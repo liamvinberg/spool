@@ -1,6 +1,6 @@
 import type { DesignProjection } from "../../daemon/design-projection";
 import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
-import { type Presence, type PresenceState, readPresenceState } from "../../team-sync-protocol";
+import { type Presence, type PresenceState, readPresence } from "../../team-sync-protocol";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -167,7 +167,8 @@ export function joinPresence(
 			if (latest !== null) socket.send(latest);
 		},
 		heard: (data) => {
-			const presence = readPresence(data);
+			const message = readJson(data);
+			const presence = message === undefined ? undefined : readPresence(message);
 			if (presence !== undefined) on.heard(presence);
 		},
 		dropped: () => {
@@ -182,18 +183,6 @@ export function joinPresence(
 		},
 		stop,
 	};
-}
-
-function readPresence(data: unknown): Presence | undefined {
-	const message = readJson(data);
-	if (message?.type !== "presence" || typeof message.still !== "number") return undefined;
-	const person = message.person as Record<string, unknown> | null | undefined;
-	if (typeof person !== "object" || person === null) return undefined;
-	const { accountId, name, color } = person;
-	if (typeof accountId !== "string" || typeof name !== "string" || typeof color !== "string") return undefined;
-	const state = readPresenceState(message.state);
-	if (state === undefined) return undefined;
-	return { type: "presence", person: { accountId, name, color }, state, still: message.still };
 }
 
 function readJson(data: unknown): Record<string, unknown> | undefined {

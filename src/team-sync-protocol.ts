@@ -342,6 +342,17 @@ const PRESENCE_NAME = 160;
 /** The frames a dragging pointer names, at most. */
 export const PRESENCE_DRAGGING = 4;
 
+/** A well-formed presence message, as a daemon or a browser hears it; undefined for anything else. */
+export function readPresence(message: Record<string, unknown>): Presence | undefined {
+	const { person, still } = message;
+	const state = readPresenceState(message.state);
+	if (message.type !== "presence" || state === undefined || typeof still !== "number" || !isRecord(person))
+		return undefined;
+	const { accountId, name, color } = person;
+	if (typeof accountId !== "string" || typeof name !== "string" || typeof color !== "string") return undefined;
+	return { type: "presence", person: { accountId, name, color }, state, still };
+}
+
 /** A well-formed presence state, copied field by field; null for "left"; undefined for anything else. */
 export function readPresenceState(value: unknown): PresenceState | null | undefined {
 	if (value === null) return null;

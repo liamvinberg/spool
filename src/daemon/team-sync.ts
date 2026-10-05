@@ -19,7 +19,7 @@ import {
 	type Presence,
 	type PresenceState,
 	RESEND_PATHS,
-	readPresenceState,
+	readPresence,
 	SAVES_PER_MINUTE,
 	SAVES_PER_MONTH,
 	travels,
@@ -733,12 +733,10 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 			if (mine !== null) socket?.send(tell(mine));
 		},
 		hear(message: Record<string, unknown>): void {
-			const { person, still } = message;
-			const state = readPresenceState(message.state);
-			if (state === undefined || typeof still !== "number" || !isPerson(person)) return;
-			const presence: Presence = { type: "presence", person, state, still };
-			if (state === null) others.delete(person.accountId);
-			else others.set(person.accountId, { presence, heard: Date.now() });
+			const presence = readPresence(message);
+			if (presence === undefined) return;
+			if (presence.state === null) others.delete(presence.person.accountId);
+			else others.set(presence.person.accountId, { presence, heard: Date.now() });
 			onPresence?.(presence);
 		},
 		/** The connection dropped: everyone it showed is gone until it is back. */
@@ -752,12 +750,6 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 				still: presence.still + Date.now() - heard,
 			})),
 	};
-}
-
-function isPerson(value: unknown): value is Presence["person"] {
-	if (typeof value !== "object" || value === null) return false;
-	const { accountId, name, color } = value as Record<string, unknown>;
-	return typeof accountId === "string" && typeof name === "string" && typeof color === "string";
 }
 
 /**
