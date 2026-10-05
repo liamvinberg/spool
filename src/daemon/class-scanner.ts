@@ -25,22 +25,56 @@ export interface ScannedFile {
 /** Which class candidates some files hold: scanCandidates, or Oxide in the parity test. */
 export type ClassScanner = (files: readonly ScannedFile[]) => string[];
 
+/** A table of characters, by code: whether each ASCII one is among these. */
+function characters(...members: string[]): Uint8Array {
+	const table = new Uint8Array(128);
+	for (const member of members) table[member.charCodeAt(0)] = 1;
+	return table;
+}
+
 /** Where a candidate stops when it is not inside an arbitrary value. */
-const STOP = new Set([" ", "\t", "\n", "\r", '"', "'", "`", "{", "}", "<", ">", ",", ";", "\\", "="]);
+const STOP = characters(" ", "\t", "\n", "\r", '"', "'", "`", "{", "}", "<", ">", ",", ";", "\\", "=");
 /** What Oxide accepts right before a candidate, and right after one. */
-const BEFORE = new Set([" ", "\t", "\n", "\r", '"', "'", "`", "}", ">", "."]);
-const AFTER = new Set([" ", "\t", "\n", "\r", '"', "'", "`", "{", "<", "=", ":", "\\", "]"]);
+const BEFORE = characters(" ", "\t", "\n", "\r", '"', "'", "`", "}", ">", ".");
+const AFTER = characters(" ", "\t", "\n", "\r", '"', "'", "`", "{", "<", "=", ":", "\\", "]");
 /** JSON takes brackets and braces on either side too. */
-const BEFORE_JSON = new Set([...BEFORE, "{", "[", "]"]);
-const AFTER_JSON = new Set([...AFTER, "}", "["]);
+const BEFORE_JSON = characters(" ", "\t", "\n", "\r", '"', "'", "`", "}", ">", ".", "{", "[", "]");
+const AFTER_JSON = characters(" ", "\t", "\n", "\r", '"', "'", "`", "{", "<", "=", ":", "\\", "]", "}", "[");
 /** Punctuation a token can end in that is the code's, not the candidate's. */
-const TRAILING = new Set([")", ":", ".", "?", "!"]);
+const TRAILING = characters(")", ":", ".", "?", "!");
 /** What a key's candidate is spelled with, outside its brackets. */
 const KEY = /[A-Za-z0-9_./-]/;
 /** What Oxide refuses right before a key's candidate. */
 const NOT_BEFORE_KEY = new Set(["!", "*", "@", "<"]);
 /** Past this many characters an open bracket is code, not an arbitrary value. */
 const LONGEST_BRACKET = 400;
+
+const OPEN_SQUARE = 91;
+const CLOSE_SQUARE = 93;
+const OPEN_ROUND = 40;
+const CLOSE_ROUND = 41;
+const NEWLINE = 10;
+
+/** Whether a character code is in a table; nothing past ASCII is. */
+function within(table: Uint8Array, code: number): boolean {
+	return code < 128 && table[code] === 1;
+}
+
+/** Whether a character code is whitespace as `\s` takes it. */
+function isSpace(code: number): boolean {
+	if (code < 128) return code === 32 || (code >= 9 && code <= 13);
+	return (
+		code === 0xa0 ||
+		code === 0x1680 ||
+		(code >= 0x2000 && code <= 0x200a) ||
+		code === 0x2028 ||
+		code === 0x2029 ||
+		code === 0x202f ||
+		code === 0x205f ||
+		code === 0x3000 ||
+		code === 0xfeff
+	);
+}
 
 /** Every class candidate in these files, each once. */
 export function scanCandidates(files: readonly ScannedFile[]): string[] {
@@ -53,30 +87,38 @@ function scan(text: string, extension: string, found: Set<string>): void {
 	const json = extension === "json";
 	const before = json ? BEFORE_JSON : BEFORE;
 	const after = json ? AFTER_JSON : AFTER;
+	// the two passes below mostly find the same runs: each is offered once
+	const runs = new Set<number>();
 
 	// The token, and each spelling inside it that starts after a "." (a
-	// selector, a property access), each with its trailing punctuation peeled
-	// off one character at a time, a "]" too where it closes nothing the
-	// spelling opened (`[open, block]`). A spelling counts only where its own
-	// neighbours are boundaries.
+	// selector, a property access).
 	const offer = (start: number, end: number): void => {
-		const starts = [start];
-		for (let at = start; at < end - 1; at++) if (text[at] === ".") starts.push(at + 1);
-		for (const from of starts) {
-			let unclosed = 0;
-			for (let at = from; at < end; at++) {
-				if (text[at] === "[") unclosed++;
-				else if (text[at] === "]") unclosed--;
-			}
-			let to = end;
-			while (to > from) {
-				const opens = from === 0 || from !== start || before.has(text[from - 1] as string);
-				if (opens && (to === text.length || after.has(text[to] as string))) offered(found, text.slice(from, to));
-				const last = text[to - 1] as string;
-				if (last === "]" && unclosed < 0) unclosed++;
-				else if (!TRAILING.has(last)) break;
-				to--;
-			}
+		const run = start * (text.length + 1) + end;
+		if (runs.has(run)) return;
+		runs.add(run);
+		spell(start, start, end);
+		for (let dot = text.indexOf(".", start); dot !== -1 && dot < end - 1; dot = text.indexOf(".", dot + 1)) {
+			spell(dot + 1, start, end);
+		}
+	};
+
+	// One spelling with its trailing punctuation peeled off one character at a
+	// time, a "]" too where it closes nothing the spelling opened
+	// (`[open, block]`). A spelling counts only where its own neighbours are
+	// boundaries.
+	const spell = (from: number, start: number, end: number): void => {
+		const opens = from === 0 || from !== start || within(before, text.charCodeAt(from - 1));
+		let unclosed: number | undefined;
+		let to = end;
+		while (to > from) {
+			if (opens && (to === text.length || within(after, text.charCodeAt(to)))) offered(found, text.slice(from, to));
+			const last = text.charCodeAt(to - 1);
+			if (last === CLOSE_SQUARE) {
+				unclosed ??= bracketBalance(text, from, to);
+				if (unclosed >= 0) break;
+				unclosed++;
+			} else if (!within(TRAILING, last)) break;
+			to--;
 		}
 	};
 
@@ -94,21 +136,21 @@ function scan(text: string, extension: string, found: Set<string>): void {
 		start = -1;
 	};
 	for (let at = 0; at < text.length; at++) {
-		const char = text[at] as string;
-		if (depth === 0 && STOP.has(char)) {
+		const code = text.charCodeAt(at);
+		if (depth === 0 && within(STOP, code)) {
 			flush(at);
 			continue;
 		}
 		// an arbitrary value never holds whitespace: this bracket is code, not a class
-		if (depth > 0 && /\s/.test(char)) {
+		if (depth > 0 && isSpace(code)) {
 			depth = 0;
 			start = -1;
 			continue;
 		}
 		if (start < 0) start = at;
-		if (char === "[" || (char === "(" && depth > 0)) depth++;
-		else if ((char === "]" || char === ")") && depth > 0) depth--;
-		if (depth > 0 && (char === "\n" || at - start > LONGEST_BRACKET)) {
+		if (code === OPEN_SQUARE || (code === OPEN_ROUND && depth > 0)) depth++;
+		else if ((code === CLOSE_SQUARE || code === CLOSE_ROUND) && depth > 0) depth--;
+		if (depth > 0 && (code === NEWLINE || at - start > LONGEST_BRACKET)) {
 			depth = 0;
 			flush(at);
 		}
@@ -125,12 +167,23 @@ function scan(text: string, extension: string, found: Set<string>): void {
 	}
 }
 
+/** How many more "[" than "]" a stretch of text holds. */
+function bracketBalance(text: string, from: number, to: number): number {
+	let balance = 0;
+	for (let at = from; at < to; at++) {
+		const code = text.charCodeAt(at);
+		if (code === OPEN_SQUARE) balance++;
+		else if (code === CLOSE_SQUARE) balance--;
+	}
+	return balance;
+}
+
 /**
  * A candidate kept, unless it spells a custom property shorthand Oxide refuses:
  * `z-(--layer-*)` is no candidate, `z-(--layer)` and `bg-(color:--ink)/50` are.
  */
 function offered(found: Set<string>, candidate: string): void {
-	const shorthand = shorthandAt(candidate);
+	const shorthand = candidate.includes("-(") ? shorthandAt(candidate) : -1;
 	if (shorthand === -1 || SHORTHAND.test(candidate.slice(shorthand + 1))) found.add(candidate);
 }
 
