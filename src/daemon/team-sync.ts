@@ -6,7 +6,15 @@ import { writeAtomic } from "../atomic-write";
 import type { CloudVault } from "../cloud-auth";
 import { SpoolError } from "../errors";
 import { isTeamProject, type ProjectLink, readProjectLink } from "../team-project";
-import { decodeFrame, encodeFrame, PROTOCOL_VERSION, travels } from "../team-sync-protocol";
+import {
+	decodeFrame,
+	encodeFrame,
+	PROTOCOL_VERSION,
+	type Presence,
+	type PresenceState,
+	readPresenceState,
+	travels,
+} from "../team-sync-protocol";
 import { FORMAT_VERSION } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
@@ -56,11 +64,17 @@ export interface LocalCopyOptions {
 	notice?: (message: string) => void;
 	/** This copy's set-aside marks changed: one of its saves lost a collision, or a mark went. */
 	onMarks?: () => void;
+	/** Another person on this team canvas moved, arrived or left (`state` null). */
+	onPresence?: (presence: Presence) => void;
 }
 
 export interface LocalCopy {
 	/** Resolves whenever the copy is caught up and nothing it sent is waiting on an answer. */
 	idle(): Promise<void>;
+	/** Where this machine's person is on the canvas, or null once nobody here is looking. Never stored. */
+	presence(state: PresenceState | null): void;
+	/** Everyone else on the canvas now, `still` counted to this moment. */
+	people(): Presence[];
 	close(): void;
 }
 
@@ -126,6 +140,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let settle: NodeJS.Timeout | undefined;
 	let watch: TreeWatch | undefined;
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
+	const presence = copyPresence(options.onPresence);
 
 	const persist = () => writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 	const isIdle = () => caughtUp && inflight.size === 0 && yielding.size === 0 && changed.size === 0;
@@ -241,6 +256,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const framed = decodeFrame(data);
 		if (framed === null) return;
 		const { message, bytes } = framed;
+		if (message.type === "presence") return presence.hear(message);
 		if (message.type === "file") receive(message, bytes);
 		else if (message.type === "caught-up") {
 			if (typeof message.head === "number" && message.head > state.head) state.head = message.head;
@@ -249,6 +265,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			retryMs = RECONNECT_MIN_MS;
 			checkEverything();
 			burst = undefined;
+			presence.joined(socket);
 		} else if (message.type === "restored") {
 			const { path, version } = message;
 			if (typeof path === "string" && travels(path) && typeof version === "number")
@@ -305,6 +322,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				inflight.clear();
 				dirty.clear();
 				yielding.clear();
+				presence.lost();
 				if (closed) return;
 				if (!live) return fail(new SpoolError(`spool.page closed the sync connection for ${link.url}`));
 				reconnect();
@@ -341,6 +359,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				: isIdle()
 					? Promise.resolve()
 					: new Promise<void>((resolve, reject) => waiters.push({ resolve, reject })),
+		presence: (state) => presence.say(caughtUp ? socket : undefined, state),
+		people: () => presence.people(),
 		close: () => {
 			closed = true;
 			if (retry !== undefined) clearTimeout(retry);
@@ -352,6 +372,51 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			waiters = [];
 		},
 	};
+}
+
+/**
+ * One local copy's share of presence. What this machine says goes up only while the copy is caught up, and is
+ * said again on every reconnect; who else is here is known only for as long as the connection is up.
+ */
+function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
+	let mine: PresenceState | null = null;
+	const others = new Map<string, { presence: Presence; heard: number }>();
+	const tell = (state: PresenceState | null) => encodeFrame({ type: "presence", state });
+	return {
+		say(socket: SyncSocket | undefined, state: PresenceState | null): void {
+			const changed = JSON.stringify(state) !== JSON.stringify(mine);
+			mine = state;
+			if (changed) socket?.send(tell(state));
+		},
+		joined(socket: SyncSocket | undefined): void {
+			if (mine !== null) socket?.send(tell(mine));
+		},
+		hear(message: Record<string, unknown>): void {
+			const { person, still } = message;
+			const state = readPresenceState(message.state);
+			if (state === undefined || typeof still !== "number" || !isPerson(person)) return;
+			const presence: Presence = { type: "presence", person, state, still };
+			if (state === null) others.delete(person.accountId);
+			else others.set(person.accountId, { presence, heard: Date.now() });
+			onPresence?.(presence);
+		},
+		/** The connection dropped: everyone it showed is gone until it is back. */
+		lost(): void {
+			for (const { presence } of others.values()) onPresence?.({ ...presence, state: null, still: 0 });
+			others.clear();
+		},
+		people: (): Presence[] =>
+			[...others.values()].map(({ presence, heard }) => ({
+				...presence,
+				still: presence.still + Date.now() - heard,
+			})),
+	};
+}
+
+function isPerson(value: unknown): value is Presence["person"] {
+	if (typeof value !== "object" || value === null) return false;
+	const { accountId, name, color } = value as Record<string, unknown>;
+	return typeof accountId === "string" && typeof name === "string" && typeof color === "string";
 }
 
 /**
@@ -367,6 +432,8 @@ export function createTeamSync(deps: {
 	onMarks?: (root: string) => void;
 }) {
 	const copies = new Map<string, LocalCopy>();
+	/** Who listens for presence on each root's canvas. */
+	const watchers = new Map<string, Set<(presence: Presence) => void>>();
 	let closed = false;
 	return {
 		keeping(roots: readonly string[]): void {
@@ -390,6 +457,9 @@ export function createTeamSync(deps: {
 							...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
 							...(deps.notice === undefined ? {} : { notice: deps.notice }),
 							...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
+							onPresence: (presence) => {
+								for (const watcher of watchers.get(root) ?? []) watcher(presence);
+							},
 						}),
 					);
 				} catch (error) {
@@ -399,6 +469,15 @@ export function createTeamSync(deps: {
 		},
 		/** The local copy at a root, while it is followed. */
 		copy: (root: string): LocalCopy | undefined => copies.get(root),
+		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
+		watchPresence(root: string, watcher: (presence: Presence) => void): () => void {
+			const set = watchers.get(root) ?? new Set();
+			watchers.set(root, set.add(watcher));
+			return () => {
+				set.delete(watcher);
+				if (set.size === 0) watchers.delete(root);
+			};
+		},
 		close(): void {
 			closed = true;
 			for (const copy of copies.values()) copy.close();

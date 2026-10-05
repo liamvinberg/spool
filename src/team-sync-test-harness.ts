@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
-import { CANVAS_PATH, decodeFrame, encodeFrame, mergeCanvas, PROTOCOL_VERSION, travels } from "./team-sync-protocol";
+import {
+	CANVAS_PATH,
+	decodeFrame,
+	encodeFrame,
+	mergeCanvas,
+	PROTOCOL_VERSION,
+	type PresenceState,
+	readPresenceState,
+	travels,
+} from "./team-sync-protocol";
 
 /**
  * A fake spool.page for team projects: the team API a CLI calls and a sync object a daemon connects to, in
@@ -15,7 +24,12 @@ interface Person {
 	accountId: string;
 	device: string;
 	role: "admin" | "editor" | "viewer" | null;
+	/** Their colour on the team canvas, by when they joined. */
+	color: string;
 }
+
+/** The colours the fake team hands out, one per person in the order they arrive. */
+export const TEAM_COLORS = ["#7aa7ff", "#eaa94a", "#4cc495", "#b896ff", "#f28cbc"];
 
 interface Project {
 	team: string;
@@ -37,6 +51,8 @@ interface TeamVersion {
 interface Connected {
 	person: Person;
 	live: boolean;
+	/** Where this connection's person last said they were: kept only while it's connected. */
+	presence?: { state: PresenceState; at: number };
 	deliver(frame: string | Uint8Array): void;
 	/** Closed in turn, after everything already on its way. */
 	close(): void;
@@ -110,6 +126,15 @@ export function fakeTeam(team = "devosurf") {
 				if (file.version > since) from.deliver(fileFrame(path, file));
 			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
 			from.live = true;
+			greet(at, from);
+			return;
+		}
+		if (message.type === "presence") {
+			const state = readPresenceState(message.state);
+			if (!from.live || state === undefined) return;
+			if (state === null) delete from.presence;
+			else from.presence = { state, at: Date.now() };
+			relayPresence(at, from.person);
 			return;
 		}
 		if (message.type !== "save") return;
@@ -182,6 +207,40 @@ export function fakeTeam(team = "devosurf") {
 			}
 	}
 
+	/** Where a person stands: the latest of their connections' states, as the sync object keeps it. */
+	function standing(at: Project, person: Person) {
+		let latest: Connected["presence"];
+		for (const socket of at.sockets)
+			if (socket.person === person && socket.live && socket.presence !== undefined)
+				if (latest === undefined || socket.presence.at >= latest.at) latest = socket.presence;
+		return latest;
+	}
+
+	function presenceFrame(person: Person, stood: Connected["presence"]) {
+		return encodeFrame({
+			type: "presence",
+			person: { accountId: person.accountId, name: person.accountId, color: person.color },
+			state: stood?.state ?? null,
+			still: stood === undefined ? 0 : Date.now() - stood.at,
+		});
+	}
+
+	function relayPresence(at: Project, person: Person): void {
+		const frame = presenceFrame(person, standing(at, person));
+		for (const other of at.sockets) if (other.live && other.person !== person) other.deliver(frame);
+	}
+
+	function greet(at: Project, to: Connected): void {
+		const told = new Set<Person>([to.person]);
+		for (const socket of at.sockets) {
+			if (told.has(socket.person)) continue;
+			const stood = standing(at, socket.person);
+			if (stood === undefined) continue;
+			told.add(socket.person);
+			to.deliver(presenceFrame(socket.person, stood));
+		}
+	}
+
 	const openSocket =
 		(token: string): OpenSyncSocket =>
 		(url, presented, events: SyncSocketEvents) => {
@@ -206,10 +265,11 @@ export function fakeTeam(team = "devosurf") {
 				if (!open) return false;
 				open = false;
 				at?.sockets.delete(connected);
+				if (at !== undefined && connected.presence !== undefined) relayPresence(at, connected.person);
 				return true;
 			};
 			const connected: Connected = {
-				person: person ?? { accountId: "", device: "", role: null },
+				person: person ?? { accountId: "", device: "", role: null, color: "" },
 				live: false,
 				deliver: (frame) =>
 					later(() => {
@@ -248,7 +308,8 @@ export function fakeTeam(team = "devosurf") {
 		/** One person signed in on one machine: what a CLI and a daemon there are handed. */
 		machine(name: string, role: Person["role"] = "editor") {
 			const token = `${name}-token`.padEnd(43, "x");
-			people.set(token, { accountId: name, device: `${name}'s Mac`, role });
+			const color = TEAM_COLORS[people.size % TEAM_COLORS.length] as string;
+			people.set(token, { accountId: name, device: `${name}'s Mac`, role, color });
 			const request: CloudRequestOptions = {
 				origin: TEAM_ORIGIN,
 				vault: { read: async () => token },

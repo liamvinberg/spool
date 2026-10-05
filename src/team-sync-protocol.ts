@@ -227,3 +227,85 @@ function canvasObject(bytes: Uint8Array): Entries | null {
 		return null;
 	}
 }
+
+/*
+ * Presence: where each person is on the team canvas, as it happens. It rides the same connection as ephemeral
+ * messages that are relayed to the other people connected and never stored, never in history, never on disk.
+ * One person is one account, however many local copies they hold open.
+ */
+
+/** Where one person is on a team canvas, and what they're doing there. */
+export interface PresenceState {
+	/** The page they're on. */
+	page: string;
+	/** Their pointer in the page's world coordinates, or null while it's off the canvas. */
+	pointer: { x: number; y: number } | null;
+	/** Pressing, so their name shows. */
+	pressed: boolean;
+	/** The frames they're moving now. */
+	dragging: string[];
+	/** The frame they're inside live. */
+	inside: string | null;
+	/** The world rectangle their canvas shows: what following them shows. */
+	view: { x: number; y: number; w: number; h: number } | null;
+}
+
+/** Daemon → object: this local copy's person is here, or has left (null). Sent only once caught up. */
+export interface PresenceUpdate {
+	type: "presence";
+	state: PresenceState | null;
+}
+
+/** Who a person is to the team canvas: their account, the name their pill says, and their colour in the team. */
+export interface PresencePerson {
+	accountId: string;
+	name: string;
+	color: string;
+}
+
+/**
+ * Object → daemon: where another person is now, or that they've left (null). `still` is how many milliseconds
+ * ago that changed: 0 as it happens, more in the catch-up a newcomer is sent.
+ */
+export interface Presence {
+	type: "presence";
+	person: PresencePerson;
+	state: PresenceState | null;
+	still: number;
+}
+
+/** What a name in a presence message may be: a page or a frame. Small, so a person's whole state stays small. */
+const PRESENCE_NAME = 160;
+/** The frames a dragging pointer names, at most. */
+export const PRESENCE_DRAGGING = 4;
+
+/** A well-formed presence state, copied field by field; null for "left"; undefined for anything else. */
+export function readPresenceState(value: unknown): PresenceState | null | undefined {
+	if (value === null) return null;
+	if (!isRecord(value)) return undefined;
+	const { page, pointer, pressed, dragging, inside, view } = value;
+	if (!isPresenceName(page) || typeof pressed !== "boolean" || !(inside === null || isPresenceName(inside)))
+		return undefined;
+	if (!Array.isArray(dragging) || dragging.length > PRESENCE_DRAGGING || !dragging.every(isPresenceName))
+		return undefined;
+	if (!(pointer === null || (isRecord(pointer) && finite(pointer.x) && finite(pointer.y)))) return undefined;
+	if (!(view === null || (isRecord(view) && finite(view.x) && finite(view.y) && finite(view.w) && finite(view.h))))
+		return undefined;
+	return {
+		page,
+		pointer: pointer === null ? null : { x: pointer.x as number, y: pointer.y as number },
+		pressed,
+		dragging: [...dragging],
+		inside,
+		view:
+			view === null ? null : { x: view.x as number, y: view.y as number, w: view.w as number, h: view.h as number },
+	};
+}
+
+function isPresenceName(value: unknown): value is string {
+	return typeof value === "string" && value.length <= PRESENCE_NAME;
+}
+
+function finite(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
+}

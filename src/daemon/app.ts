@@ -21,6 +21,8 @@ import { openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
+import { isTeamProject } from "../team-project";
+import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
@@ -3236,11 +3238,17 @@ export function createDaemonApp({
 					sittings.view(view, undefined);
 					letPlayerCool(project.root);
 				});
-				await stream.writeSSE({ event: "hello", data: JSON.stringify({ project: name, view }), id: String(id++) });
+				const team = isTeamProject(project.root);
+				await stream.writeSSE({
+					event: "hello",
+					data: JSON.stringify({ project: name, view, ...(team ? { team } : {}) }),
+					id: String(id++),
+				});
 				const unsubscribe = hub.subscribe(project.root, (event) => {
 					void stream.writeSSE({ event: "change", data: JSON.stringify(event), id: String(id++) }).catch(() => {});
 				});
 				stream.onAbort(unsubscribe);
+				if (team) stream.onAbort(watchPresence(stream, project.root, () => id++));
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
 		})
@@ -3428,6 +3436,35 @@ export function createDaemonApp({
 			changed: (root) => hub.publish(root, { kind: "set-aside" }),
 		}),
 	);
+	/*
+	 * Presence on a team canvas: where this machine's person is, from the canvas, as it changes. It goes to the
+	 * team through the local copy's sync connection and nowhere else: never to disk, never into history.
+	 */
+	app.put("/api/p/:project/presence", async (c) => {
+		const project = resolveProject(c, c.req.param("project"));
+		if ("response" in project) return project.response;
+		const state = readPresenceState(((await c.req.json().catch(() => undefined)) as { state?: unknown })?.state);
+		if (state === undefined) return c.text("presence must be { state: { page, pointer, ... } | null }", 400);
+		teamSync.copy(project.root)?.presence(state);
+		return c.body(null, 204);
+	});
+
+	/**
+	 * Tell one canvas who else is on its team canvas: everyone there now, then each change. Its person leaves
+	 * the team's canvas when the last canvas showing this local copy closes. Returns the unsubscribe.
+	 */
+	function watchPresence(stream: SSEStreamingApi, root: string, nextId: () => number): () => void {
+		const tell = (presence: Presence) =>
+			void stream
+				.writeSSE({ event: "presence", data: JSON.stringify(presence), id: String(nextId()) })
+				.catch(() => {});
+		for (const presence of teamSync.copy(root)?.people() ?? []) tell(presence);
+		const unwatch = teamSync.watchPresence(root, tell);
+		return () => {
+			unwatch();
+			if (![...views.values()].some((view) => view.root === root)) teamSync.copy(root)?.presence(null);
+		};
+	}
 
 	app.onError((error, c) => {
 		if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
