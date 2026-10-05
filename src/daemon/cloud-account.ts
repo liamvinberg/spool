@@ -90,6 +90,11 @@ export function createCloudAccount(options: {
 		cancel(): void {
 			pending?.cancel.abort();
 		},
+		/** `spool login` or `spool logout` changed the account outside this daemon: read it again. */
+		changed(): void {
+			known = null;
+			options.onChange();
+		},
 		async signOut(): Promise<void> {
 			pending?.cancel.abort();
 			known = null;

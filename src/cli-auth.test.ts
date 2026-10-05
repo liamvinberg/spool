@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:https";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -138,5 +139,41 @@ case "$1" in find-generic-password|delete-generic-password) exit 44;; esac
 		expect(invoked).toContain("spool.device-session.");
 		expect(invoked).toContain("spool.publisher-session.");
 		expect(invoked).not.toMatch(/token|verifier|code=/u);
+	});
+
+	it("tells a running daemon that the account changed", async () => {
+		const home = makeTempDir();
+		const bin = join(home, "bin");
+		mkdirSync(bin);
+		writeFileSync(join(bin, "security"), "#!/bin/sh\nexit 44\n");
+		chmodSync(join(bin, "security"), 0o755);
+		const told: { url: string | undefined; method: string | undefined; token: unknown }[] = [];
+		const daemon = createHttpServer((request, response) => {
+			told.push({ url: request.url, method: request.method, token: request.headers["x-spool-control"] });
+			response.statusCode = 204;
+			response.end();
+		});
+		await new Promise<void>((done) => daemon.listen(0, "127.0.0.1", done));
+		const address = daemon.address();
+		if (!address || typeof address === "string") throw new Error("missing address");
+		mkdirSync(join(home, ".spool"));
+		writeFileSync(
+			join(home, ".spool", "daemon.json"),
+			JSON.stringify({
+				pid: process.pid,
+				host: "127.0.0.1",
+				port: address.port,
+				version: "test",
+				startedAt: new Date().toISOString(),
+				controlToken: "control-secret",
+			}),
+		);
+		try {
+			const result = await spoolAsync(["logout"], home, home, { PATH: `${bin}:${process.env.PATH ?? ""}` });
+			expect(result.status).toBe(0);
+			expect(told).toEqual([{ url: "/api/cloud/account/changed", method: "POST", token: "control-secret" }]);
+		} finally {
+			await new Promise<void>((done, fail) => daemon.close((error) => (error ? fail(error) : done())));
+		}
 	});
 });

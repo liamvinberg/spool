@@ -33,6 +33,7 @@ import {
 } from "./daemon/lifecycle";
 import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-names";
 import { publicationReadiness } from "./daemon/publication-readiness";
+import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { createSettingsStore } from "./daemon/settings";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
@@ -71,6 +72,17 @@ const program = new Command("spool")
 	.version(pkg.version, "-v, --version")
 	.option(NO_OPEN, "print the canvas url without opening a browser");
 
+/** A running daemon holds the account it last read: tell it, so Home and the Mac app's menu follow. */
+async function accountChanged(): Promise<void> {
+	const state = readDaemonState(spoolDir);
+	if (state === undefined) return;
+	await fetch(`${daemonUrl(state.host, state.port)}/api/cloud/account/changed`, {
+		method: "POST",
+		headers: { [CONTROL_HEADER]: state.controlToken },
+		signal: AbortSignal.timeout(2_000),
+	}).catch(() => {});
+}
+
 program
 	.command("login")
 	.description("sign this machine in to spool.page in the system browser")
@@ -78,6 +90,7 @@ program
 		process.stderr.write("spool: opening your browser to sign in…\n");
 		const signedIn = await login(spoolDir, { origin: cloudOrigin(process.env) });
 		process.stdout.write(`signed in as ${signedIn.email}\n`);
+		await accountChanged();
 	});
 
 program
@@ -85,6 +98,7 @@ program
 	.description("sign this machine out: revoke its session and remove it from Keychain")
 	.action(async () => {
 		const result = await logout(spoolDir, { origin: cloudOrigin(process.env) });
+		await accountChanged();
 		process.stdout.write("signed out of this machine\n");
 		if (result.remote === "unavailable") {
 			process.stderr.write(

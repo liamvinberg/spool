@@ -1399,6 +1399,10 @@ export function createDaemonApp({
 			cloudAccount.cancel();
 			return c.body(null, 204);
 		})
+		.post("/api/cloud/account/changed", (c) => {
+			cloudAccount.changed();
+			return c.body(null, 204);
+		})
 		.post("/api/cloud/account/sign-out", async (c) => {
 			try {
 				await cloudAccount.signOut();
