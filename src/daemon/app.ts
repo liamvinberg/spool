@@ -21,7 +21,7 @@ import { openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
-import { isTeamProject } from "../team-project";
+import { isTeamProject, localCopyOf } from "../team-project";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
@@ -1773,12 +1773,16 @@ export function createDaemonApp({
 			// the app waits on this before it shows anything, and every card is a
 			// walk of a project's design folder — so they run together (#13)
 			const projects: ProjectCard[] = await Promise.all(
-				readRegistry(spoolDir).projects.map(async (project) => ({
-					name: basename(project.root),
-					root: project.root,
-					openedAt: project.openedAt,
-					...(await summarizeProject(project.root)),
-				})),
+				readRegistry(spoolDir).projects.map(async (project) => {
+					const link = localCopyOf(project.root);
+					return {
+						name: basename(project.root),
+						root: project.root,
+						openedAt: project.openedAt,
+						...(link === undefined ? {} : { team: { url: link.url, team: link.team, project: link.project } }),
+						...(await summarizeProject(project.root)),
+					};
+				}),
 			);
 			// the registry appends a project the first time it is opened, so of two
 			// opened in the same millisecond the later entry is the more recent

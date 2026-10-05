@@ -568,6 +568,8 @@ export interface ProjectCard extends ProjectSummary {
 	name: string;
 	root: string;
 	openedAt: string;
+	/** The team project this root is a local copy of: Home shows all of one's copies as one cover. */
+	team?: { url: string; team: string; project: string };
 }
 
 /**

@@ -62,6 +62,15 @@ export function readProjectLink(root: string): ProjectLink {
 	return link;
 }
 
+/** The team project a root is a local copy of, or nothing for a solo project or a `spool.json` that isn't one. */
+export function localCopyOf(root: string): ProjectLink | undefined {
+	try {
+		return isTeamProject(root) ? readProjectLink(root) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** The link and nothing else, so a public repo shows no more than the team's and project's names. */
 export function writeProjectLink(root: string, link: ProjectLink): void {
 	writeFileSync(join(root, PROJECT_LINK), `${JSON.stringify({ project: link.url }, null, "\t")}\n`);

@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { type MachineProjectRemoval, mutateMachineState } from "./machine-state";
 import { type Registry, type RegistryProject, readMachineRegistry } from "./machine-state-files";
+import { localCopyOf, type ProjectLink } from "./team-project";
 
 export type { Registry, RegistryProject };
 
@@ -66,4 +67,31 @@ export function resolveRegisteredRoot(path: string): string {
 	} catch {
 		return absolute;
 	}
+}
+
+/** A team project this machine holds, and every registered local copy of it, most recently opened first. */
+export interface TeamProjectCopies {
+	link: ProjectLink;
+	copies: string[];
+}
+
+/**
+ * The machine's team projects, keyed by team and name (the link a local copy's `spool.json` holds). A checkout and
+ * each of its worktrees is a local copy of one team project; each is registered by its own root, and forgetting one
+ * forgets that path only. Read from each root's `spool.json` rather than remembered, so a pull that brings one in
+ * or a branch without one is seen as it is.
+ */
+export function teamProjects(spoolDir: string): TeamProjectCopies[] {
+	const projects = new Map<string, TeamProjectCopies>();
+	const registered = [...readRegistry(spoolDir).projects].sort(
+		(a, b) => Date.parse(b.openedAt) - Date.parse(a.openedAt),
+	);
+	for (const { root } of registered) {
+		const link = localCopyOf(root);
+		if (link === undefined) continue;
+		const known = projects.get(link.url);
+		if (known === undefined) projects.set(link.url, { link, copies: [root] });
+		else known.copies.push(root);
+	}
+	return [...projects.values()];
 }
