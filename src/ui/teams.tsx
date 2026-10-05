@@ -286,12 +286,15 @@ export function TeamProjects({
 	team,
 	notice,
 	covers,
+	away,
 	onNewProject,
 }: {
 	team: CloudTeam;
 	notice?: ReactNode;
 	/** The covers of the team's projects on this Mac, if there are any. */
 	covers?: ReactNode;
+	/** The team's projects not on this Mac yet, dimmed with "Get it". */
+	away?: ReactNode;
 	onNewProject?: (() => void) | undefined;
 }) {
 	return (
@@ -310,13 +313,15 @@ export function TeamProjects({
 				)}
 			</header>
 			{notice}
-			{covers ?? (
-				<EmptyState
-					className="min-h-[420px] p-[35px] [&>p]:mt-0"
-					icon={<EmptyFramesIcon />}
-					title={`${team.name} has no projects on this Mac yet`}
-				/>
-			)}
+			{covers ??
+				(away ? null : (
+					<EmptyState
+						className="min-h-[420px] p-[35px] [&>p]:mt-0"
+						icon={<EmptyFramesIcon />}
+						title={`${team.name} has no projects on this Mac yet`}
+					/>
+				))}
+			{away}
 		</>
 	);
 }
@@ -850,6 +855,8 @@ export function useTeamHome(
 		covers: (address: string) => ReactNode;
 		/** New project, started in this team. */
 		onNewProject: (team: CloudTeam) => void;
+		/** The team's projects not on this Mac yet, to Get. */
+		away?: (team: CloudTeam) => ReactNode;
 	},
 ) {
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
@@ -875,7 +882,14 @@ export function useTeamHome(
 		setScope(address);
 		setPage("projects");
 	};
-	if (!ready) return { switcher: undefined, notice: undefined, team: undefined, teams: new Set<string>() };
+	if (!ready)
+		return {
+			switcher: undefined,
+			notice: undefined,
+			team: undefined,
+			teams: new Set<string>(),
+			editing: [] as CloudTeam[],
+		};
 	const switcher = (
 		<>
 			<TeamSwitcher teams={ready} current={current} onSelect={select} onNewTeam={() => setCreating(true)} />
@@ -936,12 +950,13 @@ export function useTeamHome(
 							team={current}
 							notice={notice}
 							covers={projects?.covers(current.address)}
+							away={projects?.away?.(current)}
 							onNewProject={projects && (() => projects.onNewProject(current))}
 						/>
 					),
 			}
 		: undefined;
 	/** The teams the switcher offers: their projects are on their own pages, not among this Mac's own. */
-	const editing = new Set(ready.teams.filter((team) => team.role !== "viewer").map((team) => team.address));
-	return { switcher, notice, team, teams: editing };
+	const editing = ready.teams.filter((team) => team.role !== "viewer");
+	return { switcher, notice, team, teams: new Set(editing.map((team) => team.address)), editing };
 }

@@ -35,6 +35,7 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
+import { MoveToTeamDialog, TeamProjectsAway } from "./team-moves";
 import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
@@ -75,6 +76,8 @@ export function App() {
 	/** The team New project starts in, while the picker is open for one. */
 	const [pickingTeam, setPickingTeam] = useState<string | undefined>();
 	const [teamMenu, setTeamMenu] = useState<string | null>(null);
+	/** The project "Move to team…" is asking about. */
+	const [moving, setMoving] = useState<{ root: string; name: string } | null>(null);
 	useEffect(() => {
 		void readAccount();
 	}, [readAccount]);
@@ -462,7 +465,26 @@ export function App() {
 			setPickingTeam(team.address);
 			setPicking("new");
 		},
+		// keyed on this Mac's copies of the team's projects, so one just got leaves the list
+		away: (team) => (
+			<TeamProjectsAway
+				key={projects
+					.filter((project) => project.team?.team === team.address)
+					.map((project) => project.root)
+					.join("\n")}
+				team={team}
+				onGot={(project) => {
+					void refetch();
+					openTab(project);
+				}}
+			/>
+		),
 	});
+	/** "Move to team…", while this account edits in a team; a team project has nowhere to move. */
+	const moveToTeam =
+		teamHome.editing.length === 0 ? undefined : (project: { root: string; name: string }) => setMoving(project);
+	const focusedSolo =
+		focusedTab !== undefined && byRoot.get(focusedTab.root)?.team === undefined ? focusedTab : undefined;
 	const canvasActive =
 		focusedTab !== undefined &&
 		chrome !== null &&
@@ -471,6 +493,7 @@ export function App() {
 		!settingsOpen &&
 		renameRequest === null &&
 		trashRequest === null &&
+		moving === null &&
 		!transfer.confirming;
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
@@ -565,6 +588,7 @@ export function App() {
 						onForgetProject={(project) => void forgetProject(project)}
 						onTrashProject={setTrashRequest}
 						onRenameProject={(project) => void requestRename(project)}
+						onMoveToTeam={moveToTeam}
 						switcher={teamHome.switcher}
 						notice={teamHome.notice}
 						team={teamHome.team}
@@ -663,7 +687,28 @@ export function App() {
 			)}
 
 			{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
-			{settingsOpen && <SettingsSheet project={focusedTab?.name} onClose={closeSettings} />}
+			{settingsOpen && (
+				<SettingsSheet
+					project={focusedTab?.name}
+					onClose={closeSettings}
+					onMoveToTeam={
+						moveToTeam && focusedSolo
+							? () => {
+									closeSettings();
+									moveToTeam(focusedSolo);
+								}
+							: undefined
+					}
+				/>
+			)}
+			{moving !== null && (
+				<MoveToTeamDialog
+					project={moving}
+					teams={teamHome.editing}
+					onMoved={() => void refetch()}
+					onClose={() => setMoving(null)}
+				/>
+			)}
 		</div>
 	);
 }

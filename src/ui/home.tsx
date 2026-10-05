@@ -32,6 +32,7 @@ export function Home({
 	onSettings,
 	onImport,
 	onExportProject,
+	onMoveToTeam,
 	account,
 	switcher,
 	notice,
@@ -48,6 +49,8 @@ export function Home({
 	onSettings: () => void;
 	onImport?: () => void;
 	onExportProject?: (project: ProjectCard) => void;
+	/** "Move to team…" on a project's cover, while this account edits in a team. */
+	onMoveToTeam?: ((project: { root: string; name: string }) => void) | undefined;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
 	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
@@ -260,6 +263,7 @@ export function Home({
 								onTrashProject={onTrashProject}
 								onRenameProject={onRenameProject}
 								{...(onExportProject === undefined ? {} : { onExportProject })}
+								{...(onMoveToTeam === undefined ? {} : { onMoveToTeam })}
 							/>
 						)}
 					</main>
@@ -302,6 +306,7 @@ export function ProjectGrid({
 	onTrashProject,
 	onRenameProject,
 	onExportProject,
+	onMoveToTeam,
 }: {
 	projects: readonly ProjectCover[];
 	menu: string | null;
@@ -311,6 +316,8 @@ export function ProjectGrid({
 	onTrashProject: (project: { root: string; name: string }) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onExportProject?: (project: ProjectCard) => void;
+	/** "Move to team…", offered on a project that isn't a team project yet. */
+	onMoveToTeam?: (project: { root: string; name: string }) => void;
 }) {
 	return (
 		<>
@@ -328,6 +335,9 @@ export function ProjectGrid({
 						onTrash={() => onTrashProject(project)}
 						onRename={() => onRenameProject(project)}
 						onExport={() => onExportProject?.(project)}
+						{...(onMoveToTeam === undefined || project.team !== undefined
+							? {}
+							: { onMoveToTeam: () => onMoveToTeam(project) })}
 					/>
 				))}
 			</div>
@@ -354,6 +364,7 @@ function ProjectTile({
 	onTrash,
 	onRename,
 	onExport,
+	onMoveToTeam,
 }: {
 	project: ProjectCard;
 	copies: number;
@@ -365,6 +376,7 @@ function ProjectTile({
 	onTrash: () => void;
 	onRename: () => void;
 	onExport: () => void;
+	onMoveToTeam?: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const cover = project.covers[0];
@@ -444,6 +456,16 @@ function ProjectTile({
 							onRename();
 						}}
 					/>
+					{onMoveToTeam && (
+						<MenuItem
+							label="Move to team…"
+							onClick={() => {
+								manageRef.current?.focus();
+								onCloseMenu();
+								onMoveToTeam();
+							}}
+						/>
+					)}
 					<MenuItem
 						label="Copy path"
 						onClick={() => {

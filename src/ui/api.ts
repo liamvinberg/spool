@@ -24,6 +24,7 @@ import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
+import type { MoveOutcome, TeamProjectOnMac } from "../daemon/team-projects";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { PresenceState } from "../team-sync-protocol";
@@ -1653,6 +1654,51 @@ export const teamActions = {
 		teamAction<Pick<CloudTeam, "address" | "name" | "role">>("POST", `/invites/${encodeURIComponent(invite)}/accept`),
 	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 };
+
+export type { MoveOutcome, TeamProjectOnMac };
+
+/** A team's projects, each on this Mac already or not ("Get it"); undefined while spool.page can't say. */
+export async function fetchTeamProjects(address: string): Promise<TeamProjectOnMac[] | undefined> {
+	try {
+		const response = await controlFetch(`/api/cloud${team(address)}/projects`);
+		const body = (response.ok ? await response.json() : null) as { projects?: unknown } | null;
+		return Array.isArray(body?.projects) ? (body.projects as TeamProjectOnMac[]) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The daemon's answer to Get it or Move to team: what it made, or what it said instead. */
+async function teamProjectAction<T>(path: string, body: unknown): Promise<T> {
+	let response: Response;
+	try {
+		response = await controlFetch(`/api/cloud${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	} catch {
+		throw new Error("spool could not be reached. Try again.");
+	}
+	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;
+	if (!response.ok || parsed === null)
+		throw new Error(typeof parsed?.error === "string" ? parsed.error : "Could not finish. Try again.");
+	return parsed;
+}
+
+/** "Get it": a team project's local copy in a checkout, or just on this Mac. */
+export function getTeamProjectAt(
+	address: string,
+	project: string,
+	place: { where: "checkout"; path: string } | { where: "mac" },
+): Promise<{ root: string; name: string }> {
+	return teamProjectAction(`${team(address)}/projects/${encodeURIComponent(project)}/get`, place);
+}
+
+/** "Move to team…": the project goes up whole, then one commit takes design/ out of git. */
+export function moveProjectToTeam(address: string, path: string): Promise<MoveOutcome> {
+	return teamProjectAction(`${team(address)}/move`, { path });
+}
 
 /** Project transfer uses the same control token as every project lifecycle write. */
 export async function exportProject(root: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {

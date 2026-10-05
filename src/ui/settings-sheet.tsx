@@ -43,7 +43,16 @@ import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
 export type SettingsTab = "general" | "appearance";
 
-export function SettingsSheet({ project, onClose }: { project: string | undefined; onClose: () => void }) {
+export function SettingsSheet({
+	project,
+	onClose,
+	onMoveToTeam,
+}: {
+	project: string | undefined;
+	onClose: () => void;
+	/** "Move to team…" for the open project, while it is only on this Mac and this account edits in a team. */
+	onMoveToTeam?: (() => void) | undefined;
+}) {
 	const [tab, setTab] = useState<SettingsTab>("general");
 	const snapshot = useSettings(project);
 	const write = useWriteSetting(project);
@@ -88,7 +97,7 @@ export function SettingsSheet({ project, onClose }: { project: string | undefine
 					<TabRow tab={tab} onTab={setTab} />
 					<div className="min-h-0 flex-1 overflow-y-auto px-6 pt-5 pb-8">
 						{snapshot === undefined ? null : tab === "general" ? (
-							<General project={project} entries={entries} write={write} />
+							<General project={project} entries={entries} write={write} onMoveToTeam={onMoveToTeam} />
 						) : (
 							<AppearanceTab entries={entries} write={write} writeMany={writeMany} />
 						)}
@@ -142,10 +151,12 @@ function General({
 	project,
 	entries,
 	write,
+	onMoveToTeam,
 }: {
 	project: string | undefined;
 	entries: readonly SettingReading[];
 	write: Write;
+	onMoveToTeam?: (() => void) | undefined;
 }) {
 	const general = entries.filter((entry) => entry.group === "general");
 	return (
@@ -153,7 +164,8 @@ function General({
 			{BANDS.map((band) => {
 				if (band.scope !== "machine" && project === undefined) return null;
 				const rows = general.filter((entry) => entry.scope === band.scope);
-				if (rows.length === 0) return null;
+				const moving = band.scope === "project" ? onMoveToTeam : undefined;
+				if (rows.length === 0 && moving === undefined) return null;
 				return (
 					<Band
 						key={band.scope}
@@ -168,6 +180,20 @@ function General({
 						{rows.map((entry) => (
 							<SettingRow key={entry.key} entry={entry} write={write} />
 						))}
+						{moving && (
+							<Row
+								label="Team"
+								says="Only on this Mac. Move it to a team to work on it live with your teammates."
+							>
+								<button
+									type="button"
+									className="rounded-md border border-border-raised px-3 py-2 type-value"
+									onClick={moving}
+								>
+									Move to team…
+								</button>
+							</Row>
+						)}
 					</Band>
 				);
 			})}
