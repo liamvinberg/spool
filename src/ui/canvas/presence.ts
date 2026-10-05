@@ -95,6 +95,8 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 			tell();
 		},
 		reset() {
+			if (sweep !== undefined) clearTimeout(sweep);
+			sweep = undefined;
 			if (people.size === 0) return;
 			people.clear();
 			tell();

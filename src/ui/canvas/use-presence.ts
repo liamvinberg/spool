@@ -31,8 +31,7 @@ export function usePresenceSender(options: {
 	const { project, team, camera, viewportRef } = options;
 
 	useEffect(() => {
-		const viewport = viewportRef.current;
-		if (!team || viewport === null) return;
+		if (!team) return;
 		let pointer: { x: number; y: number } | null = null;
 		let pressed = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -40,6 +39,7 @@ export function usePresenceSender(options: {
 		let told = "";
 		const state = (): PresenceState => {
 			const cam = camera.get();
+			const viewport = viewportRef.current;
 			const { page, inside, dragging } = latest.current;
 			const world = pointer === null || cam === null ? null : toWorld(pointer, cam);
 			return {
@@ -49,7 +49,7 @@ export function usePresenceSender(options: {
 				dragging: dragging().slice(0, PRESENCE_DRAGGING),
 				inside,
 				view:
-					cam === null
+					cam === null || viewport === null
 						? null
 						: {
 								x: round(-cam.x / cam.k),
@@ -73,16 +73,20 @@ export function usePresenceSender(options: {
 			timer ??= setTimeout(send, Math.max(0, sentAt + PRESENCE_SEND_MS - performance.now()));
 		};
 		soon.current = later;
-		const local = (event: PointerEvent) => {
+		/** Where the pointer is on the canvas, or false when it's over the window's other furniture. */
+		const over = (event: PointerEvent): boolean => {
+			const viewport = viewportRef.current;
+			if (viewport === null || !(event.target instanceof Node) || !viewport.contains(event.target)) return false;
 			const rect = viewport.getBoundingClientRect();
 			pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+			return true;
 		};
 		const move = (event: PointerEvent) => {
-			local(event);
+			if (!over(event) && !pressed) pointer = null;
 			later();
 		};
 		const press = (event: PointerEvent) => {
-			local(event);
+			if (!over(event)) return;
 			pressed = true;
 			later();
 		};
@@ -91,26 +95,28 @@ export function usePresenceSender(options: {
 			pressed = false;
 			later();
 		};
-		const leave = () => {
-			if (pressed) return;
+		const out = (event: PointerEvent) => {
+			// out of the window, or into a frame's own document: one gone inside a live frame stays where it went in
+			if (event.relatedTarget !== null || pressed || latest.current.inside !== null) return;
 			pointer = null;
 			later();
 		};
-		viewport.addEventListener("pointermove", move);
-		viewport.addEventListener("pointerdown", press);
-		viewport.addEventListener("pointerleave", leave);
-		window.addEventListener("pointerup", release);
-		window.addEventListener("pointercancel", release);
+		// heard in the capture phase, so nothing the canvas stops on its way reaches it any less
+		document.addEventListener("pointermove", move, true);
+		document.addEventListener("pointerdown", press, true);
+		document.addEventListener("pointerout", out, true);
+		window.addEventListener("pointerup", release, true);
+		window.addEventListener("pointercancel", release, true);
 		const unwatch = camera.subscribe(later);
 		later();
 		return () => {
 			soon.current = () => {};
 			if (timer !== undefined) clearTimeout(timer);
-			viewport.removeEventListener("pointermove", move);
-			viewport.removeEventListener("pointerdown", press);
-			viewport.removeEventListener("pointerleave", leave);
-			window.removeEventListener("pointerup", release);
-			window.removeEventListener("pointercancel", release);
+			document.removeEventListener("pointermove", move, true);
+			document.removeEventListener("pointerdown", press, true);
+			document.removeEventListener("pointerout", out, true);
+			window.removeEventListener("pointerup", release, true);
+			window.removeEventListener("pointercancel", release, true);
 			unwatch();
 		};
 	}, [project, team, camera, viewportRef]);

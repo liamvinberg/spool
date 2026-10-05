@@ -31,8 +31,9 @@ export function pillWidth(name: string): number {
 }
 
 interface Motion {
-	x: { p: number; v: number };
-	y: { p: number; v: number };
+	/** Where the pointer is drawn, in world units; null until it has been somewhere on this page. */
+	x: { p: number; v: number } | null;
+	y: { p: number; v: number } | null;
 	dock: { p: number; v: number };
 	/** The name the pill last docked on, in screen pixels: where it flies home from. */
 	slot: { x: number; y: number } | null;
@@ -53,6 +54,7 @@ export function PresenceLayer({
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
 	const motions = useRef(new Map<string, Motion>());
 	const docked = useRef(new Map<string, string | null>());
+	const kicked = useRef(() => {});
 
 	// every change heard, every camera drawn, and every moment the clock alone changes something, is a redraw;
 	// while a pointer or a pill is still easing, so is every animation frame
@@ -68,14 +70,14 @@ export function PresenceLayer({
 			for (const mate of room.teammates()) {
 				const at = mate.state.pointer;
 				const motion = motions.current.get(mate.person.accountId);
-				if (at === null || motion === undefined) continue;
-				motion.x = springStep(motion.x, at.x, dt, POINTER_W);
-				motion.y = springStep(motion.y, at.y, dt, POINTER_W);
+				if (motion === undefined) continue;
 				const goal = docked.current.get(mate.person.accountId) ? 1 : 0;
 				motion.dock = springStep(motion.dock, goal, dt, DOCK_W);
-				moving ||=
-					Math.abs(motion.x.p - at.x) + Math.abs(motion.y.p - at.y) > 0.05 ||
-					Math.abs(motion.dock.p - goal) > 0.002;
+				moving ||= Math.abs(motion.dock.p - goal) > 0.002;
+				if (at === null) continue;
+				motion.x = motion.x === null ? { p: at.x, v: 0 } : springStep(motion.x, at.x, dt, POINTER_W);
+				motion.y = motion.y === null ? { p: at.y, v: 0 } : springStep(motion.y, at.y, dt, POINTER_W);
+				moving ||= Math.abs(motion.x.p - at.x) + Math.abs(motion.y.p - at.y) > 0.05;
 			}
 			redraw();
 			if (moving) kick();
@@ -84,6 +86,7 @@ export function PresenceLayer({
 			last = frame === undefined ? performance.now() : last;
 			frame ??= requestAnimationFrame(step);
 		};
+		kicked.current = kick;
 		const schedule = () => {
 			if (timer !== undefined) clearTimeout(timer);
 			const now = Date.now();
@@ -101,6 +104,11 @@ export function PresenceLayer({
 			if (timer !== undefined) clearTimeout(timer);
 		};
 	}, [room, camera]);
+	// a render is what decides who is docked where, so a pill whose dock changed starts flying from here
+	useEffect(() => {
+		for (const [id, motion] of motions.current)
+			if (Math.abs(motion.dock.p - (docked.current.get(id) ? 1 : 0)) > 0.002) return kicked.current();
+	});
 
 	const cam = camera.get();
 	if (cam === null) return null;
@@ -132,10 +140,10 @@ export function PresenceLayer({
 		const at = mate.state.pointer;
 		const slot = slots.get(id);
 		const motion = motions.current.get(id);
-		if (at !== null && motion === undefined)
+		if (motion === undefined)
 			motions.current.set(id, {
-				x: { p: at.x, v: 0 },
-				y: { p: at.y, v: 0 },
+				x: at === null ? null : { p: at.x, v: 0 },
+				y: at === null ? null : { p: at.y, v: 0 },
 				dock: { p: slot === undefined ? 0 : 1, v: 0 },
 				slot: slot ?? null,
 			});
@@ -195,7 +203,11 @@ function Cursor({
 	const { person, state } = mate;
 	const gone = mate.left !== null;
 	const resting = idle(mate, now);
-	const at = motion === undefined ? null : toScreen(motion.x.p, motion.y.p);
+	// a pointer off the canvas isn't drawn; one never placed on this page has nowhere to be drawn
+	const at =
+		state.pointer === null || motion === undefined || motion.x === null || motion.y === null
+			? null
+			: toScreen(motion.x.p, motion.y.p);
 	const dock = motion === undefined ? (slot === undefined ? 0 : 1) : Math.min(1, Math.max(0, motion.dock.p));
 	const home = motion?.slot ?? slot ?? null;
 	const docking = home !== null && dock > 0.01;
