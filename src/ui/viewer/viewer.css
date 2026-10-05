@@ -1,0 +1,12 @@
+/* The canvas's own stylesheet, and every class the canvas pieces the viewer
+ * draws with use: this build's root is the viewer, and Tailwind looks for
+ * classes from there unless told the rest of the ui is drawn too. */
+@import "../ui.css";
+@source "../";
+
+/* the read-only canvas's one motion of its own: a page laid in as the last one goes */
+@keyframes viewer-page-in {
+	from {
+		opacity: 0;
+	}
+}

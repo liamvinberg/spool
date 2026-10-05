@@ -18,6 +18,7 @@
 			"types": "./dist/types/vendor.d.ts",
 			"default": "./dist/vendor.js"
 		},
+		"./viewer/*": "./dist/viewer/*",
 		"./package.json": "./package.json"
 	},
 	"files": [
@@ -31,8 +32,8 @@
 	"packageManager": "pnpm@11.5.3",
 	"scripts": {
 		"dev": "tsx src/dev.ts",
-		"build": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts && tsc -p tsconfig.compile.json",
-		"prepack": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts && tsc -p tsconfig.compile.json",
+		"build": "rm -rf dist && tsup && vite build && vite build -c vite.viewer.config.ts && cp src/runtime/spool-public.ts dist/spool-public.d.ts && tsc -p tsconfig.compile.json",
+		"prepack": "rm -rf dist && tsup && vite build && vite build -c vite.viewer.config.ts && cp src/runtime/spool-public.ts dist/spool-public.d.ts && tsc -p tsconfig.compile.json",
 		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit && tsc -p bench/evidence/tsconfig.json --noEmit",
 		"check": "biome check .",
 		"test": "vitest run",

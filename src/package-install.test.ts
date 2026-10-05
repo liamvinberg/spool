@@ -24,6 +24,7 @@ describe("packed install", () => {
 			"THIRD_PARTY_NOTICES.md",
 			"tsup.config.ts",
 			"vite.config.ts",
+			"vite.viewer.config.ts",
 			"tsconfig.json",
 			"tsconfig.compile.json",
 			"tsconfig.runtime.json",
@@ -83,13 +84,26 @@ child.send({ id: "probe", request: { kind: "account" } });
 		]);
 		expect(existsSync(join(dirname(anchor), "dist", "types", "compile-entry.d.ts"))).toBe(true);
 
-		// what a host serving frames without the daemon serves beside them
+		// what a host serving frames without the daemon serves beside them, and the read-only canvas it serves
 		const vendorProbe =
 			'const { VENDOR_MODULES, TAILWIND_SOURCES } = await import("spool.page/vendor"); process.stdout.write(JSON.stringify([Object.keys(VENDOR_MODULES), Object.keys(TAILWIND_SOURCES)]));';
 		expect(JSON.parse(run(process.execPath, ["--input-type=module", "--eval", vendorProbe], prefix))).toEqual([
 			["/vendor/react.js", "/vendor/spool.js", "/vendor/spool-jsx.js"],
 			["index.css", "theme.css", "preflight.css", "utilities.css"],
 		]);
+		const viewer = JSON.parse(
+			run(
+				process.execPath,
+				[
+					"--input-type=module",
+					"--eval",
+					'import { createRequire } from "node:module"; process.stdout.write(JSON.stringify(createRequire(import.meta.url)("spool.page/viewer/manifest.json")["index.html"]));',
+				],
+				prefix,
+			),
+		) as { file: string; css: string[] };
+		expect(existsSync(join(dirname(anchor), "dist", "viewer", viewer.file))).toBe(true);
+		expect(viewer.css.every((css) => existsSync(join(dirname(anchor), "dist", "viewer", css)))).toBe(true);
 
 		const clipboardProject = makeTempDir();
 		markProject(clipboardProject);
