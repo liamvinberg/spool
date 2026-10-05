@@ -265,3 +265,37 @@ export function ChevronIcon() {
 		</svg>
 	);
 }
+
+export function PeopleIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<circle cx="5.25" cy="4.5" r="2.1" stroke="currentColor" strokeWidth="1.15" />
+			<path
+				d="M1.75 12c.3-2.1 1.7-3.4 3.5-3.4s3.2 1.3 3.5 3.4"
+				stroke="currentColor"
+				strokeWidth="1.15"
+				strokeLinecap="round"
+			/>
+			<path
+				d="M9.4 2.6a2 2 0 0 1 0 3.8M10.6 8.8c1 .5 1.5 1.6 1.65 3.2"
+				stroke="currentColor"
+				strokeWidth="1.15"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
+
+export function CheckIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 12 12" className={className} fill="none" aria-hidden="true">
+			<path
+				d="m2.5 6.25 2.25 2.25 4.75-5"
+				stroke="currentColor"
+				strokeWidth="1.3"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}

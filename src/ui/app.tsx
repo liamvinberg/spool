@@ -34,6 +34,7 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
+import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
@@ -70,6 +71,7 @@ export function App() {
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
 	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
+	const teamHome = useTeamHome(account, openExternally);
 	useEffect(() => {
 		void readAccount();
 	}, [readAccount]);
@@ -521,6 +523,9 @@ export function App() {
 						onForgetProject={(project) => void forgetProject(project)}
 						onTrashProject={setTrashRequest}
 						onRenameProject={(project) => void requestRename(project)}
+						switcher={teamHome.switcher}
+						notice={teamHome.notice}
+						team={teamHome.team}
 						account={
 							<AccountFoot
 								account={account}
@@ -648,4 +653,9 @@ function pathFocus(open: readonly string[]): string | null {
 	if (match?.[1] === undefined) return null;
 	const name = decodeURIComponent(match[1]);
 	return open.find((root) => basename(root) === name) ?? null;
+}
+
+/** The desktop app hands a new window's URL to the system browser. */
+function openExternally(url: string): void {
+	window.open(url, "_blank", "noopener,noreferrer");
 }

@@ -1,5 +1,6 @@
 import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
+import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamRole } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import { type AgentEngineId, type AgentLoginProgress, isAgentEngineId } from "../daemon/agent-engine";
@@ -11,6 +12,7 @@ import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
 import type { CanvasPlaces, Place } from "../daemon/canvas-places";
 import type { CloudAccountState } from "../daemon/cloud-account";
+import type { CloudTeamsState } from "../daemon/cloud-teams";
 import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
@@ -40,6 +42,9 @@ export type {
 	CanvasPlaces,
 	CanvasState,
 	CloudAccountState,
+	CloudTeam,
+	CloudTeamInvite,
+	CloudTeamsState,
 	Cover,
 	EdgeSite,
 	FlowEdge,
@@ -61,6 +66,8 @@ export type {
 	SelectionEntry,
 	SelectionPut,
 	ServedThread,
+	TeamPeople,
+	TeamRole,
 	ThreadPut,
 };
 
@@ -1551,6 +1558,66 @@ export async function signOutCloudAccount(): Promise<void> {
 	const response = await client.api.cloud.account["sign-out"].$post();
 	if (!response.ok) throw new Error(await errorText(response));
 }
+
+/** This Mac's teams and the invites to its address, as spool.page says through the daemon. */
+export async function fetchCloudTeams(): Promise<CloudTeamsState> {
+	try {
+		const response = await controlFetch("/api/cloud/teams");
+		const body = (response.ok ? await response.json() : null) as CloudTeamsState | null;
+		if (body?.state === "ready" && Array.isArray(body.teams) && Array.isArray(body.invites)) return body;
+		return body?.state === "signed-out" ? body : { state: "unreachable" };
+	} catch {
+		return { state: "unreachable" };
+	}
+}
+
+/** spool.page, or the daemon on its behalf, said no. `code` is the reason, such as `last_admin`. */
+export class TeamActionRefused extends Error {
+	constructor(readonly code: string) {
+		super(code);
+	}
+}
+
+async function teamAction<T>(method: string, path: string, body?: unknown): Promise<T> {
+	let response: Response;
+	try {
+		response = await controlFetch(`/api/cloud${path}`, {
+			method,
+			...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+		});
+	} catch {
+		throw new TeamActionRefused("unreachable");
+	}
+	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;
+	if (!response.ok) throw new TeamActionRefused(typeof parsed?.error === "string" ? parsed.error : "unreachable");
+	return parsed as T;
+}
+
+const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
+
+/** Everything Home's team pages ask of spool.page. Each throws `TeamActionRefused` when refused. */
+export const teamActions = {
+	create: (name: string) => teamAction<Pick<CloudTeam, "address" | "name">>("POST", "/teams", { name }),
+	people: (address: string) => teamAction<TeamPeople>("GET", `${team(address)}/people`),
+	update: (address: string, change: { name?: string; address?: string }) =>
+		teamAction<Pick<CloudTeam, "address" | "name">>("PATCH", team(address), change),
+	delete: (address: string) => teamAction<unknown>("DELETE", team(address)),
+	setLogo: (address: string, data: string) => teamAction<unknown>("PUT", `${team(address)}/logo`, { data }),
+	removeLogo: (address: string) => teamAction<unknown>("DELETE", `${team(address)}/logo`),
+	invite: (address: string, email: string, role: TeamRole) =>
+		teamAction<{ emailed: boolean }>("POST", `${team(address)}/invites`, { email, role }),
+	resendInvite: (address: string, invite: string) =>
+		teamAction<{ emailed: boolean }>("POST", `${team(address)}/invites/${encodeURIComponent(invite)}/resend`),
+	cancelInvite: (address: string, invite: string) =>
+		teamAction<unknown>("DELETE", `${team(address)}/invites/${encodeURIComponent(invite)}`),
+	setRole: (address: string, account: string, role: TeamRole) =>
+		teamAction<unknown>("PATCH", `${team(address)}/members/${encodeURIComponent(account)}`, { role }),
+	removeMember: (address: string, account: string) =>
+		teamAction<unknown>("DELETE", `${team(address)}/members/${encodeURIComponent(account)}`),
+	accept: (invite: string) =>
+		teamAction<Pick<CloudTeam, "address" | "name" | "role">>("POST", `/invites/${encodeURIComponent(invite)}/accept`),
+	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
+};
 
 /** Project transfer uses the same control token as every project lifecycle write. */
 export async function exportProject(root: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {

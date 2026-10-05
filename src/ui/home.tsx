@@ -33,6 +33,9 @@ export function Home({
 	onImport,
 	onExportProject,
 	account,
+	switcher,
+	notice,
+	team,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -47,6 +50,12 @@ export function Home({
 	onExportProject?: (project: ProjectCard) => void;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
+	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
+	switcher?: ReactNode;
+	/** One line per invite waiting for this account, above the covers. */
+	notice?: ReactNode;
+	/** While a team is chosen in the switcher: its nav and its page, in place of your own projects. */
+	team?: { nav: ReactNode; main: ReactNode } | undefined;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
@@ -80,10 +89,15 @@ export function Home({
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-thread" />
 						<span>spool</span>
 					</div>
+					{switcher}
 					<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
-						<NavigationButton icon={<FrameIcon />} active onClick={() => setQuery("")}>
-							Projects
-						</NavigationButton>
+						{team ? (
+							team.nav
+						) : (
+							<NavigationButton icon={<FrameIcon />} active onClick={() => setQuery("")}>
+								Projects
+							</NavigationButton>
+						)}
 					</nav>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-muted [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
@@ -98,10 +112,15 @@ export function Home({
 						{account ?? <span>On this Mac</span>}
 					</div>
 				</aside>
-				{loading ? (
+				{team ? (
+					<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
+						{team.main}
+					</main>
+				) : loading ? (
 					<main aria-busy="true" />
 				) : projects.length === 0 && needle === "" ? (
-					<main className="pj-welcome-main flex items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
+					<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
+						{notice && <div className="w-[650px] max-w-full">{notice}</div>}
 						<EmptyState
 							className="pj-welcome mt-[-50px] w-[650px] [&>p]:mt-[14px] [&>p]:[font:var(--type-body)] [&>p]:text-muted [&>.spool-empty-actions]:grid [&>.spool-empty-actions]:w-full [&>.spool-empty-actions]:grid-cols-2 [&>.spool-empty-actions]:gap-[22px] [&>.spool-empty-actions]:mt-[44px] [&>.spool-empty-actions]:text-left [@media(max-width:720px)]:m-0 [@media(max-width:720px)]:[&>.spool-empty-actions]:grid-cols-1"
 							heading="h1"
@@ -197,6 +216,7 @@ export function Home({
 								</button>
 							</div>
 						</header>
+						{notice}
 						<div className="pj-toolbar mb-[24px] flex h-[23px] items-center justify-between text-muted type-caption">
 							<span className="type-detail">
 								{visible.length} {visible.length === 1 ? "project" : "projects"}
