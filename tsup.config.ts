@@ -3,11 +3,24 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
 import { buildBundledOAuth } from "./src/daemon/bundled-oauth-build";
+import { collapsedWords } from "./src/daemon/edit-words";
+import { tagWord, wholeComponent } from "./src/daemon/element-name";
 import { buildVendorEntry } from "./src/vendor-entry-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
 // would race the other's write — the build script clears dist/ up front
 const licenses = esbuildLicenses();
+
+// The canvas shim's helpers as source, printed once here and baked into both builds that carry the shim (the
+// CLI's and spool.page/compile), so the daemon and a Worker that bundles the compile again embed the same bytes
+// (src/daemon/document.ts).
+const shimHelpers = {
+	__SPOOL_SHIM_HELPERS__: JSON.stringify({
+		wholeComponent: String(wholeComponent),
+		tagWord: String(tagWord),
+		collapsedWords: String(collapsedWords),
+	}),
+};
 
 export default defineConfig([
 	{
@@ -31,6 +44,7 @@ export default defineConfig([
 		shims: true,
 		// Bundled code asks for builtins that only exist under node:, like node:sqlite.
 		removeNodeProtocol: false,
+		define: shimHelpers,
 		esbuildPlugins: [licenses],
 		onSuccess: async () => {
 			const renderer = fileURLToPath(new URL("./src/daemon/bundled-oauth-page.ts", import.meta.url));
@@ -78,6 +92,7 @@ export default defineConfig([
 		splitting: false,
 		external: [/^node:/],
 		removeNodeProtocol: false,
+		define: shimHelpers,
 		esbuildPlugins: [licenses],
 	},
 	{

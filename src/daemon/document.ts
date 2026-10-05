@@ -6,6 +6,24 @@ import { tagWord, wholeComponent } from "./element-name";
 import { PROJECT_LAYER } from "./tailwind";
 
 /**
+ * The source of the three helpers the canvas shim carries, written and tested once in TypeScript
+ * (`element-name.ts`, `edit-words.ts`). The release build prints them once and bakes the text in here
+ * (tsup.config.ts), so every copy of this module carries the same bytes however it is bundled again: a
+ * Worker that bundles `spool.page/compile` renames and reprints what it bundles, and a function's own
+ * `toString()` would then compile a different document from the daemon's. Run from source, they are read off
+ * the functions themselves.
+ */
+declare const __SPOOL_SHIM_HELPERS__: { wholeComponent: string; tagWord: string; collapsedWords: string } | undefined;
+const shimHelpers =
+	typeof __SPOOL_SHIM_HELPERS__ === "undefined"
+		? {
+				wholeComponent: wholeComponent.toString(),
+				tagWord: tagWord.toString(),
+				collapsedWords: collapsedWords.toString(),
+			}
+		: __SPOOL_SHIM_HELPERS__;
+
+/**
  * Assembly of the served frame document. Spool owns the whole page (#16):
  * frames carry zero boilerplate, so everything a component needs to render —
  * finished CSS, fonts, import map, boot module — is injected here, inline,
@@ -1176,8 +1194,8 @@ const canvasShimJs = `(() => {
 
 	// what the name label calls an element (#339), written and tested once in
 	// daemon/element-name.ts
-	var componentOf = ${wholeComponent.toString()};
-	var tagWordOf = ${tagWord.toString()};
+	var componentOf = ${shimHelpers.wholeComponent};
+	var tagWordOf = ${shimHelpers.tagWord};
 	function nameOf(el) { return componentOf(el) ?? tagWordOf(el); }
 
 	// the outermost svg an element is drawn inside, or the element itself: the
@@ -1402,7 +1420,7 @@ const canvasShimJs = `(() => {
 	}
 
 	// the collapsing rule itself, written and tested once in daemon/edit-words.ts
-	var collapseWords = ${collapsedWords.toString()};
+	var collapseWords = ${shimHelpers.collapsedWords};
 
 	// the words the element is already drawing, written back as its own, so the
 	// pre-wrap an open edit forces has no source line break left to draw
