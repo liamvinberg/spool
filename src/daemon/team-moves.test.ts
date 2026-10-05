@@ -15,8 +15,16 @@ import { createSettingsStore } from "./settings";
  * on git and on what reached the team.
  */
 
+/** Clones carry no config, so every commit here names its author through the environment, as a bare CI runner needs. */
+const IDENTITY = {
+	GIT_AUTHOR_NAME: "Hands",
+	GIT_AUTHOR_EMAIL: "hands@example.test",
+	GIT_COMMITTER_NAME: "Hands",
+	GIT_COMMITTER_EMAIL: "hands@example.test",
+};
+
 function git(cwd: string, ...args: string[]): string {
-	return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+	return execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...IDENTITY } }).trim();
 }
 
 /** A fresh repository with a folder named for the project, as a product checkout is. */
@@ -201,7 +209,7 @@ describe("Get it", () => {
 /** Ana's existing project: design/ in git with history, a pushed remote, and hooks that would say if they ran. */
 function existingProject() {
 	const remote = join(makeTempDir(), "remote.git");
-	git(makeTempDir(), "init", "--quiet", "--bare", remote);
+	git(makeTempDir(), "init", "--quiet", "--bare", "--initial-branch=main", remote);
 	const root = repo("site", "git@github.com:devosurf/site.git");
 	const state = join(makeTempDir(), ".spool");
 	initProject(root, state, { history: true });
