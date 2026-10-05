@@ -1,9 +1,8 @@
 import { join } from "node:path";
-import { buildDesignEntry, cssSources } from "./compile";
+import { frameFolder } from "../page-path";
+import { buildDesignEntry, type CompileHost, cssSources } from "./design-compile";
 import type { DesignReads } from "./design-reads";
 import { layeredProjectCss } from "./document";
-import { frameFolder } from "./projection";
-import { compileFrameCssOnWorker } from "./tailwind";
 
 const STYLESHEET_ENTRY = "<spool-styles>";
 
@@ -20,21 +19,24 @@ export interface FrameStyleRef {
  * when it would come out the same.
  */
 export async function buildFrameStyleClosure(
+	host: CompileHost,
 	designDir: string,
 	ref: FrameStyleRef,
 	reads: DesignReads,
 	publication = false,
 ): Promise<{ css: string; inputs: string[] }> {
 	const folder = frameFolder(ref.name);
-	const frame = await buildDesignEntry({
+	const frame = await buildDesignEntry(host.esbuild, {
 		designDir,
 		resolveDir: join(designDir, folder),
 		sourcefile: STYLESHEET_ENTRY,
 		contents: `import frame from ${JSON.stringify("./frame.tsx")};\nexport default frame;\n`,
 		label: `frame "${ref.name}"`,
-		...(publication ? { publication: true } : { reads: () => reads }),
+		...(publication ? { publication: true } : {}),
+		files: host.files,
+		reads: () => reads,
 	});
-	const compiled = await compileFrameCssOnWorker(designDir, cssSources(reads, frame.sourceFiles));
+	const compiled = await host.stylesheets(designDir, cssSources(reads, frame.sourceFiles));
 	for (const sheet of compiled.stylesheets) reads.noted(sheet.file, sheet.digest);
 	const project = frame.bundledCss === undefined ? "" : layeredProjectCss(frame.bundledCss);
 	return {

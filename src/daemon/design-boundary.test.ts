@@ -9,9 +9,9 @@ const SENTINEL = "outside-design-sentinel";
 
 /**
  * The `shared-*` kinds reach out by the design-relative shared/ name (#273),
- * which the compile answers from the folders where it can (`shared-import.ts`):
- * a linked file, a linked folder and a `..` out of design/ must each be refused
- * exactly as the same reach by relative path is.
+ * which the compile answers from the folders (`design-resolve.ts`): a linked
+ * file, a linked folder and a `..` out of design/ must each be refused exactly
+ * as the same reach by relative path is.
  */
 type Escape = "ts" | "json" | "css" | "tailwind" | "symlink" | "shared-symlink" | "shared-folder" | "shared-parent";
 

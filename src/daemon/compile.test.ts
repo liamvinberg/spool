@@ -1,13 +1,22 @@
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as esbuild from "esbuild";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { buildDesignEntry, createFrameCompiler, cssSources, describeCompileError, hashInputs } from "./compile";
+import { createFrameCompiler, hashInputs } from "./compile";
+import { buildDesignEntry, cssSources, type DesignEntryOptions, designBuildOptions } from "./design-compile";
 import { realDesignDir } from "./design-path";
 import { createDesignReads } from "./design-reads";
+import { diskDesignFiles } from "./disk-files";
 import { buildPublicationPlayer } from "./play";
 import type { Webfonts } from "./webfonts";
+
+/** One entry through the design compile, on the disk with native esbuild, as the daemon compiles it. */
+function bundle(options: Omit<DesignEntryOptions, "files" | "reads">) {
+	const reads = createDesignReads(options.designDir, diskDesignFiles);
+	return buildDesignEntry(esbuild, { ...options, files: diskDesignFiles, reads: () => reads });
+}
 
 describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
 	it.each(["./effect", "shared/shaders/effect"])("imports %s as the complete source string", async (specifier) => {
@@ -16,7 +25,7 @@ describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
 		const source = '// source stays text: "quoted", \\paths, λ\nvoid main() {}\n';
 		writeDesignFile(root, relativeFile, source);
 		const designDir = realDesignDir(root);
-		const { bootJs, sourceFiles } = await buildDesignEntry({
+		const { bootJs, sourceFiles } = await bundle({
 			designDir,
 			resolveDir: designDir,
 			sourcefile: "<spool-boot>",
@@ -33,7 +42,7 @@ describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
 		const { root } = makeProject(join(makeTempDir(), ".spool"));
 		writeDesignFile(root, `effect.${extension}`, "void main() {}\n");
 		const designDir = realDesignDir(root);
-		const { sourceFiles } = await buildDesignEntry({
+		const { sourceFiles } = await bundle({
 			designDir,
 			resolveDir: designDir,
 			sourcefile: "<spool-boot>",
@@ -50,7 +59,7 @@ describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
 		writeFileSync(outside, "private shader source");
 		if (kind === "symlink") symlinkSync(outside, join(designDir, `outside.${extension}`));
 		await expect(
-			buildDesignEntry({
+			bundle({
 				designDir,
 				resolveDir: designDir,
 				sourcefile: "<spool-boot>",
@@ -74,7 +83,7 @@ describe("the compiled closure", () => {
 		writeDesignFile(root, join("frames", "shop", "cart", "frame.tsx"), "export default () => null;\n");
 		const designDir = realDesignDir(root);
 
-		const { sourceFiles } = await buildDesignEntry({
+		const { sourceFiles } = await bundle({
 			designDir,
 			// what a frame passes: esbuild keys the entry against this, not against designDir
 			resolveDir: join(designDir, "frames", "shop", "cart"),
@@ -93,7 +102,7 @@ describe("the compiled closure", () => {
 		writeDesignFile(root, join("frames", "cart", "frame.tsx"), "export default () => null;\n");
 		const designDir = realDesignDir(root);
 
-		const { sourceFiles } = await buildDesignEntry({
+		const { sourceFiles } = await bundle({
 			designDir,
 			// what the player composition passes (`play.ts`)
 			resolveDir: designDir,
@@ -124,7 +133,7 @@ describe("design-relative shared/ imports", () => {
 		);
 		const designDir = realDesignDir(root);
 
-		const { sourceFiles } = await buildDesignEntry({
+		const { sourceFiles } = await bundle({
 			designDir,
 			resolveDir: join(designDir, "frames", "shop", "cart"),
 			sourcefile: "<spool-boot>",
@@ -159,7 +168,7 @@ describe("design-relative shared/ imports", () => {
 			].join("\n");
 		const compile = async (from: string) => {
 			writeDesignFile(root, join("frames", "shop", "cart", "frame.tsx"), frame(from));
-			return await buildDesignEntry({
+			return await bundle({
 				designDir,
 				resolveDir: join(designDir, "frames", "shop", "cart"),
 				sourcefile: "<spool-boot>",
@@ -483,36 +492,47 @@ describe("misses that overlap", () => {
 });
 
 /**
- * A compile hands esbuild the bytes it read rather than letting esbuild read
- * each file, and esbuild gives an import's attributes their meaning only for a
- * file it reads itself. Whatever an import asks, the bundle must be the one
- * esbuild makes on its own.
+ * A compile hands esbuild the bytes it read and resolves every import itself,
+ * so esbuild reads no file. Whatever an import asks, the bundle must be the
+ * one esbuild makes reading for itself, but for one thing a plugin cannot ask
+ * of it: a named import from JSON imported `with { type: "json" }`, which
+ * esbuild alone refuses, compiles.
  */
 describe("a bundle made of the compile's own reads", () => {
 	it.each([
 		'import text from "./note.js" with { type: "text" };\nexport default text;',
 		'import bytes from "./note.js" with { type: "bytes" };\nexport default bytes;',
-		'import { k } from "./data.json" with { type: "json" };\nexport default k;',
 		'import data from "./data.json" with { type: "json" };\nexport default data;',
 		'import sheet from "./look.css" with { type: "css" };\nexport default sheet;',
+		'import note from "./note.js" with { kind: "text" };\nexport default note;',
+		'import "./notes.md";',
 		'export { a } from "./plain.ts";',
+		'export { m } from "./module.mts";',
+		'export { a } from "./plain.js";',
+		'export * from "./folder";',
+		'import url from "./look.css?inline";\nexport default url;',
+		'import "./missing";',
 	])("is the bundle esbuild makes reading for itself: %s", async (contents) => {
 		const { root } = makeProject(join(makeTempDir(), ".spool"));
 		writeDesignFile(root, "note.js", "export const secret = 1;\n");
+		writeDesignFile(root, "notes.md", "# notes\n");
 		writeDesignFile(root, "data.json", '{"k": 1}\n');
 		writeDesignFile(root, "look.css", ".look { color: red }\n");
 		writeDesignFile(root, "plain.ts", "export const a: number = 1;\n");
+		writeDesignFile(root, "module.mts", "export const m = <T,>(value: T): T => value;\n");
+		writeDesignFile(root, "folder/index.tsx", "export const f = <p>folder</p>;\n");
 		const designDir = realDesignDir(root);
 		const entry = { designDir, resolveDir: designDir, sourcefile: "<spool-boot>", contents, label: "the entry" };
-		const outcome = (built: Promise<{ bootJs: string; bundledCss?: string | undefined }>) =>
+		const outcome = (built: Promise<{ outputFiles: { text: string }[] }>) =>
 			built.then(
-				({ bootJs, bundledCss }) => ({ bootJs, bundledCss }),
-				(error: unknown) => describeCompileError(error),
+				({ outputFiles }) => outputFiles.map((file) => file.text),
+				(error: { errors: { text: string }[] }) => error.errors.map((message) => message.text),
 			);
-		const reads = createDesignReads(designDir);
+		const reads = createDesignReads(designDir, diskDesignFiles);
+		const options = designBuildOptions({ ...entry, files: diskDesignFiles, reads: () => reads });
 
-		const own = await outcome(buildDesignEntry(entry));
-		const handed = await outcome(buildDesignEntry({ ...entry, reads: () => reads }));
+		const own = await outcome(esbuild.build({ ...options, plugins: [] }));
+		const handed = await outcome(esbuild.build(options));
 
 		expect(handed).toEqual(own);
 		expect(reads.settled()).toBe(true);
@@ -526,7 +546,7 @@ describe("a bundle made of the compile's own reads", () => {
 			return join(designDir, `${name}.ts`);
 		});
 
-		const sources = cssSources(createDesignReads(designDir), files);
+		const sources = cssSources(createDesignReads(designDir, diskDesignFiles), files);
 
 		expect(sources.map(({ bytes }) => bytes.buffer.byteLength)).toEqual(sources.map(({ bytes }) => bytes.byteLength));
 		expect(sources.map(({ bytes }) => Buffer.from(bytes).toString("utf8"))).toEqual([
@@ -534,17 +554,5 @@ describe("a bundle made of the compile's own reads", () => {
 			"export const b = 1;\n",
 			"export const c = 1;\n",
 		]);
-	});
-
-	it("checks a file that read as absent but that esbuild then read for itself", () => {
-		const { root } = makeProject(join(makeTempDir(), ".spool"));
-		const designDir = realDesignDir(root);
-		const file = join(designDir, "late.ts");
-		const reads = createDesignReads(designDir);
-
-		reads.readTwice(file);
-		writeDesignFile(root, "late.ts", "export const late = 1;\n");
-
-		expect(reads.settled()).toBe(false);
 	});
 });

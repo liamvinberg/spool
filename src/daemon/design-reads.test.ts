@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { DesignBoundaryError, realDesignDir } from "./design-path";
 import { contentDigest, createDesignReads } from "./design-reads";
+import { diskDesignFiles } from "./disk-files";
 
 function project() {
 	const { root } = makeProject(join(makeTempDir(), ".spool"));
@@ -19,7 +20,7 @@ describe("a compile's reads", () => {
 		const { root, designDir } = project();
 		writeDesignFile(root, "shared/a.ts", "export const a = 1;\n");
 		const file = join(designDir, "shared", "a.ts");
-		const reads = createDesignReads(designDir);
+		const reads = createDesignReads(designDir, diskDesignFiles);
 
 		const first = reads.bytes(file);
 		writeDesignFile(root, "shared/a.ts", "export const a = 2;\n");
@@ -34,7 +35,7 @@ describe("a compile's reads", () => {
 		const { designDir } = project();
 		rmSync(join(designDir, "shared", "fonts.css"), { force: true });
 		mkdirSync(join(designDir, "shared", "fonts.css"));
-		const reads = createDesignReads(designDir);
+		const reads = createDesignReads(designDir, diskDesignFiles);
 
 		expect(reads.text(join(designDir, "shared", "fonts.css"))).toBeUndefined();
 		expect(reads.text(join(designDir, "shared", "missing.json"))).toBeUndefined();
@@ -46,7 +47,7 @@ describe("a compile's reads", () => {
 		const outside = join(root, "outside.ts");
 		writeFileSync(outside, "export const secret = 1;\n");
 		symlinkSync(outside, join(designDir, "shared", "escape.ts"));
-		const reads = createDesignReads(designDir);
+		const reads = createDesignReads(designDir, diskDesignFiles);
 
 		expect(() => reads.bytes(join(designDir, "shared", "escape.ts"))).toThrow(DesignBoundaryError);
 		expect(reads.digests().size).toBe(0);
@@ -55,27 +56,12 @@ describe("a compile's reads", () => {
 	it("are of no one state once a file read elsewhere was read two ways", () => {
 		const { designDir } = project();
 		const tokens = join(designDir, "shared", "tokens.css");
-		const reads = createDesignReads(designDir);
+		const reads = createDesignReads(designDir, diskDesignFiles);
 
 		reads.noted(tokens, contentDigest(Buffer.from("a")));
 		reads.noted(tokens, contentDigest(Buffer.from("a")));
 		expect(reads.settled()).toBe(true);
 		reads.noted(tokens, contentDigest(Buffer.from("b")));
 		expect(reads.settled()).toBe(false);
-	});
-
-	it("check a file esbuild read for itself once more before they are judged", () => {
-		const { root, designDir } = project();
-		writeDesignFile(root, "shared/kept.mts", "export const kept = 1;\n");
-		writeDesignFile(root, "shared/moved.mts", "export const moved = 1;\n");
-		const steady = createDesignReads(designDir);
-		const moving = createDesignReads(designDir);
-
-		steady.readTwice(join(designDir, "shared", "kept.mts"));
-		moving.readTwice(join(designDir, "shared", "moved.mts"));
-		writeDesignFile(root, "shared/moved.mts", "export const moved = 2;\n");
-
-		expect(steady.settled()).toBe(true);
-		expect(moving.settled()).toBe(false);
 	});
 });

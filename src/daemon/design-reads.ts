@@ -1,6 +1,7 @@
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { DesignBoundaryError, designPathResolver } from "./design-path";
+import { DesignBoundaryError, designPathResolver } from "./design-boundary";
+import type { DesignFiles } from "./design-files";
 
 /** What a cache key says of one file: the SHA-256 of its bytes, or that there were none. */
 export function contentDigest(bytes: Uint8Array | undefined): string {
@@ -12,13 +13,20 @@ export function contentDigest(bytes: Uint8Array | undefined): string {
  * at the path, or a folder where a file was expected. A path that leaves
  * design/ is refused, never read.
  */
-export function readDesignBytes(resolvePath: (file: string) => string, file: string): Buffer | undefined {
+export function readDesignBytes(
+	resolvePath: (file: string) => string,
+	file: string,
+	files: DesignFiles,
+): Buffer | undefined {
+	let path: string;
 	try {
-		return readFileSync(resolvePath(file));
+		path = resolvePath(file);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
+	const bytes = files.read(path);
+	return bytes === undefined ? undefined : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 /**
@@ -40,22 +48,16 @@ export interface DesignReads {
 	 * of no one state of the folder.
 	 */
 	noted(file: string, digest: string): void;
-	/**
-	 * A file esbuild reads for itself: it is read here too, now, and again when
-	 * the compile is judged, and it counts as read once only if both agree.
-	 */
-	readTwice(file: string): void;
 	/** Every file read, by the digest of what was read. */
 	digests(): ReadonlyMap<string, string>;
 	/** Whether every file was one state throughout: no read differed from another of the same file. */
 	settled(): boolean;
 }
 
-export function createDesignReads(designDir: string): DesignReads {
-	const resolvePath = designPathResolver(designDir);
+export function createDesignReads(designDir: string, files: DesignFiles): DesignReads {
+	const resolvePath = designPathResolver(designDir, files);
 	const read = new Map<string, Buffer | undefined>();
 	const digests = new Map<string, string>();
-	const twice = new Set<string>();
 	let torn = false;
 
 	function noted(file: string, digest: string): void {
@@ -66,7 +68,7 @@ export function createDesignReads(designDir: string): DesignReads {
 
 	function bytes(file: string): Buffer | undefined {
 		if (read.has(file)) return read.get(file);
-		const found = readDesignBytes(resolvePath, file);
+		const found = readDesignBytes(resolvePath, file, files);
 		read.set(file, found);
 		noted(file, contentDigest(found));
 		return found;
@@ -76,17 +78,7 @@ export function createDesignReads(designDir: string): DesignReads {
 		bytes,
 		text: (file) => bytes(file)?.toString("utf8"),
 		noted,
-		readTwice(file) {
-			bytes(file);
-			twice.add(file);
-		},
 		digests: () => digests,
-		settled() {
-			for (const file of twice) {
-				if (contentDigest(readDesignBytes(resolvePath, file)) !== digests.get(file)) torn = true;
-			}
-			twice.clear();
-			return !torn;
-		},
+		settled: () => !torn,
 	};
 }

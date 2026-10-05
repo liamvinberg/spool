@@ -292,23 +292,24 @@ const captureWorkerJs = `(() => {
 })();`;
 
 const escapedCaptureWorkerJs = escapeInlineScript(captureWorkerJs);
-const CAPTURE_WORKER_BASE_CSP = [
-	"default-src 'none'",
-	`script-src 'sha256-${createHash("sha256").update(escapedCaptureWorkerJs).digest("base64")}'`,
-	"img-src data: blob:",
-	"font-src data:",
-	"connect-src 'none'",
-	"worker-src 'none'",
-	"object-src 'none'",
-	"base-uri 'none'",
-	"form-action 'none'",
-	"frame-src 'none'",
-	"style-src 'none'",
-].join("; ");
+const captureWorkerBaseCsp = (): string =>
+	[
+		"default-src 'none'",
+		`script-src 'sha256-${createHash("sha256").update(escapedCaptureWorkerJs).digest("base64")}'`,
+		"img-src data: blob:",
+		"font-src data:",
+		"connect-src 'none'",
+		"worker-src 'none'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'none'",
+		"frame-src 'none'",
+		"style-src 'none'",
+	].join("; ");
 
 export function captureWorkerCsp(controlOrigin: string): string {
 	const origin = new URL(controlOrigin).origin;
-	return `${CAPTURE_WORKER_BASE_CSP}; frame-ancestors ${origin}`;
+	return `${captureWorkerBaseCsp()}; frame-ancestors ${origin}`;
 }
 
 export function captureWorkerDocument(controlOrigin: string): string {
@@ -2305,7 +2306,11 @@ const canvasShimJs = `(() => {
  * a restarted daemon 304s browsers into keeping documents whose shim speaks
  * yesterday's protocol.
  */
-export const shimHash: string = createHash("sha256").update(canvasShimJs).digest("hex");
+export function shimHash(): string {
+	shimDigest ??= createHash("sha256").update(canvasShimJs).digest("hex");
+	return shimDigest;
+}
+let shimDigest: string | undefined;
 
 /**
  * The document served when a frame does not compile: the toolchain's message,

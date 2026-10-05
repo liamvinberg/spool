@@ -2,12 +2,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Scanner } from "@tailwindcss/oxide";
+import * as esbuild from "esbuild";
 import { __unstable__loadDesignSystem } from "tailwindcss";
 import { describe, expect, it } from "vitest";
 import { type ClassScanner, type ScannedFile, scanCandidates } from "./class-scanner";
-import { buildDesignEntry, cssSources } from "./compile";
+import { buildDesignEntry, cssSources } from "./design-compile";
 import { createDesignReads } from "./design-reads";
-import { compileFrameCssHere, designStylesheets, ROOT_CSS } from "./tailwind";
+import { diskDesignFiles } from "./disk-files";
+import { pinnedTailwind } from "./stylesheet-workers";
+import { compileFrameCss, designStylesheets, ROOT_CSS } from "./tailwind";
 
 /**
  * Spool scans for Tailwind classes with its own scanner, so a Worker can scan
@@ -52,7 +55,10 @@ function scanned(file: string): ScannedFile {
  * time, rather than of build(), which keeps every candidate it has seen.
  */
 async function buildsSomething(): Promise<(candidate: string) => boolean> {
-	const system = await __unstable__loadDesignSystem(ROOT_CSS, designStylesheets(designDir));
+	const system = await __unstable__loadDesignSystem(
+		ROOT_CSS,
+		designStylesheets(designDir, diskDesignFiles, pinnedTailwind),
+	);
 	return (candidate) =>
 		candidate.startsWith("--")
 			? system.theme.get([candidate as `--${string}`]) !== null
@@ -103,15 +109,16 @@ describe("the class scanner, held to Oxide", () => {
 		const differ: string[] = [];
 		let compared = 0;
 		await inParallel(frames, 8, async (entry) => {
-			const reads = createDesignReads(designDir);
+			const reads = createDesignReads(designDir, diskDesignFiles);
 			let sourceFiles: string[];
 			try {
-				({ sourceFiles } = await buildDesignEntry({
+				({ sourceFiles } = await buildDesignEntry(esbuild, {
 					designDir,
 					resolveDir: join(entry, ".."),
 					sourcefile: "<spool-styles>",
 					contents: 'import frame from "./frame.tsx";\nexport default frame;\n',
 					label: entry,
+					files: diskDesignFiles,
 					reads: () => reads,
 				}));
 			} catch {
@@ -119,8 +126,9 @@ describe("the class scanner, held to Oxide", () => {
 				return;
 			}
 			const sources = cssSources(reads, sourceFiles);
-			const ours = await compileFrameCssHere(designDir, sources);
-			const theirs = await compileFrameCssHere(designDir, sources, oxide);
+			const from = { files: diskDesignFiles, tailwind: pinnedTailwind };
+			const ours = await compileFrameCss(designDir, sources, from);
+			const theirs = await compileFrameCss(designDir, sources, { ...from, scan: oxide });
 			compared++;
 			if (ours.css !== theirs.css) differ.push(entry.slice(designDir.length + 1));
 		});

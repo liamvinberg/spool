@@ -10,6 +10,8 @@ import { type Footprint, readSidecar, writePlacement } from "./geometry";
 import { type Unseen, unseenNow } from "./seen";
 import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 
+export { frameFolder } from "../page-path";
+
 /**
  * The canvas projection of design/frames (#22), grouped to any depth (#39,
  * #231): a frame is a folder holding a frame entry, and every safe-named folder
@@ -253,12 +255,6 @@ async function hasEntryAwaited(directory: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
-}
-
-/** The design-relative folder a frame name resolves to, wire-format slashes —
- * the one spelling of "where a frame lives" every daemon surface shares. */
-export function frameFolder(name: string): string {
-	return `frames/${name}`;
 }
 
 /**

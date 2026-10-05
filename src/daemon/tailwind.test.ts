@@ -5,13 +5,8 @@ import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { DesignBoundaryError, realDesignDir } from "./design-path";
 import { contentDigest } from "./design-reads";
-import {
-	type CssSource,
-	compileFrameCssHere,
-	compileFrameCssOnWorker,
-	createCssWorkers,
-	startCssWorker,
-} from "./tailwind";
+import { compileFrameCssHere, compileFrameCssOnWorker, createCssWorkers, startCssWorker } from "./stylesheet-workers";
+import type { CssSource } from "./tailwind";
 
 function project(tokens: string) {
 	const { root } = makeProject(join(makeTempDir(), ".spool"));

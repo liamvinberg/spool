@@ -149,3 +149,9 @@ export function carriedPage(page: string, from: string, to: string): string | un
 export function carriedKeys<T>(held: Record<string, T>, from: string, to: string): Record<string, T> {
 	return Object.fromEntries(Object.entries(held).map(([page, value]) => [carriedPage(page, from, to) ?? page, value]));
 }
+
+/** The design-relative folder a frame name resolves to, wire-format slashes —
+ * the one spelling of "where a frame lives" every daemon surface shares. */
+export function frameFolder(name: string): string {
+	return `frames/${name}`;
+}

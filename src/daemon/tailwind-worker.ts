@@ -1,10 +1,10 @@
 import { parentPort } from "node:worker_threads";
-import { DesignBoundaryError } from "./design-path";
-import { type CssJob, type CssReply, compileFrameCssHere } from "./tailwind";
+import { DesignBoundaryError } from "./design-boundary";
+import { type CssJob, type CssReply, compileFrameCssHere } from "./stylesheet-workers";
 
 /**
  * A stylesheet worker: the Tailwind half of a frame compile, off the daemon's
- * event loop (see CSS_WORKERS in tailwind.ts). It keeps nothing between jobs;
+ * event loop (see CSS_WORKERS in stylesheet-workers.ts). It keeps nothing between jobs;
  * every job is the same compileFrameCssHere the daemon would otherwise run
  * on its event loop.
  */

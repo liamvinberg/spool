@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { REACT_SPECIFIERS } from "./vendor-pins";
 
 /**
  * The one pinned React (#16): a single ESM bundle covering react, react-dom,
@@ -14,26 +15,16 @@ import { build } from "esbuild";
  * facade (the pattern validated in spikes/live-frames).
  */
 
-export const REACT_SPECIFIERS = ["react", "react-dom", "react-dom/client", "react/jsx-runtime"] as const;
-
-export const VENDOR_REACT_URL = "/vendor/react.js";
-
-export const VENDOR_SPOOL_URL = "/vendor/spool.js";
-
-export const VENDOR_SPOOL_JSX_URL = "/vendor/spool-jsx.js";
+export {
+	importMapPins,
+	REACT_SPECIFIERS,
+	VENDOR_REACT_URL,
+	VENDOR_SPOOL_JSX_URL,
+	VENDOR_SPOOL_URL,
+} from "./vendor-pins";
 
 export const reactVersion: string = (createRequire(import.meta.url)("react/package.json") as { version: string })
 	.version;
-
-/** Spool's import map pins: the pinned React and the flow runtime always win. */
-export function importMapPins(): Record<string, string> {
-	return {
-		...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, VENDOR_REACT_URL])),
-		spool: VENDOR_SPOOL_URL,
-		// the stamping JSX runtime the compiler injects (#23) — not agent surface
-		"spool/jsx-dev-runtime": VENDOR_SPOOL_JSX_URL,
-	};
-}
 
 /**
  * Memoize a vendor build. Same rule as the frame compiler: failures are never

@@ -1,12 +1,10 @@
-import { readFileSync, realpathSync } from "node:fs";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
+import { Buffer } from "node:buffer";
+import { dirname, extname, join, posix, resolve } from "node:path";
 import { compile } from "tailwindcss";
 import { type ClassScanner, scanCandidates } from "./class-scanner";
-import { DesignBoundaryError, resolveDesignPath } from "./design-path";
-import { contentDigest } from "./design-reads";
-import { spoolEntry } from "./spool-entry";
+import { designPathResolver, designRelativePath } from "./design-boundary";
+import type { DesignFiles } from "./design-files";
+import { contentDigest, readDesignBytes } from "./design-reads";
 
 /**
  * Serve-time Tailwind (#15): frames receive finished CSS, compiled with the
@@ -15,12 +13,22 @@ import { spoolEntry } from "./spool-entry";
  * and tokens.css is the only project entry into the compile.
  */
 
-const tailwindDir = realpathSync(dirname(fileURLToPath(import.meta.resolve("tailwindcss/index.css"))));
+/**
+ * The stylesheets of Spool's pinned Tailwind, by name in its package:
+ * `index.css` for `@import "tailwindcss"`, and the others a project may import
+ * by name. Where they are read from is the caller's: the daemon reads its own
+ * install, a Worker carries them as text.
+ */
+export type TailwindStylesheets = (name: string) => string | undefined;
 
-function isWithin(base: string, target: string): boolean {
-	const rel = relative(base, target);
-	return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
-}
+/** Every stylesheet of the pinned Tailwind a project's tokens.css can reach. */
+export const TAILWIND_STYLESHEETS: readonly string[] = ["index.css", "theme.css", "preflight.css", "utilities.css"];
+
+/**
+ * Where Tailwind's own stylesheets sit as far as its compile is told: no
+ * folder anywhere, so nothing a project writes can name one of them by path.
+ */
+const TAILWIND_BASE = "/\0tailwindcss";
 
 /**
  * The layer every project stylesheet the frame bundle carries is wrapped in
@@ -72,38 +80,38 @@ export interface DesignStylesheets {
 /**
  * The one way into a project's stylesheets.
  *
- * It is where the pin lives: "tailwindcss" resolves into spool's own install
+ * It is where the pin lives: "tailwindcss" resolves into spool's own Tailwind
  * and nowhere else, a relative import resolves inside design/ or is refused,
  * and anything else is not an import this daemon serves.
  */
-export function designStylesheets(designDir: string): DesignStylesheets {
+export function designStylesheets(
+	designDir: string,
+	files: DesignFiles,
+	tailwind: TailwindStylesheets,
+): DesignStylesheets {
 	const stylesheets = new Map<string, string>();
+	const resolvePath = designPathResolver(designDir, files);
+
+	function pinned(id: string, name: string): { path: string; base: string; content: string } {
+		const content = name.startsWith("../") ? undefined : tailwind(name);
+		if (content === undefined)
+			throw new Error(`tailwindcss import "${id}" is not a stylesheet of Spool's pinned Tailwind`);
+		return { path: `${TAILWIND_BASE}/${name}`, base: TAILWIND_BASE, content };
+	}
 
 	async function loadStylesheet(id: string, base: string): Promise<{ path: string; base: string; content: string }> {
-		let file: string;
-		if (id === "tailwindcss") {
-			file = join(tailwindDir, "index.css");
-		} else if (id.startsWith("tailwindcss/")) {
-			file = join(tailwindDir, id.slice("tailwindcss/".length));
-		} else if (id.startsWith("./") || id.startsWith("../")) {
-			file = resolve(base, id);
-		} else {
+		if (id === "tailwindcss") return pinned(id, "index.css");
+		if (id.startsWith("tailwindcss/")) return pinned(id, posix.normalize(id.slice("tailwindcss/".length)));
+		if (!id.startsWith("./") && !id.startsWith("../")) {
 			throw new Error(
 				`unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in tokens.css`,
 			);
 		}
-		// Spool's pinned Tailwind install is the only non-design stylesheet
-		// root. Component-aware containment prevents prefix siblings from
-		// masquerading as package internals.
-		if (isWithin(tailwindDir, file)) {
-			file = realpathSync(file);
-			if (!isWithin(tailwindDir, file)) {
-				throw new Error(`tailwindcss import "${id}" resolves outside Spool's pinned Tailwind install`);
-			}
-			return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
-		}
-		file = resolveDesignPath(designDir, file, id);
-		const bytes = readFileSync(file);
+		// Spool's pinned Tailwind is the only non-design stylesheet root
+		if (base === TAILWIND_BASE) return pinned(id, posix.normalize(id));
+		const file = resolvePath(resolve(base, id), id);
+		const bytes = readDesignBytes(resolvePath, file, files);
+		if (bytes === undefined) throw new Error(`no stylesheet at design/${designRelativePath(designDir, file)}`);
 		stylesheets.set(file, contentDigest(bytes));
 		return { path: file, base: dirname(file), content: bytes.toString("utf8") };
 	}
@@ -115,25 +123,32 @@ export function designStylesheets(designDir: string): DesignStylesheets {
 	return { base: join(designDir, "shared"), loadStylesheet, loadModule, stylesheets };
 }
 
+/** What compiling a frame's stylesheet reads from: the project, Spool's Tailwind, and the scanner. */
+export interface StylesheetSources {
+	files: DesignFiles;
+	tailwind: TailwindStylesheets;
+	scan?: ClassScanner | undefined;
+}
+
 /**
- * Compile the finished stylesheet for one frame document here, wherever it is
- * called: theme + preflight + the utilities its source closure
- * actually uses. A fresh compiler per call keeps the output a pure function of
- * the read stylesheets and the given sources — Tailwind's build() accumulates
- * candidates across calls, which would bleed one frame's utilities into the
- * next document. The same accumulation is why one compiler cannot serve a
- * whole project either: build() also marks every theme variable a frame used,
- * and the marks decide which variables the next frame's stylesheet carries.
+ * Compile one frame document's finished stylesheet: theme + preflight + the
+ * utilities its source closure actually uses. A fresh compiler per call keeps
+ * the output a pure function of the read stylesheets and the given sources —
+ * Tailwind's build() accumulates candidates across calls, which would bleed
+ * one frame's utilities into the next document. The same accumulation is why
+ * one compiler cannot serve a whole project either: build() also marks every
+ * theme variable a frame used, and the marks decide which variables the next
+ * frame's stylesheet carries.
  *
- * The daemon never calls this on its event loop: it calls
- * compileFrameCssOnWorker, and a stylesheet worker runs this.
+ * The daemon never calls this on its event loop: its stylesheet runner hands
+ * the job to a stylesheet worker, which runs this.
  */
-export async function compileFrameCssHere(
+export async function compileFrameCss(
 	designDir: string,
 	sources: CssSource[],
-	scan: ClassScanner = scanCandidates,
+	{ files, tailwind, scan = scanCandidates }: StylesheetSources,
 ): Promise<FrameCss> {
-	const sheets = designStylesheets(designDir);
+	const sheets = designStylesheets(designDir, files, tailwind);
 	const compiler = await compile(ROOT_CSS, {
 		base: sheets.base,
 		loadStylesheet: sheets.loadStylesheet,
@@ -149,168 +164,13 @@ export async function compileFrameCssHere(
 }
 
 /**
- * How many stylesheet workers compile frame stylesheets for this daemon.
- *
- * A frame's stylesheet was most of the work its compile did on the daemon's
- * event loop, in chunks the loop cannot break up: Tailwind's setup,
- * reading and scanning the frame's files, then build(). On Spool's own canvas
- * that came to about 10ms a frame, 5 of them in build() alone, while esbuild
- * bundles in a process of its own. A few compiles in flight, as when every
- * cover is photographed or the player composes a project, stacked those chunks
- * into stalls of tens of milliseconds in which the daemon answered nothing. On
- * a stylesheet worker the same work costs the daemon a message each way.
- *
- * Two: with three compiles in flight one worker already keeps pace, because
- * esbuild's half of a compile is the slower one, and every worker is another
- * Tailwind's worth of memory. The second is for the player, which compiles
- * eight frames' stylesheets at once: over Spool's own canvas it composed in
- * about 15 s with two workers against 17 to 20 with one.
+ * Where a compile's frame stylesheets are made, from the bytes its bundle was
+ * made of. The daemon runs them on its stylesheet workers; a Worker runs them
+ * in place (`inProcessStylesheets`).
  */
-const CSS_WORKERS = 2;
+export type StylesheetRunner = (designDir: string, sources: CssSource[]) => Promise<FrameCss>;
 
-/**
- * How long one stylesheet may take once its worker begins it. A frame's takes
- * milliseconds, tens when a worker holds several. A worker past this is stuck,
- * in a stylesheet that loops or a scan that never returns, and every job it
- * holds would wait forever while new ones kept arriving.
- */
-const CSS_JOB_MS = 30_000;
-
-/** One stylesheet to compile, as a stylesheet worker receives it. */
-export interface CssJob {
-	id: number;
-	designDir: string;
-	sources: CssSource[];
-}
-
-/**
- * A stylesheet worker's word on a job: that it has begun it, then its answer.
- * An error crosses as its message alone, except a design-boundary refusal,
- * which carries its path so it arrives as the same DesignBoundaryError it left
- * as.
- */
-export type CssReply =
-	| { id: number; started: true }
-	| { id: number; css: FrameCss }
-	| { id: number; message: string }
-	| { id: number; boundary: string };
-
-/** Start one stylesheet worker: tailwind-worker.ts, from source or from dist. */
-export function startCssWorker(): Worker {
-	const entry = spoolEntry("./tailwind-worker.ts", "./tailwind-worker.js");
-	return new Worker(entry.path, { execArgv: entry.execArgv });
-}
-
-interface PendingCss {
-	designDir: string;
-	sources: CssSource[];
-	resolve: (css: FrameCss) => void;
-	reject: (error: Error) => void;
-	/** The job's deadline, set once its worker begins it. */
-	timer: NodeJS.Timeout | undefined;
-}
-
-interface CssWorker {
-	worker: Worker;
-	jobs: Map<number, PendingCss>;
-}
-
-/**
- * A pool of at most `size` stylesheet workers, started as jobs need them. An
- * idle worker takes a job, else a new one while the pool has room, else
- * whichever holds the fewest jobs. A worker that dies fails only the jobs it
- * held, and the next job starts another in its place. A job its worker has
- * been at for longer than `timeout` fails; that worker is stopped as stuck,
- * and the jobs it held besides move to one that answers.
- */
-export function createCssWorkers(
-	start: () => Worker = startCssWorker,
-	size = CSS_WORKERS,
-	timeout = CSS_JOB_MS,
-): (designDir: string, sources: CssSource[]) => Promise<FrameCss> {
-	const workers: CssWorker[] = [];
-	let lastJob = 0;
-
-	function add(): CssWorker {
-		const worker = start();
-		const held: CssWorker = { worker, jobs: new Map() };
-		// An idle worker never holds the process open; one with a job in hand does.
-		worker.unref();
-		worker.on("message", (reply: CssReply) => {
-			const job = held.jobs.get(reply.id);
-			if (job === undefined) return;
-			if ("started" in reply) {
-				// from here, not from the handoff: time spent queued behind the
-				// worker's other jobs is not this one's
-				job.timer = setTimeout(() => stuck(held, reply.id), timeout);
-				job.timer.unref();
-				return;
-			}
-			held.jobs.delete(reply.id);
-			clearTimeout(job.timer);
-			if (held.jobs.size === 0) worker.unref();
-			if ("css" in reply) job.resolve(reply.css);
-			else if ("boundary" in reply) job.reject(new DesignBoundaryError(reply.boundary));
-			else job.reject(new Error(reply.message));
-		});
-		const lost = (error: Error) => {
-			retire(held);
-			for (const job of held.jobs.values()) {
-				clearTimeout(job.timer);
-				job.reject(error);
-			}
-			held.jobs.clear();
-		};
-		worker.on("error", lost);
-		worker.on("exit", (code) => lost(new Error(`the stylesheet worker stopped (exit code ${code})`)));
-		workers.push(held);
-		return held;
-	}
-
-	function retire(held: CssWorker): void {
-		const at = workers.indexOf(held);
-		if (at !== -1) workers.splice(at, 1);
-	}
-
-	/** A job past its deadline fails, its worker is stopped, and the rest it held go to another. */
-	function stuck(held: CssWorker, id: number): void {
-		const job = held.jobs.get(id);
-		if (job === undefined) return;
-		retire(held);
-		const others = [...held.jobs.values()].filter((other) => other !== job);
-		held.jobs.clear();
-		for (const pending of [job, ...others]) clearTimeout(pending.timer);
-		job.reject(new Error(`this frame's stylesheet took longer than ${timeout / 1000} s to compile`));
-		void held.worker.terminate();
-		for (const other of others) hand(other);
-	}
-
-	function hand(job: PendingCss): void {
-		const idle = workers.find((candidate) => candidate.jobs.size === 0);
-		const chosen =
-			idle ??
-			(workers.length < size
-				? add()
-				: workers.reduce((least, next) => (next.jobs.size < least.jobs.size ? next : least)));
-		const id = ++lastJob;
-		job.timer = undefined;
-		chosen.jobs.set(id, job);
-		chosen.worker.ref();
-		chosen.worker.postMessage({ id, designDir: job.designDir, sources: job.sources } satisfies CssJob);
-	}
-
-	return (designDir, sources) =>
-		new Promise((resolve, reject) => hand({ designDir, sources, resolve, reject, timer: undefined }));
-}
-
-const daemonCssWorkers = createCssWorkers();
-
-/**
- * The finished stylesheet for one frame document (#15): compileFrameCssHere,
- * run on one of the daemon's stylesheet workers so its event loop stays free
- * while Tailwind works. The sources are the bytes the frame's bundle was made
- * of, handed over rather than read again.
- */
-export function compileFrameCssOnWorker(designDir: string, sources: CssSource[]): Promise<FrameCss> {
-	return daemonCssWorkers(designDir, sources);
+/** Frame stylesheets compiled where they are asked for, as a Cloudflare Worker compiles them. */
+export function inProcessStylesheets(sources: StylesheetSources): StylesheetRunner {
+	return (designDir, frameSources) => compileFrameCss(designDir, frameSources, sources);
 }
