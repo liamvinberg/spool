@@ -96,6 +96,15 @@ export default defineConfig([
 		esbuildPlugins: [licenses],
 	},
 	{
+		// spool.page/sync-protocol (src/team-sync-protocol.ts): the sync protocol, which spool-cloud's sync object
+		// imports rather than keeping a copy. It imports nothing, so it runs anywhere.
+		entry: { "sync-protocol": "src/team-sync-protocol.ts" },
+		format: "esm",
+		platform: "neutral",
+		target: "es2022",
+		splitting: false,
+	},
+	{
 		entry: { "publication-runtime": "src/runtime/frame-runtime.ts" },
 		format: "esm",
 		platform: "browser",

@@ -84,6 +84,16 @@ child.send({ id: "probe", request: { kind: "account" } });
 		]);
 		expect(existsSync(join(dirname(anchor), "dist", "types", "compile-entry.d.ts"))).toBe(true);
 
+		// the sync protocol spool-cloud's sync object speaks, the one copy of it, with its types beside it
+		const protocolProbe =
+			'const protocol = await import("spool.page/sync-protocol"); process.stdout.write(JSON.stringify([protocol.PROTOCOL_VERSION, typeof protocol.decodeFrame, protocol.travels("frames/home/frame.tsx")]));';
+		expect(JSON.parse(run(process.execPath, ["--input-type=module", "--eval", protocolProbe], prefix))).toEqual([
+			1,
+			"function",
+			true,
+		]);
+		expect(existsSync(join(dirname(anchor), "dist", "types", "team-sync-protocol.d.ts"))).toBe(true);
+
 		// what a host serving frames without the daemon serves beside them, and the read-only canvas it serves
 		const vendorProbe =
 			'const { VENDOR_MODULES, TAILWIND_SOURCES } = await import("spool.page/vendor"); process.stdout.write(JSON.stringify([Object.keys(VENDOR_MODULES), Object.keys(TAILWIND_SOURCES)]));';

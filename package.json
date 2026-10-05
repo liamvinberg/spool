@@ -18,6 +18,10 @@
 			"types": "./dist/types/vendor.d.ts",
 			"default": "./dist/vendor.js"
 		},
+		"./sync-protocol": {
+			"types": "./dist/types/team-sync-protocol.d.ts",
+			"default": "./dist/sync-protocol.js"
+		},
 		"./viewer/*": "./dist/viewer/*",
 		"./package.json": "./package.json"
 	},

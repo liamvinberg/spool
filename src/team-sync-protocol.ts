@@ -1,6 +1,6 @@
 /**
  * The sync protocol between a team project's sync object and each editor's daemon: the contract, versioned.
- * spool-cloud's `src/worker/sync/protocol.ts` is the other copy of this file and the two change together.
+ * This is its one copy: spool-cloud's sync object imports it as `spool.page/sync-protocol`.
  *
  * A daemon opens one WebSocket per local copy, says `hello` with the last team version it has applied, and is
  * sent every path the team changed since. After that each side sends what happens as it happens: the daemon
