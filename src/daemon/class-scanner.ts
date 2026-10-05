@@ -35,6 +35,10 @@ const BEFORE_JSON = new Set([...BEFORE, "{", "[", "]"]);
 const AFTER_JSON = new Set([...AFTER, "}", "["]);
 /** Punctuation a token can end in that is the code's, not the candidate's. */
 const TRAILING = new Set([")", ":", ".", "?", "!"]);
+/** What a key's candidate is spelled with, outside its brackets. */
+const KEY = /[A-Za-z0-9_./-]/;
+/** What Oxide refuses right before a key's candidate. */
+const NOT_BEFORE_KEY = new Set(["!", "*", "@", "<"]);
 /** Past this many characters an open bracket is code, not an arbitrary value. */
 const LONGEST_BRACKET = 400;
 
@@ -52,17 +56,25 @@ function scan(text: string, extension: string, found: Set<string>): void {
 
 	// The token, and each spelling inside it that starts after a "." (a
 	// selector, a property access), each with its trailing punctuation peeled
-	// off one character at a time. A spelling counts only where its own
+	// off one character at a time, a "]" too where it closes nothing the
+	// spelling opened (`[open, block]`). A spelling counts only where its own
 	// neighbours are boundaries.
 	const offer = (start: number, end: number): void => {
 		const starts = [start];
 		for (let at = start; at < end - 1; at++) if (text[at] === ".") starts.push(at + 1);
 		for (const from of starts) {
+			let unclosed = 0;
+			for (let at = from; at < end; at++) {
+				if (text[at] === "[") unclosed++;
+				else if (text[at] === "]") unclosed--;
+			}
 			let to = end;
 			while (to > from) {
 				const opens = from === 0 || from !== start || before.has(text[from - 1] as string);
-				if (opens && (to === text.length || after.has(text[to] as string))) found.add(text.slice(from, to));
-				if (!TRAILING.has(text[to - 1] as string)) break;
+				if (opens && (to === text.length || after.has(text[to] as string))) offered(found, text.slice(from, to));
+				const last = text[to - 1] as string;
+				if (last === "]" && unclosed < 0) unclosed++;
+				else if (!TRAILING.has(last)) break;
 				to--;
 			}
 		}
@@ -104,4 +116,57 @@ function scan(text: string, extension: string, found: Set<string>): void {
 	flush(text.length);
 
 	for (const property of text.matchAll(/--[A-Za-z0-9_-]+/g)) found.add(property[0]);
+
+	// A key, `{ block: open }` or `(visible: boolean)`: a candidate followed by
+	// ":" and whitespace counts whatever stands before it, as Oxide takes it.
+	for (const colon of text.matchAll(/:(?=\s|$)/g)) {
+		const key = keyBefore(text, colon.index);
+		if (key !== undefined) offered(found, key);
+	}
+}
+
+/**
+ * A candidate kept, unless it spells a custom property shorthand Oxide refuses:
+ * `z-(--layer-*)` is no candidate, `z-(--layer)` and `bg-(color:--ink)/50` are.
+ */
+function offered(found: Set<string>, candidate: string): void {
+	const shorthand = shorthandAt(candidate);
+	if (shorthand === -1 || SHORTHAND.test(candidate.slice(shorthand + 1))) found.add(candidate);
+}
+
+/** Where a candidate's `-(` shorthand starts, outside any arbitrary value in brackets; -1 when it has none. */
+function shorthandAt(candidate: string): number {
+	let depth = 0;
+	for (let at = 0; at < candidate.length - 1; at++) {
+		const char = candidate[at];
+		if (char === "[") depth++;
+		else if (char === "]") depth--;
+		else if (depth === 0 && char === "-" && candidate[at + 1] === "(") return at;
+	}
+	return -1;
+}
+
+/** A custom property shorthand as Oxide takes one: a property, a fallback, then a modifier or `!` at most. */
+const SHORTHAND = /^\((?:[a-z-]+:)?--[A-Za-z0-9_-]+(?:,[^)]*)?\)(?:\/\S*|!)?$/;
+
+/** The candidate that ends where a key's ":" stands, or undefined when none does. */
+function keyBefore(text: string, end: number): string | undefined {
+	let start = end;
+	// an arbitrary value it ends in, whole: `w-[3px]: `
+	const close = text[start - 1];
+	if (close === "]" || close === ")") {
+		let depth = 0;
+		do {
+			const char = text[--start] as string;
+			if (char === "]" || char === ")") depth++;
+			else if (char === "[" || char === "(") depth--;
+			else if (/\s/.test(char)) return undefined;
+		} while (depth > 0 && start > 0);
+		if (depth > 0) return undefined;
+	}
+	while (start > 0 && KEY.test(text[start - 1] as string)) start--;
+	// a candidate starts at a letter, a digit or a dash
+	while (start < end && "_./".includes(text[start] as string)) start++;
+	if (start === end || text[start] === "-" || NOT_BEFORE_KEY.has(text[start - 1] as string)) return undefined;
+	return text.slice(start, end);
 }

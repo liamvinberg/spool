@@ -82,6 +82,22 @@ describe("the class scanner, held to Oxide", () => {
 		expect([...extra.keys()].filter((candidate) => !DOCUMENTED_EXTRAS.has(candidate))).toEqual([]);
 	});
 
+	// what other canvases than Spool's own showed it, each where Oxide takes a
+	// candidate this scanner once missed or took one Oxide does not
+	it.each([
+		["a key", "const [filter, setFilter] = useState<Filter>({ q: '' });"],
+		["a closing bracket", "const [blurRef, blur] = useComputed<HTMLDivElement>(readFilter);"],
+		["a parameter's name", "export function watchVisible(onChange: (visible: boolean) => void) {}"],
+		["a callback's parameter", "const emit = useCallback((block: Block) => setBlocks([block]), []);"],
+		["a shorthand Oxide refuses", '<Note says="Each takes its z-(--layer-*) class and a portal container." />'],
+		["a shorthand inside a value", '<div className="max-h-[calc(100dvh-(--spacing(16)))] overflow-auto" />'],
+	])("builds what Oxide builds from %s", async (_, content) => {
+		const builds = await buildsSomething();
+		const source = [{ content, extension: "tsx" }];
+
+		expect(scanCandidates(source).filter(builds).sort()).toEqual(oxide(source).filter(builds).sort());
+	});
+
 	it("builds every frame on the canvas the stylesheet Oxide would", { timeout: 300_000 }, async () => {
 		const frames = files.filter((file) => file.startsWith(join(designDir, "frames")) && file.endsWith("/frame.tsx"));
 		const differ: string[] = [];
