@@ -306,7 +306,7 @@ export function HerePill({ people }: { people: readonly HerePerson[] | undefined
 	return (
 		<span
 			data-here={people.map((person) => person.name).join(" ")}
-			className="pointer-events-none absolute bottom-[10px] left-[10px] flex items-center gap-[8px] rounded-full bg-bg py-[3px] pr-[10px] pl-[3px] text-text"
+			className="pointer-events-none absolute bottom-[10px] left-[10px] z-10 flex items-center gap-[8px] rounded-full bg-bg py-[3px] pr-[10px] pl-[3px] text-text"
 		>
 			<span className="flex">
 				{shown.map((person, i) => (
