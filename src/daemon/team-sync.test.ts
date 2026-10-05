@@ -20,6 +20,7 @@ import { removeProject } from "../remove";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
+import { watchFolder } from "./watch-tree";
 
 /**
  * Team sync as an editor sees it: two machines, each its own state folder and repo, each a daemon, against
@@ -494,6 +495,20 @@ describe("a save", () => {
 			expect(cloud.file("checkout", local), local).toBeUndefined();
 		}
 		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+	});
+
+	it("goes up though macOS dropped its folder event while another watch started", { timeout: 20_000 }, async () => {
+		const { cloud, ana } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") !== undefined);
+		for (let gap = 0; gap < 5; gap += 1) {
+			// every folder watch the daemon starts restarts macOS's one stream of folder events, dropping what lands then
+			const elsewhere = watchFolder(makeTempDir(), { recursive: true });
+			onTestFinished(() => elsewhere.close());
+			writeFrame(ana.root, `gap-${gap}`, `export default () => <h1>${gap}</h1>;\n`);
+		}
+		for (let gap = 0; gap < 5; gap += 1)
+			await until(() => cloud.file("checkout", `frames/gap-${gap}/frame.tsx`) !== undefined, 10_000);
 	});
 
 	it("is never sent back by the machine it arrived on", async () => {

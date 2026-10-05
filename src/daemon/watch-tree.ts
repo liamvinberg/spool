@@ -1,4 +1,4 @@
-import { type FSWatcher, readdirSync, statSync, watch } from "node:fs";
+import { type FSWatcher, readdirSync, statSync, type WatchListener, watch } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 
 /**
@@ -22,6 +22,30 @@ export interface TreeWatch {
 	close(): void;
 }
 
+/** Who is told each time this process starts a folder watch. */
+const starting = new Set<() => void>();
+
+/**
+ * Hear every folder watch this process starts from now on. macOS gives a process one stream of folder events for all
+ * of its watches and starts that stream again for each new one, and what lands in the gap is announced to none of
+ * them: whoever must not miss a change looks again once a watch has started. Returns the unsubscribe.
+ */
+export function onWatchStart(listener: () => void): () => void {
+	starting.add(listener);
+	return () => starting.delete(listener);
+}
+
+/** `fs.watch` on a folder, and every listener for a watch starting told. Every folder watch the daemon opens is one. */
+export function watchFolder(
+	dir: string,
+	options: { recursive?: boolean } = {},
+	listener?: WatchListener<string>,
+): FSWatcher {
+	const watcher = watch(dir, { ...options, encoding: "utf8" }, listener);
+	for (const told of starting) told();
+	return watcher;
+}
+
 /** Whether the OS walks the tree, or we do. */
 const NATIVE_RECURSIVE = process.platform === "darwin" || process.platform === "win32";
 
@@ -37,7 +61,7 @@ export function watchTree(dir: string, onPath: (filename: string | null) => void
 
 /** The OS's own recursive watch, which is one handle and no bookkeeping. */
 function nativeTree(dir: string, onPath: (filename: string | null) => void, onError: () => void): TreeWatch {
-	const watcher = watch(dir, { recursive: true }, (_type, filename) => onPath(named(filename)));
+	const watcher = watchFolder(dir, { recursive: true }, (_type, filename) => onPath(named(filename)));
 	watcher.on("error", onError);
 	return { close: () => watcher.close() };
 }
@@ -58,7 +82,7 @@ export function watchFolders(root: string, onPath: (filename: string | null) => 
 		if (closed || open.has(dir)) return;
 		let watcher: FSWatcher;
 		try {
-			watcher = watch(dir);
+			watcher = watchFolder(dir);
 		} catch {
 			// a folder that went between the read and the watch: its parent is
 			// watching, and its going is an event of its own

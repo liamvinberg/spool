@@ -107,8 +107,6 @@ async function works(
 		projects: { copies: string[] }[];
 	};
 	expect(listed.projects[0]?.copies).toEqual([root]);
-	// macOS restarts its one stream of folder events for every new watch, and drops what lands meanwhile
-	await new Promise((resolve) => setTimeout(resolve, 1_000));
 	writeFrame(ana, "news", "export default () => <h1>News</h1>;\n");
 	await until(() => text(root, "frames/news/frame.tsx")?.includes("News") === true, 10_000);
 	writeFrame(root, "from-ben", "export default () => <h1>Ben</h1>;\n");
@@ -357,7 +355,6 @@ describe("Move to team", () => {
 		expect(status(ben)).toEqual([]);
 		// nothing of Ben's went up as a delete
 		expect(cloud.saves("site").filter((save) => save.by === "ben")).toEqual([]);
-		await new Promise((resolve) => setTimeout(resolve, 1_000));
 
 		writeFrame(project.root, "news", "export default () => <h1>News</h1>;\n");
 		await until(() => text(ben, "frames/news/frame.tsx")?.includes("News") === true, 10_000);

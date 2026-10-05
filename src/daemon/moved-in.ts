@@ -1,6 +1,7 @@
-import { existsSync, type FSWatcher, watch } from "node:fs";
+import { existsSync, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { isTeamProject, PROJECT_LINK } from "../team-project";
+import { watchFolder } from "./watch-tree";
 
 /**
  * A teammate's project moved into its team (DEV-190), seen from this Mac: pulling the move commit takes `design/` out
@@ -53,7 +54,7 @@ export function watchForMoves(deps: {
 				}
 				if (watched.has(root)) continue;
 				try {
-					const watcher = watch(root, (_type, name) => {
+					const watcher = watchFolder(root, {}, (_type, name) => {
 						if (name !== null && name !== PROJECT_LINK) return;
 						// git lays spool.json down and takes design/ away in one checkout: let it finish first
 						clearTimeout(settling.get(root));

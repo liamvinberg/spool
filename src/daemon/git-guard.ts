@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, type FSWatcher, realpathSync, type Stats, statSync, watch } from "node:fs";
+import { existsSync, type FSWatcher, realpathSync, type Stats, statSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { watchFolder } from "./watch-tree";
 
 /**
  * The git guard: how a local copy tells what git wrote into `design/` from what a person or an agent saved.
@@ -91,7 +92,7 @@ export function guardAgainstGit(designDir: string, onIndex: (paths: string[]) =>
 	};
 	let watcher: FSWatcher | undefined;
 	try {
-		watcher = watch(dirname(index), (_type, name) => {
+		watcher = watchFolder(dirname(index), {}, (_type, name) => {
 			if (name !== null && !name.startsWith(basename(index))) return;
 			settle ??= setTimeout(changed, SETTLE_MS);
 		});

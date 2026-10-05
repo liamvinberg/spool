@@ -1,6 +1,7 @@
-import { mkdirSync, watch } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { mutateMachineState, type SessionMutationResult } from "../machine-state";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
+import { watchFolder } from "./watch-tree";
 
 /**
  * The app session in ~/.spool/session.json: which projects are open as tabs
@@ -45,7 +46,7 @@ interface MachineStateWatchOptions {
 
 const nodeMachineStateWatch: MachineStateWatchAdapter = {
 	subscribe: (spoolDir, changed, failed) => {
-		const watcher = watch(spoolDir, { encoding: "utf8" }, (_type, filename) => changed(filename));
+		const watcher = watchFolder(spoolDir, {}, (_type, filename) => changed(filename));
 		watcher.on("error", failed);
 		// Notifications are hints; also reconcile these two small state files
 		// when the OS drops or coalesces an atomic replacement notification.
