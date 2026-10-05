@@ -275,8 +275,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			close: () => {
 				socket = undefined;
 				caughtUp = false;
+				// what was in flight is settled by the next catch-up: applied saves come back as the team's version
 				inflight.clear();
 				dirty.clear();
+				yielding.clear();
 				if (closed) return;
 				if (!live) return fail(new SpoolError(`spool.page closed the sync connection for ${link.url}`));
 				reconnect();
