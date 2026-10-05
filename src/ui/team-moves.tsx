@@ -55,7 +55,7 @@ export function TeamProjectsAway({
 					<article key={project.url} className="pj-away-cover min-w-0">
 						<div className="relative grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-border-raised bg-canvas opacity-60">
 							<span className="px-[18px] text-center text-muted type-detail">
-								{project.repo ?? "No repo linked"}
+								{project.repo ?? "no repo linked"}
 							</span>
 						</div>
 						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
@@ -122,7 +122,8 @@ export function GetItDialog({
 				}}
 			/>
 		);
-	const choice = (key: string, selected: boolean, select: () => void, title: string, detail: string) => (
+	/** One place; `detail` is a path, said as the machine says it, unless it is a sentence. */
+	const choice = (key: string, selected: boolean, select: () => void, title: string, detail: string, path = true) => (
 		<label
 			key={key}
 			className={cn(
@@ -139,7 +140,7 @@ export function GetItDialog({
 			/>
 			<span className="flex min-w-0 flex-col gap-[3px]">
 				<span className="type-control">{title}</span>
-				<span className="truncate text-muted type-detail" title={detail}>
+				<span className={cn("truncate text-muted", path ? "type-detail" : "type-label")} title={detail}>
 					{detail}
 				</span>
 			</span>
@@ -168,6 +169,7 @@ export function GetItDialog({
 						() => setPlace({ kind: "checkout", path }),
 						`In ${tilde(path)}`,
 						`Your checkout of ${project.repo}`,
+						false,
 					),
 				)}
 				{choice(
@@ -176,6 +178,7 @@ export function GetItDialog({
 					() => setPicking(true),
 					"In a checkout…",
 					picked === null ? "Choose a clone of the repo" : tilde(picked),
+					picked !== null,
 				)}
 				{choice(
 					"mac",
@@ -187,7 +190,7 @@ export function GetItDialog({
 			</div>
 			{project.clone !== null && (
 				<div className="mb-[8px] flex flex-col gap-[6px]">
-					<span className="text-muted type-detail">
+					<span className="text-muted type-label">
 						Not cloned yet? Clone {project.repo} yourself, then Get it there:
 					</span>
 					<code className="select-all overflow-x-auto rounded-[6px] border border-border-raised bg-bg px-[10px] py-[8px] type-detail">
@@ -245,7 +248,7 @@ export function MoveToTeamDialog({
 					</select>
 				</label>
 			)}
-			<p className="mb-[8px] text-muted type-detail">History before the move stays in git.</p>
+			<p className="mb-[8px] text-muted type-label">History before the move stays in git.</p>
 		</ConfirmDialog>
 	);
 }
