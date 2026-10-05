@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Scanner } from "@tailwindcss/oxide";
@@ -65,7 +66,15 @@ async function buildsSomething(): Promise<(candidate: string) => boolean> {
 			: system.candidatesToCss([candidate])[0] !== null;
 }
 
+/** The version of a package as installed, which a pin alone doesn't say. */
+const installed = (name: string): string =>
+	(createRequire(import.meta.url)(`${name}/package.json`) as { version: string }).version;
+
 describe("the class scanner, held to Oxide", () => {
+	it("is held to the Oxide of the Tailwind Spool ships, so moving one pin alone fails here", () => {
+		expect(installed("@tailwindcss/oxide")).toBe(installed("tailwindcss"));
+	});
+
 	it("finds every class Oxide finds in each file, and only the documented extra besides", {
 		timeout: 120_000,
 	}, async () => {
