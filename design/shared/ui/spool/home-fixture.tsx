@@ -11,6 +11,8 @@ export interface ProjectCard {
 	copies?: number;
 	/** The team project this is a local copy of: it has no "Move to team…". */
 	team?: { url: string; team: string; project: string };
+	/** The team this was synced with until the project ended here. */
+	ended?: string;
 }
 
 export const homeProjects: ProjectCard[] = projects.map((project, index) => ({

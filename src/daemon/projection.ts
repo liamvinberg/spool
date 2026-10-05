@@ -469,6 +469,8 @@ export interface ProjectCard extends ProjectSummary {
 	openedAt: string;
 	/** The team project this root is a local copy of: Home shows all of one's copies as one cover. */
 	team?: { url: string; team: string; project: string };
+	/** The team this folder was a local copy for until the project ended here: its cover goes on saying so. */
+	ended?: string;
 }
 
 /**

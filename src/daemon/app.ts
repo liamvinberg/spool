@@ -133,7 +133,7 @@ import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
-import { createTeamSync, followedLink, type OpenSyncSocket } from "./team-sync";
+import { createTeamSync, endedWith, followedLink, type OpenSyncSocket } from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -1840,11 +1840,13 @@ export function createDaemonApp({
 			const projects: ProjectCard[] = await Promise.all(
 				readRegistry(spoolDir).projects.map(async (project) => {
 					const link = followedLink(project.root);
+					const ended = endedWith(project.root);
 					return {
 						name: basename(project.root),
 						root: project.root,
 						openedAt: project.openedAt,
 						...(link === undefined ? {} : { team: { url: link.url, team: link.team, project: link.project } }),
+						...(ended === undefined ? {} : { ended }),
 						...(await summarizeProject(project.root)),
 					};
 				}),
@@ -3513,6 +3515,12 @@ export function createDaemonApp({
 		}),
 	);
 	app.route("/api/p", projectShares.routes);
+	/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
+	app.get("/api/p/:project/sync", (c) => {
+		const project = resolveProject(c, c.req.param("project"));
+		if ("response" in project) return project.response;
+		return c.json(teamSync.state(project.root));
+	});
 	app.route(
 		"/api/p",
 		setAsideRoutes({

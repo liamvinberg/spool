@@ -92,6 +92,12 @@ it("offers rename for a project that already has frames", () => {
 	expect(host.textContent).not.toContain("Rename…");
 });
 
+it("says on its cover that a project is no longer synced with its team, long after it ended", () => {
+	const ended = { ...project("checkout", "2026-09-01T00:00:00Z"), ended: "devosurf" };
+	const host = mount(createElement(Home, { projects: [ended], ...actions() }));
+	expect(host.querySelector(".pj-cover-button")?.textContent).toContain("no longer synced with devosurf");
+});
+
 it("shows a team project once however many local copies this Mac holds, opening the latest", () => {
 	const callbacks = actions();
 	const team = { url: "https://spool.page/devosurf/checkout", team: "devosurf", project: "checkout" };

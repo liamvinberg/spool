@@ -25,6 +25,7 @@ import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projecti
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, TeamProjectOnMac } from "../daemon/team-projects";
+import type { SyncState } from "../daemon/team-sync";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
@@ -1656,7 +1657,7 @@ export const teamActions = {
 	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 };
 
-export type { MoveOutcome, TeamProjectOnMac };
+export type { MoveOutcome, SyncState, TeamProjectOnMac };
 
 /** Who is inside a team project right now, as its cover says it. */
 export type HerePerson = TeamProjectHere["people"][number];
@@ -1714,6 +1715,33 @@ export function getTeamProjectAt(
 /** "Move to team…": the project goes up whole, then one commit takes design/ out of git. */
 export function moveProjectToTeam(address: string, path: string): Promise<MoveOutcome> {
 	return teamProjectAction(`${team(address)}/move`, { path });
+}
+
+/** What in a project's design/ would stay on this Mac, and in git, if it moved into a team. */
+export async function fetchMoveStays(path: string): Promise<{ path: string; why: string }[]> {
+	try {
+		const response = await controlFetch(`/api/cloud/move/stays?${new URLSearchParams({ path })}`);
+		const body = (response.ok ? await response.json() : null) as { stays?: unknown } | null;
+		return Array.isArray(body?.stays) ? (body.stays as { path: string; why: string }[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
+export async function fetchSyncState(project: string): Promise<SyncState | undefined> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/sync`);
+		const body = (response.ok ? await response.json() : null) as Partial<SyncState> | null;
+		if (!Array.isArray(body?.held)) return undefined;
+		return {
+			ended: typeof body.ended === "string" ? body.ended : null,
+			paused: typeof body.paused === "string" ? body.paused : null,
+			held: body.held,
+		};
+	} catch {
+		return undefined;
+	}
 }
 
 /** Project transfer uses the same control token as every project lifecycle write. */

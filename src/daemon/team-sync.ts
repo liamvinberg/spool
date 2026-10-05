@@ -99,9 +99,21 @@ export interface LocalCopyOptions {
 	moving?: ProjectLink;
 }
 
+/**
+ * What a project's canvas says of its sync for as long as it lasts, wherever it opens: the team the copy was synced
+ * with until it ended here, the limit sync is paused on, and every file that didn't travel and why.
+ */
+export interface SyncState {
+	ended: string | null;
+	paused: string | null;
+	held: { path: string; why: string }[];
+}
+
 export interface LocalCopy {
 	/** Resolves whenever the copy is caught up and nothing it sent is waiting on an answer. */
 	idle(): Promise<void>;
+	/** Sync paused, and what didn't travel, now. */
+	state(): Pick<SyncState, "paused" | "held">;
 	/** Where this machine's person is on the canvas, or null once nobody here is looking. Never stored. */
 	presence(state: PresenceState | null): void;
 	/** Everyone else on the canvas now, `still` counted to this moment. */
@@ -700,6 +712,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 					: new Promise<void>((resolve, reject) => waiters.push({ resolve, reject })),
 		presence: (state) => presence.say(caughtUp ? socket : undefined, state),
 		people: () => presence.people(),
+		state: () => ({
+			paused: isPaused() && paused !== undefined ? paused.why : null,
+			held: [...held].map(([path, why]) => ({ path, why })).sort((a, b) => (a.path < b.path ? -1 : 1)),
+		}),
 		turnEnded: () => {
 			const said = setTimeout(() => {
 				const waited = isIdle()
@@ -858,6 +874,11 @@ export function createTeamSync(deps: {
 		},
 		/** The local copy at a root, while it is followed. */
 		copy: (root: string): LocalCopy | undefined => copies.get(root),
+		/** What a root's canvas says of its sync now: nothing to say for a solo project. */
+		state: (root: string): SyncState => ({
+			ended: endedWith(root) ?? null,
+			...(copies.get(root)?.state() ?? { paused: null, held: [] }),
+		}),
 		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
 		watchPresence(root: string, watcher: (presence: Presence) => void): () => void {
 			const set = watchers.get(root) ?? new Set();
@@ -906,6 +927,12 @@ export function resumeLocalCopy(root: string): void {
 /** Whether a local copy's team project ended for this machine. */
 export function hasEnded(root: string): boolean {
 	return copyRecord(root)?.ended === true;
+}
+
+/** The team a copy that ended here was synced with: what its canvas and its cover go on saying. */
+export function endedWith(root: string): string | undefined {
+	const record = copyRecord(root);
+	return record?.ended === true ? parseProjectLink(record.project)?.team : undefined;
 }
 
 /**

@@ -941,10 +941,17 @@ describe("what travels", () => {
 		for (let at = 0; at < 20 && !told.some((data) => JSON.stringify(data).includes("film.mov")); at += 1)
 			told.push((await events.next()).data);
 		expect(told).toContainEqual({ kind: "sync", message: "shared/assets/film.mov didn't travel: it's over 25 MB" });
+		// and a canvas opened later still lists them
+		const { held } = (await syncState(ana.daemon)) as { held: { path: string; why: string }[] };
+		expect(Object.fromEntries(held.map(({ path, why }) => [path, why]))).toEqual({
+			...stayed,
+			"frames/linked/frame.tsx": "symlinks stay on this Mac",
+		});
 
 		// a file that shrinks under the limit travels after all
 		writeFileSync(join(ana.root, "design/shared/assets/film.mov"), Buffer.alloc(1_000, 1));
 		await until(() => same(ana.root, ben.root, "shared/assets/film.mov"));
+		expect(JSON.stringify(await syncState(ana.daemon))).not.toContain("film.mov");
 	});
 
 	it("lets a big file finish being written before it travels, so no first part of it does", async () => {
@@ -982,6 +989,11 @@ describe("what travels", () => {
 	});
 });
 
+/** What a canvas opened on the project now is told of its sync: an ending, a pause, and what didn't travel. */
+async function syncState(daemon: ReturnType<typeof makeApp>, project = "checkout") {
+	return (await daemon.request(`/api/p/${project}/sync`)).json();
+}
+
 describe("a limit", () => {
 	it("pauses sync with the reason, keeps changes on this machine, and resumes when it lifts", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
@@ -996,11 +1008,18 @@ describe("a limit", () => {
 		await new Promise((wake) => setTimeout(wake, 300));
 		expect(existsSync(join(ben.root, "design/frames/home"))).toBe(false);
 		expect(cloud.file("checkout", "frames/about/frame.tsx")).toBeUndefined();
+		// a canvas opened now still says so, for as long as it lasts
+		expect(await syncState(ana.daemon)).toEqual({
+			ended: null,
+			paused: "this project took 120 saves in the last minute",
+			held: [],
+		});
 
 		cloud.lift();
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
 		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 5_000);
 		await until(() => said.ana.includes("Sync resumed."));
+		expect(await syncState(ana.daemon)).toEqual({ ended: null, paused: null, held: [] });
 	});
 });
 
@@ -1022,6 +1041,12 @@ describe("when a team project ends for a machine", () => {
 			);
 			expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
 			expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
+			// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
+			expect(await syncState(ben.daemon)).toEqual({ ended: "devosurf", paused: null, held: [] });
+			const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
+				projects: { root: string; ended?: string }[];
+			};
+			expect(listed.projects.find((project) => project.root === ben.root)?.ended).toBe("devosurf");
 			// git is left alone: design/ shows up to be committed if Ben wants it, and nothing was committed for him
 			expect(status(ben.root)).toEqual(expect.arrayContaining(["?? design/frames/home/frame.tsx", "?? spool.json"]));
 			expect(git(ben.root, "rev-list", "--all", "--count").trim()).toBe("0");

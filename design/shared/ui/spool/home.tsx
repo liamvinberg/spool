@@ -351,6 +351,7 @@ function ProjectTile({
 				<span className="pj-opened-time mt-[7px] block text-muted type-detail">
 					{relativeTime(project.openedAt)}
 					{(project.copies ?? 1) > 1 && ` · ${project.copies} copies on this Mac`}
+					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
 				</span>
 			</button>
 			<button

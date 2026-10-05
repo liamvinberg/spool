@@ -201,6 +201,7 @@ import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
+import { SYNC_CHANGED, useSyncState } from "./sync-state";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
@@ -619,6 +620,7 @@ export function ProjectCanvas({
 		[deck.open, turnRunning, queueTurn, sendTurn],
 	);
 	const setAside = useSetAside(project, handSetAside);
+	const syncState = useSyncState(project);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
@@ -3835,9 +3837,10 @@ export function ProjectCanvas({
 						// read back costs a projection read
 						if (event.cover !== undefined) noteCover(event.frame, event.cover);
 						else void refetchFrames();
-					} else if (event.kind === "sync" && event.message !== undefined) {
-						// team sync says what didn't travel, why it paused, or that the project ended here
-						setNotice({ kind: "success", message: event.message });
+					} else if (event.kind === "sync") {
+						// team sync says what didn't travel, why it paused, or that the project ended here: said where
+						// it lasts, and read again from the daemon
+						window.dispatchEvent(new CustomEvent(SYNC_CHANGED));
 					}
 				},
 			},
@@ -6003,6 +6006,7 @@ export function ProjectCanvas({
 				/>
 			)}
 			{setAside.node}
+			{syncState}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

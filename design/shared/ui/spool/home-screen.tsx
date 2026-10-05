@@ -18,6 +18,7 @@ export function SpoolHomeScreen({
 	switcher,
 	invites,
 	team,
+	projects: shown,
 	onGo,
 }: {
 	canvasTarget?: string | undefined;
@@ -33,9 +34,11 @@ export function SpoolHomeScreen({
 	switcher?: React.ReactNode | undefined;
 	invites?: React.ReactNode | undefined;
 	team?: { nav: React.ReactNode; main: React.ReactNode } | undefined;
+	/** The projects Your projects starts with, when a frame draws a state of its own. */
+	projects?: ProjectCard[] | undefined;
 	onGo?: ((target: string) => void) | undefined;
 }) {
-	const [projects, setProjects] = useState(firstLaunch ? [] : homeProjects);
+	const [projects, setProjects] = useState(firstLaunch ? [] : (shown ?? homeProjects));
 	const [location, setLocation] = useState(initialLocation);
 	const [picker, setPicker] = useState(initialPicker);
 	const [removed, setRemoved] = useState<ProjectCard | null>(null);
