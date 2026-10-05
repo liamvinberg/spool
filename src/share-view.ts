@@ -4,6 +4,8 @@
  * team's, or a solo project's own account), shows a set of pages to outsiders, and is either named people, who
  * sign in, or anyone with its link. Pure, so the canvas, the viewer and the daemon spell it alike.
  */
+import { pageName, ROOT_PAGE } from "./page-path";
+
 export type ShareKind = "people" | "link";
 
 export interface ShareView {
@@ -48,6 +50,14 @@ export interface ShareRequest {
 	kind: ShareKind;
 	pages: string[];
 	people?: string[];
+}
+
+/** How a share names the root page, which has no folder to name it. */
+export const TOP_PAGE = "the top page";
+
+/** A shared page as a share's sheet and line say it: its own name, or the top page. */
+export function sharedPageName(page: string): string {
+	return page === ROOT_PAGE ? TOP_PAGE : pageName(page);
 }
 
 /** A person as their address is said aloud: its first part, `kim` for kim.berg@client.com. */

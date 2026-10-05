@@ -135,7 +135,10 @@ function OpenedShare({ share, adding }: { share: ShownShare; adding: string }) {
 	);
 }
 
-/** The sheet a share starts from: who it is for, its pages, and the links that leave them, said and never blocking. */
+/**
+ * The sheet a share starts from: who it is for, its pages (the top page first), and the links that leave them, said
+ * and never blocking.
+ */
 export function ShareSheetCard({
 	pages,
 	chosen,
@@ -176,7 +179,8 @@ export function ShareSheetCard({
 				<div className="flex h-8 items-center rounded-sm border border-text bg-bg px-2 text-text type-detail">{people}</div>
 			</div>
 			<div className="border-border-raised border-b px-5 py-3">
-				{pages.map((page) => (
+				{/* the root page heads the list as the top page: its frames share like any page's */}
+				{["the top page", ...pages].map((page) => (
 					<label key={page} className="flex h-7 items-center gap-2 type-detail">
 						<input type="checkbox" readOnly checked={chosen.includes(page)} className="accent-thread" />
 						<span className={chosen.includes(page) ? "text-text" : "text-muted"}>{page}</span>

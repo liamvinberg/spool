@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { type ProjectShares, personName, type SharesSource, type ShareView, saidAgo, shareWho } from "../share-view";
+import { ROOT_PAGE } from "../page-path";
+import {
+	type ProjectShares,
+	personName,
+	type SharesSource,
+	type ShareView,
+	saidAgo,
+	shareWho,
+	TOP_PAGE,
+} from "../share-view";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
 
@@ -132,7 +141,9 @@ function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean
 		>
 			<KindGlyph kind={share.kind} className="shrink-0 text-muted" />
 			<span className="shrink-0 text-text type-label">{shareWho(share)}</span>
-			<span className="min-w-0 flex-1 truncate text-muted type-detail">{share.pages.join(", ")}</span>
+			<span className="min-w-0 flex-1 truncate text-muted type-detail">
+				{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
+			</span>
 			{manage && (
 				<span className="h-2.5 w-2.5 shrink-0 text-muted">
 					<ChevronIcon />
@@ -175,7 +186,9 @@ function OpenedShare({
 			>
 				<KindGlyph kind={share.kind} className="shrink-0 text-text" />
 				<span className="shrink-0 text-text type-label">{shareWho(share)}</span>
-				<span className="min-w-0 flex-1 truncate text-muted type-detail">{share.pages.join(", ")}</span>
+				<span className="min-w-0 flex-1 truncate text-muted type-detail">
+					{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
+				</span>
 				<span className="h-2.5 w-2.5 shrink-0 rotate-90 text-muted">
 					<ChevronIcon />
 				</span>

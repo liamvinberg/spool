@@ -1798,9 +1798,7 @@ export function CanvasSidebar({
 							shareable={onSharePage !== undefined}
 							onClose={() => setMenu(null)}
 							actions={{
-								share: () => {
-									if (menu.target.kind === "page") onSharePage?.(menu.target.page);
-								},
+								share: () => onSharePage?.(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPageWith: () => {
 									// inside the page holding them: the frames are meant to stay where

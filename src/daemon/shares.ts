@@ -7,6 +7,7 @@ import { writeAtomic } from "../atomic-write";
 import { account, type CloudRequestOptions, CloudSignedOut, cloudOrigin } from "../cloud-auth";
 import { CloudShareRefused, cloudShares, type SharePlace } from "../cloud-shares";
 import { CloudTeamRefused } from "../cloud-teams";
+import { ROOT_PAGE } from "../page-path";
 import type { ProjectShares, ShareRequest } from "../share-view";
 import { localCopyOf } from "../team-project";
 import { FILE_LIMIT_BYTES, travels } from "../team-sync-protocol";
@@ -302,7 +303,7 @@ export async function sharedFiles(
 	const wanted = new Set<string>(["canvas.json"]);
 	const shown = new Set(pages);
 	const frames = projectDesign(designDir, diskDesignFiles)
-		.frames.filter((frame) => frame.page !== undefined && shown.has(frame.page))
+		.frames.filter((frame) => shown.has(frame.page ?? ROOT_PAGE))
 		.map((frame) => frame.name);
 	const sources = new Map<string, string>();
 	for (const frame of frames) {

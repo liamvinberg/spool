@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { Unseen } from "../../daemon/seen";
 import { isFramePath, pageChain, pageName, pageUnder, ROOT_PAGE } from "../../page-path";
-import { saidAgo, saidList } from "../../share-view";
+import { saidAgo, saidList, sharedPageName } from "../../share-view";
 import type { Camera } from "../api";
 import {
 	type Box,
@@ -322,8 +322,10 @@ function ViewerCanvas({
 	const known = useMemo(() => new Set(canvas.pages), [canvas.pages]);
 	const [where, setWhere] = useState(() => locate(config, new URL(window.location.href)));
 	const outsider = project.shared !== undefined;
-	// an outsider has no root page of their own: the canvas opens on the first page shared with them
-	const opening = outsider ? (project.shared?.pages.find((each) => known.has(each)) ?? ROOT_PAGE) : ROOT_PAGE;
+	// an outsider opens on the first page shared with them: the root page's frames only when it is one of them
+	const opening = outsider
+		? (project.shared?.pages.find((each) => each === ROOT_PAGE || known.has(each)) ?? ROOT_PAGE)
+		: ROOT_PAGE;
 	const page = known.has(where.page) ? where.page : opening;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
 	/** The frame the player has open: a save that renames or removes it never closes the player under anyone. */
@@ -806,7 +808,7 @@ function SharedLine({ shared }: { shared: ViewerShared }) {
 			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-border-raised bg-surface text-[9px] text-text">
 				{shared.by[0]?.toUpperCase()}
 			</span>
-			{shared.by} shared {saidList(shared.pages.map(pageName))} with you
+			{shared.by} shared {saidList(shared.pages.map(sharedPageName))} with you
 			{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
 		</span>
 	);

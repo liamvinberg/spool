@@ -14,6 +14,7 @@ import {
 	makeTempDir,
 	until,
 	writeDesignFile,
+	writeFrame,
 	writePageFrame,
 } from "../test-helpers";
 import type { AgentEngine } from "./agent-engine";
@@ -229,6 +230,16 @@ describe("a solo project's share", () => {
 		expect((await daemon.request(`${base}/${id}`, { method: "DELETE" })).status).toBe(200);
 		await until(() => cloud.sources.length === 3, 15_000);
 		expect(cloud.copy()).toEqual({});
+	});
+
+	it("shares the root page's own frames as a page, and none of the pages under it", async () => {
+		const { root } = makeProject(makeTempDir());
+		writeFrame(root, "home", frame("Welcome in"));
+		writePageFrame(root, "checkout", "pay", frame("Pay 640 kr"));
+		const { files, frames } = await sharedFiles(root, realDesignDir(root), [""], "0.0.0-test");
+		expect(frames).toEqual(["home"]);
+		expect([...files.keys()]).toContain("frames/home/frame.tsx");
+		expect([...files.keys()].some((path) => path.startsWith("frames/checkout/"))).toBe(false);
 	});
 
 	it("offers nothing to share while nobody is signed in to spool.page", async () => {

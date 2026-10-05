@@ -29,6 +29,13 @@ describe("sharing a page", () => {
 			);
 		expect(labels(true)).toContain("Share…");
 		expect(labels(false)).not.toContain("Share…");
+		// the root page has no row: it is shared from the rail's own list, the one its new pages start from
+		const root = (shareable: boolean) =>
+			menuEntries({ kind: "empty" }, { ...at, shareable }).some(
+				(entry) => entry.rule !== true && entry.label === "Share…",
+			);
+		expect(root(true)).toBe(true);
+		expect(root(false)).toBe(false);
 		expect(
 			menuEntries({ kind: "frame", name: "checkout/cart" }, { ...at, shareable: true }).some(
 				(entry) => entry.rule !== true && entry.label === "Share…",

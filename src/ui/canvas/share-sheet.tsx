@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pageName, pageParent, ROOT_PAGE } from "../../page-path";
-import type { ShareKind, ShareRequest, ShareView } from "../../share-view";
+import { type ShareKind, type ShareRequest, type ShareView, sharedPageName } from "../../share-view";
 import { cn } from "../cn";
 import { KindGlyph, refusalSaid } from "../shares";
 
@@ -50,7 +50,7 @@ export function ShareSheet({
 	onClose,
 }: {
 	page: string;
-	/** Every named page, as the rail lists them. */
+	/** Every named page, as the rail lists them; the root page is listed first, as the top page. */
 	pages: readonly string[];
 	walks: readonly ShareWalk[];
 	onCreate: (request: ShareRequest) => Promise<{ share: ShareView } | { error: string }>;
@@ -106,7 +106,7 @@ export function ShareSheet({
 			>
 				<div className="flex items-center justify-between border-border-raised border-b px-5 py-4">
 					<h2 id="share-sheet-title" className="font-medium type-title">
-						Share {[...chosen].map(pageName).join(", ") || "pages"}
+						Share {[...chosen].sort().map(sharedPageName).join(", ") || "pages"}
 					</h2>
 					<button type="button" aria-label="Close" className="text-muted hover:text-text" onClick={onClose}>
 						×
@@ -148,7 +148,7 @@ export function ShareSheet({
 						)}
 						<fieldset className="min-h-0 overflow-y-auto border-border-raised border-b px-5 py-3">
 							<legend className="sr-only">Pages</legend>
-							{pages.map((each) => (
+							{[ROOT_PAGE, ...pages].map((each) => (
 								<label key={each} className="flex h-7 cursor-pointer items-center gap-2 type-detail">
 									<input
 										type="checkbox"
@@ -160,7 +160,7 @@ export function ShareSheet({
 										className={chosen.has(each) ? "text-text" : "text-muted"}
 										style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
 									>
-										{pageName(each)}
+										{sharedPageName(each)}
 									</span>
 								</label>
 							))}
@@ -178,20 +178,15 @@ export function ShareSheet({
 									>
 										<span className="min-w-0 flex-1 truncate">
 											{pageName(link.from)} → {pageName(link.to)}
-											<span className="text-muted">
-												{" "}
-												on {link.page === ROOT_PAGE ? "the top page" : pageName(link.page)}
-											</span>
+											<span className="text-muted"> on {sharedPageName(link.page)}</span>
 										</span>
-										{link.page !== ROOT_PAGE && (
-											<button
-												type="button"
-												className="shrink-0 text-muted hover:text-text type-label"
-												onClick={() => toggle(link.page)}
-											>
-												Add {pageName(link.page)}
-											</button>
-										)}
+										<button
+											type="button"
+											className="shrink-0 text-muted hover:text-text type-label"
+											onClick={() => toggle(link.page)}
+										>
+											Add {sharedPageName(link.page)}
+										</button>
 									</p>
 								))}
 							</div>

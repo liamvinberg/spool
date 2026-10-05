@@ -91,6 +91,8 @@ export function menuEntries(
 	if (target.kind === "empty") {
 		return [
 			{ run: "newPage", label: "New page" },
+			// the root page has no row of its own: this list is its, so its frames are shared from here
+			...(at.shareable === true ? [{ run: "share", label: "Share…" } as const] : []),
 			{ run: "paste", label: "Paste", keys: hotkeyKey("sidebar.paste"), off: !at.pasteable },
 			{ rule: true },
 			{ run: "collapseAll", label: "Collapse all" },
