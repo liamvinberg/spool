@@ -32,6 +32,7 @@ export function Home({
 	onSettings,
 	onImport,
 	onExportProject,
+	account,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -44,6 +45,8 @@ export function Home({
 	onSettings: () => void;
 	onImport?: () => void;
 	onExportProject?: (project: ProjectCard) => void;
+	/** This Mac's account, at the foot of the sidebar. */
+	account?: ReactNode;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
@@ -92,7 +95,7 @@ export function Home({
 								Settings
 							</NavigationButton>
 						</nav>
-						<span>On this Mac</span>
+						{account ?? <span>On this Mac</span>}
 					</div>
 				</aside>
 				{loading ? (

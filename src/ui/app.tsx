@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DaemonIdentity, ProjectCard } from "./api";
+import { AccountFoot } from "./account-foot";
+import type { CloudAccountState, DaemonIdentity, ProjectCard } from "./api";
 import {
+	cancelCloudSignIn,
+	fetchCloudAccount,
 	fetchDaemonIdentity,
 	fetchProjects,
 	fetchSession,
@@ -10,6 +13,9 @@ import {
 	putSessionOrder,
 	reloadForNewBundle,
 	renameProject,
+	reopenCloudSignIn,
+	signInCloudAccount,
+	signOutCloudAccount,
 	subscribeSse,
 	trashProject,
 } from "./api";
@@ -62,6 +68,11 @@ export function App() {
 	const [picking, setPicking] = useState<"new" | "folder" | false>(false);
 	const location = useSetting("projects.location");
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
+	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
+	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
+	useEffect(() => {
+		void readAccount();
+	}, [readAccount]);
 	const [renameRequest, setRenameRequest] = useState<{
 		project: TabProject;
 		initialName: string;
@@ -205,6 +216,7 @@ export function App() {
 					// a setting moved somewhere on this machine: every reading is stale,
 					// and a theme has to land on this page without a reload
 					if (event.kind === "settings") return settingsMoved();
+					if (event.kind === "account") return void readAccount();
 					if (
 						event.kind === "project-renamed" &&
 						typeof event.from === "string" &&
@@ -220,7 +232,7 @@ export function App() {
 			// or forgotten in a shell across that gap left no other trace here
 			{ onReconnect: () => void refetch() },
 		);
-	}, [refetch, offerUpdate, remapProject]);
+	}, [refetch, offerUpdate, remapProject, readAccount]);
 
 	const startUpgrade = useCallback(async () => {
 		setToast({ kind: "updating", stage: "installing" });
@@ -509,6 +521,18 @@ export function App() {
 						onForgetProject={(project) => void forgetProject(project)}
 						onTrashProject={setTrashRequest}
 						onRenameProject={(project) => void requestRename(project)}
+						account={
+							<AccountFoot
+								account={account}
+								onSignIn={() => {
+									setAccount({ state: "signing-in" });
+									void signInCloudAccount();
+								}}
+								onReopen={() => void reopenCloudSignIn()}
+								onCancel={() => void cancelCloudSignIn()}
+								onSignOut={() => void signOutCloudAccount().finally(readAccount)}
+							/>
+						}
 					/>
 				) : (
 					<ProjectCanvas

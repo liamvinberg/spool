@@ -2,7 +2,8 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { ProjectCard } from "./api";
+import { AccountFoot } from "./account-foot";
+import type { CloudAccountState, ProjectCard } from "./api";
 import { Home } from "./home";
 import { ProjectPicker } from "./picker";
 
@@ -89,6 +90,59 @@ it("offers rename for a project that already has frames", () => {
 	act(() => button(host, "Rename…").click());
 	expect(callbacks.onRenameProject).toHaveBeenCalledExactlyOnceWith(existing);
 	expect(host.textContent).not.toContain("Rename…");
+});
+
+describe("the account at the foot of Home's sidebar", () => {
+	const foot = (account: CloudAccountState) => {
+		const calls = { onSignIn: vi.fn(), onReopen: vi.fn(), onCancel: vi.fn(), onSignOut: vi.fn() };
+		const host = mount(
+			createElement(Home, {
+				projects: [],
+				...actions(),
+				account: createElement(AccountFoot, { account, ...calls }),
+			}),
+		);
+		return { host, calls };
+	};
+
+	it("offers Sign in while this Mac is signed out", () => {
+		const { host, calls } = foot({ state: "signed-out" });
+		expect(host.querySelector(".pj-navigation-foot")?.textContent).toContain(
+			"Sign in to share links and join a team.",
+		);
+		act(() => button(host, "Sign in").click());
+		expect(calls.onSignIn).toHaveBeenCalledOnce();
+	});
+
+	it("waits for the browser, and opens it again or cancels", () => {
+		const { host, calls } = foot({ state: "signing-in" });
+		expect(host.textContent).toContain("Finish in your browser");
+		act(() => button(host, "Open it again").click());
+		act(() => button(host, "Cancel").click());
+		expect(calls.onReopen).toHaveBeenCalledOnce();
+		expect(calls.onCancel).toHaveBeenCalledOnce();
+	});
+
+	it("shows the account once signed in, with the account page and Sign out of this Mac", () => {
+		const { host, calls } = foot({
+			state: "signed-in",
+			email: "ada@tidemark.app",
+			accountUrl: "https://spool.page/account",
+		});
+		const chip = host.querySelector<HTMLButtonElement>('[aria-label="Signed in as ada@tidemark.app"]');
+		act(() => chip?.click());
+		expect(host.querySelector<HTMLAnchorElement>('a[href="https://spool.page/account"]')?.textContent).toContain(
+			"Passkeys and Macs",
+		);
+		act(() => button(host, "Sign out of this Mac").click());
+		expect(calls.onSignOut).toHaveBeenCalledOnce();
+	});
+
+	it("keeps quiet when spool.page cannot be reached", () => {
+		const { host } = foot({ state: "unreachable" });
+		expect(host.querySelector(".pj-account")).toBeNull();
+		expect(host.textContent).not.toContain("Sign in");
+	});
 });
 
 function button(host: HTMLElement, label: string): HTMLButtonElement {

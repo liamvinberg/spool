@@ -10,6 +10,7 @@ import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
 import type { CanvasPlaces, Place } from "../daemon/canvas-places";
+import type { CloudAccountState } from "../daemon/cloud-account";
 import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
@@ -38,6 +39,7 @@ export type {
 	CanvasOrder,
 	CanvasPlaces,
 	CanvasState,
+	CloudAccountState,
 	Cover,
 	EdgeSite,
 	FlowEdge,
@@ -1518,6 +1520,36 @@ export async function fetchSharingAvailable(): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+/** Who this Mac is signed in to spool.page as; unreachable when the daemon cannot say. */
+export async function fetchCloudAccount(): Promise<CloudAccountState> {
+	try {
+		const response = await client.api.cloud.account.$get();
+		const body: CloudAccountState = response.ok ? await response.json() : { state: "unreachable" };
+		if (body.state === "signed-in") return typeof body.email === "string" ? body : { state: "unreachable" };
+		return ["signed-out", "signing-in"].includes(body.state) ? body : { state: "unreachable" };
+	} catch {
+		return { state: "unreachable" };
+	}
+}
+
+/** Starts the browser handoff; the daemon tells Home how it ends over the app event stream. */
+export async function signInCloudAccount(): Promise<void> {
+	await client.api.cloud.account["sign-in"].$post();
+}
+
+export async function reopenCloudSignIn(): Promise<void> {
+	await client.api.cloud.account.reopen.$post();
+}
+
+export async function cancelCloudSignIn(): Promise<void> {
+	await client.api.cloud.account.cancel.$post();
+}
+
+export async function signOutCloudAccount(): Promise<void> {
+	const response = await client.api.cloud.account["sign-out"].$post();
+	if (!response.ok) throw new Error(await errorText(response));
 }
 
 /** Project transfer uses the same control token as every project lifecycle write. */

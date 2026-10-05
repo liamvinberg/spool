@@ -45,6 +45,7 @@ import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { parsePlaces, writePlaces } from "./canvas-places";
+import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -202,6 +203,8 @@ export interface DaemonOptions {
 	onMachineStateWatchError?: (error: Error) => void;
 	/** Controlled Cloud boundary for daemon publication route tests. */
 	publicationServices?: PublicationJobServices;
+	/** Controlled Cloud boundary for the account at the foot of Home. */
+	cloudAccountServices?: CloudAccountServices;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 }
@@ -433,6 +436,7 @@ export function createDaemonApp({
 	onHistoryNotice,
 	home,
 	publicationServices,
+	cloudAccountServices,
 	booth: boothSeams,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
@@ -826,6 +830,11 @@ export function createDaemonApp({
 		}
 		for (const listener of appListeners) listener(event);
 	};
+	const cloudAccount = createCloudAccount({
+		spoolDir,
+		...(cloudAccountServices === undefined ? {} : { services: cloudAccountServices }),
+		onChange: () => emitAppEvent({ kind: "account" }),
+	});
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
 	history.keeping(registeredRoots());
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
@@ -1286,6 +1295,24 @@ export function createDaemonApp({
 			return c.json({ started: true }, 202);
 		})
 		.get("/api/cloud/session", async (c) => c.json({ available: await publicationJobs.available() }))
+		.get("/api/cloud/account", async (c) => c.json(await cloudAccount.read()))
+		.post("/api/cloud/account/sign-in", async (c) => {
+			cloudAccount.signIn();
+			return c.json(await cloudAccount.read(), 202);
+		})
+		.post("/api/cloud/account/reopen", (c) => c.json({ reopened: cloudAccount.reopen() }))
+		.post("/api/cloud/account/cancel", (c) => {
+			cloudAccount.cancel();
+			return c.body(null, 204);
+		})
+		.post("/api/cloud/account/sign-out", async (c) => {
+			try {
+				await cloudAccount.signOut();
+			} catch (error) {
+				return c.text(error instanceof Error ? error.message : "could not sign out", 503);
+			}
+			return c.json(await cloudAccount.read());
+		})
 		.get("/api/session", (c) => c.json(readSession(spoolDir)))
 		.put(
 			"/api/session",
