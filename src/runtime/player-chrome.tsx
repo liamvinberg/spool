@@ -63,6 +63,7 @@ export function Player({
 	loading = false,
 	publication,
 	onInset,
+	closeLabel = "Close the tab",
 }: {
 	project: string;
 	frames: Record<string, ComponentType>;
@@ -79,6 +80,8 @@ export function Player({
 	 * out under the bar by the page itself.
 	 */
 	onInset?: (px: number) => void;
+	/** What leaving is called: a tab closes, and the read-only canvas in a browser goes back to the canvas. */
+	closeLabel?: string;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
 	const { frame, arrival, externalHref } = controller.read();
@@ -151,6 +154,7 @@ export function Player({
 						away: hidden && !peeked,
 						onHide: hide,
 						onClose: close,
+						closeLabel,
 					}
 				: { desk })}
 		/>
@@ -432,6 +436,7 @@ function TopBar({
 	away,
 	onHide,
 	onClose,
+	closeLabel = "Close the tab",
 }: {
 	project: string;
 	frame: string;
@@ -452,6 +457,7 @@ function TopBar({
 	away?: boolean;
 	onHide?: (hidden: boolean) => void;
 	onClose?: () => void;
+	closeLabel?: string;
 }) {
 	const layout = barLayout(viewport.vw);
 	// Said once and then gone, the way a toast is; pressing reset ends it early
@@ -526,7 +532,7 @@ function TopBar({
 				{desk === undefined && (
 					<>
 						<span className="spool-bar-rule" />
-						<CloseButton label="Close the tab" onClose={onClose ?? (() => {})} />
+						<CloseButton label={closeLabel} onClose={onClose ?? (() => {})} />
 					</>
 				)}
 			</span>
