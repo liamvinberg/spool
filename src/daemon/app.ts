@@ -17,7 +17,7 @@ import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
-import { openProject } from "../open";
+import { fetchLocalCopy, openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
@@ -87,6 +87,7 @@ import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
+import { watchForMoves } from "./moved-in";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
@@ -129,6 +130,7 @@ import {
 } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
+import { teamProjectRoutes } from "./team-projects";
 import { createTeamSync, type OpenSyncSocket } from "./team-sync";
 import {
 	coverSize,
@@ -850,6 +852,7 @@ export function createDaemonApp({
 			history.keeping(registeredRoots());
 			boothKeeping(registeredRoots());
 			teamSync.keeping(registeredRoots());
+			movedIn.keeping(registeredRoots());
 		}
 		for (const listener of appListeners) listener(event);
 	};
@@ -875,6 +878,19 @@ export function createDaemonApp({
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
 	});
 	teamSync.keeping(registeredRoots());
+	// DEV-190: a project a teammate moved into the team arrives here with the move commit's pull, and is refilled
+	const movedIn = watchForMoves({
+		refill: async (root) => {
+			await fetchLocalCopy(root, spoolDir, {
+				origin: teamSyncServices?.origin ?? cloudOrigin(process.env),
+				...(cloudTeamsRequest === undefined ? {} : { request: cloudTeamsRequest }),
+				...(teamSyncServices?.openSocket === undefined ? {} : { openSocket: teamSyncServices.openSocket }),
+			});
+		},
+		arrived: () => teamSync.keeping(registeredRoots()),
+		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
+	});
+	movedIn.keeping(registeredRoots());
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
 		...(machineStateWatchAdapter === undefined ? {} : { adapter: machineStateWatchAdapter }),
 		onError:
@@ -3441,6 +3457,17 @@ export function createDaemonApp({
 		cloudTeamRoutes({ spoolDir, request: cloudTeamsRequest, openSocket: teamSyncServices?.openSocket }),
 	);
 	app.route(
+		"/api/cloud",
+		teamProjectRoutes({
+			spoolDir,
+			request: cloudTeamsRequest,
+			openSocket: teamSyncServices?.openSocket,
+			location: () =>
+				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
+			notice: teamSyncServices?.notice ?? ((message) => console.error(`spool: ${message}`)),
+		}),
+	);
+	app.route(
 		"/api/p",
 		setAsideRoutes({
 			spoolDir,
@@ -3764,6 +3791,7 @@ export function createDaemonApp({
 			machineStateWatch.stop();
 			history.close();
 			teamSync.close();
+			movedIn.close();
 			liveTurns.close();
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			for (const stop of boothWatches.values()) stop();

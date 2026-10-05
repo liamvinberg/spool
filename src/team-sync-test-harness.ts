@@ -49,6 +49,8 @@ interface Project {
 	version: number;
 	/** Every path a local copy asked to have resent. */
 	resent: string[];
+	/** Where its code lives, as `host/path`. */
+	repo: string | null;
 }
 
 interface TeamVersion {
@@ -99,12 +101,28 @@ export function fakeTeam(team = "devosurf") {
 					.map((one) => ({ accountId: one.accountId, email: `${one.accountId}@devosurf.com`, role: one.role })),
 				invites: [],
 			});
-		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?$/u.exec(path);
+		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo)?$/u.exec(path);
 		if (match === null || match[1] !== team || person.role === null)
 			return Response.json({ error: "team_not_found" }, { status: 404 });
-		const described = (name: string) => ({ id: name, name, team, url: `${TEAM_ORIGIN}/${team}/${name}` });
+		const described = (name: string) => ({
+			id: name,
+			name,
+			team,
+			url: `${TEAM_ORIGIN}/${team}/${name}`,
+			repo: project(name)?.repo ?? null,
+		});
+		if (request.method === "GET" && match[2] === undefined)
+			return Response.json({ projects: [...projects.keys()].sort().map(described) });
+		if (request.method === "PUT" && match[3] !== undefined)
+			return request.json().then((body: { repo: string }) => {
+				const found = project(match[2] ?? "");
+				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				if (found === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
+				found.repo = body.repo;
+				return Response.json(described(found.name));
+			});
 		if (request.method === "POST" && match[2] === undefined)
-			return request.json().then((body: { name: string }) => {
+			return request.json().then((body: { name: string; repo?: string }) => {
 				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
 				const name = body.name.toLowerCase();
 				if (projects.has(name)) return Response.json({ error: "project_taken" }, { status: 409 });
@@ -117,6 +135,7 @@ export function fakeTeam(team = "devosurf") {
 					sockets: new Set(),
 					version: 0,
 					resent: [],
+					repo: body.repo ?? null,
 				});
 				return Response.json(described(name), { status: 201 });
 			});
@@ -374,6 +393,8 @@ export function fakeTeam(team = "devosurf") {
 				for (const socket of project.sockets) if (socket.person.accountId === accountId) socket.cut();
 			return () => away.delete(accountId);
 		},
+		/** The repo spool.page has recorded for a project. */
+		repo: (name: string) => project(name)?.repo,
 		/** An admin changes someone's role, or removes them with null; their connections are cut off at once. */
 		role(accountId: string, role: Person["role"]) {
 			for (const person of people.values()) if (person.accountId === accountId) person.role = role;
