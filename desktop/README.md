@@ -35,6 +35,14 @@ when another `spool` is already on the login shell's PATH: someone who
 installed it with npm or pnpm keeps theirs. `spool upgrade` through the app's
 command points at Check for Updates rather than at a package manager.
 
+## The Cloud Account menu
+
+Spool > Cloud Account shows Sign In… when this Mac is signed out, and the
+account's email with Sign Out when it is signed in. It reads the account from the
+daemon (`/api/cloud/account`) and reads it again on each `account` event on the
+daemon's `/api/events` stream, which signing in or out from Home, this menu or
+`spool login`/`logout` all send. Nothing polls.
+
 ## Do not also run `spool autostart`
 
 `spool autostart` installs a launchd job that starts the daemon at login. The app

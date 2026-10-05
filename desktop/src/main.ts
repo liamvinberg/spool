@@ -16,6 +16,7 @@ import {
 	Tray,
 } from "electron";
 import { LINK, launcherPath, linkAsAdministrator, linkDirectly, linkState, otherSpool } from "./cli-link";
+import { accountItems, type CloudAccountState, followAccount } from "./cloud-account";
 import * as daemon from "./daemon";
 import { directoryDialogOptions } from "./directory-dialog";
 import { log, openLog } from "./log";
@@ -183,6 +184,9 @@ let daemonPort: number | undefined;
 let daemonControlToken: string | undefined;
 /** The daemon the window is on: whose it is and which version, for the tray. */
 let daemonInfo: { version: string; adopted: boolean } | undefined;
+/** The account the daemon last answered, for the Cloud Account menu, and the stream that keeps it current. */
+let account: CloudAccountState | undefined;
+let following: { daemon: string; stop(): void } | undefined;
 let shuttingDown = false;
 
 /**
@@ -427,6 +431,7 @@ function point(
 	daemonControlToken = controlToken;
 	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
 	tray?.setContextMenu(buildTrayMenu());
+	follow(new URL(url).origin, controlToken);
 	log("daemon", verdict, `pid=${pid}`, `v${daemonVersion}`, url);
 	// Reopening from the Dock should give back the canvas as it was left, not
 	// reload it out from under whatever was on screen.
@@ -762,10 +767,10 @@ export function buildAppMenu(): Menu {
 				{ label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => sendCanvasCommand("app.settings") },
 				{
 					label: "Cloud Account",
-					submenu: [
-						{ label: "Sign In…", click: () => void cloudAccount("login") },
-						{ label: "Sign Out", click: () => void cloudAccount("logout") },
-					],
+					submenu: accountItems(account, {
+						signIn: () => void cloudAccount("login"),
+						signOut: () => void cloudAccount("logout"),
+					}),
 				},
 				{ label: "Install Command Line Tool…", click: () => void installCommand() },
 				{ type: "separator" },
@@ -1480,6 +1485,23 @@ const RELAUNCH_DEADLINE_MS = 15_000;
  */
 function tell(message: string, detail: string, type: "info" | "warning" | "error"): void {
 	void dialog.showMessageBox({ type, message, detail, buttons: ["OK"] });
+}
+
+/** Keep the Cloud Account menu on the account of the daemon the window is pointed at. */
+function follow(origin: string, controlToken: string): void {
+	const daemon = `${origin} ${controlToken}`;
+	if (following?.daemon === daemon) return;
+	following?.stop();
+	following = {
+		daemon,
+		...followAccount(origin, controlToken, (next) => {
+			if (JSON.stringify(next) === JSON.stringify(account)) return;
+			account = next;
+			// a submenu is fixed once built, so the menu is built again around the account
+			Menu.setApplicationMenu(buildAppMenu());
+			updateCanvasMenu();
+		}),
+	};
 }
 
 async function cloudAccount(command: "login" | "logout"): Promise<void> {
