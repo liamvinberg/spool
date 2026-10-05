@@ -131,7 +131,7 @@ export function Faces({ mates, following, open = false }: { mates: readonly Mate
 	);
 }
 
-function Face({ mate, followed, size = 22 }: { mate: Mate; followed: boolean; size?: number }) {
+export function Face({ mate, followed, size = 22 }: { mate: Mate; followed: boolean; size?: number }) {
 	const away = mate.away !== undefined;
 	return (
 		<span

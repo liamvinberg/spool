@@ -3,6 +3,7 @@ import { cn } from "shared/lib/utils";
 import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/demo/coffee-screens";
 import { ChevronIcon, FolderIcon, SearchIcon } from "shared/ui/spool/icons";
 import { SpoolMark } from "shared/ui/spool/mark";
+import { Face, type Mate } from "shared/ui/spool/presence";
 import { TeamMark } from "shared/ui/spool/teams";
 import { UnseenMark } from "shared/ui/spool/unseen-mark";
 
@@ -12,7 +13,8 @@ import { UnseenMark } from "shared/ui/spool/unseen-mark";
  * the safe areas everything pads by (62 and 34).
  *
  * `navigator` is a team canvas link on a member's phone: recent, the top level's pages with their frame counts
- * and its own frames as covers, and a teammate's save arriving as a toast. `play` is a desktop frame played
+ * and its own frames as covers, and a teammate's save arriving as a toast. Who is in each part shows beside it
+ * (DEV-197): everyone at the top, ana under checkout and inside `cart`, ben and mira under onboarding. `play` is a desktop frame played
  * upright, whole and small, asking for the phone to be turned. `link` is a shared link opened in the phone's
  * browser the first time: the prototype full screen, and the card under it saying how to keep it.
  */
@@ -29,16 +31,20 @@ const RECENT = [
 	{ frame: "receipt", screen: "receipt", by: "ana", ago: "yesterday", page: "checkout", changed: false },
 ] as const;
 
-const PAGES = [
-	{ name: "checkout", count: 6 },
-	{ name: "menu", count: 4 },
-	{ name: "onboarding", count: 9 },
-	{ name: "explore", count: 112 },
-] as const;
+const ANA: Mate = { name: "ana", color: "#7aa7ff" };
+const BEN: Mate = { name: "ben", color: "#eaa94a" };
+const MIRA: Mate = { name: "mira", color: "#4cc495", idle: true };
 
-const COVERS: readonly { name: string; screen: CoffeeScreenName | null }[] = [
+const PAGES: readonly { name: string; count: number; here?: readonly Mate[] }[] = [
+	{ name: "checkout", count: 6, here: [ANA] },
+	{ name: "menu", count: 4 },
+	{ name: "onboarding", count: 9, here: [BEN, MIRA] },
+	{ name: "explore", count: 112 },
+];
+
+const COVERS: readonly { name: string; screen: CoffeeScreenName | null; here?: readonly Mate[] }[] = [
 	{ name: "menu", screen: "menu" },
-	{ name: "cart", screen: "cart" },
+	{ name: "cart", screen: "cart", here: [ANA] },
 	{ name: "receipt", screen: "receipt" },
 	{ name: "landing", screen: null },
 ];
@@ -59,7 +65,10 @@ function Navigator() {
 			<header className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<TeamMark team={TEAM} size={22} />
 				<span className="min-w-0 truncate type-control">kaffe</span>
-				<span className="ml-auto shrink-0 text-muted type-detail">view only</span>
+				<span className="ml-auto flex shrink-0 items-center gap-2.5">
+					<PartFaces mates={[ANA, BEN, MIRA]} />
+					<span className="text-muted type-detail">view only</span>
+				</span>
 			</header>
 			<label className="mx-3 mb-1 flex h-10 shrink-0 items-center gap-2 rounded-md bg-surface px-3">
 				<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
@@ -87,6 +96,7 @@ function Navigator() {
 				{PAGES.map((page) => (
 					<Row key={page.name} icon={<FolderIcon className="h-4 w-4 text-muted" />}>
 						<span className="min-w-0 flex-1 truncate type-value">{page.name}</span>
+						{page.here && <PartFaces mates={page.here} />}
 						<span className="text-muted type-detail">{page.count}</span>
 						<span className="flex h-2.5 w-2.5 shrink-0 text-muted">
 							<ChevronIcon />
@@ -107,6 +117,11 @@ function Navigator() {
 								) : (
 									<span className="absolute top-0 left-0 h-[844px] w-[390px] origin-top-left scale-[0.27]">
 										<CoffeeScreen screen={cover.screen} scale="full" />
+									</span>
+								)}
+								{cover.here && (
+									<span className="absolute right-1 bottom-1">
+										<PartFaces mates={cover.here} />
 									</span>
 								)}
 							</span>
@@ -195,6 +210,19 @@ function SharedLinkScreen() {
 				</span>
 			</div>
 		</div>
+	);
+}
+
+/** Whoever is in one part, as `viewer-presence.tsx` draws them: 18px faces, overlapping. */
+function PartFaces({ mates }: { mates: readonly Mate[] }) {
+	return (
+		<span className="flex shrink-0 items-center">
+			{mates.map((mate, i) => (
+				<span key={mate.name} className="relative h-[18px] shrink-0" style={{ width: i === mates.length - 1 ? 18 : 13, zIndex: mates.length - i }}>
+					<Face mate={mate} followed={false} size={18} />
+				</span>
+			))}
+		</span>
 	);
 }
 

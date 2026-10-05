@@ -3,6 +3,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "shared/lib/utils";
+import { HerePill, type HerePerson } from "./home";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import type { Team } from "./teams";
 
@@ -28,15 +29,26 @@ export const TIDEMARK_AWAY: TeamProjectOnMac[] = [
 ];
 
 /** The team's projects not on this Mac, dimmed, each with "Get it". */
-export function AwayCovers({ projects, onGet }: { projects: readonly TeamProjectOnMac[]; onGet?: (name: string) => void }) {
+export function AwayCovers({
+	projects,
+	onGet,
+	here,
+}: {
+	projects: readonly TeamProjectOnMac[];
+	onGet?: (name: string) => void;
+	here?: Readonly<Record<string, readonly HerePerson[]>> | undefined;
+}) {
 	return (
 		<section className="pj-away mt-[44px]" aria-label="Not on this Mac">
 			<h2 className="mb-[18px] text-muted type-caption">Not on this Mac</h2>
 			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px]">
 				{projects.map((project) => (
 					<article key={project.name} className="pj-away-cover min-w-0">
-						<div className="relative grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-border-raised bg-canvas opacity-60">
-							<span className="px-[18px] text-center text-muted type-detail">{project.repo ?? "no repo linked"}</span>
+						<div className="relative">
+							<div className="grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-border-raised bg-canvas opacity-60">
+								<span className="px-[18px] text-center text-muted type-detail">{project.repo ?? "no repo linked"}</span>
+							</div>
+							<HerePill people={here?.[project.name]} />
 						</div>
 						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
 							<strong className="truncate text-muted type-title font-[500]">{project.name}</strong>

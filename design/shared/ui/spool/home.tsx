@@ -245,7 +245,42 @@ export function Home({
 }
 
 /** The covers, three across, each with its menu: a team's page draws its projects with these too. */
-export function ProjectGrid({ projects, onOpenProject }: { projects: ProjectCard[]; onOpenProject: (project: { root: string; name: string }) => void }) {
+/** Who is inside a team project right now, as `HerePill` in `src/ui/home.tsx` says it on the cover's foot. */
+export interface HerePerson {
+	name: string;
+	color: string;
+}
+
+export function HerePill({ people }: { people: readonly HerePerson[] | undefined }) {
+	if (people === undefined || people.length === 0) return null;
+	return (
+		<span className="pointer-events-none absolute bottom-[10px] left-[10px] z-10 flex items-center gap-[8px] rounded-full bg-bg py-[3px] pr-[10px] pl-[3px] text-text">
+			<span className="flex">
+				{people.slice(0, 4).map((person, i) => (
+					<span
+						key={person.name}
+						className="grid h-[22px] w-[22px] place-items-center rounded-full font-semibold text-[10px] uppercase leading-none"
+						style={{ background: person.color, color: "#0e0e0e", boxShadow: "0 0 0 2px var(--color-bg)", marginLeft: i === 0 ? 0 : -5, zIndex: 4 - i }}
+					>
+						{person.name.charAt(0)}
+					</span>
+				))}
+			</span>
+			<span className="type-detail">{people.length === 1 ? `${people[0]?.name} is here` : `${people.length} here`}</span>
+		</span>
+	);
+}
+
+export function ProjectGrid({
+	projects,
+	onOpenProject,
+	here,
+}: {
+	projects: ProjectCard[];
+	onOpenProject: (project: { root: string; name: string }) => void;
+	/** who is inside each team project, by its name in the team */
+	here?: Readonly<Record<string, readonly HerePerson[]>> | undefined;
+}) {
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
 	return (
 		<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
@@ -253,6 +288,7 @@ export function ProjectGrid({ projects, onOpenProject }: { projects: ProjectCard
 				<ProjectTile
 					key={project.root}
 					project={project}
+					here={project.team === undefined ? undefined : here?.[project.team.project]}
 					menuOpen={menuRoot === project.root}
 					onToggleMenu={() => setMenuRoot(menuRoot === project.root ? null : project.root)}
 					onCloseMenu={() => setMenuRoot(null)}
@@ -266,6 +302,7 @@ export function ProjectGrid({ projects, onOpenProject }: { projects: ProjectCard
 
 function ProjectTile({
 	project,
+	here,
 	menuOpen,
 	onToggleMenu,
 	onCloseMenu,
@@ -273,6 +310,7 @@ function ProjectTile({
 	onForget,
 }: {
 	project: ProjectCard;
+	here?: readonly HerePerson[] | undefined;
 	menuOpen: boolean;
 	onToggleMenu: () => void;
 	onCloseMenu: () => void;
@@ -297,6 +335,7 @@ function ProjectTile({
 							className="h-full w-full object-cover object-top"
 						/>
 					)}
+					<HerePill people={here} />
 					<span className="pj-cover-enter absolute right-[12px] bottom-[12px] grid h-[30px] w-[30px] place-items-center rounded-[6px] border border-border-raised bg-bg text-text opacity-0 [transform:translateX(-3px)] group-focus-visible/cover:opacity-100 group-focus-visible/cover:[transform:none] group-hover/cover:opacity-100 group-hover/cover:[transform:none] motion-reduce:transition-none">
 						<Arrow />
 					</span>

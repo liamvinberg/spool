@@ -17,8 +17,8 @@ export default function Team() {
 				main: (
 					<TeamProjects
 						team={TIDEMARK}
-						covers={<ProjectGrid projects={TIDEMARK_PROJECTS} onOpenProject={() => ui.go("app/spool-canvas")} />}
-						away={<AwayCovers projects={TIDEMARK_AWAY} onGet={() => ui.go("app/spool-home--get-it")} />}
+						covers={<ProjectGrid projects={TIDEMARK_PROJECTS} here={HERE} onOpenProject={() => ui.go("app/spool-canvas")} />}
+						away={<AwayCovers projects={TIDEMARK_AWAY} here={HERE} onGet={() => ui.go("app/spool-home--get-it")} />}
 						onNewProject={() => ui.go("app/spool-home--picker")}
 					/>
 				),
@@ -26,6 +26,15 @@ export default function Team() {
 		/>
 	);
 }
+
+/** Who is inside Tidemark's projects right now (DEV-197): two in the app, and sam in one this Mac doesn't hold. */
+const HERE = {
+	app: [
+		{ name: "ben", color: "#7aa7ff" },
+		{ name: "cleo", color: "#eaa94a" },
+	],
+	onboarding: [{ name: "sam", color: "#4cc495" }],
+};
 
 /** Tidemark's projects on this Mac: the app's checkout and a lane worktree beside it are one cover. */
 const TIDEMARK_PROJECTS = homeProjects.slice(0, 2).map((project, index) => ({
