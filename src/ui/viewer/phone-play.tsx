@@ -160,6 +160,7 @@ export function PhonePlay({
 	};
 	const settle = () => {
 		const el = layer.current;
+		if (iframe.current !== null) iframe.current.style.pointerEvents = "";
 		if (el === null) return;
 		const from = { transform: el.style.transform, borderRadius: el.style.borderRadius };
 		el.style.transform = "";
@@ -225,6 +226,8 @@ export function PhonePlay({
 						onPointerDown={(event) => {
 							event.currentTarget.setPointerCapture(event.pointerId);
 							pulling.current = { x: event.clientX, at: event.timeStamp, far: 0 };
+							// the thumb is the edge's until it lets go: a frame on another origin would take it otherwise
+							if (iframe.current !== null) iframe.current.style.pointerEvents = "none";
 							setHint(false);
 						}}
 						onPointerMove={(event) => {
