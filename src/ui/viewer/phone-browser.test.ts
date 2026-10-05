@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Page, WebSocketRoute } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DesignFrame } from "../../daemon/design-projection";
+import type { PresenceState } from "../../team-sync-protocol";
 import { testBrowser } from "../../test-browser";
 import type { ViewerConfig, ViewerProject } from "./source";
 
@@ -49,6 +50,7 @@ const member: ViewerProject = {
 	canvas: bigCanvas(),
 	frames: FRAMES,
 	live: "/api/live",
+	presence: "/api/presence",
 	role: "viewer",
 	covers: { home: "/covers/home" },
 	recent: [
@@ -119,6 +121,9 @@ interface Opened {
 	page: Page;
 	requests: { method: string; url: string }[];
 	live: () => Promise<WebSocketRoute>;
+	presence: () => Promise<WebSocketRoute>;
+	/** What the phone has said of where its person is. */
+	said: PresenceState[];
 }
 
 /** The canvas on an iPhone-sized touch screen, with its safe areas, at `path` under the page's configuration. */
@@ -147,6 +152,14 @@ async function onPhone(
 	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
 		socket = route;
 		route.send(JSON.stringify({ type: "head", head: 1 }));
+	});
+	let presence: WebSocketRoute | undefined;
+	const said: PresenceState[] = [];
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence`, (route) => {
+		presence = route;
+		route.onMessage((message) => {
+			if (message !== "ping") said.push((JSON.parse(String(message)) as { state: PresenceState }).state);
+		});
 	});
 	if (storage !== undefined)
 		await page.addInitScript((values) => {
@@ -188,6 +201,11 @@ async function onPhone(
 			await expect.poll(() => socket !== undefined).toBe(true);
 			return socket as WebSocketRoute;
 		},
+		presence: async () => {
+			await expect.poll(() => presence !== undefined).toBe(true);
+			return presence as WebSocketRoute;
+		},
+		said,
 	};
 }
 
@@ -387,5 +405,72 @@ describe("a team canvas on a phone", () => {
 		await expect.poll(() => toast.textContent()).toBe("jonas saved menushow");
 		await toast.getByRole("button", { name: "show" }).click();
 		await expect.poll(() => page.frameLocator("[data-phone-frame]").locator("h1").textContent()).toBe("menu");
+	});
+
+	it("shows who is in each part, and is seen on the level it is on and inside the frame it plays", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, presence, said, requests } = await onPhone(PATH, { as: member, config: CANVAS });
+		const pages = page.getByRole("navigation", { name: "Pages" });
+		await pages.waitFor();
+		const room = await presence();
+		const hear = (name: string, state: Partial<PresenceState>) =>
+			room.send(
+				JSON.stringify({
+					type: "presence",
+					person: { accountId: `${name}-id`, name, color: "#4cc495" },
+					state: { page: "", pointer: null, pressed: false, dragging: [], inside: null, view: null, ...state },
+					still: 0,
+				}),
+			);
+		hear("ana", { page: "area-3/part-2/deep", pointer: { x: 10, y: 10 } });
+		hear("mira", { inside: "home" });
+		const part = (where: string) => page.locator(`${where} [data-presence-part]`);
+
+		// everyone at the top, and each where they are: ana under area-3, mira inside home
+		await expect.poll(() => part("header").getAttribute("data-presence-part")).toBe("ana mira");
+		const area = pages.getByRole("button", { name: "area-3", exact: true });
+		await expect.poll(() => area.locator("[data-presence-part]").getAttribute("data-presence-part")).toBe("ana");
+		expect(
+			await pages.getByRole("button", { name: "area-1", exact: true }).locator("[data-presence-part]").count(),
+		).toBe(0);
+		await expect.poll(() => part('[data-navigator-cover="home"]').getAttribute("data-presence-part")).toBe("mira");
+
+		// a level down, ana is in part-2; this phone is seen on the level it opened
+		await area.click();
+		await expect
+			.poll(() =>
+				pages
+					.getByRole("button", { name: "part-2", exact: true })
+					.locator("[data-presence-part]")
+					.getAttribute("data-presence-part"),
+			)
+			.toBe("ana");
+		await expect
+			.poll(() => said.at(-1))
+			.toEqual({
+				page: "area-3",
+				pointer: null,
+				pressed: false,
+				dragging: [],
+				inside: null,
+				view: null,
+			});
+		await page.getByRole("navigation", { name: "Where" }).getByRole("button", { name: "checkout" }).click();
+		await pages.getByRole("button", { name: "Play home" }).last().click();
+		await page.locator("[data-phone-frame]").waitFor();
+		await expect.poll(() => said.at(-1)?.inside).toBe("home");
+
+		// gone, she leaves the parts she was in
+		room.send(
+			JSON.stringify({
+				type: "presence",
+				person: { accountId: "ana-id", name: "ana", color: "#4cc495" },
+				state: null,
+				still: 0,
+			}),
+		);
+		await expect.poll(() => part("header").getAttribute("data-presence-part")).toBe("mira");
+		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
 	});
 });

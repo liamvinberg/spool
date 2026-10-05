@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page, WebSocketRoute } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { PresenceState } from "../../team-sync-protocol";
 import { testBrowser } from "../../test-browser";
 import type { ViewerProject } from "./source";
 
@@ -34,6 +35,7 @@ const project: ViewerProject = {
 	},
 	frames: FRAMES,
 	live: "/api/live",
+	presence: "/api/presence",
 	role: "viewer",
 };
 /** The same project as an editor sees it, with a cover a member's daemon sent for home. */
@@ -123,6 +125,11 @@ interface Opened {
 	requests: { method: string; url: string }[];
 	/** The project's live address, once the canvas has connected to it. */
 	live: () => Promise<WebSocketRoute>;
+	/** The project's presence, once the canvas has joined it, and what the canvas has said there. */
+	presence: () => Promise<WebSocketRoute>;
+	said: PresenceState[];
+	/** Whether the canvas ever connected to presence. */
+	joined: () => boolean;
 	/** Change what the canvas reads next, and what the frames' origin serves. */
 	serve: (next: { project?: ViewerProject; version?: string }) => void;
 }
@@ -146,6 +153,15 @@ async function open(
 	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
 		socket = route;
 		route.send(JSON.stringify({ type: "head", head: 1 }));
+	});
+	let presence: WebSocketRoute | undefined;
+	const said: PresenceState[] = [];
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence`, (route) => {
+		presence = route;
+		route.onMessage((message) => {
+			if (message === "ping") return;
+			said.push((JSON.parse(String(message)) as { state: PresenceState }).state);
+		});
 	});
 	if (session !== undefined)
 		await page.addInitScript((values) => {
@@ -203,6 +219,12 @@ async function open(
 			await expect.poll(() => socket !== undefined).toBe(true);
 			return socket as WebSocketRoute;
 		},
+		presence: async () => {
+			await expect.poll(() => presence !== undefined).toBe(true);
+			return presence as WebSocketRoute;
+		},
+		said,
+		joined: () => presence !== undefined,
 		serve: (next) => {
 			if (next.project !== undefined) reading = next.project;
 			if (next.version !== undefined) version = next.version;
@@ -404,7 +426,8 @@ describe("the read-only canvas", () => {
 	});
 
 	it("shows an outsider only the pages shared with them, one line, and nobody", { timeout: 60_000 }, async () => {
-		const { page, requests } = await open(PATH, { as: outsider });
+		const opened = await open(PATH, { as: outsider });
+		const { page, requests } = opened;
 		// no root page of their own: the canvas opens on the page shared with them
 		await expect
 			.poll(() => page.frameLocator('iframe[title="shop/cart"]').locator("h1").textContent())
@@ -423,8 +446,76 @@ describe("the read-only canvas", () => {
 		await player.frameLocator('iframe[title="shop/cart"]').getByRole("button", { name: "Go to home" }).click();
 		await expect.poll(() => new URL(page.url()).searchParams.get("frame")).toBe("home");
 		expect(await player.locator('iframe[title="home"]').getAttribute("src")).toBe(`${FRAMES}home?play`);
-		// nothing listens to the project's saves for them, and nothing they do sends anything
+		// nothing listens to the project's saves for them, nobody is on their canvas, and nothing they do sends anything
 		expect(requests.some((request) => request.url.includes("/api/live"))).toBe(false);
+		expect(opened.joined()).toBe(false);
+		expect(await page.locator("[data-presence-faces], [data-presence-layer]").count()).toBe(0);
+		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+	});
+
+	it("shows teammates as the Mac's canvas does, and says where this viewer is for them to see", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, presence, said, requests } = await open();
+		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+		const room = await presence();
+		const ana = { accountId: "ana-id", name: "ana", color: "#eaa94a" };
+		const state = (more: Partial<PresenceState> = {}): PresenceState => ({
+			page: "",
+			pointer: { x: 400, y: 300 },
+			pressed: false,
+			dragging: [],
+			inside: null,
+			view: { x: 0, y: 0, w: 1700, h: 600 },
+			...more,
+		});
+		const hear = (more: Partial<PresenceState> | null) =>
+			room.send(
+				JSON.stringify({ type: "presence", person: ana, state: more === null ? null : state(more), still: 0 }),
+			);
+
+		// her pointer and name over home, in her colour, and her face at the top right
+		hear({});
+		const cursor = page.locator('[data-presence-cursor="ana-id"]');
+		await cursor.waitFor({ state: "attached" });
+		const home = await page.locator('[data-viewer-frame="home"]').boundingBox();
+		const pointer = await cursor.locator("div").first().boundingBox();
+		if (home === null || pointer === null) throw new Error("nothing on screen");
+		expect(pointer.x).toBeGreaterThan(home.x);
+		expect(pointer.x).toBeLessThan(home.x + home.width);
+		await page.locator('[data-presence-pill="ana-id"][data-presence-said]').waitFor();
+		expect(await page.locator('[data-presence-face="ana-id"]').count()).toBe(1);
+		// inside menu live, her name docks on its
+		hear({ inside: "menu" });
+		await page.locator('[data-presence-docked="menu"]').waitFor();
+
+		// where this viewer's pointer is, in the canvas's world, and the page they're on
+		const field = await page.locator("[data-viewer-field]").boundingBox();
+		if (field === null) throw new Error("no field");
+		await page.mouse.move(field.x + 300, field.y + 200);
+		await expect.poll(() => said.at(-1)?.pointer).not.toBeNull();
+		expect(said.at(-1)).toMatchObject({ page: "", pressed: false, dragging: [], inside: null });
+		expect(said.at(-1)?.view?.w).toBeGreaterThan(0);
+		// a frame played is the frame they're inside
+		await page.locator('[data-viewer-frame="home"]').click();
+		await expect.poll(() => said.at(-1)?.inside).toBe("home");
+		await page.getByRole("button", { name: "Back to the canvas" }).click();
+		await expect.poll(() => said.at(-1)?.inside).toBeNull();
+
+		// a face pressed follows her: her page, her view, until esc
+		await page.locator('[data-presence-face="ana-id"]').click();
+		await page.locator('[data-presence-following="ana-id"]').waitFor();
+		hear({ page: "shop", inside: null, view: { x: 0, y: 0, w: 390, h: 844 } });
+		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/shop`);
+		await page.keyboard.press("Escape");
+		await page.locator("[data-presence-following]").waitFor({ state: "detached" });
+		expect(new URL(page.url()).pathname).toBe(`${PATH}/shop`);
+
+		// gone, she fades from the canvas and the faces
+		hear(null);
+		await page.locator('[data-presence-face="ana-id"]').waitFor({ state: "detached" });
+		await page.locator('[data-presence-cursor="ana-id"]').waitFor({ state: "detached" });
+		// presence is said over the socket alone: nothing is ever posted
 		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
 	});
 

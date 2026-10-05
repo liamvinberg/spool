@@ -1,5 +1,6 @@
 import type { DesignProjection } from "../../daemon/design-projection";
 import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
+import { type Presence, type PresenceState, readPresenceState } from "../../team-sync-protocol";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -42,6 +43,11 @@ export interface ViewerProject {
 	role?: ViewerRole;
 	/** Where the project's saves are told as they land: a WebSocket address on the page's own origin. */
 	live?: string;
+	/**
+	 * For a member: where who else is on the canvas is heard and where this person is said, a WebSocket address on
+	 * the page's own origin. An outsider has none: they see nobody and are seen by nobody.
+	 */
+	presence?: string;
 	/** Each frame's cover, by its name: an image a member's daemon took, on the page's own origin. */
 	covers?: Record<string, string>;
 	/** Where spool for Mac is got, for whoever has no spool. */
@@ -81,14 +87,17 @@ export type ViewerLive =
 	| { type: "head"; head: number }
 	| { type: "saved"; head: number; by: string; changed: string[]; touched: string[] };
 
-/** How often the live address is told this canvas is still there, so nothing between closes it as idle. */
-const LIVE_PING_MS = 30_000;
+/** How often a socket of the canvas's is told it is still there, so nothing between closes it as idle. */
+const PING_MS = 30_000;
 
 /**
- * Listen to the project's saves for as long as the canvas is open, connecting again with a growing wait when
- * the connection drops. The canvas sends nothing over it but the keepalive: it only hears.
+ * Hold a WebSocket to an address on the page's own origin open for as long as the canvas is, connecting again with
+ * a growing wait when it drops, and saying it is still there every `PING_MS`.
  */
-export function listen(address: string, heard: (message: ViewerLive) => void): () => void {
+function keepOpen(
+	address: string,
+	on: { opened?: (socket: WebSocket) => void; heard: (data: unknown) => void; dropped?: () => void },
+): () => void {
 	const url = new URL(address, window.location.href);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 	let socket: WebSocket | undefined;
@@ -97,18 +106,18 @@ export function listen(address: string, heard: (message: ViewerLive) => void): (
 	let wait = 1000;
 	let stopped = false;
 	const connect = () => {
-		socket = new WebSocket(url);
-		socket.addEventListener("open", () => {
+		const opening = new WebSocket(url);
+		socket = opening;
+		opening.addEventListener("open", () => {
 			wait = 1000;
-			ping = setInterval(() => socket?.send("ping"), LIVE_PING_MS);
+			ping = setInterval(() => opening.send("ping"), PING_MS);
+			on.opened?.(opening);
 		});
-		socket.addEventListener("message", (event) => {
-			const message = readLive(event.data);
-			if (message !== undefined) heard(message);
-		});
-		socket.addEventListener("close", () => {
+		opening.addEventListener("message", (event) => on.heard(event.data));
+		opening.addEventListener("close", () => {
 			clearInterval(ping);
 			if (stopped) return;
+			on.dropped?.();
 			retry = setTimeout(connect, wait);
 			wait = Math.min(wait * 2, 30_000);
 		});
@@ -122,17 +131,84 @@ export function listen(address: string, heard: (message: ViewerLive) => void): (
 	};
 }
 
-function readLive(data: unknown): ViewerLive | undefined {
+/**
+ * Listen to the project's saves for as long as the canvas is open. The canvas sends nothing over it but the
+ * keepalive: it only hears.
+ */
+export function listen(address: string, heard: (message: ViewerLive) => void): () => void {
+	return keepOpen(address, {
+		heard: (data) => {
+			const message = readLive(data);
+			if (message !== undefined) heard(message);
+		},
+	});
+}
+
+/** A member taking part in presence on the canvas: where they are is said with `say`, until `stop`. */
+export interface PresenceLink {
+	say: (state: PresenceState) => void;
+	stop: () => void;
+}
+
+/**
+ * Take part in presence on the project's canvas (DEV-197), as the Mac's canvas does through its daemon: hear where
+ * everyone else is, and say where this person is. A connection that comes back is told who's here afresh, so
+ * `dropped` forgets everyone first, and it is told where this person last was again.
+ */
+export function joinPresence(
+	address: string,
+	on: { heard: (presence: Presence) => void; dropped: () => void },
+): PresenceLink {
+	let open: WebSocket | null = null;
+	let latest: string | null = null;
+	const stop = keepOpen(address, {
+		opened: (socket) => {
+			open = socket;
+			if (latest !== null) socket.send(latest);
+		},
+		heard: (data) => {
+			const presence = readPresence(data);
+			if (presence !== undefined) on.heard(presence);
+		},
+		dropped: () => {
+			open = null;
+			on.dropped();
+		},
+	});
+	return {
+		say: (state) => {
+			latest = JSON.stringify({ type: "presence", state });
+			open?.send(latest);
+		},
+		stop,
+	};
+}
+
+function readPresence(data: unknown): Presence | undefined {
+	const message = readJson(data);
+	if (message?.type !== "presence" || typeof message.still !== "number") return undefined;
+	const person = message.person as Record<string, unknown> | null | undefined;
+	if (typeof person !== "object" || person === null) return undefined;
+	const { accountId, name, color } = person;
+	if (typeof accountId !== "string" || typeof name !== "string" || typeof color !== "string") return undefined;
+	const state = readPresenceState(message.state);
+	if (state === undefined) return undefined;
+	return { type: "presence", person: { accountId, name, color }, state, still: message.still };
+}
+
+function readJson(data: unknown): Record<string, unknown> | undefined {
 	if (typeof data !== "string") return undefined;
-	let value: unknown;
 	try {
-		value = JSON.parse(data);
+		const value: unknown = JSON.parse(data);
+		return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
 	} catch {
 		return undefined;
 	}
-	if (typeof value !== "object" || value === null) return undefined;
-	const message = value as Record<string, unknown>;
-	if (typeof message.head !== "number") return undefined;
+}
+
+function readLive(data: unknown): ViewerLive | undefined {
+	const message = readJson(data);
+	if (message === undefined || typeof message.head !== "number") return undefined;
 	if (message.type === "head") return { type: "head", head: message.head };
 	const names = (list: unknown) =>
 		Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : [];

@@ -5,6 +5,7 @@ import { pageChain, pageName, pageParent, ROOT_PAGE } from "../../page-path";
 import { saidAgo } from "../../share-view";
 import type { Box } from "../canvas/camera";
 import { mergeOrder, mergePageTree } from "../canvas/order";
+import type { PresenceRoom } from "../canvas/presence";
 import { UnseenMark } from "../canvas/unseen-mark";
 import { cn } from "../cn";
 import { ChevronIcon, FolderIcon, FrameIcon, SearchIcon } from "../icons";
@@ -12,6 +13,7 @@ import { TeamMark } from "../teams";
 import { isDesktop } from "./phone";
 import { PhonePlay } from "./phone-play";
 import { address, edits, locate, type ViewerConfig, type ViewerProject } from "./source";
+import { PartFaces, type ViewerPresence } from "./viewer-presence";
 
 /** How many pages and frames find lists at most: enough to jump, never the whole project at once. */
 const FOUND = { pages: 8, frames: 24 };
@@ -28,6 +30,10 @@ export interface NavigatorToast {
  * frame counts, and the open page's frames as covers; above it all, find over page and frame names. A frame plays
  * from its cover, full screen, and a pull from the right edge brings it back. A teammate's save arrives as a toast.
  *
+ * Who is in each part shows beside it (DEV-197): the faces of everyone on the canvas at the top, of whoever is on a
+ * page or under it on its row, and of whoever is inside a frame on its cover. This person is seen on the level they
+ * are on, and inside the frame they play, with no pointer.
+ *
  * The URL follows the level and the played frame as the canvas's does, so back steps up a level or out of play.
  */
 export function Navigator({
@@ -36,12 +42,15 @@ export function Navigator({
 	marks,
 	onSeen,
 	toast,
+	presence,
 }: {
 	config: ViewerConfig;
 	project: ViewerProject;
 	marks: ReadonlyMap<string, Unseen>;
 	onSeen: (frame: string) => void;
 	toast: NavigatorToast | null;
+	/** Who else is on the canvas; null where there is no presence. */
+	presence: ViewerPresence | null;
 }) {
 	const { canvas } = project;
 	const [where, setWhere] = useState(() => locate(config, new URL(window.location.href)));
@@ -86,6 +95,12 @@ export function Navigator({
 		return () => window.removeEventListener("popstate", onPop);
 	}, [config]);
 
+	const say = presence?.say;
+	useEffect(() => {
+		say?.({ page: level, pointer: null, pressed: false, dragging: [], inside: played, view: null });
+	}, [say, level, played]);
+	const room = presence?.room;
+
 	const play = (frame: string) => {
 		onSeen(frame);
 		go({ page: level, frame });
@@ -109,7 +124,10 @@ export function Navigator({
 			<header className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				{project.team !== null && <TeamMark team={project.team} size={22} />}
 				<span className="min-w-0 truncate type-control">{project.project}</span>
-				{!edits(project.role) && <span className="ml-auto shrink-0 text-muted type-detail">view only</span>}
+				<span className="ml-auto flex shrink-0 items-center gap-2.5">
+					{room !== undefined && <PartFaces room={room} part={() => true} />}
+					{!edits(project.role) && <span className="text-muted type-detail">view only</span>}
+				</span>
 			</header>
 			<label className="mx-3 mb-1 flex h-10 shrink-0 items-center gap-2 rounded-md bg-surface px-3">
 				<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
@@ -174,13 +192,14 @@ export function Navigator({
 								icon={<FolderIcon className="h-4 w-4 text-muted" />}
 							>
 								<span className="min-w-0 flex-1 truncate type-value">{pageName(page)}</span>
+								{room !== undefined && <PartFaces room={room} part={(mate) => under(mate.state.page, page)} />}
 								<span className="text-muted type-detail">{totals.get(page) ?? 0}</span>
 								<span className="flex h-2.5 w-2.5 shrink-0 text-muted">
 									<ChevronIcon />
 								</span>
 							</Row>
 						))}
-						<Covers frames={framesOf(level)} covers={covers} marks={marks} onPlay={play} />
+						<Covers frames={framesOf(level)} covers={covers} marks={marks} room={room} onPlay={play} />
 						{(tree.get(level) ?? []).length === 0 && framesOf(level).length === 0 && (
 							<div className="px-4 py-3 text-muted type-detail">nothing on this page yet</div>
 						)}
@@ -223,6 +242,11 @@ export function Navigator({
 			)}
 		</div>
 	);
+}
+
+/** Whether a page is the part named, or inside it. */
+function under(page: string, part: string): boolean {
+	return page === part || page.startsWith(`${part}/`);
 }
 
 /** Where a frame's cover stands in the navigator, when one is in sight. */
@@ -271,11 +295,13 @@ function Covers({
 	frames,
 	covers,
 	marks,
+	room,
 	onPlay,
 }: {
 	frames: readonly DesignFrame[];
 	covers: Record<string, string>;
 	marks: ReadonlyMap<string, Unseen>;
+	room: PresenceRoom | undefined;
 	onPlay: (frame: string) => void;
 }) {
 	if (frames.length === 0) return null;
@@ -307,6 +333,11 @@ function Covers({
 						) : (
 							<span className="absolute inset-0 grid place-items-center text-muted type-detail">
 								{frame.w} × {frame.h}
+							</span>
+						)}
+						{room !== undefined && (
+							<span className="absolute right-1 bottom-1">
+								<PartFaces room={room} part={(mate) => mate.state.inside === frame.name} />
 							</span>
 						)}
 					</span>

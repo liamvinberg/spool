@@ -22,8 +22,12 @@ import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
+import { createPresenceRoom } from "../canvas/presence";
+import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
+import { PresenceLayer } from "../canvas/presence-layer";
 import { contentX, guideX, railRows } from "../canvas/rail-rows";
 import { UnseenMark } from "../canvas/unseen-mark";
+import { useFollow, usePresenceSender } from "../canvas/use-presence";
 import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon, RibbonMark } from "../icons";
@@ -45,6 +49,7 @@ import {
 	viewerShares,
 } from "./source";
 import { ViewerPlayer } from "./viewer-player";
+import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
 
 /**
  * The read-only canvas (DEV-114): the shipped canvas with every authoring
@@ -182,6 +187,7 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 	const [toast, setToast] = useState<(NavigatorToast & { id: number }) | null>(null);
 	const known = useRef(new Set(first.canvas.frames.map((frame) => frame.name)));
 	known.current = new Set(project.canvas.frames.map((frame) => frame.name));
+	const presence = useViewerPresence(first.presence);
 
 	useEffect(() => {
 		let head: number | undefined;
@@ -255,11 +261,15 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 		[],
 	);
 
-	if (phone) return <Navigator config={config} project={project} marks={marks} onSeen={seen} toast={toast} />;
+	if (phone)
+		return (
+			<Navigator config={config} project={project} marks={marks} onSeen={seen} toast={toast} presence={presence} />
+		);
 	return (
 		<ViewerCanvas
 			config={config}
 			project={project}
+			presence={presence}
 			revisions={revisions}
 			marks={marks}
 			onSeen={seen}
@@ -290,6 +300,7 @@ const EMPTY_CAMERA: Camera = { x: 0, y: 0, k: 1 };
 function ViewerCanvas({
 	config,
 	project,
+	presence,
 	revisions,
 	marks,
 	onSeen,
@@ -298,6 +309,8 @@ function ViewerCanvas({
 }: {
 	config: ViewerConfig;
 	project: ViewerProject;
+	/** Who else is on the canvas, for a member; null for an outsider, who sees nobody. */
+	presence: ViewerPresence | null;
 	revisions: ReadonlyMap<string, number>;
 	marks: ReadonlyMap<string, Unseen>;
 	/** A frame was played: its mark has been seen. */
@@ -458,6 +471,33 @@ function ViewerCanvas({
 		if (at !== null) camera.fly(zoomAt(at, size.w / 2, size.h / 2, factor));
 	};
 
+	// --- presence (DEV-197): seen and seeing as on the Mac; a frame played is the frame they're inside
+	const [following, setFollowing] = useState<string | null>(null);
+	const room = presence?.room;
+	usePresenceSender({
+		send: presence?.say ?? NOBODY,
+		team: presence !== null,
+		camera,
+		viewportRef: viewport,
+		page,
+		inside: played,
+		dragging: NOTHING_DRAGGED,
+	});
+	useFollow({
+		room: room ?? EMPTY_ROOM,
+		following,
+		stop: () => setFollowing(null),
+		camera,
+		viewportRef: viewport,
+		page,
+		goToPage: (next) => {
+			if (next !== ROOT_PAGE && !known.has(next)) return false;
+			if (next !== page) go({ page: next, frame: null });
+			return true;
+		},
+	});
+	const followed = following === null ? undefined : room?.get(following);
+
 	return (
 		<div className="flex h-dvh select-none overflow-hidden bg-bg text-text">
 			<PagesRail
@@ -520,11 +560,16 @@ function ViewerCanvas({
 							nothing on this page yet
 						</div>
 					)}
+					{room !== undefined && <PresenceLayer room={room} camera={camera} frames={frames} page={page} />}
 				</div>
+				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
 					{project.shared !== undefined && <SharedLine shared={project.shared} />}
 					{project.shares !== undefined && <ProjectShared address={project.shares} manage={edits(project.role)} />}
 					{edits(project.role) && <OpenInSpool project={project} onNotice={onNotice} />}
+					{room !== undefined && (
+						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
+					)}
 				</div>
 				{toast !== null && (
 					<div
@@ -584,6 +629,11 @@ function ViewerCanvas({
 		</div>
 	);
 }
+
+/** Presence's stand-ins where there is none: nothing is said, nobody is followed, and a viewer drags nothing. */
+const NOBODY = () => {};
+const EMPTY_ROOM = createPresenceRoom();
+const NOTHING_DRAGGED = () => [];
 
 /** The frames' world, moved by the camera alone: a pan or a zoom renders nothing. */
 function CameraField({ camera, children }: { camera: CameraStore; children: ReactNode }) {
