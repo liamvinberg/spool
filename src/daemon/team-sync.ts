@@ -376,8 +376,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const restore = (path: string, bytes: Buffer | undefined) => {
 		if (vanished())
 			// everything the folder held comes back, not only what the watcher has named so far
-			for (const [held, file] of Object.entries(state.files))
-				if (file.hash !== null && readLocal(held) === undefined) restoring.add(held);
+			for (const [missing, file] of Object.entries(state.files))
+				if (file.hash !== null && readLocal(missing) === undefined) restoring.add(missing);
 		const known = state.files[path];
 		if (known === undefined || known.hash === null) {
 			if (bytes !== undefined) hold(path, GIT_ONLY);
