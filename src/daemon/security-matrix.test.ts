@@ -188,7 +188,9 @@ describe("daemon authority matrix", () => {
 			expect((await health("https://beta.spool.page")).headers.get("access-control-allow-origin")).toBeNull();
 
 			vi.stubEnv("SPOOL_CLOUD_ORIGIN", "https://beta.spool.page");
-			onTestFinished(() => vi.unstubAllEnvs());
+			onTestFinished(() => {
+				vi.unstubAllEnvs();
+			});
 			const response = await health("https://beta.spool.page");
 
 			expect(response.headers.get("access-control-allow-origin")).toBe("https://beta.spool.page");
