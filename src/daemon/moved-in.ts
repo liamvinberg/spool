@@ -1,7 +1,7 @@
 import { existsSync, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { isTeamProject, PROJECT_LINK } from "../team-project";
-import { watchFolder } from "./watch-tree";
+import { rescanAfterWatchStarts, watchFolder } from "./watch-tree";
 
 /**
  * A teammate's project moved into its team (DEV-190), seen from this Mac: pulling the move commit takes `design/` out
@@ -21,6 +21,10 @@ export function watchForMoves(deps: {
 	const refilling = new Set<string>();
 	const settling = new Map<string, NodeJS.Timeout>();
 	let closed = false;
+	// a spool.json git laid down while macOS's folder events restarted for another watch is looked for by hand
+	const gaps = rescanAfterWatchStarts(() => {
+		for (const root of watched.keys()) look(root);
+	});
 
 	const look = (root: string) => {
 		if (closed || !isTeamProject(root)) return;
@@ -77,6 +81,7 @@ export function watchForMoves(deps: {
 		},
 		close(): void {
 			closed = true;
+			gaps.close();
 			for (const watcher of watched.values()) watcher.close();
 			watched.clear();
 			for (const timer of settling.values()) clearTimeout(timer);

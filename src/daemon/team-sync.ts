@@ -28,7 +28,7 @@ import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
-import { onWatchStart, type TreeWatch, watchTree } from "./watch-tree";
+import { rescanAfterWatchStarts, type TreeWatch, watchTree } from "./watch-tree";
 
 /**
  * The daemon's half of team sync: one connection per local copy to the team project's sync object at
@@ -138,12 +138,6 @@ const PING_MS = 30_000;
 const TURN_SETTLE_MS = 500;
 /** The longest git may hold its index lock before what it left is looked at anyway: a crashed git leaves one. */
 const GIT_WAIT_MS = 10_000;
-/**
- * When design/ is looked at again after a folder watch starts anywhere in the daemon, for what macOS's restarted
- * stream of folder events dropped meanwhile; and how long before the start a change counts as maybe dropped.
- */
-const RESCANS_AFTER_WATCH_MS = [250, 1_000, 3_000];
-const WATCH_GAP_SLACK_MS = 1_000;
 
 /** A local copy kept in step with its team for as long as the daemon runs: it reconnects, and follows the folder. */
 export function followLocalCopy(options: LocalCopyOptions): LocalCopy {
@@ -443,31 +437,18 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		for (const path of new Set([...filesUnder(designDir, ""), ...Object.keys(state.files)])) check(path);
 	};
 
-	// --- a folder watch started somewhere in the daemon: what changed in the gap it made is looked for by hand ---
-
-	let rescans: NodeJS.Timeout[] = [];
-	/** The earliest a change the gap may have dropped could have been made. */
-	let gapSince: number | undefined;
-
-	/** Look again, briefly, at every file changed since the gap opened and every known path gone from disk. */
-	const rescanSoon = () => {
-		gapSince ??= Date.now() - WATCH_GAP_SLACK_MS;
-		for (const timer of rescans) clearTimeout(timer);
-		rescans = RESCANS_AFTER_WATCH_MS.map((ms, at) => {
-			const timer = setTimeout(() => {
-				const since = gapSince ?? 0;
-				if (at === RESCANS_AFTER_WATCH_MS.length - 1) gapSince = undefined;
-				// before it is caught up, the catch-up itself looks at everything
+	/**
+	 * A folder watch started somewhere in the daemon, and macOS may have dropped a save meanwhile: every file changed
+	 * since then is looked at, and every known path gone from disk. Before it is caught up, the catch-up does it all.
+	 */
+	const gaps = live
+		? rescanAfterWatchStarts((since) => {
 				if (closed || !caughtUp) return;
 				for (const path of filesUnder(designDir, "")) if ((statOf(path)?.mtimeMs ?? 0) >= since) check(path);
 				for (const path of Object.keys(state.files)) if (statOf(path) === undefined) check(path);
 				wake();
-			}, ms);
-			timer.unref?.();
-			return timer;
-		});
-	};
-	const stopHearingWatches = live ? onWatchStart(rescanSoon) : () => {};
+			})
+		: undefined;
 
 	/** What a watcher event names: the path itself, everything under it if it is a folder, and anything that was. */
 	const checkChanged = () => {
@@ -720,8 +701,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (ping !== undefined) clearInterval(ping);
 			if (gitWait !== undefined) clearTimeout(gitWait);
 			if (asking !== undefined) clearImmediate(asking);
-			for (const timer of rescans) clearTimeout(timer);
-			stopHearingWatches();
+			gaps?.close();
 			// when this copy stopped watching: whatever git does from now is checked when it is followed again
 			if (watching) persist();
 			guard.close();

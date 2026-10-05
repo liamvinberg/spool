@@ -25,14 +25,39 @@ export interface TreeWatch {
 /** Who is told each time this process starts a folder watch. */
 const starting = new Set<() => void>();
 
+/** When to look again after a folder watch starts, and how long before the start a change counts as maybe dropped. */
+const RESCANS_AFTER_WATCH_MS = [250, 1_000, 3_000];
+const WATCH_GAP_SLACK_MS = 1_000;
+
 /**
- * Hear every folder watch this process starts from now on. macOS gives a process one stream of folder events for all
- * of its watches and starts that stream again for each new one, and what lands in the gap is announced to none of
- * them: whoever must not miss a change looks again once a watch has started. Returns the unsubscribe.
+ * Look again, briefly, every time this process starts a folder watch. macOS gives a process one stream of folder
+ * events for all of its watches and starts that stream again for each new one, and what lands in the gap is
+ * announced to none of them: whoever must not miss a change is handed `since`, the earliest a dropped change could
+ * have been made, a few times over the seconds after the latest start.
  */
-export function onWatchStart(listener: () => void): () => void {
-	starting.add(listener);
-	return () => starting.delete(listener);
+export function rescanAfterWatchStarts(rescan: (since: number) => void): { close(): void } {
+	let timers: NodeJS.Timeout[] = [];
+	let since: number | undefined;
+	const started = () => {
+		since ??= Date.now() - WATCH_GAP_SLACK_MS;
+		for (const timer of timers) clearTimeout(timer);
+		timers = RESCANS_AFTER_WATCH_MS.map((ms, at) => {
+			const timer = setTimeout(() => {
+				const from = since ?? 0;
+				if (at === RESCANS_AFTER_WATCH_MS.length - 1) since = undefined;
+				rescan(from);
+			}, ms);
+			timer.unref?.();
+			return timer;
+		});
+	};
+	starting.add(started);
+	return {
+		close: () => {
+			starting.delete(started);
+			for (const timer of timers) clearTimeout(timer);
+		},
+	};
 }
 
 /** `fs.watch` on a folder, and every listener for a watch starting told. Every folder watch the daemon opens is one. */
