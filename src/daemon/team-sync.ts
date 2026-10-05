@@ -114,6 +114,8 @@ export interface LocalCopy {
 	close(): void;
 }
 
+/** Why a file git put in design/ that the team doesn't have stays on this machine. */
+const GIT_ONLY = "git put it here and your team doesn't have it; edit it to send it";
 /** Why a file outside the layout stays on the machine that wrote it. */
 const OUTSIDE_LAYOUT = "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync";
 /** How sync says each limit it paused on. */
@@ -174,6 +176,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const designDir = realDesignDir(options.root);
 	const stateFile = join(designDir, ".spool", "sync.json");
 	const state = readState(stateFile, link.url);
+	/**
+	 * A copy with no record of the team yet holds only its person's own work, as a move does: what git tracks in a
+	 * teammate's `design/` after a pull of the move commit that had to merge is frames they made, which go up.
+	 */
+	let ownWork = Object.keys(state.files).length === 0;
 
 	let closed = false;
 	let socket: SyncSocket | undefined;
@@ -342,13 +349,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (writing(path)) return;
 		const why = stays(path);
 		if (why !== undefined) return hold(path, why);
-		held.delete(path);
 		const bytes = readLocal(path);
 		const hash = bytes === undefined ? null : digest(bytes);
 		const known = state.files[path];
-		if (hash === (known?.hash ?? null)) return;
-		if (gitWrote(path, bytes)) return restore(path, bytes);
-		send(path, bytes);
+		if (hash !== (known?.hash ?? null) && gitWrote(path, bytes)) return restore(path, bytes);
+		held.delete(path);
+		if (hash !== (known?.hash ?? null)) send(path, bytes);
 	};
 
 	// --- the git guard: what git writes into design/ never goes up; the team's version comes back over it ---
@@ -367,9 +373,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	/** Git's doing, or a folder that vanished: neither is a save. */
 	const gitWrote = (path: string, bytes: Buffer | undefined) =>
-		(bytes === undefined && vanished()) || guard.wrote(path, bytes);
+		(bytes === undefined && vanished()) || (!ownWork && guard.wrote(path, bytes));
 
-	/** Put the team's version back: ask for its bytes, or take away a file the team doesn't have. */
+	/**
+	 * Put the team's version back: ask for its bytes. A file the team doesn't have is left as git left it and never
+	 * sent: whatever git wrote is in git, but it is never deleted on git's word, since that word can be wrong.
+	 */
 	const restore = (path: string, bytes: Buffer | undefined) => {
 		if (vanished())
 			// everything the folder held comes back, not only what the watcher has named so far
@@ -377,10 +386,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				if (file.hash !== null && readLocal(held) === undefined) restoring.add(held);
 		const known = state.files[path];
 		if (known === undefined || known.hash === null) {
-			if (bytes === undefined) return;
-			const target = join(designDir, ...path.split("/"));
-			rmSync(target, { force: true });
-			pruneEmpty(designDir, dirname(target));
+			if (bytes !== undefined) hold(path, GIT_ONLY);
 			return;
 		}
 		// a folder taken away whole takes its .gitignore with it, and the refill must stay out of git too
@@ -537,6 +543,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			toldSignedOut = false;
 			retryMs = RECONNECT_MIN_MS;
 			checkEverything();
+			ownWork = false;
 			// what git did while nobody watched has been put back; from here the guard sees git as it goes
 			if (live && !watching) {
 				watching = true;

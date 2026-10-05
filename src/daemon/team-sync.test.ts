@@ -764,8 +764,8 @@ function commitFiles(root: string, files: Record<string, string>, parent?: strin
 }
 
 describe("the git guard", () => {
-	it("puts the team's version back over an old branch's design/, and sends teammates nothing", async () => {
-		const { cloud, ana, ben } = await twoEditors();
+	it("puts the team's version back over an old branch's design/, sends teammates nothing, and deletes nothing", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
 		writeFrame(ana.root, "home", "team's home\n");
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
 		git(ben.root, "add", "spool.json");
@@ -784,7 +784,9 @@ describe("the git guard", () => {
 
 		await until(() => read(ben.root, "frames/home/frame.tsx").toString() === "team's home\n");
 		await until(() => read(ben.root, "canvas.json").toString() === canvas);
-		await until(() => !existsSync(join(ben.root, "design/frames/legacy")));
+		// a file the team never had stays as git left it, unsent, and Ben is told once
+		await until(() => said.ben.some((message) => message.startsWith("frames/legacy/frame.tsx didn't travel: git")));
+		expect(read(ben.root, "frames/legacy/frame.tsx").toString()).toBe("legacy\n");
 		await new Promise((wake) => setTimeout(wake, 300));
 		expect(cloud.saves("checkout").length).toBe(saves);
 		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("team's home\n");
@@ -798,6 +800,7 @@ describe("the git guard", () => {
 		// and a save after it, made by a person, still travels
 		writeFrame(ben.root, "home", "ben's home\n");
 		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
+		expect(said.ben.filter((message) => message.startsWith("frames/legacy"))).toHaveLength(1);
 	});
 
 	it("keeps syncing while a pre-team branch is out, keeps no history there, and sends nothing git did", async () => {

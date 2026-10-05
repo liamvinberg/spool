@@ -362,6 +362,47 @@ describe("Move to team", () => {
 		await until(() => text(project.root, "frames/from-ben/frame.tsx") !== undefined, 10_000);
 	});
 
+	it("sends a teammate's own new frames to the team when their branch had diverged from the move", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		const benRoot = realpathSync(join(makeTempDir()));
+		git(benRoot, "clone", "--quiet", project.remote, "site");
+		const ben = join(benRoot, "site");
+		const benState = join(makeTempDir(), ".spool");
+		openProject(ben, benState);
+		const benMachine = cloud.machine("ben");
+		makeApp(benState, {
+			teamSyncServices: { ...benMachine.services, notice: () => {} },
+			cloudTeamsRequest: benMachine.request,
+		});
+		// Ben's own work, committed on his branch as his history does, before he hears of the move
+		writeFrame(ben, "bens", "export default () => <h1>Ben's</h1>;\n");
+		git(ben, "add", "design");
+		git(ben, "commit", "--quiet", "-m", "design: 1 new");
+		const anaDaemon = makeApp(project.state, {
+			teamSyncServices: { ...ana.services, notice: () => {} },
+			cloudTeamsRequest: ana.request,
+		});
+		await anaDaemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		git(project.root, "push", "--quiet", "pushed", "main");
+
+		// the pull is a merge: the move takes design/ out of git, and Ben's new frame stays tracked
+		git(ben, "pull", "--quiet", "--no-rebase", "--no-edit", "origin", "main");
+		await until(() => cloud.file("site", "frames/bens/frame.tsx")?.includes("Ben's") === true, 10_000);
+		await until(() => text(project.root, "frames/bens/frame.tsx")?.includes("Ben's") === true, 10_000);
+		expect(text(ben, "frames/bens/frame.tsx")).toContain("Ben's");
+		expect(text(ben, "frames/home/frame.tsx")).toContain("Home");
+		expect(cloud.file("site", "frames/home/frame.tsx")).toContain("Home");
+		expect(cloud.saves("site").filter((save) => save.by === "ben" && save.deleted)).toEqual([]);
+	});
+
 	it("refills a teammate whose spool was off when they pulled the move, at its next start, sending no delete", {
 		timeout: 30_000,
 	}, async () => {
