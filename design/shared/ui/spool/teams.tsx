@@ -180,14 +180,19 @@ export function TeamNav({ team, page, onPage }: { team: Team; page: TeamPage; on
 	);
 }
 
-export function TeamProjects({ team, notice }: { team: Team; notice?: ReactNode }) {
+/** A team's projects on this Mac, one cover per team project however many local copies it has, and New project in the team. */
+export function TeamProjects({ team, notice, covers, onNewProject }: { team: Team; notice?: ReactNode; covers?: ReactNode; onNewProject?: () => void }) {
 	return (
 		<>
-			<header className="pj-heading mb-[31px] flex h-[35px] items-center">
+			<header className="pj-heading mb-[31px] flex h-[35px] items-center justify-between gap-[25px]">
 				<h1 className="type-page font-medium">Projects</h1>
+				<button type="button" className={cn("home-action home-action-primary h-[35px]", HOME_ACTION_PRIMARY)} onClick={onNewProject}>
+					<PlusIcon className="h-[10px] w-[10px]" />
+					New project…
+				</button>
 			</header>
 			{notice}
-			<EmptyState className="min-h-[420px] p-[35px] [&>p]:mt-0" icon={<EmptyFramesIcon />} title={`${team.name} has no projects yet`} />
+			{covers ?? <EmptyState className="min-h-[420px] p-[35px] [&>p]:mt-0" icon={<EmptyFramesIcon />} title={`${team.name} has no projects on this Mac yet`} />}
 		</>
 	);
 }

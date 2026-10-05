@@ -244,6 +244,26 @@ export function Home({
 	);
 }
 
+/** The covers, three across, each with its menu: a team's page draws its projects with these too. */
+export function ProjectGrid({ projects, onOpenProject }: { projects: ProjectCard[]; onOpenProject: (project: { root: string; name: string }) => void }) {
+	const [menuRoot, setMenuRoot] = useState<string | null>(null);
+	return (
+		<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
+			{projects.map((project) => (
+				<ProjectTile
+					key={project.root}
+					project={project}
+					menuOpen={menuRoot === project.root}
+					onToggleMenu={() => setMenuRoot(menuRoot === project.root ? null : project.root)}
+					onCloseMenu={() => setMenuRoot(null)}
+					onOpen={() => onOpenProject(project)}
+					onForget={() => {}}
+				/>
+			))}
+		</div>
+	);
+}
+
 function ProjectTile({
 	project,
 	menuOpen,
@@ -289,7 +309,10 @@ function ProjectTile({
 							: "no frames yet"}
 					</span>
 				</div>
-				<span className="pj-opened-time mt-[7px] block text-muted type-detail">{relativeTime(project.openedAt)}</span>
+				<span className="pj-opened-time mt-[7px] block text-muted type-detail">
+					{relativeTime(project.openedAt)}
+					{(project.copies ?? 1) > 1 && ` · ${project.copies} copies on this Mac`}
+				</span>
 			</button>
 			<button
 				type="button"

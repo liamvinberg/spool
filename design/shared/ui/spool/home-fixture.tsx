@@ -7,6 +7,8 @@ export interface ProjectCard {
 	openedAt: string;
 	frameCount: number;
 	covers: { frame: string; cover: { hash: Artwork } }[];
+	/** A team project's local copies on this Mac, all under its one cover. */
+	copies?: number;
 }
 
 export const homeProjects: ProjectCard[] = projects.map((project, index) => ({
