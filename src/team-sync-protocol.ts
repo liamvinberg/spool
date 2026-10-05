@@ -81,6 +81,8 @@ export interface SetAside {
 	path: string;
 	/** The team's version, which stands. */
 	version: Version;
+	/** Whose save stands, and from which machine. */
+	by: { accountId: string; device: string };
 }
 
 /** Object → daemon: a save that can't be taken at all, such as a path outside the layout. */
@@ -144,4 +146,84 @@ export function travels(path: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/*
+ * Collisions. First to reach the team stands and a later save built on an older version is set aside, with two
+ * exceptions: an edit beats a delete, and canvas.json is merged key by key instead of colliding.
+ */
+
+/**
+ * Object → the daemons of the machine whose delete was undone: a teammate's edit, built on a version from before
+ * the delete, reached the team after it, and an edit beats a delete. The file itself comes back to everyone as an
+ * ordinary `file`; this tells the machine that deleted it why. A machine that was away is told when it catches up.
+ */
+export interface Restored {
+	type: "restored";
+	path: string;
+	/** The team version the edit made. */
+	version: Version;
+	by: { accountId: string; device: string };
+}
+
+/** The one file that never collides. */
+export const CANVAS_PATH = "canvas.json";
+
+/** canvas.json's keys whose own keys are merged one at a time: each page's place. */
+const MERGED_PER_ENTRY = new Set(["places"]);
+
+/**
+ * canvas.json as it is once a save built on `base` meets the team's version: each top-level key, and each page's
+ * place, is taken from the save where the save changed it from `base` and from the team's version otherwise, so
+ * the last write to each key wins. Null when the team's version or the save isn't a JSON object, which then
+ * collides like any other file. A base the team no longer has, or never had, counts as empty.
+ */
+export function mergeCanvas(base: Uint8Array | null, team: Uint8Array, mine: Uint8Array): Uint8Array | null {
+	const theirs = canvasObject(team);
+	const ours = canvasObject(mine);
+	if (theirs === null || ours === null) return null;
+	const was = (base === null ? null : canvasObject(base)) ?? {};
+	const merged = mergeKeys(was, theirs, ours, (key, before, after, now) =>
+		MERGED_PER_ENTRY.has(key) ? mergeEntries(before, after, now) : after,
+	);
+	return new TextEncoder().encode(`${JSON.stringify(merged, null, "\t")}\n`);
+}
+
+type Entries = Record<string, unknown>;
+
+/** Every key the save changed from its base, taken onto the team's version; `take` says what a changed key becomes. */
+function mergeKeys(
+	was: Entries,
+	theirs: Entries,
+	ours: Entries,
+	take: (key: string, before: unknown, after: unknown, now: unknown) => unknown,
+): Entries {
+	const merged: Entries = { ...theirs };
+	for (const key of new Set([...Object.keys(was), ...Object.keys(ours)])) {
+		if (JSON.stringify(ours[key]) === JSON.stringify(was[key])) continue;
+		const value = take(key, was[key], ours[key], theirs[key]);
+		if (value === undefined) delete merged[key];
+		else merged[key] = value;
+	}
+	return merged;
+}
+
+/** One map of entries merged entry by entry; a map left empty is no key at all, as canvas.json writes it. */
+function mergeEntries(before: unknown, after: unknown, now: unknown): unknown {
+	if (after !== undefined && !isRecord(after)) return after;
+	const merged = mergeKeys(entries(before), entries(now), entries(after), (_key, _before, value) => value);
+	return Object.keys(merged).length === 0 ? undefined : merged;
+}
+
+function entries(value: unknown): Entries {
+	return isRecord(value) ? value : {};
+}
+
+function canvasObject(bytes: Uint8Array): Entries | null {
+	try {
+		const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
 }
