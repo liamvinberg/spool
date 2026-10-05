@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { WebSocket } from "undici";
@@ -9,6 +9,7 @@ import { isTeamProject, type ProjectLink, readProjectLink } from "../team-projec
 import { decodeFrame, encodeFrame, PROTOCOL_VERSION, travels } from "../team-sync-protocol";
 import { FORMAT_VERSION } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
+import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
 import { type TreeWatch, watchTree } from "./watch-tree";
 
 /**
@@ -53,6 +54,8 @@ export interface LocalCopyOptions {
 	vault: Pick<CloudVault, "read">;
 	openSocket?: OpenSyncSocket;
 	notice?: (message: string) => void;
+	/** This copy's set-aside marks changed: one of its saves lost a collision, or a mark went. */
+	onMarks?: () => void;
 }
 
 export interface LocalCopy {
@@ -111,8 +114,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let retry: NodeJS.Timeout | undefined;
 	let ping: NodeJS.Timeout | undefined;
 	let refs = 0;
-	/** Saves sent and not yet answered, by their ref. */
-	const inflight = new Map<string, { path: string; hash: string | null }>();
+	/** Saves sent and not yet answered, by their ref, with the bytes a set-aside mark keeps. */
+	const inflight = new Map<string, { path: string; hash: string | null; bytes: Buffer | undefined; batch: string }>();
+	/** While a connection catches up, everything it sets aside arrives together, as one batch. */
+	let burst: string | undefined;
 	/** Paths that changed again while their last save was in flight. */
 	const dirty = new Set<string>();
 	/** Paths whose save was set aside: the team's version that follows overwrites what is here. */
@@ -144,7 +149,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (socket === undefined) return;
 		const ref = String(++refs);
 		const hash = bytes === undefined ? null : digest(bytes);
-		inflight.set(ref, { path, hash });
+		inflight.set(ref, { path, hash, bytes, batch: burst ?? randomUUID() });
 		socket.send(
 			encodeFrame(
 				{ type: "save", ref, path, base: state.files[path]?.version ?? null, deleted: bytes === undefined },
@@ -221,6 +226,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		} else writeAtomic(target, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 	};
 
+	/** A collision this copy lost, kept for the canvas to mark. */
+	const mark = (lost: Omit<SetAsideMark, "id" | "at" | "deleted">, bytes: Buffer | undefined) => {
+		recordMark(designDir, lost, bytes);
+		notice(
+			lost.kind === "restored"
+				? `${lost.path} is back: a teammate's edit beats your delete`
+				: `your change to ${lost.path} was set aside: a teammate's save reached the team first`,
+		);
+		options.onMarks?.();
+	};
+
 	const handle = (data: string | ArrayBuffer) => {
 		const framed = decodeFrame(data);
 		if (framed === null) return;
@@ -232,6 +248,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			caughtUp = true;
 			retryMs = RECONNECT_MIN_MS;
 			checkEverything();
+			burst = undefined;
+		} else if (message.type === "restored") {
+			const { path, version } = message;
+			if (typeof path === "string" && travels(path) && typeof version === "number")
+				mark({ path, kind: "restored", version, by: byOf(message.by), batch: burst ?? randomUUID() }, undefined);
 		} else if (message.type === "saved" || message.type === "set-aside" || message.type === "refused") {
 			const sent = typeof message.ref === "string" ? inflight.get(message.ref) : undefined;
 			if (sent === undefined || typeof message.ref !== "string") return;
@@ -239,10 +260,13 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (message.type === "saved" && typeof message.version === "number") {
 				state.files[sent.path] = { version: message.version, hash: sent.hash };
 				persist();
+				// this copy's own save of a marked file reached the team, and is the answer to the mark
+				if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();
 			}
 			if (message.type === "set-aside") {
 				yielding.add(sent.path);
-				notice(`your change to ${sent.path} was set aside: a teammate's save reached the team first`);
+				const version = typeof message.version === "number" ? message.version : 0;
+				mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
 			}
 			if (message.type === "refused") notice(`${sent.path} did not travel: ${String(message.reason)}`);
 			if (dirty.delete(sent.path)) check(sent.path);
@@ -267,6 +291,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		}
 		socket = openSocket(syncUrl(link), token, {
 			open: () => {
+				burst = randomUUID();
 				socket?.send(
 					encodeFrame({ type: "hello", protocol: PROTOCOL_VERSION, format: FORMAT_VERSION, since: state.head }),
 				);
@@ -275,6 +300,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			close: () => {
 				socket = undefined;
 				caughtUp = false;
+				burst = undefined;
 				// what was in flight is settled by the next catch-up: applied saves come back as the team's version
 				inflight.clear();
 				dirty.clear();
@@ -337,6 +363,8 @@ export function createTeamSync(deps: {
 	vault: (origin: string) => Pick<CloudVault, "read">;
 	openSocket?: OpenSyncSocket;
 	notice?: (message: string) => void;
+	/** A local copy's set-aside marks changed. */
+	onMarks?: (root: string) => void;
 }) {
 	const copies = new Map<string, LocalCopy>();
 	let closed = false;
@@ -361,6 +389,7 @@ export function createTeamSync(deps: {
 							vault: deps.vault(origin),
 							...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
 							...(deps.notice === undefined ? {} : { notice: deps.notice }),
+							...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
 						}),
 					);
 				} catch (error) {
@@ -390,6 +419,12 @@ const openWebSocket: OpenSyncSocket = (url, token, events) => {
 	socket.addEventListener("close", () => events.close());
 	return { send: (frame) => socket.send(frame), close: () => socket.close() };
 };
+
+function byOf(value: unknown): SetAsideMark["by"] {
+	if (typeof value !== "object" || value === null) return null;
+	const { accountId, device } = value as Record<string, unknown>;
+	return typeof accountId === "string" && typeof device === "string" ? { accountId, device } : null;
+}
 
 function readState(file: string, project: string): CopyState {
 	try {
@@ -427,7 +462,7 @@ function filesUnder(designDir: string, path: string): string[] {
 }
 
 /** Folders a teammate's deletes emptied go too, so an emptied frame is no page; `frames/` and `shared/` stay. */
-function pruneEmpty(designDir: string, dir: string): void {
+export function pruneEmpty(designDir: string, dir: string): void {
 	for (let at = dir; relative(designDir, at).includes(sep); at = dirname(at)) {
 		try {
 			if (readdirSync(at).length > 0) return;

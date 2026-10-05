@@ -125,6 +125,7 @@ import {
 	updateSession,
 	watchMachineState,
 } from "./session";
+import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createTeamSync, type OpenSyncSocket } from "./team-sync";
 import {
@@ -862,6 +863,7 @@ export function createDaemonApp({
 		vault: (origin) => teamSyncServices?.vault ?? keychainVault(spoolDir, origin),
 		...(teamSyncServices?.openSocket === undefined ? {} : { openSocket: teamSyncServices.openSocket }),
 		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
+		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
 	});
 	teamSync.keeping(registeredRoots());
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
@@ -3416,6 +3418,16 @@ export function createDaemonApp({
 		.get("/p/:project", (c) => serveUiIndex(c));
 	// Outside the typed chain, which is as deep as the compiler follows; Home reads these by their exported types.
 	app.route("/api/cloud", cloudTeamRoutes({ spoolDir, request: cloudTeamsRequest }));
+	app.route(
+		"/api/p",
+		setAsideRoutes({
+			spoolDir,
+			request: cloudTeamsRequest,
+			resolve: resolveProject,
+			framesUsing: (root, path) => framesUsingIn(root).framesUsing(path),
+			changed: (root) => hub.publish(root, { kind: "set-aside" }),
+		}),
+	);
 
 	app.onError((error, c) => {
 		if (error instanceof DesignBoundaryError) return c.text(error.message, 400);

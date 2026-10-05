@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
-import { decodeFrame, encodeFrame, PROTOCOL_VERSION, travels } from "./team-sync-protocol";
+import { CANVAS_PATH, decodeFrame, encodeFrame, mergeCanvas, PROTOCOL_VERSION, travels } from "./team-sync-protocol";
 
 /**
  * A fake spool.page for team projects: the team API a CLI calls and a sync object a daemon connects to, in
- * process. It keeps the rules the real object keeps (order, set-aside, relay to everyone else) and records
- * every save it is sent, so a test can say what reached the team and what never did.
+ * process. It keeps the rules the real object keeps (order, set-aside, an edit beating a delete, canvas.json
+ * merged key by key, relay to everyone else) and records every save it is sent, so a test can say what reached
+ * the team and what never did.
  */
 export const TEAM_ORIGIN = "https://cloud.test";
 
@@ -19,10 +20,18 @@ interface Person {
 interface Project {
 	team: string;
 	name: string;
-	files: Map<string, { version: number; bytes: Uint8Array | null }>;
+	files: Map<string, TeamVersion>;
 	saves: { path: string; base: number | null; deleted: boolean; by: string; outcome: string }[];
+	/** Every applied version's bytes and who made it, which a canvas.json merge reads its base from. */
+	versions: Map<number, TeamVersion>;
 	sockets: Set<Connected>;
 	version: number;
+}
+
+interface TeamVersion {
+	version: number;
+	bytes: Uint8Array | null;
+	by?: Person;
 }
 
 interface Connected {
@@ -35,6 +44,8 @@ interface Connected {
 export function fakeTeam(team = "devosurf") {
 	const people = new Map<string, Person>();
 	const projects = new Map<string, Project>();
+	/** Machines that can't reach the team right now, by account. */
+	const away = new Set<string>();
 	const project = (name: string) => projects.get(name);
 
 	function answer(request: Request, person: Person | undefined): Response | Promise<Response> {
@@ -49,6 +60,13 @@ export function fakeTeam(team = "devosurf") {
 				invites: [],
 				mayCreateTeam: false,
 			});
+		if (path === `/api/teams/${team}/people` && person.role !== null)
+			return Response.json({
+				members: [...people.values()]
+					.filter((one) => one.role !== null)
+					.map((one) => ({ accountId: one.accountId, email: `${one.accountId}@devosurf.com`, role: one.role })),
+				invites: [],
+			});
 		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?$/u.exec(path);
 		if (match === null || match[1] !== team || person.role === null)
 			return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -58,7 +76,15 @@ export function fakeTeam(team = "devosurf") {
 				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
 				const name = body.name.toLowerCase();
 				if (projects.has(name)) return Response.json({ error: "project_taken" }, { status: 409 });
-				projects.set(name, { team, name, files: new Map(), saves: [], sockets: new Set(), version: 0 });
+				projects.set(name, {
+					team,
+					name,
+					files: new Map(),
+					saves: [],
+					versions: new Map(),
+					sockets: new Set(),
+					version: 0,
+				});
 				return Response.json(described(name), { status: 201 });
 			});
 		const found = match[2] === undefined ? undefined : project(match[2]);
@@ -97,39 +123,60 @@ export function fakeTeam(team = "devosurf") {
 		else apply(at, from, { ref, path, base, deleted }, current, bytes);
 	}
 
-	/** A save that changes something: applied on the team's current version, set aside on any other. */
+	/**
+	 * A save that changes something: applied on the team's current version, set aside on any other, except that an
+	 * edit beats a delete and canvas.json is merged onto the team's version key by key.
+	 */
 	function apply(
 		at: Project,
 		from: Connected,
 		{ ref, path, base, deleted }: { ref: string; path: string; base: number | null; deleted: boolean },
-		current: { version: number; bytes: Uint8Array | null } | undefined,
+		current: TeamVersion | undefined,
 		bytes: Uint8Array | undefined,
 	): void {
-		const applies = current === undefined || current.version === base;
-		at.version += 1;
-		at.saves.push({ path, base, deleted, by: from.person.accountId, outcome: applies ? "applied" : "set_aside" });
-		if (!applies) {
-			from.deliver(encodeFrame({ type: "set-aside", ref, path, version: current.version }));
+		const stale = current !== undefined && current.version !== base;
+		const merged =
+			stale && path === CANVAS_PATH && bytes !== undefined && current.bytes !== null
+				? mergeCanvas(base === null ? null : (at.versions.get(base)?.bytes ?? null), current.bytes, bytes)
+				: null;
+		if (merged !== null && current !== undefined && hash(merged) === hash(current.bytes)) {
+			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
 			from.deliver(fileFrame(path, current));
 			return;
 		}
-		const file = { version: at.version, bytes: bytes ?? null };
+		const beatsDelete = current !== undefined && current.bytes === null && bytes !== undefined;
+		const applies = current === undefined || !stale || merged !== null || beatsDelete;
+		at.version += 1;
+		at.saves.push({ path, base, deleted, by: from.person.accountId, outcome: applies ? "applied" : "set_aside" });
+		if (!applies) {
+			const by = current.by ?? from.person;
+			from.deliver(
+				encodeFrame({
+					type: "set-aside",
+					ref,
+					path,
+					version: current.version,
+					by: { accountId: by.accountId, device: by.device },
+				}),
+			);
+			from.deliver(fileFrame(path, current));
+			return;
+		}
+		const content = merged ?? bytes ?? null;
+		const file = { version: at.version, bytes: content, by: from.person };
 		at.files.set(path, file);
+		at.versions.set(file.version, file);
 		from.deliver(encodeFrame({ type: "saved", ref, path, version: file.version }));
+		if (merged !== null) from.deliver(fileFrame(path, file));
+		const by = { accountId: from.person.accountId, device: from.person.device };
 		for (const other of at.sockets)
-			if (other !== from && other.live)
+			if (other !== from && other.live) {
 				other.deliver(
-					encodeFrame(
-						{
-							type: "file",
-							path,
-							version: file.version,
-							deleted,
-							by: { accountId: from.person.accountId, device: from.person.device },
-						},
-						bytes,
-					),
+					encodeFrame({ type: "file", path, version: file.version, deleted, by }, content ?? undefined),
 				);
+				if (beatsDelete && other.person === current.by)
+					other.deliver(encodeFrame({ type: "restored", path, version: file.version, by }));
+			}
 	}
 
 	const openSocket =
@@ -167,7 +214,13 @@ export function fakeTeam(team = "devosurf") {
 						events.close();
 					}),
 			};
-			if (person === undefined || at === undefined || person.role === null || person.role === "viewer")
+			if (
+				person === undefined ||
+				at === undefined ||
+				person.role === null ||
+				person.role === "viewer" ||
+				away.has(person.accountId)
+			)
 				connected.close();
 			else {
 				at.sockets.add(connected);
@@ -214,6 +267,13 @@ export function fakeTeam(team = "devosurf") {
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
 		},
+		/** One machine loses the team until it comes back: what it saves waits, and it catches up on reconnect. */
+		offline(accountId: string) {
+			away.add(accountId);
+			for (const project of projects.values())
+				for (const socket of project.sockets) if (socket.person.accountId === accountId) socket.close();
+			return () => away.delete(accountId);
+		},
 		/** Every connection to a project dropped at once, as a network going away. */
 		disconnect(name: string) {
 			for (const socket of project(name)?.sockets ?? []) socket.close();
@@ -221,7 +281,7 @@ export function fakeTeam(team = "devosurf") {
 	};
 }
 
-function fileFrame(path: string, file: { version: number; bytes: Uint8Array | null }): string | Uint8Array {
+function fileFrame(path: string, file: TeamVersion): string | Uint8Array {
 	return encodeFrame(
 		{ type: "file", path, version: file.version, deleted: file.bytes === null },
 		file.bytes ?? undefined,

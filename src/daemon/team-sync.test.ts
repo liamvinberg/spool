@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -63,8 +64,14 @@ async function twoEditors() {
 	copyFileSync(join(anaRoot, "spool.json"), join(benRoot, "spool.json"));
 	await fetchLocalCopy(benRoot, benState, { origin: TEAM_ORIGIN, request: ben.request, openSocket: ben.openSocket });
 	openProject(benRoot, benState);
-	const anaDaemon = makeApp(anaState, { teamSyncServices: { ...ana.services, notice: () => {} } });
-	const benDaemon = makeApp(benState, { teamSyncServices: { ...ben.services, notice: () => {} } });
+	const anaDaemon = makeApp(anaState, {
+		teamSyncServices: { ...ana.services, notice: () => {} },
+		cloudTeamsRequest: ana.request,
+	});
+	const benDaemon = makeApp(benState, {
+		teamSyncServices: { ...ben.services, notice: () => {} },
+		cloudTeamsRequest: ben.request,
+	});
 	return { cloud, link, ana: { root: anaRoot, daemon: anaDaemon }, ben: { root: benRoot, daemon: benDaemon } };
 }
 
@@ -269,5 +276,162 @@ describe("a save", () => {
 		expect(cloud.saves("checkout").filter((save) => save.path === "frames/home/frame.tsx")).toEqual(
 			expect.arrayContaining([expect.objectContaining({ outcome: "set_aside" })]),
 		);
+	});
+});
+
+interface Mark {
+	id: string;
+	path: string;
+	kind: string;
+	deleted: boolean;
+	frames: string[];
+	by: string | null;
+	file: string | null;
+	batch: string;
+}
+
+async function marks(daemon: ReturnType<typeof makeApp>): Promise<Mark[]> {
+	return ((await (await daemon.request("/api/p/checkout/set-aside")).json()) as { marks: Mark[] }).marks;
+}
+
+const text = (root: string, path: string) =>
+	existsSync(join(root, "design", path)) ? read(root, path).toString() : undefined;
+
+describe("a collision", () => {
+	it("keeps the first save, sets the second aside, and gives its machine the team's version and a mark", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "first\n");
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "first\n");
+
+		// both build on "first"; Ana's reaches the team while Ben's machine is away
+		const back = cloud.offline("ben");
+		writeFrame(ben.root, "home", "ben's\n");
+		writeFrame(ana.root, "home", "ana's\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "ana's\n");
+		back();
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "ana's\n", 10_000);
+		expect(
+			cloud
+				.saves("checkout")
+				.filter((save) => save.path === "frames/home/frame.tsx")
+				.slice(-2),
+		).toMatchObject([
+			{ by: "ana", outcome: "applied" },
+			{ by: "ben", outcome: "set_aside" },
+		]);
+		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")));
+		const [mark] = await marks(ben.daemon);
+		expect(mark).toMatchObject({
+			path: "frames/home/frame.tsx",
+			kind: "set-aside",
+			deleted: false,
+			frames: ["home"],
+			by: "ana@devosurf.com",
+		});
+		expect(readFileSync(join(ben.root, mark?.file ?? ""), "utf8")).toBe("ben's\n");
+		// the editor whose save won isn't told
+		expect(await marks(ana.daemon)).toEqual([]);
+
+		const compared = await (await ben.daemon.request(`/api/p/checkout/set-aside/${mark?.id}`)).json();
+		expect(compared).toEqual({
+			path: "frames/home/frame.tsx",
+			mine: { text: "ben's\n", size: 6 },
+			team: { text: "ana's\n", size: 6 },
+		});
+
+		// putting it back is an ordinary new save on top, which reaches Ana
+		const put = await ben.daemon.request(`/api/p/checkout/set-aside/${mark?.id}/put-back`, { method: "POST" });
+		expect(put.status).toBe(200);
+		await until(() => text(ana.root, "frames/home/frame.tsx") === "ben's\n");
+		expect(await marks(ben.daemon)).toEqual([]);
+		expect(cloud.saves("checkout").at(-1)).toMatchObject({ by: "ben", outcome: "applied" });
+	});
+
+	it("lets an edit beat a delete: the file comes back for everyone, and the deleter is marked", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "first\n");
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "first\n");
+
+		const back = cloud.offline("ana");
+		writeFrame(ana.root, "home", "ana kept going\n");
+		rmSync(join(ben.root, "design/frames/home"), { recursive: true });
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === null);
+		back();
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "ana kept going\n", 10_000);
+		expect(text(ana.root, "frames/home/frame.tsx")).toBe("ana kept going\n");
+		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")));
+		expect(await marks(ben.daemon)).toMatchObject([
+			{ path: "frames/home/frame.tsx", kind: "restored", deleted: true, frames: ["home"], by: "ana@devosurf.com" },
+		]);
+		expect(await marks(ana.daemon)).toEqual([]);
+
+		// putting the delete back is an ordinary delete on top of the edit
+		const [mark] = await marks(ben.daemon);
+		await ben.daemon.request(`/api/p/checkout/set-aside/${mark?.id}/put-back`, { method: "POST" });
+		await until(() => !existsSync(join(ana.root, "design/frames/home")));
+	});
+
+	it("leaves a losing rename's old path beside the new one", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "cart", "cart\n");
+		await until(() => text(ben.root, "frames/cart/frame.tsx") === "cart\n");
+
+		const back = cloud.offline("ana");
+		renameSync(join(ana.root, "design/frames/cart"), join(ana.root, "design/frames/basket"));
+		writeFrame(ben.root, "cart", "ben's cart\n");
+		await until(() => cloud.file("checkout", "frames/cart/frame.tsx") === "ben's cart\n");
+		back();
+		await until(() => text(ben.root, "frames/basket/frame.tsx") === "cart\n", 10_000);
+		await until(() => text(ana.root, "frames/cart/frame.tsx") === "ben's cart\n", 10_000);
+		expect(text(ben.root, "frames/cart/frame.tsx")).toBe("ben's cart\n");
+		expect(text(ana.root, "frames/basket/frame.tsx")).toBe("cart\n");
+	});
+
+	it("never happens to canvas.json: changes to different keys both land", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		const canvas = (root: string) => JSON.parse(read(root, "canvas.json").toString()) as Record<string, unknown>;
+		const write = (root: string, change: Record<string, unknown>) =>
+			writeDesignFile(root, "canvas.json", `${JSON.stringify({ ...canvas(root), ...change }, null, "\t")}\n`);
+		write(ana.root, { places: { home: { x: 0, y: 0 } } });
+		await until(() => same(ana.root, ben.root, "canvas.json"));
+
+		const back = cloud.offline("ben");
+		write(ana.root, { places: { home: { x: 0, y: 900 } } });
+		write(ben.root, { order: { frames: { "": ["cart", "home"] } } });
+		await until(() => (cloud.file("checkout", "canvas.json") ?? "").includes("900"));
+		back();
+		for (const root of [ana.root, ben.root])
+			await until(() => {
+				const fields = canvas(root);
+				return JSON.stringify(fields.places).includes("900") && fields.order !== undefined;
+			}, 10_000);
+		expect(canvas(ana.root)).toEqual(canvas(ben.root));
+		expect(await marks(ben.daemon)).toEqual([]);
+	});
+
+	it("after a while offline, catches up without overwriting teammates' newer work, as one batch", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		const names = ["a", "b", "c", "d", "e"];
+		for (const name of names) writeFrame(ana.root, name, `${name} first\n`);
+		await until(() => names.every((name) => text(ben.root, `frames/${name}/frame.tsx`) === `${name} first\n`));
+
+		const back = cloud.offline("ben");
+		for (const name of names) writeFrame(ben.root, name, `${name} by ben\n`);
+		writeFrame(ben.root, "new", "new by ben\n");
+		for (const name of names.slice(0, 4)) writeFrame(ana.root, name, `${name} by ana\n`);
+		await until(() => cloud.file("checkout", "frames/d/frame.tsx") === "d by ana\n");
+		back();
+		await until(() => text(ana.root, "frames/new/frame.tsx") === "new by ben\n", 10_000);
+		await until(() => text(ana.root, "frames/e/frame.tsx") === "e by ben\n", 10_000);
+		for (const name of names.slice(0, 4)) {
+			await until(() => text(ben.root, `frames/${name}/frame.tsx`) === `${name} by ana\n`, 10_000);
+			expect(text(ana.root, `frames/${name}/frame.tsx`)).toBe(`${name} by ana\n`);
+		}
+		await until(() =>
+			readFileSync(join(ben.root, "design/.spool/set-aside/marks.json"), "utf8").includes("frames/d"),
+		);
+		const set = await marks(ben.daemon);
+		expect(set.map((mark) => mark.path).sort()).toEqual(names.slice(0, 4).map((name) => `frames/${name}/frame.tsx`));
+		expect(new Set(set.map((mark) => mark.batch)).size).toBe(1);
 	});
 });

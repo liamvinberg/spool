@@ -48,7 +48,10 @@ export type ChangeEvent =
 	| { kind: "walked" }
 	// a render pass filled dark targets (#34), published by the resolve API: the
 	// graph really did gain edges, which a witnessed walk never does
-	| { kind: "resolved" };
+	| { kind: "resolved" }
+	// a team project's set-aside marks changed: one of this machine's saves lost a
+	// collision, or a mark was acted on. .spool is invisible to the watcher, so sync says it
+	| { kind: "set-aside" };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
@@ -221,20 +224,10 @@ function classify(
 ): FrameChange | GeometryChange | SharedChange | undefined {
 	if (filename === null) return { kind: "shared" };
 	const parts = filename.split(sep);
-	const [head, first] = parts;
-	if (head === "frames" && first !== undefined && first !== "") {
-		const segments = parts.slice(1);
-		// walk down while the folder is a page; what stops the walk is the frame,
-		// and the last folder on the path when nothing on it is a frame yet
-		let at = 0;
-		while (at < segments.length - 1 && isPageFolder(join(designDir, "frames", ...segments.slice(0, at + 1)))) {
-			at += 1;
-		}
-		const leaf = segments[at];
-		if (leaf === undefined || leaf === "") return { kind: "frame", frame: first };
-		// a frame is named by its path (#336): the pages walked through, then its folder
-		const frame = segments.slice(0, at + 1).join("/");
-		const rest = segments.slice(at + 1);
+	const [head] = parts;
+	const owner = frameOfPath(designDir, parts);
+	if (owner !== undefined) {
+		const { frame, rest } = owner;
 		if (rest.length === 1 && rest[0]?.startsWith("frame.json") === true) return { kind: "geometry", frame };
 		return { kind: "frame", frame };
 	}
@@ -249,4 +242,26 @@ function mergeShared(held: ChangeEvent | undefined, next: SharedChange): SharedC
 	if (held?.kind !== "shared") return next;
 	if (held.frames === undefined || next.frames === undefined) return { kind: "shared" };
 	return { kind: "shared", frames: [...new Set([...held.frames, ...next.frames])] };
+}
+
+/**
+ * The frame a design-relative path under `frames/` is in, and the rest of the path inside it; nothing for a path
+ * anywhere else. A frame is named by its path (#336): the pages walked through, then its folder.
+ */
+export function frameOfPath(
+	designDir: string,
+	parts: readonly string[],
+): { frame: string; rest: string[] } | undefined {
+	const [head, first] = parts;
+	if (head !== "frames" || first === undefined || first === "") return undefined;
+	const segments = parts.slice(1);
+	// walk down while the folder is a page; what stops the walk is the frame,
+	// and the last folder on the path when nothing on it is a frame yet
+	let at = 0;
+	while (at < segments.length - 1 && isPageFolder(join(designDir, "frames", ...segments.slice(0, at + 1)))) {
+		at += 1;
+	}
+	const leaf = segments[at];
+	if (leaf === undefined || leaf === "") return { frame: first, rest: [] };
+	return { frame: segments.slice(0, at + 1).join("/"), rest: segments.slice(at + 1) };
 }
