@@ -38,7 +38,10 @@ interface Connected {
 	person: Person;
 	live: boolean;
 	deliver(frame: string | Uint8Array): void;
+	/** Closed in turn, after everything already on its way. */
 	close(): void;
+	/** Gone this instant: nothing sent from now on arrives, and the daemon hears of it in turn. */
+	cut(): void;
 }
 
 export function fakeTeam(team = "devosurf") {
@@ -199,6 +202,12 @@ export function fakeTeam(team = "devosurf") {
 						),
 				);
 			};
+			const shut = () => {
+				if (!open) return false;
+				open = false;
+				at?.sockets.delete(connected);
+				return true;
+			};
 			const connected: Connected = {
 				person: person ?? { accountId: "", device: "", role: null },
 				live: false,
@@ -208,11 +217,11 @@ export function fakeTeam(team = "devosurf") {
 					}),
 				close: () =>
 					later(() => {
-						if (!open) return;
-						open = false;
-						at?.sockets.delete(connected);
-						events.close();
+						if (shut()) events.close();
 					}),
+				cut: () => {
+					if (shut()) later(() => events.close());
+				},
 			};
 			if (
 				person === undefined ||
@@ -270,8 +279,9 @@ export function fakeTeam(team = "devosurf") {
 		/** One machine loses the team until it comes back: what it saves waits, and it catches up on reconnect. */
 		offline(accountId: string) {
 			away.add(accountId);
+			// at once: a save the machine makes after this line must never reach the team
 			for (const project of projects.values())
-				for (const socket of project.sockets) if (socket.person.accountId === accountId) socket.close();
+				for (const socket of project.sockets) if (socket.person.accountId === accountId) socket.cut();
 			return () => away.delete(accountId);
 		},
 		/** Every connection to a project dropped at once, as a network going away. */
