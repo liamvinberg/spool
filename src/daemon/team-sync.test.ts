@@ -287,7 +287,7 @@ interface Mark {
 	frames: string[];
 	by: string | null;
 	file: string | null;
-	batch: string;
+	together: number;
 }
 
 async function marks(daemon: ReturnType<typeof makeApp>): Promise<Mark[]> {
@@ -432,6 +432,6 @@ describe("a collision", () => {
 		);
 		const set = await marks(ben.daemon);
 		expect(set.map((mark) => mark.path).sort()).toEqual(names.slice(0, 4).map((name) => `frames/${name}/frame.tsx`));
-		expect(new Set(set.map((mark) => mark.batch)).size).toBe(1);
+		expect(set.map((mark) => mark.together)).toEqual([4, 4, 4, 4]);
 	});
 });

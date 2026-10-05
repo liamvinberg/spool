@@ -29,6 +29,7 @@ export function FrameLabel({
 	unseen,
 	onPlay,
 	sharing,
+	setAside,
 }: {
 	name: string;
 	/** the frame's link, said at the one size the canvas keeps legible at any zoom */
@@ -51,6 +52,8 @@ export function FrameLabel({
 	unseen?: Unseen | undefined;
 	/** Play this frame. Offered on the selection, where the attention already is. */
 	onPlay?: () => void;
+	/** A team project's mark on a frame whose file this machine's save lost (`set-aside.tsx`). */
+	setAside?: ReactNode;
 }) {
 	const place = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
@@ -121,6 +124,7 @@ export function FrameLabel({
 						{/* the selection's own verb, at the far end of its own row: no
 					    travelling to a corner of the chrome to act on what is right
 					    here. Ghost until wanted — the label is not a toolbar. */}
+						{setAside}
 						{sharing && <ShareChipButton chip={sharing.chip} expanded={sharing.expanded} onOpen={sharing.open} />}
 						{selected && onPlay !== undefined && (
 							<button

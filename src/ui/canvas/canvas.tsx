@@ -22,6 +22,7 @@ import type {
 	RungRead,
 	SelectionEntry,
 	SelectionPut,
+	ShownSetAside,
 	TextWritten,
 } from "../api";
 import {
@@ -186,6 +187,7 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
+import { setAsideAsk, useSetAside } from "./set-aside";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
@@ -587,6 +589,25 @@ export function ProjectCanvas({
 	const deck = useAgentThreads(project, preferredEngine, root);
 	const turn = deck.turn;
 	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
+	/**
+	 * A set-aside mark's Hand to agent: one press is a turn on the open thread, or the next one
+	 * if a turn is running, with both sides of the file. The rail opens on it. Where the rail has
+	 * nowhere to put words yet, the composer holds them for the person to send.
+	 */
+	const { running: turnRunning, queue: queueTurn, send: sendTurn } = turn;
+	const handSetAside = useCallback(
+		(mark: ShownSetAside) => {
+			const text = setAsideAsk(mark);
+			const took = turnRunning() ? queueTurn(text) : sendTurn(text);
+			setAgentRequest({
+				id: crypto.randomUUID(),
+				thread: deck.open,
+				...(took ? {} : { prepared: { intent: `set-aside ${mark.path}`, text, selection: [] } }),
+			});
+		},
+		[deck.open, turnRunning, queueTurn, sendTurn],
+	);
+	const setAside = useSetAside(project, handSetAside);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
@@ -3749,6 +3770,7 @@ export function ProjectCanvas({
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (["frame", "shared", "geometry"].includes(event.kind))
 						window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
+					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
 						const own = saved.current.get(frame);
@@ -5636,6 +5658,7 @@ export function ProjectCanvas({
 											: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
 									})()}
 									onPlay={() => playFrame(frame.name)}
+									setAside={setAside.label(frame.name)}
 								/>
 							);
 						})}
@@ -5894,6 +5917,7 @@ export function ProjectCanvas({
 				)}
 			/>
 			{sharing.node}
+			{setAside.node}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

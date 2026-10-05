@@ -1,11 +1,12 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
+import type { CloudRequestOptions } from "../cloud-auth";
 import { PortBusyError, SpoolError } from "../errors";
 import type { AgentEngine } from "./agent-engine";
 import type { AgentExecutor } from "./agent-exec";
 import type { Look } from "./agent-preflight";
-import { createDaemonApp } from "./app";
+import { createDaemonApp, type TeamSyncServices } from "./app";
 import type { BoothSeams } from "./booth";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
 import type { PublicationJobServices } from "./publication-jobs";
@@ -32,6 +33,9 @@ export interface ServeDaemonOptions {
 	publicationServices?: PublicationJobServices | undefined;
 	/** The photo booth's browser, starting scheme and waits, as a browser test sets them. */
 	booth?: BoothSeams | undefined;
+	/** Controlled Cloud boundary for a team project's sync and its teammates' names. */
+	teamSyncServices?: TeamSyncServices | undefined;
+	cloudTeamsRequest?: CloudRequestOptions | undefined;
 }
 
 export interface RunningDaemon {
@@ -64,6 +68,8 @@ export function serveDaemon({
 	agentLook,
 	publicationServices,
 	booth,
+	teamSyncServices,
+	cloudTeamsRequest,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
 	assertLoopbackHost(host);
 	const daemon = createDaemonApp({
@@ -80,6 +86,8 @@ export function serveDaemon({
 		...(agentLook === undefined ? {} : { agentLook }),
 		...(publicationServices === undefined ? {} : { publicationServices }),
 		...(booth === undefined ? {} : { booth }),
+		...(teamSyncServices === undefined ? {} : { teamSyncServices }),
+		...(cloudTeamsRequest === undefined ? {} : { cloudTeamsRequest }),
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {

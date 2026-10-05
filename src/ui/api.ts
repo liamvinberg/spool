@@ -23,6 +23,7 @@ import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
+import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
@@ -66,6 +67,8 @@ export type {
 	SelectionEntry,
 	SelectionPut,
 	ServedThread,
+	SetAsideCompare,
+	ShownSetAside,
 	TeamPeople,
 	TeamRole,
 	ThreadPut,
@@ -1644,4 +1647,38 @@ export async function cancelProjectTransfer(transfer: string): Promise<boolean> 
 	const response = await client.api.projects.transfer.cancel.$post({ json: { transfer } });
 	if (!response.ok) throw new Error(await errorText(response));
 	return ((await response.json()) as { cancelled: boolean }).cancelled;
+}
+
+/** A team project's set-aside marks: this machine's saves that lost a collision, and its deletes an edit undid. */
+export async function fetchSetAside(project: string): Promise<ShownSetAside[]> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/set-aside`);
+		const body = (response.ok ? await response.json() : null) as { marks?: unknown } | null;
+		return Array.isArray(body?.marks) ? (body.marks as ShownSetAside[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+/** One mark's two sides, this machine's and the team's, for Compare. */
+export async function compareSetAside(project: string, id: string): Promise<SetAsideCompare | undefined> {
+	const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/set-aside/${encodeURIComponent(id)}`);
+	return response.ok ? ((await response.json()) as SetAsideCompare) : undefined;
+}
+
+/** Put this machine's side back on disk, which the sync sends as an ordinary new save. */
+export async function putSetAsideBack(project: string, id: string): Promise<boolean> {
+	const response = await controlFetch(
+		`/api/p/${encodeURIComponent(project)}/set-aside/${encodeURIComponent(id)}/put-back`,
+		{ method: "POST" },
+	);
+	return response.ok;
+}
+
+/** Let a mark go, keeping the team's version. */
+export async function dismissSetAside(project: string, id: string): Promise<boolean> {
+	const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/set-aside/${encodeURIComponent(id)}`, {
+		method: "DELETE",
+	});
+	return response.ok;
 }

@@ -7,7 +7,7 @@ import { cloudTeams } from "../cloud-teams";
 import { isTeamProject, readProjectLink } from "../team-project";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { frameOfPath } from "./events";
-import { forgetMarks, markBytes, markFile, readMarks, type SetAsideMark } from "./set-aside";
+import { batchSize, forgetMarks, markBytes, markFile, readMarks, type SetAsideMark } from "./set-aside";
 import { pruneEmpty } from "./team-sync";
 
 /** One mark as the canvas draws it: on which frames, and whose save stands, by name where the team says. */
@@ -23,7 +23,8 @@ export interface ShownSetAside {
 	/** Where this machine's side is kept, relative to the project root, for an agent to read. */
 	file: string | null;
 	at: number;
-	batch: string;
+	/** How many marks arrived together with this one, itself included: more than a handful are one summary. */
+	together: number;
 }
 
 /** One side of a compare: the file's text, or only its size where it isn't text. Null for a delete. */
@@ -106,7 +107,7 @@ export function setAsideRoutes(deps: {
 					by: mark.by === null ? null : await nameOf(team, mark.by.accountId),
 					file: mark.deleted ? null : relative(project.root, markFile(designDir, mark)).split("\\").join("/"),
 					at: mark.at,
-					batch: mark.batch,
+					together: batchSize(designDir, mark.batch),
 				});
 			return c.json({ marks });
 		})
