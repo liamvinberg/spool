@@ -11,13 +11,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { chooseInitTarget, describeChoice, initDestination, initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
 import { readRegistry, teamProjects } from "../registry";
 import { removeProject } from "../remove";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
-import { makeApp, makeTempDir, until, writeDesignFile, writeFrame } from "../test-helpers";
+import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 
 /**
@@ -46,6 +46,7 @@ function status(root: string): string[] {
 }
 
 const read = (root: string, path: string) => readFileSync(join(root, "design", path));
+const encode = (text: string) => new TextEncoder().encode(text);
 const same = (a: string, b: string, path: string) =>
 	existsSync(join(b, "design", path)) && read(a, path).equals(read(b, path));
 
@@ -66,17 +67,20 @@ async function twoEditors() {
 	copyFileSync(join(anaRoot, "spool.json"), join(benRoot, "spool.json"));
 	await fetchLocalCopy(benRoot, benState, { origin: TEAM_ORIGIN, request: ben.request, openSocket: ben.openSocket });
 	openProject(benRoot, benState);
+	// what each daemon says, as its owner would read it
+	const said = { ana: [] as string[], ben: [] as string[] };
 	const anaDaemon = makeApp(anaState, {
-		teamSyncServices: { ...ana.services, notice: () => {} },
+		teamSyncServices: { ...ana.services, notice: (message) => said.ana.push(message) },
 		cloudTeamsRequest: ana.request,
 	});
 	const benDaemon = makeApp(benState, {
-		teamSyncServices: { ...ben.services, notice: () => {} },
+		teamSyncServices: { ...ben.services, notice: (message) => said.ben.push(message) },
 		cloudTeamsRequest: ben.request,
 	});
 	return {
 		cloud,
 		link,
+		said,
 		ana: { root: anaRoot, daemon: anaDaemon, state: anaState, machine: ana },
 		ben: { root: benRoot, daemon: benDaemon, state: benState, machine: ben },
 	};
@@ -799,5 +803,169 @@ describe("the git guard", () => {
 		expect(cloud.saves("checkout").length).toBe(saves);
 		writeFrame(ben.root, "home", "ben's home\n");
 		await until(() => read(ana.root, "frames/home/frame.tsx").toString() === "ben's home\n");
+	});
+});
+
+describe("what travels", () => {
+	it("keeps a symlink, a foreign dot-folder and a file over 25 MB on the machine that wrote them, which says so", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await ana.daemon.request("/api/p/checkout/events", { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+
+		const outside = join(makeTempDir(), "elsewhere");
+		mkdirSync(outside);
+		writeFileSync(join(outside, "frame.tsx"), "export default () => <h1>Not ours</h1>;\n");
+		// once a frame has reached Ben, Ana's copy is caught up and watching
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		symlinkSync("/etc/hosts", join(ana.root, "design/frames/home/hosts.txt"));
+		symlinkSync(outside, join(ana.root, "design/frames/linked"));
+		writeDesignFile(ana.root, ".git/config", "[core]\n\tsshCommand = touch /tmp/owned\n");
+		writeDesignFile(ana.root, ".claude/settings.json", "{}\n");
+		mkdirSync(join(ana.root, "design/shared/assets"), { recursive: true });
+		writeFileSync(join(ana.root, "design/shared/assets/film.mov"), Buffer.alloc(26_000_000, 1));
+
+		const stayed = {
+			"frames/home/hosts.txt": "symlinks stay on this Mac",
+			"frames/linked": "symlinks stay on this Mac",
+			".git/config": "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync",
+			".claude/settings.json": "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync",
+			"shared/assets/film.mov": "it's over 25 MB",
+		};
+		for (const [path, why] of Object.entries(stayed))
+			await until(() => said.ana.includes(`${path} didn't travel: ${why}`));
+		for (const path of [...Object.keys(stayed), "frames/linked/frame.tsx"]) {
+			expect(existsSync(join(ben.root, "design", path)), path).toBe(false);
+			expect(cloud.file("checkout", path), path).toBeUndefined();
+		}
+		// each is said once, and on the canvas too
+		expect(said.ana.filter((message) => message.startsWith("shared/assets/film.mov"))).toHaveLength(1);
+		const told: unknown[] = [];
+		for (let at = 0; at < 20 && !told.some((data) => JSON.stringify(data).includes("film.mov")); at += 1)
+			told.push((await events.next()).data);
+		expect(told).toContainEqual({ kind: "sync", message: "shared/assets/film.mov didn't travel: it's over 25 MB" });
+
+		// a file that shrinks under the limit travels after all
+		writeFileSync(join(ana.root, "design/shared/assets/film.mov"), Buffer.alloc(1_000, 1));
+		await until(() => same(ana.root, ben.root, "shared/assets/film.mov"));
+	});
+
+	it("writes no team file through a symlink or over 25 MB", async () => {
+		const { cloud, ana } = await twoEditors();
+		writeFrame(ana.root, "real", "export default () => null;\n");
+		symlinkSync(join(ana.root, "design/frames/real"), join(ana.root, "design/frames/alias"));
+		cloud.forge(
+			"checkout",
+			{ type: "file", path: "frames/alias/frame.tsx", version: 98, deleted: false },
+			encode("x"),
+		);
+		cloud.forge(
+			"checkout",
+			{ type: "file", path: "shared/assets/huge.bin", version: 99, deleted: false },
+			new Uint8Array(26_000_000),
+		);
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") !== undefined);
+		expect(read(ana.root, "frames/real/frame.tsx").toString()).toBe("export default () => null;\n");
+		expect(existsSync(join(ana.root, "design/shared/assets/huge.bin"))).toBe(false);
+	});
+});
+
+describe("a limit", () => {
+	it("pauses sync with the reason, keeps changes on this machine, and resumes when it lifts", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		cloud.limit("rate_limited", 1);
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() =>
+			said.ana.includes(
+				"Sync paused: this project took 120 saves in the last minute. Changes stay on this Mac until it lifts.",
+			),
+		);
+		writeFrame(ana.root, "about", "export default () => <h1>About</h1>;\n");
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(existsSync(join(ben.root, "design/frames/home"))).toBe(false);
+		expect(cloud.file("checkout", "frames/about/frame.tsx")).toBeUndefined();
+
+		cloud.lift();
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
+		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 5_000);
+		await until(() => said.ana.includes("Sync resumed."));
+	});
+});
+
+describe("when a team project ends for a machine", () => {
+	for (const [change, act] of [
+		["is made a viewer", (cloud: ReturnType<typeof fakeTeam>) => cloud.role("ben", "viewer")],
+		["is removed from the team", (cloud: ReturnType<typeof fakeTeam>) => cloud.role("ben", null)],
+		["finds the project removed", (cloud: ReturnType<typeof fakeTeam>) => cloud.removeProject("checkout")],
+	] as const)
+		it(`stops syncing and leaves an ordinary local project when its editor ${change}`, async () => {
+			const { cloud, said, ana, ben } = await twoEditors();
+			writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+			await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+			const link = readFileSync(join(ben.root, "spool.json"), "utf8");
+
+			act(cloud);
+			await until(() =>
+				said.ben.includes("No longer synced with devosurf. This is now a project on this Mac only."),
+			);
+			expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
+			expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
+			// git is left alone: design/ shows up to be committed if Ben wants it, and nothing was committed for him
+			expect(status(ben.root)).toEqual(expect.arrayContaining(["?? design/frames/home/frame.tsx", "?? spool.json"]));
+			expect(git(ben.root, "rev-list", "--all", "--count").trim()).toBe("0");
+
+			// nothing travels either way any more, and every file stays
+			writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
+			writeFrame(ana.root, "home", "export default () => <h1>Ana again</h1>;\n");
+			await new Promise((wake) => setTimeout(wake, 300));
+			expect(cloud.file("checkout", "frames/mine/frame.tsx")).toBeUndefined();
+			expect(read(ben.root, "frames/home/frame.tsx").toString()).toContain("<h1>Home</h1>");
+		});
+
+	it("is found on reconnect when the change was made while the copy was offline", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		// the line drops first, so nothing reaches Ben's copy until it tries again and is refused
+		cloud.disconnect("checkout");
+		cloud.role("ben", null);
+		await until(() => said.ben.includes("No longer synced with devosurf. This is now a project on this Mac only."));
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
+		// Ana's copy is still an editor's, and carries on
+		writeFrame(ana.root, "about", "export default () => null;\n");
+		await until(() => cloud.file("checkout", "frames/about/frame.tsx") !== undefined);
+		expect(said.ana).toEqual([]);
+	});
+
+	it("ends the copy whatever branch is checked out, and a branch alone never ends it", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		// a pre-team branch has no spool.json: that by itself is no ending
+		const link = readFileSync(join(ben.root, "spool.json"), "utf8");
+		rmSync(join(ben.root, "spool.json"));
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(said.ben.filter((message) => message.startsWith("No longer synced"))).toEqual([]);
+
+		cloud.role("ben", null);
+		await until(() => said.ben.includes("No longer synced with devosurf. This is now a project on this Mac only."));
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
+		// back on a branch with spool.json, the copy stays ended
+		writeFileSync(join(ben.root, "spool.json"), link);
+		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8"))).toMatchObject({
+			ended: true,
+		});
+	});
+
+	it("is not an ending when the machine is signed out: it waits for `spool login`", async () => {
+		const { cloud, said, ben } = await twoEditors();
+		cloud.revoke("ben");
+		await until(() => said.ben.some((message) => message.includes("signed out; run `spool login`")));
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+		expect(said.ben.filter((message) => message.includes("signed out"))).toHaveLength(1);
 	});
 });

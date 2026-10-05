@@ -51,7 +51,10 @@ export type ChangeEvent =
 	| { kind: "resolved" }
 	// a team project's set-aside marks changed: one of this machine's saves lost a
 	// collision, or a mark was acted on. .spool is invisible to the watcher, so sync says it
-	| { kind: "set-aside" };
+	| { kind: "set-aside" }
+	// team sync has something to say about this local copy: a file that didn't
+	// travel, a pause on a limit, or the team project ending on this machine
+	| { kind: "sync"; message: string };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {

@@ -224,8 +224,9 @@ export interface DaemonOptions {
 export interface TeamSyncServices {
 	origin?: string;
 	vault?: Pick<CloudVault, "read">;
+	fetch?: typeof fetch;
 	openSocket?: OpenSyncSocket;
-	notice?: (message: string) => void;
+	notice?: (message: string, root?: string) => void;
 }
 
 /** The player page's params (#24): Zod-validated, path-safe names only. */
@@ -861,10 +862,16 @@ export function createDaemonApp({
 	history.keeping(registeredRoots());
 	// every team project's local copies, kept in step with their teams while the daemon runs
 	const teamSync = createTeamSync({
+		spoolDir,
 		origin: () => teamSyncServices?.origin ?? cloudOrigin(process.env),
 		vault: (origin) => teamSyncServices?.vault ?? keychainVault(spoolDir, origin),
+		...(teamSyncServices?.fetch === undefined ? {} : { fetch: teamSyncServices.fetch }),
 		...(teamSyncServices?.openSocket === undefined ? {} : { openSocket: teamSyncServices.openSocket }),
-		...(teamSyncServices?.notice === undefined ? {} : { notice: teamSyncServices.notice }),
+		// what didn't travel, a pause and an ending go to the log and to the project's open canvases
+		notice: (message, root) => {
+			(teamSyncServices?.notice ?? ((said: string) => console.error(`spool: ${said}`)))(message, root);
+			if (root !== undefined) hub.publish(root, { kind: "sync", message });
+		},
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
 	});
 	teamSync.keeping(registeredRoots());

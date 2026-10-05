@@ -3793,7 +3793,13 @@ export function ProjectCanvas({
 				},
 				presence: (data) => presenceRoom.hear(data as Presence),
 				change: (data) => {
-					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
+					const event = data as {
+						kind: string;
+						frame?: string;
+						frames?: string[];
+						cover?: Cover;
+						message?: string;
+					};
 					if (["frame", "shared", "geometry"].includes(event.kind))
 						window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
 					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
@@ -3840,6 +3846,9 @@ export function ProjectCanvas({
 						// read back costs a projection read
 						if (event.cover !== undefined) noteCover(event.frame, event.cover);
 						else void refetchFrames();
+					} else if (event.kind === "sync" && event.message !== undefined) {
+						// team sync says what didn't travel, why it paused, or that the project ended here
+						setNotice({ kind: "success", message: event.message });
 					}
 				},
 			},

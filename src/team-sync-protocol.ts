@@ -90,7 +90,9 @@ export interface Refused {
 	type: "refused";
 	ref: string;
 	path: string;
-	reason: "outside_layout" | "invalid_save";
+	reason: "outside_layout" | "invalid_save" | "too_large" | Unauthorized | Limited;
+	/** For a limit: seconds until it may lift, when the object can say. */
+	retryAfter?: number;
 }
 
 /**
@@ -156,6 +158,35 @@ export function travels(path: string): boolean {
 	if (segments.length < 2 || (segments[0] !== "frames" && segments[0] !== "shared")) return false;
 	return segments.every((segment) => segment !== "" && !segment.startsWith(".") && !/[\\\0]/u.test(segment));
 }
+
+// Guarded sync: who may write, and the fair-use limits. The object enforces them; the daemon says why.
+
+/**
+ * Why a save from this connection is refused before anything else is looked at. `signed_out`: its device
+ * session was revoked or has expired. `not_editor`: its account is no longer an editor or admin of the team,
+ * or the team or the project is gone. The object closes the connection after either.
+ */
+export type Unauthorized = "signed_out" | "not_editor";
+
+/**
+ * A fair-use limit the save would pass, or the object couldn't check the save at all. Sync pauses until it
+ * lifts, and the file stays where it was written.
+ */
+export type Limited = "project_full" | "rate_limited" | "monthly_limit" | "unavailable";
+
+/** The largest file that travels; a bigger one is refused as `too_large` and stays on its machine. */
+export const FILE_LIMIT_BYTES = 25_000_000;
+/** The most a team project's design/ may hold. */
+export const PROJECT_LIMIT_BYTES = 1_000_000_000;
+/** Saves a team project takes in any minute, from everyone together. */
+export const SAVES_PER_MINUTE = 120;
+/** Saves one editor makes to a team project in a calendar month (UTC). */
+export const SAVES_PER_MONTH = 30_000;
+
+/** The object closed the connection: its device session was revoked or has expired. */
+export const CLOSE_SIGNED_OUT = 4401;
+/** The object closed the connection: the account no longer edits this team project, or it is gone. */
+export const CLOSE_NOT_EDITOR = 4403;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

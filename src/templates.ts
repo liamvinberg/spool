@@ -12,7 +12,8 @@ export const FORMAT_VERSION = 2;
 export const canvasJson = (history: boolean): string =>
 	`${JSON.stringify({ format: FORMAT_VERSION, history }, null, "\t")}\n`;
 
-const gitignore = ".spool/\n";
+/** A solo project's own `design/.gitignore`: only `.spool/`, this machine's own state, stays out of git. */
+export const SOLO_GITIGNORE = ".spool/\n";
 
 const claudeMd = "@AGENTS.md\n";
 
@@ -78,7 +79,7 @@ export function cn(...inputs: ClassValue[]) {
 
 /** Files written under design/, keyed by relative path. */
 export const scaffoldFiles = (history: boolean): Record<string, string> => ({
-	".gitignore": gitignore,
+	".gitignore": SOLO_GITIGNORE,
 	"AGENTS.md": agentsMd,
 	"CLAUDE.md": claudeMd,
 	"canvas.json": canvasJson(history),

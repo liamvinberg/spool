@@ -3,20 +3,28 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSyn
 import { dirname, join, relative, sep } from "node:path";
 import { WebSocket } from "undici";
 import { writeAtomic } from "../atomic-write";
-import type { CloudVault } from "../cloud-auth";
+import { CloudSignedOut, type CloudVault } from "../cloud-auth";
+import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { isTeamProject, type ProjectLink, readProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
+	CLOSE_NOT_EDITOR,
+	CLOSE_SIGNED_OUT,
 	decodeFrame,
 	encodeFrame,
+	FILE_LIMIT_BYTES,
+	type Limited,
+	PROJECT_LIMIT_BYTES,
 	PROTOCOL_VERSION,
 	type Presence,
 	type PresenceState,
 	RESEND_PATHS,
 	readPresenceState,
+	SAVES_PER_MINUTE,
+	SAVES_PER_MONTH,
 	travels,
 } from "../team-sync-protocol";
-import { FORMAT_VERSION } from "../templates";
+import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
@@ -31,7 +39,8 @@ import { type TreeWatch, watchTree } from "./watch-tree";
  * edit. Before writing, the copy records the file as the team's version, which is how the watcher tells a
  * teammate's write from a local save and never sends it back.
  *
- * Only Spool's own layout travels (`travels`), checked here on the way out and again on the way in.
+ * Only Spool's own layout travels (`travels`), checked here on the way out and again on the way in: regular
+ * files reached through real folders, 25 MB at most. What doesn't travel stays here and the copy says so.
  */
 
 /** What a local copy remembers of the team between runs, in `design/.spool`, which never travels. */
@@ -41,6 +50,8 @@ interface CopyState {
 	head: number;
 	/** Each path as this copy last had it from the team: its version, and its hash or null for deleted. */
 	files: Record<string, { version: number; hash: string | null }>;
+	/** The team project ended for this machine, and the folder is an ordinary project here now. */
+	ended?: true;
 }
 
 export interface SyncSocket {
@@ -51,8 +62,15 @@ export interface SyncSocket {
 export interface SyncSocketEvents {
 	open(): void;
 	message(data: string | ArrayBuffer): void;
-	close(): void;
+	/** `code` is the close code the cloud gave, if it gave one. */
+	close(code?: number): void;
 }
+
+/**
+ * Whether this machine still edits a team project, as spool.page says when asked: `not_editor` when the account
+ * was removed or made a viewer or the team or project is gone, `unknown` when spool.page can't be reached.
+ */
+export type Standing = "editor" | "not_editor" | "signed_out" | "unknown";
 
 /** The connection itself, swapped by tests for an in-process team. */
 export type OpenSyncSocket = (url: string, token: string, events: SyncSocketEvents) => SyncSocket;
@@ -68,6 +86,10 @@ export interface LocalCopyOptions {
 	onMarks?: () => void;
 	/** Another person on this team canvas moved, arrived or left (`state` null). */
 	onPresence?: (presence: Presence) => void;
+	/** Asked when spool.page refused or cut the connection: does this machine still edit the project? */
+	standing?: () => Promise<Standing>;
+	/** The project ended for this machine. The copy has stopped; ending it is its owner's. */
+	ended?: () => void;
 }
 
 export interface LocalCopy {
@@ -80,6 +102,17 @@ export interface LocalCopy {
 	close(): void;
 }
 
+/** Why a file outside the layout stays on the machine that wrote it. */
+const OUTSIDE_LAYOUT = "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync";
+/** How sync says each limit it paused on. */
+const LIMITS: Record<Limited, string> = {
+	project_full: `the team's design/ is at its ${PROJECT_LIMIT_BYTES / 1_000_000_000} GB limit`,
+	rate_limited: `this project took ${SAVES_PER_MINUTE} saves in the last minute`,
+	monthly_limit: `you've made ${SAVES_PER_MONTH.toLocaleString("en")} saves to this project this month`,
+	unavailable: "spool.page couldn't check saves just now",
+};
+/** How long a pause lasts when spool.page can't say when its limit lifts. */
+const RETRY_LIMIT_SECONDS = 60;
 /** How long the watcher's burst for one save is let settle before the files are read. */
 const SETTLE_MS = 50;
 const RECONNECT_MIN_MS = 1_000;
@@ -145,6 +178,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let watch: TreeWatch | undefined;
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
 	const presence = copyPresence(options.onPresence);
+	/** Paths that didn't travel and why, each said once until it travels or goes. */
+	const held = new Map<string, string>();
+	/** A limit paused sync: why, and until when nothing is sent. What changes meanwhile waits on disk. */
+	let paused: { why: string; until: number } | undefined;
+	let resume: NodeJS.Timeout | undefined;
+	let toldSignedOut = false;
 
 	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
 	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
@@ -175,6 +214,61 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		return stat?.isFile() === true ? readFileSync(file) : undefined;
 	};
 
+	/**
+	 * Why a file on disk stays on this machine though its path is in the layout: it is a symlink or reached through
+	 * one, or it is too big. Nothing when it may travel, or isn't there.
+	 */
+	const stays = (path: string): string | undefined => {
+		const segments = path.split("/");
+		let at = designDir;
+		for (const [index, segment] of segments.entries()) {
+			at = join(at, segment);
+			const stat = lstatSync(at, { throwIfNoEntry: false });
+			if (stat?.isSymbolicLink() === true) return "symlinks stay on this Mac";
+			if (stat === undefined || (index < segments.length - 1 && !stat.isDirectory())) return undefined;
+			if (index === segments.length - 1 && stat.isFile() && stat.size > FILE_LIMIT_BYTES)
+				return `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
+		}
+		return undefined;
+	};
+
+	/** Say once that a file didn't travel and why; it stays here as it is. */
+	const hold = (path: string, why: string) => {
+		if (held.get(path) === why) return;
+		held.set(path, why);
+		notice(`${path} didn't travel: ${why}`);
+	};
+
+	/** A file the watcher saw outside the layout, said unless it is Spool's own or the system's. */
+	const outside = (path: string) => {
+		if (path === ".gitignore" || path.startsWith(".spool/") || path.split("/").at(-1) === ".DS_Store") return;
+		const stat = lstatSync(join(designDir, ...path.split("/")), { throwIfNoEntry: false });
+		if (stat?.isFile() === true || stat?.isSymbolicLink() === true) hold(path, OUTSIDE_LAYOUT);
+	};
+
+	const isPaused = () => paused !== undefined && Date.now() < paused.until;
+
+	/** A limit was reached: nothing more is sent until it may have lifted, then everything waiting is tried. */
+	const pause = (reason: Limited, retryAfter: unknown) => {
+		const why = LIMITS[reason];
+		if (paused?.why !== why) notice(`Sync paused: ${why}. Changes stay on this Mac until it lifts.`);
+		const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : RETRY_LIMIT_SECONDS;
+		paused = { why, until: Date.now() + seconds * 1_000 };
+		if (resume !== undefined) clearTimeout(resume);
+		resume = setTimeout(() => {
+			resume = undefined;
+			if (caughtUp) checkEverything();
+			wake();
+		}, seconds * 1_000);
+		resume.unref?.();
+		if (!live) fail(new SpoolError(`sync paused: ${why}`));
+	};
+
+	const signedOut = () => {
+		if (!toldSignedOut) notice(`${link.url} is not synced while this machine is signed out; run \`spool login\``);
+		toldSignedOut = true;
+	};
+
 	const send = (path: string, bytes: Buffer | undefined) => {
 		if (socket === undefined) return;
 		const ref = String(++refs);
@@ -190,7 +284,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	/** Send one path if it differs from the team's version this copy last had, unless git made it differ. */
 	const check = (path: string) => {
-		if (!travels(path) || restoring.has(path) || !present()) return;
+		if (!travels(path) || restoring.has(path) || !present() || isPaused()) return;
 		if (guard.busy() && !gitStale) {
 			deferred.add(path);
 			waitForGit();
@@ -200,6 +294,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			dirty.add(path);
 			return;
 		}
+		const why = stays(path);
+		if (why !== undefined) return hold(path, why);
+		held.delete(path);
 		const bytes = readLocal(path);
 		const hash = bytes === undefined ? null : digest(bytes);
 		const known = state.files[path];
@@ -296,7 +393,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (!caughtUp) return;
 		for (const path of paths) {
 			// .spool and every other dot-folder are this machine's alone
-			if (path.split("/").some((segment) => segment.startsWith("."))) continue;
+			const dotted = path.split("/").some((segment) => segment.startsWith("."));
+			if (dotted || !travels(path)) outside(path);
+			if (dotted) continue;
 			check(path);
 			for (const under of filesUnder(designDir, path)) check(under);
 			for (const known of Object.keys(state.files)) if (known.startsWith(`${path}/`)) check(known);
@@ -315,8 +414,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		// a hostile or broken cloud could name anything: only Spool's own layout is ever written
 		let target: string;
 		try {
-			if (!travels(path)) throw new Error(path);
-			target = resolveDesignPath(designDir, join(designDir, ...path.split("/")), path);
+			if (!travels(path) || (bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) throw new Error(path);
+			const named = join(designDir, ...path.split("/"));
+			target = resolveDesignPath(designDir, named, path);
+			// regular files only: never written through a symlink, even one that stays inside design/
+			if (target !== named) throw new Error(path);
 		} catch {
 			notice(`refused a team file outside Spool's layout: ${path}`);
 			return;
@@ -367,6 +469,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (typeof message.head === "number" && message.head > state.head) state.head = message.head;
 			persist();
 			caughtUp = true;
+			toldSignedOut = false;
 			retryMs = RECONNECT_MIN_MS;
 			checkEverything();
 			burst = undefined;
@@ -386,13 +489,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				persist();
 				// this copy's own save of a marked file reached the team, and is the answer to the mark
 				if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();
+				if (paused !== undefined && !isPaused()) {
+					paused = undefined;
+					notice("Sync resumed.");
+				}
 			}
 			if (message.type === "set-aside") {
 				yielding.add(sent.path);
 				const version = typeof message.version === "number" ? message.version : 0;
 				mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
 			}
-			if (message.type === "refused") notice(`${sent.path} did not travel: ${String(message.reason)}`);
+			if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
 			if (dirty.delete(sent.path)) check(sent.path);
 		}
 		wake();
@@ -410,18 +517,20 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (closed) return;
 		if (token === undefined) {
 			if (!live) return fail(new SpoolError("not signed in; run `spool login`"));
-			notice(`${link.url} is not synced while this machine is signed out; run \`spool login\``);
+			signedOut();
 			return reconnect();
 		}
+		let opened = false;
 		socket = openSocket(syncUrl(link), token, {
 			open: () => {
 				burst = randomUUID();
+				opened = true;
 				socket?.send(
 					encodeFrame({ type: "hello", protocol: PROTOCOL_VERSION, format: FORMAT_VERSION, since: state.head }),
 				);
 			},
 			message: handle,
-			close: () => {
+			close: (code) => {
 				socket = undefined;
 				caughtUp = false;
 				burst = undefined;
@@ -432,9 +541,29 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				presence.lost();
 				if (closed) return;
 				if (!live) return fail(new SpoolError(`spool.page closed the sync connection for ${link.url}`));
+				if (code === CLOSE_SIGNED_OUT) signedOut();
+				// cut off, or refused before it opened: spool.page says whether this machine still edits the project
+				if (code === CLOSE_NOT_EDITOR || !opened) return void askStanding();
 				reconnect();
 			},
 		});
+	};
+
+	/** Whether the project ended for this machine; otherwise the copy keeps trying, as it does offline. */
+	const askStanding = async () => {
+		const standing = (await options.standing?.()) ?? "unknown";
+		if (closed) return;
+		if (standing === "not_editor" && options.ended !== undefined) return options.ended();
+		if (standing === "signed_out") signedOut();
+		reconnect();
+	};
+
+	/** A save spool.page wouldn't take: the file stays here, and a limit pauses sync until it lifts. */
+	const refused = (path: string, reason: unknown, retryAfter: unknown) => {
+		if (reason === "too_large") hold(path, `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`);
+		else if (reason === "outside_layout" || reason === "invalid_save") hold(path, OUTSIDE_LAYOUT);
+		else if (typeof reason === "string" && Object.hasOwn(LIMITS, reason)) pause(reason as Limited, retryAfter);
+		// signed_out and not_editor: the connection closes next, and the close is what is answered
 	};
 
 	const reconnect = () => {
@@ -482,6 +611,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (gitWait !== undefined) clearTimeout(gitWait);
 			if (asking !== undefined) clearImmediate(asking);
 			guard.close();
+			if (resume !== undefined) clearTimeout(resume);
 			watch?.close();
 			socket?.close();
 			socket = undefined;
@@ -537,13 +667,16 @@ function isPerson(value: unknown): value is Presence["person"] {
 
 /**
  * Every team project the daemon has registered, followed for as long as it stays registered. A local copy
- * whose `design/` isn't there yet waits for a fetch to fill it.
+ * whose `design/` isn't there yet waits for a fetch to fill it, and one whose project ended is never followed.
  */
 export function createTeamSync(deps: {
+	spoolDir: string;
 	origin: () => string;
 	vault: (origin: string) => Pick<CloudVault, "read">;
+	fetch?: typeof fetch;
 	openSocket?: OpenSyncSocket;
-	notice?: (message: string) => void;
+	/** What a local copy has to say, and the root it is about. */
+	notice?: (message: string, root?: string) => void;
 	/** A local copy's set-aside marks changed. */
 	onMarks?: (root: string) => void;
 }) {
@@ -551,10 +684,39 @@ export function createTeamSync(deps: {
 	/** Who listens for presence on each root's canvas. */
 	const watchers = new Map<string, Set<(presence: Presence) => void>>();
 	let closed = false;
+	const say = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
+
+	const standing =
+		(link: ProjectLink, origin: string, vault: Pick<CloudVault, "read">) => async (): Promise<Standing> => {
+			try {
+				const request = { origin, vault, ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }) };
+				const { role } = await cloudTeams(deps.spoolDir, request).project(link.team, link.project);
+				return role === "viewer" ? "not_editor" : "editor";
+			} catch (error) {
+				if (error instanceof CloudSignedOut) return "signed_out";
+				// not in the team, the team deleted, or the project removed: all answered the same
+				if (error instanceof CloudTeamRefused && error.status === 404) return "not_editor";
+				return "unknown";
+			}
+		};
+
+	const end = (root: string, link: ProjectLink) => {
+		copies.get(root)?.close();
+		copies.delete(root);
+		try {
+			endLocalCopy(root, link);
+			say(`No longer synced with ${link.team}. This is now a project on this Mac only.`, root);
+		} catch (error) {
+			say(error instanceof Error ? error.message : String(error), root);
+		}
+	};
+
 	return {
 		keeping(roots: readonly string[]): void {
 			if (closed) return;
-			const wanted = roots.filter((root) => isTeamProject(root) && existsSync(join(root, "design", "canvas.json")));
+			const wanted = roots.filter(
+				(root) => isTeamProject(root) && existsSync(join(root, "design", "canvas.json")) && !hasEnded(root),
+			);
 			for (const [root, copy] of copies) {
 				if (wanted.includes(root)) continue;
 				copy.close();
@@ -564,14 +726,18 @@ export function createTeamSync(deps: {
 				if (copies.has(root)) continue;
 				try {
 					const origin = deps.origin();
+					const vault = deps.vault(origin);
+					const link = readProjectLink(root);
 					copies.set(
 						root,
 						followLocalCopy({
 							root,
 							origin,
-							vault: deps.vault(origin),
+							vault,
 							...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
-							...(deps.notice === undefined ? {} : { notice: deps.notice }),
+							notice: (message) => say(message, root),
+							standing: standing(link, origin, vault),
+							ended: () => end(root, link),
 							...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
 							onPresence: (presence) => {
 								for (const watcher of watchers.get(root) ?? []) watcher(presence);
@@ -579,7 +745,7 @@ export function createTeamSync(deps: {
 						}),
 					);
 				} catch (error) {
-					(deps.notice ?? console.error)(error instanceof Error ? error.message : String(error));
+					say(error instanceof Error ? error.message : String(error), root);
 				}
 			}
 		},
@@ -604,6 +770,31 @@ export function createTeamSync(deps: {
 
 export type TeamSync = ReturnType<typeof createTeamSync>;
 
+/**
+ * A team project ended for this machine: its local copy becomes an ordinary project here. The solo
+ * `design/.gitignore` comes back, so the folder can be committed again; `spool.json` and git are left alone; and
+ * the copy's record says it ended, so the daemon never follows it again. No file is touched.
+ */
+export function endLocalCopy(root: string, link: ProjectLink): void {
+	const designDir = realDesignDir(root);
+	writeAtomic(join(designDir, ".gitignore"), SOLO_GITIGNORE);
+	const stateFile = join(designDir, ".spool", "sync.json");
+	// the link the copy was followed by: a branch checked out now may have no spool.json
+	const state: CopyState = { ...readState(stateFile, link.url), ended: true };
+	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+}
+
+/** Whether a local copy's team project ended for this machine. */
+export function hasEnded(root: string): boolean {
+	try {
+		return (
+			(JSON.parse(readFileSync(join(root, "design", ".spool", "sync.json"), "utf8")) as CopyState).ended === true
+		);
+	} catch {
+		return false;
+	}
+}
+
 const openWebSocket: OpenSyncSocket = (url, token, events) => {
 	const socket = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
 	socket.binaryType = "arraybuffer";
@@ -611,7 +802,7 @@ const openWebSocket: OpenSyncSocket = (url, token, events) => {
 	socket.addEventListener("message", (event) => events.message(event.data as string | ArrayBuffer));
 	// a failed handshake or a dropped line is an error and then a close; the close is what is answered
 	socket.addEventListener("error", () => {});
-	socket.addEventListener("close", () => events.close());
+	socket.addEventListener("close", (event) => events.close(event.code));
 	return { send: (frame) => socket.send(frame), close: () => socket.close() };
 };
 
