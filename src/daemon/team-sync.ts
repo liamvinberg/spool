@@ -899,6 +899,18 @@ export function endLocalCopy(root: string, link: ProjectLink): void {
 	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 }
 
+/**
+ * A copy that ended here is got again, its person an editor once more: it is a local copy again, out of git, and the
+ * daemon follows it. What changed here meanwhile goes up as saves built on the versions it last had.
+ */
+export function resumeLocalCopy(root: string): void {
+	const designDir = realDesignDir(root);
+	const stateFile = join(designDir, ".spool", "sync.json");
+	const { ended: _, ...state } = JSON.parse(readFileSync(stateFile, "utf8")) as CopyState;
+	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+	writeAtomic(join(designDir, ".gitignore"), TEAM_GITIGNORE);
+}
+
 /** Whether a local copy's team project ended for this machine. */
 export function hasEnded(root: string): boolean {
 	return copyRecord(root)?.ended === true;

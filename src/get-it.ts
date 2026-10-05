@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { CloudSignedOut } from "./cloud-auth";
 import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
+import { hasEnded, resumeLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
 import type { TeamInitOptions } from "./init";
@@ -81,6 +82,8 @@ export async function getTeamProject(
 		}
 		throw error;
 	}
+	// a copy that ended here, its person an editor again, is followed again
+	if (hasEnded(root)) resumeLocalCopy(root);
 	registerProject(spoolDir, root);
 	// a project with no repo yet takes the one it was just got into: information for the team, never a permission
 	if (found.repo === null && place.kind === "checkout") {

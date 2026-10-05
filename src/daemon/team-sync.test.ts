@@ -1052,6 +1052,34 @@ describe("when a team project ends for a machine", () => {
 		});
 	});
 
+	it("is a project to get again once its editor is back, and getting it follows the copy again", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.role("ben", "viewer");
+		await until(() => said.ben.includes("No longer synced with devosurf. This is now a project on this Mac only."));
+		// the ended copy is no local copy: Home shows the project not here, and the folder as Ben's own
+		expect(teamProjects(ben.state)).toEqual([]);
+		const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
+			projects: { root: string; team?: unknown }[];
+		};
+		expect(listed.projects.find((project) => project.root === ben.root)?.team).toBeUndefined();
+
+		cloud.role("ben", "editor");
+		writeFrame(ana.root, "news", "export default () => <h1>News</h1>;\n");
+		const got = await ben.daemon.controlRequest("/api/cloud/teams/devosurf/projects/checkout/get", {
+			method: "POST",
+			headers: { "content-type": "application/json", origin: "http://localhost:7766" },
+			body: JSON.stringify({ where: "checkout", path: ben.root }),
+		});
+		expect(got.status, await got.clone().text()).toBe(200);
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+		expect(teamProjects(ben.state).map(({ copies }) => copies)).toEqual([[ben.root]]);
+		await until(() => same(ana.root, ben.root, "frames/news/frame.tsx"), 10_000);
+		writeFrame(ben.root, "back", "export default () => <h1>Back</h1>;\n");
+		await until(() => cloud.file("checkout", "frames/back/frame.tsx") !== undefined, 10_000);
+	}, 30_000);
+
 	it("is not an ending when the machine is signed out: it waits for `spool login`", async () => {
 		const { cloud, said, ben } = await twoEditors();
 		cloud.revoke("ben");
