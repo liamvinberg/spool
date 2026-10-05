@@ -18,6 +18,7 @@ import { fetchLocalCopy, openProject } from "../open";
 import { readRegistry, registerProject, teamProjects } from "../registry";
 import { removeProject } from "../remove";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
+import { SOLO_GITIGNORE } from "../templates";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 import { historyEnabled } from "./history";
@@ -300,6 +301,23 @@ describe("local copies", () => {
 		// the copy that stays is still the team's
 		writeFrame(ben.root, "home", "from ben\n");
 		await until(() => same(ben.root, ana.root, "frames/home/frame.tsx"));
+	});
+
+	it("keeps design/ out of git from the moment it is followed, whatever .gitignore it had", async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const state = join(makeTempDir(), ".spool");
+		const { root } = await initTeamProject(repo(), state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+		});
+		// as a teammate's design/ that survived pulling the move commit keeps the solo one
+		writeFileSync(join(root, "design/.gitignore"), SOLO_GITIGNORE);
+		makeApp(state, { teamSyncServices: { ...ana.services, notice: () => {} }, cloudTeamsRequest: ana.request });
+		await until(() => readFileSync(join(root, "design/.gitignore"), "utf8") === "*\n");
+		expect(status(root)).toEqual(["?? spool.json"]);
 	});
 
 	it("is never deleted for the team when its folder is erased while still registered", async () => {

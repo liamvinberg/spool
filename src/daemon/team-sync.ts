@@ -663,8 +663,14 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		retryMs = Math.min(retryMs * 2, RECONNECT_MAX_MS);
 	};
 
-	/** Watch design/ for saves, again after a refill: a design/ removed whole can take its watch with it. */
+	/**
+	 * Watch design/ for saves, again after a refill: a design/ removed whole can take its watch with it. A followed
+	 * copy is out of git whatever `.gitignore` it came with (a solo one survives a pull of the move commit).
+	 */
 	const follow = () => {
+		const ignore = join(designDir, ".gitignore");
+		if (present() && existsSync(designDir) && readLocal(".gitignore")?.toString() !== TEAM_GITIGNORE)
+			writeAtomic(ignore, TEAM_GITIGNORE);
 		watch?.close();
 		watch = watchTree(
 			designDir,
