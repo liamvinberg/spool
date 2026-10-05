@@ -850,6 +850,8 @@ export function NewTeamDialog({
 export function useTeamHome(
 	account: CloudAccountState,
 	open: (url: string) => void,
+	/** The team Home shows first: one a link at spool.page handed over, with none of its projects here yet. */
+	shown: string | null,
 	projects?: {
 		/** The covers of a team's projects on this Mac, by its address; nothing for none. */
 		covers: (address: string) => ReactNode;
@@ -860,7 +862,7 @@ export function useTeamHome(
 	},
 ) {
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
-	const [scope, setScope] = useState<string | null>(null);
+	const [scope, setScope] = useState<string | null>(shown);
 	const [page, setPage] = useState<TeamPage>("projects");
 	const [creating, setCreating] = useState(false);
 	const signedIn = account.state === "signed-in" ? account.email : null;

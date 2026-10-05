@@ -24,6 +24,7 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { PresenceFaces } from "./canvas/presence-faces";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
+import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
@@ -68,6 +69,8 @@ export function App() {
 	openRef.current = open;
 	const [focused, setFocused] = useState<string | null>(null);
 	const [booted, setBooted] = useState(false);
+	/** A team project a link at spool.page handed this page, until it has been opened. */
+	const [handed, setHanded] = useState(() => handedOver(window.location.search));
 	const [picking, setPicking] = useState<"new" | "folder" | false>(false);
 	const location = useSetting("projects.location");
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
@@ -343,6 +346,18 @@ export function App() {
 		[focusProject],
 	);
 
+	// a team project handed over from its link at spool.page: this Mac's local copy opens, and with none here
+	// Home shows the team it is in
+	useEffect(() => {
+		if (handed === null || !booted || !projectsLoaded) return;
+		setHanded(null);
+		const copy = projects.find(
+			(project) => project.team?.team === handed.team && project.team.project === handed.project,
+		);
+		if (copy !== undefined) openTab(copy);
+		else window.history.replaceState(null, "", "/");
+	}, [handed, booted, projectsLoaded, projects, openTab]);
+
 	/**
 	 * The tabs, arranged. Local state moves first and the PUT follows, exactly as
 	 * opening one does: the session event that comes back says the same thing this
@@ -443,7 +458,7 @@ export function App() {
 		await refetch();
 		openTab(project);
 	});
-	const teamHome = useTeamHome(account, openExternally, {
+	const teamHome = useTeamHome(account, openExternally, handed?.team ?? null, {
 		covers: (address) => {
 			const covers = coversOf(
 				projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
