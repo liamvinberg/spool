@@ -63,20 +63,21 @@ export function cloudShares(spoolDir: string, options: CloudRequestOptions = {})
 		/** The files the shared pages are made of, path by hash: spool.page's copy becomes exactly these. */
 		putSource: (id: string, files: Record<string, string>) =>
 			call<{ head: number }>("PUT", `${solo(id)}/source`, { files }),
-		/** Whether spool.page holds this version's cover already. */
-		hasCover: async (id: string, source: string) => {
+		/** Whether spool.page holds this version's cover already, a team project's or a solo one's. */
+		hasCover: async (at: SharePlace, source: string) => {
 			try {
-				await call<null>("HEAD", `${solo(id)}/covers/${source}`);
+				await call<null>("HEAD", `${place(at)}/covers/${source}`);
 				return true;
 			} catch (error) {
 				if (error instanceof CloudShareRefused && (error.status === 404 || error.status === 410)) return false;
 				throw error;
 			}
 		},
-		putCover: (id: string, source: string, frame: string, bytes: Uint8Array) =>
+		/** A frame's cover, filed under the version of the frame it is of. */
+		putCover: (at: SharePlace, source: string, frame: string, bytes: Uint8Array) =>
 			call<null>(
 				"PUT",
-				`${solo(id)}/covers/${source}?${new URLSearchParams({ frame })}`,
+				`${place(at)}/covers/${source}?${new URLSearchParams({ frame })}`,
 				bytes,
 				"application/octet-stream",
 			),

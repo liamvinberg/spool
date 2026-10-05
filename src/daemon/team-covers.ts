@@ -1,4 +1,5 @@
-import { authorizedCloudRequest, type CloudRequestOptions, CloudSignedOut } from "../cloud-auth";
+import { type CloudRequestOptions, CloudSignedOut } from "../cloud-auth";
+import { CloudShareRefused, cloudShares } from "../cloud-shares";
 import { followedLink } from "./team-sync";
 
 /**
@@ -21,11 +22,6 @@ export interface TeamCoversOptions {
 	log?: (line: string) => void;
 }
 
-/** The path a version's cover is filed under at spool.page. */
-export function coverPath(team: string, project: string, source: string): string {
-	return `/api/teams/${encodeURIComponent(team)}/projects/${encodeURIComponent(project)}/covers/${source}`;
-}
-
 export function createTeamCovers({ spoolDir, request, log = () => {} }: TeamCoversOptions): TeamCovers {
 	/** One send at a time, in the order the booth stored them: a first pass through a project is hundreds. */
 	let queue: Promise<void> = Promise.resolve();
@@ -35,21 +31,18 @@ export function createTeamCovers({ spoolDir, request, log = () => {} }: TeamCove
 		const options = request();
 		// a solo project's covers stay here, and so do an ended copy's and those of a team on another cloud
 		if (link === undefined || link.origin !== options.origin) return;
-		const path = coverPath(link.team, link.project, source);
+		const cloud = cloudShares(spoolDir, options);
+		const at = { kind: "team", team: link.team, project: link.project } as const;
 		try {
-			const asked = await authorizedCloudRequest(spoolDir, path, { method: "HEAD" }, options);
-			if (asked.ok) return;
-			if (asked.status !== 404) return;
-			const sent = await authorizedCloudRequest(
-				spoolDir,
-				`${path}?${new URLSearchParams({ frame })}`,
-				{ method: "PUT", headers: { "content-type": "application/octet-stream" }, body: Buffer.from(bytes) },
-				options,
-			);
-			if (!sent.ok) log(`the cover of ${frame} wasn't sent to ${link.team}: ${sent.status}`);
+			if (await cloud.hasCover(at, source)) return;
+			await cloud.putCover(at, source, frame, bytes);
 		} catch (error) {
-			// signed out, or spool.page out of reach: the next shot of a new version tries again
-			if (!(error instanceof CloudSignedOut)) log(`the cover of ${frame} wasn't sent: ${(error as Error).message}`);
+			// a version spool.page holds a newer cover than is no failure; signed out, or out of reach, the next shot
+			// of a new version tries again
+			if (error instanceof CloudShareRefused) {
+				if (error.status !== 410) log(`the cover of ${frame} wasn't sent to ${link.team}: ${error.status}`);
+			} else if (!(error instanceof CloudSignedOut))
+				log(`the cover of ${frame} wasn't sent: ${(error as Error).message}`);
 		}
 	}
 
