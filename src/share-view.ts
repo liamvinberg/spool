@@ -33,6 +33,16 @@ export type ProjectShares =
 	/** This project can't share from here: a team project that ended on this Mac, or one on another cloud. */
 	| { state: "unavailable" };
 
+/**
+ * Where a project's shares are read and changed from: the daemon on a Mac, spool.page in a browser. A change or a
+ * stop answers spool.page's reason when it refused, or null.
+ */
+export interface SharesSource {
+	read(): Promise<ProjectShares>;
+	change(share: string, change: { add?: string[]; remove?: string[] }): Promise<string | null>;
+	stop(share: string): Promise<string | null>;
+}
+
 /** What a new share asks for. */
 export interface ShareRequest {
 	kind: ShareKind;
@@ -55,4 +65,18 @@ export function shareWho(share: Pick<ShareView, "kind" | "people">): string {
 export function saidList(names: readonly string[]): string {
 	if (names.length <= 2) return names.join(" and ");
 	return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/** How long ago a moment was, as a share's line says it: "just now", "4 min ago", "3 hours ago", "yesterday". */
+export function saidAgo(seconds: number, now = Date.now() / 1000): string {
+	const minutes = Math.floor((now - seconds) / 60);
+	if (minutes < 1) return "just now";
+	if (minutes < 60) return `${minutes} min ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return hours === 1 ? "an hour ago" : `${hours} hours ago`;
+	const days = Math.floor(hours / 24);
+	if (days === 1) return "yesterday";
+	if (days < 7) return `${days} days ago`;
+	if (days < 30) return days < 14 ? "last week" : `${Math.floor(days / 7)} weeks ago`;
+	return new Date(seconds * 1000).toLocaleDateString("en", { month: "short", day: "numeric" });
 }

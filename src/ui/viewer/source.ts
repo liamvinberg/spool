@@ -1,4 +1,5 @@
 import type { DesignProjection } from "../../daemon/design-projection";
+import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -12,17 +13,26 @@ export interface ViewerConfig {
 }
 
 /**
- * One team project as the read-only canvas draws it, which is all it is ever
+ * One project as the read-only canvas draws it, which is all it is ever
  * told: the team, the project, who is looking, the canvas core reads from the
  * project's files (`projectDesign`), and where each frame's document is
  * served, `<frames><encoded frame name>`, on an origin of its own.
+ *
+ * An outsider is told only what was shared with them (`shared`): its pages as
+ * they last settled, and nothing else of the project.
  */
 export interface ViewerProject {
-	team: { address: string; name: string; logo: string | null };
+	/** The team a team project belongs to; null for a solo project shared on its own. */
+	team: { address: string; name: string; logo: string | null } | null;
 	project: string;
-	account: string;
+	/** Who is looking, by address; null for whoever holds a link share's link. */
+	account: string | null;
 	canvas: DesignProjection;
 	frames: string;
+	/** For an outsider: who shared these pages with them, which, and when they last changed for outsiders. */
+	shared?: ViewerShared;
+	/** For a member: where the project's shares are read, and changed by its editors and admins. */
+	shares?: string;
 	/** The role of whoever is looking. Editors and admins may hand the project over to spool on their Mac. */
 	role?: ViewerRole;
 	/** Where the project's saves are told as they land: a WebSocket address on the page's own origin. */
@@ -34,6 +44,13 @@ export interface ViewerProject {
 }
 
 export type ViewerRole = "admin" | "editor" | "viewer";
+
+/** What an outsider's one line says: who shared, which pages, and when they last changed (seconds), if ever. */
+export interface ViewerShared {
+	by: string;
+	pages: string[];
+	updated: number | null;
+}
 
 /** Whether a role edits: holds the folders, so has a spool to hand the project over to. */
 export function edits(role: ViewerRole | undefined): boolean {
@@ -148,6 +165,44 @@ export function locate(config: ViewerConfig, url: URL): { page: string; frame: s
 
 /** The canvas URL of a page, with the frame being played on it, if any. */
 export function address(config: ViewerConfig, page: string, frame: string | null): string {
-	const path = page === "" ? config.path : `${config.path}/${page.split("/").map(encodeURIComponent).join("/")}`;
+	// a link share's canvas lives at its host's root, whose path is ""
+	const path =
+		page === "" ? config.path || "/" : `${config.path}/${page.split("/").map(encodeURIComponent).join("/")}`;
 	return frame === null ? path : `${path}?${new URLSearchParams({ frame })}`;
+}
+
+/**
+ * A project's shares at spool.page, for a member's Shared control: read by any member, changed by its editors and
+ * admins, whom spool.page alone decides. These are the only requests the canvas sends that change anything, and
+ * only when an editor presses for them.
+ */
+export function viewerShares(address: string, manage: boolean): SharesSource {
+	const send = async (url: string, init: RequestInit): Promise<string | null> => {
+		const response = await fetch(url, { credentials: "same-origin", ...init });
+		if (response.ok) return null;
+		return (((await response.json().catch(() => null)) as { error?: string } | null)?.error ??
+			"unavailable") as string;
+	};
+	return {
+		async read(): Promise<ProjectShares> {
+			try {
+				const response = await fetch(address, {
+					credentials: "same-origin",
+					headers: { accept: "application/json" },
+				});
+				if (!response.ok) return { state: "unreachable" };
+				const { shares } = (await response.json()) as { shares: ShareView[] };
+				return { state: "ready", shares, manage };
+			} catch {
+				return { state: "unreachable" };
+			}
+		},
+		change: (share, change) =>
+			send(`${address}/${encodeURIComponent(share)}`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(change),
+			}),
+		stop: (share) => send(`${address}/${encodeURIComponent(share)}`, { method: "DELETE" }),
+	};
 }

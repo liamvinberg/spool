@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
+import { isFramePath } from "../../page-path";
 import { fulfillClipboardCopy } from "../../runtime/clipboard-host";
 import { Player, type PlayerController } from "../../runtime/player-chrome";
 import { PLAYER_CHROME_RULES } from "../../runtime/player-chrome-css";
@@ -35,6 +36,7 @@ export function ViewerPlayer({
 	project,
 	frames,
 	documentOf,
+	walksAnywhere = false,
 	start,
 	from,
 	onWalked,
@@ -43,6 +45,11 @@ export function ViewerPlayer({
 	project: string;
 	frames: readonly DesignFrame[];
 	documentOf: (frame: string) => string;
+	/**
+	 * Walk to any frame a document names, known here or not: an outsider walking off the pages shared with them is
+	 * shown the screen that says it isn't shared, never left where they were.
+	 */
+	walksAnywhere?: boolean;
 	/** The frame to play; a different one while open is a walk to it. */
 	start: string;
 	/** Where the frame stands on screen on the canvas, to grow from; null plays it at once. */
@@ -60,6 +67,8 @@ export function ViewerPlayer({
 	const closing = useRef(false);
 	const latest = useRef({ frames, documentOf, onWalked, onClosed });
 	latest.current = { frames, documentOf, onWalked, onClosed };
+	const reaches = useRef(walksAnywhere);
+	reaches.current = walksAnywhere;
 	/** Where it opened: what the glide grows out of, and shrinks back into while the same frame plays. */
 	const opening = useRef({ start, from });
 
@@ -83,7 +92,7 @@ export function ViewerPlayer({
 			geometry,
 			frames: () => latest.current.frames.map((frame) => frame.name),
 			walk(frame) {
-				if (!latest.current.frames.some((each) => each.name === frame)) return;
+				if (!walkable(latest.current.frames, reaches.current, frame)) return;
 				session.current = null;
 				set({
 					frame,
@@ -152,7 +161,7 @@ export function ViewerPlayer({
 					return;
 				case "go":
 				case "back": {
-					if (!latest.current.frames.some((frame) => frame.name === message.target)) {
+					if (!walkable(latest.current.frames, reaches.current, message.target)) {
 						if (message.id !== undefined)
 							source.postMessage(walkRejected(message.frame, message.id, "missing"), "*");
 						return;
@@ -218,6 +227,11 @@ function PlayedDocument({
 			style={{ height: `calc(100vh - ${DESK_BAR_PX}px)` }}
 		/>
 	);
+}
+
+/** Whether a walk to a frame goes anywhere: one on the canvas, or any frame at all where walks reach anywhere. */
+function walkable(frames: readonly DesignFrame[], anywhere: boolean, frame: string): boolean {
+	return frames.some((each) => each.name === frame) || (anywhere && isFramePath(frame));
 }
 
 /** The transform that puts the played page where its frame stands on the canvas. */

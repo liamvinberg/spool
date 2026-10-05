@@ -44,6 +44,43 @@ const editor: ViewerProject = {
 	download: "https://spool.test/Spool.dmg",
 };
 const SHOW_CANVAS = { "spool-viewer:look:/devosurf/checkout": "1" };
+/** The same project as an outsider sees it: the one page shared with them, as it last settled, and one line. */
+const outsider: ViewerProject = {
+	team: { address: "devosurf", name: "Devosurf", logo: null },
+	project: "checkout",
+	account: "kim@client.com",
+	canvas: {
+		pages: ["shop"],
+		places: { shop: { x: 3000, y: 0 } },
+		order: {},
+		frames: [{ name: "shop/cart", page: "shop", x: 0, y: 0, w: 390, h: 844 }],
+	},
+	frames: FRAMES,
+	shared: { by: "ana", pages: ["shop"], updated: Math.floor(Date.now() / 1000) - 150 },
+};
+/** The project's shares, as spool.page lists them for an editor (with their links) or a viewer (without). */
+const SHARES = [
+	{
+		id: "people-share",
+		kind: "people",
+		pages: ["shop"],
+		people: ["kim@client.com", "ola.n@client.com"],
+		by: "ana@devosurf.com",
+		at: Math.floor(Date.now() / 1000) - 3 * 86400,
+		opens: 14,
+		link: "https://cloud.test/shared/people-share",
+	},
+	{
+		id: "link-share",
+		kind: "link",
+		pages: ["home", "shop"],
+		people: [],
+		by: "ben@devosurf.com",
+		at: Math.floor(Date.now() / 1000) - 8 * 86400,
+		opens: 41,
+		link: "https://s1.onspool.test/",
+	},
+];
 
 /** A frame document as the frame's own origin serves it: its name, and a link that walks. */
 function frameDocument(frame: string, version = ""): string {
@@ -122,6 +159,13 @@ async function open(
 			return route.fulfill({ body: readFileSync(file), contentType: type });
 		}
 		if (url.origin === APP && url.pathname === "/api/canvas") return route.fulfill({ json: reading });
+		if (url.origin === APP && url.pathname === "/api/shares")
+			return route.fulfill({
+				json: {
+					shares: SHARES.map(({ link, ...share }) => (reading.role === "viewer" ? share : { ...share, link })),
+				},
+			});
+		if (url.origin === APP && url.pathname.startsWith("/api/shares/")) return route.fulfill({ status: 204 });
 		if (url.origin === APP && url.pathname.startsWith("/covers/"))
 			return route.fulfill({
 				body: readFileSync(join(process.cwd(), "src/ui/agent-app-assets/claude.png")),
@@ -357,5 +401,62 @@ describe("the read-only canvas", () => {
 		await page.reload();
 		await page.getByRole("navigation", { name: "Pages" }).waitFor();
 		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+	});
+
+	it("shows an outsider only the pages shared with them, one line, and nobody", { timeout: 60_000 }, async () => {
+		const { page, requests } = await open(PATH, { as: outsider });
+		// no root page of their own: the canvas opens on the page shared with them
+		await expect
+			.poll(() => page.frameLocator('iframe[title="shop/cart"]').locator("h1").textContent())
+			.toBe("shop/cart");
+		await page.getByText("ana shared shop with you · updated 2 min ago").waitFor();
+		const rail = page.getByRole("navigation", { name: "Pages" });
+		expect(await rail.getByRole("button", { name: "shop" }).count()).toBe(1);
+		for (const other of ["home", "menu"]) expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);
+		expect(await page.getByText("view only").count()).toBe(0);
+		for (const name of [/open in spool/i, /^shared/i])
+			expect(await page.getByRole("button", { name }).count()).toBe(0);
+
+		// a walk off the shared pages goes where it leads, and that screen says it isn't shared
+		await page.locator('[data-viewer-frame="shop/cart"]').click();
+		const player = page.locator("[data-viewer-player]");
+		await player.frameLocator('iframe[title="shop/cart"]').getByRole("button", { name: "Go to home" }).click();
+		await expect.poll(() => new URL(page.url()).searchParams.get("frame")).toBe("home");
+		expect(await player.locator('iframe[title="home"]').getAttribute("src")).toBe(`${FRAMES}home?play`);
+		// nothing listens to the project's saves for them, and nothing they do sends anything
+		expect(requests.some((request) => request.url.includes("/api/live"))).toBe(false);
+		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+	});
+
+	it("lists the project's shares for members, which editors open, change and stop and viewers only read", {
+		timeout: 60_000,
+	}, async () => {
+		const viewer = await open(PATH, { as: { ...project, shares: "/api/shares" } });
+		await viewer.page.getByRole("button", { name: /^Shared/u }).click();
+		const read = viewer.page.getByRole("dialog", { name: "Shared" });
+		await read.getByText("kim and ola").waitFor();
+		await read.getByText("anyone with the link").waitFor();
+		for (const button of await read.getByRole("button").all()) expect(await button.isDisabled()).toBe(true);
+		expect(await read.getByText(/Copy link|Stop sharing/u).count()).toBe(0);
+		expect(viewer.requests.filter((request) => request.method !== "GET")).toEqual([]);
+
+		const { page, requests } = await open(PATH, { as: { ...editor, shares: "/api/shares" }, session: SHOW_CANVAS });
+		await page.getByRole("button", { name: /^Shared/u }).click();
+		const shared = page.getByRole("dialog", { name: "Shared" });
+		await shared.getByRole("button", { name: /kim and ola/u }).click();
+		await shared.getByText("ola.n@client.com").waitFor();
+		await shared.getByText("ana · 3 days ago · 14 opens").waitFor();
+		await shared.getByRole("button", { name: "Copy link" }).waitFor();
+		await shared.getByRole("button", { name: "Remove ola.n@client.com" }).click();
+		await shared.getByLabel("Add someone by email").fill("sam@client.com");
+		await shared.getByLabel("Add someone by email").press("Enter");
+		await shared.getByRole("button", { name: "Stop sharing" }).click();
+		const writes = () => requests.filter((request) => request.method !== "GET");
+		await expect.poll(() => writes().length).toBe(3);
+		expect(writes()).toEqual([
+			{ method: "PATCH", url: `${APP}/api/shares/people-share` },
+			{ method: "PATCH", url: `${APP}/api/shares/people-share` },
+			{ method: "DELETE", url: `${APP}/api/shares/people-share` },
+		]);
 	});
 });

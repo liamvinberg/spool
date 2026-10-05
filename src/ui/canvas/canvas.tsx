@@ -29,6 +29,7 @@ import type {
 import {
 	beaconTrash,
 	coverUrl,
+	daemonShares,
 	fetchCanvasState,
 	fetchEnginePreference,
 	fetchFlows,
@@ -56,6 +57,7 @@ import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { ProjectEmpty } from "../project-empty";
+import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
@@ -193,6 +195,7 @@ import {
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
 import { setAsideAsk, useSetAside } from "./set-aside";
+import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
@@ -383,6 +386,10 @@ export function ProjectCanvas({
 	const [camera] = useState(createCameraStore);
 	const sharingAvailable = useSharingAvailable();
 	const sharing = useCanvasSharing(project, sharingAvailable, camera);
+	// pages shared with outsiders through spool.page (DEV-193), started from a page's right-click
+	const pageShares = useMemo(() => daemonShares(project), [project]);
+	const { shares: projectShares } = useShares(pageShares);
+	const [sharingPage, setSharingPage] = useState<string | null>(null);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	// on the document rather than the viewport, which a booting canvas has not drawn yet
 	useEffect(() => watchMotionStrain(camera, document.documentElement), [camera]);
@@ -5564,6 +5571,7 @@ export function ProjectCanvas({
 					// against the same overlay and lands in the same batched write
 					onMarkSeen={markRead}
 					under={elementTree.under}
+					onSharePage={projectShares?.state === "ready" && projectShares.manage ? setSharingPage : undefined}
 				/>
 			</div>
 			<div
@@ -5979,6 +5987,19 @@ export function ProjectCanvas({
 				)}
 			/>
 			{sharing.node}
+			{sharingPage !== null && (
+				<ShareSheet
+					page={sharingPage}
+					pages={navigatorPages}
+					walks={edges}
+					onCreate={async (request) => {
+						const answer = await pageShares.create(request);
+						if ("share" in answer) window.dispatchEvent(new CustomEvent(SHARES_CHANGED));
+						return answer;
+					}}
+					onClose={() => setSharingPage(null)}
+				/>
+			)}
 			{setAside.node}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />

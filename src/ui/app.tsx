@@ -3,6 +3,7 @@ import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard } from "./api";
 import {
 	cancelCloudSignIn,
+	daemonShares,
 	fetchCloudAccount,
 	fetchDaemonIdentity,
 	fetchProjects,
@@ -35,6 +36,7 @@ import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
+import { SharedControl, useShares } from "./shares";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { MoveToTeamDialog, TeamProjectsAway } from "./team-moves";
 import { useTeamHome } from "./teams";
@@ -116,6 +118,10 @@ export function App() {
 		[open, byRoot, forgetting],
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
+	/** The focused project's shares with outsiders, for the Shared control at the window's top right (DEV-193). */
+	const focusedName = focusedTab?.name;
+	const tabShares = useMemo(() => (focusedName === undefined ? null : daemonShares(focusedName)), [focusedName]);
+	const { shares: focusedShares } = useShares(tabShares);
 
 	const projectRevision = useRef(0);
 	const remapProject = useCallback((from: string, renamed: TabProject) => {
@@ -578,6 +584,8 @@ export function App() {
 								onFollow={chrome.presence.follow}
 							/>
 						)}
+						{/* who the project's pages are shared with, outside the team (DEV-193) */}
+						{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
 					</div>
 				)}
 			</header>

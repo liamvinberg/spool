@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { Unseen } from "../../daemon/seen";
-import { pageChain, pageName, pageUnder, ROOT_PAGE } from "../../page-path";
+import { isFramePath, pageChain, pageName, pageUnder, ROOT_PAGE } from "../../page-path";
+import { saidAgo, saidList } from "../../share-view";
 import type { Camera } from "../api";
 import {
 	type Box,
@@ -26,6 +27,7 @@ import { UnseenMark } from "../canvas/unseen-mark";
 import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon, RibbonMark } from "../icons";
+import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import {
 	address,
@@ -36,6 +38,8 @@ import {
 	type ViewerConfig,
 	type ViewerLive,
 	type ViewerProject,
+	type ViewerShared,
+	viewerShares,
 } from "./source";
 import { ViewerPlayer } from "./viewer-player";
 
@@ -105,7 +109,8 @@ function Knock({ project, onLook }: { project: ViewerProject; onLook: () => void
 			const there = await knock();
 			if (stopped) return;
 			setAnswered(there);
-			if (there) window.location.replace(handoverAddress({ team: project.team.address, project: project.project }));
+			if (there && project.team !== null)
+				window.location.replace(handoverAddress({ team: project.team.address, project: project.project }));
 			else timer = setTimeout(() => void cycle(), KNOCK_BEAT_MS);
 		};
 		void cycle();
@@ -126,7 +131,7 @@ function Knock({ project, onLook }: { project: ViewerProject; onLook: () => void
 			<p className="mt-[10px] text-muted type-control">
 				{answered === false
 					? "Open spool and this page hands over by itself."
-					: `${project.team.name}’s project, on this Mac.`}
+					: `${project.team?.name ?? project.project}’s project, on this Mac.`}
 			</p>
 			<div className="mt-[44px] flex items-center gap-[18px] text-muted type-control">
 				<button type="button" className="hover:text-text" onClick={onLook}>
@@ -142,7 +147,7 @@ function Knock({ project, onLook }: { project: ViewerProject; onLook: () => void
 				)}
 			</div>
 			<p className="absolute bottom-[28px] text-muted type-detail">
-				{project.account} · {project.team.address}
+				{project.account} · {project.team?.address}
 			</p>
 		</div>
 	);
@@ -292,13 +297,19 @@ function ViewerCanvas({
 	const { canvas } = project;
 	const known = useMemo(() => new Set(canvas.pages), [canvas.pages]);
 	const [where, setWhere] = useState(() => locate(config, new URL(window.location.href)));
-	const page = known.has(where.page) ? where.page : ROOT_PAGE;
+	const outsider = project.shared !== undefined;
+	// an outsider has no root page of their own: the canvas opens on the first page shared with them
+	const opening = outsider ? (project.shared?.pages.find((each) => known.has(each)) ?? ROOT_PAGE) : ROOT_PAGE;
+	const page = known.has(where.page) ? where.page : opening;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
 	/** The frame the player has open: a save that renames or removes it never closes the player under anyone. */
 	const playing = useRef<string | null>(null);
+	// an outsider following a link to a screen not shared with them is told so by the screen itself
 	const played =
 		where.frame !== null &&
-		(where.frame === playing.current || canvas.frames.some((frame) => frame.name === where.frame))
+		(where.frame === playing.current ||
+			canvas.frames.some((frame) => frame.name === where.frame) ||
+			(outsider && isFramePath(where.frame)))
 			? where.frame
 			: null;
 	playing.current = played;
@@ -499,11 +510,11 @@ function ViewerCanvas({
 						</div>
 					)}
 				</div>
-				{edits(project.role) && (
-					<div className="absolute top-3 right-3">
-						<OpenInSpool project={project} onNotice={onNotice} />
-					</div>
-				)}
+				<div className="absolute top-3 right-3 flex items-center gap-3">
+					{project.shared !== undefined && <SharedLine shared={project.shared} />}
+					{project.shares !== undefined && <ProjectShared address={project.shares} manage={edits(project.role)} />}
+					{edits(project.role) && <OpenInSpool project={project} onNotice={onNotice} />}
+				</div>
 				{toast !== null && (
 					<div
 						role="status"
@@ -545,6 +556,7 @@ function ViewerCanvas({
 					project={project.project}
 					frames={canvas.frames}
 					documentOf={(name) => `${project.frames}${encodeURIComponent(name)}?play`}
+					walksAnywhere={outsider}
 					start={played}
 					from={from.current}
 					onWalked={(frame) => {
@@ -710,7 +722,7 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 				setKnocking(true);
 				const there = await knock();
 				setKnocking(false);
-				if (there)
+				if (there && project.team !== null)
 					window.location.assign(handoverAddress({ team: project.team.address, project: project.project }));
 				else onNotice("spool isn’t open on this Mac");
 			}}
@@ -718,6 +730,32 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 			Open in spool
 		</button>
 	);
+}
+
+/**
+ * The one line an outsider is shown (DEV-114): who shared these pages with them and when they last changed. Nobody
+ * else is on it, and nothing says the rest of the project exists.
+ */
+function SharedLine({ shared }: { shared: ViewerShared }) {
+	return (
+		<span
+			data-viewer-shared=""
+			className="flex items-center gap-2 rounded-sm border border-border bg-bg/90 py-1.5 pr-3 pl-1.5 text-muted backdrop-blur type-detail"
+		>
+			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-border-raised bg-surface text-[9px] text-text">
+				{shared.by[0]?.toUpperCase()}
+			</span>
+			{shared.by} shared {saidList(shared.pages.map(pageName))} with you
+			{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
+		</span>
+	);
+}
+
+/** A member's Shared control: the project's shares, which its editors and admins change and viewers only read. */
+function ProjectShared({ address, manage }: { address: string; manage: boolean }) {
+	const source = useMemo(() => viewerShares(address, manage), [address, manage]);
+	const { shares } = useShares(source);
+	return <SharedControl source={source} shares={shares} />;
 }
 
 /** The pages rail, as it ships, with nothing on it that changes anything. */
@@ -760,9 +798,11 @@ function PagesRail({
 	return (
 		<aside className="flex w-[232px] shrink-0 flex-col border-border border-r bg-bg">
 			<div className="flex h-11 shrink-0 items-center gap-2 border-border border-b pr-2 pl-3.5">
-				<TeamMark team={project.team} size={18} />
+				{project.team !== null && <TeamMark team={project.team} size={18} />}
 				<span className="truncate type-control">{project.project}</span>
-				{!edits(project.role) && <span className="ml-auto shrink-0 text-muted type-detail">view only</span>}
+				{!edits(project.role) && project.shared === undefined && (
+					<span className="ml-auto shrink-0 text-muted type-detail">view only</span>
+				)}
 			</div>
 			<nav aria-label="Pages" className="min-h-0 flex-1 overflow-y-auto py-2">
 				{rows.map((row) =>
@@ -858,7 +898,9 @@ function PagesRail({
 					) : null,
 				)}
 			</nav>
-			<div className="truncate border-border border-t px-3.5 py-3 text-muted type-detail">{project.account}</div>
+			{project.account !== null && (
+				<div className="truncate border-border border-t px-3.5 py-3 text-muted type-detail">{project.account}</div>
+			)}
 		</aside>
 	);
 }

@@ -47,6 +47,8 @@ export interface RailMenuActions {
 	readonly collapseAll: () => void;
 	readonly markSeen: () => void;
 	readonly markAllSeen: () => void;
+	/** Share the page with outsiders: offered only where this project can share. */
+	readonly share: () => void;
 }
 
 type Entry =
@@ -82,6 +84,8 @@ export function menuEntries(
 		 * canvas with nothing unseen should still teach that the verb is there.
 		 */
 		unseen: number;
+		/** whether this project can share its pages from here: signed in, and editing it */
+		shareable?: boolean;
 	},
 ): readonly Entry[] {
 	if (target.kind === "empty") {
@@ -98,6 +102,8 @@ export function menuEntries(
 	if (target.kind === "page") {
 		return [
 			{ run: "newPage", label: "New page" },
+			// sharing starts where the work is: one page, others added in the sheet
+			...(at.shareable === true ? [{ run: "share", label: "Share…" } as const] : []),
 			{ rule: true },
 			{ run: "rename", label: "Rename", keys: hotkeyKey("sidebar.rename") },
 			{ run: "duplicate", label: "Duplicate", keys: hotkeyKey("sidebar.duplicate") },
@@ -139,6 +145,7 @@ export function RailMenu({
 	selection,
 	movable,
 	unseen,
+	shareable = false,
 	actions,
 	onClose,
 }: {
@@ -147,6 +154,7 @@ export function RailMenu({
 	selection: number;
 	movable: boolean;
 	unseen: number;
+	shareable?: boolean;
 	actions: RailMenuActions;
 	onClose: () => void;
 }) {
@@ -158,7 +166,7 @@ export function RailMenu({
 		return () => window.removeEventListener("resize", onClose);
 	}, [onClose]);
 
-	const entries = menuEntries(menu.target, { pasteable, selection, movable, unseen });
+	const entries = menuEntries(menu.target, { pasteable, selection, movable, unseen, shareable });
 	const height = heightOf(entries);
 	const flipX = menu.x + MENU_WIDTH > window.innerWidth - SCREEN_MARGIN;
 	const flipY = menu.y + height > window.innerHeight - SCREEN_MARGIN;

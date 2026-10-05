@@ -263,6 +263,7 @@ export function CanvasSidebar({
 	unseen = NOTHING_UNSEEN,
 	onMarkSeen,
 	under = null,
+	onSharePage,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -317,6 +318,8 @@ export function CanvasSidebar({
 	onMarkSeen?: (names: readonly string[]) => void;
 	/** what stands under one frame's row, which is the element tree while Edit is on */
 	under?: RailUnder | null;
+	/** Share a page with outsiders, where this project can (DEV-193): a page row's right-click offers it. */
+	onSharePage?: ((page: string) => void) | undefined;
 }) {
 	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
 	const [resizing, setResizing] = useState(false);
@@ -1792,8 +1795,12 @@ export function CanvasSidebar({
 							selection={selected.length}
 							movable={menuMove !== null && menuMove.names.length > 0 && menuTargets.length > 0}
 							unseen={menuUnseen}
+							shareable={onSharePage !== undefined}
 							onClose={() => setMenu(null)}
 							actions={{
+								share: () => {
+									if (menu.target.kind === "page") onSharePage?.(menu.target.page);
+								},
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								newPageWith: () => {
 									// inside the page holding them: the frames are meant to stay where

@@ -27,6 +27,7 @@ import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes"
 import type { MoveOutcome, TeamProjectOnMac } from "../daemon/team-projects";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
+import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
@@ -1759,4 +1760,49 @@ export async function dismissSetAside(project: string, id: string): Promise<bool
 		method: "DELETE",
 	});
 	return response.ok;
+}
+
+/**
+ * A project's shares, through the daemon, which holds this Mac's session with spool.page: read, changed and
+ * stopped from the Shared control, and made from a page's right-click. A refusal answers spool.page's reason.
+ */
+export function daemonShares(project: string): SharesSource & {
+	create(request: ShareRequest): Promise<{ share: ShareView } | { error: string }>;
+} {
+	const base = `/api/p/${encodeURIComponent(project)}/shares`;
+	const refusal = async (response: Response) =>
+		response.ok
+			? null
+			: (((await response.json().catch(() => null)) as { error?: string } | null)?.error ?? "unavailable");
+	return {
+		async read() {
+			try {
+				const response = await controlFetch(base);
+				return response.ok ? ((await response.json()) as ProjectShares) : { state: "unreachable" };
+			} catch {
+				return { state: "unreachable" };
+			}
+		},
+		async change(share, change) {
+			return refusal(
+				await controlFetch(`${base}/${encodeURIComponent(share)}`, {
+					method: "PATCH",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(change),
+				}),
+			);
+		},
+		async stop(share) {
+			return refusal(await controlFetch(`${base}/${encodeURIComponent(share)}`, { method: "DELETE" }));
+		},
+		async create(request) {
+			const response = await controlFetch(base, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(request),
+			});
+			const error = await refusal(response.clone());
+			return error === null ? { share: (await response.json()) as ShareView } : { error };
+		},
+	};
 }
