@@ -16,7 +16,6 @@ import { realDesignDir } from "./design-path";
 import { projectDesign } from "./design-projection";
 import { diskDesignFiles } from "./disk-files";
 import { hasEnded } from "./team-sync";
-import { readCover, readCoverImage } from "./thumbs";
 
 /** A solo project's link to spool.page, beside its other machine state: which cloud, and the id it was given. */
 const SHARE_STATE = ".spool/share.json";
@@ -56,6 +55,15 @@ export function createProjectShares(options: ProjectSharesOptions) {
 	let queue: Promise<unknown> = Promise.resolve();
 	const quiet = new Map<string, ReturnType<typeof setTimeout>>();
 	const watching = new Map<string, () => void>();
+	/** The newest cover the booth took of each frame since the daemon started, with the version it is of. */
+	const shots = new Map<string, { source: string; bytes: Uint8Array }>();
+	/** The frames each solo project's last upload showed: the only ones whose covers leave this Mac. */
+	const shown = new Map<string, ReadonlySet<string>>();
+
+	const sendCover = async (id: string, frame: string, cover: { source: string; bytes: Uint8Array }) => {
+		const cloud = client();
+		if (!(await cloud.hasCover(id, cover.source))) await cloud.putCover(id, cover.source, frame, cover.bytes);
+	};
 
 	const stateFile = (root: string) => join(root, "design", SHARE_STATE);
 	const readState = (root: string): SoloShareState | undefined => {
@@ -97,7 +105,7 @@ export function createProjectShares(options: ProjectSharesOptions) {
 		const pages = asked ?? [
 			...new Set((await cloud.list({ kind: "solo", id })).shares.flatMap((share) => share.pages)),
 		];
-		const { files, frames } = await sharedFiles(root, realDesignDir(root), pages, options.version);
+		const { files, frames, sources } = await sharedFiles(root, realDesignDir(root), pages, options.version);
 		const hashes: Record<string, string> = {};
 		for (const [path, bytes] of files) hashes[path] = sha256(bytes);
 		const byHash = new Map([...files].map(([path, bytes]) => [hashes[path] ?? "", bytes]));
@@ -116,12 +124,11 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			await send(error.missing);
 			await cloud.putSource(id, hashes);
 		}
+		shown.set(root, new Set(frames));
+		// a frame's cover goes up under the version it is of, so outsiders see it while that version is theirs
 		for (const frame of frames) {
-			const cover = readCover(root, frame);
-			const image = cover === undefined ? undefined : readCoverImage(root, frame, cover.hash);
-			if (image === undefined) continue;
-			const source = sha256(image.bytes);
-			if (!(await cloud.hasCover(id, source))) await cloud.putCover(id, source, frame, image.bytes);
+			const cover = shots.get(`${root}\0${frame}`);
+			if (cover !== undefined && cover.source === sources.get(frame)) await sendCover(id, frame, cover);
 		}
 		if (asked !== undefined) return;
 		if (pages.length === 0) stopWatching(root);
@@ -259,6 +266,18 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			}
 			for (const root of [...watching.keys()]) if (!kept.has(root)) stopWatching(root);
 		},
+		/**
+		 * The booth took a frame's cover: kept for the next upload, and sent now when the project is a shared solo
+		 * project (a team project's go up through `team-covers.ts`).
+		 */
+		covered: (root: string, frame: string, source: string, bytes: Uint8Array) => {
+			shots.set(`${root}\0${frame}`, { source, bytes });
+			const place = placeOf(root);
+			if (typeof place === "string" || place.kind !== "solo" || !shown.get(root)?.has(frame)) return;
+			void enqueue(() => sendCover(place.id, frame, { source, bytes })).catch(() => {
+				// not a frame spool.page holds, or out of reach: the next upload sends it
+			});
+		},
 		/** Everything asked of spool.page so far, finished. */
 		settled: () => queue,
 		close: () => {
@@ -279,12 +298,13 @@ export async function sharedFiles(
 	designDir: string,
 	pages: readonly string[],
 	version: string,
-): Promise<{ files: Map<string, Buffer>; frames: string[] }> {
+): Promise<{ files: Map<string, Buffer>; frames: string[]; sources: Map<string, string> }> {
 	const wanted = new Set<string>(["canvas.json"]);
 	const shown = new Set(pages);
 	const frames = projectDesign(designDir, diskDesignFiles)
 		.frames.filter((frame) => frame.page !== undefined && shown.has(frame.page))
 		.map((frame) => frame.name);
+	const sources = new Map<string, string>();
 	for (const frame of frames) {
 		for (const path of filesUnder(designDir, `frames/${frame}`)) wanted.add(path);
 		try {
@@ -295,6 +315,7 @@ export async function sharedFiles(
 				authority: { projectCapability: "", controlOrigin: "http://127.0.0.1" },
 				version,
 			});
+			sources.set(frame, compiled.source);
 			for (const input of compiled.inputs) {
 				const path = relative(designDir, input).split(sep).join("/");
 				if (!path.startsWith("..")) wanted.add(path);
@@ -315,7 +336,7 @@ export async function sharedFiles(
 			// gone, or never there: an input a compile looked for and didn't find
 		}
 	}
-	return { files: shown.size === 0 ? new Map() : files, frames };
+	return { files: shown.size === 0 ? new Map() : files, frames, sources };
 }
 
 /** Every file in a folder and below it, design-relative, leaving out any frame nested inside and dot-entries. */

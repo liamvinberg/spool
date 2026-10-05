@@ -18,6 +18,8 @@ import {
 } from "../test-helpers";
 import type { AgentEngine } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
+import { realDesignDir } from "./design-path";
+import { createProjectShares, sharedFiles } from "./shares";
 
 /**
  * Sharing pages from the Mac: a team project's shares are spool.page's, changed through this Mac's session; a solo
@@ -243,6 +245,36 @@ describe("a solo project's share", () => {
 		});
 		expect(refused.status).toBe(401);
 		expect(existsSync(join(root, "design/.spool/share.json"))).toBe(false);
+	});
+});
+
+describe("a solo project's covers", () => {
+	it("go up for the frames it shares, under the version each is of, and never for the rest", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writePageFrame(root, "checkout", "pay", frame("Pay 640 kr"));
+		writePageFrame(root, "menu", "list", frame("Tonight's menu"));
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+		});
+		const made = await shares.routes.request(`/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind: "link", pages: ["checkout"] }),
+		});
+		expect(made.status).toBe(200);
+		const { sources } = await sharedFiles(root, realDesignDir(root), ["checkout"], "0.0.0-test");
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1]);
+		shares.covered(root, "checkout/pay", sources.get("checkout/pay") ?? "", png);
+		shares.covered(root, "menu/list", "b".repeat(64), png);
+		await shares.settled();
+		expect([...cloud.covers]).toEqual([[sources.get("checkout/pay"), "checkout/pay"]]);
+		shares.close();
 	});
 });
 
