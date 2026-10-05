@@ -48,6 +48,8 @@ export { type DesignEntry, type DesignFileKind, type DesignFiles, memoryDesignFi
 export { type DesignFrame, type DesignProjection, projectDesign } from "./daemon/design-projection";
 export { errorDocument } from "./daemon/document";
 export { inertWebfonts, type WebfontFile, type Webfonts } from "./daemon/font-faces";
+/** The policy every frame document is served under, given the origin it is served from. */
+export { servedFrameCsp } from "./daemon/frame-csp";
 export {
 	compilePublication,
 	type PlayerBundle,
