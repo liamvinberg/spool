@@ -3,6 +3,7 @@ import { AccountFoot } from "shared/ui/spool/account-foot";
 import { ProjectGrid } from "shared/ui/spool/home";
 import { homeProjects } from "shared/ui/spool/home-fixture";
 import { SpoolHomeScreen } from "shared/ui/spool/home-screen";
+import { AwayCovers, TIDEMARK_AWAY } from "shared/ui/spool/team-moves";
 import { TeamNav, TeamProjects, TeamSwitcher, TIDEMARK } from "shared/ui/spool/teams";
 
 export default function Team() {
@@ -17,6 +18,7 @@ export default function Team() {
 					<TeamProjects
 						team={TIDEMARK}
 						covers={<ProjectGrid projects={TIDEMARK_PROJECTS} onOpenProject={() => ui.go("app/spool-canvas")} />}
+						away={<AwayCovers projects={TIDEMARK_AWAY} onGet={() => ui.go("app/spool-home--get-it")} />}
 						onNewProject={() => ui.go("app/spool-home--picker")}
 					/>
 				),
@@ -31,4 +33,5 @@ const TIDEMARK_PROJECTS = homeProjects.slice(0, 2).map((project, index) => ({
 	root: `~/code/${index === 0 ? "tidemark-app" : "tidemark-site"}`,
 	name: index === 0 ? "tidemark-app" : "tidemark-site",
 	...(index === 0 ? { copies: 2 } : {}),
+	team: { url: `https://spool.page/tidemark/${index === 0 ? "app" : "site"}`, team: "tidemark", project: index === 0 ? "app" : "site" },
 }));

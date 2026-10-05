@@ -331,6 +331,7 @@ function ProjectTile({
 							onOpen();
 						}}
 					/>
+					{project.team === undefined && <MenuItem label="Move to team…" onClick={onCloseMenu} />}
 					<MenuItem
 						label="Copy path"
 						onClick={() => {

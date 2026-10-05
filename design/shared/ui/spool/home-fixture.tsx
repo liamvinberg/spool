@@ -9,6 +9,8 @@ export interface ProjectCard {
 	covers: { frame: string; cover: { hash: Artwork } }[];
 	/** A team project's local copies on this Mac, all under its one cover. */
 	copies?: number;
+	/** The team project this is a local copy of: it has no "Move to team…". */
+	team?: { url: string; team: string; project: string };
 }
 
 export const homeProjects: ProjectCard[] = projects.map((project, index) => ({
