@@ -17,6 +17,7 @@ import {
 	themeTokens,
 } from "../settings/registry";
 import { matchPreset, PRESETS, parseTheme, printTheme, type ThemeSpec, themeWrites } from "../settings/themes";
+import { fetchCloudTeams } from "./api";
 import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
@@ -212,6 +213,8 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 				<Switch on={Boolean(entry.value)} label={entry.label} onChange={move} />
 			) : entry.shape.kind === "choice" ? (
 				<Segmented choices={entry.shape.choices} value={String(entry.value)} label={entry.label} onChange={move} />
+			) : entry.shape.kind === "destination" ? (
+				<DestinationControl value={String(entry.value)} label={entry.label} onChange={move} />
 			) : (
 				<ColourControl settingKey={entry.key} value={String(entry.value)} label={entry.label} onChange={move} />
 			)}
@@ -732,16 +735,59 @@ function Switch({ on, label, onChange }: { on: boolean; label: string; onChange:
 	);
 }
 
+/**
+ * "New projects go to": ask, only this Mac, or one of the teams this Mac's account edits in. A team that isn't
+ * offered any more (signed out, or left) still shows while it is the value, so the row never lies about the file.
+ */
+function DestinationControl({
+	value,
+	label,
+	onChange,
+}: {
+	value: string;
+	label: string;
+	onChange: (next: string) => void;
+}) {
+	const [teams, setTeams] = useState<{ address: string; name: string }[]>([]);
+	useEffect(() => {
+		let live = true;
+		void fetchCloudTeams().then((state) => {
+			if (live && state.state === "ready") setTeams(state.teams.filter((team) => team.role !== "viewer"));
+		});
+		return () => {
+			live = false;
+		};
+	}, []);
+	const named = new Map([
+		["ask", "Ask"],
+		["local", "Only this Mac"],
+		...teams.map((team) => [team.address, team.name] as const),
+	]);
+	if (!named.has(value)) named.set(value, value);
+	return (
+		<Segmented
+			choices={[...named.keys()]}
+			value={value}
+			label={label}
+			onChange={onChange}
+			name={(choice) => named.get(choice) ?? choice}
+		/>
+	);
+}
+
 function Segmented({
 	choices,
 	value,
 	label,
 	onChange,
+	name = (choice) => choice,
 }: {
 	choices: readonly string[];
 	value: string;
 	label: string;
 	onChange: (next: string) => void;
+	/** What a choice reads as, where that isn't the value itself. */
+	name?: (choice: string) => string;
 }) {
 	return (
 		<span className="flex h-7 items-stretch rounded-sm border border-border p-px">
@@ -751,7 +797,7 @@ function Segmented({
 					<button
 						key={choice}
 						type="button"
-						aria-label={`${label}: ${choice}`}
+						aria-label={`${label}: ${name(choice)}`}
 						aria-pressed={lit}
 						onClick={() => onChange(choice)}
 						className={cn(
@@ -759,7 +805,7 @@ function Segmented({
 							lit ? "bg-control text-text" : "text-muted hover:text-text",
 						)}
 					>
-						{choice}
+						{name(choice)}
 					</button>
 				);
 			})}
