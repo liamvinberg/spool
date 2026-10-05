@@ -135,10 +135,10 @@ describe("Cloud account sign-in", () => {
 		});
 
 		expect(authenticated).toEqual(ACCOUNT);
-		expect(new URL(opened).origin).toBe("https://beta.spool.page");
+		expect(new URL(opened).origin).toBe("https://spool.page");
 		expect(requested).toEqual([
-			"https://beta.spool.page/auth/account/exchange",
-			"https://beta.spool.page/auth/account/session",
+			"https://spool.page/auth/account/exchange",
+			"https://spool.page/auth/account/session",
 		]);
 	});
 
@@ -202,7 +202,7 @@ describe("Cloud account sign-in", () => {
 	});
 
 	it("accepts only a canonical HTTPS authority from machine configuration", () => {
-		expect(cloudOrigin({})).toBe("https://beta.spool.page");
+		expect(cloudOrigin({})).toBe("https://spool.page");
 		expect(cloudOrigin({ SPOOL_CLOUD_ORIGIN: "https://beta.spool.page" })).toBe("https://beta.spool.page");
 		expect(cloudOrigin({ SPOOL_CLOUD_ORIGIN: "https://spool.page" })).toBe("https://spool.page");
 		for (const origin of ["http://spool.page", "https://spool.page/path", "https://user@spool.page"])

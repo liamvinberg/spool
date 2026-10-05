@@ -177,15 +177,23 @@ describe("daemon authority matrix", () => {
 		});
 
 		// a team project's link at spool.page knocks the same way before it hands over to this Mac
-		it.each(["https://spool.page", "https://beta.spool.page"])(
-			"lets the cloud (%s) read a trimmed health",
-			async (origin) => {
-				const response = await health(origin);
+		it("lets the cloud (https://spool.page) read a trimmed health", async () => {
+			const response = await health("https://spool.page");
 
-				expect(response.headers.get("access-control-allow-origin")).toBe(origin);
-				expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
-			},
-		);
+			expect(response.headers.get("access-control-allow-origin")).toBe("https://spool.page");
+			expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
+		});
+
+		it("lets another cloud read a trimmed health only when SPOOL_CLOUD_ORIGIN names it", async () => {
+			expect((await health("https://beta.spool.page")).headers.get("access-control-allow-origin")).toBeNull();
+
+			vi.stubEnv("SPOOL_CLOUD_ORIGIN", "https://beta.spool.page");
+			onTestFinished(() => vi.unstubAllEnvs());
+			const response = await health("https://beta.spool.page");
+
+			expect(response.headers.get("access-control-allow-origin")).toBe("https://beta.spool.page");
+			expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
+		});
 
 		// so a locally served copy of the door can read health while it is being
 		// worked on. Safe by construction: anything already on loopback could ask

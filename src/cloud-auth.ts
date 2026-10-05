@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { openInBrowser } from "./browser";
 import { SpoolError } from "./errors";
 
-export const CLOUD_ORIGIN = "https://beta.spool.page";
+export const CLOUD_ORIGIN = "https://spool.page";
 /** A sign-in at spool.page lasts ten minutes, from the page to its last step. */
 const HANDOFF_MS = 10 * 60_000;
 /** The Keychain service holding this instance's device session. */
