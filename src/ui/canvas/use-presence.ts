@@ -1,0 +1,202 @@
+import { type RefObject, useEffect, useRef } from "react";
+import { PRESENCE_DRAGGING, type PresenceState } from "../../team-sync-protocol";
+import { putPresence } from "../api";
+import { toWorld } from "./camera";
+import type { CameraStore } from "./camera-store";
+import { followCamera, type PresenceRoom } from "./presence";
+
+/** At most one presence in this many milliseconds goes to the daemon; the receiving canvas smooths between them. */
+export const PRESENCE_SEND_MS = 50;
+/** How quickly a follower's camera eases onto the view it follows, per second. */
+const FOLLOW_RATE = 8;
+
+/**
+ * Say where this canvas's person is on a team canvas, as it changes (DEV-196): the page, the pointer in world
+ * coordinates, a press, the frames a drag is moving, the frame they're inside live and the rectangle the
+ * camera shows. Sent to the daemon no more often than `PRESENCE_SEND_MS`, and only when something changed.
+ */
+export function usePresenceSender(options: {
+	project: string;
+	team: boolean;
+	camera: CameraStore;
+	viewportRef: RefObject<HTMLDivElement | null>;
+	page: string;
+	inside: string | null;
+	/** The frames a gesture is moving now, read when a state goes. */
+	dragging: () => readonly string[];
+}): void {
+	const latest = useRef(options);
+	latest.current = options;
+	const soon = useRef<() => void>(() => {});
+	const { project, team, camera, viewportRef } = options;
+
+	useEffect(() => {
+		const viewport = viewportRef.current;
+		if (!team || viewport === null) return;
+		let pointer: { x: number; y: number } | null = null;
+		let pressed = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let sentAt = Number.NEGATIVE_INFINITY;
+		let told = "";
+		const state = (): PresenceState => {
+			const cam = camera.get();
+			const { page, inside, dragging } = latest.current;
+			const world = pointer === null || cam === null ? null : toWorld(pointer, cam);
+			return {
+				page,
+				pointer: world === null ? null : { x: round(world.x), y: round(world.y) },
+				pressed,
+				dragging: dragging().slice(0, PRESENCE_DRAGGING),
+				inside,
+				view:
+					cam === null
+						? null
+						: {
+								x: round(-cam.x / cam.k),
+								y: round(-cam.y / cam.k),
+								w: round(viewport.clientWidth / cam.k),
+								h: round(viewport.clientHeight / cam.k),
+							},
+			};
+		};
+		const send = () => {
+			timer = undefined;
+			const next = state();
+			const json = JSON.stringify(next);
+			if (json === told) return;
+			told = json;
+			sentAt = performance.now();
+			putPresence(project, next);
+		};
+		// never in the event itself: a gesture the canvas starts or ends on this event is read once it has
+		const later = () => {
+			timer ??= setTimeout(send, Math.max(0, sentAt + PRESENCE_SEND_MS - performance.now()));
+		};
+		soon.current = later;
+		const local = (event: PointerEvent) => {
+			const rect = viewport.getBoundingClientRect();
+			pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+		};
+		const move = (event: PointerEvent) => {
+			local(event);
+			later();
+		};
+		const press = (event: PointerEvent) => {
+			local(event);
+			pressed = true;
+			later();
+		};
+		const release = () => {
+			if (!pressed) return;
+			pressed = false;
+			later();
+		};
+		const leave = () => {
+			if (pressed) return;
+			pointer = null;
+			later();
+		};
+		viewport.addEventListener("pointermove", move);
+		viewport.addEventListener("pointerdown", press);
+		viewport.addEventListener("pointerleave", leave);
+		window.addEventListener("pointerup", release);
+		window.addEventListener("pointercancel", release);
+		const unwatch = camera.subscribe(later);
+		later();
+		return () => {
+			soon.current = () => {};
+			if (timer !== undefined) clearTimeout(timer);
+			viewport.removeEventListener("pointermove", move);
+			viewport.removeEventListener("pointerdown", press);
+			viewport.removeEventListener("pointerleave", leave);
+			window.removeEventListener("pointerup", release);
+			window.removeEventListener("pointercancel", release);
+			unwatch();
+		};
+	}, [project, team, camera, viewportRef]);
+
+	// a page switch or a frame gone inside is news even with the pointer still
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the page and the frame inside are the triggers; the send reads them through the ref
+	useEffect(() => soon.current(), [options.page, options.inside]);
+}
+
+/**
+ * Follow a teammate's view (DEV-196): this camera eases onto the rectangle theirs shows, onto their page when
+ * they change it, until esc, until anything else moves the camera, or until they leave.
+ */
+export function useFollow(options: {
+	room: PresenceRoom;
+	following: string | null;
+	stop: () => void;
+	camera: CameraStore;
+	viewportRef: RefObject<HTMLDivElement | null>;
+	page: string;
+	/** Go to a page for the follow, or say it isn't one here. */
+	goToPage: (page: string) => boolean;
+}): void {
+	const latest = useRef(options);
+	latest.current = options;
+	const { following, camera, room, viewportRef } = options;
+
+	useEffect(() => {
+		if (following === null) return;
+		const stop = () => latest.current.stop();
+		// the camera this follow last put, so anything else moving it ends the follow; null adopts whatever is there
+		let mine: object | null = null;
+		let asked: string | null = null;
+		let last = performance.now();
+		let frame = requestAnimationFrame(function step(time) {
+			const dt = Math.min(0.1, (time - last) / 1000);
+			last = time;
+			const mate = room.get(following);
+			const cam = camera.get();
+			const viewport = viewportRef.current;
+			if (mate === undefined || mate.left !== null) return stop();
+			if (mine !== null && cam !== mine) return stop();
+			if (mate.state.page !== latest.current.page) {
+				// their page first; the camera there is adopted once it has arrived
+				if (asked !== mate.state.page && !latest.current.goToPage(mate.state.page)) return stop();
+				asked = mate.state.page;
+				mine = null;
+			} else if (cam !== null && viewport !== null && mate.state.view !== null) {
+				const width = viewport.clientWidth;
+				const height = viewport.clientHeight;
+				const goal = followCamera(mate.state.view, { width, height });
+				const u = 1 - Math.exp(-FOLLOW_RATE * dt);
+				// eased as a centre and a zoom, so a zoom doesn't swing the view sideways on the way
+				const k = cam.k * (goal.k / cam.k) ** u;
+				const centre = (c: { x: number; y: number; k: number }) => ({
+					x: (width / 2 - c.x) / c.k,
+					y: (height / 2 - c.y) / c.k,
+				});
+				const from = centre(cam);
+				const to = centre(goal);
+				const cx = from.x + (to.x - from.x) * u;
+				const cy = from.y + (to.y - from.y) * u;
+				const next = { k, x: width / 2 - cx * k, y: height / 2 - cy * k };
+				// arrived is left alone, so a still view lets the camera come to rest
+				if (Math.abs(next.x - cam.x) + Math.abs(next.y - cam.y) > 0.05 || Math.abs(next.k / cam.k - 1) > 1e-4) {
+					camera.set(next);
+					mine = next;
+				} else mine = cam;
+				asked = null;
+			} else mine = cam;
+			frame = requestAnimationFrame(step);
+		});
+		const stopOnEsc = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			stop();
+		};
+		window.addEventListener("keydown", stopOnEsc, true);
+		return () => {
+			cancelAnimationFrame(frame);
+			window.removeEventListener("keydown", stopOnEsc, true);
+		};
+	}, [following, camera, room, viewportRef]);
+}
+
+function round(value: number): number {
+	return Math.round(value * 10) / 10;
+}

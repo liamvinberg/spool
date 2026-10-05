@@ -26,6 +26,7 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
+import type { PresenceState } from "../team-sync-protocol";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
 declare global {
@@ -173,6 +174,19 @@ export interface CanvasView {
  */
 export function putCanvasView(project: string, view: CanvasView): void {
 	void client.api.p[":project"].view.$put({ param: { project }, json: view }).catch(() => {});
+}
+
+/**
+ * Tell the daemon where this canvas's person is on a team canvas, or that they've gone (null). Never waited on
+ * and never retried, and not a write the update waits out: the next move says it again.
+ */
+export function putPresence(project: string, state: PresenceState | null): void {
+	void fetch(`/api/p/${encodeURIComponent(project)}/presence`, {
+		method: "PUT",
+		headers: { "content-type": "application/json", "X-Spool-Control": controlToken },
+		body: JSON.stringify({ state }),
+		keepalive: state === null,
+	}).catch(() => {});
 }
 
 export async function browseDirectory(path?: string): Promise<FsListing | undefined> {

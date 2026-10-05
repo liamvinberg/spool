@@ -21,6 +21,7 @@ import {
 } from "./api";
 import type { CameraStore } from "./canvas/camera-store";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { PresenceFaces } from "./canvas/presence-faces";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
 import { Home } from "./home";
@@ -505,6 +506,15 @@ export function App() {
 							</button>
 						)}
 						<ZoomReadout camera={chrome.camera} />
+						{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
+						{chrome.presence !== undefined && (
+							<PresenceFaces
+								room={chrome.presence.room}
+								page={chrome.presence.page}
+								following={chrome.presence.following}
+								onFollow={chrome.presence.follow}
+							/>
+						)}
 					</div>
 				)}
 			</header>

@@ -9,6 +9,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
+import type { Presence } from "../../team-sync-protocol";
 import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
@@ -161,6 +162,9 @@ import {
 } from "./pages";
 import { PictureCanvas, PictureClaims } from "./picture-canvas";
 import type { PictureFrame } from "./picture-layer";
+import { createPresenceRoom, type PresenceRoom } from "./presence";
+import { FollowMark } from "./presence-faces";
+import { PresenceLayer } from "./presence-layer";
 import { type Held, PropertiesRail, rungOf, useRungs } from "./properties-rail";
 import {
 	alterMessage,
@@ -195,6 +199,7 @@ import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
+import { useFollow, usePresenceSender } from "./use-presence";
 import { WalkLayer, walksOf } from "./walk-layer";
 
 /**
@@ -224,6 +229,16 @@ export interface CanvasChrome {
 	 * governs the whole layer (#151), so it counts the whole layer.
 	 */
 	hasThreads: boolean;
+	/** Who else is on a team project's canvas, for the faces at the top right; absent on a project of one's own. */
+	presence?: CanvasPresence | undefined;
+}
+
+/** A team canvas's people, as the window's top right shows them and follows one. */
+export interface CanvasPresence {
+	room: PresenceRoom;
+	page: string;
+	following: string | null;
+	follow: (accountId: string | null) => void;
 }
 
 interface Point {
@@ -484,6 +499,13 @@ export function ProjectCanvas({
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
 	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
+	/**
+	 * Who else is on a team project's canvas (DEV-196), as the event stream tells it, and whose view this
+	 * canvas is following. A project of one's own has nobody and says nothing.
+	 */
+	const [presenceRoom] = useState(() => createPresenceRoom());
+	const [team, setTeam] = useState(false);
+	const [following, setFollowing] = useState<string | null>(null);
 	/**
 	 * Where each page stands on the field holding it (#265).
 	 *
@@ -3759,6 +3781,9 @@ export function ProjectCanvas({
 				hello: (data) => {
 					const view = (data as { view?: unknown }).view;
 					viewStream.current = typeof view === "string" ? view : null;
+					// a stream that comes back says again who is here
+					setTeam((data as { team?: unknown }).team === true);
+					presenceRoom.reset();
 					tellView();
 					// the stream tells every change from here on; one made before it
 					// opened, after the canvas's first read was answered, is in a read
@@ -3766,6 +3791,7 @@ export function ProjectCanvas({
 					if (!opened) void refetchFrames();
 					opened = true;
 				},
+				presence: (data) => presenceRoom.hear(data as Presence),
 				change: (data) => {
 					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 					if (["frame", "shared", "geometry"].includes(event.kind))
@@ -3819,7 +3845,17 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [changedUnderHand, noteCover, project, refetchFlows, refetchFrames, reloadOrHold, resync, tellView]);
+	}, [
+		changedUnderHand,
+		noteCover,
+		project,
+		refetchFlows,
+		refetchFrames,
+		reloadOrHold,
+		resync,
+		tellView,
+		presenceRoom,
+	]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
@@ -5373,9 +5409,40 @@ export function ProjectCanvas({
 			arrowsOn,
 			toggleArrows,
 			hasThreads,
+			presence: team ? { room: presenceRoom, page: activePage, following, follow: setFollowing } : undefined,
 		});
 		return () => onChrome(null);
-	}, [arrowsOn, hasThreads, onChrome, toggleArrows, camera]);
+	}, [arrowsOn, hasThreads, onChrome, toggleArrows, camera, team, presenceRoom, activePage, following]);
+
+	// --- presence (DEV-196) ---------------------------------------------------------
+
+	usePresenceSender({
+		project,
+		team,
+		camera,
+		viewportRef,
+		page: activePage,
+		inside: entered,
+		dragging: () => (gesture.current.kind === "move" ? gesture.current.names : []),
+	});
+	const followPage = useCallback(
+		(page: string) => {
+			if (page !== ROOT_PAGE && !pages.includes(page)) return false;
+			switchToPage(page);
+			return true;
+		},
+		[pages, switchToPage],
+	);
+	useFollow({
+		room: presenceRoom,
+		following,
+		stop: () => setFollowing(null),
+		camera,
+		viewportRef,
+		page: activePage,
+		goToPage: followPage,
+	});
+	const followed = following === null ? undefined : presenceRoom.get(following);
 
 	// --- render -------------------------------------------------------------------
 
@@ -5723,8 +5790,13 @@ export function ProjectCanvas({
 						    beside it: presence on any visible frame at any zoom, and a located
 						    mark wherever a document was live enough to be measured */}
 						<AgentHandLayer camera={camera} frames={visibleFrames} hand={hand} marks={handMarks} />
+						{/* teammates on a team canvas (DEV-196), over everything on the field */}
+						{team && (
+							<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
+						)}
 					</>
 				)}
+				{followed !== undefined && <FollowMark mate={followed} />}
 
 				{menu !== null && (
 					<ContextMenu

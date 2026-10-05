@@ -132,6 +132,17 @@
 	 * and an eased one makes two marks a second apart look the same age. */
 	--animate-hand-lane: hand-lane 6000ms linear forwards;
 
+	/* a teammate arriving on a team canvas (presence): their pointer and face come up out
+	 * of nothing, at the pace the prototype's take settled on; leaving is the reverse,
+	 * drawn as a transition because it starts from wherever they were */
+	--animate-presence-in: presence-in 450ms cubic-bezier(0.22, 0.61, 0.36, 1);
+
+	@keyframes presence-in {
+		from {
+			opacity: 0;
+		}
+	}
+
 	@keyframes hand-wind {
 		from {
 			stroke-dashoffset: 1;
