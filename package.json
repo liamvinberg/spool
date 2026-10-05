@@ -14,6 +14,10 @@
 			"types": "./dist/types/compile-entry.d.ts",
 			"default": "./dist/compile.js"
 		},
+		"./vendor": {
+			"types": "./dist/types/vendor.d.ts",
+			"default": "./dist/vendor.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [

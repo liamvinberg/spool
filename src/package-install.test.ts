@@ -83,6 +83,14 @@ child.send({ id: "probe", request: { kind: "account" } });
 		]);
 		expect(existsSync(join(dirname(anchor), "dist", "types", "compile-entry.d.ts"))).toBe(true);
 
+		// what a host serving frames without the daemon serves beside them
+		const vendorProbe =
+			'const { VENDOR_MODULES, TAILWIND_SOURCES } = await import("spool.page/vendor"); process.stdout.write(JSON.stringify([Object.keys(VENDOR_MODULES), Object.keys(TAILWIND_SOURCES)]));';
+		expect(JSON.parse(run(process.execPath, ["--input-type=module", "--eval", vendorProbe], prefix))).toEqual([
+			["/vendor/react.js", "/vendor/spool.js", "/vendor/spool-jsx.js"],
+			["index.css", "theme.css", "preflight.css", "utilities.css"],
+		]);
+
 		const clipboardProject = makeTempDir();
 		markProject(clipboardProject);
 		writeFrame(

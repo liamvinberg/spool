@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
 import { buildBundledOAuth } from "./src/daemon/bundled-oauth-build";
+import { buildVendorEntry } from "./src/vendor-entry-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
 // would race the other's write — the build script clears dist/ up front
@@ -62,6 +63,8 @@ export default defineConfig([
 		define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
 		esbuildPlugins: [licenses],
+		// spool.page/vendor: the same modules, with the pinned React, for a host that is not the daemon
+		onSuccess: () => buildVendorEntry("dist"),
 	},
 	{
 		// spool.page/compile (src/compile-entry.ts): core's compile, as a Cloudflare
