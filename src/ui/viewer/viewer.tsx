@@ -29,6 +29,9 @@ import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon, RibbonMark } from "../icons";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
+import { Navigator, type NavigatorToast } from "./navigator";
+import { onPhone } from "./phone";
+import { SharedLink } from "./shared-link";
 import {
 	address,
 	edits,
@@ -56,6 +59,7 @@ export function Viewer({ config }: { config: ViewerConfig }) {
 	// undefined while it is being read, null when there is no project to read
 	const [project, setProject] = useState<ViewerProject | null | undefined>(undefined);
 	const [looking, setLooking] = useState(false);
+	const [phone] = useState(onPhone);
 	useEffect(() => {
 		let live = true;
 		readProject(config).then(
@@ -68,6 +72,8 @@ export function Viewer({ config }: { config: ViewerConfig }) {
 	}, [config]);
 	if (project === undefined) return <Quiet>opening</Quiet>;
 	if (project === null) return <Quiet>This project isn’t here</Quiet>;
+	// a phone gets no spatial canvas: a shared link plays, and a team canvas is a navigator
+	if (phone && project.shared !== undefined) return <SharedLink config={config} project={project} />;
 	if (!looking && knocks(config, project))
 		return (
 			<Knock
@@ -78,7 +84,7 @@ export function Viewer({ config }: { config: ViewerConfig }) {
 				}}
 			/>
 		);
-	return <LiveCanvas config={config} first={project} />;
+	return <LiveCanvas config={config} first={project} phone={phone} />;
 }
 
 /**
@@ -168,12 +174,12 @@ const RENEW_MS = 60 * 60 * 1000;
  * where they stand, those whose own files it changed wear the changed mark until they are played, and a short
  * toast says who saved what. The canvas reads the project again for anything else the save moved.
  */
-function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProject }) {
+function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: ViewerProject; phone: boolean }) {
 	const [project, setProject] = useState(first);
 	/** How many times each frame's document has been made again since this tab opened. */
 	const [revisions, setRevisions] = useState<ReadonlyMap<string, number>>(new Map());
 	const [marks, setMarks] = useState<ReadonlyMap<string, Unseen>>(new Map());
-	const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+	const [toast, setToast] = useState<(NavigatorToast & { id: number }) | null>(null);
 	const known = useRef(new Set(first.canvas.frames.map((frame) => frame.name)));
 	known.current = new Set(project.canvas.frames.map((frame) => frame.name));
 
@@ -217,7 +223,11 @@ function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProj
 					next.set(frame, known.current.has(frame) && next.get(frame) !== "new" ? "changed" : "new");
 				return next;
 			});
-			setToast({ id: Date.now(), message: `${message.by} saved ${saidFrames(message.changed)}` });
+			setToast({
+				id: Date.now(),
+				message: `${message.by} saved ${saidFrames(message.changed)}`,
+				frame: message.changed[0] ?? null,
+			});
 		};
 		const stop = first.live === undefined ? () => {} : listen(first.live, heard);
 		return () => {
@@ -245,6 +255,7 @@ function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProj
 		[],
 	);
 
+	if (phone) return <Navigator config={config} project={project} marks={marks} onSeen={seen} toast={toast} />;
 	return (
 		<ViewerCanvas
 			config={config}
@@ -252,7 +263,7 @@ function LiveCanvas({ config, first }: { config: ViewerConfig; first: ViewerProj
 			revisions={revisions}
 			marks={marks}
 			onSeen={seen}
-			onNotice={(message) => setToast({ id: Date.now(), message })}
+			onNotice={(message) => setToast({ id: Date.now(), message, frame: null })}
 			toast={toast?.message ?? null}
 		/>
 	);

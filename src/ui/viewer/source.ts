@@ -10,6 +10,11 @@ import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
 export interface ViewerConfig {
 	api: string;
 	path: string;
+	/**
+	 * Whether the page is an app a phone may keep on its Home Screen: a link share's page, which names itself, its
+	 * icon and its manifest. Opened in a phone's browser, it says once how to add it there.
+	 */
+	app?: boolean;
 }
 
 /**
@@ -41,6 +46,15 @@ export interface ViewerProject {
 	covers?: Record<string, string>;
 	/** Where spool for Mac is got, for whoever has no spool. */
 	download?: string;
+	/** For a member: the frames saved to last, newest first, from the team's history. */
+	recent?: ViewerRecent[];
+}
+
+/** A frame as saved to last: who saved it, by name, and when (seconds). */
+export interface ViewerRecent {
+	frame: string;
+	by: string;
+	at: number;
 }
 
 export type ViewerRole = "admin" | "editor" | "viewer";
@@ -137,9 +151,9 @@ export function readConfig(): ViewerConfig {
 	const script = document.getElementById("spool-viewer");
 	const value: unknown = JSON.parse(script?.textContent ?? "null");
 	if (typeof value !== "object" || value === null) throw new Error("spool viewer: no configuration");
-	const { api, path } = value as Record<string, unknown>;
+	const { api, path, app } = value as Record<string, unknown>;
 	if (typeof api !== "string" || typeof path !== "string") throw new Error("spool viewer: no configuration");
-	return { api, path };
+	return app === true ? { api, path, app } : { api, path };
 }
 
 /**
