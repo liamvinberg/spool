@@ -20,6 +20,7 @@ import {
 	PROJECT_LINK,
 	type ProjectLink,
 	parseProjectLink,
+	refuseForeignLink,
 	TEAM_GITIGNORE,
 	writeProjectLink,
 } from "./team-project";
@@ -69,6 +70,7 @@ export async function initTeamProject(
 ): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
 	const root = realDir(targetDir);
 	refuseExisting(root);
+	refuseForeignLink(root);
 	const request = { ...options.request, origin: options.origin };
 	const teams = cloudTeams(spoolDir, request);
 	const team = await chosenTeam(teams, options.team);

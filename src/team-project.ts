@@ -25,9 +25,20 @@ export interface ProjectLink {
 
 const SEGMENT = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u;
 
-/** Whether the folder is a team project's root: the link sits beside `design/`. */
+/**
+ * Whether the folder is a team project's root: the link sits beside `design/`. A `spool.json` that holds no team
+ * project's link is another tool's file, never read as one and never written over.
+ */
 export function isTeamProject(root: string): boolean {
-	return existsSync(join(root, PROJECT_LINK));
+	return localCopyOf(root) !== undefined;
+}
+
+/** Refuse to write the link where a `spool.json` that isn't one already is. */
+export function refuseForeignLink(root: string): void {
+	if (existsSync(join(root, PROJECT_LINK)) && !isTeamProject(root))
+		throw new SpoolError(
+			`${join(root, PROJECT_LINK)} is a spool.json that isn't a team project's; spool won't write over it`,
+		);
 }
 
 /** A team project's URL taken apart, or nothing when it isn't one. */
@@ -62,10 +73,12 @@ export function readProjectLink(root: string): ProjectLink {
 	return link;
 }
 
-/** The team project a root is a local copy of, or nothing for a solo project or a `spool.json` that isn't one. */
+/** The team project a root's `spool.json` links to, or nothing for a solo project or a `spool.json` that isn't one. */
 export function localCopyOf(root: string): ProjectLink | undefined {
 	try {
-		return isTeamProject(root) ? readProjectLink(root) : undefined;
+		return parseProjectLink(
+			(JSON.parse(readFileSync(join(root, PROJECT_LINK), "utf8")) as { project?: unknown }).project,
+		);
 	} catch {
 		return undefined;
 	}

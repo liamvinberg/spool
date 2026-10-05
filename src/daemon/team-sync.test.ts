@@ -150,6 +150,20 @@ describe("spool init --team", () => {
 				request: { origin: TEAM_ORIGIN, vault: { read: async () => undefined } },
 			}),
 		).rejects.toThrow(/run `spool login`/u);
+		// another tool's spool.json is never written over
+		const foreign = repo();
+		writeFileSync(join(foreign, "spool.json"), '{ "threads": 4 }\n');
+		const ana = cloud.machine("ana");
+		await expect(
+			initTeamProject(foreign, join(makeTempDir(), ".spool"), {
+				team: "devosurf",
+				origin: TEAM_ORIGIN,
+				request: ana.request,
+				openSocket: ana.openSocket,
+			}),
+		).rejects.toThrow(/spool\.json that isn't a team project's/u);
+		expect(readFileSync(join(foreign, "spool.json"), "utf8")).toBe('{ "threads": 4 }\n');
+		expect(existsSync(join(foreign, "design"))).toBe(false);
 	});
 });
 

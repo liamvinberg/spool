@@ -12,7 +12,7 @@ import { linksTo } from "./move-in";
 import { fetchLocalCopy } from "./open";
 import { expandHome, realDir } from "./paths";
 import { registerProject } from "./registry";
-import { isTeamProject, PROJECT_LINK, parseProjectLink, writeProjectLink } from "./team-project";
+import { isTeamProject, PROJECT_LINK, parseProjectLink, refuseForeignLink, writeProjectLink } from "./team-project";
 
 /**
  * "Get it" (DEV-190): a team project not yet on this Mac becomes a local copy here, in one of three places.
@@ -64,6 +64,7 @@ export async function getTeamProject(
 	const wrote = !linksTo(root, link.url);
 	if (wrote) {
 		if (isTeamProject(root)) throw new SpoolError(`${root} already has a ${PROJECT_LINK} for another team project.`);
+		refuseForeignLink(root);
 		if (existsSync(join(root, "design")))
 			throw new SpoolError(`${root} already has a design/ folder. Choose another place.`);
 		if (place.kind === "mac" && made === undefined && readdirSync(root).length > 0)

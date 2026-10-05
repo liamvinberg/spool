@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { historyEnabled } from "./daemon/history";
 import { readSession } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { initProject } from "./init";
@@ -149,6 +150,14 @@ describe("initProject", () => {
 		markProject(root);
 
 		expect(() => initProject(root, join(makeTempDir(), ".spool"))).toThrow(/spool open/);
+	});
+
+	it("makes a project beside another tool's spool.json, leaving it as it was, with history as asked", () => {
+		const root = makeTempDir();
+		writeFileSync(join(root, "spool.json"), '{ "threads": 4 }\n');
+		initProject(root, join(makeTempDir(), ".spool"), { history: true });
+		expect(readFileSync(join(root, "spool.json"), "utf8")).toBe('{ "threads": 4 }\n');
+		expect(historyEnabled(root)).toBe(true);
 	});
 
 	it("refuses when the target directory does not exist", () => {

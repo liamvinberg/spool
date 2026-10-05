@@ -44,6 +44,16 @@ describe("resolveProjectRoot", () => {
 		expect(resolveProjectRoot(deep)).toBe(realpathSync(repo));
 	});
 
+	it("walks past a spool.json that isn't a team project's link: another tool's file", () => {
+		const repo = makeTempDir();
+		markProject(repo);
+		const pkg = join(repo, "packages", "app");
+		mkdirSync(pkg, { recursive: true });
+		writeFileSync(join(pkg, "spool.json"), '{ "threads": 4 }\n');
+
+		expect(resolveProjectRoot(pkg)).toBe(realpathSync(repo));
+	});
+
 	it("takes the nearest of either marker, so a team package and a solo one coexist in one repo", () => {
 		const repo = makeTempDir();
 		markProject(repo);

@@ -16,6 +16,7 @@ import {
 	type ProjectLink,
 	parseProjectLink,
 	readProjectLink,
+	refuseForeignLink,
 	TEAM_GITIGNORE,
 	writeProjectLink,
 } from "./team-project";
@@ -46,6 +47,7 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	const root = realDir(targetDir);
 	const design = join(root, "design");
 	if (isTeamProject(root)) throw new SpoolError(`${basename(root)} is already a team project`);
+	refuseForeignLink(root);
 	if (!existsSync(join(design, "canvas.json"))) throw new SpoolError(`${root} is not a spool project`);
 	const request = { ...options.request, origin: options.origin };
 	const teams = cloudTeams(spoolDir, request);
