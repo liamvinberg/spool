@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type CloudRequestOptions, CloudSignedOut, keychainVault } from "./cloud-auth";
 import {
@@ -180,10 +180,13 @@ async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promise<Clou
 	return team;
 }
 
+/** The team already has a project by the folder's name. */
+class ProjectNameTaken extends SpoolError {}
+
 function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
 	if (!(error instanceof CloudTeamRefused)) return error;
 	if (error.code === "project_taken")
-		return new SpoolError(
+		return new ProjectNameTaken(
 			`${team} already has a project called "${folder}"; start this one in a folder with another name`,
 		);
 	if (error.code === "invalid_project_name" || error.code === "project_name_reserved")
@@ -248,6 +251,39 @@ export function createProject(parentDir: string, name: string, spoolDir: string)
 			`Could not create a project in ${parent}. Choose another folder or check that it is writable.`,
 		);
 	}
+}
+
+/**
+ * The app's New project while a team is chosen in Home's switcher: the folder is made where the picker says, then
+ * started in the team as `spool init --team` starts one. No name is the next free `untitled` the team doesn't have
+ * yet. A team that refuses leaves no folder behind.
+ */
+export async function createTeamProject(
+	parentDir: string,
+	name: string,
+	spoolDir: string,
+	options: TeamInitOptions,
+): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
+	const trimmed = name.trim();
+	if (trimmed !== "" && !isSafeName(trimmed)) throw new SpoolError(`Not a folder name: ${JSON.stringify(trimmed)}`);
+	const parent = expandHome(parentDir);
+	mkdirSync(parent, { recursive: true });
+	for (let suffix = 1; suffix <= 100; suffix++) {
+		const folder = trimmed !== "" ? trimmed : suffix === 1 ? "untitled" : `untitled-${suffix}`;
+		const target = join(realDir(parent), folder);
+		if (existsSync(target)) {
+			if (trimmed !== "") throw new SpoolError(`${trimmed} already exists here. Choose another name.`);
+			continue;
+		}
+		mkdirSync(target);
+		try {
+			return await initTeamProject(target, spoolDir, options);
+		} catch (error) {
+			rmSync(target, { recursive: true, force: true });
+			if (trimmed !== "" || !(error instanceof ProjectNameTaken)) throw error;
+		}
+	}
+	throw new SpoolError("Could not find a free name for the project. Give it one.");
 }
 
 /** Allocate with mkdir itself: another request or process may take any name before us. */

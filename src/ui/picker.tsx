@@ -4,6 +4,7 @@ import {
 	browseDirectory,
 	createDirectoryAt,
 	createProjectAt,
+	createTeamProjectAt,
 	type FsHit,
 	initProjectAt,
 	type OpenOutcome,
@@ -26,9 +27,12 @@ export function ProjectPicker({
 	onOpened,
 	onClose,
 	onLocation,
+	team,
 }: {
 	initial?: "start" | "folder" | "location";
 	location?: string | undefined;
+	/** The team a new project starts in, as Home's switcher has it; none is this Mac only. */
+	team?: string | undefined;
 	onOpened: (project: { root: string; name: string }) => void;
 	onClose: () => void;
 	onLocation?: (path: string) => Promise<{ ok: boolean; reason?: string }>;
@@ -139,7 +143,11 @@ export function ProjectPicker({
 					const written = await writeSetting("projects.location", parent);
 					if (!written.ok) throw new Error(written.reason);
 				}
-				opened(await createProjectAt(parent, name.trim()));
+				opened(
+					await (team === undefined
+						? createProjectAt(parent, name.trim())
+						: createTeamProjectAt(team, parent, name.trim())),
+				);
 			});
 	}
 	function chooseNative(purpose: DirectoryRequest["purpose"], closeOnCancel = false) {

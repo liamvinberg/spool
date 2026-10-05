@@ -3429,7 +3429,10 @@ export function createDaemonApp({
 		.get("/", (c) => serveUiIndex(c))
 		.get("/p/:project", (c) => serveUiIndex(c));
 	// Outside the typed chain, which is as deep as the compiler follows; Home reads these by their exported types.
-	app.route("/api/cloud", cloudTeamRoutes({ spoolDir, request: cloudTeamsRequest }));
+	app.route(
+		"/api/cloud",
+		cloudTeamRoutes({ spoolDir, request: cloudTeamsRequest, openSocket: teamSyncServices?.openSocket }),
+	);
 	app.route(
 		"/api/p",
 		setAsideRoutes({

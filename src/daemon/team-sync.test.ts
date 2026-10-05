@@ -320,6 +320,48 @@ describe("local copies", () => {
 	});
 });
 
+describe("New project in the app, while a team is chosen", () => {
+	it("starts a team project in a new folder, uploaded to the team", async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const state = join(makeTempDir(), ".spool");
+		const daemon = makeApp(state, {
+			cloudTeamsRequest: ana.request,
+			teamSyncServices: { ...ana.services, notice: () => {} },
+		});
+		const parent = join(makeTempDir(), "devosurf");
+		const start = (name: string, path = parent) =>
+			daemon.controlRequest("/api/cloud/teams/devosurf/projects", {
+				method: "POST",
+				headers: { "content-type": "application/json", origin: "http://localhost:7766" },
+				body: JSON.stringify({ path, name }),
+			});
+
+		const named = await start("Checkout");
+		expect(named.status).toBe(200);
+		const root = join(realpathSync(parent), "Checkout");
+		expect(await named.json()).toEqual({ root, name: "Checkout" });
+		expect(JSON.parse(readFileSync(join(root, "spool.json"), "utf8"))).toEqual({
+			project: `${TEAM_ORIGIN}/devosurf/checkout`,
+		});
+		expect(cloud.paths("checkout")).toContain("canvas.json");
+		expect(readRegistry(state).projects.map((project) => project.root)).toEqual([root]);
+
+		// no name is the next untitled the team doesn't have yet
+		mkdirSync(join(parent, "untitled"));
+		expect(await (await start("")).json()).toMatchObject({ name: "untitled-2" });
+		expect(cloud.paths("untitled-2")).toContain("canvas.json");
+
+		const elsewhere = makeTempDir();
+		const taken = await start("checkout", elsewhere);
+		expect(taken.status).toBe(409);
+		expect(await taken.json()).toEqual({
+			error: 'Devosurf already has a project called "checkout"; start this one in a folder with another name',
+		});
+		expect(existsSync(join(elsewhere, "checkout"))).toBe(false);
+	});
+});
+
 describe("spool init with no flag", () => {
 	it("stays on this Mac, asking nothing, for someone signed out or editing in no team", async () => {
 		const cloud = fakeTeam();

@@ -233,6 +233,24 @@ export async function createProjectAt(path: string, name: string): Promise<OpenO
 	return { kind: "error", message: await errorText(res) };
 }
 
+/** New project while a team is chosen in Home: a team project in a new folder, uploaded to the team. */
+export async function createTeamProjectAt(team: string, path: string, name: string): Promise<OpenOutcome> {
+	let response: Response;
+	try {
+		response = await controlFetch(`/api/cloud/teams/${encodeURIComponent(team)}/projects`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ path, name }),
+		});
+	} catch {
+		return { kind: "error", message: "spool could not be reached. Try again." };
+	}
+	const body = (await response.json().catch(() => null)) as { root?: string; name?: string; error?: string } | null;
+	if (response.ok && typeof body?.root === "string" && typeof body.name === "string")
+		return { kind: "opened", root: body.root, name: body.name };
+	return { kind: "error", message: body?.error ?? "Could not start the project. Try again." };
+}
+
 export async function renameProject(root: string, name: string): Promise<{ root: string; name: string }> {
 	const res = await client.api.projects.rename.$post({ json: { root, name } });
 	if (!res.ok) throw new Error(await errorText(res));
