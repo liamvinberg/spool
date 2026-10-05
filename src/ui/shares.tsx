@@ -215,11 +215,13 @@ function OpenedShare({
 					</form>
 				</>
 			)}
-			<div className="flex h-9 items-center gap-3 border-border-raised border-t px-3.5">
-				<span className="min-w-0 flex-1 truncate text-muted type-detail">
-					{personName(share.by)} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
-				</span>
-				{share.link !== undefined && (
+			<p className="truncate border-border-raised border-t px-3.5 pt-2 text-muted type-detail">
+				{personName(share.by)} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
+			</p>
+			<div className="flex h-8 items-center justify-between px-3.5">
+				{share.link === undefined ? (
+					<span />
+				) : (
 					<button
 						type="button"
 						className="cursor-pointer text-muted transition-colors hover:text-text type-label"

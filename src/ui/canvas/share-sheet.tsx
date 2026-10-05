@@ -150,7 +150,12 @@ export function ShareSheet({
 							<legend className="sr-only">Pages</legend>
 							{pages.map((each) => (
 								<label key={each} className="flex h-7 cursor-pointer items-center gap-2 type-detail">
-									<input type="checkbox" checked={chosen.has(each)} onChange={() => toggle(each)} />
+									<input
+										type="checkbox"
+										checked={chosen.has(each)}
+										onChange={() => toggle(each)}
+										className="accent-thread"
+									/>
 									<span
 										className={chosen.has(each) ? "text-text" : "text-muted"}
 										style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
