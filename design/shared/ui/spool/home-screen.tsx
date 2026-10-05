@@ -14,6 +14,7 @@ export function SpoolHomeScreen({
 	initialPicker = null,
 	initialName = "",
 	initialLocation = "~/spool",
+	account,
 	onGo,
 }: {
 	canvasTarget?: string | undefined;
@@ -23,6 +24,8 @@ export function SpoolHomeScreen({
 	initialPicker?: ProjectPickerMode | null;
 	initialName?: string;
 	initialLocation?: string;
+	/** The foot of the sidebar; signed out unless a frame draws another state. */
+	account?: React.ReactNode | undefined;
 	onGo?: ((target: string) => void) | undefined;
 }) {
 	const [projects, setProjects] = useState(firstLaunch ? [] : homeProjects);
@@ -44,6 +47,7 @@ export function SpoolHomeScreen({
 		>
 			<div className="relative h-full">
 				<Home
+					{...(account === undefined ? {} : { account })}
 					projects={projects}
 					location={location}
 					onStart={start}

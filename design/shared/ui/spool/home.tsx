@@ -1,5 +1,6 @@
 import { cn } from "shared/lib/utils";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AccountFoot } from "./account-foot";
 import type { ProjectCard } from "./home-fixture";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { CloseIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, SearchIcon } from "./icons";
@@ -21,6 +22,7 @@ export function Home({
 	location,
 	starting = false,
 	notice,
+	account = <AccountFoot account={{ state: "signed-out" }} />,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -33,6 +35,8 @@ export function Home({
 	location: string;
 	starting?: boolean;
 	notice?: string | null;
+	/** This Mac's account, at the foot of the sidebar. */
+	account?: ReactNode;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
@@ -59,7 +63,7 @@ export function Home({
 	return (
 		<div className="pj-body h-full overflow-auto bg-bg text-text [scrollbar-width:thin] [scrollbar-color:var(--color-border-raised)_transparent]">
 			<div className="pj-layout grid min-h-full grid-cols-[208px_minmax(0,1fr)] [@media(max-width:720px)]:grid-cols-[64px_minmax(0,1fr)]">
-				<aside className="pj-navigation sticky top-0 flex h-[calc(100vh-44px)] flex-col border-r border-border bg-bg px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
+				<aside className="pj-navigation sticky top-0 z-10 flex h-[calc(100vh-44px)] flex-col border-r border-border bg-bg px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
 					<div className="pj-wordmark mb-[30px] flex h-[32px] items-center gap-[10px] px-[13px] [font:var(--type-mark)] tracking-[-1px] [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden">
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-thread" />
 						<span>spool</span>
@@ -70,8 +74,8 @@ export function Home({
 							<span>Projects</span>
 						</button>
 					</nav>
-					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-muted [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden items-start">
-						<span>On this Mac</span>
+					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-muted [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
+						{account}
 					</div>
 				</aside>
 				{loading ? (
