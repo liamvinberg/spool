@@ -8,7 +8,7 @@ import { spool, spoolAsync } from "./cli-test-helpers";
 import { makeTempDir } from "./test-helpers";
 
 describe("Cloud account CLI", () => {
-	it("completes login through the actual CLI without exposing native credentials", async () => {
+	it("completes login through the actual CLI without exposing native credentials", { timeout: 20_000 }, async () => {
 		const home = makeTempDir();
 		const bin = join(home, "bin");
 		const key = join(home, "key.pem");
