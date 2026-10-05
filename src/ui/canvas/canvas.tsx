@@ -72,7 +72,6 @@ import {
 	type Box,
 	boundsOf,
 	centerOn,
-	clamp,
 	entryCamera,
 	fitCamera,
 	intersects,
@@ -80,6 +79,8 @@ import {
 	type NearScreen,
 	toWorld,
 	visibleWorldRect,
+	wheelPixels,
+	wheelZoomFactor,
 	zoomAt,
 } from "./camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
@@ -344,26 +345,6 @@ function spatialDirection(key: string): SpatialDirection | undefined {
 		default:
 			return undefined;
 	}
-}
-
-function wheelPixels(delta: number, mode: number, pageSize: number): number {
-	return delta * (mode === 1 ? 16 : mode === 2 ? pageSize : 1);
-}
-
-/**
- * Pinch sensitivity: zoom per pixel of wheel travel. Exponential, so a given
- * finger movement changes zoom by the same *ratio* at every zoom level — the
- * property that makes deep zoom feel the same as shallow zoom. Excalidraw's
- * linear step needs a log10 term bolted on to fake this; we get it for free.
- *
- * The clamp is a teleport guard, not a speed limit. A trackpad sends many small
- * deltas per second and never reaches it; one mouse notch (deltaY 100) does, and
- * capping that notch at 2× is exactly what you want.
- */
-const WHEEL_ZOOM_RATE = 0.011;
-
-function wheelZoomFactor(delta: number, mode: number, pageSize: number): number {
-	return clamp(Math.exp(-wheelPixels(delta, mode, pageSize) * WHEEL_ZOOM_RATE), 0.5, 2);
 }
 
 /** Opaque sandbox origins identify no frame; its current iframe window does. */
