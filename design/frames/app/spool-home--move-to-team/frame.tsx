@@ -11,7 +11,13 @@ export default function MoveToTeam() {
 			onGo={ui.go}
 			account={<AccountFoot account={{ state: "signed-in", email: "ada@tidemark.app", accountUrl: "https://spool.page/account" }} />}
 			switcher={<TeamSwitcher current={null} />}
-			overlay={<MoveToTeamSheet project="tvärsö" teams={TEAMS.filter((team) => team.role !== "viewer")} />}
+			overlay={
+				<MoveToTeamSheet
+					project="tvärsö"
+					teams={TEAMS.filter((team) => team.role !== "viewer")}
+					stays={[{ path: "README.md", why: "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync" }]}
+				/>
+			}
 		/>
 	);
 }

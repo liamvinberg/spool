@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { CloudTeam, TeamProjectOnMac } from "./api";
 import { Home } from "./home";
-import { GetItDialog, MoveToTeamDialog, TeamProjectsAway } from "./team-moves";
+import { GetItDialog, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
 
 function mount(element: React.ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -114,8 +114,47 @@ it("gets it just on this Mac when no checkout here holds the repo, and says why 
 	expect(host.textContent).toContain("You're a viewer of devosurf");
 });
 
+it("names what stays on this Mac and in git before it moves", async () => {
+	daemon((url) =>
+		url.includes("/move/stays")
+			? Response.json({
+					stays: [{ path: "README.md", why: "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync" }],
+				})
+			: Response.json({}),
+	);
+	const host = mount(
+		createElement(MoveToTeamDialog, {
+			project: { root: "/Users/ana/site", name: "site" },
+			teams: [DEVOSURF],
+			onMoved: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	await settle();
+	expect(host.querySelector("[data-move-stays]")?.textContent).toContain(
+		"This file stays on this Mac and in git. It doesn't go to the team:",
+	);
+	expect(host.querySelector("[data-move-stays]")?.textContent).toContain("design/README.md");
+});
+
+it("says on Home when a move's commit wasn't made, and nothing when it was", () => {
+	const moved = { root: "/Users/ana/site", name: "site" };
+	expect(moveCommitNote({ ...moved, commit: "committed" }, DEVOSURF)).toBeUndefined();
+	expect(moveCommitNote({ ...moved, commit: "no-git" }, DEVOSURF)).toBeUndefined();
+	expect(moveCommitNote({ ...moved, commit: "failed" }, DEVOSURF)).toBe(
+		"site moved to Devosurf. git didn't take its commit. spool tries again the next time it starts, or commit spool.json and design/'s removal yourself.",
+	);
+	expect(moveCommitNote({ ...moved, commit: "waiting" }, DEVOSURF)).toBe(
+		"site moved to Devosurf. Its commit lands once git is done with what it's doing.",
+	);
+});
+
 it("moves a project to the chosen team, saying history before the move stays in git", async () => {
-	const asked = daemon(() => Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }));
+	const asked = daemon((url) =>
+		url.includes("/move/stays")
+			? Response.json({ stays: [] })
+			: Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }),
+	);
 	const onMoved = vi.fn();
 	const host = mount(
 		createElement(MoveToTeamDialog, {
@@ -133,7 +172,10 @@ it("moves a project to the chosen team, saying history before the move stays in 
 	});
 	await act(async () => button(host, "Move to Tidemark").click());
 	await settle();
-	expect(asked).toEqual(['POST /api/cloud/teams/tidemark/move {"path":"/Users/ana/site"}']);
+	expect(asked).toEqual([
+		"GET /api/cloud/move/stays?path=%2FUsers%2Fana%2Fsite",
+		'POST /api/cloud/teams/tidemark/move {"path":"/Users/ana/site"}',
+	]);
 	expect(onMoved).toHaveBeenCalledWith({ root: "/Users/ana/site", name: "site", commit: "committed" }, TIDEMARK);
 });
 

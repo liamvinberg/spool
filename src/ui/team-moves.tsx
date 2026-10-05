@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
 	type CloudTeam,
+	fetchMoveStays,
 	fetchTeamProjects,
 	getTeamProjectAt,
 	type HerePerson,
@@ -227,6 +228,16 @@ export function MoveToTeamDialog({
 	onClose: () => void;
 }) {
 	const [address, setAddress] = useState(teams[0]?.address ?? "");
+	const [stays, setStays] = useState<{ path: string; why: string }[]>([]);
+	useEffect(() => {
+		let current = true;
+		void fetchMoveStays(project.root).then((found) => {
+			if (current) setStays(found);
+		});
+		return () => {
+			current = false;
+		};
+	}, [project.root]);
 	const chosen = teams.find((team) => team.address === address);
 	return (
 		<ConfirmDialog
@@ -257,6 +268,51 @@ export function MoveToTeamDialog({
 				</label>
 			)}
 			<p className="mb-[8px] text-muted type-label">History before the move stays in git.</p>
+			{stays.length > 0 && (
+				<div className="mb-[8px] flex flex-col gap-[4px]" data-move-stays="">
+					<p className="text-muted type-label">
+						{stays.length === 1
+							? "This file stays on this Mac and in git. It doesn't go to the team:"
+							: `These ${stays.length} files stay on this Mac and in git. They don't go to the team:`}
+					</p>
+					<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
+						{stays.map(({ path, why }) => (
+							<li key={path} className="text-muted type-detail">
+								<span className="font-mono text-text">design/{path}</span> {why}
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
 		</ConfirmDialog>
+	);
+}
+
+/** What became of a move's commit, when it wasn't made: said on Home until dismissed. */
+export function moveCommitNote(outcome: MoveOutcome, team: CloudTeam): string | undefined {
+	const moved = `${outcome.name} moved to ${team.name}.`;
+	switch (outcome.commit) {
+		case "waiting":
+			return `${moved} Its commit lands once git is done with what it's doing.`;
+		case "detached":
+			return `${moved} HEAD is detached, so its commit wasn't made. Check out a branch and spool makes it the next time it starts.`;
+		case "failed":
+			return `${moved} git didn't take its commit. spool tries again the next time it starts, or commit spool.json and design/'s removal yourself.`;
+		default:
+			return undefined;
+	}
+}
+
+export function MoveCommitLine({ note, onDismiss }: { note: string; onDismiss: () => void }) {
+	return (
+		<div
+			role="status"
+			className="pj-move-commit mb-[22px] flex min-h-[48px] items-center gap-[12px] border-border border-y py-[8px]"
+		>
+			<span className="min-w-0 flex-1 type-control">{note}</span>
+			<button type="button" className={cn("home-action", HOME_ACTION)} onClick={onDismiss}>
+				Dismiss
+			</button>
+		</div>
 	);
 }

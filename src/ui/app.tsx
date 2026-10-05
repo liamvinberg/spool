@@ -38,7 +38,7 @@ import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { SharedControl, useShares } from "./shares";
 import { type TabProject, TabStrip } from "./tab-strip";
-import { MoveToTeamDialog, TeamProjectsAway } from "./team-moves";
+import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
 import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
@@ -83,6 +83,8 @@ export function App() {
 	const [teamMenu, setTeamMenu] = useState<string | null>(null);
 	/** The project "Move to team…" is asking about. */
 	const [moving, setMoving] = useState<{ root: string; name: string } | null>(null);
+	/** What became of a move's commit, when it wasn't made, until dismissed. */
+	const [moveNote, setMoveNote] = useState<string | null>(null);
 	useEffect(() => {
 		void readAccount();
 	}, [readAccount]);
@@ -615,7 +617,16 @@ export function App() {
 						onRenameProject={(project) => void requestRename(project)}
 						onMoveToTeam={moveToTeam}
 						switcher={teamHome.switcher}
-						notice={teamHome.notice}
+						notice={
+							moveNote === null ? (
+								teamHome.notice
+							) : (
+								<>
+									<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
+									{teamHome.notice}
+								</>
+							)
+						}
 						team={teamHome.team}
 						account={
 							<AccountFoot
@@ -730,7 +741,10 @@ export function App() {
 				<MoveToTeamDialog
 					project={moving}
 					teams={teamHome.editing}
-					onMoved={() => void refetch()}
+					onMoved={(outcome, team) => {
+						setMoveNote(moveCommitNote(outcome, team) ?? null);
+						void refetch();
+					}}
 					onClose={() => setMoving(null)}
 				/>
 			)}

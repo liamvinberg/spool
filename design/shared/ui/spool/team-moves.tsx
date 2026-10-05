@@ -122,7 +122,16 @@ export function GetItSheet({ team, project }: { team: Team; project: TeamProject
 }
 
 /** "Move to team…": which team, what the move does, and where history before it stays. */
-export function MoveToTeamSheet({ project, teams }: { project: string; teams: readonly Team[] }) {
+export function MoveToTeamSheet({
+	project,
+	teams,
+	stays = [],
+}: {
+	project: string;
+	teams: readonly Team[];
+	/** What in design/ stays on this Mac and in git, as the sheet names it first. */
+	stays?: readonly { path: string; why: string }[];
+}) {
 	const chosen = teams[0];
 	return (
 		<Sheet
@@ -137,6 +146,22 @@ export function MoveToTeamSheet({ project, teams }: { project: string; teams: re
 				</label>
 			)}
 			<p className="mb-[8px] text-muted type-label">History before the move stays in git.</p>
+			{stays.length > 0 && (
+				<div className="mb-[8px] flex flex-col gap-[4px]">
+					<p className="text-muted type-label">
+						{stays.length === 1
+							? "This file stays on this Mac and in git. It doesn't go to the team:"
+							: `These ${stays.length} files stay on this Mac and in git. They don't go to the team:`}
+					</p>
+					<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
+						{stays.map(({ path, why }) => (
+							<li key={path} className="text-muted type-detail">
+								<span className="font-mono text-text">design/{path}</span> {why}
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
 		</Sheet>
 	);
 }
