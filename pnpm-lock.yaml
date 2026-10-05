@@ -27,7 +27,7 @@ importers:
         specifier: 19.2.3
         version: 19.2.3(@types/react@19.2.17)
       esbuild:
-        specifier: ^0.28.1
+        specifier: 0.28.1
         version: 0.28.1
       playwright-core:
         specifier: ^1.61.1
@@ -96,6 +96,9 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+      esbuild-wasm:
+        specifier: 0.28.1
+        version: 0.28.1
       fake-indexeddb:
         specifier: ^6.2.5
         version: 6.2.5
@@ -1706,6 +1709,11 @@ packages:
 
   es-module-lexer@2.3.1:
     resolution: {integrity: sha512-shc1dbU90Yl/xq1QrC7QRtfcwURZuVRfPhZbDoldJ1cn1gzDvBaBWlv0eFolj5+0znnPJz5TXLxsN77X/12KTA==}
+
+  esbuild-wasm@0.28.1:
+    resolution: {integrity: sha512-p/GD4E8oYRjg3kjdKrnMb0s4PzXgJF42e0MF4H0+ACyK/kIlFRp3e0fzOleIG+wBBm6MM3XQrbpe7soEA+vJIA==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   esbuild@0.27.7:
     resolution: {integrity: sha512-IxpibTjyVnmrIQo5aqNpCgoACA/dTKLTlhMHihVHhdkxKyPO1uBBthumT0rdHmcsk9uMonIWS0m4FljWzILh3w==}
@@ -4226,6 +4234,8 @@ snapshots:
   entities@7.0.1: {}
 
   es-module-lexer@2.3.1: {}
+
+  esbuild-wasm@0.28.1: {}
 
   esbuild@0.27.7:
     optionalDependencies:

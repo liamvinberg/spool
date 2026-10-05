@@ -1,0 +1,14 @@
+{
+	// The types of spool.page/compile (src/compile-entry.ts), emitted beside its
+	// build so a Worker that imports it is type checked against the real contract.
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"rootDir": "src",
+		"outDir": "dist/types"
+	},
+	"include": [],
+	"files": ["src/compile-entry.ts"]
+}

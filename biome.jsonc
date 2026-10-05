@@ -17,6 +17,7 @@
 			"!bench/evidence",
 			"!design",
 			"!fixtures/captures",
+			"!fixtures/compile",
 			"!prototype-editing",
 			"!spikes",
 			"!research"

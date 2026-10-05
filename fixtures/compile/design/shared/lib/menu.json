@@ -1,0 +1,13 @@
+{
+	"title": "Today",
+	"items": [
+		{
+			"name": "Oat flat white",
+			"price": 48
+		},
+		{
+			"name": "Cardamom bun",
+			"price": 39
+		}
+	]
+}

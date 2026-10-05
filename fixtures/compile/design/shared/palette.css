@@ -1,0 +1,5 @@
+@theme {
+	--color-ink: #16161a;
+	--color-paper: #f7f4ee;
+	--color-accent: oklch(64% 0.19 34);
+}

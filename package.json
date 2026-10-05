@@ -9,6 +9,13 @@
 	"bin": {
 		"spool": "./dist/cli.js"
 	},
+	"exports": {
+		"./compile": {
+			"types": "./dist/types/compile-entry.d.ts",
+			"default": "./dist/compile.js"
+		},
+		"./package.json": "./package.json"
+	},
 	"files": [
 		"dist",
 		"LICENSE.md",
@@ -20,8 +27,8 @@
 	"packageManager": "pnpm@11.5.3",
 	"scripts": {
 		"dev": "tsx src/dev.ts",
-		"build": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts",
-		"prepack": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts",
+		"build": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts && tsc -p tsconfig.compile.json",
+		"prepack": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts && tsc -p tsconfig.compile.json",
 		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit && tsc -p bench/evidence/tsconfig.json --noEmit",
 		"check": "biome check .",
 		"test": "vitest run",
@@ -45,6 +52,7 @@
 		"@types/ws": "^8.18.1",
 		"@vitejs/plugin-react": "^6.0.3",
 		"commander": "^15.0.0",
+		"esbuild-wasm": "0.28.1",
 		"fake-indexeddb": "^6.2.5",
 		"fflate": "^0.8.3",
 		"happy-dom": "^20.11.0",
@@ -66,7 +74,7 @@
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"@types/react": "19.2.17",
 		"@types/react-dom": "19.2.3",
-		"esbuild": "^0.28.1",
+		"esbuild": "0.28.1",
 		"playwright-core": "^1.61.1",
 		"react": "19.2.7",
 		"react-dom": "19.2.7",

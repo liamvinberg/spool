@@ -64,6 +64,20 @@ export default defineConfig([
 		esbuildPlugins: [licenses],
 	},
 	{
+		// spool.page/compile (src/compile-entry.ts): core's compile, as a Cloudflare
+		// Worker imports it. Built on its own, with nothing of the CLI's bundle (its
+		// require banner, its shims) riding along, so importing it runs nothing;
+		// tailwindcss stays a dependency and node builtins are the Worker's.
+		entry: { compile: "src/compile-entry.ts" },
+		format: "esm",
+		platform: "neutral",
+		target: "es2022",
+		splitting: false,
+		external: [/^node:/],
+		removeNodeProtocol: false,
+		esbuildPlugins: [licenses],
+	},
+	{
 		entry: { "publication-runtime": "src/runtime/frame-runtime.ts" },
 		format: "esm",
 		platform: "browser",

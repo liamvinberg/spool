@@ -1,0 +1,6 @@
+@import "./palette.css";
+
+@theme {
+	--font-display: "Fixture Sans", ui-sans-serif, system-ui;
+	--radius-card: 14px;
+}

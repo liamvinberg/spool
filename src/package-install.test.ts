@@ -25,6 +25,7 @@ describe("packed install", () => {
 			"tsup.config.ts",
 			"vite.config.ts",
 			"tsconfig.json",
+			"tsconfig.compile.json",
 			"tsconfig.runtime.json",
 			"tsconfig.ui.json",
 		]) {
@@ -71,6 +72,16 @@ child.send({ id: "probe", request: { kind: "account" } });
 		expect(run(process.execPath, ["--input-type=module", "--eval", bundledProbe], consumer)).toBe(
 			'{"signedIn":false,"account":null,"connections":[]}',
 		);
+
+		// the compile a Worker imports, by its package name, with its types beside it
+		const compileProbe =
+			'const compile = await import("spool.page/compile"); process.stdout.write(JSON.stringify([typeof compile.compileFrameDocument, typeof compile.compilePublication, compile.ESBUILD_VERSION]));';
+		expect(JSON.parse(run(process.execPath, ["--input-type=module", "--eval", compileProbe], prefix))).toEqual([
+			"function",
+			"function",
+			JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).dependencies.esbuild,
+		]);
+		expect(existsSync(join(dirname(anchor), "dist", "types", "compile-entry.d.ts"))).toBe(true);
 
 		const clipboardProject = makeTempDir();
 		markProject(clipboardProject);

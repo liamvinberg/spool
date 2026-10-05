@@ -1,0 +1,7 @@
+{
+	"imports": {
+		"clsx": "https://esm.sh/clsx@2.1.1",
+		"tailwind-merge": "https://esm.sh/tailwind-merge@3.6.0",
+		"motion/react": "https://esm.sh/motion@12.42.2/react?external=react,react-dom"
+	}
+}
