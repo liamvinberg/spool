@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
-import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamRole } from "../cloud-teams";
+import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamProjectHere, TeamRole } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import { type AgentEngineId, type AgentLoginProgress, isAgentEngineId } from "../daemon/agent-engine";
@@ -1657,6 +1657,21 @@ export const teamActions = {
 };
 
 export type { MoveOutcome, TeamProjectOnMac };
+
+/** Who is inside a team project right now, as its cover says it. */
+export type HerePerson = TeamProjectHere["people"][number];
+
+/** Who is inside each of a team's projects now, by project name; undefined while spool.page can't say. */
+export async function fetchTeamHere(address: string): Promise<ReadonlyMap<string, HerePerson[]> | undefined> {
+	try {
+		const response = await controlFetch(`/api/cloud${team(address)}/here`);
+		const body = (response.ok ? await response.json() : null) as { projects?: unknown } | null;
+		if (!Array.isArray(body?.projects)) return undefined;
+		return new Map((body.projects as TeamProjectHere[]).map((project) => [project.name, project.people]));
+	} catch {
+		return undefined;
+	}
+}
 
 /** A team's projects, each on this Mac already or not ("Get it"); undefined while spool.page can't say. */
 export async function fetchTeamProjects(address: string): Promise<TeamProjectOnMac[] | undefined> {

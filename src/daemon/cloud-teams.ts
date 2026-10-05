@@ -72,6 +72,8 @@ export function cloudTeamRoutes(options: {
 				(c) => act(c, () => client().create(c.req.valid("json").name)),
 			)
 			.get("/teams/:team/people", (c) => act(c, () => client().people(c.req.param("team"))))
+			// who is inside each of the team's projects now, for Home's covers
+			.get("/teams/:team/here", (c) => act(c, () => client().here(c.req.param("team"))))
 			.patch(
 				"/teams/:team",
 				validator("json", (value) => {

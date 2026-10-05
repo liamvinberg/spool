@@ -5,6 +5,8 @@ import {
 	type CloudTeamInvite,
 	type CloudTeamsState,
 	fetchCloudTeams,
+	fetchTeamHere,
+	type HerePerson,
 	TeamActionRefused,
 	type TeamPeople,
 	type TeamRole,
@@ -843,6 +845,40 @@ export function NewTeamDialog({
 	);
 }
 
+/** Who is inside each of a team's projects now, by project name. */
+export type TeamHere = ReadonlyMap<string, readonly HerePerson[]>;
+
+/** How often Home reads again who is inside the team's projects, while it is on screen. */
+export const HERE_MS = 10_000;
+
+/**
+ * Who is inside each of the shown team's projects right now (DEV-197), read from spool.page when the team is
+ * chosen and again every `HERE_MS` while the window is shown. Nobody is said while spool.page can't say.
+ */
+export function useTeamHere(address: string | null): TeamHere {
+	const [here, setHere] = useState<TeamHere>(new Map());
+	useEffect(() => {
+		setHere(new Map());
+		if (address === null) return;
+		let current = true;
+		const read = () => {
+			if (document.hidden) return;
+			void fetchTeamHere(address).then((read) => {
+				if (current) setHere(read ?? new Map());
+			});
+		};
+		read();
+		const timer = setInterval(read, HERE_MS);
+		document.addEventListener("visibilitychange", read);
+		return () => {
+			current = false;
+			clearInterval(timer);
+			document.removeEventListener("visibilitychange", read);
+		};
+	}, [address]);
+	return here;
+}
+
 /**
  * Home's teams, wired: reads this Mac's teams once it is signed in, keeps which one Home shows, and hands
  * Home its switcher, its invite lines and, while a team is chosen, that team's nav and page.
@@ -853,12 +889,12 @@ export function useTeamHome(
 	/** The team Home shows first: one a link at spool.page handed over, with none of its projects here yet. */
 	shown: string | null,
 	projects?: {
-		/** The covers of a team's projects on this Mac, by its address; nothing for none. */
-		covers: (address: string) => ReactNode;
+		/** The covers of a team's projects on this Mac, by its address, saying who is inside each; nothing for none. */
+		covers: (address: string, here: TeamHere) => ReactNode;
 		/** New project, started in this team. */
 		onNewProject: (team: CloudTeam) => void;
 		/** The team's projects not on this Mac yet, to Get. */
-		away?: (team: CloudTeam) => ReactNode;
+		away?: (team: CloudTeam, here: TeamHere) => ReactNode;
 	},
 ) {
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
@@ -880,6 +916,7 @@ export function useTeamHome(
 	}, [signedIn, refresh]);
 	const ready = teams.state === "ready" ? teams : null;
 	const current = ready?.teams.find((team) => team.address === scope && team.role !== "viewer") ?? null;
+	const here = useTeamHere(current?.address ?? null);
 	const select = (address: string | null) => {
 		setScope(address);
 		setPage("projects");
@@ -951,8 +988,8 @@ export function useTeamHome(
 						<TeamProjects
 							team={current}
 							notice={notice}
-							covers={projects?.covers(current.address)}
-							away={projects?.away?.(current)}
+							covers={projects?.covers(current.address, here)}
+							away={projects?.away?.(current, here)}
 							onNewProject={projects && (() => projects.onNewProject(current))}
 						/>
 					),

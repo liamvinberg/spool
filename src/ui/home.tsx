@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { ProjectCard } from "./api";
+import type { HerePerson, ProjectCard } from "./api";
 import { cn } from "./cn";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
@@ -296,6 +296,45 @@ export function coversOf(projects: readonly ProjectCard[]): ProjectCover[] {
 	return covers;
 }
 
+/**
+ * Who is inside a team project right now (DEV-197), on its cover's foot so it reads as inside: their faces in their
+ * team colours, and "sam is here" or "2 here".
+ */
+export function HerePill({ people }: { people: readonly HerePerson[] | undefined }) {
+	if (people === undefined || people.length === 0) return null;
+	const shown = people.length > HERE_FACES ? people.slice(0, HERE_FACES - 1) : people;
+	return (
+		<span
+			data-here={people.map((person) => person.name).join(" ")}
+			className="pointer-events-none absolute bottom-[10px] left-[10px] flex items-center gap-[8px] rounded-full bg-bg py-[3px] pr-[10px] pl-[3px] text-text"
+		>
+			<span className="flex">
+				{shown.map((person, i) => (
+					<span
+						key={person.name}
+						className="grid h-[22px] w-[22px] place-items-center rounded-full font-semibold text-[10px] uppercase leading-none"
+						style={{
+							background: person.color,
+							color: "#0e0e0e",
+							boxShadow: "0 0 0 2px var(--color-bg)",
+							marginLeft: i === 0 ? 0 : -5,
+							zIndex: shown.length - i,
+						}}
+					>
+						{person.name.charAt(0)}
+					</span>
+				))}
+			</span>
+			<span className="type-detail">
+				{people.length === 1 ? `${people[0]?.name} is here` : `${people.length} here`}
+			</span>
+		</span>
+	);
+}
+
+/** The faces a cover shows before the rest are only counted. */
+const HERE_FACES = 4;
+
 /** The covers, three across, each with its menu: `menu` is the root whose menu is open. */
 export function ProjectGrid({
 	projects,
@@ -307,6 +346,7 @@ export function ProjectGrid({
 	onRenameProject,
 	onExportProject,
 	onMoveToTeam,
+	here,
 }: {
 	projects: readonly ProjectCover[];
 	menu: string | null;
@@ -318,6 +358,8 @@ export function ProjectGrid({
 	onExportProject?: (project: ProjectCard) => void;
 	/** "Move to team…", offered on a project that isn't a team project yet. */
 	onMoveToTeam?: (project: { root: string; name: string }) => void;
+	/** Who is inside each team project now, by its name in the team. */
+	here?: ReadonlyMap<string, readonly HerePerson[]>;
 }) {
 	return (
 		<>
@@ -327,6 +369,7 @@ export function ProjectGrid({
 						key={project.root}
 						project={project}
 						copies={copies}
+						here={project.team === undefined ? undefined : here?.get(project.team.project)}
 						menuOpen={menu === project.root}
 						onToggleMenu={() => onMenu(menu === project.root ? null : project.root)}
 						onCloseMenu={() => onMenu(null)}
@@ -356,6 +399,7 @@ export function ProjectGrid({
 function ProjectTile({
 	project,
 	copies,
+	here,
 	menuOpen,
 	onToggleMenu,
 	onCloseMenu,
@@ -368,6 +412,7 @@ function ProjectTile({
 }: {
 	project: ProjectCard;
 	copies: number;
+	here: readonly HerePerson[] | undefined;
 	menuOpen: boolean;
 	onToggleMenu: () => void;
 	onCloseMenu: () => void;
@@ -402,6 +447,7 @@ function ProjectTile({
 							className="h-full w-full object-cover object-top"
 						/>
 					)}
+					<HerePill people={here} />
 					<span className="pj-cover-enter absolute right-[12px] bottom-[12px] grid h-[30px] w-[30px] place-items-center rounded-[6px] border border-border-raised bg-bg text-text opacity-0 [transform:translateX(-3px)] group-focus-visible/cover:opacity-100 group-focus-visible/cover:[transform:none] group-hover/cover:opacity-100 group-hover/cover:[transform:none] motion-reduce:transition-none">
 						<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 					</span>

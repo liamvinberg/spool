@@ -465,7 +465,7 @@ export function App() {
 		openTab(project);
 	});
 	const teamHome = useTeamHome(account, openExternally, handed?.team ?? null, {
-		covers: (address) => {
+		covers: (address, here) => {
 			const covers = coversOf(
 				projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
 			);
@@ -479,6 +479,7 @@ export function App() {
 					onTrashProject={setTrashRequest}
 					onRenameProject={(project) => void requestRename(project)}
 					onExportProject={transfer.exportProject}
+					here={here}
 				/>
 			);
 		},
@@ -487,13 +488,14 @@ export function App() {
 			setPicking("new");
 		},
 		// keyed on this Mac's copies of the team's projects, so one just got leaves the list
-		away: (team) => (
+		away: (team, here) => (
 			<TeamProjectsAway
 				key={projects
 					.filter((project) => project.team?.team === team.address)
 					.map((project) => project.root)
 					.join("\n")}
 				team={team}
+				here={here}
 				onGot={(project) => {
 					void refetch();
 					openTab(project);

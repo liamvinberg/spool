@@ -103,6 +103,19 @@ export function fakeTeam(team = "devosurf") {
 					.map((one) => ({ accountId: one.accountId, email: `${one.accountId}@devosurf.com`, role: one.role })),
 				invites: [],
 			});
+		// who is inside each project now, as the sync objects say from their sockets: never the asker
+		if (path === `/api/teams/${team}/here` && person.role !== null)
+			return Response.json({
+				projects: [...projects.values()]
+					.sort((a, b) => a.name.localeCompare(b.name))
+					.map((at) => ({
+						name: at.name,
+						url: `${TEAM_ORIGIN}/${team}/${at.name}`,
+						people: [...new Set([...at.sockets].map((socket) => socket.person))]
+							.filter((one) => one !== person && standing(at, one) !== undefined)
+							.map((one) => ({ name: one.accountId, color: one.color })),
+					})),
+			});
 		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo)?$/u.exec(path);
 		if (match === null || match[1] !== team || person.role === null)
 			return Response.json({ error: "team_not_found" }, { status: 404 });

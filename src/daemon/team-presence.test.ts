@@ -54,13 +54,24 @@ async function team() {
 	const benRoot = await clone(benState, ben);
 	return {
 		cloud,
-		ana: { root: anaRoot, state: anaState, services: ana.services, clone: () => clone(anaState, ana, "second") },
-		ben: { root: benRoot, state: benState, services: ben.services },
+		ana: {
+			root: anaRoot,
+			state: anaState,
+			services: ana.services,
+			request: ana.request,
+			clone: () => clone(anaState, ana, "second"),
+		},
+		ben: { root: benRoot, state: benState, services: ben.services, request: ben.request },
 	};
 }
 
-const daemon = (machine: { state: string; services: ReturnType<ReturnType<typeof fakeTeam>["machine"]>["services"] }) =>
-	makeApp(machine.state, { teamSyncServices: { ...machine.services, notice: () => {} } });
+type Machine = ReturnType<ReturnType<typeof fakeTeam>["machine"]>;
+
+const daemon = (machine: { state: string; services: Machine["services"]; request: Machine["request"] }) =>
+	makeApp(machine.state, {
+		teamSyncServices: { ...machine.services, notice: () => {} },
+		cloudTeamsRequest: machine.request,
+	});
 
 /** A canvas on a project: what its event stream says of presence, and its own person's moves. */
 async function canvas(app: Daemon, project: string) {
@@ -164,6 +175,27 @@ describe("presence on a team canvas", () => {
 		expect(await bens.heard()).toMatchObject({ person: { accountId: "ana" }, state: null });
 		// and neither of her copies was ever told about her other
 		await one.quiet().catch(() => {});
+	});
+
+	it("says on Home who is inside each of the team's projects, once each and never the one asking", async () => {
+		const { ana, ben } = await team();
+		const anaDaemon = daemon(ana);
+		const benDaemon = daemon(ben);
+		const here = async () =>
+			(await (await benDaemon.request("/api/cloud/teams/devosurf/here")).json()) as {
+				projects: { name: string; people: { name: string; color: string }[] }[];
+			};
+		const bens = await canvas(benDaemon, "checkout");
+		await bens.say(at(0, 0));
+		expect(await here()).toMatchObject({ projects: [{ name: "checkout", people: [] }] });
+
+		const anas = await canvas(anaDaemon, "checkout");
+		await anas.say(at(1, 1));
+		await bens.heard();
+		expect((await here()).projects[0]?.people).toEqual([{ name: "ana", color: TEAM_COLORS[0] }]);
+		await anas.close();
+		await bens.heard();
+		expect((await here()).projects[0]?.people).toEqual([]);
 	});
 
 	it("writes nothing to disk, to git or to the team", async () => {

@@ -3,12 +3,14 @@ import {
 	type CloudTeam,
 	fetchTeamProjects,
 	getTeamProjectAt,
+	type HerePerson,
 	type MoveOutcome,
 	moveProjectToTeam,
 	type TeamProjectOnMac,
 } from "./api";
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
+import { HerePill } from "./home";
 import { HOME_ACTION } from "./home-actions";
 import { ProjectPicker } from "./picker";
 
@@ -29,9 +31,12 @@ export function tilde(path: string): string {
  */
 export function TeamProjectsAway({
 	team,
+	here,
 	onGot,
 }: {
 	team: CloudTeam;
+	/** Who is inside each of the team's projects now, by name: someone may be in one this Mac doesn't hold. */
+	here?: ReadonlyMap<string, readonly HerePerson[]>;
 	onGot: (project: { root: string; name: string }) => void;
 }) {
 	const [projects, setProjects] = useState<TeamProjectOnMac[] | undefined>();
@@ -53,10 +58,13 @@ export function TeamProjectsAway({
 			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
 				{away.map((project) => (
 					<article key={project.url} className="pj-away-cover min-w-0">
-						<div className="relative grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-border-raised bg-canvas opacity-60">
-							<span className="px-[18px] text-center text-muted type-detail">
-								{project.repo ?? "no repo linked"}
-							</span>
+						<div className="relative">
+							<div className="grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-border-raised bg-canvas opacity-60">
+								<span className="px-[18px] text-center text-muted type-detail">
+									{project.repo ?? "no repo linked"}
+								</span>
+							</div>
+							<HerePill people={here?.get(project.name)} />
 						</div>
 						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
 							<strong className="truncate text-muted type-title font-[500]">{project.name}</strong>

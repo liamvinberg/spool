@@ -57,6 +57,13 @@ export interface CloudTeamProject {
 	repo: string | null;
 }
 
+/** Who is inside one of a team's projects right now (DEV-197): each person once, named and in their team colour. */
+export interface TeamProjectHere {
+	name: string;
+	url: string;
+	people: { name: string; color: string }[];
+}
+
 /** spool.page said no. `code` is its reason, such as `last_admin` or `team_creation_closed`. */
 export class CloudTeamRefused extends SpoolError {
 	constructor(
@@ -129,6 +136,8 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 			call<CloudTeamProject>("POST", `${team(address)}/projects`, { name, ...(repo === undefined ? {} : { repo }) }),
 		/** Every project in the team, whether or not this Mac holds it. */
 		projects: (address: string) => call<{ projects: CloudTeamProject[] }>("GET", `${team(address)}/projects`),
+		/** Who is inside each of the team's projects now, leaving out whoever asks. */
+		here: (address: string) => call<{ projects: TeamProjectHere[] }>("GET", `${team(address)}/here`),
 		/** Record the repo a project's code lives in, from a checkout's `origin`. Editors and admins only. */
 		setRepo: (address: string, name: string, repo: string) =>
 			call<CloudTeamProject>("PUT", `${team(address)}/projects/${encodeURIComponent(name)}/repo`, { repo }),
