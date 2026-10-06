@@ -169,10 +169,21 @@ async function locate(designDir: string): Promise<Repository | undefined> {
 	if (said === undefined) return undefined;
 	const [top, index, format] = said.split("\n");
 	if (top === undefined || index === undefined) return undefined;
-	const real = realpathSync(top);
-	const scope = relative(real, realpathSync(designDir)).split(sep).join("/");
+	const real = realOrUndefined(top);
+	const design = realOrUndefined(designDir);
+	// the folder went away while git was answering: there is nothing left to guard
+	if (real === undefined || design === undefined) return undefined;
+	const scope = relative(real, design).split(sep).join("/");
 	if (scope === "" || scope.startsWith("..")) return undefined;
 	return { top: real, index: resolve(designDir, index), scope, format: format === "sha256" ? "sha256" : "sha1" };
+}
+
+function realOrUndefined(path: string): string | undefined {
+	try {
+		return realpathSync(path);
+	} catch {
+		return undefined;
+	}
 }
 
 /** What the index tracks under `design/`: each design-relative path and its blob. */
