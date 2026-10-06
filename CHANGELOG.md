@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.31.0
+
+### Minor Changes
+
+- ad04fb5: Shared links and team canvases work on a phone. A link share opens straight into its prototype, full screen, with no width cap: the frame fills the whole screen under the notch and the home bar and is told the real safe areas to pad itself by. Opened in the phone's browser for the first time, a card under the running prototype says who shared it, when it last changed, and how to add it to the Home Screen, where it runs like an app.
+
+  A team canvas link on a phone gives a navigator instead of the spatial canvas: the frames saved to last, who saved each and when, the pages a level at a time with breadcrumbs and frame counts, find over page and frame names, and each page's frames as covers. A teammate's save arrives as a toast you can tap to see it. Tap a cover to play the frame full screen; pull from the right edge to leave. A desktop frame plays whole and small upright, with its size and "turn the phone"; turn the phone to play it at its authored size scaled to the screen, and turn it upright again to leave.
+
+- 50e67f6: Teammates see each other in the browser too. A member looking at a team canvas at spool.page, a viewer or an editor away from their Mac, sees everyone's pointers, names, docked pills and faces as the Mac's canvas shows them, can press a face to follow someone, and appears on everyone else's canvas the same way. A frame they play counts as the frame they're inside. People you share pages with outside the team see nobody and appear nowhere.
+
+  On a phone, the navigator shows who is in each part: everyone on the canvas at the top, who is on a page or under it beside its row, and who is inside a frame on its cover.
+
+  On Home, a team project's cover says who is inside it right now, "sam is here" or "2 here", and keeps it current while Home is open.
+
+- a6f6531: The team sync protocol is published as `spool.page/sync-protocol`, so a host that runs a team project's sync speaks exactly the protocol this version of spool does.
+
+### Patch Changes
+
+- f3ba376: The Mac app's Cloud Account menu now shows only what fits: Sign In when you are signed out, and your email with Sign Out when you are signed in. It follows the account when you sign in or out from Home, the menu or `spool login` and `spool logout`, and Home's account now follows those commands too.
+- f3f7caa: A `spool.json` that belongs to another tool no longer makes spool treat the folder as a team project. Spool walks past it, starts projects beside it and never writes over it.
+- 615d1a0: Opening a `.spool` file from Finder while the Mac app is starting no longer says it could not open the project after opening it anyway. The canvas also loads once at launch instead of twice.
+- 053a5db: Frames on the top page can be shared now. Right-click the empty space in the pages rail and choose Share…, or tick the top page in any share's sheet. People you share it with see the top page's own frames and none of the pages under it.
+- 705222c: spool now signs in to spool.page instead of beta.spool.page, and new team projects link to spool.page. Sign in once more after updating. `SPOOL_CLOUD_ORIGIN` still points spool somewhere else.
+- 2c4bb66: Checking out a branch from before a project moved to its team no longer stops its local copy syncing, and spool no longer commits the team's `design/` to git on that branch.
+- 5762237: A team project that stopped syncing here because you were made a viewer or removed shows as not on this Mac again once you're back, and Get it brings that copy back in sync.
+- 2b32c33: A teammate's `design/` that survived pulling the move commit is kept out of git as soon as spool follows it, so `git add -A` can't put it back.
+- 46e6eec: Spool no longer deletes a file from a team project's `design/` because git seemed to have put it there. Frames a teammate made on their own branch before pulling the move commit now go up to the team, and a file an old branch brings that the team never had stays on disk, unsent, with a note saying so.
+- 9f0e529: Moving a project into a team no longer fails over files that never travel, like a symlink or a file over 25 MB, and those files and anything else in `design/` outside spool's layout stay in git, so teammates who pull keep them. A move is refused up front on a detached HEAD, and a move commit git couldn't take, because a crashed git left its lock or spool quit while waiting, is made the next time spool starts instead of being lost.
+- b2108c9: Moving a project into a team now takes its shares with it. Links you already sent keep working and show the team's pages from then on.
+- bc200aa: Move to team now lists the files in `design/` that will stay on this Mac and in git before you move, and Home tells you when the move commit wasn't made and what happens next.
+- dc682f1: A save to a team project made just as spool started watching another folder could wait until the next reconnect to reach your team. It now goes up within moments.
+- da900b1: A team project's sync state now stays where you can see it. Its canvas says that sync is paused, which files didn't travel, or that the project is no longer synced with its team, and says it again whenever you open the canvas. A project that stopped syncing while it was closed says so on its cover at Home.
+
 ## 0.30.0
 
 ### Minor Changes
