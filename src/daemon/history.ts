@@ -693,7 +693,12 @@ export async function branchesTouchingDesign(root: string): Promise<string[]> {
 			if (diff?.ok === true && diff.stdout.trim() !== "") touching.push(branch);
 		});
 	}
-	const tracked = new Set(touching.filter(({ ref }) => ref.startsWith("refs/heads/")).map(({ upstream }) => upstream));
+	// a local branch tracking another local branch is two branches to merge; only its remote twin is the same one
+	const tracked = new Set(
+		touching
+			.filter(({ ref, upstream }) => ref.startsWith("refs/heads/") && upstream.startsWith("refs/remotes/"))
+			.map(({ upstream }) => upstream),
+	);
 	return touching
 		.filter(({ ref }) => !tracked.has(ref))
 		.map(({ ref }) => ref.replace(/^refs\/(heads|remotes)\//u, ""));

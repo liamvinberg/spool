@@ -393,6 +393,24 @@ describe("Move to team", () => {
 		expect(await asked.json()).toEqual({ branches: ["web-redesign"] });
 	});
 
+	it("names a local branch another local branch tracks", { timeout: 30_000 }, async () => {
+		const project = existingProject();
+		git(project.root, "switch", "--quiet", "-c", "develop");
+		writeFrame(project.root, "home", "export default () => <h1>Develop</h1>;\n");
+		git(project.root, "commit", "--quiet", "-am", "develop");
+		git(project.root, "branch", "--quiet", "--track", "feature", "develop");
+		git(project.root, "switch", "--quiet", "feature");
+		writeFrame(project.root, "home", "export default () => <h1>Feature</h1>;\n");
+		git(project.root, "commit", "--quiet", "-am", "feature");
+		git(project.root, "switch", "--quiet", "main");
+		const daemon = makeApp(project.state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
+		const asked = await daemon.controlRequest(
+			`/api/cloud/move/branches?${new URLSearchParams({ path: project.root })}`,
+		);
+		const { branches } = (await asked.json()) as { branches: string[] };
+		expect([...branches].sort()).toEqual(["develop", "feature"]);
+	});
+
 	it("names no branches for a project in no git repo", async () => {
 		const root = realpathSync(makeTempDir());
 		const state = join(makeTempDir(), ".spool");
