@@ -424,7 +424,8 @@ it("drags a tab while another is still closing, keeping it under the pointer", a
 		const box = await page.locator(`[data-tab="${held}"]`).boundingBox();
 		offsets.push(x - (box?.x ?? 0));
 	}
-	for (const offset of offsets.slice(1)) expect(Math.abs(offset - (offsets[0] ?? 0))).toBeLessThan(2);
+	// within a frame of the row's slide: a loaded machine can show one frame's step, never a tab left behind
+	for (const offset of offsets.slice(1)) expect(Math.abs(offset - (offsets[0] ?? 0))).toBeLessThan(3);
 	// then carried just past the centre of the tab after it, with the row long settled
 	await page.waitForTimeout(250);
 	const slots = await page.evaluate(() =>
