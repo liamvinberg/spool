@@ -5,6 +5,7 @@ import type { ProjectCard } from "./home-fixture";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { CloseIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, SearchIcon } from "./icons";
 import { ProjectLocation } from "./project-location";
+import { ProjectMark } from "./project-icon";
 import { Thumbnail } from "./home-fixture";
 import { SpoolMark as RibbonMark } from "./mark";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
@@ -26,6 +27,7 @@ export function Home({
 	switcher,
 	invites,
 	team,
+	menuAt = null,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -46,10 +48,12 @@ export function Home({
 	invites?: ReactNode;
 	/** While a team is chosen in the switcher: its nav and its page, in place of your own projects. */
 	team?: { nav: ReactNode; main: ReactNode } | undefined;
+	/** Specimen: the root whose cover menu starts open. */
+	menuAt?: string | null;
 }) {
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState("Recent");
-	const [menuRoot, setMenuRoot] = useState<string | null>(null);
+	const [menuRoot, setMenuRoot] = useState<string | null>(menuAt);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const registered = projects.filter((project) => project.root !== forgetting);
 	const needle = query.trim().toLowerCase();
@@ -340,15 +344,24 @@ function ProjectTile({
 						<Arrow />
 					</span>
 				</div>
-				<div className="pj-cover-caption flex items-baseline justify-between gap-[9px] pt-[15px] pr-[32px]">
-					<strong className="truncate type-title font-[500]">{project.name}</strong>
+				<div className="pj-cover-caption flex items-center justify-between gap-[9px] pt-[15px] pr-[32px]">
+					<span className="flex min-w-0 items-center gap-[10px]">
+						<ProjectMark
+							name={project.name}
+							icon={project.icon}
+							team={project.team?.team}
+							paused={project.syncPaused !== undefined}
+							size={20}
+						/>
+						<strong className="truncate type-title font-[500]">{project.name}</strong>
+					</span>
 					<span className="shrink-0 text-muted type-detail">
 						{project.frameCount
 							? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}`
 							: "no frames yet"}
 					</span>
 				</div>
-				<span className="pj-opened-time mt-[7px] block text-muted type-detail">
+				<span className="pj-opened-time mt-[7px] block pl-[30px] text-muted type-detail">
 					{relativeTime(project.openedAt)}
 					{(project.copies ?? 1) > 1 && ` · ${project.copies} copies on this Mac`}
 					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
@@ -371,6 +384,10 @@ function ProjectTile({
 							onOpen();
 						}}
 					/>
+					<MenuItem label="Change icon…" onClick={onCloseMenu} />
+					{project.icon?.from === "file" && <MenuItem label="Remove icon" onClick={onCloseMenu} />}
+					<MenuItem label="Export project…" onClick={onCloseMenu} />
+					<MenuItem label="Rename…" onClick={onCloseMenu} />
 					{project.team === undefined && <MenuItem label="Move to team…" onClick={onCloseMenu} />}
 					<MenuItem
 						label="Copy path"

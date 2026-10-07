@@ -1,6 +1,7 @@
 import { ui } from "spool";
 import { AccountFoot } from "shared/ui/spool/account-foot";
 import { ProjectGrid } from "shared/ui/spool/home";
+import { PROJECT_ICONS } from "shared/lib/spool/project-icon";
 import { homeProjects } from "shared/ui/spool/home-fixture";
 import { SpoolHomeScreen } from "shared/ui/spool/home-screen";
 import { AwayCovers, TIDEMARK_AWAY } from "shared/ui/spool/team-moves";
@@ -41,6 +42,7 @@ const TIDEMARK_PROJECTS = homeProjects.slice(0, 2).map((project, index) => ({
 	...project,
 	root: `~/code/${index === 0 ? "tidemark-app" : "tidemark-site"}`,
 	name: index === 0 ? "tidemark-app" : "tidemark-site",
-	...(index === 0 ? { copies: 2 } : {}),
+	icon: PROJECT_ICONS[index === 0 ? "tidemark-app" : "tidemark-site"],
+	...(index === 0 ? { copies: 2 } : { syncPaused: "this project took 120 saves in the last minute" }),
 	team: { url: `https://spool.page/tidemark/${index === 0 ? "app" : "site"}`, team: "tidemark", project: index === 0 ? "app" : "site" },
 }));

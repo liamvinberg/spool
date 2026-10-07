@@ -19,6 +19,7 @@ export function SpoolHomeScreen({
 	invites,
 	team,
 	projects: shown,
+	menuAt,
 	onGo,
 }: {
 	canvasTarget?: string | undefined;
@@ -36,6 +37,8 @@ export function SpoolHomeScreen({
 	team?: { nav: React.ReactNode; main: React.ReactNode } | undefined;
 	/** The projects Your projects starts with, when a frame draws a state of its own. */
 	projects?: ProjectCard[] | undefined;
+	/** Specimen: the root whose cover menu starts open. */
+	menuAt?: string | undefined;
 	onGo?: ((target: string) => void) | undefined;
 }) {
 	const [projects, setProjects] = useState(firstLaunch ? [] : (shown ?? homeProjects));
@@ -51,7 +54,6 @@ export function SpoolHomeScreen({
 	const start = () => setPicker("start");
 	return (
 		<SpoolShell
-			canvasControls={false}
 			tabs={firstLaunch ? [] : ["tvärsö", "kaffe"]}
 			onPick={() => setPicker("start")}
 		>
@@ -61,6 +63,7 @@ export function SpoolHomeScreen({
 					switcher={switcher}
 					invites={invites}
 					team={team}
+					menuAt={menuAt ?? null}
 					projects={projects}
 					location={location}
 					onStart={start}
