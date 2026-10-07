@@ -787,4 +787,15 @@ describe("Move to team under the save limit", () => {
 		expect(cloud.saves("site")).toEqual([]);
 		unchanged(project, before);
 	});
+
+	it("names what stopped the shares going over", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		mkdirSync(join(project.root, "design", ".spool"), { recursive: true });
+		writeFileSync(
+			join(project.root, "design", ".spool", "share.json"),
+			JSON.stringify({ origin: TEAM_ORIGIN, project: "nowhere" }),
+		);
+		await expect(moveAs(cloud, project)).rejects.toThrow(/^site's shares didn't move: spool\.page refused: \w+\. Nothing changed here; try again\.$/);
+	});
 });

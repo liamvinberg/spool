@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
-import { type CloudTeamProject, cloudTeams } from "./cloud-teams";
+import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { carrySharesOver } from "./daemon/shares";
 import {
@@ -102,10 +102,14 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 
 	try {
 		await carrySharesOver(root, spoolDir, request, link);
-	} catch {
-		throw new SpoolError(
-			`spool.page couldn't take ${basename(root)}'s shares just now. Nothing changed here; try again.`,
-		);
+	} catch (error) {
+		const why =
+			error instanceof CloudTeamRefused
+				? `spool.page refused: ${error.code}`
+				: error instanceof SpoolError
+					? error.message
+					: "spool.page could not be reached";
+		throw new SpoolError(`${basename(root)}'s shares didn't move: ${why}. Nothing changed here; try again.`);
 	}
 	closing(basename(root), options);
 	writeProjectLink(root, link);
