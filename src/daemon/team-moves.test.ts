@@ -629,4 +629,36 @@ describe("Move to team under the save limit", () => {
 			expect(existsSync(join(project.root, "spool.json"))).toBe(false);
 			expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
 		});
+
+	it("tells the move sheet how far the move has got and what it is waiting out, while it runs", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = bigProject(3);
+		const daemon = makeApp(project.state, { cloud: ana.cloud, teamNotice: () => {} });
+		const progress = async () =>
+			(
+				(await (
+					await daemon.controlRequest(`/api/cloud/move/progress?${new URLSearchParams({ path: project.root })}`)
+				).json()) as { progress: MoveProgress | null }
+			).progress;
+		expect(await progress()).toBeNull();
+		cloud.limit("rate_limited", 1);
+
+		const moving = daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		let seen = await progress();
+		for (const start = Date.now(); seen?.paused == null && Date.now() - start < 10_000; seen = await progress())
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		expect(seen).toMatchObject({ up: 0, paused: { why: "this project took 120 saves in the last minute" } });
+		expect(seen?.total).toBeGreaterThanOrEqual(5);
+		cloud.lift();
+
+		expect((await moving).status).toBe(200);
+		expect(await progress()).toBeNull();
+	});
 });

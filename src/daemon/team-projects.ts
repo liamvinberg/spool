@@ -6,7 +6,7 @@ import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { getTeamProject } from "../get-it";
 import { checkoutOf, cloneCommand } from "../git-remote";
-import { moveIntoTeam } from "../move-in";
+import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { expandHome, realDir } from "../paths";
 import { readRegistry, teamProjects } from "../registry";
 import type { DaemonCloud } from "./app";
@@ -59,8 +59,22 @@ export function teamProjectRoutes(options: {
 		if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
 		return c.json({ error: "spool.page could not be reached. Try again." }, 503);
 	};
+	/** Each move under way, by its project's root: how far it has got, for the move sheet to ask. */
+	const moves = new Map<string, MoveProgress>();
 	return (
 		new Hono()
+			/** How far a move under way has got, and a pause it is waiting out; null when none is. */
+			.get("/move/progress", (c) => {
+				const path = c.req.query("path");
+				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/project" }, 400);
+				let root: string;
+				try {
+					root = realDir(path);
+				} catch {
+					return c.json({ progress: null });
+				}
+				return c.json({ progress: moves.get(root) ?? null });
+			})
 			/** What in a project's design/ would stay on this Mac if it moved: the Move sheet names it first. */
 			.get("/move/stays", (c) => {
 				const path = c.req.query("path");
@@ -131,11 +145,18 @@ export function teamProjectRoutes(options: {
 						: c.json({ error: 'expected { "path": "/abs/project" }' }, 400);
 				}),
 				async (c) => {
+					const path = c.req.valid("json").path;
+					let root: string | undefined;
 					try {
-						const moved = await moveIntoTeam(c.req.valid("json").path, options.spoolDir, {
+						const key = realDir(path);
+						if (moves.has(key)) return c.json({ error: `${basename(key)} is already moving.` }, 409);
+						moves.set(key, { up: 0, total: 0, paused: null });
+						root = key;
+						const moved = await moveIntoTeam(path, options.spoolDir, {
 							team: c.req.param("team"),
 							...asked(),
 							...(options.signal === undefined ? {} : { signal: options.signal }),
+							onProgress: (progress) => moves.set(key, progress),
 						});
 						void moved.commit.then((commit) =>
 							options.notice?.(
@@ -154,6 +175,8 @@ export function teamProjectRoutes(options: {
 						return c.json(outcome);
 					} catch (error) {
 						return refused(c, error);
+					} finally {
+						if (root !== undefined) moves.delete(root);
 					}
 				},
 			)
