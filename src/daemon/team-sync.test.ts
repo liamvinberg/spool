@@ -224,7 +224,6 @@ describe("a fetch that can't", () => {
 				request: ana.request,
 				openSocket: ana.openSocket,
 				env: {},
-				platform: "darwin",
 				...options,
 			});
 		await expect(
@@ -236,16 +235,9 @@ describe("a fetch that can't", () => {
 		await expect(fetching({ request: noWayIn, env: { CLAUDE_CODE_REMOTE: "true" } })).rejects.toThrow(
 			"Claude Code on the web can't fetch a team project's design/ yet",
 		);
-		const noKeychain = {
-			origin: TEAM_ORIGIN,
-			vault: {
-				read: async () => {
-					throw new Error("macOS Keychain is unavailable");
-				},
-			},
-		};
-		await expect(fetching({ request: noKeychain, env: { CODEX_THREAD_ID: "1" }, platform: "linux" })).rejects.toThrow(
-			"a cloud agent can't fetch a team project's design/ yet",
+		// a local agent, on a Mac or a Linux box over SSH, runs where someone can sign spool in
+		await expect(fetching({ request: noWayIn, env: { CODEX_THREAD_ID: "1" } })).rejects.toThrow(
+			"https://cloud.test/devosurf/checkout is a team project; run `spool login` to fetch its design/",
 		);
 		expect(existsSync(join(clone, "design"))).toBe(false);
 	});

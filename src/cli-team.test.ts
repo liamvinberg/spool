@@ -133,7 +133,7 @@ describe("a fresh clone of a team project", { timeout: 60_000 }, () => {
 
 		const agent = await machine(outsider, false).run(["shot", "home"], root, { CLAUDE_CODE_REMOTE: "true" });
 		expect(agent.stderr).toBe(
-			`spool: ${outsider.origin}/devosurf/checkout is a team project, and Claude Code on the web can't fetch a team project's design/ yet; work on it from a Mac with spool signed in to devosurf\n`,
+			`spool: ${outsider.origin}/devosurf/checkout is a team project, and Claude Code on the web can't fetch a team project's design/ yet; work on it from a machine with spool signed in to devosurf\n`,
 		);
 		expect(existsSync(join(root, "design"))).toBe(false);
 	});
