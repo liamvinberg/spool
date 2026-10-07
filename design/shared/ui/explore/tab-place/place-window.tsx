@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import type { Place, PlaceTab, PlaceTeam } from "shared/lib/explore/tab-place/tabs";
 import { cn } from "shared/lib/utils";
 import { ThreadIcon } from "shared/ui/spool/icons";
@@ -6,19 +6,15 @@ import { Faces, type Mate } from "shared/ui/spool/presence";
 
 /**
  * The Mac window cropped to its top: the shipped header (`src/ui/app.tsx` with `src/ui/tab-strip.tsx`, every
- * class copied) over a strip of canvas, with one change per take to how a tab says where its project lives.
+ * class copied) over a strip of canvas, with one change to how a tab says where its project lives.
  *
  * - `mark`: a team project's tab leads with its team's letter mark, the one Home's switcher draws. Your own
  *   projects are untouched. A pause hollows the mark.
- * - `crumb`: a team project's tab is named by its address, `tidemark/checkout`, the path its spool.page link
- *   ends in. A pause breaks the slash; an ended copy keeps the team struck through.
- * - `group`: a team's open copies sit together behind its chip, and the chip folds them away when the strip
- *   runs out of room. Your own projects stand outside every group.
  *
  * Held still: no drag, and the hover, the card and the menu are props.
  */
 
-export type TabPlaceTake = "mark" | "crumb" | "group";
+export type TabPlaceTake = "mark";
 
 /** Home's team letter-mark hues (`src/ui/teams.tsx`), picked by the same sum. */
 const HUES = ["#2E5D70", "#6B4E2E", "#4E3F70", "#2F6150", "#70393F"];
@@ -36,7 +32,6 @@ export function TabPlaceWindow({
 	hovered,
 	card = false,
 	menu,
-	folded = [],
 	frame,
 	argues,
 }: {
@@ -49,8 +44,6 @@ export function TabPlaceWindow({
 	card?: boolean | undefined;
 	/** the tab whose menu is open */
 	menu?: string | undefined;
-	/** group take: the teams whose tabs are folded into their chip */
-	folded?: readonly string[] | undefined;
 	frame: string;
 	argues: string;
 }) {
@@ -104,13 +97,9 @@ export function TabPlaceWindow({
 									ref={strip}
 									className="project-tabs-scroll relative z-[1] flex h-full min-w-0 items-center gap-[2px] overflow-x-auto overflow-y-hidden px-[2px] py-0 [scrollbar-width:none]"
 								>
-									{take === "group" ? (
-										<Grouped tabs={tabs} focused={focused} hovered={hovered} folded={folded} />
-									) : (
-										tabs.map((tab) => (
-											<Tab key={tab.root} tab={tab} take={take} active={tab.root === focused} hovered={tab.root === hovered} />
-										))
-									)}
+									{tabs.map((tab) => (
+										<Tab key={tab.root} tab={tab} take={take} active={tab.root === focused} hovered={tab.root === hovered} />
+									))}
 								</div>
 								<span className="project-tabs-plus relative ml-[6px] flex h-[30px] w-[32px] shrink-0 items-center justify-center rounded-[6px] [color:var(--color-muted)]">
 									<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -131,12 +120,12 @@ export function TabPlaceWindow({
 				</div>
 				{cardTab !== undefined && anchors[cardTab.root] !== undefined ? (
 					<div className="absolute z-40" style={{ left: anchors[cardTab.root]?.left, top: (anchors[cardTab.root]?.bottom ?? 0) + 8 }}>
-						<PlaceCard tab={cardTab} marked={take !== "crumb"} />
+						<PlaceCard tab={cardTab} />
 					</div>
 				) : null}
 				{menuTab !== undefined && anchors[menuTab.root] !== undefined ? (
 					<div className="absolute z-40" style={{ left: (anchors[menuTab.root]?.left ?? 0) + 14, top: (anchors[menuTab.root]?.bottom ?? 0) - 6 }}>
-						<PlaceMenu tab={menuTab} marked={take !== "crumb"} />
+						<PlaceMenu tab={menuTab} />
 					</div>
 				) : null}
 			</div>
@@ -196,42 +185,13 @@ function Tab({
 	);
 }
 
-function Label({ tab, take, active }: { tab: PlaceTab; take: TabPlaceTake; active: boolean }) {
+function Label({ tab }: { tab: PlaceTab; take: TabPlaceTake; active: boolean }) {
 	const { place } = tab;
-	const name = <span className="min-w-0 truncate">{tab.name}</span>;
-	if (take === "mark") {
-		return (
-			<>
-				{place.kind === "team" ? <PlaceMark team={place.team} paused={place.paused !== undefined} /> : null}
-				{name}
-			</>
-		);
-	}
-	if (take === "crumb") {
-		if (place.kind === "solo") return name;
-		const ended = place.kind === "ended";
-		const paused = place.kind === "team" && place.paused !== undefined;
-		return (
-			<span className="flex min-w-0 items-baseline">
-				<span
-					className={cn(
-						"shrink-0 font-mono text-[12px]",
-						ended ? "text-muted/45 line-through decoration-muted/60" : active ? "text-muted" : "text-muted/70",
-					)}
-				>
-					{place.team.address}
-				</span>
-				{paused ? <PauseBars className="mx-[5px] self-center" /> : <span className={cn("shrink-0 font-mono text-[12px]", ended ? "px-[3px] text-muted/45" : "px-[2px] text-muted/50")}>/</span>}
-				{name}
-			</span>
-		);
-	}
-	// group: the chip names the team, so the tab says only what is wrong with this copy
 	return (
-		<span className="flex min-w-0 items-baseline gap-[8px]">
-			{name}
-			{place.kind === "team" && place.paused !== undefined ? <span className="shrink-0 text-muted/80 type-detail">paused</span> : null}
-		</span>
+		<>
+			{place.kind === "team" ? <PlaceMark team={place.team} paused={place.paused !== undefined} /> : null}
+			<span className="min-w-0 truncate">{tab.name}</span>
+		</>
 	);
 }
 
@@ -257,91 +217,13 @@ function PlaceMark({ team, paused = false, size = 16 }: { team: PlaceTeam; pause
 	);
 }
 
-function PauseBars({ className }: { className?: string }) {
-	return (
-		<svg width="8" height="10" viewBox="0 0 8 10" aria-hidden="true" className={cn("shrink-0 text-muted", className)}>
-			<rect x="0.5" y="1" width="2.5" height="8" rx="0.75" fill="currentColor" />
-			<rect x="5" y="1" width="2.5" height="8" rx="0.75" fill="currentColor" />
-		</svg>
-	);
-}
-
-/** Group take: runs of one team's copies gather behind its chip; everything else is a tab as it ships. */
-function Grouped({
-	tabs,
-	focused,
-	hovered,
-	folded,
-}: {
-	tabs: readonly PlaceTab[];
-	focused: string;
-	hovered: string | undefined;
-	folded: readonly string[];
-}) {
-	const runs: { team: PlaceTeam | null; tabs: PlaceTab[] }[] = [];
-	for (const tab of tabs) {
-		const team = tab.place.kind === "team" ? tab.place.team : null;
-		const last = runs.at(-1);
-		if (team !== null && last?.team?.address === team.address) last.tabs.push(tab);
-		else runs.push({ team, tabs: [tab] });
-	}
-	return (
-		<>
-			{runs.map((run, index) =>
-				run.team === null ? (
-					<Fragment key={run.tabs[0]?.root}>
-						{run.tabs.map((tab) => (
-							<Tab key={tab.root} tab={tab} take="group" active={tab.root === focused} hovered={tab.root === hovered} />
-						))}
-					</Fragment>
-				) : (
-					<div key={run.team.address} className={cn("flex h-full shrink-0 items-center gap-[2px]", index > 0 && "ml-[8px]", index < runs.length - 1 && "mr-[8px]")}>
-						<GroupChip
-							team={run.team}
-							count={run.tabs.length}
-							folded={folded.includes(run.team.address)}
-							paused={run.tabs.some((tab) => tab.place.kind === "team" && tab.place.paused !== undefined)}
-						/>
-						{folded.includes(run.team.address)
-							? null
-							: run.tabs.map((tab) => (
-									<Tab key={tab.root} tab={tab} take="group" active={tab.root === focused} hovered={tab.root === hovered} />
-								))}
-					</div>
-				),
-			)}
-		</>
-	);
-}
-
-/** Open, the chip is the team's mark at the head of its run; folded, it names the team and counts what it holds. */
-function GroupChip({ team, count, folded, paused }: { team: PlaceTeam; count: number; folded: boolean; paused: boolean }) {
-	return (
-		<span
-			className={cn(
-				"relative flex h-[26px] shrink-0 items-center gap-[7px] rounded-[6px] [font:var(--type-control)] text-muted",
-				folded ? "bg-surface pr-[9px] pl-[5px]" : "px-[4px] shadow-[inset_0_0_0_1px_var(--color-border-raised)]",
-			)}
-		>
-			<PlaceMark team={team} size={18} />
-			{folded ? (
-				<>
-					<span>{team.name}</span>
-					<span className="text-muted/80 tabular-nums type-detail">{count}</span>
-					{paused ? <PauseBars /> : null}
-				</>
-			) : null}
-		</span>
-	);
-}
-
 /** What a tab says when the pointer rests on it: where the project lives, and its sync in the daemon's words. */
-function PlaceCard({ tab, marked }: { tab: PlaceTab; marked: boolean }) {
+function PlaceCard({ tab }: { tab: PlaceTab }) {
 	const { place } = tab;
 	return (
 		<div className="flex w-[380px] animate-menu-in flex-col gap-[6px] rounded-md border border-border-raised bg-raised px-3 py-[10px]">
 			<p className="flex items-center gap-[8px] text-text type-value">
-				{marked && place.kind === "team" ? <PlaceMark team={place.team} paused={place.paused !== undefined} /> : null}
+				{place.kind === "team" ? <PlaceMark team={place.team} paused={place.paused !== undefined} /> : null}
 				<span className="truncate">{address(tab)}</span>
 			</p>
 			<p className="text-text type-control">{said(place)}</p>
@@ -360,7 +242,7 @@ function said(place: Place): string {
 }
 
 /** The tab's menu (`src/ui/project-tab-menu.tsx`), opening on where the project lives. */
-function PlaceMenu({ tab, marked }: { tab: PlaceTab; marked: boolean }) {
+function PlaceMenu({ tab }: { tab: PlaceTab }) {
 	const team = tab.place.kind === "team" ? tab.place.team : null;
 	const row = "flex h-[30px] items-center justify-between rounded-sm px-3 text-left text-text hover:bg-surface type-control";
 	const rule = <div className="mx-2 my-unit h-px bg-border-raised" />;
@@ -380,16 +262,10 @@ function PlaceMenu({ tab, marked }: { tab: PlaceTab; marked: boolean }) {
 	return (
 		<div role="menu" className="flex w-[228px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit">
 			<div className="flex flex-col gap-[2px] px-3 pt-[7px] pb-[6px]">
-				{marked || team === null ? (
-					<span className="flex items-center gap-[7px] text-text type-control">
-						{team ? <PlaceMark team={team} paused={tab.place.kind === "team" && tab.place.paused !== undefined} /> : null}
-						{team ? team.name : "On this Mac"}
-					</span>
-				) : (
-					<span className="truncate text-text type-value">
-						{team.address}/{tab.name.replaceAll(" ", "-")}
-					</span>
-				)}
+				<span className="flex items-center gap-[7px] text-text type-control">
+					{team ? <PlaceMark team={team} paused={tab.place.kind === "team" && tab.place.paused !== undefined} /> : null}
+					{team ? team.name : "On this Mac"}
+				</span>
 				<span className="truncate text-muted type-detail">{tab.root}</span>
 			</div>
 			{rule}
