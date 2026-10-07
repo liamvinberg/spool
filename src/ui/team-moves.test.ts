@@ -300,6 +300,7 @@ it("shows how many files are up while it moves, and counts the pause down each s
 	let polls = 0;
 	const asked = daemon((url) => {
 		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/branches")) return Response.json({ branches: [], checkedOnly: null });
 		if (url.includes("/move/progress")) {
 			if (!posted) return Response.json(NOTHING);
 			// the first poll answers; every later one hangs, so the countdown moves only by the sheet's own clock
@@ -330,6 +331,7 @@ it("picks up a move already under way when it opens, and hands its outcome to Ho
 	let done = false;
 	const asked = daemon((url) => {
 		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/branches")) return Response.json({ branches: [], checkedOnly: null });
 		if (done)
 			return Response.json({
 				progress: null,
@@ -359,6 +361,7 @@ it("says what stopped a move it picked up", async () => {
 	let done = false;
 	daemon((url) => {
 		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/branches")) return Response.json({ branches: [], checkedOnly: null });
 		if (done)
 			return Response.json({
 				progress: null,
