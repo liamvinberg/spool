@@ -130,6 +130,16 @@ export function readState(directory: string): DaemonState | undefined {
 }
 
 /**
+ * Whether no daemon is left to serve: the state file is absent, or names a
+ * process that has exited. Asked of the process rather than over HTTP, because a
+ * busy daemon can miss a health probe and must not read as dead for it.
+ */
+export function gone(directory: string): boolean {
+	const state = readState(directory);
+	return state === undefined || !alive(state.pid);
+}
+
+/**
  * Whether a running daemon is older than the spool this bundle carries, which is
  * the one case a daemon is replaced rather than adopted. Equal never is, and a
  * version this cannot rank (a suffix, a word) is left alone: replacing on a

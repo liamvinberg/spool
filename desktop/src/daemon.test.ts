@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -11,6 +12,7 @@ import {
 	configuredAddress,
 	connectHost,
 	daemonUrl,
+	gone,
 	health,
 	readState,
 	start,
@@ -70,6 +72,21 @@ test("corrupt, absent and half-written state all read as absent", () => {
 			startedAt: "now",
 			controlToken: "secret",
 		});
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("a daemon is gone when its state file is absent or names a process that exited", () => {
+	const directory = temporary();
+	const state = { host: "127.0.0.1", port: 7766, version: "0.9.1", startedAt: "now", controlToken: "secret" };
+	try {
+		assert.equal(gone(directory), true);
+		writeFileSync(join(directory, "daemon.json"), JSON.stringify({ ...state, pid: process.pid }));
+		assert.equal(gone(directory), false);
+		const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+		writeFileSync(join(directory, "daemon.json"), JSON.stringify({ ...state, pid: exited }));
+		assert.equal(gone(directory), true);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}

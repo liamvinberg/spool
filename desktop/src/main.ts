@@ -278,6 +278,18 @@ function createWindow(): BrowserWindow {
 		canvasActive = false;
 		updateCanvasMenu();
 	});
+	// a canvas that could not load, or whose page crashed, is only the window's
+	// background: the watch below brings it back
+	created.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+		if (!isMainFrame || code === ABORTED || !isDaemonUrl(url)) return;
+		log("canvas", "FAIL load", description);
+		canvasLost = true;
+	});
+	created.webContents.on("render-process-gone", (_event, details) => {
+		if (details.reason === "clean-exit") return;
+		log("canvas", "FAIL gone", details.reason);
+		canvasLost = true;
+	});
 	created.on("closed", () => {
 		if (created !== window) return;
 		clearTimeout(coverDeadline);
@@ -359,9 +371,10 @@ function isDaemonUrl(candidate: string): boolean {
 }
 
 /** Bring the canvas up: adopt or start a daemon, then point the window at it. */
-export async function openCanvas(): Promise<void> {
+export async function openCanvas(raise = true): Promise<void> {
+	if (raise) gaveUp = false;
 	if (openingCanvas !== undefined) return openingCanvas;
-	openingCanvas = showCanvas();
+	openingCanvas = showCanvas(raise);
 	try {
 		await openingCanvas;
 	} finally {
@@ -371,12 +384,14 @@ export async function openCanvas(): Promise<void> {
 
 let openingCanvas: Promise<void> | undefined;
 
-async function showCanvas(): Promise<void> {
+async function showCanvas(raise: boolean): Promise<void> {
 	if (shuttingDown) return;
 	if (window === undefined) window = createWindow();
 	const showing = window;
-	showing.show();
-	showing.focus();
+	if (raise) {
+		showing.show();
+		showing.focus();
+	}
 
 	const current = await daemon.status(DIRECTORY);
 	if (shuttingDown || showing.isDestroyed()) return;
@@ -520,6 +535,69 @@ async function startBundled(): Promise<
 
 function fallback(heading: string, detail: string): void {
 	void window?.loadURL(holdingPage(heading, detail));
+}
+
+// MARK: - Keeping the canvas
+
+/** Chromium's code for a load another load replaced, which is no failure. */
+const ABORTED = -3;
+const WATCH_MS = 3_000;
+/** The canvas page failed to load or crashed, and shows nothing but the window. */
+let canvasLost = false;
+/** Watches in a row that found no daemon: one is a `spool upgrade` between two of them. */
+let missed = 0;
+/** A restart that failed already told the person once; the next one waits for them to open the canvas. */
+let gaveUp = false;
+let bringing = false;
+
+/**
+ * Bring the canvas back when what it stands on went away.
+ * A daemon that exits leaves the open page retrying a port nothing answers, and
+ * a page that failed to load or crashed shows only the window's background, so
+ * either one is noticed here and the canvas opened again on a daemon that runs.
+ * It does not raise the window: this happens while the person is elsewhere too.
+ */
+function watchCanvas(): void {
+	setInterval(() => {
+		if (
+			shuttingDown ||
+			gaveUp ||
+			bringing ||
+			cover ||
+			openingCanvas ||
+			window === undefined ||
+			window.isDestroyed()
+		) {
+			missed = 0;
+			return;
+		}
+		missed = daemon.gone(DIRECTORY) ? missed + 1 : 0;
+		if (canvasLost || missed >= 2) void bringBack(window);
+	}, WATCH_MS).unref();
+}
+
+async function bringBack(showing: BrowserWindow): Promise<void> {
+	bringing = true;
+	try {
+		log("canvas", "bringing back", canvasLost ? "the page was lost" : "the daemon is gone");
+		const url = showing.webContents.getURL();
+		if (isDaemonUrl(url)) {
+			// where the person was, and the drafts the page keeps, outlive the page
+			if (!canvasLost) await saveWorkspace(true).catch(() => {});
+			resumeWorkspace = { ...resumeWorkspace, path: new URL(url).pathname };
+		}
+		canvasLost = false;
+		missed = 0;
+		if (shuttingDown || showing.isDestroyed()) return;
+		// off the daemon's address first, or pointing the window back at it is taken for already there
+		await showing
+			.loadURL(holdingPage("Spool stopped", "Starting it again. The canvas opens as soon as it answers."))
+			.catch(() => {});
+		await openCanvas(false);
+		if (daemon.gone(DIRECTORY)) gaveUp = true;
+	} finally {
+		bringing = false;
+	}
 }
 
 // MARK: - The play window
@@ -1686,6 +1764,7 @@ export function boot(): void {
 		installTray();
 		scheduleChecks();
 		await openCanvas();
+		watchCanvas();
 		documents.start();
 		// a convenience: nothing about it may stop a launch or escape as a rejection
 		void offerCommand().catch((error: unknown) => log("command", "FAIL", String(error)));
