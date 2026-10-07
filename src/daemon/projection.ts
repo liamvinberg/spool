@@ -8,6 +8,7 @@ import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, readSidecar, writePlacement } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
+import type { ProjectIcon } from "./project-icon";
 import { type Unseen, unseenNow } from "./seen";
 import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 
@@ -471,6 +472,8 @@ export interface ProjectCard extends ProjectSummary {
 	team?: { url: string; team: string; project: string };
 	/** The team this folder was a local copy for until the project ended here: its cover goes on saying so. */
 	ended?: string;
+	/** What its tab and its cover draw: its icon file or its repo's favicon; absent, the name's first letter. */
+	icon?: ProjectIcon;
 }
 
 /**

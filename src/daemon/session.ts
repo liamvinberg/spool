@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { mutateMachineState, type SessionMutationResult } from "../machine-state";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
+import type { ProjectIcon } from "./project-icon";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -25,6 +26,8 @@ export type AppEvent =
 	| { kind: "settings" }
 	/** this Mac signed in, out, or started or ended a sign-in: Home's foot re-reads */
 	| { kind: "account" }
+	/** a project's icon changed on disk: its card takes this one (null for none), with no reread of the list */
+	| { kind: "icon"; root: string; icon: ProjectIcon | null }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.

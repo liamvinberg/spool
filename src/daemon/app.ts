@@ -90,6 +90,18 @@ import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { watchForMoves } from "./moved-in";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
+import {
+	createIconWatch,
+	findProjectIcon,
+	ICON_MAX_BYTES,
+	ICON_REFUSALS,
+	IconRefused,
+	iconType,
+	isIconHash,
+	readProjectIcon,
+	removeProjectIcon,
+	writeProjectIcon,
+} from "./project-icon";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import {
@@ -852,9 +864,19 @@ export function createDaemonApp({
 			teamSync.keeping(registeredRoots());
 			movedIn.keeping(registeredRoots());
 			projectShares.keeping(registeredRoots());
+			iconKeeping();
 		}
 		for (const listener of appListeners) listener(event);
 	};
+	// a project's icon changed on disk, by whatever hand: its card takes the new one on every page
+	const iconWatch = createIconWatch({
+		subscribe: (root, listener) => hub.subscribe(root, listener),
+		changed: (root, icon) => emitAppEvent({ kind: "icon", root, icon: icon ?? null }),
+	});
+	/** The icon watch rides the hub's watchers, which a really-listening daemon holds open for the booth anyway. */
+	function iconKeeping(): void {
+		if (selfOrigin !== undefined) iconWatch.keeping(registeredRoots());
+	}
 	const cloudAccount = createCloudAccount({
 		spoolDir,
 		...(cloudAccountServices === undefined ? {} : { services: cloudAccountServices }),
@@ -1841,13 +1863,18 @@ export function createDaemonApp({
 				readRegistry(spoolDir).projects.map(async (project) => {
 					const link = followedLink(project.root);
 					const ended = endedWith(project.root);
+					const [summary, icon] = await Promise.all([
+						summarizeProject(project.root),
+						findProjectIcon(project.root),
+					]);
 					return {
 						name: basename(project.root),
 						root: project.root,
 						openedAt: project.openedAt,
 						...(link === undefined ? {} : { team: { url: link.url, team: link.team, project: link.project } }),
 						...(ended === undefined ? {} : { ended }),
-						...(await summarizeProject(project.root)),
+						...(icon === undefined ? {} : { icon }),
+						...summary,
 					};
 				}),
 			);
@@ -1857,6 +1884,82 @@ export function createDaemonApp({
 			projects.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
 			return c.json({ projects });
 		})
+		/*
+		 * A project's icon: its chosen file or its repo's favicon. The hash is the content, so the address is the
+		 * credential an <img> cannot carry as a header and an immutable cache key, as a cover's is. Read-only, and
+		 * only ever the file the project's icon resolves to now. An SVG opened on its own runs nothing here: it is
+		 * served sandboxed, with no script and nothing fetched.
+		 */
+		.get("/icons/:project/:hash", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const hash = c.req.param("hash");
+			if (!isIconHash(hash)) return c.text("no such icon", 404);
+			const found = await readProjectIcon(project.root);
+			if (found === undefined || found.icon.hash !== hash) return c.text("no such icon", 404);
+			immutableCover(c, iconType(found.icon.path));
+			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+			return c.body(new Uint8Array(found.bytes));
+		})
+		// "Change icon…": the chosen image becomes design/shared/icon.<ext>, the only icon.* there
+		.post("/api/projects/icon", async (c) => {
+			const root = c.req.query("root");
+			if (root === undefined || !registeredRoots().includes(root))
+				return c.json({ error: "This project is no longer registered." }, 404);
+			if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
+			if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
+			// read no further than the cap, whatever the request says it carries
+			const tooBig = () => c.json({ error: ICON_REFUSALS.size }, 413);
+			if (Number(c.req.header("content-length")) > ICON_MAX_BYTES) return tooBig();
+			const chunks: Uint8Array[] = [];
+			let length = 0;
+			const reader = c.req.raw.body?.getReader();
+			for (;;) {
+				const chunk = await reader?.read();
+				if (chunk === undefined || chunk.done) break;
+				length += chunk.value.length;
+				if (length > ICON_MAX_BYTES) {
+					await reader?.cancel();
+					return tooBig();
+				}
+				chunks.push(chunk.value);
+			}
+			const bytes = Buffer.concat(chunks);
+			try {
+				const icon = writeProjectIcon(root, bytes);
+				iconWatch.saw(root, icon);
+				emitAppEvent({ kind: "icon", root, icon });
+				return c.json({ icon });
+			} catch (error) {
+				if (error instanceof IconRefused) return c.json({ error: error.message }, 400);
+				if (error instanceof DesignBoundaryError) return c.json({ error: error.message }, 400);
+				return c.json({ error: `Could not save the icon: ${(error as Error).message}` }, 409);
+			}
+		})
+		// "Remove icon": design/shared/icon.* goes, and the favicon or the letter comes back
+		.post(
+			"/api/projects/icon/remove",
+			validator("json", (value, c) => {
+				const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
+				return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
+			}),
+			async (c) => {
+				const { root } = c.req.valid("json");
+				if (!registeredRoots().includes(root))
+					return c.json({ error: "This project is no longer registered." }, 404);
+				if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
+				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
+				try {
+					removeProjectIcon(root);
+				} catch (error) {
+					return c.json({ error: `Could not remove the icon: ${(error as Error).message}` }, 409);
+				}
+				const icon = await findProjectIcon(root);
+				iconWatch.saw(root, icon);
+				emitAppEvent({ kind: "icon", root, icon: icon ?? null });
+				return c.json({ icon: icon ?? null });
+			},
+		)
 		.get("/api/p/:project/frames", (c) => {
 			const name = c.req.param("project");
 			const project = resolveProject(c, name);
@@ -3815,6 +3918,7 @@ export function createDaemonApp({
 			captureOrigin = captureOriginFor(controlOrigin);
 			selfOrigin = renderOrigin;
 			boothKeeping(registeredRoots());
+			iconKeeping();
 		},
 		/** Begin the daily phone-home — post-listen only, and only when opted in. */
 		startUpdateCheck: () => {
@@ -3852,6 +3956,7 @@ export function createDaemonApp({
 			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			for (const stop of boothWatches.values()) stop();
 			boothWatches.clear();
+			iconWatch.close();
 			hub.close();
 			updateChecker.stop();
 			const closed = await Promise.allSettled([compiled, ...stoppedEngines, booth.close(), goReader.close()]);
