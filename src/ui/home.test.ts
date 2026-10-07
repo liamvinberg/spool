@@ -623,5 +623,6 @@ it("confirms trashing the whole folder, supports cancellation and retries failur
 	await act(async () => finish?.(new Response(null, { status: 204 })));
 	expect(host.querySelector("dialog")).toBeNull();
 	expect(host.querySelector('[aria-label="Open coffee"]')).toBeNull();
-	expect(host.querySelector('[aria-label="Close coffee"]')).toBeNull();
+	// its tab is closing: still shrinking in the row, but no longer a tab
+	expect(host.querySelector(`[data-tab-slot="${coffee.root}"]`)).toBeNull();
 });
