@@ -89,6 +89,58 @@ describe("the tab strip", () => {
 		expect(onReorder).not.toHaveBeenCalled();
 	});
 
+	it("lets go of a drag when a tab opens or closes under it, stepping every tab back", async () => {
+		const onReorder = vi.fn();
+		const onFocus = vi.fn();
+		const { host, rerender } = await render({ onReorder, onFocus });
+		place(host);
+		await act(async () => {
+			tabOf(host, 0)?.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 6, clientX: 50 }),
+			);
+			window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 6, clientX: 170 }));
+		});
+		expect(tabOf(host, 1)?.style.transform).toBe("translateX(-110px)");
+		await rerender({ tabs: tabs.slice(0, 2) });
+		// alpha and beta, the tabs still open, travel back rather than snapping
+		for (const index of [0, 1]) {
+			expect(tabOf(host, index)?.style.transform).toBe("translateX(0px)");
+			expect(tabOf(host, index)?.style.transition).toContain("200ms");
+		}
+		await act(async () => {
+			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 6, clientX: 170 }));
+			host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[0]?.click();
+		});
+		expect(onReorder).not.toHaveBeenCalled();
+		// the release that ends a drag is not a click on the tab
+		expect(onFocus).not.toHaveBeenCalled();
+	});
+
+	it("takes the arrangement at once when a tab is pressed while the dropped one is still landing", async () => {
+		const onReorder = vi.fn();
+		const { host } = await render({ onReorder });
+		place(host);
+		await act(async () => {
+			tabOf(host, 0)?.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 7, clientX: 50 }),
+			);
+			window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 170 }));
+			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: 170 }));
+		});
+		expect(onReorder).not.toHaveBeenCalled();
+		await act(async () => {
+			tabOf(host, 2)?.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 8, clientX: 250 }),
+			);
+		});
+		expect(onReorder).toHaveBeenCalledWith(["/w/beta", "/w/alpha", "/w/gamma"]);
+		await act(async () => {
+			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 8, clientX: 250 }));
+			await new Promise((resolve) => setTimeout(resolve, 260));
+		});
+		expect(onReorder).toHaveBeenCalledTimes(1);
+	});
+
 	it("leaves the order alone when the drag never reaches the next tab", async () => {
 		const onReorder = vi.fn();
 		const onFocus = vi.fn();
@@ -146,12 +198,17 @@ describe("the tab strip", () => {
 	});
 });
 
-/** Give every tab the box it would have on screen: 100 wide, 10 apart. */
+/**
+ * Give every tab's slot the box it would have on screen: 100 wide, 10 apart,
+ * moving left as the strip scrolls right.
+ */
 function place(host: HTMLElement) {
-	[...host.querySelectorAll<HTMLElement>("[data-tab]")].forEach((tab, index) => {
-		const left = index * 110;
-		tab.getBoundingClientRect = () =>
-			({ left, right: left + 100, width: 100, top: 0, bottom: 26, height: 26, x: left, y: 0 }) as DOMRect;
+	const scroller = host.querySelector<HTMLElement>(".project-tabs-scroll");
+	[...host.querySelectorAll<HTMLElement>("[data-tab-slot]")].forEach((slot, index) => {
+		slot.getBoundingClientRect = () => {
+			const left = index * 110 - (scroller?.scrollLeft ?? 0);
+			return { left, right: left + 100, width: 100, top: 0, bottom: 26, height: 26, x: left, y: 0 } as DOMRect;
+		};
 	});
 }
 
@@ -219,4 +276,25 @@ it("exports an inactive tab without focusing it, and restores keyboard focus on 
 	expect(document.querySelector('[role="menu"]')).toBeNull();
 	expect(document.activeElement).toBe(beta);
 	expect(onClose).not.toHaveBeenCalled();
+});
+
+it("closes a tab by the middle button, and puts its menu away with it", async () => {
+	const onClose = vi.fn();
+	const { host, rerender } = await render({ onClose });
+	const beta = host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[1];
+	await act(async () => beta?.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 })));
+	expect(onClose).toHaveBeenCalledWith("/w/beta");
+	await act(async () =>
+		beta?.dispatchEvent(
+			new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 150, clientY: 20 }),
+		),
+	);
+	expect(document.querySelector('[role="menu"]')).not.toBeNull();
+	await rerender({ tabs: [tabs[0], tabs[2]].flatMap((tab) => (tab === undefined ? [] : [tab])) });
+	expect(document.querySelector('[role="menu"]')).toBeNull();
+	// already closing: no longer a tab to anything but the eye
+	expect([...host.querySelectorAll<HTMLElement>("[data-tab]")].map((tab) => tab.dataset.tab)).toEqual([
+		"/w/alpha",
+		"/w/gamma",
+	]);
 });
