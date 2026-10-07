@@ -9,8 +9,8 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 - The spool CLI in this checkout is `pnpm dev <verb>`: the checkout is its own instance (state `~/.spool-dev`, port 7767 unless that state's `config.json` names another). Never drive the installed `spool` from here — it is a different instance on a different version.
 - `desktop/` is the Mac app: an Electron window on the daemon that bundles the published package. Its README covers building and releasing it.
 - `design/` is Spool's dogfood canvas. Run `pnpm dev skill` before working there; its nested `AGENTS.md` governs that folder. `design/frames/app/` mirrors what ships, so a change to what `src/ui` or `src/runtime` draws also redraws its frame there.
-- `design/` is history's: where a project keeps history the daemon commits canvas work itself, so working-tree changes confined to `design/` are a save waiting on its window and never block landing unrelated work whose paths do not overlap them.
-- Commit atomically as you go, one change per commit. Message: `area: what changed` in lowercase plain words, no body (`daemon: create a project from a folder name`). The `design: <counts>` commits are the daemon's own canvas saves, not a style to copy.
+- `design/` is a team project, `spool.page/devosurf/spool` (`spool.json` at the root): it is out of git, and every save in it reaches the team through spool.page within a second, so canvas work is never committed, merged or shipped. A fresh worktree has no `design/` until a `pnpm dev` verb fetches it, which needs the checkout instance signed in once (`pnpm dev login`). Read the canvas in a browser at that address.
+- Commit atomically as you go, one change per commit. Message: `area: what changed` in lowercase plain words, no body (`daemon: create a project from a folder name`). The `design: <counts>` commits in history are the daemon's old canvas saves, not a style to copy.
 
 ## Agent skills
 
