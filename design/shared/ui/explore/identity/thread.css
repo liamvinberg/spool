@@ -1,0 +1,92 @@
+/* thread: quiet warm greyscale chrome, and one red line that does every active state.
+ * The rules the take keeps, and the parts sheet shows:
+ *   spacing   4px base: 4 8 12 16 24 32 48
+ *   radius    by height: 4 for chips (20), 6 for controls and rows (28), 8 for containers, 0 for panes
+ *   rows      28 for every list, tree, menu and property row; pane headers 40
+ *   strokes   panes and guides 1px; the thread 1.5px
+ *   colour    neutrals by role; red is the thread, its knots, and the chips that label a red outline
+ *   type      a name standing as a title is sans; the same name in a list, label or path is mono
+ *   shadow    one token, only on what floats */
+
+.id-thread {
+	--t-chrome: #131312;
+	--t-canvas: #1a1a18;
+	--t-float: #1f1f1d;
+	--t-line: #282725;
+	--t-guide: #3d3c39;
+	--t-hover: rgb(255 255 255 / 0.05);
+	--t-text: #edebe7;
+	--t-muted: #9d9a95;
+	--t-faint: #76736e;
+	--t-inverse: #edebe7;
+	--t-on-inverse: #131312;
+	--t-thread: #f5391a;
+	--t-thread-ink: #f5391a;
+	--t-thread-fill: #f5391a;
+	--t-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.7);
+
+	font-family: "Instrument Sans Variable", system-ui, sans-serif;
+	color: var(--t-text);
+	-webkit-font-smoothing: antialiased;
+}
+
+.id-thread[data-appearance="light"] {
+	--t-chrome: #f6f5f2;
+	--t-canvas: #e9e8e4;
+	--t-float: #fdfcfa;
+	--t-line: #e1dfda;
+	--t-guide: #c9c6c0;
+	--t-hover: rgb(40 30 20 / 0.05);
+	--t-text: #1c1b19;
+	--t-muted: #62605b;
+	--t-faint: #7c7973;
+	--t-inverse: #1c1b19;
+	--t-on-inverse: #f6f5f2;
+	--t-thread: #f5391a;
+	--t-thread-ink: #cf2f12;
+	--t-thread-fill: #d9310f;
+	--t-shadow: 0 12px 32px -14px rgb(40 30 20 / 0.28);
+}
+
+/* the type ladder: six roles, nothing else */
+.id-thread .t-display {
+	font-size: 24px;
+	line-height: 32px;
+	font-weight: 500;
+	letter-spacing: -0.015em;
+}
+.id-thread .t-title {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	letter-spacing: -0.005em;
+}
+.id-thread .t-body {
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 400;
+}
+.id-thread .t-caption {
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 400;
+}
+.id-thread .t-mono {
+	font-family: "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+	font-size: 12px;
+	line-height: 16px;
+}
+.id-thread .t-micro {
+	font-family: "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+	font-size: 11px;
+	line-height: 16px;
+}
+/* keys: the micro role's size, drawn by the system font so ⌘ ⇧ ↵ ⌫ keep their shape */
+.id-thread .t-key {
+	font-family: system-ui, -apple-system, "Instrument Sans Variable", sans-serif;
+	font-size: 11px;
+	line-height: 16px;
+	letter-spacing: 0.02em;
+}

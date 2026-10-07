@@ -1,0 +1,86 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Geist+Mono:wght@400..500&display=swap");
+
+/*
+ * contrast: spool on a Geist dashboard grid. Structure is 1px lines, rest states carry no
+ * fill, red is selection, flows, unseen and destructive. Every value below is a role.
+ */
+
+.id-contrast {
+	--k-sans: "Geist", "Instrument Sans Variable", system-ui, sans-serif;
+	--k-mono: "Geist Mono", "Fragment Mono", ui-monospace, monospace;
+
+	/* dark: near-black chrome, a step lighter canvas */
+	--k-bg: #0a0a0a;
+	--k-canvas: #131312;
+	--k-hover: #171716;
+	--k-selected: #1f1f1d;
+	--k-border: #242422;
+	--k-border-strong: #383734;
+	--k-text: #ededeb;
+	--k-muted: #a3a29e;
+	--k-faint: #75736f;
+	--k-primary: #ededeb;
+	--k-on-primary: #0a0a0a;
+	--k-thread: #f5391a;
+	--k-thread-ink: #ff4a2b;
+	--k-thread-solid: #f5391a;
+	--k-on-thread: #ffffff;
+	--k-handle: #0a0a0a;
+	--k-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.7);
+
+	font-family: var(--k-sans);
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--k-text);
+	-webkit-font-smoothing: antialiased;
+	font-feature-settings: "ss01" off;
+}
+
+.id-contrast[data-appearance="light"] {
+	/* light: pure white chrome, warm-grey canvas so white frames still read */
+	--k-bg: #ffffff;
+	--k-canvas: #f3f3f1;
+	--k-hover: #f5f5f3;
+	--k-selected: #ebebe8;
+	--k-border: #e6e5e2;
+	--k-border-strong: #cfcdc9;
+	--k-text: #0a0a0a;
+	--k-muted: #62615d;
+	--k-faint: #7d7b77;
+	--k-primary: #0a0a0a;
+	--k-on-primary: #ffffff;
+	--k-thread: #f5391a;
+	--k-thread-ink: #d42d0e;
+	--k-thread-solid: #e0320f;
+	--k-on-thread: #ffffff;
+	--k-handle: #ffffff;
+	--k-shadow: 0 8px 24px -6px rgb(10 10 10 / 0.14), 0 1px 2px rgb(10 10 10 / 0.06);
+}
+
+/* The type ladder: six roles, nothing between them. */
+.id-contrast .k-title {
+	font: 600 24px/32px var(--k-sans);
+	letter-spacing: -0.025em;
+}
+.id-contrast .k-head {
+	font: 600 13px/20px var(--k-sans);
+	letter-spacing: -0.005em;
+}
+.id-contrast .k-body {
+	font: 400 13px/20px var(--k-sans);
+}
+.id-contrast .k-small {
+	font: 400 12px/16px var(--k-sans);
+}
+.id-contrast .k-mono {
+	font: 400 12px/16px var(--k-mono);
+	letter-spacing: 0;
+}
+.id-contrast .k-micro {
+	font: 400 11px/16px var(--k-mono);
+	letter-spacing: 0;
+}
+
+.id-contrast .k-float {
+	box-shadow: var(--k-shadow);
+}

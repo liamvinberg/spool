@@ -1,0 +1,95 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..600&display=swap");
+
+/* compact: a dense pro tool built from four numbers. 4px grid, 24px rows and
+ * controls, 4px radius on anything you click (6px on anything that floats),
+ * 12px base type. Inter for what people read, Fragment Mono (spool's own) for
+ * what lives in the project: pages, frames, paths, values, counts, keys.
+ * Red is the thread: selection, the current page, unseen, focus, on.
+ * Everything below is scoped to .id-compact. */
+
+.id-compact {
+	/* surfaces, lowest to highest */
+	--c-chrome: #0f0f0e;
+	--c-canvas: #171716;
+	--c-field: #1d1c1b;
+	--c-raised: #222120;
+	/* lines */
+	--c-line: #252422;
+	--c-line-2: #34322f;
+	/* state fills */
+	--c-hover: rgb(255 250 240 / 0.04);
+	--c-selected: rgb(255 250 240 / 0.08);
+	/* text, three steps */
+	--c-text: #ecebe8;
+	--c-text-2: #a29f99;
+	--c-text-3: #74716b;
+	/* inverted, for the primary button */
+	--c-invert: #ecebe8;
+	--c-on-invert: #0f0f0e;
+	/* the thread */
+	--c-thread: #f5391a;
+	--c-thread-ink: #ff5636;
+	--c-thread-soft: rgb(245 57 26 / 0.14);
+	--c-on-thread: #ffffff;
+	/* one shadow, only for what floats */
+	--c-float: 0 0 0 1px rgb(0 0 0 / 0.55), 0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 8px 24px -4px rgb(0 0 0 / 0.5);
+	--c-scrim: rgb(0 0 0 / 0.5);
+
+	color-scheme: dark;
+	background: var(--c-chrome);
+	color: var(--c-text);
+	font-family: "Inter", "Instrument Sans Variable", system-ui, sans-serif;
+	font-size: 12px;
+	line-height: 16px;
+	font-feature-settings: "cv11" 1, "tnum" 1;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+.id-compact[data-appearance="light"] {
+	--c-chrome: #f6f5f2;
+	--c-canvas: #e9e8e4;
+	--c-field: #ebeae6;
+	--c-raised: #ffffff;
+	--c-line: #e1dfda;
+	--c-line-2: #cfccc6;
+	--c-hover: rgb(40 30 10 / 0.045);
+	--c-selected: rgb(40 30 10 / 0.08);
+	--c-text: #1b1a18;
+	--c-text-2: #5d5a55;
+	--c-text-3: #85817b;
+	--c-invert: #1b1a18;
+	--c-on-invert: #f6f5f2;
+	--c-thread: #f5391a;
+	--c-thread-ink: #c8290d;
+	--c-thread-soft: rgb(245 57 26 / 0.1);
+	--c-on-thread: #ffffff;
+	--c-float: 0 0 0 1px rgb(30 25 15 / 0.1), 0 8px 24px -6px rgb(30 25 15 / 0.18);
+	--c-scrim: rgb(30 25 15 / 0.2);
+
+	color-scheme: light;
+}
+
+/* the type ladder: six roles, nothing else */
+.id-compact .c-display {
+	font: 600 20px/24px "Inter", system-ui, sans-serif;
+	letter-spacing: -0.012em;
+}
+.id-compact .c-heading {
+	font: 600 12px/16px "Inter", system-ui, sans-serif;
+}
+.id-compact .c-body {
+	font: 400 12px/16px "Inter", system-ui, sans-serif;
+}
+.id-compact .c-small {
+	font: 400 11px/16px "Inter", system-ui, sans-serif;
+	letter-spacing: 0.005em;
+}
+.id-compact .c-mono {
+	font: 400 12px/16px "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+}
+.id-compact .c-mono-sm {
+	font: 400 11px/16px "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+}
