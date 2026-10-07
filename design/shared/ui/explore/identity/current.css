@@ -1,0 +1,47 @@
+/* The baseline take: spool's own tokens (src/ui/ui.css) as 0.31.1 ships them, scoped so the
+ * theme utilities (bg-bg, text-muted, border-border-raised…) resolve per appearance inside
+ * this take. Nothing here is a proposal. */
+
+.id-current {
+	color-scheme: dark;
+	--color-bg: #0e0e0e;
+	--color-canvas: #161616;
+	--color-surface: #1c1c1c;
+	--color-raised: #282828;
+	--color-border: #262626;
+	--color-border-raised: #363636;
+	--color-text: #f0efed;
+	--color-muted: #94918d;
+	--color-thread: #f5391a;
+	--color-mark: #f5391a;
+	--color-on-thread: #ffffff;
+	/* ui.css @theme inline */
+	--color-control: #282828;
+	--color-thread-strong: #f5391a;
+	/* home.tsx's menu danger, the one colour outside the token file */
+	--color-danger: #ff604b;
+	--cur-shadow: none;
+	font-family: var(--font-sans);
+	font-synthesis: none;
+	-webkit-font-smoothing: antialiased;
+	color: var(--color-text);
+}
+
+.id-current[data-appearance="light"] {
+	color-scheme: light;
+	--color-bg: #f0efec;
+	--color-canvas: #e6e5e1;
+	--color-surface: #faf9f6;
+	--color-raised: #ffffff;
+	--color-border: #dcdad5;
+	--color-border-raised: #c2c0ba;
+	--color-text: #1a1917;
+	--color-muted: #696662;
+	--color-control: color-mix(in srgb, #1a1917 6%, transparent);
+	--color-thread-strong: color-mix(in srgb, #f5391a 78%, #000000);
+	--color-danger: #bb2614;
+}
+
+.id-current .cur-mono {
+	font-feature-settings: "calt" 0;
+}
