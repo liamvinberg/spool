@@ -3,7 +3,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSyn
 import { dirname, join, relative, sep } from "node:path";
 import { WebSocket } from "undici";
 import { writeAtomic } from "../atomic-write";
-import { type CloudRequestOptions, CloudSignedOut, type CloudVault, keychainVault } from "../cloud-auth";
+import { type CloudRequestOptions, CloudSignedOut, type CloudVault, sessionVault } from "../cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
@@ -162,7 +162,7 @@ export function followLocalCopy(options: LocalCopyOptions): LocalCopy {
 	return localCopy(options, true);
 }
 
-/** How a verb reaches the team once: this machine's Keychain session unless `request` hands in another vault. */
+/** How a verb reaches the team once: this machine's own session unless `request` hands in another vault. */
 export interface SyncOnceOptions {
 	origin: string;
 	request?: CloudRequestOptions;
@@ -180,7 +180,7 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 		{
 			root,
 			origin: options.origin,
-			vault: options.request?.vault ?? keychainVault(spoolDir, options.origin),
+			vault: options.request?.vault ?? sessionVault(spoolDir, options.origin),
 			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
 			...(options.moving === undefined ? {} : { moving: options.moving }),
 			notice: () => {},

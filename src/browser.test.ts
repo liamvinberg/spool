@@ -1,6 +1,6 @@
 import type { SpawnOptions } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { openInBrowser, shouldOpenBrowser } from "./browser";
+import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 
 /** Records a launch instead of performing one — no browser opens in a test run. */
 function recorder() {
@@ -84,5 +84,19 @@ describe("shouldOpenBrowser", () => {
 
 	it("opens nothing when the person said not to", () => {
 		expect(shouldOpenBrowser({ noOpen: true, stdin: { isTTY: true } })).toBe(false);
+	});
+});
+
+describe("hasLocalBrowser", () => {
+	it("is a Mac's own, or a Linux desktop's", () => {
+		expect(hasLocalBrowser({}, "darwin")).toBe(true);
+		expect(hasLocalBrowser({ DISPLAY: ":0" }, "linux")).toBe(true);
+		expect(hasLocalBrowser({ WAYLAND_DISPLAY: "wayland-0" }, "linux")).toBe(true);
+	});
+
+	it("is on another machine over SSH, and missing on a Linux box with no display", () => {
+		expect(hasLocalBrowser({ SSH_CONNECTION: "100.64.0.2 52144 100.64.0.1 22" }, "darwin")).toBe(false);
+		expect(hasLocalBrowser({ SSH_TTY: "/dev/pts/0", DISPLAY: ":0" }, "linux")).toBe(false);
+		expect(hasLocalBrowser({}, "linux")).toBe(false);
 	});
 });

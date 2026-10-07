@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { type CloudRequestOptions, keychainVault, originOf } from "../cloud-auth";
+import { type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
@@ -236,7 +236,7 @@ export interface DaemonOptions {
 	booth?: BoothSeams | undefined;
 }
 
-/** spool.page as the daemon reaches it: where it is, the Keychain, the fetch, and the sync socket. */
+/** spool.page as the daemon reaches it: where it is, the session vault, the fetch, and the sync socket. */
 export interface DaemonCloud extends CloudRequestOptions {
 	openSocket?: OpenSyncSocket;
 }
@@ -888,7 +888,7 @@ export function createDaemonApp({
 	const teamSync = createTeamSync({
 		spoolDir,
 		origin: () => originOf(cloud),
-		vault: (origin) => cloud?.vault ?? keychainVault(spoolDir, origin),
+		vault: (origin) => cloud?.vault ?? sessionVault(spoolDir, origin),
 		...(cloud?.fetch === undefined ? {} : { fetch: cloud.fetch }),
 		...(cloud?.openSocket === undefined ? {} : { openSocket: cloud.openSocket }),
 		// what didn't travel, a pause and an ending go to the log and to the project's open canvases

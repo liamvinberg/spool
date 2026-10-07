@@ -52,7 +52,7 @@ interface SoloShareState {
 
 export interface ProjectSharesOptions {
 	spoolDir: string;
-	/** Where spool.page is, the Keychain and the fetch: the machine's own unless a test hands in a fake. */
+	/** Where spool.page is, the session vault and the fetch: the machine's own unless a test hands in a fake. */
 	request?: CloudRequestOptions | undefined;
 	/** Spool's version, as a frame's compile is asked for it. */
 	version: string;

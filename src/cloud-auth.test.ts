@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,9 +7,11 @@ import {
 	authorizedCloudRequest,
 	CloudSignedOut,
 	cloudOrigin,
+	fileVault,
 	keychainVault,
 	login,
 	logout,
+	pastedCode,
 	session,
 } from "./cloud-auth";
 import { makeTempDir } from "./test-helpers";
@@ -109,6 +111,77 @@ describe("Cloud account sign-in", () => {
 		} finally {
 			await cloud.close();
 		}
+	});
+
+	it("finishes the same handoff from the address a browser on another machine pasted back", async () => {
+		const cloud = await authServer();
+		const vault = memoryVault();
+		let callback: URL | undefined;
+		const asked: boolean[] = [];
+		try {
+			const authenticated = await login("/tmp/spool-one", {
+				origin: cloud.origin,
+				vault,
+				device: "devobee",
+				open: (url) => {
+					callback = new URL(new URL(url).searchParams.get("return_url") ?? "");
+				},
+				paste: async (again) => {
+					asked.push(again);
+					if (!callback) throw new Error("asked before the link was shown");
+					if (asked.length === 1) return "not an address";
+					const other = new URL(callback);
+					other.searchParams.set("state", "s".repeat(32));
+					other.searchParams.set("code", "x".repeat(43));
+					if (asked.length === 2) return other.toString();
+					// what a phone's address bar shows: no scheme, the code on the end
+					const landed = new URL(callback);
+					landed.searchParams.set("code", "c".repeat(43));
+					return `  ${landed.toString().replace(/^http:\/\//u, "")}\n`;
+				},
+			});
+			expect(authenticated).toEqual(ACCOUNT);
+			expect(asked).toEqual([false, true, true]);
+			expect(cloud.exchange()?.returnUrl).toBe(callback?.toString());
+			expect(cloud.exchange()?.code).toBe("c".repeat(43));
+			expect(await vault.read()).toBe("t".repeat(43));
+		} finally {
+			await cloud.close();
+		}
+	});
+
+	it("stops asking for an address once the browser's redirect arrives", async () => {
+		const cloud = await authServer();
+		let stopped: AbortSignal | undefined;
+		try {
+			await login("/tmp/spool-one", {
+				origin: cloud.origin,
+				vault: memoryVault(),
+				device: "devobee",
+				open: (url) => {
+					const callback = new URL(new URL(url).searchParams.get("return_url") ?? "");
+					callback.searchParams.set("code", "c".repeat(43));
+					setTimeout(() => void fetch(callback, { redirect: "manual" }), 10);
+				},
+				paste: (_again, signal) => {
+					stopped = signal;
+					return new Promise((done) => signal.addEventListener("abort", () => done(undefined)));
+				},
+			});
+			expect(stopped?.aborted).toBe(true);
+		} finally {
+			await cloud.close();
+		}
+	});
+
+	it("reads a pasted code only from an address carrying this sign-in's state", () => {
+		const state = "s".repeat(32);
+		const code = "c".repeat(43);
+		expect(pastedCode(`http://127.0.0.1:5000/callback?state=${state}&code=${code}`, state)).toBe(code);
+		expect(pastedCode(`127.0.0.1:5000/callback?state=${state}&code=${code}`, state)).toBe(code);
+		expect(pastedCode(`http://127.0.0.1:5000/callback?state=${"o".repeat(32)}&code=${code}`, state)).toBeUndefined();
+		expect(pastedCode(`http://127.0.0.1:5000/callback?state=${state}&code=short`, state)).toBeUndefined();
+		expect(pastedCode(code, state)).toBeUndefined();
 	});
 
 	it("uses the beta for login and its account probe by default", async () => {
@@ -273,6 +346,29 @@ esac
 		const argv = readFileSync(calls, "utf8");
 		expect(argv).not.toContain("a".repeat(43));
 		expect(argv).not.toContain("b".repeat(43));
+	});
+
+	it("keeps a session file only its owner can read, one per authority, inside the instance's own folder", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const page = fileVault(spoolDir, "https://spool.page");
+		const other = fileVault(spoolDir, "https://cloud.test");
+		expect(await page.read()).toBeUndefined();
+		await page.write("a".repeat(43));
+		await other.write("b".repeat(43));
+		expect(await page.read()).toBe("a".repeat(43));
+		expect(await other.read()).toBe("b".repeat(43));
+		const file = join(spoolDir, "cloud", "spool.page.session");
+		expect(statSync(file).mode & 0o777).toBe(0o600);
+		expect(statSync(join(spoolDir, "cloud")).mode & 0o777).toBe(0o700);
+		await page.write("c".repeat(43));
+		expect(await page.read()).toBe("c".repeat(43));
+		await page.delete();
+		await page.delete();
+		expect(existsSync(file)).toBe(false);
+		expect(await other.read()).toBe("b".repeat(43));
+		await expect(page.write("not a session")).rejects.toThrow("spool.page returned an invalid session");
+		writeFileSync(file, "garbled");
+		await expect(page.read()).rejects.toThrow("Cloud sharing is signed out");
 	});
 
 	it("reports revoked sessions without disturbing local work", async () => {

@@ -60,3 +60,13 @@ export function openInBrowser(url: string, options: OpenInBrowserOptions = {}): 
 export function shouldOpenBrowser(options: { noOpen: boolean; stdin: { isTTY?: boolean } }): boolean {
 	return !options.noOpen && options.stdin.isTTY === true;
 }
+
+/**
+ * Whether a browser opened here would be in front of the person and could reach this machine's loopback. Over SSH
+ * it is on another machine, and a Linux box with no display has none.
+ */
+export function hasLocalBrowser(env: Record<string, string | undefined>, platform: NodeJS.Platform): boolean {
+	if (env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY) return false;
+	if (platform === "darwin" || platform === "win32") return true;
+	return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
+}

@@ -1,11 +1,63 @@
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:https";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { spool, spoolAsync } from "./cli-test-helpers";
+import { cliPath, spool, spoolAsync, tsxBin } from "./cli-test-helpers";
 import { makeTempDir } from "./test-helpers";
+
+/** A terminal with a browser in front of it: a desktop session, not one reached over SSH. */
+const LOCAL_DESKTOP = { DISPLAY: ":0", SSH_CONNECTION: "", SSH_CLIENT: "", SSH_TTY: "" };
+
+/** spool.page over HTTPS answering the sign-in exchange and the account probe. */
+async function signInCloud() {
+	const dir = makeTempDir();
+	const key = join(dir, "key.pem");
+	const certificate = join(dir, "cert.pem");
+	execFileSync(
+		"openssl",
+		["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1"].concat([
+			"-keyout",
+			key,
+			"-out",
+			certificate,
+		]),
+		{ stdio: "ignore" },
+	);
+	let exchange: Record<string, unknown> | undefined;
+	const server = createServer(
+		{ key: readFileSync(key), cert: readFileSync(certificate) },
+		async (request, response) => {
+			response.setHeader("content-type", "application/json");
+			if (request.url === "/auth/account/exchange") {
+				let raw = "";
+				for await (const chunk of request) raw += chunk;
+				exchange = JSON.parse(raw) as Record<string, unknown>;
+				return response.end(JSON.stringify({ token: "t".repeat(43), expiresAt: 2_000_000_000 }));
+			}
+			if (request.url === "/auth/account/session")
+				return response.end(
+					JSON.stringify({
+						accountId: "account",
+						email: "ada@tidemark.app",
+						sessionId: "s",
+						expiresAt: 2_000_000_000,
+					}),
+				);
+			response.statusCode = 404;
+			response.end();
+		},
+	);
+	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("missing address");
+	return {
+		origin: `https://127.0.0.1:${address.port}`,
+		exchange: () => exchange,
+		close: () => new Promise<void>((done) => server.close(() => done())),
+	};
+}
 
 describe("Cloud account CLI", () => {
 	it("completes login through the actual CLI without exposing native credentials", { timeout: 20_000 }, async () => {
@@ -97,6 +149,7 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 				PATH: `${bin}:${process.env.PATH ?? ""}`,
 				SPOOL_CLOUD_ORIGIN: `https://127.0.0.1:${address.port}`,
 				NODE_TLS_REJECT_UNAUTHORIZED: "0",
+				...LOCAL_DESKTOP,
 			});
 			expect(result.status).toBe(0);
 			expect(result.stdout).toBe("signed in as ada@tidemark.app\n");
@@ -116,30 +169,98 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 		}
 	});
 
-	it("signs out outside a project through the instance-specific Keychain entry", () => {
+	it("signs in over SSH from the address the browser on another device ends on", { timeout: 20_000 }, async () => {
 		const home = makeTempDir();
-		const bin = join(home, "bin");
-		const calls = join(home, "security-calls");
-		mkdirSync(bin);
-		writeFileSync(
-			join(bin, "security"),
-			`#!/bin/sh
+		const cloud = await signInCloud();
+		const openers = fakeOpenersOn(home);
+		try {
+			const child = spawn(tsxBin, [cliPath, "login"], {
+				cwd: home,
+				env: {
+					...process.env,
+					HOME: home,
+					SPOOL_DIR: "",
+					PATH: `${openers}:${process.env.PATH ?? ""}`,
+					SPOOL_CLOUD_ORIGIN: cloud.origin,
+					NODE_TLS_REJECT_UNAUTHORIZED: "0",
+					NODE_NO_WARNINGS: "1",
+					DISPLAY: ":0",
+					SSH_CONNECTION: "100.64.0.2 52144 100.64.0.1 22",
+				},
+			});
+			let stdout = "";
+			let stderr = "";
+			let pasted: URL | undefined;
+			child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+			child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+				stderr += chunk;
+				const link = /^ {2}(https:\/\/\S+)$/mu.exec(stderr)?.[1];
+				if (!link || pasted || !stderr.includes("spool: address: ")) return;
+				pasted = new URL(new URL(link).searchParams.get("return_url") ?? "");
+				pasted.searchParams.set("code", "c".repeat(43));
+				child.stdin.write("this is not it\n");
+				child.stdin.write(`${pasted.toString()}\n`);
+			});
+			const status = await new Promise<number | null>((done) => child.on("close", done));
+			expect(stderr).toContain("open this link in a browser on any device and sign in");
+			expect(stderr).toContain("that isn't this sign-in's address");
+			expect(status).toBe(0);
+			expect(stdout).toBe("signed in as ada@tidemark.app\n");
+			expect(cloud.exchange()?.code).toBe("c".repeat(43));
+			pasted?.searchParams.delete("code");
+			expect(cloud.exchange()?.returnUrl).toBe(pasted?.toString());
+			expect(existsSync(join(home, "launched"))).toBe(false);
+			if (process.platform !== "darwin") {
+				const file = join(home, ".spool", "cloud", `${new URL(cloud.origin).host}.session`);
+				expect(readFileSync(file, "utf8")).toBe(`${"t".repeat(43)}\n`);
+				expect(statSync(file).mode & 0o777).toBe(0o600);
+			}
+		} finally {
+			await cloud.close();
+		}
+	});
+
+	it.runIf(process.platform !== "darwin")(
+		"signs out a machine with no Keychain by forgetting its session file",
+		async () => {
+			const home = makeTempDir();
+			const file = join(home, ".spool", "cloud", "127.0.0.1:9.session");
+			mkdirSync(join(home, ".spool", "cloud"), { recursive: true });
+			writeFileSync(file, `${"t".repeat(43)}\n`, { mode: 0o600 });
+			const result = await spoolAsync(["logout"], home, home, { SPOOL_CLOUD_ORIGIN: "https://127.0.0.1:9" });
+			expect(result.stdout).toBe("signed out of this machine\n");
+			expect(result.stderr).toContain("remote revocation could not be confirmed");
+			expect(existsSync(file)).toBe(false);
+		},
+	);
+
+	it.runIf(process.platform === "darwin")(
+		"signs out outside a project through the instance-specific Keychain entry",
+		() => {
+			const home = makeTempDir();
+			const bin = join(home, "bin");
+			const calls = join(home, "security-calls");
+			mkdirSync(bin);
+			writeFileSync(
+				join(bin, "security"),
+				`#!/bin/sh
 printf '%s\\n' "$*" >> ${JSON.stringify(calls)}
 case "$1" in find-generic-password|delete-generic-password) exit 44;; esac
 `,
-		);
-		chmodSync(join(bin, "security"), 0o755);
-		const result = spool(["logout"], home, home, { PATH: `${bin}:${process.env.PATH ?? ""}` });
-		expect(result.status).toBe(0);
-		expect(result.stdout).toBe("signed out of this machine\n");
-		expect(result.stderr).toBe("");
-		const invoked = readFileSync(calls, "utf8");
-		expect(invoked).toContain("find-generic-password");
-		expect(invoked).toContain("delete-generic-password");
-		expect(invoked).toContain("spool.device-session.");
-		expect(invoked).toContain("spool.publisher-session.");
-		expect(invoked).not.toMatch(/token|verifier|code=/u);
-	});
+			);
+			chmodSync(join(bin, "security"), 0o755);
+			const result = spool(["logout"], home, home, { PATH: `${bin}:${process.env.PATH ?? ""}` });
+			expect(result.status).toBe(0);
+			expect(result.stdout).toBe("signed out of this machine\n");
+			expect(result.stderr).toBe("");
+			const invoked = readFileSync(calls, "utf8");
+			expect(invoked).toContain("find-generic-password");
+			expect(invoked).toContain("delete-generic-password");
+			expect(invoked).toContain("spool.device-session.");
+			expect(invoked).toContain("spool.publisher-session.");
+			expect(invoked).not.toMatch(/token|verifier|code=/u);
+		},
+	);
 
 	it("tells a running daemon that the account changed", async () => {
 		const home = makeTempDir();
@@ -177,3 +298,14 @@ case "$1" in find-generic-password|delete-generic-password) exit 44;; esac
 		}
 	});
 });
+
+/** Openers that record a launch in `home/launched` instead of opening a browser. */
+function fakeOpenersOn(home: string): string {
+	const bin = join(home, "openers");
+	mkdirSync(bin);
+	for (const name of ["open", "xdg-open", "cmd"]) {
+		writeFileSync(join(bin, name), `#!/bin/sh\necho "$@" >> ${JSON.stringify(join(home, "launched"))}\n`);
+		chmodSync(join(bin, name), 0o755);
+	}
+	return bin;
+}

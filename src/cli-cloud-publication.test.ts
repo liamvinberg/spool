@@ -234,6 +234,9 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("missing address");
+	// signed in: a Mac reads the stand-in Keychain above, anywhere else the session file
+	mkdirSync(join(spoolDir, "cloud"));
+	writeFileSync(join(spoolDir, "cloud", `127.0.0.1:${address.port}.session`), "t".repeat(43), { mode: 0o600 });
 	const env = {
 		PATH: `${bin}:${process.env.PATH ?? ""}`,
 		SPOOL_DIR: spoolDir,
@@ -353,7 +356,7 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		expect(wire).not.toContain(root);
 		expect(wire).not.toContain(spoolDir);
 		expect(wire).not.toContain("t".repeat(43));
-		expect(readFileSync(calls, "utf8")).not.toContain("t".repeat(43));
+		if (process.platform === "darwin") expect(readFileSync(calls, "utf8")).not.toContain("t".repeat(43));
 		writeFrame(root, "other", "export default () => <h1>Other</h1>");
 		const refused = await spoolAsync(["cloud", "publish", "other"], home, root, env);
 		expect(refused.status).toBe(1);

@@ -1,11 +1,11 @@
-import { CloudAccountChanged, type CloudRequestOptions, cloudOrigin, keychainVault, session } from "../cloud-auth";
+import { CloudAccountChanged, type CloudRequestOptions, cloudOrigin, session, sessionVault } from "../cloud-auth";
 export interface PublicationAuthOptions extends CloudRequestOptions {
 	expectedPublisherId?: string;
 }
 /** A job may use only its admitted account, and a running operation may not follow a mutable vault. */
 export async function publicationAuthority(spoolDir: string, options: PublicationAuthOptions) {
 	const origin = options.origin ?? cloudOrigin(process.env);
-	const vault = options.vault ?? keychainVault(spoolDir, origin);
+	const vault = options.vault ?? sessionVault(spoolDir, origin);
 	const token = await vault.read();
 	const assertCurrent = async () => {
 		if ((await vault.read()) !== token) throw new CloudAccountChanged();

@@ -34,7 +34,6 @@ export interface FetchOptions {
 	progress?: (line: string) => void;
 	/** The environment a cloud agent is recognised by. */
 	env?: Record<string, string | undefined>;
-	platform?: NodeJS.Platform;
 }
 
 /**
@@ -62,11 +61,11 @@ export async function fetchLocalCopy(
 	try {
 		role = (await cloudTeams(spoolDir, request).project(link.team, link.project)).role;
 	} catch (error) {
-		// an agent in a cloud sandbox has no session and no Keychain to keep one in
-		const agent = cloudAgent(options.env ?? process.env, options.platform ?? process.platform);
+		// an agent in a cloud sandbox has no session and nobody at its terminal to sign it in
+		const agent = cloudAgent(options.env ?? process.env);
 		if (agent !== undefined && !(error instanceof CloudTeamRefused))
 			throw new SpoolError(
-				`${link.url} is a team project, and ${agent} can't fetch a team project's design/ yet; work on it from a Mac with spool signed in to ${link.team}`,
+				`${link.url} is a team project, and ${agent} can't fetch a team project's design/ yet; work on it from a machine with spool signed in to ${link.team}`,
 			);
 		if (error instanceof CloudSignedOut)
 			throw new SpoolError(`${link.url} is a team project; run \`spool login\` to fetch its design/`);
@@ -89,15 +88,11 @@ export async function fetchLocalCopy(
 
 /**
  * The cloud-run agent this process is, if any: Claude Code on the web and GitHub's Copilot cloud agent say so in
- * the environment. Any other agent on a machine with no macOS Keychain is taken for one too, since spool signs in
- * nowhere else. Asked only once a fetch has found no way in.
+ * the environment. Any other agent runs where someone can sign spool in, a Linux box over SSH included, so it is
+ * told to. Asked only once a fetch has found no way in.
  */
-export function cloudAgent(env: Record<string, string | undefined>, platform: NodeJS.Platform): string | undefined {
+export function cloudAgent(env: Record<string, string | undefined>): string | undefined {
 	if (env.CLAUDE_CODE_REMOTE === "true") return "Claude Code on the web";
 	if (env.AI_AGENT === "github_copilot_cloud_agent") return "Copilot's cloud agent";
-	if (platform === "darwin") return undefined;
-	const agent = ["CLAUDECODE", "CODEX_SANDBOX", "CODEX_THREAD_ID", "CURSOR_AGENT", "COPILOT_AGENT"].some(
-		(name) => (env[name] ?? "") !== "",
-	);
-	return agent ? "a cloud agent" : undefined;
+	return undefined;
 }
