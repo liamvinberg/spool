@@ -955,7 +955,7 @@ function copyRecord(root: string): Partial<CopyState> | undefined {
 	}
 }
 
-const openWebSocket: OpenSyncSocket = (url, token, events) => {
+export const openWebSocket: OpenSyncSocket = (url, token, events) => {
 	const socket = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
 	socket.binaryType = "arraybuffer";
 	socket.addEventListener("open", () => events.open());
@@ -963,7 +963,13 @@ const openWebSocket: OpenSyncSocket = (url, token, events) => {
 	// a failed handshake or a dropped line is an error and then a close; the close is what is answered
 	socket.addEventListener("error", () => {});
 	socket.addEventListener("close", (event) => events.close(event.code));
-	return { send: (frame) => socket.send(frame), close: () => socket.close() };
+	// a socket still handshaking throws on send, where a closed one drops it; what matters is said again on catch-up
+	return {
+		send: (frame) => {
+			if (socket.readyState === WebSocket.OPEN) socket.send(frame);
+		},
+		close: () => socket.close(),
+	};
 };
 
 function byOf(value: unknown): SetAsideMark["by"] {

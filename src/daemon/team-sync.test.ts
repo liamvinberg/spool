@@ -11,6 +11,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { chooseInitTarget, describeChoice, initDestination, initTeamProject } from "../init";
@@ -22,6 +23,7 @@ import { SOLO_GITIGNORE } from "../templates";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 import { historyEnabled } from "./history";
+import { openWebSocket } from "./team-sync";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -1129,5 +1131,27 @@ describe("when a team project ends for a machine", () => {
 		await new Promise((wake) => setTimeout(wake, 300));
 		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
 		expect(said.ben.filter((message) => message.includes("signed out"))).toHaveLength(1);
+	});
+});
+
+describe("the sync socket", () => {
+	it("drops what is said while spool.page has yet to answer the handshake, rather than taking the daemon down", async () => {
+		// a handshake that never finishes, as one does on a network that dropped while the Mac slept
+		const held: Socket[] = [];
+		const server = createServer((connection) => held.push(connection));
+		await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+		onTestFinished(() => {
+			for (const connection of held) connection.destroy();
+			server.close();
+		});
+		const { port } = server.address() as { port: number };
+		const socket = openWebSocket(`ws://127.0.0.1:${port}/sync`, "token", {
+			open: () => {},
+			message: () => {},
+			close: () => {},
+		});
+		await until(() => held.length === 1);
+		expect(() => socket.send("ping")).not.toThrow();
+		socket.close();
 	});
 });
