@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.33.0
+
+### Minor Changes
+
+- 6887d9b: Projects have icons, on their tabs and on Home. Right-click a tab, or open a cover's menu, and choose Change icon… to pick one: it's saved as design/shared/icon.\*, so it reaches your team with the rest of the project. Without one, spool uses the repo's favicon, or the first letter of the project's name. A team project's tab shows the team's mark in the corner of its icon, hollow while its sync is paused.
+- 4dd6b84: The threads switch and the zoom percentage are gone from the top bar. Showing threads is now a setting under Settings, General, and T still turns them on and off.
+
+### Patch Changes
+
+- 68a480c: Closing the tab you are on now takes you to the tab next to it, like a browser does. Home opens only when you close the last tab.
+- 7935a6d: Project tabs now open and close smoothly: a closed tab shrinks away while the tabs after it slide into its place, and a new tab grows in and scrolls into view. You can close a tab with the middle mouse button, and scroll a full row of tabs with an ordinary mouse wheel.
+
 ## 0.32.0
 
 ### Minor Changes
