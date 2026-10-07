@@ -16,6 +16,7 @@ import {
 	RibbonMark,
 	SearchIcon,
 } from "./icons";
+import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
 import "./home.css";
@@ -33,6 +34,8 @@ export function Home({
 	onImport,
 	onExportProject,
 	onMoveToTeam,
+	onChangeIcon,
+	onRemoveIcon,
 	account,
 	switcher,
 	notice,
@@ -51,6 +54,10 @@ export function Home({
 	onExportProject?: (project: ProjectCard) => void;
 	/** "Move to team…" on a project's cover, while this account edits in a team. */
 	onMoveToTeam?: ((project: { root: string; name: string }) => void) | undefined;
+	/** "Change icon…" on a project's cover. */
+	onChangeIcon?: (project: { root: string; name: string }) => void;
+	/** "Remove icon" on a cover whose icon is the project's own file. */
+	onRemoveIcon?: (project: { root: string; name: string }) => void;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
 	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
@@ -264,6 +271,8 @@ export function Home({
 								onRenameProject={onRenameProject}
 								{...(onExportProject === undefined ? {} : { onExportProject })}
 								{...(onMoveToTeam === undefined ? {} : { onMoveToTeam })}
+								{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
+								{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
 							/>
 						)}
 					</main>
@@ -346,6 +355,8 @@ export function ProjectGrid({
 	onRenameProject,
 	onExportProject,
 	onMoveToTeam,
+	onChangeIcon,
+	onRemoveIcon,
 	here,
 }: {
 	projects: readonly ProjectCover[];
@@ -358,6 +369,8 @@ export function ProjectGrid({
 	onExportProject?: (project: ProjectCard) => void;
 	/** "Move to team…", offered on a project that isn't a team project yet. */
 	onMoveToTeam?: (project: { root: string; name: string }) => void;
+	onChangeIcon?: (project: { root: string; name: string }) => void;
+	onRemoveIcon?: (project: { root: string; name: string }) => void;
 	/** Who is inside each team project now, by its name in the team. */
 	here?: ReadonlyMap<string, readonly HerePerson[]>;
 }) {
@@ -381,6 +394,10 @@ export function ProjectGrid({
 						{...(onMoveToTeam === undefined || project.team !== undefined
 							? {}
 							: { onMoveToTeam: () => onMoveToTeam(project) })}
+						{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(project) })}
+						{...(onRemoveIcon === undefined || project.icon?.from !== "file"
+							? {}
+							: { onRemoveIcon: () => onRemoveIcon(project) })}
 					/>
 				))}
 			</div>
@@ -409,6 +426,8 @@ function ProjectTile({
 	onRename,
 	onExport,
 	onMoveToTeam,
+	onChangeIcon,
+	onRemoveIcon,
 }: {
 	project: ProjectCard;
 	copies: number;
@@ -422,6 +441,8 @@ function ProjectTile({
 	onRename: () => void;
 	onExport: () => void;
 	onMoveToTeam?: () => void;
+	onChangeIcon?: () => void;
+	onRemoveIcon?: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const cover = project.covers[0];
@@ -452,15 +473,25 @@ function ProjectTile({
 						<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 					</span>
 				</div>
-				<div className="pj-cover-caption flex items-baseline justify-between gap-[9px] pt-[15px] pr-[32px]">
-					<strong className="truncate type-title font-[500]">{project.name}</strong>
+				<div className="pj-cover-caption flex items-center justify-between gap-[9px] pt-[15px] pr-[32px]">
+					<span className="flex min-w-0 items-center gap-[10px]">
+						<ProjectMark
+							project={project.name}
+							name={project.name}
+							icon={project.icon}
+							team={project.team?.team}
+							paused={project.syncPaused !== undefined}
+							size={20}
+						/>
+						<strong className="truncate type-title font-[500]">{project.name}</strong>
+					</span>
 					<span className="shrink-0 text-muted type-detail">
 						{project.frameCount
 							? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}`
 							: "no frames yet"}
 					</span>
 				</div>
-				<span className="pj-opened-time mt-[7px] block text-muted type-detail">
+				<span className="pj-opened-time mt-[7px] block pl-[30px] text-muted type-detail">
 					{relativeTime(project.openedAt)}
 					{copies > 1 && ` · ${copies} copies on this Mac`}
 					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
@@ -487,6 +518,26 @@ function ProjectTile({
 							onOpen();
 						}}
 					/>
+					{onChangeIcon && (
+						<MenuItem
+							label="Change icon…"
+							onClick={() => {
+								manageRef.current?.focus();
+								onCloseMenu();
+								onChangeIcon();
+							}}
+						/>
+					)}
+					{onRemoveIcon && (
+						<MenuItem
+							label="Remove icon"
+							onClick={() => {
+								manageRef.current?.focus();
+								onCloseMenu();
+								onRemoveIcon();
+							}}
+						/>
+					)}
 					<MenuItem
 						label="Export project…"
 						onClick={() => {

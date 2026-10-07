@@ -11,7 +11,9 @@ import {
 } from "motion/react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import type { ProjectIcon } from "./api";
 import { cn } from "./cn";
+import { ProjectMark } from "./project-icon";
 import { ProjectTabMenu } from "./project-tab-menu";
 
 /**
@@ -39,6 +41,12 @@ import { ProjectTabMenu } from "./project-tab-menu";
 export interface TabProject {
 	root: string;
 	name: string;
+	/** What leads the name: the project's icon file or its repo's favicon; absent, its first letter. */
+	icon?: ProjectIcon | undefined;
+	/** A team project's local copy: its team's address, whose mark it wears in its icon's corner. */
+	teamAddress?: string | undefined;
+	/** The copy's sync is paused, and its team mark is hollow. */
+	paused?: boolean | undefined;
 }
 
 /** how far a press travels before it is a drag rather than a click */
@@ -98,6 +106,8 @@ export function TabStrip({
 	onReorder,
 	onPick,
 	onExport,
+	onChangeIcon,
+	onRemoveIcon,
 }: {
 	tabs: readonly TabProject[];
 	focused: string | null;
@@ -108,6 +118,10 @@ export function TabStrip({
 	/** the "+" door: open a project folder */
 	onPick: () => void;
 	onExport?: (project: TabProject) => void;
+	/** "Change icon…": choose an image for the project. */
+	onChangeIcon?: (project: TabProject) => void;
+	/** "Remove icon", offered while the icon is the project's own file. */
+	onRemoveIcon?: (project: TabProject) => void;
 }) {
 	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
 	const strip = useRef<HTMLDivElement | null>(null);
@@ -449,9 +463,13 @@ export function TabStrip({
 			{menu && (
 				<ProjectTabMenu
 					{...menu}
+					// the tab as it is now: an icon changed while the menu is open shows in its header
+					project={tabs.find((tab) => tab.root === menu.project.root) ?? menu.project}
 					onClose={() => setMenu(null)}
 					onExport={() => onExport?.(menu.project)}
 					onCloseTab={() => onClose(menu.project.root)}
+					{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(menu.project) })}
+					{...(onRemoveIcon === undefined ? {} : { onRemoveIcon: () => onRemoveIcon(menu.project) })}
 				/>
 			)}
 		</MotionConfig>
@@ -576,7 +594,7 @@ function Tab({
 				)}
 				<button
 					type="button"
-					className="project-tab-label relative flex items-center flex-auto min-w-0 h-full [padding:0_38px_0_12px] [font:var(--type-control)] [color:var(--color-muted)] cursor-default after:content-[''] after:absolute after:[inset:0_0_-4px] [&_span]:overflow-hidden [&_span]:whitespace-nowrap [&_span]:text-ellipsis"
+					className="project-tab-label relative flex items-center gap-[10px] flex-auto min-w-0 h-full [padding:0_38px_0_10px] [font:var(--type-control)] [color:var(--color-muted)] cursor-default after:content-[''] after:absolute after:[inset:0_0_-4px]"
 					onContextMenu={(event) => {
 						event.preventDefault();
 						onMenu(event.clientX, event.clientY, event.currentTarget);
@@ -592,7 +610,18 @@ function Tab({
 					onClick={onPick}
 					title={tab.root}
 				>
-					<span>{tab.name}</span>
+					<ProjectMark
+						project={tab.name}
+						name={tab.name}
+						icon={tab.icon}
+						team={tab.teamAddress}
+						paused={tab.paused}
+						// the gap round the badge is the colour the tab is drawn on
+						cut={active && present ? "var(--color-canvas)" : "var(--color-bg)"}
+					/>
+					<span className="project-tab-name min-w-0 overflow-hidden whitespace-nowrap text-ellipsis">
+						{tab.name}
+					</span>
 				</button>
 				<button
 					type="button"

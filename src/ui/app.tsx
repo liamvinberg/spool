@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountFoot } from "./account-foot";
-import type { CloudAccountState, DaemonIdentity, ProjectCard } from "./api";
+import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon } from "./api";
 import {
 	cancelCloudSignIn,
 	daemonShares,
@@ -31,6 +31,8 @@ import { HotkeySheet } from "./hotkey-sheet";
 import type { HotkeyIdFor } from "./hotkeys";
 import { HomeIcon } from "./icons";
 import { ProjectPicker } from "./picker";
+import { ProjectTeams } from "./project-icon";
+import { useIconChange } from "./project-icon-change";
 import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
@@ -115,7 +117,16 @@ export function App() {
 		() =>
 			open
 				.filter((root) => !forgetting.has(root))
-				.map((root) => ({ root, name: byRoot.get(root)?.name ?? basename(root) })),
+				.map((root) => {
+					const card = byRoot.get(root);
+					return {
+						root,
+						name: card?.name ?? basename(root),
+						icon: card?.icon,
+						teamAddress: card?.team?.team,
+						paused: card?.syncPaused !== undefined,
+					};
+				}),
 		[open, byRoot, forgetting],
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
@@ -125,7 +136,7 @@ export function App() {
 	const { shares: focusedShares } = useShares(tabShares);
 
 	const projectRevision = useRef(0);
-	const remapProject = useCallback((from: string, renamed: TabProject) => {
+	const remapProject = useCallback((from: string, renamed: { root: string; name: string }) => {
 		projectRevision.current += 1;
 		setProjects((cards) => cards.map((card) => (card.root === from ? { ...card, ...renamed } : card)));
 		setOpen((roots) => roots.map((root) => (root === from ? renamed.root : root)));
@@ -134,6 +145,15 @@ export function App() {
 			window.history.replaceState(null, "", `/p/${encodeURIComponent(renamed.name)}`);
 		}
 	}, []);
+
+	/** One card's icon or sync pause moved: that card changes, and nothing is read again. */
+	const patchCard = useCallback((root: string, patch: (card: ProjectCard) => ProjectCard) => {
+		setProjects((cards) => cards.map((card) => (card.root === root ? patch(card) : card)));
+	}, []);
+	const setIcon = useCallback(
+		(root: string, icon: ProjectIcon | undefined) => patchCard(root, (card) => withIcon(card, icon)),
+		[patchCard],
+	);
 
 	const refetch = useCallback(async () => {
 		const revision = ++projectRevision.current;
@@ -235,6 +255,17 @@ export function App() {
 					// and a theme has to land on this page without a reload
 					if (event.kind === "settings") return settingsMoved();
 					if (event.kind === "account") return void readAccount();
+					// a project's icon changed on disk, or a team copy's sync paused or lifted: one card moves
+					if (event.kind === "icon" && typeof event.root === "string") {
+						const icon = (data as { icon?: ProjectIcon | null }).icon ?? undefined;
+						return setIcon(event.root, icon);
+					}
+					if (event.kind === "sync" && typeof event.root === "string") {
+						const paused = (data as { paused?: unknown }).paused;
+						return patchCard(event.root, (card) =>
+							withPause(card, typeof paused === "string" ? paused : undefined),
+						);
+					}
 					if (
 						event.kind === "project-renamed" &&
 						typeof event.from === "string" &&
@@ -250,7 +281,7 @@ export function App() {
 			// or forgotten in a shell across that gap left no other trace here
 			{ onReconnect: () => void refetch() },
 		);
-	}, [refetch, offerUpdate, remapProject, readAccount]);
+	}, [refetch, offerUpdate, remapProject, readAccount, setIcon, patchCard]);
 
 	const startUpgrade = useCallback(async () => {
 		setToast({ kind: "updating", stage: "installing" });
@@ -461,6 +492,7 @@ export function App() {
 		});
 	}, [appWindow, openSettings]);
 
+	const icons = useIconChange(setIcon);
 	const transfer = useProjectTransfer(async (project) => {
 		await refetch();
 		openTab(project);
@@ -480,6 +512,8 @@ export function App() {
 					onTrashProject={setTrashRequest}
 					onRenameProject={(project) => void requestRename(project)}
 					onExportProject={transfer.exportProject}
+					onChangeIcon={icons.change}
+					onRemoveIcon={icons.remove}
 					here={here}
 				/>
 			);
@@ -507,6 +541,8 @@ export function App() {
 	/** "Move to team…", while this account edits in a team; a team project has nowhere to move. */
 	const moveToTeam =
 		teamHome.editing.length === 0 ? undefined : (project: { root: string; name: string }) => setMoving(project);
+	/** The teams this Mac knows, for the marks a team project's tab and cover wear. */
+	const markTeams = useMemo(() => new Map(teamHome.all.map((team) => [team.address, team])), [teamHome.all]);
 	const focusedSolo =
 		focusedTab !== undefined && byRoot.get(focusedTab.root)?.team === undefined ? focusedTab : undefined;
 	const canvasActive =
@@ -525,210 +561,229 @@ export function App() {
 	}, [appWindow, canvasActive]);
 
 	return (
-		<div className="flex h-full flex-col bg-bg">
-			<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-muted)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
-				<div className="flex h-full min-w-0 flex-1 items-center">
-					<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-border-raised">
-						<button
-							type="button"
-							className="app-home flex items-center gap-[9px] h-[32px] [padding:0_4px_0_6px] [font:var(--type-control)] [color:var(--color-muted)] cursor-pointer [&:is(:hover,[aria-current])]:text-text active:[transform:translateY(1px)] motion-reduce:active:transform-none"
-							onClick={() => focusProject(null)}
-							aria-current={focusedTab === undefined ? "page" : undefined}
-							title="Home"
-						>
-							<HomeIcon />
-							<span>Home</span>
-						</button>
+		<ProjectTeams.Provider value={markTeams}>
+			<div className="flex h-full flex-col bg-bg">
+				<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-muted)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
+					<div className="flex h-full min-w-0 flex-1 items-center">
+						<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-border-raised">
+							<button
+								type="button"
+								className="app-home flex items-center gap-[9px] h-[32px] [padding:0_4px_0_6px] [font:var(--type-control)] [color:var(--color-muted)] cursor-pointer [&:is(:hover,[aria-current])]:text-text active:[transform:translateY(1px)] motion-reduce:active:transform-none"
+								onClick={() => focusProject(null)}
+								aria-current={focusedTab === undefined ? "page" : undefined}
+								title="Home"
+							>
+								<HomeIcon />
+								<span>Home</span>
+							</button>
+						</div>
+
+						<TabStrip
+							tabs={tabs}
+							focused={focused}
+							onFocus={focusProject}
+							onClose={closeTab}
+							onReorder={reorderTabs}
+							onExport={transfer.exportProject}
+							onChangeIcon={icons.change}
+							onRemoveIcon={icons.remove}
+							onPick={() => setPicking("new")}
+						/>
 					</div>
 
-					<TabStrip
-						tabs={tabs}
-						focused={focused}
-						onFocus={focusProject}
-						onClose={closeTab}
-						onReorder={reorderTabs}
-						onExport={transfer.exportProject}
-						onPick={() => setPicking("new")}
-					/>
-				</div>
-
-				{focusedTab !== undefined && chrome !== null && (
-					<div className="flex h-full shrink-0 items-center gap-4">
-						{/* Play lives on the selection now (#13/#24), where the frame it
+					{focusedTab !== undefined && chrome !== null && (
+						<div className="flex h-full shrink-0 items-center gap-4">
+							{/* Play lives on the selection now (#13/#24), where the frame it
 						    would open is the frame you are looking at. A header button
 						    could only ever guess, and its guess with nothing selected was
 						    the first frame by name — a start that means nothing. */}
-						{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
-						{chrome.presence !== undefined && (
-							<PresenceFaces
-								room={chrome.presence.room}
-								page={chrome.presence.page}
-								following={chrome.presence.following}
-								onFollow={chrome.presence.follow}
-							/>
-						)}
-						{/* who the project's pages are shared with, outside the team (DEV-193) */}
-						{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
-					</div>
-				)}
-			</header>
+							{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
+							{chrome.presence !== undefined && (
+								<PresenceFaces
+									room={chrome.presence.room}
+									page={chrome.presence.page}
+									following={chrome.presence.following}
+									onFollow={chrome.presence.follow}
+								/>
+							)}
+							{/* who the project's pages are shared with, outside the team (DEV-193) */}
+							{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
+						</div>
+					)}
+				</header>
 
-			<main className="min-h-0 flex-1">
-				{focusedTab === undefined ? (
-					<Home
-						projects={projects.filter(
-							(project) =>
-								!forgetting.has(project.root) &&
-								(project.team === undefined || !teamHome.teams.has(project.team.team)),
-						)}
-						loading={!projectsLoaded}
-						onStart={() => {
+				<main className="min-h-0 flex-1">
+					{focusedTab === undefined ? (
+						<Home
+							projects={projects.filter(
+								(project) =>
+									!forgetting.has(project.root) &&
+									(project.team === undefined || !teamHome.teams.has(project.team.team)),
+							)}
+							loading={!projectsLoaded}
+							onStart={() => {
+								setPickingTeam(undefined);
+								setPicking("new");
+							}}
+							onFolder={() => setPicking("folder")}
+							onSettings={openSettings}
+							onImport={transfer.importProject}
+							onExportProject={transfer.exportProject}
+							onChangeIcon={icons.change}
+							onRemoveIcon={icons.remove}
+							onOpenProject={(project) => openTab(project)}
+							onForgetProject={(project) => void forgetProject(project)}
+							onTrashProject={setTrashRequest}
+							onRenameProject={(project) => void requestRename(project)}
+							onMoveToTeam={moveToTeam}
+							switcher={teamHome.switcher}
+							notice={
+								moveNote === null ? (
+									teamHome.notice
+								) : (
+									<>
+										<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
+										{teamHome.notice}
+									</>
+								)
+							}
+							team={teamHome.team}
+							account={
+								<AccountFoot
+									account={account}
+									onSignIn={() => {
+										setAccount({ state: "signing-in" });
+										void signInCloudAccount();
+									}}
+									onReopen={() => void reopenCloudSignIn()}
+									onCancel={() => void cancelCloudSignIn()}
+									onSignOut={() => void signOutCloudAccount().finally(readAccount)}
+								/>
+							}
+						/>
+					) : (
+						<ProjectCanvas
+							key={focusedTab.root}
+							project={focusedTab.name}
+							root={focusedTab.root}
+							onChrome={setChrome}
+							onSettings={openSettings}
+							onFolder={() => setPicking("folder")}
+							onRename={(name) => requestRename(focusedTab, name)}
+						/>
+					)}
+				</main>
+
+				{transfer.surface}
+				{icons.surface}
+				{toast !== null && (
+					<UpdateToastPill
+						toast={toast}
+						aboveCanvasTools={focusedTab !== undefined && chrome !== null}
+						onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
+						onDismiss={dismissToast}
+					/>
+				)}
+
+				{picking === "new" && (
+					<ProjectPicker
+						initial="start"
+						location={
+							pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`
+						}
+						team={pickingTeam}
+						onOpened={(project) => {
+							setPicking(false);
 							setPickingTeam(undefined);
-							setPicking("new");
+							openTab(project);
 						}}
-						onFolder={() => setPicking("folder")}
-						onSettings={openSettings}
-						onImport={transfer.importProject}
-						onExportProject={transfer.exportProject}
-						onOpenProject={(project) => openTab(project)}
-						onForgetProject={(project) => void forgetProject(project)}
-						onTrashProject={setTrashRequest}
-						onRenameProject={(project) => void requestRename(project)}
-						onMoveToTeam={moveToTeam}
-						switcher={teamHome.switcher}
-						notice={
-							moveNote === null ? (
-								teamHome.notice
-							) : (
-								<>
-									<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
-									{teamHome.notice}
-								</>
-							)
-						}
-						team={teamHome.team}
-						account={
-							<AccountFoot
-								account={account}
-								onSignIn={() => {
-									setAccount({ state: "signing-in" });
-									void signInCloudAccount();
-								}}
-								onReopen={() => void reopenCloudSignIn()}
-								onCancel={() => void cancelCloudSignIn()}
-								onSignOut={() => void signOutCloudAccount().finally(readAccount)}
-							/>
-						}
-					/>
-				) : (
-					<ProjectCanvas
-						key={focusedTab.root}
-						project={focusedTab.name}
-						root={focusedTab.root}
-						onChrome={setChrome}
-						onSettings={openSettings}
-						onFolder={() => setPicking("folder")}
-						onRename={(name) => requestRename(focusedTab, name)}
+						onClose={() => {
+							setPicking(false);
+							setPickingTeam(undefined);
+						}}
 					/>
 				)}
-			</main>
+				{picking === "folder" && (
+					<ProjectPicker
+						onOpened={(project) => {
+							setPicking(false);
+							openTab(project);
+						}}
+						onClose={() => setPicking(false)}
+					/>
+				)}
 
-			{transfer.surface}
-			{toast !== null && (
-				<UpdateToastPill
-					toast={toast}
-					aboveCanvasTools={focusedTab !== undefined && chrome !== null}
-					onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
-					onDismiss={dismissToast}
-				/>
-			)}
+				{renameRequest !== null && (
+					<RenameProjectDialog
+						project={renameRequest.project}
+						initialName={renameRequest.initialName}
+						onRename={async (name) => {
+							const renamed = await renameProject(renameRequest.project.root, name);
+							remapProject(renameRequest.project.root, renamed);
+							renameRequest.resolve(renamed.name);
+							void refetch();
+						}}
+						onClose={() => {
+							renameRequest.resolve(null);
+							setRenameRequest(null);
+						}}
+					/>
+				)}
 
-			{picking === "new" && (
-				<ProjectPicker
-					initial="start"
-					location={pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`}
-					team={pickingTeam}
-					onOpened={(project) => {
-						setPicking(false);
-						setPickingTeam(undefined);
-						openTab(project);
-					}}
-					onClose={() => {
-						setPicking(false);
-						setPickingTeam(undefined);
-					}}
-				/>
-			)}
-			{picking === "folder" && (
-				<ProjectPicker
-					onOpened={(project) => {
-						setPicking(false);
-						openTab(project);
-					}}
-					onClose={() => setPicking(false)}
-				/>
-			)}
+				{trashRequest !== null && (
+					<TrashProjectDialog
+						project={trashRequest}
+						onTrash={async () => {
+							await trashProject(trashRequest.root);
+							projectRevision.current += 1;
+							setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
+							setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
+							if (focused === trashRequest.root) focusProject(null);
+							void refetch();
+						}}
+						onClose={() => setTrashRequest(null)}
+					/>
+				)}
 
-			{renameRequest !== null && (
-				<RenameProjectDialog
-					project={renameRequest.project}
-					initialName={renameRequest.initialName}
-					onRename={async (name) => {
-						const renamed = await renameProject(renameRequest.project.root, name);
-						remapProject(renameRequest.project.root, renamed);
-						renameRequest.resolve(renamed.name);
-						void refetch();
-					}}
-					onClose={() => {
-						renameRequest.resolve(null);
-						setRenameRequest(null);
-					}}
-				/>
-			)}
-
-			{trashRequest !== null && (
-				<TrashProjectDialog
-					project={trashRequest}
-					onTrash={async () => {
-						await trashProject(trashRequest.root);
-						projectRevision.current += 1;
-						setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
-						setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
-						if (focused === trashRequest.root) focusProject(null);
-						void refetch();
-					}}
-					onClose={() => setTrashRequest(null)}
-				/>
-			)}
-
-			{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
-			{settingsOpen && (
-				<SettingsSheet
-					project={focusedTab?.name}
-					onClose={closeSettings}
-					onMoveToTeam={
-						moveToTeam && focusedSolo
-							? () => {
-									closeSettings();
-									moveToTeam(focusedSolo);
-								}
-							: undefined
-					}
-				/>
-			)}
-			{moving !== null && (
-				<MoveToTeamDialog
-					project={moving}
-					teams={teamHome.editing}
-					onMoved={(outcome, team) => {
-						setMoveNote(moveCommitNote(outcome, team) ?? null);
-						void refetch();
-					}}
-					onClose={() => setMoving(null)}
-				/>
-			)}
-		</div>
+				{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
+				{settingsOpen && (
+					<SettingsSheet
+						project={focusedTab?.name}
+						onClose={closeSettings}
+						onMoveToTeam={
+							moveToTeam && focusedSolo
+								? () => {
+										closeSettings();
+										moveToTeam(focusedSolo);
+									}
+								: undefined
+						}
+					/>
+				)}
+				{moving !== null && (
+					<MoveToTeamDialog
+						project={moving}
+						teams={teamHome.editing}
+						onMoved={(outcome, team) => {
+							setMoveNote(moveCommitNote(outcome, team) ?? null);
+							void refetch();
+						}}
+						onClose={() => setMoving(null)}
+					/>
+				)}
+			</div>
+		</ProjectTeams.Provider>
 	);
+}
+
+function withIcon(card: ProjectCard, icon: ProjectIcon | undefined): ProjectCard {
+	const { icon: _was, ...rest } = card;
+	return icon === undefined ? rest : { ...rest, icon };
+}
+
+function withPause(card: ProjectCard, paused: string | undefined): ProjectCard {
+	const { syncPaused: _was, ...rest } = card;
+	return paused === undefined ? rest : { ...rest, syncPaused: paused };
 }
 
 function basename(path: string): string {
