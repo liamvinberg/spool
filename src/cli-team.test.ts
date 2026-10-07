@@ -60,7 +60,7 @@ async function cloud(answers: { teams?: { name: string; role: string }[]; role?:
 	return { origin: `https://127.0.0.1:${address.port}`, asked };
 }
 
-/** A machine's home with a Keychain that holds a session, or none. */
+/** A machine's home whose session vault holds a session, or none: a Mac's Keychain, or elsewhere the session file. */
 function machine(cloud: Cloud, signedIn: boolean) {
 	const home = makeTempDir();
 	const bin = join(home, "bin");
@@ -70,6 +70,10 @@ function machine(cloud: Cloud, signedIn: boolean) {
 		signedIn ? `#!/bin/sh\nprintf '%s' "${"t".repeat(43)}"\n` : "#!/bin/sh\nexit 44\n",
 	);
 	chmodSync(join(bin, "security"), 0o755);
+	if (signedIn) {
+		mkdirSync(join(home, ".spool", "cloud"), { recursive: true });
+		writeFileSync(join(home, ".spool", "cloud", `${new URL(cloud.origin).host}.session`), "t".repeat(43));
+	}
 	const env = {
 		PATH: `${bin}:${process.env.PATH ?? ""}`,
 		SPOOL_CLOUD_ORIGIN: cloud.origin,

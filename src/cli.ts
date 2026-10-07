@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
-import { openInBrowser, shouldOpenBrowser } from "./browser";
+import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
 import { describeSlowFrame, slowFrames } from "./check-pace";
 import { CloudRequestFailure, cloudOrigin, login, logout } from "./cloud-auth";
@@ -85,17 +85,53 @@ async function accountChanged(): Promise<void> {
 
 program
 	.command("login")
-	.description("sign this machine in to spool.page in the system browser")
-	.action(async () => {
-		process.stderr.write("spool: opening your browser to sign in…\n");
-		const signedIn = await login(spoolDir, { origin: cloudOrigin(process.env) });
-		process.stdout.write(`signed in as ${signedIn.email}\n`);
+	.description("sign this machine in to spool.page in a browser, here or on any other device")
+	.option("--no-browser", "print the sign-in link instead of opening a browser on this machine")
+	.action(async (options: { browser: boolean }) => {
+		const origin = cloudOrigin(process.env);
+		if (options.browser && hasLocalBrowser(process.env, process.platform)) {
+			process.stderr.write("spool: opening your browser to sign in…\n");
+			const signedIn = await login(spoolDir, { origin });
+			process.stdout.write(`signed in as ${signedIn.email}\n`);
+			await accountChanged();
+			return;
+		}
+		// Over SSH the browser is on another device: its redirect to this machine's loopback never arrives, so the
+		// address it lands on is pasted back here instead. Lines are buffered rather than asked for one at a time, so
+		// a paste that arrives with a stray line still keeps its address.
+		const rl = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
+		const lines = rl[Symbol.asyncIterator]();
+		try {
+			const signedIn = await login(spoolDir, {
+				origin,
+				open: (url) =>
+					process.stderr.write(
+						`spool: open this link in a browser on any device and sign in:\n\n  ${url}\n\n` +
+							"When you're in, that browser goes to a 127.0.0.1 address it can't load. Copy that whole address from the address bar and paste it here within a minute.\n",
+					),
+				paste: async (again, signal) => {
+					process.stderr.write(
+						again
+							? "spool: that isn't this sign-in's address; paste the whole 127.0.0.1 address: "
+							: "spool: address: ",
+					);
+					const stopped = new Promise<undefined>((done) =>
+						signal.addEventListener("abort", () => done(undefined), { once: true }),
+					);
+					const line = await Promise.race([lines.next(), stopped]);
+					return line === undefined || line.done ? undefined : line.value;
+				},
+			});
+			process.stdout.write(`signed in as ${signedIn.email}\n`);
+		} finally {
+			rl.close();
+		}
 		await accountChanged();
 	});
 
 program
 	.command("logout")
-	.description("sign this machine out: revoke its session and remove it from Keychain")
+	.description("sign this machine out: revoke its session and forget it here")
 	.action(async () => {
 		const result = await logout(spoolDir, { origin: cloudOrigin(process.env) });
 		await accountChanged();

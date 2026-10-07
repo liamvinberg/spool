@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type CloudRequestOptions, CloudSignedOut, keychainVault } from "./cloud-auth";
+import { type CloudRequestOptions, CloudSignedOut, sessionVault } from "./cloud-auth";
 import {
 	type CloudTeam,
 	type CloudTeamProject,
@@ -52,7 +52,7 @@ export interface TeamInitOptions {
 	team: string;
 	/** The spool.page this machine signs in to. */
 	origin: string;
-	/** A fake spool.page and Keychain, for tests. */
+	/** A fake spool.page and session vault, for tests. */
 	request?: CloudRequestOptions;
 	openSocket?: OpenSyncSocket;
 }
@@ -119,9 +119,9 @@ export async function initDestination(
 	const request = { ...options.request, origin: options.origin };
 	let token: string | undefined;
 	try {
-		token = await (request.vault ?? keychainVault(spoolDir, options.origin)).read();
+		token = await (request.vault ?? sessionVault(spoolDir, options.origin)).read();
 	} catch {
-		// no Keychain is no session
+		// no vault to read is no session
 		token = undefined;
 	}
 	if (token === undefined) return { kind: "local" };

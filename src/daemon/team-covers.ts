@@ -17,7 +17,7 @@ export interface TeamCovers {
 
 export interface TeamCoversOptions {
 	spoolDir: string;
-	/** Where spool.page is, the Keychain and the fetch: the machine's own unless a test hands in a fake. */
+	/** Where spool.page is, the session vault and the fetch: the machine's own unless a test hands in a fake. */
 	request: () => CloudRequestOptions & { origin: string };
 	log?: (line: string) => void;
 }

@@ -1,15 +1,16 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { openInBrowser } from "./browser";
 import { SpoolError } from "./errors";
 
 export const CLOUD_ORIGIN = "https://spool.page";
 /** A sign-in at spool.page lasts ten minutes, from the page to its last step. */
 const HANDOFF_MS = 10 * 60_000;
-/** The Keychain service holding this instance's device session. */
+/** The macOS Keychain service holding this instance's device session. */
 const SERVICE = "spool.device-session";
 /** Before accounts, the beta kept a publisher session here; signing out clears it too. */
 const LEGACY_SERVICE = "spool.publisher-session";
@@ -65,11 +66,16 @@ export interface AuthOptions {
 	origin?: string;
 	fetch?: typeof fetch;
 	open?: (url: string) => void;
+	/**
+	 * For a browser on another machine, whose redirect to this one's loopback never arrives: asks for the address
+	 * that browser ended on, and asks `again` after a paste that isn't it. Undefined when there is nothing more to read.
+	 */
+	paste?: (again: boolean, signal: AbortSignal) => Promise<string | undefined>;
 	vault?: CloudVault;
 	timeoutMs?: number;
 	/** Ends a sign-in still waiting on the browser. */
 	signal?: AbortSignal;
-	/** How spool.page lists this machine; the Mac's own name when omitted. */
+	/** How spool.page lists this machine; the machine's own name when omitted. */
 	device?: string;
 }
 
@@ -169,6 +175,58 @@ export function keychainVault(spoolDir: string, origin = CLOUD_ORIGIN, entry = S
 	};
 }
 
+/** Where this machine keeps its device session: the Keychain on a Mac, a file only its owner can read elsewhere. */
+export function sessionVault(spoolDir: string, origin = CLOUD_ORIGIN): CloudVault {
+	return process.platform === "darwin" ? keychainVault(spoolDir, origin) : fileVault(spoolDir, origin);
+}
+
+/**
+ * The device session as a file in the instance's state folder, for a machine with no Keychain: a Linux box reached
+ * over SSH has no unlocked keyring to ask, and the daemon outlives the session that signed in. Owner-only, the way
+ * gh and the cloud CLIs keep theirs.
+ */
+export function fileVault(spoolDir: string, origin = CLOUD_ORIGIN): CloudVault {
+	const dir = join(spoolDir, "cloud");
+	const file = join(dir, `${new URL(origin).host}.session`);
+	const unavailable = () =>
+		new SpoolError(`${file} can't be read or written; local spool still works, but Cloud sharing is signed out`);
+	return {
+		async read() {
+			let text: string;
+			try {
+				text = await readFile(file, "utf8");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+				throw unavailable();
+			}
+			const token = text.trim();
+			if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) throw unavailable();
+			return token;
+		},
+		async write(token) {
+			if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) throw new SpoolError("spool.page returned an invalid session");
+			const staged = `${file}.${base64url(randomBytes(9))}.tmp`;
+			try {
+				await mkdir(dir, { recursive: true, mode: 0o700 });
+				await chmod(dir, 0o700);
+				// wx never follows a planted symlink, and the mode is the file's from its first byte.
+				await writeFile(staged, `${token}\n`, { flag: "wx", mode: 0o600 });
+				await rename(staged, file);
+			} catch {
+				await rm(staged, { force: true }).catch(() => {});
+				throw unavailable();
+			}
+		},
+		async delete() {
+			try {
+				await rm(file, { force: true });
+			} catch {
+				throw unavailable();
+			}
+		},
+	};
+}
+
 async function responseJson(response: Response): Promise<Record<string, unknown>> {
 	try {
 		const value: unknown = await response.json();
@@ -178,7 +236,7 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
 	}
 }
 
-/** What spool.page calls this machine on the account page: the Mac's own name. */
+/** What spool.page calls this machine on the account page: a Mac's own name, or the host name elsewhere. */
 export async function deviceName(): Promise<string> {
 	const fallback = hostname().replace(/\.local$/u, "");
 	const named =
@@ -189,17 +247,38 @@ export async function deviceName(): Promise<string> {
 					),
 				)
 			: "";
-	return (named || fallback || "Mac").replace(/\p{C}/gu, "").slice(0, 64);
+	return (named || fallback || (process.platform === "darwin" ? "Mac" : "this machine"))
+		.replace(/\p{C}/gu, "")
+		.slice(0, 64);
 }
 
 /**
- * Signs this machine in through the system browser: spool.page's sign-in page hands a one-use code back
- * to a loopback listener, and the code and its PKCE verifier buy a device session kept in the Keychain.
+ * The one-use code in an address someone pasted: the loopback callback their browser couldn't load, whole or with
+ * its scheme left off, and only when it carries this sign-in's state.
+ */
+export function pastedCode(text: string, state: string): string | undefined {
+	const trimmed = text.trim();
+	let url: URL;
+	try {
+		url = new URL(/^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed) ? trimmed : `http://${trimmed}`);
+	} catch {
+		return undefined;
+	}
+	const code = url.searchParams.get("code");
+	if (url.searchParams.get("state") !== state || !code || !/^[A-Za-z0-9_-]{43}$/u.test(code)) return undefined;
+	return code;
+}
+
+/**
+ * Signs this machine in through a browser: spool.page's sign-in page hands a one-use code back to a loopback
+ * listener, and the code and its PKCE verifier buy a device session kept in this machine's vault. A browser on
+ * another machine, the phone or laptop someone reached this one from over SSH, can't reach that listener: the
+ * address it ends on carries the same code, and pasting it here finishes the same handoff.
  */
 export async function login(spoolDir: string, options: AuthOptions = {}): Promise<CloudAccount> {
 	const origin = originOf(options);
 	const request = options.fetch ?? fetch;
-	const vault = options.vault ?? keychainVault(spoolDir, origin);
+	const vault = options.vault ?? sessionVault(spoolDir, origin);
 	const device = options.device ?? (await deviceName());
 	const verifier = base64url(randomBytes(32));
 	const state = base64url(randomBytes(24));
@@ -207,13 +286,23 @@ export async function login(spoolDir: string, options: AuthOptions = {}): Promis
 	let timer: NodeJS.Timeout | undefined;
 	const code = await new Promise<string>((accept, reject) => {
 		let settled = false;
+		const pasting = new AbortController();
 		const finish = (action: () => void) => {
 			if (settled) return;
 			settled = true;
 			if (timer) clearTimeout(timer);
 			options.signal?.removeEventListener("abort", cancel);
+			pasting.abort();
 			server.close();
 			action();
+		};
+		const readPasted = async (paste: NonNullable<AuthOptions["paste"]>) => {
+			for (let again = false; !settled; again = true) {
+				const text = await paste(again, pasting.signal).catch(() => undefined);
+				if (text === undefined || settled) return;
+				const handoff = pastedCode(text, state);
+				if (handoff) return finish(() => accept(handoff));
+			}
 		};
 		const cancel = () => finish(() => reject(new SpoolError("sign-in was cancelled")));
 		const server = createServer((incoming, outgoing) => {
@@ -254,8 +343,9 @@ export async function login(spoolDir: string, options: AuthOptions = {}): Promis
 			try {
 				(options.open ?? openInBrowser)(start.toString());
 			} catch {
-				finish(() => reject(new SpoolError("could not open the system browser")));
+				return finish(() => reject(new SpoolError("could not open the system browser")));
 			}
+			if (options.paste) void readPasted(options.paste);
 		});
 		timer = setTimeout(() => {
 			finish(() => reject(new SpoolError("sign-in expired; run `spool login` to try again")));
@@ -273,7 +363,8 @@ export async function login(spoolDir: string, options: AuthOptions = {}): Promis
 		throw new SpoolError("spool.page could not be reached; sign-in was not stored");
 	}
 	const body = await responseJson(response);
-	if (!response.ok || typeof body.token !== "string") throw new SpoolError("sign-in could not be completed");
+	if (!response.ok || typeof body.token !== "string")
+		throw new SpoolError("sign-in could not be completed; run `spool login` to try again");
 	await vault.write(body.token);
 	try {
 		return await account(spoolDir, { origin, fetch: request, vault });
@@ -318,7 +409,7 @@ export async function authorizedCloudRequest(
 	if ((!path.startsWith("/api/") && !SESSION_PATHS.includes(path)) || path.startsWith("//"))
 		throw new SpoolError("invalid Cloud API path");
 	const origin = originOf(options);
-	const vault = options.vault ?? keychainVault(spoolDir, origin);
+	const vault = options.vault ?? sessionVault(spoolDir, origin);
 	const token = await vault.read();
 	if (!token) throw new CloudSignedOut("not signed in; run `spool login`");
 	const headers = new Headers(init.headers);
@@ -346,13 +437,13 @@ export async function authorizedCloudRequest(
 	return response;
 }
 
-/** Signs this machine out: spool.page revokes its device session, and the Keychain forgets it. */
+/** Signs this machine out: spool.page revokes its device session, and this machine's vault forgets it. */
 export async function logout(
 	spoolDir: string,
 	options: AuthOptions = {},
 ): Promise<{ remote: "absent" | "revoked" | "unavailable" }> {
 	const origin = options.origin ?? CLOUD_ORIGIN;
-	const vault = options.vault ?? keychainVault(spoolDir, origin);
+	const vault = options.vault ?? sessionVault(spoolDir, origin);
 	const revoke = async (path: string, token: string) => {
 		const response = await (options.fetch ?? fetch)(new URL(path, origin), {
 			method: "POST",
@@ -370,7 +461,8 @@ export async function logout(
 	} finally {
 		await vault.delete();
 	}
-	if (options.vault === undefined) {
+	// Only a Mac ever kept the beta's publisher session.
+	if (options.vault === undefined && process.platform === "darwin") {
 		const legacy = keychainVault(spoolDir, origin, LEGACY_SERVICE);
 		const old = await legacy.read().catch(() => undefined);
 		if (old) {
