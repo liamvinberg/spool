@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.1
+
+### Patch Changes
+
+- bf116ce: Spool no longer crashes to a black window when the network drops while a team project is syncing. A keepalive sent before spool.page answered used to take the daemon down.
+
 ## 0.31.0
 
 ### Minor Changes
