@@ -671,6 +671,92 @@ describe("Move to team under the save limit", () => {
 		expect(await progress()).toBeNull();
 	});
 
+	/** Ana's daemon over a project, a move posted to it, and the move sheet's question of it. */
+	function sheetOver(cloud: ReturnType<typeof fakeTeam>, project: ReturnType<typeof existingProject>) {
+		const daemon = makeApp(project.state, { cloud: cloud.machine("ana").cloud, teamNotice: () => {} });
+		const ask = async () =>
+			(await (
+				await daemon.controlRequest(`/api/cloud/move/progress?${new URLSearchParams({ path: project.root })}`)
+			).json()) as { progress: MoveProgress | null; team: string | null; ended: unknown };
+		const move = (signal?: AbortSignal) =>
+			daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+				method: "POST",
+				headers: json,
+				body: JSON.stringify({ path: project.root }),
+				...(signal === undefined ? {} : { signal }),
+			});
+		const paused = async () => {
+			for (const start = Date.now(); Date.now() - start < 10_000; )
+				if ((await ask()).progress?.paused != null) return;
+				else await new Promise((resolve) => setTimeout(resolve, 25));
+			throw new Error("the move never paused");
+		};
+		return { ask, move, paused };
+	}
+
+	it("refuses a second move of a project already moving", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		cloud.limit("rate_limited", 1);
+		const first = sheet.move();
+		await sheet.paused();
+		const second = await sheet.move();
+		expect(second.status).toBe(409);
+		expect(await second.json()).toEqual({ error: "site is already moving." });
+		expect((await sheet.ask()).team).toBe("devosurf");
+		cloud.lift();
+		expect((await first).status).toBe(200);
+	});
+
+	it("keeps the outcome of a move whose sheet went away, and tells the next sheet once", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		cloud.limit("rate_limited", 1);
+		const reload = new AbortController();
+		const first = sheet.move(reload.signal);
+		await sheet.paused();
+		// the page reloads: the move's answer has nobody to go to
+		reload.abort();
+		cloud.lift();
+		await first;
+		expect(await sheet.ask()).toEqual({
+			progress: null,
+			team: "devosurf",
+			ended: { outcome: { root: project.root, name: "site", commit: "committed" } },
+		});
+		expect(await sheet.ask()).toEqual({ progress: null, team: null, ended: null });
+	});
+
+	it("keeps what stopped a move whose sheet went away", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		cloud.limit("rate_limited", 1);
+		const reload = new AbortController();
+		const first = sheet.move(reload.signal);
+		await sheet.paused();
+		reload.abort();
+		cloud.limit("project_full", 60);
+		await first;
+		expect(await sheet.ask()).toEqual({
+			progress: null,
+			team: "devosurf",
+			ended: { error: "site didn't move: the team's design/ is at its 1 GB limit. Nothing changed here." },
+		});
+	});
+
+	it("keeps no outcome its sheet already heard", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		expect((await sheet.move()).status).toBe(200);
+		expect(await sheet.ask()).toEqual({ progress: null, team: null, ended: null });
+	});
+
 	/** Ana's move of a project, against this cloud, with these options on top. */
 	const moveAs = (
 		cloud: ReturnType<typeof fakeTeam>,

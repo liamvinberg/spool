@@ -32,6 +32,22 @@ export interface TeamProjectOnMac {
 /** What a move came to, as Home says it. */
 export type MoveOutcome = { root: string; name: string; commit: MoveCommit["kind"] | "waiting" };
 
+/** How a move ended: what it came to, or what stopped it. */
+export type MoveEnded = { outcome: MoveOutcome } | { error: string };
+
+/**
+ * What the move sheet asks of a project: the move under way and its team, or how one ended that no sheet heard,
+ * said once.
+ */
+export interface MoveReading {
+	progress: MoveProgress | null;
+	team: string | null;
+	ended: MoveEnded | null;
+}
+
+/** How long the end of a move no sheet heard is kept for the next one. */
+const ENDED_KEPT_MS = 60 * 60_000;
+
 /** How long a move waits on its commit before it answers; past that the commit lands on its own once git is free. */
 const COMMIT_ANSWER_MS = 5_000;
 
@@ -54,26 +70,35 @@ export function teamProjectRoutes(options: {
 		...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
 	});
 	const refused = (c: Context, error: unknown) => {
-		if (error instanceof CloudSignedOut) return c.json({ error: "Sign in to spool.page again." }, 401);
-		if (error instanceof CloudTeamRefused) return c.json({ error: `spool.page refused: ${error.code}` }, 409);
-		if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
-		return c.json({ error: "spool.page could not be reached. Try again." }, 503);
+		const { error: said, status } = refusal(error);
+		return c.json({ error: said }, status);
 	};
-	/** Each move under way, by its project's root: how far it has got, for the move sheet to ask. */
-	const moves = new Map<string, MoveProgress>();
+	/** Each move under way, by its project's root: the team it goes to and how far it has got, for the sheet. */
+	const moves = new Map<string, { team: string; progress: MoveProgress }>();
+	/**
+	 * How a move ended whose answer had nobody to go to, the sheet that asked closed or reloaded: told to the next
+	 * sheet that asks, once, for as long as `ENDED_KEPT_MS`.
+	 */
+	const ended = new Map<string, { team: string; ended: MoveEnded; at: number }>();
 	return (
 		new Hono()
 			/** How far a move under way has got, and a pause it is waiting out; null when none is. */
 			.get("/move/progress", (c) => {
 				const path = c.req.query("path");
 				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/project" }, 400);
+				const nothing: MoveReading = { progress: null, team: null, ended: null };
 				let root: string;
 				try {
 					root = realDir(path);
 				} catch {
-					return c.json({ progress: null });
+					return c.json(nothing);
 				}
-				return c.json({ progress: moves.get(root) ?? null });
+				const moving = moves.get(root);
+				if (moving !== undefined) return c.json({ progress: moving.progress, team: moving.team, ended: null });
+				const over = ended.get(root);
+				ended.delete(root);
+				if (over === undefined || Date.now() - over.at > ENDED_KEPT_MS) return c.json(nothing);
+				return c.json({ progress: null, team: over.team, ended: over.ended } satisfies MoveReading);
 			})
 			/** What in a project's design/ would stay on this Mac if it moved: the Move sheet names it first. */
 			.get("/move/stays", (c) => {
@@ -146,17 +171,24 @@ export function teamProjectRoutes(options: {
 				}),
 				async (c) => {
 					const path = c.req.valid("json").path;
+					const team = c.req.param("team");
 					let root: string | undefined;
+					/** The answer, kept for the next sheet when the one that asked is gone. */
+					const answer = (over: MoveEnded) => {
+						if (root !== undefined && c.req.raw.signal.aborted)
+							ended.set(root, { team, ended: over, at: Date.now() });
+					};
 					try {
 						const key = realDir(path);
 						if (moves.has(key)) return c.json({ error: `${basename(key)} is already moving.` }, 409);
-						moves.set(key, { up: 0, total: 0, paused: null });
+						moves.set(key, { team, progress: { up: 0, total: 0, paused: null } });
+						ended.delete(key);
 						root = key;
 						const moved = await moveIntoTeam(path, options.spoolDir, {
-							team: c.req.param("team"),
+							team,
 							...asked(),
 							...(options.signal === undefined ? {} : { signal: options.signal }),
-							onProgress: (progress) => moves.set(key, progress),
+							onProgress: (progress) => moves.set(key, { team, progress }),
 						});
 						void moved.commit.then((commit) =>
 							options.notice?.(
@@ -172,8 +204,10 @@ export function teamProjectRoutes(options: {
 							),
 						]);
 						const outcome: MoveOutcome = { root: moved.root, name: basename(moved.root), commit };
+						answer({ outcome });
 						return c.json(outcome);
 					} catch (error) {
+						answer({ error: refusal(error).error });
 						return refused(c, error);
 					} finally {
 						if (root !== undefined) moves.delete(root);
@@ -181,6 +215,14 @@ export function teamProjectRoutes(options: {
 				},
 			)
 	);
+}
+
+/** What the daemon answers a team-project request that failed, and with which status. */
+function refusal(error: unknown): { error: string; status: 401 | 409 | 503 } {
+	if (error instanceof CloudSignedOut) return { error: "Sign in to spool.page again.", status: 401 };
+	if (error instanceof CloudTeamRefused) return { error: `spool.page refused: ${error.code}`, status: 409 };
+	if (error instanceof SpoolError) return { error: error.message, status: 409 };
+	return { error: "spool.page could not be reached. Try again.", status: 503 };
 }
 
 /** Every checkout this Mac's registered projects sit in, with the repo its `origin` names. */
