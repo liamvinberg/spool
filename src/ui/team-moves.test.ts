@@ -139,7 +139,9 @@ it("names what stays on this Mac and in git before it moves", async () => {
 
 it("names the branches still changing design/ before it moves, and nothing when there are none", async () => {
 	const sheet = async (branches: string[]) => {
-		daemon((url) => (url.includes("/move/branches") ? Response.json({ branches }) : Response.json({ stays: [] })));
+		daemon((url) =>
+			url.includes("/move/branches") ? Response.json({ branches, checkedOnly: null }) : Response.json({ stays: [] }),
+		);
 		const host = mount(
 			createElement(MoveToTeamDialog, {
 				project: { root: "/Users/ana/site", name: "site" },
@@ -165,6 +167,33 @@ it("names the branches still changing design/ before it moves, and nothing when 
 	expect(await sheet([])).toBeNull();
 });
 
+it("says when it only checked the most recent branches", async () => {
+	const sheet = async (answer: { branches: string[]; checkedOnly: number | null }) => {
+		daemon((url) => (url.includes("/move/branches") ? Response.json(answer) : Response.json({ stays: [] })));
+		const host = mount(
+			createElement(MoveToTeamDialog, {
+				project: { root: "/Users/ana/site", name: "site" },
+				teams: [DEVOSURF],
+				onMoved: vi.fn(),
+				onClose: vi.fn(),
+			}),
+		);
+		await settle();
+		return host.querySelector("[data-move-branches]");
+	};
+	const capped = await sheet({ branches: ["redesign"], checkedOnly: 50 });
+	expect(capped?.textContent).toContain("This branch still changes design/.");
+	expect(capped?.textContent).toContain("Only the 50 most recent branches were checked.");
+	// nothing found among the ones checked still says not all were
+	expect((await sheet({ branches: [], checkedOnly: 12 }))?.textContent).toBe(
+		"Only the 12 most recent branches were checked.",
+	);
+	expect((await sheet({ branches: [], checkedOnly: 0 }))?.textContent).toBe(
+		"spool ran out of time before it could check the branches.",
+	);
+	expect((await sheet({ branches: ["redesign"], checkedOnly: null }))?.textContent).not.toContain("Only");
+});
+
 it("says on Home when a move's commit wasn't made, and nothing when it was", () => {
 	const moved = { root: "/Users/ana/site", name: "site" };
 	expect(moveCommitNote({ ...moved, commit: "committed" }, DEVOSURF)).toBeUndefined();
@@ -182,7 +211,7 @@ it("moves a project to the chosen team, saying history before the move stays in 
 		url.includes("/move/stays")
 			? Response.json({ stays: [] })
 			: url.includes("/move/branches")
-				? Response.json({ branches: [] })
+				? Response.json({ branches: [], checkedOnly: null })
 				: Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }),
 	);
 	const onMoved = vi.fn();

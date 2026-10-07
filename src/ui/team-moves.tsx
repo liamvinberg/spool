@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+	type BranchesTouchingDesign,
 	type CloudTeam,
 	fetchMoveBranches,
 	fetchMoveStays,
@@ -292,36 +293,48 @@ export function MoveToTeamDialog({
 
 /**
  * The branches that still change design/ (DEV-236): once the move commit takes design/ out of git, merging one is a
- * modify/delete conflict. A warning, not a block; nothing shows when there are none or git can't say.
+ * modify/delete conflict. A warning, not a block; nothing shows when there are none or git can't say, and a line
+ * says so when only the most recent branches were checked. Closing the sheet stops the check.
  */
 function MoveBranches({ root }: { root: string }) {
-	const [branches, setBranches] = useState<string[]>([]);
+	const [found, setFound] = useState<BranchesTouchingDesign>({ branches: [], checkedOnly: null });
 	useEffect(() => {
-		let current = true;
-		void fetchMoveBranches(root).then((found) => {
-			if (current) setBranches(found);
+		const asking = new AbortController();
+		void fetchMoveBranches(root, asking.signal).then((answer) => {
+			if (!asking.signal.aborted) setFound(answer);
 		});
-		return () => {
-			current = false;
-		};
+		return () => asking.abort();
 	}, [root]);
-	if (branches.length === 0) return null;
+	const { branches, checkedOnly } = found;
+	if (branches.length === 0 && checkedOnly === null) return null;
 	return (
 		<div className="mb-[8px] flex flex-col gap-[4px]" data-move-branches="">
-			<p className="text-muted type-label">
-				{branches.length === 1
-					? "This branch still changes design/. Merge it first, or it'll conflict after the move:"
-					: `These ${branches.length} branches still change design/. Merge them first, or they'll conflict after the move:`}
-			</p>
-			<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
-				{branches.map((branch) => (
-					<li key={branch} className="font-mono text-text type-detail">
-						{branch}
-					</li>
-				))}
-			</ul>
+			{branches.length > 0 && (
+				<>
+					<p className="text-muted type-label">
+						{branches.length === 1
+							? "This branch still changes design/. Merge it first, or it'll conflict after the move:"
+							: `These ${branches.length} branches still change design/. Merge them first, or they'll conflict after the move:`}
+					</p>
+					<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
+						{branches.map((branch) => (
+							<li key={branch} className="font-mono text-text type-detail">
+								{branch}
+							</li>
+						))}
+					</ul>
+				</>
+			)}
+			{checkedOnly !== null && <p className="text-muted type-label">{partlyChecked(checkedOnly)}</p>}
 		</div>
 	);
+}
+
+/** Said when the branch check stopped short, at its limit or its time. */
+function partlyChecked(checked: number): string {
+	if (checked === 0) return "spool ran out of time before it could check the branches.";
+	if (checked === 1) return "Only the most recent branch was checked.";
+	return `Only the ${checked} most recent branches were checked.`;
 }
 
 /** What became of a move's commit, when it wasn't made: said on Home until dismissed. */
