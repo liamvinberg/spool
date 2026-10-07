@@ -1,9 +1,15 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+/**
+ * spool's own canvas is a team project, so design/ is out of git: a fresh checkout, CI's included, has none until a
+ * signed-in verb fetches it. The canvas's half of each parity is checked wherever it has been.
+ */
+const canvas = existsSync(join(process.cwd(), "design/canvas.json"));
+
 describe("typography foundations", () => {
-	it("keeps the canvas's type definitions identical to the app", () => {
+	it.runIf(canvas)("keeps the canvas's type definitions identical to the app", () => {
 		expect(readFileSync(join(process.cwd(), "design/shared/typography.css"), "utf8")).toBe(
 			readFileSync(join(__dirname, "typography.css"), "utf8"),
 		);
@@ -20,7 +26,7 @@ describe("typography foundations", () => {
  */
 describe("the stylesheet the arrival lives in", () => {
 	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
-	const TOKENS = readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8");
+	const TOKENS = canvas ? readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8") : "";
 	const block = (open: string): string => {
 		const at = CSS.indexOf(open);
 		if (at === -1) throw new Error(`no ${open}`);
@@ -67,7 +73,7 @@ describe("the stylesheet the arrival lives in", () => {
 	});
 
 	/** the design canvas draws with the same tokens, so what it decides is what ships */
-	it("is mirrored by the design canvas", () => {
+	it.runIf(canvas)("is mirrored by the design canvas", () => {
 		for (const name of ["open", "paragraph", "rise"]) {
 			const line = CSS.split("\n").find((one) => one.includes(`--animate-agent-${name}:`));
 			expect(line).toBeDefined();
@@ -120,6 +126,6 @@ describe("thread stylesheet", () => {
 		expect(rule).toContain("180ms cubic-bezier(0.22, 0.61, 0.36, 1)");
 		expect(CSS).toContain(".agent-thread-row:hover .agent-thread-ask");
 		// and the design canvas carries the same rule
-		expect(readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8")).toContain(rule);
+		if (canvas) expect(readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8")).toContain(rule);
 	});
 });
