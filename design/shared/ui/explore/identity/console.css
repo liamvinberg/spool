@@ -1,0 +1,35 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap");
+
+/* console: one monospace on a 7.2 × 24 cell. The palette is set per appearance from
+ * console.tsx (one source, so the parts sheet can print its own hex values); this file
+ * holds the face and the three type sizes. */
+.id-console {
+	font-family: "JetBrains Mono", ui-monospace, monospace;
+	font-size: 12px;
+	line-height: 24px;
+	font-weight: 400;
+	font-variant-ligatures: none;
+	font-feature-settings: "calt" 0;
+	-webkit-font-smoothing: antialiased;
+	color: var(--k-ink);
+}
+
+.id-console .k-micro {
+	font-size: 10px;
+	line-height: 16px;
+	font-weight: 600;
+}
+
+.id-console .k-display {
+	font-size: 20px;
+	line-height: 24px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.id-console .k-dots {
+	background-color: var(--k-canvas);
+	background-image: radial-gradient(circle at 0.5px 0.5px, var(--k-dot) 1px, transparent 0);
+	background-size: 24px 24px;
+	background-position: 12px 12px;
+}
