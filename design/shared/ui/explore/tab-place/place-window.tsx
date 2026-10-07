@@ -1,8 +1,10 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
-import type { Place, PlaceTab, PlaceTeam } from "shared/lib/explore/tab-place/tabs";
+import type { Place, PlaceTab } from "shared/lib/explore/tab-place/tabs";
 import { cn } from "shared/lib/utils";
 import { ThreadIcon } from "shared/ui/spool/icons";
 import { Faces, type Mate } from "shared/ui/spool/presence";
+import { IconPicker } from "./icon-picker";
+import { type IconTake, TabIcon, TeamMark } from "./project-icon";
 
 /**
  * The Mac window cropped to its top: the shipped header (`src/ui/app.tsx` with `src/ui/tab-strip.tsx`, every
@@ -10,15 +12,13 @@ import { Faces, type Mate } from "shared/ui/spool/presence";
  *
  * - `mark`: a team project's tab leads with its team's letter mark, the one Home's switcher draws. Your own
  *   projects are untouched. A pause hollows the mark.
+ * - `badge`, `ring`, `either`: every tab leads with its project's icon, and the take is how the team mark rides
+ *   along with it (`project-icon.tsx`). The menu gains "Change icon…".
  *
- * Held still: no drag, and the hover, the card and the menu are props.
+ * Held still: no drag, and the hover, the card, the menu and the picker are props.
  */
 
-export type TabPlaceTake = "mark";
-
-/** Home's team letter-mark hues (`src/ui/teams.tsx`), picked by the same sum. */
-const HUES = ["#2E5D70", "#6B4E2E", "#4E3F70", "#2F6150", "#70393F"];
-const hueOf = (team: PlaceTeam) => HUES[[...team.address].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % HUES.length];
+export type TabPlaceTake = IconTake;
 
 const MATES: readonly Mate[] = [
 	{ name: "sam", color: "#7cc4a4" },
@@ -32,6 +32,8 @@ export function TabPlaceWindow({
 	hovered,
 	card = false,
 	menu,
+	lit,
+	picker,
 	frame,
 	argues,
 }: {
@@ -44,6 +46,10 @@ export function TabPlaceWindow({
 	card?: boolean | undefined;
 	/** the tab whose menu is open */
 	menu?: string | undefined;
+	/** the menu row under the pointer */
+	lit?: string | undefined;
+	/** the tab whose "Change icon…" picker is open */
+	picker?: string | undefined;
 	frame: string;
 	argues: string;
 }) {
@@ -72,6 +78,7 @@ export function TabPlaceWindow({
 
 	const cardTab = card ? tabs.find((tab) => tab.root === hovered) : undefined;
 	const menuTab = tabs.find((tab) => tab.root === menu);
+	const pickerTab = tabs.find((tab) => tab.root === picker);
 
 	return (
 		<div className="flex h-full flex-col gap-3 bg-bg p-4 pb-3 font-sans text-text antialiased [font-synthesis:none]">
@@ -120,14 +127,15 @@ export function TabPlaceWindow({
 				</div>
 				{cardTab !== undefined && anchors[cardTab.root] !== undefined ? (
 					<div className="absolute z-40" style={{ left: anchors[cardTab.root]?.left, top: (anchors[cardTab.root]?.bottom ?? 0) + 8 }}>
-						<PlaceCard tab={cardTab} />
+						<PlaceCard tab={cardTab} take={take} />
 					</div>
 				) : null}
 				{menuTab !== undefined && anchors[menuTab.root] !== undefined ? (
 					<div className="absolute z-40" style={{ left: (anchors[menuTab.root]?.left ?? 0) + 14, top: (anchors[menuTab.root]?.bottom ?? 0) - 6 }}>
-						<PlaceMenu tab={menuTab} />
+						<PlaceMenu tab={menuTab} take={take} lit={lit} />
 					</div>
 				) : null}
+				{pickerTab !== undefined ? <IconPicker project={pickerTab.name} /> : null}
 			</div>
 			<div className="flex shrink-0 items-baseline gap-3 px-1">
 				<span className="shrink-0 font-mono text-2xs text-muted/60">{frame}</span>
@@ -165,7 +173,9 @@ function Tab({
 					className={cn(
 						"project-tab-label relative flex h-full min-w-0 flex-auto items-center [font:var(--type-control)] [padding:0_38px_0_12px]",
 						active ? "text-text" : "[color:var(--color-muted)]",
-						take === "mark" && tab.place.kind === "team" && "gap-[7px] pl-[10px]",
+						(take !== "mark" || tab.place.kind === "team") && "gap-[7px] pl-[10px]",
+						take === "ring" && "gap-[6px] pl-[8px]",
+						take === "badge" && "gap-[10px]",
 					)}
 				>
 					<Label tab={tab} take={take} active={active} />
@@ -185,45 +195,22 @@ function Tab({
 	);
 }
 
-function Label({ tab }: { tab: PlaceTab; take: TabPlaceTake; active: boolean }) {
-	const { place } = tab;
+function Label({ tab, take, active }: { tab: PlaceTab; take: TabPlaceTake; active: boolean }) {
 	return (
 		<>
-			{place.kind === "team" ? <PlaceMark team={place.team} paused={place.paused !== undefined} /> : null}
+			<TabIcon tab={tab} take={take} cut={active ? "var(--color-canvas)" : "var(--color-bg)"} />
 			<span className="min-w-0 truncate">{tab.name}</span>
 		</>
 	);
 }
 
-/** Home's team mark at tab size: filled while the copy syncs, hollow while sync is paused. */
-function PlaceMark({ team, paused = false, size = 16 }: { team: PlaceTeam; paused?: boolean; size?: number }) {
-	return (
-		<span
-			aria-hidden="true"
-			className={cn(
-				"grid shrink-0 place-items-center rounded-[4px] font-semibold leading-none",
-				paused ? "text-muted" : "text-[#EDEDED]",
-			)}
-			style={{
-				width: size,
-				height: size,
-				fontSize: 9,
-				background: paused ? "transparent" : hueOf(team),
-				boxShadow: paused ? "inset 0 0 0 1.25px var(--color-muted)" : undefined,
-			}}
-		>
-			{[...team.name][0]?.toUpperCase()}
-		</span>
-	);
-}
-
 /** What a tab says when the pointer rests on it: where the project lives, and its sync in the daemon's words. */
-function PlaceCard({ tab }: { tab: PlaceTab }) {
+function PlaceCard({ tab, take }: { tab: PlaceTab; take: TabPlaceTake }) {
 	const { place } = tab;
 	return (
 		<div className="flex w-[380px] animate-menu-in flex-col gap-[6px] rounded-md border border-border-raised bg-raised px-3 py-[10px]">
 			<p className="flex items-center gap-[8px] text-text type-value">
-				{place.kind === "team" ? <PlaceMark team={place.team} paused={place.paused !== undefined} /> : null}
+				<TabIcon tab={tab} take={take} cut="var(--color-raised)" />
 				<span className="truncate">{address(tab)}</span>
 			</p>
 			<p className="text-text type-control">{said(place)}</p>
@@ -241,37 +228,52 @@ function said(place: Place): string {
 	return `Synced with ${place.team.name}.`;
 }
 
-/** The tab's menu (`src/ui/project-tab-menu.tsx`), opening on where the project lives. */
-function PlaceMenu({ tab }: { tab: PlaceTab }) {
+/**
+ * The tab's menu (`src/ui/project-tab-menu.tsx`), opening on where the project lives. With project icons it opens
+ * on the project itself, its icon drawn as the tab draws it, and "Change icon…" leads.
+ */
+function PlaceMenu({ tab, take, lit }: { tab: PlaceTab; take: TabPlaceTake; lit: string | undefined }) {
 	const team = tab.place.kind === "team" ? tab.place.team : null;
-	const row = "flex h-[30px] items-center justify-between rounded-sm px-3 text-left text-text hover:bg-surface type-control";
-	const rule = <div className="mx-2 my-unit h-px bg-border-raised" />;
-	const items: ReactNode = team ? (
-		<>
-			<span className={cn(row, "bg-surface")}>
-				Open on spool.page <span className="text-muted">↗</span>
-			</span>
-			<span className={row}>Export project…</span>
-		</>
-	) : (
-		<>
-			<span className={row}>Move to team…</span>
-			<span className={row}>Export project…</span>
-		</>
+	const paused = tab.place.kind === "team" && tab.place.paused !== undefined;
+	const on = lit ?? (take === "mark" && team ? "Open on spool.page" : undefined);
+	const row = (label: string, more?: ReactNode) => (
+		<span key={label} className={cn("flex h-[30px] items-center justify-between rounded-sm px-3 text-left text-text hover:bg-surface type-control", on === label && "bg-surface")}>
+			{label}
+			{more}
+		</span>
 	);
+	const rule = <div className="mx-2 my-unit h-px bg-border-raised" />;
+	const items: ReactNode[] = [
+		...(take === "mark" ? [] : [row("Change icon…")]),
+		...(take !== "mark" && tab.icon?.from === "file" ? [row("Remove icon")] : []),
+		...(team ? [row("Open on spool.page", <span className="text-muted">↗</span>)] : [row("Move to team…")]),
+		row("Export project…"),
+	];
 	return (
-		<div role="menu" className="flex w-[228px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit">
-			<div className="flex flex-col gap-[2px] px-3 pt-[7px] pb-[6px]">
-				<span className="flex items-center gap-[7px] text-text type-control">
-					{team ? <PlaceMark team={team} paused={tab.place.kind === "team" && tab.place.paused !== undefined} /> : null}
-					{team ? team.name : "On this Mac"}
-				</span>
-				<span className="truncate text-muted type-detail">{tab.root}</span>
-			</div>
+		<div role="menu" className="flex w-[244px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit">
+			{take === "mark" ? (
+				<div className="flex flex-col gap-[2px] px-3 pt-[7px] pb-[6px]">
+					<span className="flex items-center gap-[7px] text-text type-control">
+						{team ? <TeamMark team={team} paused={paused} /> : null}
+						{team ? team.name : "On this Mac"}
+					</span>
+					<span className="truncate text-muted type-detail">{tab.root}</span>
+				</div>
+			) : (
+				<div className="flex items-center gap-[10px] px-3 pt-[8px] pb-[7px]">
+					<TabIcon tab={tab} take={take} size={24} cut="var(--color-raised)" />
+					<div className="flex min-w-0 flex-col gap-[1px]">
+						<span className="truncate text-text type-control">{tab.name}</span>
+						<span className="truncate text-muted type-detail">
+							{team ? `${team.name}${paused ? " · sync paused" : ""}` : "On this Mac"}
+						</span>
+					</div>
+				</div>
+			)}
 			{rule}
 			{items}
 			{rule}
-			<span className={row}>Close tab</span>
+			{row("Close tab")}
 		</div>
 	);
 }
