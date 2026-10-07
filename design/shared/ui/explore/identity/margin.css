@@ -1,0 +1,106 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap");
+
+/* margin: editorial paper. Light is paper, dark is ink. The thread is a red pencil. */
+.id-margin {
+	/* ink (dark) */
+	--m-chrome: #1d1c19;
+	--m-canvas: #171614;
+	--m-raised: #262421;
+	--m-wash: #262420;
+	--m-rule: #33302b;
+	--m-rule-strong: #4a463f;
+	--m-ink: #ece7dd;
+	--m-muted: #9c968b;
+	--m-faint: #5e5950;
+	--m-fill: #ece7dd;
+	--m-on-fill: #1d1c19;
+	--m-thread: #f5391a;
+	--m-thread-text: #ff5a3d;
+	--m-dot: #2b2925;
+	--m-teammate: #3b82f6;
+	--m-lift: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px -16px rgb(0 0 0 / 0.7);
+
+	--m-serif: "Instrument Serif", Georgia, serif;
+	--m-sans: "Instrument Sans Variable", "Instrument Sans", system-ui, sans-serif;
+	--m-mono: "Fragment Mono", ui-monospace, monospace;
+
+	background: var(--m-chrome);
+	color: var(--m-ink);
+	font: 400 13px/20px var(--m-sans);
+	-webkit-font-smoothing: antialiased;
+}
+
+.id-margin[data-appearance="light"] {
+	/* paper (light) */
+	--m-chrome: #f3f0ea;
+	--m-canvas: #e8e3d9;
+	--m-raised: #fbf9f5;
+	--m-wash: #e9e5dc;
+	--m-rule: #dbd5c9;
+	--m-rule-strong: #b8b0a1;
+	--m-ink: #1c1a16;
+	--m-muted: #6b665c;
+	--m-faint: #aaa396;
+	--m-fill: #1c1a16;
+	--m-on-fill: #f3f0ea;
+	--m-thread: #f5391a;
+	--m-thread-text: #c42c10;
+	--m-dot: #d6d0c4;
+	--m-lift: 0 1px 0 rgb(60 50 30 / 0.06), 0 12px 32px -16px rgb(60 50 30 / 0.35);
+}
+
+/* the type ladder: six roles */
+.id-margin .m-display {
+	font: 400 28px/32px var(--m-serif);
+	letter-spacing: -0.005em;
+}
+.id-margin .m-heading {
+	font: 400 18px/24px var(--m-serif);
+}
+.id-margin .m-heading-i {
+	font: italic 400 18px/24px var(--m-serif);
+}
+.id-margin .m-control {
+	font: 400 13px/20px var(--m-sans);
+}
+.id-margin .m-caption {
+	font: 400 12px/16px var(--m-sans);
+}
+.id-margin .m-value {
+	font: 400 12px/16px var(--m-mono);
+	font-feature-settings: "calt" 0;
+}
+.id-margin .m-folio {
+	font: 400 10px/12px var(--m-mono);
+	letter-spacing: 0.04em;
+	font-feature-settings: "calt" 0;
+}
+
+/* a dotted leader: name ........ value */
+.id-margin .m-leader {
+	flex: 1 1 auto;
+	min-width: 12px;
+	height: 2px;
+	align-self: flex-end;
+	margin: 0 8px 7px;
+	background-image: radial-gradient(circle, var(--m-faint) 0.7px, transparent 0.9px);
+	background-size: 4px 2px;
+	background-repeat: repeat-x;
+	background-position: left center;
+}
+
+/* the canvas desk: a quiet dot grid */
+.id-margin .m-desk {
+	background-color: var(--m-canvas);
+	background-image: radial-gradient(circle, var(--m-dot) 1px, transparent 1.2px);
+	background-size: 24px 24px;
+	background-position: 12px 12px;
+}
+
+/* the red pencil underline */
+.id-margin .m-pencil {
+	text-decoration-line: underline;
+	text-decoration-color: var(--m-thread);
+	text-decoration-thickness: 1.5px;
+	text-underline-offset: 4px;
+}
