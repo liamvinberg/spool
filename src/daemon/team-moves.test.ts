@@ -16,7 +16,7 @@ import { moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, until, writeFrame } from "../test-helpers";
-import { commitMoveIn, MOVE_MESSAGE } from "./history";
+import { branchesTouchingDesign, commitMoveIn, MOVE_MESSAGE } from "./history";
 import { createSettingsStore } from "./settings";
 
 /**
@@ -337,7 +337,7 @@ describe("Move to team", () => {
 			(await (
 				await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: project.root })}`)
 			).json()) as unknown;
-		expect(await branches()).toEqual({ branches: [] });
+		expect(await branches()).toEqual({ branches: [], checkedOnly: null });
 
 		// a branch touching design/, one touching only code, one already merged, and the current branch's own work
 		git(project.root, "switch", "--quiet", "-c", "redesign");
@@ -368,7 +368,9 @@ describe("Move to team", () => {
 		git(project.root, "branch", "--quiet", "--set-upstream-to=pushed/redesign", "redesign");
 		git(project.root, "remote", "set-head", "pushed", "main");
 
-		expect(await branches()).toEqual({ branches: ["redesign", "pushed/theirs"] });
+		const { branches: found, checkedOnly } = (await branches()) as { branches: string[]; checkedOnly: unknown };
+		expect([...found].sort()).toEqual(["pushed/theirs", "redesign"]);
+		expect(checkedOnly).toBeNull();
 	});
 
 	it("reads design/ where the project sits in its repo, not at the repo's top", { timeout: 30_000 }, async () => {
@@ -390,7 +392,7 @@ describe("Move to team", () => {
 		git(top, "switch", "--quiet", "main");
 		const daemon = makeApp(state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
 		const asked = await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: root })}`);
-		expect(await asked.json()).toEqual({ branches: ["web-redesign"] });
+		expect(await asked.json()).toEqual({ branches: ["web-redesign"], checkedOnly: null });
 	});
 
 	it("names a local branch another local branch tracks", { timeout: 30_000 }, async () => {
@@ -411,13 +413,46 @@ describe("Move to team", () => {
 		expect([...branches].sort()).toEqual(["develop", "feature"]);
 	});
 
+	/** A branch off main changing design/, committed at a given time, so which branches are newest is known. */
+	const branchAt = (root: string, name: string, date: string) => {
+		git(root, "switch", "--quiet", "-c", name, "main");
+		writeFrame(root, name, `export default () => <h1>${name}</h1>;\n`);
+		git(root, "add", "-A");
+		execFileSync("git", ["commit", "--quiet", "-m", name], {
+			cwd: root,
+			env: { ...process.env, ...IDENTITY, GIT_COMMITTER_DATE: date },
+		});
+		git(root, "switch", "--quiet", "main");
+	};
+
+	it("checks only the most recent branches, and says how many it checked", { timeout: 30_000 }, async () => {
+		const project = existingProject();
+		branchAt(project.root, "oldest", "2024-01-01T00:00:00Z");
+		branchAt(project.root, "newest", "2024-03-01T00:00:00Z");
+		branchAt(project.root, "middle", "2024-02-01T00:00:00Z");
+		expect(await branchesTouchingDesign(project.root, { limit: 2 })).toEqual({
+			branches: ["newest", "middle"],
+			checkedOnly: 2,
+		});
+		expect(await branchesTouchingDesign(project.root, { limit: 3 })).toEqual({
+			branches: ["newest", "middle", "oldest"],
+			checkedOnly: null,
+		});
+	});
+
+	it("stops at its time limit, saying it only checked some", { timeout: 30_000 }, async () => {
+		const project = existingProject();
+		branchAt(project.root, "redesign", "2024-01-01T00:00:00Z");
+		expect(await branchesTouchingDesign(project.root, { within: 0 })).toEqual({ branches: [], checkedOnly: 0 });
+	});
+
 	it("names no branches for a project in no git repo", async () => {
 		const root = realpathSync(makeTempDir());
 		const state = join(makeTempDir(), ".spool");
 		initProject(root, state);
 		const daemon = makeApp(state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
 		const asked = await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: root })}`);
-		expect(await asked.json()).toEqual({ branches: [] });
+		expect(await asked.json()).toEqual({ branches: [], checkedOnly: null });
 	});
 
 	it("carries a solo project's shares over to the team project, so links already sent keep working", {
