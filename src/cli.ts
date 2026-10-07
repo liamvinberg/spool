@@ -9,7 +9,7 @@ import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
 import { describeSlowFrame, slowFrames } from "./check-pace";
-import { CloudRequestFailure, cloudOrigin, login, logout } from "./cloud-auth";
+import { CloudNotApproved, CloudRequestFailure, CloudSignedOut, cloudOrigin, login, logout } from "./cloud-auth";
 import {
 	CloudPublicationFailure,
 	listPublications,
@@ -146,6 +146,10 @@ program
 
 const cloud = program.command("cloud").description("publish and inspect protected websites");
 
+/**
+ * Every `spool cloud` verb answers in JSON on stdout, a failure too, so a script can read it. A failure also says
+ * itself as a plain sentence on stderr, where the CLI's other errors go, so a person never has to read the JSON.
+ */
 async function cloudJson(action: () => Promise<unknown>): Promise<void> {
 	try {
 		process.stdout.write(`${JSON.stringify(await action())}\n`);
@@ -153,9 +157,12 @@ async function cloudJson(action: () => Promise<unknown>): Promise<void> {
 		const known =
 			error instanceof CloudPublicationFailure
 				? error.detail
-				: error instanceof CloudRequestFailure
+				: error instanceof CloudRequestFailure || error instanceof CloudNotApproved
 					? { code: error.code, retryable: error.retryable }
-					: undefined;
+					: error instanceof CloudSignedOut
+						? { code: error.code, retryable: false }
+						: undefined;
+		process.stderr.write(`spool: ${error instanceof Error ? error.message : "Cloud publication failed"}\n`);
 		process.stdout.write(
 			`${JSON.stringify({
 				error: {
