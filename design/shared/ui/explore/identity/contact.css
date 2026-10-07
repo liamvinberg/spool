@@ -1,0 +1,84 @@
+/* contact: the darkroom and the lightbox.
+ * Chrome stays low so the frames are the brightest thing on screen; the red
+ * thread is the safelight and the grease pencil, and nothing else is coloured. */
+
+.id-contact {
+	/* identity, both appearances */
+	--k-thread: #f5391a;
+	--k-on-thread: #ffffff;
+	--k-peer: #3b82f6;
+
+	/* darkroom */
+	--k-bar: #0a0a0a;
+	--k-panel: #0c0c0c;
+	--k-canvas: #050505;
+	--k-well: #030303;
+	--k-line: #1a1a1a;
+	--k-raise: #1b1b1b;
+	--k-float: #121212;
+	--k-float-line: #222222;
+	--k-field: #121212;
+	--k-field-line: #1c1c1c;
+	--k-text: #e8e6e2;
+	--k-muted: #85827d;
+	--k-faint: #615f5b;
+	--k-wash: rgb(245 57 26 / 0.13);
+	--k-pencil: #ff5a3c;
+	--k-mount: transparent;
+	--k-ph: #e6e5e2;
+	--k-ph-ink: #cbcac6;
+	--k-ph-line: transparent;
+
+	color: var(--k-text);
+	font-family: "Instrument Sans Variable", system-ui, sans-serif;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* lightbox */
+.id-contact[data-appearance="light"] {
+	--k-bar: #efefee;
+	--k-panel: #f5f5f4;
+	--k-canvas: #ffffff;
+	--k-well: #e9e9e7;
+	--k-line: #e0e0de;
+	--k-raise: #e6e6e4;
+	--k-float: #ffffff;
+	--k-float-line: #d6d6d3;
+	--k-field: #ffffff;
+	--k-field-line: #dcdcd9;
+	--k-text: #121212;
+	--k-muted: #686764;
+	--k-faint: #92918d;
+	--k-wash: rgb(245 57 26 / 0.09);
+	--k-pencil: #d42a0e;
+	--k-mount: #c9c9c6;
+	--k-ph: #ffffff;
+	--k-ph-ink: #e4e4e2;
+	--k-ph-line: #cfcfcc;
+}
+
+/* five roles, two families: names and numbers are mono, sentences are sans */
+.id-contact .k-edge {
+	font: 400 10px/12px "Fragment Mono", ui-monospace, monospace;
+	letter-spacing: 0.02em;
+	font-feature-settings: "calt" 0;
+}
+.id-contact .k-data {
+	font: 400 11px/16px "Fragment Mono", ui-monospace, monospace;
+	font-feature-settings: "calt" 0;
+}
+.id-contact .k-title {
+	font: 400 13px/16px "Fragment Mono", ui-monospace, monospace;
+	letter-spacing: -0.01em;
+	font-feature-settings: "calt" 0;
+}
+.id-contact .k-body {
+	font: 400 12px/16px "Instrument Sans Variable", system-ui, sans-serif;
+}
+.id-contact .k-strong {
+	font-weight: 550;
+}
+.id-contact .k-display {
+	font: 500 20px/24px "Instrument Sans Variable", system-ui, sans-serif;
+	letter-spacing: -0.015em;
+}
