@@ -137,6 +137,24 @@ it("shows only machine settings without a project and keeps Appearance available
 	unmount();
 });
 
+it("draws the threads as a machine switch on General and writes its own key", async () => {
+	const writes: unknown[] = [];
+	const { host, unmount } = await mount((init) => {
+		if (reads(init)) return Response.json(snapshot());
+		writes.push(bodyOf(init));
+		return Response.json(
+			snapshot({ "canvas.threads": false }).entries.find((entry) => entry.key === "canvas.threads"),
+		);
+	});
+	const text = host.querySelector('[role="dialog"]')?.textContent ?? "";
+	expect(text.indexOf("Show threads")).toBeGreaterThan(text.indexOf("~/.spool/config.json"));
+	const toggle = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Show threads"]');
+	expect(toggle?.getAttribute("aria-checked")).toBe("true");
+	await act(async () => toggle?.click());
+	expect(writes).toMatchObject([{ key: "canvas.threads", value: false }]);
+	unmount();
+});
+
 it("keeps a refused write on the file's value and says why", async () => {
 	const { host, unmount } = await mount((init) => {
 		if (reads(init)) return Response.json(snapshot());

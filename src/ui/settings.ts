@@ -42,7 +42,8 @@ async function load(project: string | undefined): Promise<void> {
 	if (pending !== undefined) return pending;
 	const task = fetchSettings(project).then((snapshot) => {
 		inFlight.delete(key);
-		if (snapshot === undefined) return;
+		// a body that is not a snapshot is no reading at all: every value stays its default
+		if (snapshot === undefined || !Array.isArray(snapshot.entries)) return;
 		snapshots.set(key, snapshot);
 		if (project === undefined) applyTheme(snapshot.entries);
 		notify();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard } from "./api";
 import {
@@ -20,7 +20,6 @@ import {
 	subscribeSse,
 	trashProject,
 } from "./api";
-import type { CameraStore } from "./canvas/camera-store";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { PresenceFaces } from "./canvas/presence-faces";
 import { desktopBridge } from "./desktop-bridge";
@@ -29,8 +28,8 @@ import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
-import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import { EdgeIcon, HomeIcon } from "./icons";
+import type { HotkeyIdFor } from "./hotkeys";
+import { HomeIcon } from "./icons";
 import { ProjectPicker } from "./picker";
 import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
@@ -559,26 +558,6 @@ export function App() {
 						    would open is the frame you are looking at. A header button
 						    could only ever guess, and its guess with nothing selected was
 						    the first frame by name — a start that means nothing. */}
-						{/* the threads toggle (#34): the map is identity, so on is the
-						    default — but a page with no thread gets no switch. It governs
-						    the whole flow layer now (#151), the arrows and the docked
-						    walks together. It carried a dot over hidden faults until #203
-						    took the faults off the canvas; with nothing left to whisper
-						    about, the toggle is a toggle again. */}
-						{chrome.hasThreads && (
-							<button
-								type="button"
-								className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
-									chrome.arrowsOn ? "text-text" : "text-muted"
-								}`}
-								title={`Threads (${hotkeyKey("canvas.threads")})`}
-								aria-pressed={chrome.arrowsOn}
-								onClick={chrome.toggleArrows}
-							>
-								<EdgeIcon />
-							</button>
-						)}
-						<ZoomReadout camera={chrome.camera} />
 						{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
 						{chrome.presence !== undefined && (
 							<PresenceFaces
@@ -750,28 +729,6 @@ export function App() {
 			)}
 		</div>
 	);
-}
-
-/**
- * The canvas's zoom, as a percentage (#81).
- *
- * It follows the camera rather than being handed a number: the bar is the
- * whole window's render, and a zoom tick that rendered it would render the
- * canvas under it too. The number is written straight to the text, and only
- * when the rounded percentage changes.
- */
-function ZoomReadout({ camera }: { camera: CameraStore }) {
-	const readout = useRef<HTMLSpanElement | null>(null);
-	useLayoutEffect(() => {
-		const write = (k: number | undefined) => {
-			const text = `${k === undefined ? 100 : Math.round(k * 100)}%`;
-			if (readout.current !== null && readout.current.textContent !== text) readout.current.textContent = text;
-		};
-		write(camera.get()?.k);
-		// a camera that went away reads as the 100% a field with nothing framed opens at
-		return camera.subscribe((now) => write(now?.k));
-	}, [camera]);
-	return <span ref={readout} className="min-w-9 text-right text-muted type-detail" />;
 }
 
 function basename(path: string): string {

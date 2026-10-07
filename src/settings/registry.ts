@@ -198,6 +198,14 @@ export const SETTINGS = {
 		label: "Check for updates",
 		says: "Once a day, and a line in the canvas when there is one.",
 	},
+	"canvas.threads": {
+		scope: "machine",
+		group: "general",
+		shape: { kind: "boolean" },
+		fallback: true,
+		label: "Show threads",
+		says: "The arrows between frames and the tags for walks that leave the page. T turns them on and off.",
+	},
 	"agent.permissions": {
 		scope: "local",
 		group: "agent",

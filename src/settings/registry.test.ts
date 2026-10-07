@@ -15,6 +15,7 @@ describe("settings registry", () => {
 	it("parses each shape and refuses what does not fit it", () => {
 		expect(parseSetting("history", true)).toEqual({ ok: true, value: true });
 		expect(parseSetting("history", "true").ok).toBe(false);
+		expect(parseSetting("canvas.threads", false)).toEqual({ ok: true, value: false });
 		expect(parseSetting("agent.permissions", "bypass")).toEqual({ ok: true, value: "bypass" });
 		expect(parseSetting("agent.permissions", "yolo").ok).toBe(false);
 		expect(parseSetting("theme.dark.thread", " #2F6FE0 ")).toEqual({ ok: true, value: "#2f6fe0" });

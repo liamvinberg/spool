@@ -3,7 +3,9 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { SETTINGS } from "../../settings/registry";
 import type { Flows } from "../api";
+import { settingsMoved } from "../settings";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 import { openEventStream } from "./test-event-stream";
 
@@ -15,7 +17,7 @@ import { openEventStream } from "./test-event-stream";
  *
  * The geometry is walk-layer.test.ts's. What is asserted here is the wiring:
  * that the marks appear without being asked for, that pressing one travels,
- * and that the one toggle governs the whole layer.
+ * and that the one setting governs the whole layer.
  */
 
 const PROJECTION = {
@@ -38,13 +40,29 @@ const FLOWS: Flows = {
 	unreadable: [],
 };
 
+/** The machine's settings as the daemon reads them back: only the threads matter here. */
+const threadsReading = (on: boolean) => ({
+	project: null,
+	entries: [{ ...SETTINGS["canvas.threads"], key: "canvas.threads", value: on, source: on ? "default" : "file" }],
+});
+
 function mount(flows: Flows = FLOWS) {
 	const chrome: { latest: CanvasChrome | null } = { latest: null };
+	const settings = { threads: true, writes: [] as unknown[] };
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async (input: RequestInfo | URL) => {
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/events")) return openEventStream();
+			if (url.pathname.endsWith("/api/settings")) {
+				if (init?.method === "PUT") {
+					const body = JSON.parse(String(init.body)) as { key: string; value: boolean };
+					settings.writes.push(body);
+					settings.threads = body.value;
+					return Response.json(threadsReading(settings.threads).entries[0]);
+				}
+				return Response.json(threadsReading(settings.threads));
+			}
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) return Response.json(PROJECTION);
 			if (url.pathname.endsWith("/flows/resolve")) return Response.json({ skipped: 0, read: 0, unavailable: 0 });
@@ -77,6 +95,7 @@ function mount(flows: Flows = FLOWS) {
 	return {
 		host,
 		chrome,
+		settings,
 		render: async () => {
 			await act(async () => {
 				root.render(
@@ -89,6 +108,8 @@ function mount(flows: Flows = FLOWS) {
 				);
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
+			// the settings are one machine-wide reading, shared across tests: read this test's
+			await act(async () => settingsMoved());
 		},
 	};
 }
@@ -146,7 +167,6 @@ describe("the walk layer", () => {
 
 		expect(canvas.host.textContent).not.toContain("rows.tsx");
 		expect(canvas.host.textContent).not.toContain("unreadable");
-		expect(canvas.chrome.latest?.hasThreads).toBe(false);
 	});
 
 	it("travels when an exit tag is pressed: the page follows and the target is the selection", async () => {
@@ -208,34 +228,29 @@ describe("the walk layer", () => {
 		expect(drawn[2]?.transform).toBe("translate(405px, -22px) scale(1)");
 	});
 
-	it("hides the whole layer on one toggle, arrows and tags together", async () => {
+	it("hides the whole layer when the threads setting is off, arrows and tags together", async () => {
 		const canvas = mount();
 		await canvas.render();
-		expect(canvas.chrome.latest?.arrowsOn).toBe(true);
+		await until(() => exitTag(canvas.host, "shop/checkout") !== null);
 
-		await act(async () => canvas.chrome.latest?.toggleArrows());
+		canvas.settings.threads = false;
+		await act(async () => settingsMoved());
 
-		expect(exitTag(canvas.host, "shop/checkout")).toBeNull();
+		await until(() => exitTag(canvas.host, "shop/checkout") === null);
 		expect(canvas.host.querySelector("svg[data-flow-arrows]")).toBeNull();
 	});
 
-	it("offers the toggle for a page whose only walks leave it", async () => {
-		// no same-page edge at all: the old rule counted no thread and drew no switch
-		const canvas = mount({
-			frames: ["home", "menu", "shop/checkout"],
-			edges: [{ from: "home", to: "shop/checkout", certainty: "will", sites: [] }],
-			unreadable: [],
+	it("flips the machine setting on the threads key, and the layer follows", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await until(() => exitTag(canvas.host, "shop/checkout") !== null);
+
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "t", bubbles: true }));
 		});
-		await canvas.render();
 
-		expect(canvas.chrome.latest?.hasThreads).toBe(true);
-	});
-
-	it("draws no switch over a page with nothing to hide", async () => {
-		const canvas = mount({ frames: ["home", "menu", "shop/checkout"], edges: [], unreadable: [] });
-		await canvas.render();
-
-		expect(canvas.chrome.latest?.hasThreads).toBe(false);
+		expect(canvas.settings.writes).toEqual([{ key: "canvas.threads", value: false }]);
+		await until(() => exitTag(canvas.host, "shop/checkout") === null);
 	});
 });
 

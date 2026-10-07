@@ -9,6 +9,7 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
+import { SETTINGS } from "../../settings/registry";
 import type { Presence, PresenceState } from "../../team-sync-protocol";
 import { AgentHandoff } from "../agent-handoff";
 import type {
@@ -58,6 +59,7 @@ import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { ProjectEmpty } from "../project-empty";
+import { useSetting, useWriteSetting } from "../settings";
 import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
@@ -220,21 +222,11 @@ import { WalkLayer, walksOf } from "./walk-layer";
 
 export interface CanvasChrome {
 	/**
-	 * The camera itself, for the zoom readout to follow (#81). A percentage
-	 * handed up here would re-render the whole window on every zoom tick, so the
-	 * readout subscribes and writes its own number instead.
+	 * The camera itself, handed up rather than a zoom number: a number would
+	 * re-render the whole window on every zoom tick, and whoever wants it can
+	 * subscribe instead.
 	 */
 	camera: CameraStore;
-	/** The threads toggle (#34): shown pressed while the map draws. */
-	arrowsOn: boolean;
-	toggleArrows: () => void;
-	/**
-	 * Whether this page has a layer to hide: an arrow between two frames on it,
-	 * or a walk that leaves it. The toggle is not drawn otherwise — a switch
-	 * over nothing is chrome pretending to be a control (#34/#39). One toggle
-	 * governs the whole layer (#151), so it counts the whole layer.
-	 */
-	hasThreads: boolean;
 	/** Who else is on a team project's canvas, for the faces at the top right; absent on a project of one's own. */
 	presence?: CanvasPresence | undefined;
 }
@@ -399,8 +391,10 @@ export function ProjectCanvas({
 	// every read of the frame list, and the covers heard between them (frame-reads.ts)
 	const [frameReads] = useState(createFrameReads);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
-	// the arrows toggle (#34): per-project, default on — the map is spool's identity
-	const [arrowsOn, setArrowsOn] = useState(true);
+	// the threads (#34): the arrows and the docked walks, one machine setting
+	// rather than a top-bar switch, default on because the map is spool's identity
+	const arrowsOn = useSetting("canvas.threads") ?? SETTINGS["canvas.threads"].fallback;
+	const writeSetting = useWriteSetting();
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
@@ -886,14 +880,6 @@ export function ProjectCanvas({
 	// on another page (#151). Derived at rest — the layer is never gated on a
 	// selection, because the gap it fills is the frames you did not pick.
 	const walks = useMemo(() => walksOf(edges, visibleFrames, frames), [edges, visibleFrames, frames]);
-	// a layer to hide on this page: an arrow with both ends here, or a docked
-	// walk. One toggle governs both, so it counts both — a page whose only walks
-	// leave it used to get no switch at all (#34/#39/#151).
-	const hasThreads = useMemo(() => {
-		if (walks.length > 0) return true;
-		const here = new Set(visibleFrames.map((entry) => entry.name));
-		return edges.some((edge) => edge.from !== edge.to && here.has(edge.from) && here.has(edge.to));
-	}, [edges, visibleFrames, walks]);
 
 	// A hidden hover lingers to fade its ring, and a ring fading out is nobody
 	// pointing at anything (#172).
@@ -1250,14 +1236,13 @@ export function ProjectCanvas({
 		setEdges(flows.edges);
 	}, [project]);
 
-	// boot: stored cameras + arrows + active page, the
+	// boot: stored cameras + active page, the
 	// projection, the link graph — the canvas reopens on the page it left (#39)
 	useEffect(() => {
 		let alive = true;
 		void (async () => {
 			const state = await fetchCanvasState(project);
 			if (alive && state !== undefined) {
-				setArrowsOn(state.arrows ?? true);
 				cameras.current = camerasFromState(state);
 				const page = state.activePage ?? ROOT_PAGE;
 				setActivePage(page);
@@ -1580,7 +1565,7 @@ export function ProjectCanvas({
 		[exitEntered],
 	);
 
-	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
+	const toggleArrows = useCallback(() => void writeSetting("canvas.threads", !arrowsOn), [writeSetting, arrowsOn]);
 
 	/**
 	 * Play (#227): a browser tab on `/play/`, the door that already exists for
@@ -4268,15 +4253,14 @@ export function ProjectCanvas({
 				if (cam === null) throw new Error("The canvas is still opening.");
 				cameras.current = { ...cameras.current, [activePage]: { x: cam.x, y: cam.y, k: cam.k } };
 				await saveCanvasState(project, {
-					arrows: arrowsOn,
 					...stateCameraSlots(cameras.current),
 					...(activePage === ROOT_PAGE ? {} : { activePage }),
 				});
 			}),
-		[camera, arrowsOn, project, activePage, flushNudge, commitTrash],
+		[camera, project, activePage, flushNudge, commitTrash],
 	);
 
-	// persist arrows + the page bookkeeping once the camera has rested: last
+	// persist the page bookkeeping once the camera has rested: last
 	// settle wins the stored slot (#12); each page keeps its own camera, and the
 	// active page rides along so reopening resumes it (#39). The camera is read
 	// when the write goes out rather than taken from the rest that armed it: a
@@ -4289,13 +4273,12 @@ export function ProjectCanvas({
 			if (cam === null) return;
 			cameras.current = { ...cameras.current, [activePage]: { x: cam.x, y: cam.y, k: cam.k } };
 			putCanvasState(project, {
-				arrows: arrowsOn,
 				...stateCameraSlots(cameras.current),
 				...(activePage === ROOT_PAGE ? {} : { activePage }),
 			});
 		}, SETTLE_PERSIST_MS);
 		return () => clearTimeout(settle);
-	}, [restCamera, arrowsOn, project, activePage, camera]);
+	}, [restCamera, project, activePage, camera]);
 
 	// --- gestures ---------------------------------------------------------------
 
@@ -5204,7 +5187,7 @@ export function ProjectCanvas({
 				event?.preventDefault();
 				if (gestureStill()) arrangeFrames();
 			},
-			// the threads toggle (#34): persisted per project
+			// the threads (#34): flips the machine setting, so every open canvas follows
 			"canvas.threads": () => toggleArrows(),
 			"canvas.tool-select": () => chooseTool("select"),
 			"canvas.tool-edit": () => chooseTool("edit"),
@@ -5407,13 +5390,10 @@ export function ProjectCanvas({
 	useEffect(() => {
 		onChrome({
 			camera,
-			arrowsOn,
-			toggleArrows,
-			hasThreads,
 			presence: team ? { room: presenceRoom, page: activePage, following, follow: setFollowing } : undefined,
 		});
 		return () => onChrome(null);
-	}, [arrowsOn, hasThreads, onChrome, toggleArrows, camera, team, presenceRoom, activePage, following]);
+	}, [onChrome, camera, team, presenceRoom, activePage, following]);
 
 	// --- presence (DEV-196) ---------------------------------------------------------
 
