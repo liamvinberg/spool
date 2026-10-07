@@ -210,7 +210,8 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 			pasted?.searchParams.delete("code");
 			expect(cloud.exchange()?.returnUrl).toBe(pasted?.toString());
 			expect(existsSync(join(home, "launched"))).toBe(false);
-			if (process.platform !== "darwin") {
+			if (process.platform === "darwin") expect(readFileSync(join(home, "stored"), "utf8")).toBe("t".repeat(43));
+			else {
 				const file = join(home, ".spool", "cloud", `${new URL(cloud.origin).host}.session`);
 				expect(readFileSync(file, "utf8")).toBe(`${"t".repeat(43)}\n`);
 				expect(statSync(file).mode & 0o777).toBe(0o600);
@@ -299,7 +300,10 @@ case "$1" in find-generic-password|delete-generic-password) exit 44;; esac
 	});
 });
 
-/** Openers that record a launch in `home/launched` instead of opening a browser. */
+/**
+ * Openers that record a launch in `home/launched` instead of opening a browser, and on a Mac a stand-in Keychain
+ * that keeps the session in `home/stored`, so the run never reaches the machine's own.
+ */
 function fakeOpenersOn(home: string): string {
 	const bin = join(home, "openers");
 	mkdirSync(bin);
@@ -307,5 +311,18 @@ function fakeOpenersOn(home: string): string {
 		writeFileSync(join(bin, name), `#!/bin/sh\necho "$@" >> ${JSON.stringify(join(home, "launched"))}\n`);
 		chmodSync(join(bin, name), 0o755);
 	}
+	const stored = JSON.stringify(join(home, "stored"));
+	writeFileSync(
+		join(bin, "security"),
+		`#!/bin/sh
+set -eu
+op="$1"; shift
+if [ "$op" = "-i" ]; then IFS= read -r line; set -- $line; op="$1"; shift; fi
+password=""
+while [ "$#" -gt 0 ]; do case "$1" in -w) if [ "$#" -gt 1 ]; then password="$2"; shift 2; else shift; fi;; -a|-s) shift 2;; *) shift;; esac; done
+case "$op" in add-generic-password) printf '%s' "$password" > ${stored};; find-generic-password) [ -f ${stored} ] || exit 44; cat ${stored};; delete-generic-password) rm -f ${stored};; esac
+`,
+	);
+	chmodSync(join(bin, "security"), 0o755);
 	return bin;
 }
