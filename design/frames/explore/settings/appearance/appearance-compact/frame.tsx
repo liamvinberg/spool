@@ -1,5 +1,0 @@
-import { AppearancePrototype } from "shared/ui/explore/appearance/appearance";
-
-export default function AppearanceCompactFrame() {
-	return <AppearancePrototype layout="compact" />;
-}
