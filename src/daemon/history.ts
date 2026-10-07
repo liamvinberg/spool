@@ -647,6 +647,58 @@ export async function commitMoveIn(root: string, options: MoveCommitOptions = {}
 	return { kind: "failed" };
 }
 
+/** How many branches are asked about at once. */
+const BRANCH_LOOKS = 8;
+
+/**
+ * The branches a move would leave conflicting (DEV-236): local and remote-tracking branches not merged into HEAD
+ * whose changes since their merge base with it touch `design/`. Once the move commit takes `design/` out of git,
+ * merging one of these is a modify/delete conflict. Skipped: the current branch, symbolic refs such as
+ * `origin/HEAD`, and a remote-tracking branch that a listed local branch tracks. One `for-each-ref` and then one
+ * `diff` per unmerged branch, never per file. A project in no git work tree, or with no commit yet, names none.
+ */
+export async function branchesTouchingDesign(root: string): Promise<string[]> {
+	let designDir: string;
+	try {
+		designDir = realDesignDir(root);
+	} catch {
+		return [];
+	}
+	const top = await git(root, ["rev-parse", "--show-toplevel"]);
+	if (!top.ok) return [];
+	const repo = top.stdout.trim();
+	if (!(await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok) return [];
+	const scope = designPath(repo, designDir);
+	const refs = await git(repo, [
+		"for-each-ref",
+		"--no-merged=HEAD",
+		"--format=%(refname)%00%(symref)%00%(upstream)",
+		"refs/heads",
+		"refs/remotes",
+	]);
+	if (!refs.ok) return [];
+	const unmerged = refs.stdout
+		.split("\n")
+		.map((line) => line.split("\0"))
+		.filter(([ref, symref]) => ref !== undefined && ref !== "" && symref === "")
+		.map(([ref, , upstream]) => ({ ref: ref as string, upstream: upstream ?? "" }));
+	const touching: typeof unmerged = [];
+	for (let start = 0; start < unmerged.length; start += BRANCH_LOOKS) {
+		const batch = unmerged.slice(start, start + BRANCH_LOOKS);
+		const looked = await Promise.all(
+			batch.map(({ ref }) => git(repo, ["diff", "--name-only", `HEAD...${ref}`, "--", scope])),
+		);
+		batch.forEach((branch, index) => {
+			const diff = looked[index];
+			if (diff?.ok === true && diff.stdout.trim() !== "") touching.push(branch);
+		});
+	}
+	const tracked = new Set(touching.filter(({ ref }) => ref.startsWith("refs/heads/")).map(({ upstream }) => upstream));
+	return touching
+		.filter(({ ref }) => !tracked.has(ref))
+		.map(({ ref }) => ref.replace(/^refs\/(heads|remotes)\//u, ""));
+}
+
 /** The paths under `design/` the commit HEAD stands on tracks that `keep` keeps in git, as git spells them. */
 async function keptIn(
 	repo: string,

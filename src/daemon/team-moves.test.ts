@@ -329,6 +329,79 @@ describe("Move to team", () => {
 		expect(status(project.root)).toEqual([]);
 	});
 
+	it("names the branches whose design/ changes aren't merged yet, before it moves", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const daemon = makeApp(project.state, { cloud: cloud.machine("ana").cloud, teamNotice: () => {} });
+		const branches = async () =>
+			(await (
+				await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: project.root })}`)
+			).json()) as unknown;
+		expect(await branches()).toEqual({ branches: [] });
+
+		// a branch touching design/, one touching only code, one already merged, and the current branch's own work
+		git(project.root, "switch", "--quiet", "-c", "redesign");
+		writeFrame(project.root, "home", "export default () => <h1>New home</h1>;\n");
+		git(project.root, "commit", "--quiet", "-am", "redesign");
+		git(project.root, "switch", "--quiet", "-c", "code-only", "main");
+		writeFileSync(join(project.root, "README.md"), "# site, again\n");
+		git(project.root, "commit", "--quiet", "-am", "code");
+		git(project.root, "switch", "--quiet", "-c", "merged", "main");
+		writeFrame(project.root, "about", "export default () => <h1>About</h1>;\n");
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "about");
+		git(project.root, "switch", "--quiet", "main");
+		git(project.root, "merge", "--quiet", "--ff-only", "merged");
+		writeFrame(project.root, "main-only", "export default () => <h1>Main</h1>;\n");
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "main's own");
+		// a remote with the redesign branch, its HEAD pointing at main, and a branch only it has
+		git(project.root, "push", "--quiet", "pushed", "main", "redesign");
+		git(project.root, "switch", "--quiet", "-c", "theirs", "main~1");
+		writeFrame(project.root, "theirs", "export default () => <h1>Theirs</h1>;\n");
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "theirs");
+		git(project.root, "push", "--quiet", "pushed", "theirs");
+		git(project.root, "switch", "--quiet", "main");
+		git(project.root, "branch", "--quiet", "-D", "theirs");
+		git(project.root, "fetch", "--quiet", "pushed");
+		git(project.root, "branch", "--quiet", "--set-upstream-to=pushed/redesign", "redesign");
+		git(project.root, "remote", "set-head", "pushed", "main");
+
+		expect(await branches()).toEqual({ branches: ["redesign", "pushed/theirs"] });
+	});
+
+	it("reads design/ where the project sits in its repo, not at the repo's top", { timeout: 30_000 }, async () => {
+		const top = repo("monorepo");
+		const state = join(makeTempDir(), ".spool");
+		mkdirSync(join(top, "web"));
+		const { root } = initProject(join(top, "web"), state);
+		mkdirSync(join(top, "design"));
+		writeFileSync(join(top, "design", "logo.txt"), "logo\n");
+		git(top, "add", "-A");
+		git(top, "commit", "--quiet", "-m", "start");
+		git(top, "switch", "--quiet", "-c", "brand");
+		writeFileSync(join(top, "design", "logo.txt"), "new logo\n");
+		git(top, "commit", "--quiet", "-am", "brand");
+		git(top, "switch", "--quiet", "-c", "web-redesign", "main");
+		writeFrame(root, "home", "export default () => <h1>Home</h1>;\n");
+		git(top, "add", "-A");
+		git(top, "commit", "--quiet", "-m", "web");
+		git(top, "switch", "--quiet", "main");
+		const daemon = makeApp(state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
+		const asked = await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: root })}`);
+		expect(await asked.json()).toEqual({ branches: ["web-redesign"] });
+	});
+
+	it("names no branches for a project in no git repo", async () => {
+		const root = realpathSync(makeTempDir());
+		const state = join(makeTempDir(), ".spool");
+		initProject(root, state);
+		const daemon = makeApp(state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
+		const asked = await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: root })}`);
+		expect(await asked.json()).toEqual({ branches: [] });
+	});
+
 	it("carries a solo project's shares over to the team project, so links already sent keep working", {
 		timeout: 30_000,
 	}, async () => {

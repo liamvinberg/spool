@@ -1765,6 +1765,17 @@ export async function fetchMoveStays(path: string): Promise<{ path: string; why:
 	}
 }
 
+/** The branches whose design/ changes aren't merged yet, which would conflict once a move takes design/ out of git. */
+export async function fetchMoveBranches(path: string): Promise<string[]> {
+	try {
+		const response = await controlFetch(`/api/cloud/move/branches?${new URLSearchParams({ path })}`);
+		const body = (response.ok ? await response.json() : null) as { branches?: unknown } | null;
+		return Array.isArray(body?.branches) ? (body.branches as string[]) : [];
+	} catch {
+		return [];
+	}
+}
+
 /** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
 export async function fetchSyncState(project: string): Promise<SyncState | undefined> {
 	try {
