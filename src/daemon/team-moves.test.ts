@@ -600,7 +600,9 @@ describe("Move to team under the save limit", () => {
 		expect(slept.filter((ms) => ms >= 1_000)).toHaveLength(4);
 		const last = progress.at(-1);
 		expect(last).toEqual({ up: last?.total, total: cloud.paths("site").length, paused: null });
-		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe("this project took 120 saves in the last minute");
+		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe(
+			"this project took 120 saves in the last minute",
+		);
 		expect(progress.some((at) => at.up > 0 && at.up < at.total && at.paused === null)).toBe(true);
 	});
 

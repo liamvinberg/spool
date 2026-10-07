@@ -4,13 +4,7 @@ import { writeAtomic } from "./atomic-write";
 import { type CloudTeamProject, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { carrySharesOver } from "./daemon/shares";
-import {
-	staysOnThisMac,
-	SyncPaused,
-	syncLocalCopy,
-	travellingFiles,
-	unconfirmedFiles,
-} from "./daemon/team-sync";
+import { SyncPaused, staysOnThisMac, syncLocalCopy, travellingFiles, unconfirmedFiles } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
 import { chosenTeam, type TeamInitOptions, teamProjectRefusal } from "./init";
@@ -140,7 +134,8 @@ async function upload(root: string, spoolDir: string, link: ProjectLink, options
 			return;
 		} catch (error) {
 			if (!(error instanceof SyncPaused && WAITED_OUT.has(error.reason))) {
-				const why = error instanceof SyncPaused ? error.why : error instanceof Error ? error.message : String(error);
+				const why =
+					error instanceof SyncPaused ? error.why : error instanceof Error ? error.message : String(error);
 				const again = error instanceof SyncPaused ? "" : "; try again";
 				throw new SpoolError(`${name} didn't move: ${why}. Nothing changed here${again}.`);
 			}
