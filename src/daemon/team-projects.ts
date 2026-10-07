@@ -10,7 +10,7 @@ import { moveIntoTeam } from "../move-in";
 import { expandHome, realDir } from "../paths";
 import { readRegistry, teamProjects } from "../registry";
 import type { DaemonCloud } from "./app";
-import type { MoveCommit } from "./history";
+import { branchesTouchingDesign, type MoveCommit } from "./history";
 import { staysOnThisMac } from "./team-sync";
 
 /** A team project as Home's team page shows it: on this Mac already, or dimmed with "Get it". */
@@ -67,6 +67,16 @@ export function teamProjectRoutes(options: {
 				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/project" }, 400);
 				try {
 					return c.json({ stays: staysOnThisMac(realDir(path)) });
+				} catch (error) {
+					return refused(c, error);
+				}
+			})
+			/** The branches whose design/ changes aren't merged yet: the Move sheet says to merge them first. */
+			.get("/move/branches", async (c) => {
+				const path = c.req.query("path");
+				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/project" }, 400);
+				try {
+					return c.json({ branches: await branchesTouchingDesign(realDir(path)) });
 				} catch (error) {
 					return refused(c, error);
 				}
