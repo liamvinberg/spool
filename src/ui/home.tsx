@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HerePerson, ProjectCard } from "./api";
 import { cn } from "./cn";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
@@ -445,9 +445,36 @@ function ProjectTile({
 	onRemoveIcon?: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
+	const tileRef = useRef<HTMLElement>(null);
+	const menuRef = useRef<HTMLDivElement>(null);
+	const [menuAt, setMenuAt] = useState<MenuPlace | null>(null);
+	const closeMenu = useRef(onCloseMenu);
+	closeMenu.current = onCloseMenu;
+	// placed in the window rather than in the tile: Home scrolls, and a menu hanging below the last row would
+	// grow the scroll box under it instead of floating over the window
+	useLayoutEffect(() => {
+		if (!menuOpen) {
+			setMenuAt(null);
+			return;
+		}
+		const tile = tileRef.current;
+		const manage = manageRef.current;
+		const menu = menuRef.current;
+		if (tile === null || manage === null || menu === null) return;
+		setMenuAt(menuPlace(tile.getBoundingClientRect(), manage.getBoundingClientRect(), menu.offsetHeight));
+		// a scroll or resize moves the tile out from under the menu, so it closes rather than drift
+		const close = () => closeMenu.current();
+		window.addEventListener("resize", close);
+		window.addEventListener("scroll", close, true);
+		return () => {
+			window.removeEventListener("resize", close);
+			window.removeEventListener("scroll", close, true);
+		};
+	}, [menuOpen]);
 	const cover = project.covers[0];
 	return (
 		<article
+			ref={tileRef}
 			className={cn("pj-project-cover group/project relative min-w-0", menuOpen ? "z-20" : "")}
 			style={{ viewTransitionName: transitionName(project.root) }}
 		>
@@ -510,7 +537,15 @@ function ProjectTile({
 				<DotsIcon />
 			</button>
 			{menuOpen && (
-				<div className="absolute right-0 top-full z-20 flex w-[196px] animate-menu-in origin-top-right flex-col rounded-md border border-border-raised bg-raised p-unit">
+				<div
+					ref={menuRef}
+					className="fixed z-20 flex w-[196px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+					style={
+						menuAt === null
+							? { visibility: "hidden", top: 0, left: 0 }
+							: { top: menuAt.top, left: menuAt.left, transformOrigin: `right ${menuAt.up ? "bottom" : "top"}` }
+					}
+				>
 					<MenuItem
 						label="Open"
 						onClick={() => {
@@ -592,6 +627,29 @@ function ProjectTile({
 			)}
 		</article>
 	);
+}
+
+/** How close to the window's edge a cover's menu may sit before it opens upwards. */
+const MENU_MARGIN = 8;
+const MENU_WIDTH = 196;
+
+interface MenuPlace {
+	top: number;
+	left: number;
+	up: boolean;
+}
+
+/**
+ * Where a cover's menu lands in the window: under the tile, its right edge on the tile's, or above the manage button
+ * when it would run off the bottom.
+ */
+export function menuPlace(tile: DOMRect, manage: DOMRect, height: number): MenuPlace {
+	const up = tile.bottom + height > window.innerHeight - MENU_MARGIN && manage.top - 4 - height >= MENU_MARGIN;
+	return {
+		top: up ? manage.top - 4 - height : tile.bottom,
+		left: Math.max(MENU_MARGIN, Math.min(tile.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - MENU_MARGIN)),
+		up,
+	};
 }
 
 function NavigationButton({
