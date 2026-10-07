@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { HeadlessShell } from "../headless-shell";
+import { type HeadlessShell, HeadlessShellCannotRunError, missingLibrary } from "../headless-shell";
 import { makeApp, makeProject, makeTempDir, sseReader, writeFrame } from "../test-helpers";
 import {
 	type BoothDeps,
@@ -314,6 +314,39 @@ describe("the booth before any browser", () => {
 		expect(deps.failed).not.toHaveBeenCalled();
 	});
 
+	it("says a browser that keeps failing to start once, however often it tries again", async () => {
+		const { booth: made, deps } = booth({ timing: { relaunchAfterMs: 30 } });
+		made.enqueue(sitting("home", "edited"));
+		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalledTimes(4), { timeout: 2000 });
+		expect(deps.log).toHaveBeenCalledTimes(1);
+		expect(deps.log).toHaveBeenCalledWith("the photo booth could not start a browser: no browser in this test");
+	});
+
+	it("stops trying a browser this machine cannot run, says what to install once, and still lets a shot try", async () => {
+		const { booth: made, deps } = booth({
+			timing: { relaunchAfterMs: 30 },
+			launch: vi.fn<NonNullable<BoothDeps["launch"]>>(async () => {
+				throw new HeadlessShellCannotRunError("libatk-1.0.so.0");
+			}),
+		});
+		made.enqueue(sitting("home", "edited"));
+		await vi.waitFor(() => expect(deps.log).toHaveBeenCalled());
+		// a minute's wait changes nothing on a machine missing libraries: no retry of its own
+		await new Promise((done) => setTimeout(done, 200));
+		expect(deps.launch).toHaveBeenCalledTimes(1);
+		expect(deps.log).toHaveBeenCalledTimes(1);
+		const line = String(vi.mocked(deps.log).mock.calls[0]?.[0]);
+		expect(line).toMatch(/^the photo booth could not start a browser: this machine is missing libatk-1\.0\.so\.0/u);
+		expect(line).toMatch(/`npx playwright-core@[\d.]+ install-deps chromium-headless-shell`/u);
+		expect(deps.failed).not.toHaveBeenCalled();
+		// somebody asking for a shot is worth one more try, and hears why it failed
+		await expect(
+			made.shoot({ project: "shop", frame: "home", width: 10, height: 10, scale: 1, tiles: [{ y: 0, height: 10 }] }),
+		).rejects.toThrow("install-deps chromium-headless-shell");
+		expect(deps.launch).toHaveBeenCalledTimes(2);
+		expect(deps.log).toHaveBeenCalledTimes(1);
+	});
+
 	it("gives a browser that does not answer a deadline, tells the shot why, and ends it if it answers late", async () => {
 		let started: (shell: HeadlessShell) => void = () => {};
 		const { booth: made } = booth({
@@ -431,5 +464,18 @@ describe("two canvases in different schemes", () => {
 		await one("light");
 		await one("dark");
 		expect(await scheme()).toBe("dark");
+	});
+});
+
+describe("a headless shell this machine cannot run", () => {
+	it("is read from the loader's line in playwright's launch log", () => {
+		const log = [
+			"Protocol error (Browser.getVersion): Internal server error, session closed. Failed to launch browser.",
+			"[pid=1][err] /cache/chrome-headless-shell: error while loading shared libraries: libatk-1.0.so.0: cannot open shared object file: No such file or directory",
+		].join("\n");
+		expect(missingLibrary(log)).toBe("libatk-1.0.so.0");
+		expect(missingLibrary("Protocol error (Browser.getVersion): Internal server error, session closed.")).toBe(
+			undefined,
+		);
 	});
 });
