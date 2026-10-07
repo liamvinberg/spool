@@ -12,7 +12,7 @@ import {
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject, initTeamProject } from "../init";
-import { moveIntoTeam } from "../move-in";
+import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, until, writeFrame } from "../test-helpers";
@@ -559,5 +559,48 @@ describe("Move to team", () => {
 		expect(cloud.saves("site").filter((save) => save.by === "ben")).toEqual([]);
 		expect(cloud.file("site", "frames/home/frame.tsx")).toContain("Home");
 		expect(status(ben)).toEqual([]);
+	});
+});
+
+describe("Move to team under the save limit", () => {
+	/** An existing project with this many more frames than it started with, each one save. */
+	function bigProject(frames: number) {
+		const project = existingProject();
+		for (let at = 0; at < frames; at++) writeFrame(project.root, `f${at}`, `export default () => <p>${at}</p>;\n`);
+		return project;
+	}
+
+	it("waits out a cloud taking 120 saves a minute and moves 500 files in one go, saying how far it got", {
+		timeout: 60_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = bigProject(500);
+		let now = 0;
+		cloud.rateLimit(120, 60_000, () => now);
+		const slept: number[] = [];
+		const progress: MoveProgress[] = [];
+
+		const moved = await moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			wait: async (ms) => {
+				slept.push(ms);
+				now += ms;
+			},
+			onProgress: (at) => progress.push(at),
+		});
+
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(cloud.paths("site")).toContain("frames/f499/frame.tsx");
+		expect(cloud.paths("site").length).toBeGreaterThan(500);
+		// four waits of up to a minute: 120 files in each minute
+		expect(slept.filter((ms) => ms >= 1_000)).toHaveLength(4);
+		const last = progress.at(-1);
+		expect(last).toEqual({ up: last?.total, total: cloud.paths("site").length, paused: null });
+		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe("this project took 120 saves in the last minute");
+		expect(progress.some((at) => at.up > 0 && at.up < at.total && at.paused === null)).toBe(true);
 	});
 });

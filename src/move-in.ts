@@ -4,7 +4,13 @@ import { writeAtomic } from "./atomic-write";
 import { type CloudTeamProject, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { carrySharesOver } from "./daemon/shares";
-import { staysOnThisMac, syncLocalCopy, unconfirmedFiles } from "./daemon/team-sync";
+import {
+	staysOnThisMac,
+	SyncPaused,
+	syncLocalCopy,
+	travellingFiles,
+	unconfirmedFiles,
+} from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
 import { chosenTeam, type TeamInitOptions, teamProjectRefusal } from "./init";
@@ -32,11 +38,24 @@ import {
  * remembered in `design/.spool/move-commit.json`, and the daemon makes the commit at its next start.
  */
 export interface MoveOptions extends TeamInitOptions {
-	/** Sleep between looks at a repo git is busy merging or rebasing in. */
+	/** Sleep out a sync pause, and between looks at a repo git is busy merging or rebasing in. */
 	wait?: (ms: number) => Promise<void>;
-	/** The daemon is closing: the commit stops waiting, and is made at its next start. */
+	/** The daemon is closing: a move waiting out a pause stops, and the commit is made at its next start. */
 	signal?: AbortSignal;
+	/** How far the upload has got, said as it goes. */
+	onProgress?: (progress: MoveProgress) => void;
 }
+
+/** How far a move's upload has got: files the team has confirmed of all that go, and a pause it is waiting out. */
+export interface MoveProgress {
+	up: number;
+	total: number;
+	/** Why spool.page isn't taking saves, and when (ms since the epoch) it may again. */
+	paused: { why: string; until: number } | null;
+}
+
+/** Limits that lift by themselves: a move waits them out. Any other stops it. */
+const WAITED_OUT = new Set(["rate_limited", "unavailable"]);
 
 export interface Moved {
 	root: string;
@@ -73,11 +92,7 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 		return made;
 	}
 
-	try {
-		await syncLocalCopy(root, spoolDir, { ...options, moving: link });
-	} catch {
-		throw new SpoolError(`spool.page couldn't take ${basename(root)} just now. Nothing changed here; try again.`);
-	}
+	await upload(root, spoolDir, link, options);
 	const missing = unconfirmedFiles(root, link);
 	if (missing.length > 0)
 		throw new SpoolError(
@@ -99,6 +114,58 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	// the registry's change is what sets the daemon following the new local copy
 	registerProject(spoolDir, root);
 	return { root, link, commit: commitMove(root, options) };
+}
+
+/**
+ * Everything in design/ that travels goes up, a limit that lifts by itself waited out as often as it comes, so a
+ * project bigger than a minute's saves moves in one go. Each round picks up where the last stopped, from what the
+ * copy's record says the team has. Any other stop names its cause, and nothing here has changed.
+ */
+async function upload(root: string, spoolDir: string, link: ProjectLink, options: MoveOptions): Promise<void> {
+	const name = basename(root);
+	const total = travellingFiles(root).length;
+	const say = (paused: MoveProgress["paused"] = null) => options.onProgress?.({ up, total, paused });
+	let up = total - unconfirmedFiles(root, link).length;
+	say();
+	for (;;) {
+		try {
+			await syncLocalCopy(root, spoolDir, {
+				...options,
+				moving: link,
+				onSaved: () => {
+					up = Math.min(total, up + 1);
+					say();
+				},
+			});
+			return;
+		} catch (error) {
+			if (!(error instanceof SyncPaused && WAITED_OUT.has(error.reason))) {
+				const why = error instanceof SyncPaused ? error.why : error instanceof Error ? error.message : String(error);
+				const again = error instanceof SyncPaused ? "" : "; try again";
+				throw new SpoolError(`${name} didn't move: ${why}. Nothing changed here${again}.`);
+			}
+			say({ why: error.why, until: Date.now() + error.seconds * 1_000 });
+			await sleep(error.seconds * 1_000, options);
+			if (options.signal?.aborted === true)
+				throw new SpoolError(`spool closed before ${name} moved. Nothing changed here; move it again.`);
+			up = total - unconfirmedFiles(root, link).length;
+			say();
+		}
+	}
+}
+
+/** A pause slept out, cut short when the daemon closes. */
+function sleep(ms: number, options: Pick<MoveOptions, "wait" | "signal">): Promise<void> {
+	if (options.wait !== undefined) return options.wait(ms);
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			options.signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		options.signal?.addEventListener("abort", done, { once: true });
+	});
 }
 
 /** Where a move whose commit hasn't been made yet says so. */

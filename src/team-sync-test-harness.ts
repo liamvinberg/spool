@@ -82,6 +82,18 @@ export function fakeTeam(team = "devosurf") {
 	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
 	const project = (name: string) => projects.get(name);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
+	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
+	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
+	/** Whether the rate lets one more save through now; when it doesn't, the seconds until it may. */
+	const overRate = (): number | undefined => {
+		if (rate === undefined) return undefined;
+		if (rate.now() >= rate.start + rate.windowMs) Object.assign(rate, { start: rate.now(), taken: 0 });
+		if (rate.taken < rate.saves) {
+			rate.taken++;
+			return undefined;
+		}
+		return Math.max(1, Math.ceil((rate.start + rate.windowMs - rate.now()) / 1_000));
+	};
 	const edits = (person: Person) => person.role === "admin" || person.role === "editor";
 	const sockets = () => [...projects.values()].flatMap((each) => [...each.sockets]);
 
@@ -216,6 +228,7 @@ export function fakeTeam(team = "devosurf") {
 			deleted: boolean;
 		};
 		const current = at.files.get(path);
+		let wait: number | undefined;
 		const refuse = (reason: string, retryAfter?: number) =>
 			from.deliver(
 				encodeFrame({ type: "refused", ref, path, reason, ...(retryAfter === undefined ? {} : { retryAfter }) }),
@@ -226,6 +239,7 @@ export function fakeTeam(team = "devosurf") {
 		} else if (!travels(path)) refuse("outside_layout");
 		else if ((bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) refuse("too_large");
 		else if (limited !== undefined) refuse(limited.reason, limited.retryAfter);
+		else if ((wait = overRate()) !== undefined) refuse("rate_limited", wait);
 		else if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
 			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
 		else apply(at, from, { ref, path, base, deleted }, current, bytes);
@@ -451,6 +465,10 @@ export function fakeTeam(team = "devosurf") {
 		},
 		lift() {
 			limited = undefined;
+		},
+		/** At most `saves` saves are taken in each window of `now`, and the rest refused as rate_limited. */
+		rateLimit(saves: number, windowMs: number, now: () => number) {
+			rate = { saves, windowMs, now, start: now(), taken: 0 };
 		},
 		/** Every connection to a project dropped at once, as a network going away. */
 		disconnect(name: string) {

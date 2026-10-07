@@ -88,6 +88,8 @@ export interface LocalCopyOptions {
 	onMarks?: () => void;
 	/** Sync paused on a limit, or the pause lifted: `state().paused` says which. */
 	onPaused?: () => void;
+	/** The team took one of this copy's saves. */
+	onSaved?: (path: string) => void;
 	/** Another person on this team canvas moved, arrived or left (`state` null). */
 	onPresence?: (presence: Presence) => void;
 	/** Asked when spool.page refused or cut the connection: does this machine still edit the project? */
@@ -139,6 +141,20 @@ const LIMITS: Record<Limited, string> = {
 	monthly_limit: `you've made ${SAVES_PER_MONTH.toLocaleString("en")} saves to this project this month`,
 	unavailable: "spool.page couldn't check saves just now",
 };
+/**
+ * A one-off sync stopped on a limit: which one, how sync says it, and how long until spool.page may take saves
+ * again. A move waits out the ones that lift by themselves.
+ */
+export class SyncPaused extends SpoolError {
+	constructor(
+		readonly reason: Limited,
+		readonly why: string,
+		readonly seconds: number,
+	) {
+		super(`sync paused: ${why}`);
+	}
+}
+
 /** How long a pause lasts when spool.page can't say when its limit lifts. */
 const RETRY_LIMIT_SECONDS = 60;
 /** How long the copy's record waits for more changes before it is written: a catch-up of many files is one write. */
@@ -168,6 +184,8 @@ export interface SyncOnceOptions {
 	request?: CloudRequestOptions;
 	openSocket?: OpenSyncSocket;
 	moving?: ProjectLink;
+	/** The team took one of this copy's saves: how a move counts its files up. */
+	onSaved?: (path: string) => void;
 }
 
 /**
@@ -183,6 +201,7 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 			vault: options.request?.vault ?? sessionVault(spoolDir, options.origin),
 			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
 			...(options.moving === undefined ? {} : { moving: options.moving }),
+			...(options.onSaved === undefined ? {} : { onSaved: options.onSaved }),
 			notice: () => {},
 		},
 		false,
@@ -345,7 +364,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			wake();
 		}, seconds * 1_000);
 		resume.unref?.();
-		if (!live) fail(new SpoolError(`sync paused: ${why}`));
+		if (!live) fail(new SyncPaused(reason, why, seconds));
 	};
 
 	const signedOut = () => {
@@ -597,6 +616,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (message.type === "saved" && typeof message.version === "number") {
 				state.files[sent.path] = { version: message.version, hash: sent.hash };
 				persistSoon();
+				options.onSaved?.(sent.path);
 				// this copy's own save of a marked file reached the team, and is the answer to the mark
 				if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();
 				if (paused !== undefined && !isPaused()) {
@@ -1054,12 +1074,16 @@ export function staysOnThisMac(root: string): { path: string; why: string }[] {
 export function unconfirmedFiles(root: string, link: ProjectLink): string[] {
 	const designDir = realDesignDir(root);
 	const { files } = readState(join(designDir, ".spool", "sync.json"), link.url);
+	return travellingFiles(root).filter(
+		(path) => files[path]?.hash !== digest(readFileSync(join(designDir, ...path.split("/")))),
+	);
+}
+
+/** Every file on disk in a project's `design/` that goes to its team, design-relative: what a move uploads. */
+export function travellingFiles(root: string): string[] {
+	const designDir = realDesignDir(root);
 	return filesUnder(designDir, "")
-		.filter(
-			(path) =>
-				whyStays(designDir, path) === undefined &&
-				files[path]?.hash !== digest(readFileSync(join(designDir, ...path.split("/")))),
-		)
+		.filter((path) => whyStays(designDir, path) === undefined)
 		.sort();
 }
 
