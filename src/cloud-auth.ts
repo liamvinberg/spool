@@ -51,6 +51,17 @@ export class CloudSignedOut extends SpoolError {
 	readonly code = "signed_out";
 }
 
+/** Signed in, but the account is not yet approved to publish websites. Teams need no such approval. */
+export class CloudNotApproved extends SpoolError {
+	readonly code = "not_approved";
+	readonly retryable = false;
+	constructor() {
+		super(
+			"this account is not approved to publish websites yet: publishing is an invite-only beta, and teams on spool.page work without it",
+		);
+	}
+}
+
 export class CloudRequestFailure extends SpoolError {
 	readonly code = "transport_interrupted";
 	readonly retryable = true;
@@ -392,7 +403,7 @@ export async function account(spoolDir: string, options: CloudRequestOptions = {
 export async function session(spoolDir: string, options: CloudRequestOptions = {}): Promise<CloudSession> {
 	const response = await authorizedCloudRequest(spoolDir, "/auth/publisher/session", {}, options);
 	const body = await responseJson(response);
-	if (response.status === 403) throw new SpoolError("this account is not approved to publish");
+	if (response.status === 403) throw new CloudNotApproved();
 	if (!response.ok || typeof body.publisherId !== "string" || typeof body.sessionId !== "string")
 		throw new SpoolError("Cloud sign-in expired or was revoked; run `spool login` again");
 	return { publisherId: body.publisherId, sessionId: body.sessionId };
