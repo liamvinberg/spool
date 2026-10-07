@@ -78,6 +78,7 @@ const topics: Record<string, () => string> = {
   shared/importmap.json      URL imports for libraries (below)
   shared/scenarios/*.json    named seeds (topic: scenarios)
   shared/assets/             images and fonts more than one frame uses (below)
+  shared/icon.*              the project's icon on its tab and on Home: one icon.svg, .png, .webp or .jpg
   AGENTS.md, CLAUDE.md       init's signposts pointing here; .gitignore covers .spool/
   canvas.json, .spool/       app-owned — never write these
 
