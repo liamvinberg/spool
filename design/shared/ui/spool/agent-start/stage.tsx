@@ -106,7 +106,7 @@ export function Backdrop({
 }) {
 	return (
 		<>
-			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={empty ? "100%" : "60%"}>
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 				<CanvasChrome
 					pages={empty ? [] : [{ name: "app", frames: ["menu", "cart"], active: true, open: true }]}
 					rail={rail}

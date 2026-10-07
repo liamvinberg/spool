@@ -34,7 +34,7 @@ export function ShareCanvas({
 	menu?: ReactNode;
 }) {
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="72%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome pages={PAGES} selected="cart" tool="select">
 				<CanvasFrame left={25} top={130} screen="menu" />
 				<CanvasFrame left={325} top={170} screen="cart" selected shared={shared} />
