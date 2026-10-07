@@ -30,7 +30,7 @@ import { UnseenMark } from "../canvas/unseen-mark";
 import { useFollow, usePresenceSender } from "../canvas/use-presence";
 import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
-import { ChevronIcon, FolderIcon, FrameIcon, RibbonMark } from "../icons";
+import { ChevronIcon, FolderIcon, FrameIcon } from "../icons";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { Navigator, type NavigatorToast } from "./navigator";
@@ -63,7 +63,6 @@ import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
 export function Viewer({ config }: { config: ViewerConfig }) {
 	// undefined while it is being read, null when there is no project to read
 	const [project, setProject] = useState<ViewerProject | null | undefined>(undefined);
-	const [looking, setLooking] = useState(false);
 	const [phone] = useState(onPhone);
 	useEffect(() => {
 		let live = true;
@@ -79,89 +78,7 @@ export function Viewer({ config }: { config: ViewerConfig }) {
 	if (project === null) return <Quiet>This project isn’t here</Quiet>;
 	// a phone gets no spatial canvas: a shared link plays, and a team canvas is a navigator
 	if (phone && project.shared !== undefined) return <SharedLink config={config} project={project} />;
-	if (!looking && knocks(config, project))
-		return (
-			<Knock
-				project={project}
-				onLook={() => {
-					window.sessionStorage.setItem(lookKey(config), "1");
-					setLooking(true);
-				}}
-			/>
-		);
 	return <LiveCanvas config={config} first={project} phone={phone} />;
-}
-
-/**
- * Whether the link knocks on spool on this Mac first: for an editor or admin on a computer, once per tab. A
- * viewer has no spool to hand over to, a phone has no Mac, and whoever chose to look in the browser stays.
- */
-function knocks(config: ViewerConfig, project: ViewerProject): boolean {
-	if (!edits(project.role)) return false;
-	if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return false;
-	return window.sessionStorage.getItem(lookKey(config)) !== "1";
-}
-
-const lookKey = (config: ViewerConfig) => `spool-viewer:look:${config.path}`;
-
-/** How often the knock is made again while nobody answers, the beat local.spool.page listens on. */
-const KNOCK_BEAT_MS = 2000;
-
-/**
- * The link knocking on spool on this Mac, as local.spool.page does, and handing over the moment it answers.
- * Looking in the browser is there from the first moment, for whoever would rather, has no spool, or has it shut.
- */
-function Knock({ project, onLook }: { project: ViewerProject; onLook: () => void }) {
-	const [answered, setAnswered] = useState<boolean | undefined>(undefined);
-	useEffect(() => {
-		let stopped = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const cycle = async () => {
-			const there = await knock();
-			if (stopped) return;
-			setAnswered(there);
-			if (there && project.team !== null)
-				window.location.replace(handoverAddress({ team: project.team.address, project: project.project }));
-			else timer = setTimeout(() => void cycle(), KNOCK_BEAT_MS);
-		};
-		void cycle();
-		return () => {
-			stopped = true;
-			clearTimeout(timer);
-		};
-	}, [project]);
-	return (
-		<div className="relative flex h-dvh flex-col items-center justify-center bg-bg pb-[60px] text-text">
-			<span className="relative grid h-[72px] w-[72px] place-items-center">
-				<span className="absolute inset-0 animate-ping rounded-full border border-thread opacity-30 [animation-duration:2.4s]" />
-				<RibbonMark className="h-[36px] w-[27px]" />
-			</span>
-			<h1 className="mt-[34px] type-heading">
-				{answered === false ? "spool isn’t open on this Mac" : `Opening ${project.project} in spool`}
-			</h1>
-			<p className="mt-[10px] text-muted type-control">
-				{answered === false
-					? "Open spool and this page hands over by itself."
-					: `${project.team?.name ?? project.project}’s project, on this Mac.`}
-			</p>
-			<div className="mt-[44px] flex items-center gap-[18px] text-muted type-control">
-				<button type="button" className="hover:text-text" onClick={onLook}>
-					{answered === false ? "Look in the browser" : "Look in the browser instead"}
-				</button>
-				{project.download !== undefined && (
-					<>
-						<span className="h-[14px] w-px bg-border-raised" />
-						<a className="hover:text-text" href={project.download}>
-							Get spool
-						</a>
-					</>
-				)}
-			</div>
-			<p className="absolute bottom-[28px] text-muted type-detail">
-				{project.account} · {project.team?.address}
-			</p>
-		</div>
-	);
 }
 
 /** How long a burst of saves is let land before the canvas reads the project again. */
@@ -771,11 +688,29 @@ function useDocuments(src: string | null, revision: number) {
 }
 
 /**
- * Open in spool, for an editor or admin: the same knock the link makes, then over to spool on this Mac. With
- * spool shut it says so, and the canvas stays.
+ * Open in spool, for an editor or admin on a computer whose spool answers: the link itself always stays in the
+ * browser, and the button is there only where it can hand over. It asks again whenever the tab comes back into
+ * view, so spool opened after the page still offers it.
  */
 function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: (message: string) => void }) {
+	const [there, setThere] = useState(false);
 	const [knocking, setKnocking] = useState(false);
+	useEffect(() => {
+		if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return;
+		let live = true;
+		const ask = () => void knock().then((answered) => live && setThere(answered));
+		const visible = () => document.visibilityState === "visible" && ask();
+		ask();
+		window.addEventListener("focus", ask);
+		document.addEventListener("visibilitychange", visible);
+		return () => {
+			live = false;
+			window.removeEventListener("focus", ask);
+			document.removeEventListener("visibilitychange", visible);
+		};
+	}, []);
+	if (!there || project.team === null) return null;
+	const team = project.team;
 	return (
 		<button
 			type="button"
@@ -783,11 +718,13 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 			className="flex h-8 cursor-pointer items-center rounded-sm border border-border-raised bg-bg px-3 text-text transition-colors hover:bg-surface active:scale-[0.97] type-control"
 			onClick={async () => {
 				setKnocking(true);
-				const there = await knock();
+				const answered = await knock();
 				setKnocking(false);
-				if (there && project.team !== null)
-					window.location.assign(handoverAddress({ team: project.team.address, project: project.project }));
-				else onNotice("spool isn’t open on this Mac");
+				if (answered) window.location.assign(handoverAddress({ team: team.address, project: project.project }));
+				else {
+					setThere(false);
+					onNotice("spool isn’t open on this Mac");
+				}
 			}}
 		>
 			Open in spool

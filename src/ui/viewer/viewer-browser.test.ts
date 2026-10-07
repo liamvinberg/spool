@@ -45,7 +45,6 @@ const editor: ViewerProject = {
 	covers: { home: "/covers/home" },
 	download: "https://spool.test/Spool.dmg",
 };
-const SHOW_CANVAS = { "spool-viewer:look:/devosurf/checkout": "1" };
 /** The same project as an outsider sees it: the one page shared with them, as it last settled, and one line. */
 const outsider: ViewerProject = {
 	team: { address: "devosurf", name: "Devosurf", logo: null },
@@ -392,37 +391,31 @@ describe("the read-only canvas", () => {
 	});
 
 	it("offers Open in spool to editors only, and shows covers until a frame draws", { timeout: 60_000 }, async () => {
-		const viewer = await open();
+		const viewer = await open(PATH, { spool: true });
+		await viewer.page.waitForTimeout(300);
 		expect(await viewer.page.getByRole("button", { name: "Open in spool" }).count()).toBe(0);
 
-		const { page, requests } = await open(PATH, { as: editor, session: SHOW_CANVAS });
+		const { page, requests } = await open(PATH, { as: editor });
 		await expect
 			.poll(() => page.locator('[data-viewer-frame="home"] [data-viewer-cover]').getAttribute("src"))
 			.toBe("/covers/home");
 		expect(await page.getByText("view only").count()).toBe(0);
-		// spool is shut on this Mac: it says so, and the canvas stays
-		await page.getByRole("button", { name: "Open in spool" }).click();
-		await page.getByRole("status").getByText("spool isn’t open on this Mac").waitFor();
+		// spool is shut on this Mac: there is nothing to hand over to, so nothing offers it
+		await page.waitForTimeout(300);
+		expect(await page.getByRole("button", { name: "Open in spool" }).count()).toBe(0);
 		expect(new URL(page.url()).origin).toBe(APP);
 		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
 	});
 
-	it("knocks on spool on this Mac for an editor, hands over when it answers, and offers the browser otherwise", {
+	it("stays in the browser for an editor whose spool answers, and hands over only when asked", {
 		timeout: 60_000,
 	}, async () => {
-		const running = await open(`${PATH}/shop`, { as: editor, spool: true, ready: false });
-		await running.page.waitForURL("http://127.0.0.1:7766/?open=devosurf%2Fcheckout");
-		await running.page.getByText("spool on this Mac").waitFor();
-
-		const { page, requests } = await open(PATH, { as: editor, ready: false });
-		await page.getByRole("heading", { name: "spool isn’t open on this Mac" }).waitFor();
-		expect(await page.getByRole("link", { name: "Get spool" }).getAttribute("href")).toBe(editor.download);
-		await page.getByRole("button", { name: "Look in the browser" }).click();
-		await page.getByRole("navigation", { name: "Pages" }).waitFor();
-		// this tab looks in the browser from now on
-		await page.reload();
-		await page.getByRole("navigation", { name: "Pages" }).waitFor();
-		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+		const { page } = await open(`${PATH}/shop`, { as: editor, spool: true });
+		await page.getByRole("button", { name: "Open in spool" }).waitFor();
+		expect(new URL(page.url()).origin).toBe(APP);
+		await page.getByRole("button", { name: "Open in spool" }).click();
+		await page.waitForURL("http://127.0.0.1:7766/?open=devosurf%2Fcheckout");
+		await page.getByText("spool on this Mac").waitFor();
 	});
 
 	it("shows an outsider only the pages shared with them, one line, and nobody", { timeout: 60_000 }, async () => {
@@ -531,7 +524,7 @@ describe("the read-only canvas", () => {
 		expect(await read.getByText(/Copy link|Stop sharing/u).count()).toBe(0);
 		expect(viewer.requests.filter((request) => request.method !== "GET")).toEqual([]);
 
-		const { page, requests } = await open(PATH, { as: { ...editor, shares: "/api/shares" }, session: SHOW_CANVAS });
+		const { page, requests } = await open(PATH, { as: { ...editor, shares: "/api/shares" } });
 		await page.getByRole("button", { name: /^Shared/u }).click();
 		const shared = page.getByRole("dialog", { name: "Shared" });
 		await shared.getByRole("button", { name: /kim and ola/u }).click();
