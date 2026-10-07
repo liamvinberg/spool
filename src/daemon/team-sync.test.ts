@@ -999,8 +999,30 @@ async function syncState(daemon: ReturnType<typeof makeApp>, project = "checkout
 describe("a limit", () => {
 	it("pauses sync with the reason, keeps changes on this machine, and resumes when it lifts", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
+		// every page hears a pause and its lifting, so a tab's team mark can go hollow and fill again
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await ana.daemon.request("/api/events", { signal: controller.signal }));
+		const nextSync = async () => {
+			for (;;) {
+				const event = await events.next(5_000);
+				if ((event.data as { kind?: string }).kind === "sync") return event.data;
+			}
+		};
+		const card = async () => {
+			const { projects } = (await (await ana.daemon.request("/api/projects")).json()) as {
+				projects: { root: string; syncPaused?: string }[];
+			};
+			return projects.find((project) => project.root === ana.root);
+		};
 		cloud.limit("rate_limited", 1);
 		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		expect(await nextSync()).toEqual({
+			kind: "sync",
+			root: ana.root,
+			paused: "this project took 120 saves in the last minute",
+		});
+		expect((await card())?.syncPaused).toBe("this project took 120 saves in the last minute");
 		await until(() =>
 			said.ana.includes(
 				"Sync paused: this project took 120 saves in the last minute. Changes stay on this Mac until it lifts.",
@@ -1022,6 +1044,8 @@ describe("a limit", () => {
 		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 5_000);
 		await until(() => said.ana.includes("Sync resumed."));
 		expect(await syncState(ana.daemon)).toEqual({ ended: null, paused: null, held: [] });
+		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: null });
+		expect((await card())?.syncPaused).toBeUndefined();
 	});
 });
 

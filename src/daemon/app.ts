@@ -897,6 +897,8 @@ export function createDaemonApp({
 			if (root !== undefined) hub.publish(root, { kind: "sync", message });
 		},
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
+		// a pause hollows the copy's team mark on its tab and its cover, and a resume fills it again
+		onSyncChanged: (root) => emitAppEvent({ kind: "sync", root, paused: teamSync.state(root).paused }),
 	});
 	teamSync.keeping(registeredRoots());
 	// DEV-190: a project a teammate moved into the team arrives here with the move commit's pull, and is refilled
@@ -1863,6 +1865,7 @@ export function createDaemonApp({
 				readRegistry(spoolDir).projects.map(async (project) => {
 					const link = followedLink(project.root);
 					const ended = endedWith(project.root);
+					const paused = link === undefined ? null : teamSync.state(project.root).paused;
 					const [summary, icon] = await Promise.all([
 						summarizeProject(project.root),
 						findProjectIcon(project.root),
@@ -1874,6 +1877,7 @@ export function createDaemonApp({
 						...(link === undefined ? {} : { team: { url: link.url, team: link.team, project: link.project } }),
 						...(ended === undefined ? {} : { ended }),
 						...(icon === undefined ? {} : { icon }),
+						...(paused === null ? {} : { syncPaused: paused }),
 						...summary,
 					};
 				}),

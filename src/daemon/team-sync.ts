@@ -86,6 +86,8 @@ export interface LocalCopyOptions {
 	notice?: (message: string) => void;
 	/** This copy's set-aside marks changed: one of its saves lost a collision, or a mark went. */
 	onMarks?: () => void;
+	/** Sync paused on a limit, or the pause lifted: `state().paused` says which. */
+	onPaused?: () => void;
 	/** Another person on this team canvas moved, arrived or left (`state` null). */
 	onPresence?: (presence: Presence) => void;
 	/** Asked when spool.page refused or cut the connection: does this machine still edit the project? */
@@ -328,12 +330,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** A limit was reached: nothing more is sent until it may have lifted, then everything waiting is tried. */
 	const pause = (reason: Limited, retryAfter: unknown) => {
 		const why = LIMITS[reason];
+		const was = isPaused();
 		if (paused?.why !== why) notice(`Sync paused: ${why}. Changes stay on this Mac until it lifts.`);
 		const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : RETRY_LIMIT_SECONDS;
+		const said = paused?.why;
 		paused = { why, until: Date.now() + seconds * 1_000 };
+		if (!was || said !== why) options.onPaused?.();
 		if (resume !== undefined) clearTimeout(resume);
 		resume = setTimeout(() => {
 			resume = undefined;
+			// the limit may have lifted: the pause is over as far as anyone looking can tell, until a save says not
+			options.onPaused?.();
 			if (caughtUp) checkEverything();
 			wake();
 		}, seconds * 1_000);
@@ -595,6 +602,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				if (paused !== undefined && !isPaused()) {
 					paused = undefined;
 					notice("Sync resumed.");
+					options.onPaused?.();
 				}
 			}
 			if (message.type === "set-aside") {
@@ -801,6 +809,8 @@ export function createTeamSync(deps: {
 	notice?: (message: string, root?: string) => void;
 	/** A local copy's set-aside marks changed. */
 	onMarks?: (root: string) => void;
+	/** A local copy's sync paused on a limit, or the pause lifted. */
+	onSyncChanged?: (root: string) => void;
 }) {
 	const copies = new Map<string, LocalCopy>();
 	/** Who listens for presence on each root's canvas. */
@@ -862,6 +872,7 @@ export function createTeamSync(deps: {
 							standing: standing(link, origin, vault),
 							ended: () => end(root, link),
 							...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
+							...(deps.onSyncChanged === undefined ? {} : { onPaused: () => deps.onSyncChanged?.(root) }),
 							onPresence: (presence) => {
 								for (const watcher of watchers.get(root) ?? []) watcher(presence);
 							},

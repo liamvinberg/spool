@@ -474,6 +474,8 @@ export interface ProjectCard extends ProjectSummary {
 	ended?: string;
 	/** What its tab and its cover draw: its icon file or its repo's favicon; absent, the name's first letter. */
 	icon?: ProjectIcon;
+	/** A team project's local copy whose sync is paused on a limit, and why: its team mark goes hollow. */
+	syncPaused?: string;
 }
 
 /**

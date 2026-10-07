@@ -28,6 +28,8 @@ export type AppEvent =
 	| { kind: "account" }
 	/** a project's icon changed on disk: its card takes this one (null for none), with no reread of the list */
 	| { kind: "icon"; root: string; icon: ProjectIcon | null }
+	/** a team project's local copy paused or resumed its sync: its card takes the reason, null once it lifts */
+	| { kind: "sync"; root: string; paused: string | null }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.
