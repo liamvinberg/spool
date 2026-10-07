@@ -78,6 +78,8 @@ export function fakeTeam(team = "devosurf") {
 	const projects = new Map<string, Project>();
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
+	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
+	let refusing: number | undefined;
 	/** Solo projects whose shares moved into a team project, as spool.page was asked. */
 	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
 	const project = (name: string) => projects.get(name);
@@ -382,6 +384,7 @@ export function fakeTeam(team = "devosurf") {
 			// refused at the handshake, as the Worker refuses: no code reaches the daemon
 			if (person === undefined || person.revoked || at === undefined || !edits(person) || away.has(person.accountId))
 				connected.close();
+			else if (refusing !== undefined) connected.close(refusing);
 			else {
 				at.sockets.add(connected);
 				later(() => events.open());
@@ -467,6 +470,13 @@ export function fakeTeam(team = "devosurf") {
 		},
 		lift() {
 			limited = undefined;
+		},
+		/** Every sync connection is closed as it opens, with `code`, until the returned undo. */
+		refuseSync(code: number) {
+			refusing = code;
+			return () => {
+				refusing = undefined;
+			};
 		},
 		/** At most `saves` saves are taken in each window of `now`, and the rest refused as rate_limited. */
 		rateLimit(saves: number, windowMs: number, now: () => number) {
