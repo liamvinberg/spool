@@ -10,7 +10,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject, initTeamProject } from "../init";
 import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
@@ -608,14 +608,20 @@ describe("Move to team under the save limit", () => {
 
 	for (const [reason, said] of [
 		["project_full", "site didn't move: the team's design/ is at its 1 GB limit. Nothing changed here."],
-		["monthly_limit", "site didn't move: you've made 30,000 saves to this project this month. Nothing changed here."],
+		[
+			"monthly_limit",
+			"site didn't move: you've made 30,000 saves to this project this month. Nothing changed here.",
+		],
 	] as const)
 		it(`stops on ${reason} and says so, changing nothing here`, { timeout: 30_000 }, async () => {
+			vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-05-20T12:00:00Z") });
+			onTestFinished(() => void vi.useRealTimers());
 			const cloud = fakeTeam();
 			const ana = cloud.machine("ana");
 			const project = existingProject();
 			const before = git(project.root, "rev-parse", "HEAD");
-			cloud.limit(reason, 3_600);
+			// a month's saves lift at the turn of the month, twelve days on
+			cloud.limit(reason, 12 * 86_400);
 			const slept: number[] = [];
 
 			await expect(
@@ -662,5 +668,123 @@ describe("Move to team under the save limit", () => {
 
 		expect((await moving).status).toBe(200);
 		expect(await progress()).toBeNull();
+	});
+
+	/** Ana's move of a project, against this cloud, with these options on top. */
+	const moveAs = (
+		cloud: ReturnType<typeof fakeTeam>,
+		project: ReturnType<typeof existingProject>,
+		options: Partial<Parameters<typeof moveIntoTeam>[2]> = {},
+	) => {
+		const ana = cloud.machine("ana");
+		return moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			...options,
+		});
+	};
+	/** Nothing here changed: no spool.json, no commit. */
+	const unchanged = (project: ReturnType<typeof existingProject>, before: string) => {
+		expect(existsSync(join(project.root, "spool.json"))).toBe(false);
+		expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
+	};
+
+	it("waits out spool.page saying it can't check saves", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		cloud.limit("unavailable", 2);
+		const slept: number[] = [];
+		const moved = await moveAs(cloud, project, {
+			wait: async (ms) => {
+				slept.push(ms);
+				cloud.lift();
+			},
+		});
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(slept).toEqual([2_000]);
+	});
+
+	it("waits out spool.page closing the sync connection as unavailable, a little longer each time", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const undo = cloud.refuseSync(1011);
+		const slept: number[] = [];
+		const progress: MoveProgress[] = [];
+		const moved = await moveAs(cloud, project, {
+			wait: async (ms) => {
+				slept.push(ms);
+				if (slept.length === 3) undo();
+			},
+			onProgress: (at) => progress.push(at),
+		});
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(slept).toEqual([2_000, 4_000, 8_000]);
+		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe("spool.page is unavailable");
+	});
+
+	it("waits out a dropped connection, and gives up after ten tries in a row that get nothing up", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		cloud.offline("ana");
+		const slept: number[] = [];
+		await expect(moveAs(cloud, project, { wait: async (ms) => void slept.push(ms) })).rejects.toThrow(
+			"site didn't move: the connection to spool.page dropped. Nothing changed here; try again.",
+		);
+		expect(slept).toHaveLength(9);
+		expect(Math.max(...slept)).toBeLessThanOrEqual(30_000);
+		unchanged(project, before);
+	});
+
+	it("says a move stopped because this Mac was signed out", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = bigProject(20);
+		const before = git(project.root, "rev-parse", "HEAD");
+		let revoked = false;
+		await expect(
+			moveAs(cloud, project, {
+				wait: async () => {},
+				onProgress: (at) => {
+					if (at.up > 0 && !revoked) {
+						revoked = true;
+						cloud.revoke("ana");
+					}
+				},
+			}),
+		).rejects.toThrow("site didn't move: not signed in; run `spool login`. Nothing changed here.");
+		unchanged(project, before);
+	});
+
+	it("stops waiting when spool closes, even when it closed before the wait began", { timeout: 10_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		cloud.limit("rate_limited", 3_600);
+		const closing = new AbortController();
+		await expect(
+			moveAs(cloud, project, {
+				signal: closing.signal,
+				// spool closes as the pause is said, before the sleep starts: no real hour is slept
+				onProgress: (at) => {
+					if (at.paused !== null) closing.abort();
+				},
+			}),
+		).rejects.toThrow("spool closed before site moved. Nothing changed here; move it again.");
+		unchanged(project, before);
+	});
+
+	it("uploads nothing when spool is already closing", { timeout: 10_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		await expect(moveAs(cloud, project, { signal: AbortSignal.abort() })).rejects.toThrow("spool closed before");
+		expect(cloud.saves("site")).toEqual([]);
+		unchanged(project, before);
 	});
 });
