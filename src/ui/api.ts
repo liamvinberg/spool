@@ -20,6 +20,7 @@ import type { Geometry } from "../daemon/geometry";
 import type { RungRead } from "../daemon/hand-lane";
 import type { EditedNode, Place as MovePlace, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
+import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
@@ -66,6 +67,7 @@ export type {
 	Place,
 	ProjectCard,
 	ProjectedFrame,
+	ProjectIcon,
 	Projection,
 	RungRead,
 	SelectionEntry,
@@ -258,6 +260,29 @@ export async function renameProject(root: string, name: string): Promise<{ root:
 	const res = await client.api.projects.rename.$post({ json: { root, name } });
 	if (!res.ok) throw new Error(await errorText(res));
 	return (await res.json()) as { root: string; name: string };
+}
+
+/** A project's icon by its content, as a cover is: the address is the credential and an immutable cache key. */
+export function iconUrl(project: string, hash: string): string {
+	return `/icons/${encodeURIComponent(project)}/${hash}`;
+}
+
+/** "Change icon…": the image becomes the project's design/shared/icon.<ext>. Throws what the daemon refused. */
+export async function changeProjectIcon(root: string, file: Blob): Promise<ProjectIcon> {
+	const res = await controlFetch(`/api/projects/icon?${new URLSearchParams({ root })}`, {
+		method: "POST",
+		body: file,
+		headers: { "Content-Type": file.type || "application/octet-stream" },
+	});
+	if (!res.ok) throw new Error(await errorText(res));
+	return ((await res.json()) as { icon: ProjectIcon }).icon;
+}
+
+/** "Remove icon": design/shared/icon.* goes; what the project wears now comes back, the favicon or none. */
+export async function removeProjectIcon(root: string): Promise<ProjectIcon | undefined> {
+	const res = await client.api.projects.icon.remove.$post({ json: { root } });
+	if (!res.ok) throw new Error(await errorText(res));
+	return ((await res.json()) as { icon: ProjectIcon | null }).icon ?? undefined;
 }
 
 export async function trashProject(root: string): Promise<void> {

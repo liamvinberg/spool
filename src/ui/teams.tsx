@@ -52,31 +52,68 @@ export function teamSays(error: unknown): string {
 	return SAYS[code] ?? "spool.page can’t be reached just now. Try again.";
 }
 
+const NO_TEAMS: CloudTeam[] = [];
+
 const HUES = ["#2E5D70", "#6B4E2E", "#4E3F70", "#2F6150", "#70393F"];
 
-/** The team's logo, or its letter mark. */
+/** What a team mark is drawn from. */
+export interface MarkTeam {
+	address: string;
+	name: string;
+	logo: string | null;
+}
+
+/**
+ * The team's logo, or its letter mark.
+ *
+ * Small, it is the badge a team project's local copy wears in its icon's corner: `cut` is the colour behind it,
+ * drawn as a gap round the mark so it reads apart from the icon, and `paused` hollows it while the copy's sync is
+ * paused, its letter in muted on the colour behind it, a logo included.
+ */
 export function TeamMark({
 	team,
 	size = 20,
+	paused = false,
+	cut,
 }: {
-	team: { address: string; name: string; logo: string | null };
+	team: MarkTeam;
 	size?: number;
+	paused?: boolean;
+	cut?: string | undefined;
 }) {
-	if (team.logo)
+	const radius = size >= 18 ? 5 : Math.max(2.5, size / 4);
+	const gap = cut === undefined ? undefined : `0 0 0 1.5px ${cut}`;
+	if (team.logo && !paused)
 		return (
 			<img
 				src={team.logo}
 				alt=""
-				className="shrink-0 rounded-[5px] object-cover"
-				style={{ width: size, height: size }}
+				data-team-mark="filled"
+				className="shrink-0 object-cover"
+				style={{ width: size, height: size, borderRadius: radius, boxShadow: gap }}
 			/>
 		);
 	const hue = HUES[[...team.address].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % HUES.length];
+	const small = size < 16;
 	return (
 		<span
 			aria-hidden="true"
-			className="grid shrink-0 place-items-center rounded-[5px] font-medium text-[#EDEDED]"
-			style={{ width: size, height: size, background: hue, fontSize: Math.round(size * 0.52) }}
+			data-team-mark={paused ? "hollow" : "filled"}
+			className={cn(
+				"grid shrink-0 place-items-center",
+				small ? "font-semibold leading-none" : "font-medium",
+				paused ? "text-muted" : "text-[#EDEDED]",
+			)}
+			style={{
+				width: size,
+				height: size,
+				borderRadius: radius,
+				background: paused ? (cut ?? "transparent") : hue,
+				fontSize: small ? Math.max(6.5, Math.round(size * 0.56)) : Math.round(size * 0.52),
+				boxShadow:
+					[paused ? "inset 0 0 0 1.25px var(--color-muted)" : undefined, gap].filter(Boolean).join(", ") ||
+					undefined,
+			}}
 		>
 			{[...team.name][0]?.toUpperCase()}
 		</span>
@@ -929,6 +966,7 @@ export function useTeamHome(
 			team: undefined,
 			teams: new Set<string>(),
 			editing: [] as CloudTeam[],
+			all: NO_TEAMS,
 		};
 	const switcher = (
 		<>
@@ -998,5 +1036,5 @@ export function useTeamHome(
 		: undefined;
 	/** The teams the switcher offers: their projects are on their own pages, not among this Mac's own. */
 	const editing = ready.teams.filter((team) => team.role !== "viewer");
-	return { switcher, notice, team, teams: new Set(editing.map((team) => team.address)), editing };
+	return { switcher, notice, team, teams: new Set(editing.map((team) => team.address)), editing, all: ready.teams };
 }
