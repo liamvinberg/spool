@@ -156,7 +156,7 @@ export default function LibraryFramesFrame() {
 	const heldFrame = LAID.frames.find((frame) => frame.id === held) ?? null;
 
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom={`${Math.round(k * 100)}%`}>
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome pages={PAGES} selected={held ?? undefined} tool="select" rail={<Rail frame={heldFrame} />}>
 				<div
 					ref={viewport}

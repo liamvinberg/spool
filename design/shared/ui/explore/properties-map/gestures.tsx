@@ -514,7 +514,7 @@ export function GestureTake({ take }: { take: "inset" | "context" }) {
 	const gesture = useEditorGesture(editor);
 	const context = take === "context";
 	return (
-		<SpoolShell activeTab="weekend" tabs={["weekend"]} zoom="100%">
+		<SpoolShell activeTab="weekend" tabs={["weekend"]}>
 			<CanvasChrome
 				pages={[{ name: "weekend", frames: ["stay"], active: true, open: true }]}
 				selected="stay"

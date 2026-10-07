@@ -104,7 +104,6 @@ export function HomeStudy({ take, state = "home" }: { take: HomeTake; state?: Ho
 			<SpoolShell
 				tabs={tabs}
 				activeTab={active}
-				canvasControls={false}
 				onFocus={setActive}
 				onHome={() => {
 					setActive(undefined);

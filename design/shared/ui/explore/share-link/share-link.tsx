@@ -227,7 +227,7 @@ export function ShareLink({
 
 	return (
 		<div className="relative h-full" onPointerDown={() => setMenu(null)}>
-			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="72%">
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 				<CanvasChrome pages={PAGES} selected="cart" tool="select" rail={null}>
 					<Frame left={16} top={130} screen="menu" />
 					<Frame

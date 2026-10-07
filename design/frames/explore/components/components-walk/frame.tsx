@@ -271,7 +271,7 @@ export default function SpoolComponentsWalkFrame() {
 	};
 
 	return (
-		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]} zoom={`${Math.round(zoom * 100)}%`}>
+		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]}>
 			{/*
 			 * No inspector, and that is the stance rather than an omission: a component is
 			 * not a frame. It has no geometry to nudge, no element tree to walk and no walks

@@ -119,7 +119,7 @@ function lensRows(pages: readonly RealPage[]): readonly Placed[] {
 
 export function OnlyPagesScreen({ take, argues }: { take: OnlyPagesTake; argues: string }) {
 	return (
-		<SpoolShell activeTab="spool" tabs={["spool", "kaffe"]} zoom={take === "today" || take === "marks" ? "70%" : "fit"}>
+		<SpoolShell activeTab="spool" tabs={["spool", "kaffe"]}>
 			<CanvasChrome
 				pages={REAL_PAGES.map((page) => ({ name: page.page, frames: page.names }))}
 				railWidth={0}

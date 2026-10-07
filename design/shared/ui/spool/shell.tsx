@@ -1,28 +1,26 @@
-import { cn } from "shared/lib/utils";
-import { ThreadIcon } from "shared/ui/spool/icons";
-import { TabStrip } from "shared/ui/spool/tab-strip";
+import { PROJECT_ICONS, PROJECT_TEAMS } from "shared/lib/spool/project-icon";
+import { TabStrip, type TabProject } from "shared/ui/spool/tab-strip";
 
 /**
  * The app shell: one 44px bar over everything — a pinned Home button,
- * one tab per open project, "+" for the folder picker, and on the right the
- * threads toggle and the zoom readout, both of which belong to the focused
- * canvas and vanish on home.
+ * one tab per open project, "+" for the folder picker, and on the right
+ * whoever else is on a team project's canvas. Every tab leads with its
+ * project's icon (`shared/lib/spool/project-icon.ts` holds the fixtures').
  *
- * There is no mode switch and no play button here. Select is the only pointer
- * tool, so "design mode" has nothing left to mean, and play lives on the
- * selection — a bar button could only guess which frame you meant.
+ * There is no mode switch, no play button, no threads switch and no zoom
+ * readout here. Select is the only pointer tool, play lives on the selection,
+ * showing threads is a setting, and the canvas shows its own zoom.
  */
 
 interface SpoolShellProps {
 	children: React.ReactNode;
 	/** the focused project tab; absent on home, where no canvas is focused */
 	activeTab?: string | undefined;
-	tabs?: readonly string[] | undefined;
+	/** a fixture project's name, or a tab drawn out in full */
+	tabs?: readonly (string | TabProject)[] | undefined;
 	homeTarget?: string | undefined;
-	/** canvas-only controls: the right side of the bar is empty on home */
-	canvasControls?: boolean | undefined;
-	zoom?: string | undefined;
-	arrowsOn?: boolean | undefined;
+	/** specimen: the root whose tab menu is open */
+	menuAt?: string | undefined;
 	/** an exploration's own control, docked at the far right — proposals only */
 	headerAccessory?: React.ReactNode | undefined;
 	onFocus?: ((root: string) => void) | undefined;
@@ -37,9 +35,7 @@ export function SpoolShell({
 	activeTab,
 	tabs = ["spool"],
 	homeTarget,
-	canvasControls = true,
-	zoom = "72%",
-	arrowsOn = true,
+	menuAt,
 	headerAccessory, onFocus, onClose, onReorder, onPick, onHome,
 }: SpoolShellProps) {
 	return (
@@ -55,35 +51,26 @@ export function SpoolShell({
 						</button>
 					</div>
 					<TabStrip
-						tabs={tabs.map((tab) => ({ root: tab, name: tab }))}
+						tabs={tabs.map(tabProject)}
 						focused={activeTab ?? null}
+						menuAt={menuAt}
+						onChangeIcon={() => {}}
+						onRemoveIcon={() => {}}
 						onFocus={onFocus} onClose={onClose} onReorder={onReorder} onPick={onPick}
 					/>
 				</div>
 
-				{canvasControls || headerAccessory !== undefined ? (
-					<div className="flex h-full shrink-0 items-center gap-4">
-						{canvasControls ? (
-							<>
-								<button
-									type="button"
-									aria-label="Threads"
-									aria-pressed={arrowsOn}
-									className={cn(
-										"flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface",
-										arrowsOn ? "text-text" : "text-muted",
-									)}
-								>
-									<ThreadIcon className="h-3.5 w-3.5" />
-								</button>
-								<span className="min-w-9 text-right text-muted type-detail">{zoom}</span>
-							</>
-						) : null}
-						{headerAccessory}
-					</div>
+				{headerAccessory !== undefined ? (
+					<div className="flex h-full shrink-0 items-center gap-4">{headerAccessory}</div>
 				) : null}
 			</header>
 			<main className="min-h-0 flex-1">{children}</main>
 		</div>
 	);
+}
+
+/** A fixture project's tab: its icon, and its team's mark when the project is a team's local copy. */
+function tabProject(tab: string | TabProject): TabProject {
+	if (typeof tab !== "string") return tab;
+	return { root: tab, name: tab, icon: PROJECT_ICONS[tab], teamAddress: PROJECT_TEAMS[tab] };
 }

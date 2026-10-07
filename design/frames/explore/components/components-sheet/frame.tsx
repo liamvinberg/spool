@@ -45,7 +45,7 @@ const WELL = 108;
 
 export default function SpoolComponentsSheetFrame() {
 	return (
-		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]} zoom="100%">
+		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]}>
 			<CanvasChrome pages={PAGES} tool="none">
 				<div className="flex h-full w-full flex-col">
 					<Band />

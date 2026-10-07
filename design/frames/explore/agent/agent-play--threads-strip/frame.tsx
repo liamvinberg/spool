@@ -63,7 +63,7 @@ export default function AgentThreadsStripFrame() {
 	const deck = useDeck(railEntries(script, turn, elapsed), turn);
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

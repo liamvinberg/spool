@@ -131,7 +131,7 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 	const willRun = !ladder.doubleRuns && double.kind === "run";
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="72%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				selected={FRAME}

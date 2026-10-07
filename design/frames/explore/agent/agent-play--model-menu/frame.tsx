@@ -78,7 +78,7 @@ export default function AgentPlayModelMenuFrame() {
 	const deck = useModel(CAPTURED, turn.run);
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

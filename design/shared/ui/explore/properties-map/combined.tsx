@@ -12,7 +12,6 @@ export function CombinedProperties() {
 			<SpoolShell
 				activeTab="weekend"
 				tabs={["weekend"]}
-				zoom="100%"
 				headerAccessory={
 					<label className="flex items-center gap-2 text-[10px] text-muted">
 						<span>Spacing unit</span>

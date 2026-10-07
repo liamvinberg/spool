@@ -83,7 +83,7 @@ export default function AgentPlayWallLoginFrame() {
 	const rows = railEntries(script, turn, elapsed).filter((entry) => !(login.carried && entry.key === "user"));
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

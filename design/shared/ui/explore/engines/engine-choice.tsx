@@ -471,7 +471,7 @@ export function EngineChoice({
 			</div>
 		);
 	return (
-		<SpoolShell activeTab="kaffe" zoom="64%">
+		<SpoolShell activeTab="kaffe">
 			<CanvasChrome
 				pages={[
 					{

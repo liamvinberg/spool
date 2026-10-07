@@ -372,7 +372,7 @@ export function ElementPanelScreen({
 	};
 
 	return (
-		<SpoolShell activeTab="spool" tabs={["spool"]} zoom="52%">
+		<SpoolShell activeTab="spool" tabs={["spool"]}>
 			<CanvasChrome
 				pages={pages}
 				selected="landing-current"

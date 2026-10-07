@@ -148,7 +148,7 @@ function fitCamera(items: readonly Placed[], view: { w: number; h: number }): Ca
 
 export function PageObjectsScreen({ mode, argues }: { mode: PageMode; argues: string }) {
 	return (
-		<SpoolShell activeTab="spool" tabs={["spool", "kaffe"]} zoom="fit">
+		<SpoolShell activeTab="spool" tabs={["spool", "kaffe"]}>
 			<CanvasChrome
 				pages={REAL_PAGES.map((page) => ({ name: page.page, frames: page.names }))}
 				railWidth={0}

@@ -60,7 +60,7 @@ export default function AgentPlayWallInstallFrame() {
 	const look = useLook();
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

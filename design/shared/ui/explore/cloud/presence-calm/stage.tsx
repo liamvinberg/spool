@@ -58,7 +58,6 @@ export function PresenceStage({ take, state }: { take: Take; state: StateId }) {
 				<SpoolShell
 					tabs={["kaffe"]}
 					activeTab="kaffe"
-					zoom={`${Math.round(view.cam.k * 100)}%`}
 					headerAccessory={view.header}
 				>
 					<CanvasChrome pages={PAGES} selected={scene.selected} rail={null} life={view.life}>

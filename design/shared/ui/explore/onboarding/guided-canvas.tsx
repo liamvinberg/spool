@@ -284,7 +284,6 @@ function Canvas({ scene, onReplay }: { scene: GuidedScene; onReplay: () => void 
 				<SpoolShell
 					activeTab={demo ? "demo" : "kaffe"}
 					tabs={demo ? ["kaffe", "demo"] : ["kaffe"]}
-					zoom={visibleFrame ? "62%" : "100%"}
 					onFocus={(tab) => {
 						if (tab === "kaffe" && demo) exitDemo();
 					}}

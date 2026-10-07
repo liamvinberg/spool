@@ -96,7 +96,7 @@ export function PresenceWindow({
 	return (
 		<div className="flex h-full w-full flex-col bg-bg">
 			<div className="h-[900px] shrink-0">
-				<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={scene.zoom} headerAccessory={header}>
+				<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} headerAccessory={header}>
 					<CanvasChrome pages={pagesFor(scene)} rail={null} tool={tool}>
 						{children}
 					</CanvasChrome>

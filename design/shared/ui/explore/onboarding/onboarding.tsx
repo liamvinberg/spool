@@ -219,7 +219,6 @@ function Demo({ take, scene, onReplay }: { take: Take; scene: Scene; onReplay: (
 				<SpoolShell
 					activeTab={take === "practice" ? "try-spool" : "kaffe"}
 					tabs={[take === "practice" ? "try-spool" : "kaffe"]}
-					zoom={empty ? "100%" : "62%"}
 				>
 					<CanvasChrome
 						pages={pages}

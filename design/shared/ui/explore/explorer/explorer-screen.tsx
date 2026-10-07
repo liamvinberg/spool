@@ -38,7 +38,7 @@ export function ExplorerScreen({
 	const frame = model.selectedFrame;
 
 	return (
-		<SpoolShell activeTab="atlas" tabs={["atlas", "spool"]} zoom="72%">
+		<SpoolShell activeTab="atlas" tabs={["atlas", "spool"]}>
 			<div className="flex h-full w-full overflow-hidden bg-bg">
 				<ExplorerRail model={model} />
 				<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">

@@ -429,7 +429,7 @@ export function MarkWindow({
 }) {
 	const pages = PAGES_AT_REST.map((page) => ({ ...page, lit: page.name === litPage }));
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="41%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={pages}
 				selected="cart"

@@ -232,7 +232,6 @@ export function EditingShell({
 			<SpoolShell
 				activeTab="northbound"
 				tabs={["northbound"]}
-				canvasControls={false}
 				headerAccessory={
 					<div className="ei-shell-controls">
 						<button

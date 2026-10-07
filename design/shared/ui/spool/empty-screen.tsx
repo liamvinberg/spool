@@ -20,7 +20,7 @@ export function SpoolEmptyScreen({
 		setPicker(null);
 	};
 	return (
-		<SpoolShell activeTab={name} tabs={[name]} homeTarget={homeTarget} zoom="100%">
+		<SpoolShell activeTab={name} tabs={[name]} homeTarget={homeTarget}>
 			<CanvasChrome pages={[]} tool="none">
 				<ProjectEmpty
 					key={name}

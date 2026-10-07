@@ -71,7 +71,7 @@ export default function AgentSayReadFrame() {
 	const ready = script.cues.length > 0;
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

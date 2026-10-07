@@ -63,7 +63,7 @@ export function VariantsPropertiesScreen({
 	const whole = decision.showing.id === "empty";
 
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso", "spool"]} zoom="100%">
+		<SpoolShell activeTab="tvarso" tabs={["tvarso", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				selected="checkout"

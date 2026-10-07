@@ -63,7 +63,7 @@ export function VariantsScreen({
 	zoom?: string;
 }) {
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso", "spool"]} zoom={zoom}>
+		<SpoolShell activeTab="tvarso" tabs={["tvarso", "spool"]}>
 			<div className="flex h-full w-full overflow-hidden bg-bg">
 				<aside className="flex shrink-0 flex-col border-border border-r bg-bg" style={{ width: PAGES_W }}>
 					{rail ?? <DefaultRail />}

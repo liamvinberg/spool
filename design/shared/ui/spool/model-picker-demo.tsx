@@ -518,7 +518,7 @@ export function ModelPickerDemo({
 			}}
 		>
 			<div className="min-h-0 flex-1">
-				<SpoolShell activeTab="kaffe" tabs={["kaffe"]} zoom="64%">
+				<SpoolShell activeTab="kaffe" tabs={["kaffe"]}>
 					<CanvasChrome
 						pages={[
 							{ name: "app", frames: ["cart", "menu", "receipt"], active: true, open: true },

@@ -38,7 +38,7 @@ export default function LibraryPageFrame() {
 	const heldFrame = LAID.frames.find((frame) => frame.id === held) ?? null;
 
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom="">
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome pages={PAGES} selected={held ?? undefined} tool="none" rail={<Rail frame={heldFrame} />}>
 				<div
 					className="relative h-full w-full overflow-y-auto overflow-x-clip"

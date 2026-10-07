@@ -85,7 +85,7 @@ export default function AgentQueueBoxFrame() {
 	const held = useQueue(QUEUE_SEED, turn.phase);
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

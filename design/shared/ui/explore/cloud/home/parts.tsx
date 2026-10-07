@@ -105,7 +105,7 @@ export function Host({
 		);
 	}
 	return (
-		<SpoolShell canvasControls={active !== undefined} activeTab={active} tabs={tabs} headerAccessory={accessory}>
+		<SpoolShell activeTab={active} tabs={tabs} headerAccessory={accessory}>
 			<div className="relative h-full">{children}</div>
 		</SpoolShell>
 	);

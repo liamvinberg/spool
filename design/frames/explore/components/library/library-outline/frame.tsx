@@ -62,7 +62,7 @@ const PAGES: readonly PageRow[] = [
 
 export default function LibraryOutlineFrame() {
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom="100%">
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome pages={PAGES} tool="none" rail={null} railWidth={0}>
 				<div className="flex h-full w-full gap-10 overflow-clip px-8 pt-5">
 					<div className="flex min-w-0 flex-1 flex-col">

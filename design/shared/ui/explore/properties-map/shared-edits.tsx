@@ -676,7 +676,7 @@ export function SharedEdits({
 
 	return (
 		<div className="se-prototype" data-take={take}>
-			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 				<div
 					className="h-full"
 					onPointerDownCapture={() => {

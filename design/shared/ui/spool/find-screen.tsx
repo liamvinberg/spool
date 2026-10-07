@@ -98,7 +98,7 @@ export function SpoolFindScreen({
 	}));
 
 	return (
-		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]} homeTarget={homeTarget} zoom="24%" arrowsOn={false}>
+		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]} homeTarget={homeTarget}>
 			<CanvasChrome pages={pages} tool="select">
 				{FIELD.map((plate) => (
 					<Miniature key={plate.name} plate={plate} />

@@ -50,7 +50,6 @@ export function SpoolPresenceScreen({ variant }: { variant: PresenceSpecimen }) 
 		<SpoolShell
 			activeTab="checkout"
 			tabs={["checkout"]}
-			zoom="72%"
 			headerAccessory={<Faces mates={mates} following={variant === "follow" ? BEN.name : undefined} open={variant === "crowd"} />}
 		>
 			<CanvasChrome pages={PAGES} tool="select">

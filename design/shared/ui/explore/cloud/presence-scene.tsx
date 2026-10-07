@@ -328,7 +328,7 @@ export function PresenceScene({ take, start = 0, paused = false }: { take: Take;
 	return (
 		<div className="flex h-full w-full flex-col bg-bg">
 			<div className="relative h-[900px] shrink-0">
-				<SpoolShell activeTab="kaffe" tabs={["kaffe"]} zoom={`${Math.round(cam.k * 41)}%`} headerAccessory={<Stack t={t} take={take} />}>
+				<SpoolShell activeTab="kaffe" tabs={["kaffe"]} headerAccessory={<Stack t={t} take={take} />}>
 					<CanvasChrome pages={[{ name: "app", frames: NAMES, active: true, open: true }]} rail={null}>
 						<div className="absolute inset-0 overflow-hidden">
 							<div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${cam.tx}px, ${cam.ty}px) scale(${cam.k})` }}>

@@ -149,7 +149,7 @@ export default function AgentHandFrame() {
 	];
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="34%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={pages}
 				tool="select"

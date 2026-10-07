@@ -286,7 +286,7 @@ export default function LibraryCanvasFrame() {
 	} as unknown as MotionStyle;
 
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom={`${zoom}%`}>
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome pages={PAGES} tool="none" rail={null} railWidth={0}>
 				<div
 					ref={viewport}

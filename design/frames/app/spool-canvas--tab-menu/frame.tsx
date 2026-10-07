@@ -1,37 +1,25 @@
-import { PROJECT_ICONS } from "shared/lib/spool/project-icon";
 import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/demo/coffee-screens";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { SpoolShell } from "shared/ui/spool/shell";
-import { SyncStateLine } from "shared/ui/spool/sync-state";
 
 /**
- * A team project's canvas while sync can't do all it should, said where it lasts and again whenever the canvas
- * opens: sync is paused on the saves-a-minute limit, and two files stay on this Mac, a film over 25 MB and a
- * symlink. The tab's team mark is hollow while the pause lasts.
+ * A tab's right-click menu, open on a team project's local copy. It opens on the project, its icon as the tab draws
+ * it with the team's mark in the corner, and says where it lives; "Change icon…" leads and "Remove icon" is there
+ * because checkout's icon is the file in design/shared. The tab strip leads every tab with its icon: spool and kaffe
+ * their files, checkout its file and its team's badge, and the letter for a project with no icon.
  */
 const PAGES: readonly PageRow[] = [
 	{ name: "app", frames: ["menu", "cart", "receipt"], active: true, open: true, unseen: {} },
 	{ name: "site", frames: ["landing", "pricing"], unseen: {} },
 ];
 
-export default function SpoolCanvasSyncFrame() {
+export default function SpoolCanvasTabMenuFrame() {
 	return (
-		<SpoolShell activeTab="checkout" tabs={[{ root: "checkout", name: "checkout", icon: PROJECT_ICONS.checkout, teamAddress: "tidemark", paused: true }]} homeTarget="spool-home">
+		<SpoolShell activeTab="checkout" tabs={["spool", "checkout", "kaffe", "aria"]} homeTarget="spool-home" menuAt="checkout">
 			<CanvasChrome pages={PAGES} tool="select">
 				{(["menu", "cart", "receipt"] as const).map((screen, index) => (
 					<Frame key={screen} left={25 + index * 300} top={250} screen={screen} />
 				))}
-				<SyncStateLine
-					open
-					state={{
-						ended: null,
-						paused: "this project took 120 saves in the last minute",
-						held: [
-							{ path: "shared/assets/film.mov", why: "it's over 25 MB" },
-							{ path: "shared/brand", why: "symlinks stay on this Mac" },
-						],
-					}}
-				/>
 			</CanvasChrome>
 		</SpoolShell>
 	);

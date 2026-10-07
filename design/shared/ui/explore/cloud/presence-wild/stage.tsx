@@ -89,7 +89,7 @@ export function PresenceWindow({ scene, take }: { scene: Scene; take: Take }) {
 	return (
 		<div className="flex h-full w-full flex-col overflow-hidden bg-bg">
 			<div className="min-h-0 flex-1">
-				<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={`${Math.round(ctx.cam.k * 100)}%`}>
+				<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 					<CanvasChrome
 						pages={pages}
 						rail={null}

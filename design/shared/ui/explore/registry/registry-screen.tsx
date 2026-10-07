@@ -63,7 +63,7 @@ const PURPOSE_HINT: Readonly<Record<Purpose, string>> = {
 /** take `home`: Registry is a second section in Home's own navigation */
 export function RegistryHomeSection({ openTarget }: { openTarget: string }) {
 	return (
-		<SpoolShell canvasControls={false} tabs={["tvärsö", "kaffe"]}>
+		<SpoolShell tabs={["tvärsö", "kaffe"]}>
 			<div className="grid h-full grid-cols-[208px_minmax(0,1fr)] overflow-hidden bg-bg">
 				<HomeNav current="Registry" />
 				<main className="min-w-0 overflow-auto px-[48px] pt-[46px] pb-[48px]">
@@ -127,7 +127,7 @@ export function RegistryHomeCard({ openTarget }: { openTarget: string }) {
 	const slack = collection("apps/slack");
 	const covers = COLLECTIONS.map((item) => item.frames[0]).filter((frame) => frame !== undefined);
 	return (
-		<SpoolShell canvasControls={false} tabs={["tvärsö", "kaffe"]}>
+		<SpoolShell tabs={["tvärsö", "kaffe"]}>
 			<div className="grid h-full grid-cols-[208px_minmax(0,1fr)] overflow-hidden bg-bg">
 				<HomeNav current="Projects" />
 				<main className="min-w-0 overflow-hidden px-[48px] pt-[46px]">
@@ -200,7 +200,7 @@ export function RegistryHomeCard({ openTarget }: { openTarget: string }) {
 /** take `nav`: Home as it is, with Registry listed under Projects and opening the tab directly */
 export function RegistryHomeNav({ registryTarget }: { registryTarget: string }) {
 	return (
-		<SpoolShell canvasControls={false} tabs={["tvärsö", "kaffe"]}>
+		<SpoolShell tabs={["tvärsö", "kaffe"]}>
 			<div className="grid h-full grid-cols-[208px_minmax(0,1fr)] overflow-hidden bg-bg">
 				<HomeNav current="Projects" registryTarget={registryTarget} />
 				<main className="min-w-0 overflow-hidden px-[48px] pt-[46px]">
@@ -245,7 +245,7 @@ export function RegistryHomeNav({ registryTarget }: { registryTarget: string }) 
 /** take `nav`, first use: the tab opens at once and fills in when the download lands (spool-cloud#183) */
 export function RegistryDownloading() {
 	return (
-		<SpoolShell activeTab="registry" tabs={["kaffe", "registry"]} canvasControls={false}>
+		<SpoolShell activeTab="registry" tabs={["kaffe", "registry"]}>
 			<div className="flex h-full w-full overflow-hidden bg-bg">
 				<aside className="flex w-[248px] shrink-0 flex-col border-border border-r bg-bg">
 					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-3 pl-3.5">
@@ -347,7 +347,6 @@ export function RegistryCanvas({
 		<SpoolShell
 			activeTab={inProject ? "kaffe" : "registry"}
 			tabs={inProject ? ["tvärsö", "kaffe"] : ["kaffe", "registry"]}
-			zoom="28%"
 		>
 			<div className="flex h-full w-full overflow-hidden bg-bg">
 				<aside className="flex w-[248px] shrink-0 flex-col border-border border-r bg-bg">
@@ -764,7 +763,7 @@ export function ProjectAgent({
 		...registryFoot,
 	];
 	return (
-		<SpoolShell activeTab="kaffe" tabs={take === "rail" ? ["tvärsö", "kaffe"] : ["kaffe", "registry"]} zoom={done ? "34%" : "40%"}>
+		<SpoolShell activeTab="kaffe" tabs={take === "rail" ? ["tvärsö", "kaffe"] : ["kaffe", "registry"]}>
 			<CanvasChrome
 				pages={pages}
 				selected={done ? "orders" : undefined}
@@ -823,7 +822,7 @@ export function ProjectWithRegistryRow({ openTarget }: { openTarget: string }) {
 		{ name: "registry", frames: ["spool", "vercel", "slack", "shaders"], foot: true, face: <RegistryIcon className="h-3.5 w-3.5" /> },
 	];
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["tvärsö", "kaffe"]} zoom="40%">
+		<SpoolShell activeTab="kaffe" tabs={["tvärsö", "kaffe"]}>
 			<div className="relative h-full">
 				<CanvasChrome pages={pages} selected="cart">
 					{KAFFE_FRAMES.map((frame) => (

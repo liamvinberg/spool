@@ -147,8 +147,6 @@ export function StartSheetScreen({ start = "home" }: { start?: StartAt }) {
 
 	const body = (
 		<SpoolShell
-			canvasControls={current !== undefined}
-			zoom="100%"
 			tabs={tabNames}
 			activeTab={current?.name}
 			headerAccessory={accessory}

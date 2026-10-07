@@ -336,7 +336,7 @@ export function DockScreen({
 		);
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<style>{stylesheet}</style>
 			<div className="flex h-full w-full overflow-hidden bg-bg">
 				<PagesRail />

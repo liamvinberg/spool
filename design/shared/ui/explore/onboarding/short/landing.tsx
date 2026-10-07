@@ -46,7 +46,7 @@ export function Landing({
 		</button>
 	);
 	return (
-		<SpoolShell activeTab={name} tabs={[name]} zoom={existing ? "60%" : "100%"} headerAccessory={replay}>
+		<SpoolShell activeTab={name} tabs={[name]} headerAccessory={replay}>
 			<CanvasChrome
 				pages={existing ? [{ name: "app", frames: ["menu", "cart"], active: true, open: true }] : []}
 				tool={existing ? "select" : "none"}

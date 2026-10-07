@@ -232,11 +232,9 @@ export function TransferPrototype({
 				<SpoolShell
 					activeTab={active === "Home" ? undefined : active}
 					tabs={tabs}
-					zoom="38%"
 					onFocus={setActive}
 					onHome={() => setActive("Home")}
 					onPick={() => setPicker("start")}
-					canvasControls={active !== "Home"}
 					onClose={(name) => {
 						setTabs(tabs.filter((tab) => tab !== name));
 						setActive("Home");

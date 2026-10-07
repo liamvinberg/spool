@@ -88,7 +88,7 @@ export default function AgentQueueBackFrame() {
 	const held = useQueue(QUEUE_SEED, turn.phase, WRITING);
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

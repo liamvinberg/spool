@@ -217,7 +217,7 @@ export function ProjectCanvas({
 		);
 	}
 	return (
-		<SpoolShell activeTab={PROJECT} tabs={[PROJECT, "kaffe"]} zoom="64%">
+		<SpoolShell activeTab={PROJECT} tabs={[PROJECT, "kaffe"]}>
 			{body}
 		</SpoolShell>
 	);

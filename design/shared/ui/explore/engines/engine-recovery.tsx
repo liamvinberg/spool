@@ -458,7 +458,7 @@ export function EngineRecovery({
 			/>
 		) : undefined;
 	return (
-		<SpoolShell activeTab="kaffe" zoom="64%">
+		<SpoolShell activeTab="kaffe">
 			<CanvasChrome
 				pages={[
 					{ name: "app", frames: ["cart", "menu", "receipt"], active: true, open: true },

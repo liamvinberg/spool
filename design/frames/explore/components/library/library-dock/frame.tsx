@@ -68,7 +68,7 @@ export default function LibraryDockFrame() {
 	}, []);
 
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom="44%">
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

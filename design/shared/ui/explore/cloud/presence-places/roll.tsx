@@ -62,7 +62,7 @@ export function RollStage({ scenario }: { scenario: ScenarioId }) {
 
 	return (
 		<Stage t={t} total={scene.total} playing={clock.playing} beats={scene.beats} onToggle={clock.toggle} onSeek={clock.seek}>
-			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={`${Math.round(cam.k * 100)}%`}>
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 				<div className="flex h-full w-full overflow-hidden bg-bg">
 					<RollRail scene={scene} t={t} cam={cam} places={places} follow={follow === null ? null : { who: follow.who, kind: follow.kind }} />
 					<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">

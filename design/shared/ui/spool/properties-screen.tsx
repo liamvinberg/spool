@@ -318,7 +318,7 @@ export function PropertiesScreen() {
 	};
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<style>{stylesheet}</style>
 			<CanvasChrome pages={PAGES} selected={FRAME} tool="select" railLabel="properties" railWidth={RAIL_W} rail={<Rail reading={reading} acts={acts} />}>
 				<div ref={fieldRef} className="absolute inset-0">

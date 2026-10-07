@@ -223,7 +223,7 @@ export function ArrangePrototype({ take, controlsOpen = false }: { take: Arrange
 	};
 
 	return (
-		<SpoolShell activeTab="spool" tabs={["spool"]} zoom={`${Math.round(display.camera.zoom * 100)}%`} arrowsOn={false}>
+		<SpoolShell activeTab="spool" tabs={["spool"]}>
 			<CanvasChrome pages={[{ name: "app", frames: tiles.map((tile) => tile.id), active: true, open: true }, { name: "site", frames: [] }, { name: "library", frames: [] }]} rail={null} tool="select">
 				<div ref={stage} className="arrange-stage" data-take={take} data-layout={display.settings.layout} data-gap={display.settings.gap} data-columns={columns} data-selected={selected.length} data-preview={Boolean(preview)} data-dragging={dragging ?? "none"} data-refine-direct={refineDirect} data-zoom={display.camera.zoom}
 					onPointerMove={move} onPointerUp={end} onPointerCancel={cancel}

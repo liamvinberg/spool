@@ -551,7 +551,7 @@ export function PropertiesReconsiderPrototype({ take }: { take: Take }) {
 				</div>
 			</div>
 			<div className="min-h-0 flex-1">
-				<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom="100%">
+				<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 					<CanvasChrome
 						pages={[
 							{ name: "booking", frames: ["checkout", "receipt"], open: true, active: !examples },

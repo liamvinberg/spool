@@ -68,7 +68,7 @@ export default function AgentPlayEnteredFrame() {
 	const outlines: readonly Outline[] = held.map((entry) => ({ id: entry.id, frame: entry.frame }));
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

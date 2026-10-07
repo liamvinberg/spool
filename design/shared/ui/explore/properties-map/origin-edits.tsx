@@ -644,7 +644,7 @@ export function OriginEdits({ take, initial = "rest" }: { take: OriginTake; init
 
 	return (
 		<div className="oe-prototype" data-take={take}>
-			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 				<div
 					className="h-full"
 					onPointerDownCapture={() => {

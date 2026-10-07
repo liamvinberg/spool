@@ -301,7 +301,7 @@ function Case({ spec }: { spec: Case }) {
 		: PAGES;
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={pages}
 				selected={landed ?? undefined}

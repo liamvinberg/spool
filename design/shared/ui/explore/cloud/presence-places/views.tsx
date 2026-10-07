@@ -82,7 +82,7 @@ export function ViewsStage({ scenario }: { scenario: ScenarioId }) {
 
 	return (
 		<Stage t={t} total={scene.total} playing={clock.playing} beats={scene.beats} onToggle={clock.toggle} onSeek={clock.seek}>
-			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={`${Math.round(cam.k * 100)}%`}>
+			<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 				<CanvasChrome pages={kaffePages(scene, t)} rail={null}>
 					<World cam={cam} />
 					<Plates scene={scene} t={t} cam={cam} />

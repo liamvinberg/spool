@@ -31,7 +31,7 @@ const OFFLINE: readonly ShownSetAside[] = ["menu", "cart", "receipt", "landing"]
 export function SetAsideScreen({ specimen, homeTarget }: { specimen: "mark" | "summary"; homeTarget?: string }) {
 	const marked = specimen === "mark";
 	return (
-		<SpoolShell activeTab="checkout" tabs={["checkout"]} homeTarget={homeTarget} zoom="72%">
+		<SpoolShell activeTab="checkout" tabs={["checkout"]} homeTarget={homeTarget}>
 			<CanvasChrome pages={PAGES} tool="select">
 				<Frame left={25} top={130} screen="menu" marked={marked} open={marked} />
 				<Frame left={325} top={130} screen="cart" marked={marked} />

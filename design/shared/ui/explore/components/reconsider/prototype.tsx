@@ -244,7 +244,7 @@ export function LibraryReconsiderPrototype({ take }: { take: Take }) {
 					</div>
 				</div>
 				<div className="min-h-0 flex-1">
-					<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom="100%">
+					<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 						<div className="flex h-full overflow-hidden bg-canvas">
 							<aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-bg">
 								<div className="h-11 border-b border-border px-4 py-3 text-base font-medium">Pages</div>

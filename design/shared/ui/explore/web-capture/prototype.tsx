@@ -247,7 +247,7 @@ export function CapturePrototype({ take, initial = "selected" }: { take: Capture
 		<div className="wc-prototype" data-capture-take={take} data-phase={phase}>
 			<div className="wc-experiment">
 				{inSpool ? (
-					<SpoolShell activeTab={project} tabs={[project, "weekend"]} zoom={target === "page" ? "46%" : "100%"}>
+					<SpoolShell activeTab={project} tabs={[project, "weekend"]}>
 						<CanvasChrome
 							pages={[
 								{ name: "app", frames: ["home", "about"] },

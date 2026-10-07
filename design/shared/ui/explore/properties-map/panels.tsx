@@ -805,7 +805,7 @@ export function VisualProperties({ take }: { take: "inspector" | "context" }) {
 	const editor = useProperties();
 	return (
 		<div className="h-full bg-bg text-text">
-			<SpoolShell activeTab="weekend" tabs={["weekend"]} zoom="100%">
+			<SpoolShell activeTab="weekend" tabs={["weekend"]}>
 				<CanvasChrome
 					pages={[{ name: "weekend", frames: ["stay"], open: true, active: true }]}
 					selected="stay"

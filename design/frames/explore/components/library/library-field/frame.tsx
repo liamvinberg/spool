@@ -113,7 +113,7 @@ const CONSTELLATION: readonly { x: number; y: number }[] = [
 
 export default function LibraryFieldFrame() {
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom="68%">
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome pages={PAGES} tool="hand" rail={null} railWidth={0}>
 				<div className="relative h-full w-full overflow-clip">
 					<Tint x={562} y={56} w={336} h={630} label="checkout-parts.tsx" count={5} />

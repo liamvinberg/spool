@@ -74,7 +74,7 @@ export default function AgentShotOpenFrame() {
 	];
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={pages}
 				tool="select"

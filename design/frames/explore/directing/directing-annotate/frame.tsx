@@ -410,7 +410,6 @@ export default function DirectingAnnotateOpus() {
 		<SpoolShell
 			activeTab="kaffe"
 			tabs={["kaffe", "opencode"]}
-			canvasControls={false}
 			headerAccessory={<PendingChip count={pins.length} reduced={reduced} />}
 		>
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: the mock canvas is the surface the tool works on */}

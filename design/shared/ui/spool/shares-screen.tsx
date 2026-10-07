@@ -42,7 +42,6 @@ export function SpoolSharesScreen({ variant }: { variant: SharesSpecimen }) {
 		<SpoolShell
 			activeTab="checkout"
 			tabs={["checkout"]}
-			zoom="72%"
 			headerAccessory={<SharedButton count={SHARES.length} open={variant === "shared"} />}
 		>
 			<CanvasChrome pages={PAGES} tool="select">

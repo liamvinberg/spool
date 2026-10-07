@@ -192,7 +192,7 @@ export function SharedScreen({ take: name }: { take: TakeName }) {
 	};
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<style>{MOTION}</style>
 			<CanvasChrome
 				pages={mapped ? PAGES_FULL : PAGES}

@@ -52,7 +52,7 @@ const PAGES: readonly PageRow[] = [
 
 export default function SpoolComponentsIndexFrame() {
 	return (
-		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]} zoom="100%">
+		<SpoolShell activeTab="spool" tabs={["kaffe", "spool"]}>
 			<CanvasChrome pages={PAGES} tool="none">
 				<div className="h-full w-full overflow-clip px-6 pt-6">
 					<Head />

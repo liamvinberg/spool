@@ -77,7 +77,7 @@ function LibraryView({ pages }: { pages: readonly PageRow[] }) {
 	const held = LAID.frames.find((frame) => frame.id === "Button") ?? null;
 	const none = () => {};
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom={`${Math.round(K * 100)}%`}>
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome pages={pages} selected="Button" tool="select" rail={<Rail frame={held} />}>
 				<div className="relative h-full w-full overflow-clip">
 					<div
@@ -164,7 +164,7 @@ function BookingView({ pages, onDoor }: { pages: readonly PageRow[]; onDoor: () 
 	const onScreen = rects.size;
 
 	return (
-		<SpoolShell activeTab="tvarso" tabs={["tvarso"]} zoom={`${Math.round(SCALE * 100)}%`}>
+		<SpoolShell activeTab="tvarso" tabs={["tvarso"]}>
 			<CanvasChrome
 				pages={pages}
 				selected={HELD}

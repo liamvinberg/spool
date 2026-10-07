@@ -564,7 +564,6 @@ export function AmbientWindow({
 		<SpoolShell
 			activeTab="kaffe"
 			tabs={["kaffe", "spool"]}
-			canvasControls={false}
 			headerAccessory={
 				<>
 					<WalkToggle on={on} faults={faults} onToggle={onToggle} />

@@ -369,7 +369,7 @@ export const DEMOS: readonly Demo[] = [
 		render: () => (
 			<div className="h-11 w-[640px] overflow-hidden border border-border">
 				<div className="h-[300px] w-[640px]">
-					<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="72%">
+					<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 						<span />
 					</SpoolShell>
 				</div>

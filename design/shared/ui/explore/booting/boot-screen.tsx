@@ -23,7 +23,7 @@ const INSPECTOR_W = 300;
 /** the tabs and zoom of a real session, so the bar reads as a machine mid-boot */
 export function BootShell({ children, rail }: { children: ReactNode; rail?: ReactNode | undefined }) {
 	return (
-		<SpoolShell activeTab="spool" tabs={["upstream", "lek", "spool", "securesend-chat"]} zoom="100%" arrowsOn={true}>
+		<SpoolShell activeTab="spool" tabs={["upstream", "lek", "spool", "securesend-chat"]}>
 			<BootChrome rail={rail}>{children}</BootChrome>
 		</SpoolShell>
 	);

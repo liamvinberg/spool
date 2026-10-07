@@ -101,7 +101,6 @@ export function Stage({
 				<SpoolShell
 					activeTab="spool"
 					tabs={["spool", "kaffe"]}
-					zoom={`${Math.round(64 * cam.z)}%`}
 					headerAccessory={<Faces faces={faces} wind={take.wind} open={state === "crowd"} />}
 				>
 					<CanvasChrome pages={PAGES} rail={null}>

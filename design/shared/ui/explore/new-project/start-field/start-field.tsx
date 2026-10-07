@@ -311,8 +311,6 @@ export function StartField({ step = "home" }: { step?: StartStep }) {
 				<SpoolShell
 					activeTab={current?.name}
 					tabs={tabs.map((id) => byId(id)?.name ?? id)}
-					canvasControls={view.kind === "canvas"}
-					zoom={current?.frames === 0 ? "100%" : "72%"}
 					headerAccessory={
 						<HostSwitch
 							host={host}

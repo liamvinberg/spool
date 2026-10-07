@@ -108,7 +108,7 @@ export default function AgentPlayLimitStopFrame() {
 	const limit = useLimit(turn.run, closesAt);
 
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]}>
 			<CanvasChrome
 				pages={PAGES}
 				tool="select"

@@ -32,7 +32,7 @@ export function TerritoryStage({ state, take }: { state: StateId; take: TakeId }
 	return (
 		<div className="flex h-full w-full flex-col bg-bg">
 			<div className="h-[900px] shrink-0">
-				<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom={`${Math.round(ctx.cam.z * 100)}%`} headerAccessory={<Roster ctx={ctx} />}>
+				<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} headerAccessory={<Roster ctx={ctx} />}>
 					<CanvasChrome pages={pages} rail={null} tool="select">
 						<Field ctx={ctx} layers={layers} />
 					</CanvasChrome>
