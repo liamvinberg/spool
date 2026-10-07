@@ -14,6 +14,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject, initTeamProject } from "../init";
 import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
+import { CLOSE_NOT_EDITOR, CLOSE_SIGNED_OUT } from "../team-sync-protocol";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, until, writeFrame } from "../test-helpers";
 import { commitMoveIn, MOVE_MESSAGE } from "./history";
@@ -744,21 +745,25 @@ describe("Move to team under the save limit", () => {
 
 	it("says a move stopped because this Mac was signed out", { timeout: 30_000 }, async () => {
 		const cloud = fakeTeam();
-		const project = bigProject(20);
+		const project = existingProject();
 		const before = git(project.root, "rev-parse", "HEAD");
-		let revoked = false;
+		cloud.limit("rate_limited", 1);
 		await expect(
 			moveAs(cloud, project, {
-				wait: async () => {},
-				onProgress: (at) => {
-					if (at.up > 0 && !revoked) {
-						revoked = true;
-						cloud.revoke("ana");
-					}
-				},
+				// signed out while the move waits: spool.page closes the next connection as signed out
+				wait: async () => void cloud.refuseSync(CLOSE_SIGNED_OUT),
 			}),
 		).rejects.toThrow("site didn't move: not signed in; run `spool login`. Nothing changed here.");
 		unchanged(project, before);
+	});
+
+	it("says a move stopped because this Mac no longer edits the team project", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		cloud.limit("rate_limited", 1);
+		await expect(
+			moveAs(cloud, project, { wait: async () => void cloud.refuseSync(CLOSE_NOT_EDITOR) }),
+		).rejects.toThrow("site didn't move: you can't edit this team project. Nothing changed here.");
 	});
 
 	it("stops waiting when spool closes, even when it closed before the wait began", { timeout: 10_000 }, async () => {
@@ -796,6 +801,8 @@ describe("Move to team under the save limit", () => {
 			join(project.root, "design", ".spool", "share.json"),
 			JSON.stringify({ origin: TEAM_ORIGIN, project: "nowhere" }),
 		);
-		await expect(moveAs(cloud, project)).rejects.toThrow(/^site's shares didn't move: spool\.page refused: \w+\. Nothing changed here; try again\.$/);
+		await expect(moveAs(cloud, project)).rejects.toThrow(
+			/^site's shares didn't move: spool\.page refused: \w+\. Nothing changed here; try again\.$/,
+		);
 	});
 });

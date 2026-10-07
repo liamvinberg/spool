@@ -163,6 +163,9 @@ export class SyncDropped extends SpoolError {
 	}
 }
 
+/** A one-off sync spool.page won't take until this Mac signs in again or is made an editor: no retry helps. */
+export class SyncRefused extends SpoolError {}
+
 /** A one-off sync stopped because its caller is closing. */
 export class SyncStopped extends SpoolError {}
 
@@ -236,8 +239,8 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 
 /** Why a one-off sync's connection closed, from the close code spool.page gave, if any. */
 function closedOnce(code: number | undefined): SpoolError {
-	if (code === CLOSE_SIGNED_OUT) return new SpoolError("not signed in; run `spool login`");
-	if (code === CLOSE_NOT_EDITOR) return new SpoolError("you can't edit this team project");
+	if (code === CLOSE_SIGNED_OUT) return new SyncRefused("not signed in; run `spool login`");
+	if (code === CLOSE_NOT_EDITOR) return new SyncRefused("you can't edit this team project");
 	if (code === CLOSE_UNAVAILABLE) return new SyncDropped("spool.page is unavailable");
 	return new SyncDropped("the connection to spool.page dropped");
 }
@@ -676,7 +679,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		}
 		if (closed) return;
 		if (token === undefined) {
-			if (!live) return fail(new SpoolError("not signed in; run `spool login`"));
+			if (!live) return fail(new SyncRefused("not signed in; run `spool login`"));
 			signedOut();
 			return reconnect();
 		}

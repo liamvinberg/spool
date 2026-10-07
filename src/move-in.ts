@@ -7,6 +7,7 @@ import { carrySharesOver } from "./daemon/shares";
 import {
 	SyncDropped,
 	SyncPaused,
+	SyncRefused,
 	staysOnThisMac,
 	syncLocalCopy,
 	travellingFiles,
@@ -186,8 +187,7 @@ function stopReason(error: unknown): string {
 		return `${error.why}. Nothing changed here.`;
 	}
 	const why = error instanceof Error ? error.message : String(error);
-	if (/run `spool login`$/u.test(why)) return `${why}. Nothing changed here.`;
-	return `${why}. Nothing changed here; try again.`;
+	return error instanceof SyncRefused ? `${why}. Nothing changed here.` : `${why}. Nothing changed here; try again.`;
 }
 
 /** The daemon is closing: the move stops before its next step, having changed nothing here. */
