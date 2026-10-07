@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
 	type CloudTeam,
+	fetchMoveProgress,
 	fetchMoveStays,
 	fetchTeamProjects,
 	getTeamProjectAt,
 	type HerePerson,
 	type MoveOutcome,
+	type MoveProgress,
 	moveProjectToTeam,
 	type TeamProjectOnMac,
 } from "./api";
@@ -238,6 +240,7 @@ export function MoveToTeamDialog({
 			current = false;
 		};
 	}, [project.root]);
+	const [moving, setMoving] = useState(false);
 	const chosen = teams.find((team) => team.address === address);
 	return (
 		<ConfirmDialog
@@ -247,7 +250,12 @@ export function MoveToTeamDialog({
 			disabled={chosen === undefined}
 			onConfirm={async () => {
 				if (chosen === undefined) return;
-				onMoved(await moveProjectToTeam(chosen.address, project.root), chosen);
+				setMoving(true);
+				try {
+					onMoved(await moveProjectToTeam(chosen.address, project.root), chosen);
+				} finally {
+					setMoving(false);
+				}
 			}}
 			onClose={onClose}
 		>
@@ -284,7 +292,42 @@ export function MoveToTeamDialog({
 					</ul>
 				</div>
 			)}
+			{moving && <MoveProgressLine root={project.root} />}
 		</ConfirmDialog>
+	);
+}
+
+/** How often the move sheet asks how far the move has got. */
+const MOVE_PROGRESS_MS = 1_000;
+
+/** Files up of all that go, and while spool.page isn't taking saves, why and for how long. Asked while it moves. */
+function MoveProgressLine({ root }: { root: string }) {
+	const [progress, setProgress] = useState<MoveProgress | null>(null);
+	useEffect(() => {
+		let current = true;
+		const timer = setInterval(() => {
+			void fetchMoveProgress(root).then((read) => {
+				if (current) setProgress(read);
+			});
+		}, MOVE_PROGRESS_MS);
+		return () => {
+			current = false;
+			clearInterval(timer);
+		};
+	}, [root]);
+	if (progress === null || progress.total === 0) return null;
+	const seconds = progress.paused === null ? 0 : Math.max(1, Math.ceil((progress.paused.until - Date.now()) / 1_000));
+	return (
+		<div className="mb-[8px] flex flex-col gap-[4px]" role="status" data-move-progress="">
+			<p className="type-label">
+				{progress.up.toLocaleString("en")} of {progress.total.toLocaleString("en")} files up
+			</p>
+			{progress.paused !== null && (
+				<p className="text-muted type-label">
+					Paused: {progress.paused.why}. Carrying on in {seconds} {seconds === 1 ? "second" : "seconds"}.
+				</p>
+			)}
+		</div>
 	);
 }
 

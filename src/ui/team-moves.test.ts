@@ -35,7 +35,7 @@ const project = (change: Partial<TeamProjectOnMac> = {}): TeamProjectOnMac => ({
 });
 
 /** The daemon, as these sheets ask it: one answer for every call, and what was asked. */
-function daemon(answer: (url: string) => Response) {
+function daemon(answer: (url: string) => Response | Promise<Response>) {
 	const asked: string[] = [];
 	vi.stubGlobal(
 		"fetch",
@@ -211,4 +211,67 @@ it("offers Move to team on a project's cover, never on a team project's", async 
 	await act(async () => (host.querySelector('[aria-label="Manage site"]') as HTMLButtonElement).click());
 	await act(async () => button(host, "Move to team…").click());
 	expect(onMoveToTeam).toHaveBeenCalledWith(expect.objectContaining({ root: "/Users/ana/site", name: "site" }));
+});
+
+it("shows how many files are up while it moves, and the pause it is waiting out", async () => {
+	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+	onTestFinished(() => void vi.useRealTimers());
+	const asked = daemon((url) => {
+		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/progress"))
+			return Response.json({
+				progress: {
+					up: 240,
+					total: 1922,
+					paused: { why: "this project took 120 saves in the last minute", until: Date.now() + 48_000 },
+				},
+			});
+		return new Promise<Response>(() => {});
+	});
+	const host = mount(
+		createElement(MoveToTeamDialog, {
+			project: { root: "/Users/ana/chamfer", name: "chamfer" },
+			teams: [DEVOSURF],
+			onMoved: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	await settle();
+	expect(host.querySelector("[data-move-progress]")).toBeNull();
+	await act(async () => button(host, "Move to Devosurf").click());
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(1_000);
+	});
+	await settle();
+	expect(asked).toContain("GET /api/cloud/move/progress?path=%2FUsers%2Fana%2Fchamfer");
+	const progress = host.querySelector("[data-move-progress]");
+	expect(progress?.textContent).toContain("240 of 1,922 files up");
+	expect(progress?.textContent).toContain(
+		"Paused: this project took 120 saves in the last minute. Carrying on in 48 seconds.",
+	);
+});
+
+it("says what stopped a move", async () => {
+	daemon((url) =>
+		url.includes("/move/stays")
+			? Response.json({ stays: [] })
+			: Response.json(
+					{ error: "chamfer didn't move: the team's design/ is at its 1 GB limit. Nothing changed here." },
+					{ status: 409 },
+				),
+	);
+	const host = mount(
+		createElement(MoveToTeamDialog, {
+			project: { root: "/Users/ana/chamfer", name: "chamfer" },
+			teams: [DEVOSURF],
+			onMoved: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	await act(async () => button(host, "Move to Devosurf").click());
+	await settle();
+	expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+		"chamfer didn't move: the team's design/ is at its 1 GB limit. Nothing changed here.",
+	);
+	expect(host.querySelector("[data-move-progress]")).toBeNull();
 });

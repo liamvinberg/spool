@@ -27,6 +27,7 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
+import type { MoveProgress } from "../move-in";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
@@ -1682,7 +1683,7 @@ export const teamActions = {
 	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 };
 
-export type { MoveOutcome, SyncState, TeamProjectOnMac };
+export type { MoveOutcome, MoveProgress, SyncState, TeamProjectOnMac };
 
 /** Who is inside a team project right now, as its cover says it. */
 export type HerePerson = TeamProjectHere["people"][number];
@@ -1740,6 +1741,17 @@ export function getTeamProjectAt(
 /** "Move to team…": the project goes up whole, then one commit takes design/ out of git. */
 export function moveProjectToTeam(address: string, path: string): Promise<MoveOutcome> {
 	return teamProjectAction(`${team(address)}/move`, { path });
+}
+
+/** How far a move under way has got, and the pause it is waiting out; null when none is or the daemon can't say. */
+export async function fetchMoveProgress(path: string): Promise<MoveProgress | null> {
+	try {
+		const response = await controlFetch(`/api/cloud/move/progress?${new URLSearchParams({ path })}`);
+		const body = (response.ok ? await response.json() : null) as { progress?: MoveProgress | null } | null;
+		return body?.progress ?? null;
+	} catch {
+		return null;
+	}
 }
 
 /** What in a project's design/ would stay on this Mac, and in git, if it moved into a team. */
