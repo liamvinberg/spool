@@ -174,6 +174,7 @@ it("moves a project to the chosen team, saying history before the move stays in 
 	await settle();
 	expect(asked).toEqual([
 		"GET /api/cloud/move/stays?path=%2FUsers%2Fana%2Fsite",
+		"GET /api/cloud/move/progress?path=%2FUsers%2Fana%2Fsite",
 		'POST /api/cloud/teams/tidemark/move {"path":"/Users/ana/site"}',
 	]);
 	expect(onMoved).toHaveBeenCalledWith({ root: "/Users/ana/site", name: "site", commit: "committed" }, TIDEMARK);
@@ -213,42 +214,111 @@ it("offers Move to team on a project's cover, never on a team project's", async 
 	expect(onMoveToTeam).toHaveBeenCalledWith(expect.objectContaining({ root: "/Users/ana/site", name: "site" }));
 });
 
-it("shows how many files are up while it moves, and the pause it is waiting out", async () => {
-	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+const CHAMFER = { root: "/Users/ana/chamfer", name: "chamfer" };
+const PAUSED = (until: number) => ({
+	up: 240,
+	total: 1922,
+	paused: { why: "this project took 120 saves in the last minute", until },
+});
+const NOTHING = { progress: null, team: null, ended: null };
+
+/** Fake intervals and clock: a poll a second, and a countdown that moves with them. */
+function fakeClock() {
+	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: new Date("2026-05-20T12:00:00Z") });
 	onTestFinished(() => void vi.useRealTimers());
+	return async (ms: number) => {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(ms);
+		});
+		await settle();
+	};
+}
+
+it("shows how many files are up while it moves, and counts the pause down each second", async () => {
+	const pass = fakeClock();
+	let posted = false;
+	let polls = 0;
 	const asked = daemon((url) => {
 		if (url.includes("/move/stays")) return Response.json({ stays: [] });
-		if (url.includes("/move/progress"))
-			return Response.json({
-				progress: {
-					up: 240,
-					total: 1922,
-					paused: { why: "this project took 120 saves in the last minute", until: Date.now() + 48_000 },
-				},
-			});
+		if (url.includes("/move/progress")) {
+			if (!posted) return Response.json(NOTHING);
+			// the first poll answers; every later one hangs, so the countdown moves only by the sheet's own clock
+			if (polls++ > 0) return new Promise<Response>(() => {});
+			return Response.json({ progress: PAUSED(Date.now() + 48_000), team: "devosurf", ended: null });
+		}
+		posted = true;
 		return new Promise<Response>(() => {});
 	});
 	const host = mount(
-		createElement(MoveToTeamDialog, {
-			project: { root: "/Users/ana/chamfer", name: "chamfer" },
-			teams: [DEVOSURF],
-			onMoved: vi.fn(),
-			onClose: vi.fn(),
-		}),
+		createElement(MoveToTeamDialog, { project: CHAMFER, teams: [DEVOSURF], onMoved: vi.fn(), onClose: vi.fn() }),
 	);
 	await settle();
 	expect(host.querySelector("[data-move-progress]")).toBeNull();
 	await act(async () => button(host, "Move to Devosurf").click());
-	await act(async () => {
-		await vi.advanceTimersByTimeAsync(1_000);
+	await pass(1_000);
+	const progress = () => host.querySelector("[data-move-progress]")?.textContent;
+	expect(progress()).toContain("240 of 1,922 files up");
+	expect(progress()).toContain("Paused: this project took 120 saves in the last minute. Carrying on in 48 seconds.");
+	await pass(3_000);
+	// a poll still out is never asked again over, so an older answer can't land after a newer one
+	expect(asked.filter((line) => line.startsWith("GET /api/cloud/move/progress"))).toHaveLength(3);
+});
+
+it("picks up a move already under way when it opens, and hands its outcome to Home when it ends", async () => {
+	const pass = fakeClock();
+	let done = false;
+	const asked = daemon((url) => {
+		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (done)
+			return Response.json({
+				progress: null,
+				team: "devosurf",
+				ended: { outcome: { root: CHAMFER.root, name: "chamfer", commit: "waiting" } },
+			});
+		return Response.json({ progress: PAUSED(Date.now() + 10_000), team: "devosurf", ended: null });
 	});
-	await settle();
-	expect(asked).toContain("GET /api/cloud/move/progress?path=%2FUsers%2Fana%2Fchamfer");
-	const progress = host.querySelector("[data-move-progress]");
-	expect(progress?.textContent).toContain("240 of 1,922 files up");
-	expect(progress?.textContent).toContain(
-		"Paused: this project took 120 saves in the last minute. Carrying on in 48 seconds.",
+	const onMoved = vi.fn();
+	const onClose = vi.fn();
+	const host = mount(
+		createElement(MoveToTeamDialog, { project: CHAMFER, teams: [TIDEMARK, DEVOSURF], onMoved, onClose }),
 	);
+	await settle();
+	expect(host.querySelector("[data-move-progress]")?.textContent).toContain("Moving to Devosurf.");
+	expect(host.querySelector("[data-move-progress]")?.textContent).toContain("240 of 1,922 files up");
+	expect(button(host, "Move to Tidemark").disabled).toBe(true);
+	done = true;
+	await pass(1_000);
+	expect(onMoved).toHaveBeenCalledWith({ root: CHAMFER.root, name: "chamfer", commit: "waiting" }, DEVOSURF);
+	expect(onClose).toHaveBeenCalled();
+	expect(asked.some((line) => line.startsWith("POST"))).toBe(false);
+});
+
+it("says what stopped a move it picked up", async () => {
+	const pass = fakeClock();
+	let done = false;
+	daemon((url) => {
+		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (done)
+			return Response.json({
+				progress: null,
+				team: "devosurf",
+				ended: {
+					error: "chamfer didn't move: the connection to spool.page dropped. Nothing changed here; try again.",
+				},
+			});
+		return Response.json({ progress: PAUSED(Date.now() + 10_000), team: "devosurf", ended: null });
+	});
+	const host = mount(
+		createElement(MoveToTeamDialog, { project: CHAMFER, teams: [DEVOSURF], onMoved: vi.fn(), onClose: vi.fn() }),
+	);
+	await settle();
+	done = true;
+	await pass(1_000);
+	expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+		"chamfer didn't move: the connection to spool.page dropped. Nothing changed here; try again.",
+	);
+	expect(host.querySelector("[data-move-progress]")).toBeNull();
+	expect(button(host, "Move to Devosurf").disabled).toBe(false);
 });
 
 it("says what stopped a move", async () => {

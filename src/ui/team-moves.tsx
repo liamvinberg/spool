@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	type CloudTeam,
 	fetchMoveProgress,
@@ -241,13 +241,17 @@ export function MoveToTeamDialog({
 		};
 	}, [project.root]);
 	const [moving, setMoving] = useState(false);
+	const move = useMoveUnderWay(project.root, moving, teams, (outcome, team) => {
+		onMoved(outcome, team);
+		onClose();
+	});
 	const chosen = teams.find((team) => team.address === address);
 	return (
 		<ConfirmDialog
 			title={`Move ${project.name} to a team`}
 			description={`spool uploads the whole project to ${chosen?.name ?? "the team"}, then makes one commit on your current branch that takes design/ out of git and adds spool.json. Nothing is pushed.`}
 			confirmLabel={chosen === undefined ? "Move" : `Move to ${chosen.name}`}
-			disabled={chosen === undefined}
+			disabled={chosen === undefined || move.found !== null}
 			onConfirm={async () => {
 				if (chosen === undefined) return;
 				setMoving(true);
@@ -292,7 +296,14 @@ export function MoveToTeamDialog({
 					</ul>
 				</div>
 			)}
-			{moving && <MoveProgressLine root={project.root} />}
+			{(moving || move.found !== null) && (
+				<MoveProgressLine progress={move.progress} team={moving ? undefined : (move.found ?? undefined)} />
+			)}
+			{move.stopped !== null && (
+				<p className="mb-[8px] text-thread-strong type-label" role="alert">
+					{move.stopped}
+				</p>
+			)}
 		</ConfirmDialog>
 	);
 }
@@ -300,25 +311,80 @@ export function MoveToTeamDialog({
 /** How often the move sheet asks how far the move has got. */
 const MOVE_PROGRESS_MS = 1_000;
 
-/** Files up of all that go, and while spool.page isn't taking saves, why and for how long. Asked while it moves. */
-function MoveProgressLine({ root }: { root: string }) {
+/**
+ * A project's move as the sheet follows it: asked once as the sheet opens, which finds a move already under way
+ * (after a reload, or from a sheet closed earlier), then each second while one is, never over a question still out.
+ * A move the sheet found that ends hands its outcome on, or says what stopped it; the sheet's own move is answered
+ * by its request.
+ */
+function useMoveUnderWay(
+	root: string,
+	posting: boolean,
+	teams: readonly CloudTeam[],
+	onMoved: (moved: MoveOutcome, team: CloudTeam) => void,
+) {
+	/** The team, by name, of a move found under way that this sheet didn't start. */
+	const [found, setFound] = useState<string | null>(null);
 	const [progress, setProgress] = useState<MoveProgress | null>(null);
+	const [stopped, setStopped] = useState<string | null>(null);
+	const [opened, setOpened] = useState(false);
+	/** A question still out: never asked over, so an older answer can't land after a newer one. */
+	const asking = useRef(false);
+	const latest = useRef({ teams, onMoved });
+	latest.current = { teams, onMoved };
+	const following = !opened || posting || found !== null;
 	useEffect(() => {
+		if (!following) return;
 		let current = true;
-		const timer = setInterval(() => {
+		const ask = () => {
+			if (asking.current) return;
+			asking.current = true;
 			void fetchMoveProgress(root).then((read) => {
-				if (current) setProgress(read);
+				asking.current = false;
+				if (!current) return;
+				setOpened(true);
+				if (read === undefined) return;
+				setProgress(read.progress);
+				const team = latest.current.teams.find((one) => one.address === read.team) ?? null;
+				if (read.progress !== null) {
+					if (!posting) {
+						setFound(team?.name ?? read.team ?? "the team");
+						setStopped(null);
+					}
+					return;
+				}
+				// the move ended: what no sheet heard is told here, and the sheet's own move its request answers
+				if (posting) return;
+				setFound(null);
+				if (read.ended !== null && "error" in read.ended) setStopped(read.ended.error);
+				else if (read.ended !== null && team !== null) latest.current.onMoved(read.ended.outcome, team);
 			});
-		}, MOVE_PROGRESS_MS);
+		};
+		if (!opened) ask();
+		const timer = setInterval(ask, MOVE_PROGRESS_MS);
 		return () => {
 			current = false;
 			clearInterval(timer);
 		};
-	}, [root]);
-	if (progress === null || progress.total === 0) return null;
-	const seconds = progress.paused === null ? 0 : Math.max(1, Math.ceil((progress.paused.until - Date.now()) / 1_000));
+	}, [root, following, posting, opened]);
+	return { found, progress, stopped };
+}
+
+/**
+ * Files up of all that go, and while spool.page isn't taking saves, why and for how long. A move this sheet found under way names its team first.
+ */
+function MoveProgressLine({ progress, team }: { progress: MoveProgress | null; team: string | undefined }) {
+	const until = progress?.paused?.until;
+	if (progress === null || progress.total === 0)
+		return team === undefined ? null : (
+			<div className="mb-[8px]" role="status" data-move-progress="">
+				<p className="type-label">Moving to {team}.</p>
+			</div>
+		);
+	const seconds = until === undefined ? 0 : Math.max(1, Math.ceil((until - Date.now()) / 1_000));
 	return (
 		<div className="mb-[8px] flex flex-col gap-[4px]" role="status" data-move-progress="">
+			{team !== undefined && <p className="type-label">Moving to {team}.</p>}
 			<p className="type-label">
 				{progress.up.toLocaleString("en")} of {progress.total.toLocaleString("en")} files up
 			</p>

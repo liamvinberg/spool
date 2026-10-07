@@ -25,7 +25,7 @@ import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
-import type { MoveOutcome, TeamProjectOnMac } from "../daemon/team-projects";
+import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
@@ -1683,7 +1683,7 @@ export const teamActions = {
 	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 };
 
-export type { MoveOutcome, MoveProgress, SyncState, TeamProjectOnMac };
+export type { MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
 
 /** Who is inside a team project right now, as its cover says it. */
 export type HerePerson = TeamProjectHere["people"][number];
@@ -1743,14 +1743,15 @@ export function moveProjectToTeam(address: string, path: string): Promise<MoveOu
 	return teamProjectAction(`${team(address)}/move`, { path });
 }
 
-/** How far a move under way has got, and the pause it is waiting out; null when none is or the daemon can't say. */
-export async function fetchMoveProgress(path: string): Promise<MoveProgress | null> {
+/** A project's move under way and its team, or how one ended that no sheet heard; undefined when the daemon can't say. */
+export async function fetchMoveProgress(path: string): Promise<MoveReading | undefined> {
 	try {
 		const response = await controlFetch(`/api/cloud/move/progress?${new URLSearchParams({ path })}`);
-		const body = (response.ok ? await response.json() : null) as { progress?: MoveProgress | null } | null;
-		return body?.progress ?? null;
+		const body = (response.ok ? await response.json() : null) as Partial<MoveReading> | null;
+		if (body === null) return undefined;
+		return { progress: body.progress ?? null, team: body.team ?? null, ended: body.ended ?? null };
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
