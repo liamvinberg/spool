@@ -10,6 +10,7 @@ import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from 
 import {
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
+	CLOSE_UNAVAILABLE,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
@@ -155,6 +156,16 @@ export class SyncPaused extends SpoolError {
 	}
 }
 
+/** A one-off sync lost its connection, or spool.page couldn't take it: worth trying again in a moment. */
+export class SyncDropped extends SpoolError {
+	constructor(readonly why: string) {
+		super(why);
+	}
+}
+
+/** A one-off sync stopped because its caller is closing. */
+export class SyncStopped extends SpoolError {}
+
 /** How long a pause lasts when spool.page can't say when its limit lifts. */
 const RETRY_LIMIT_SECONDS = 60;
 /** How long the copy's record waits for more changes before it is written: a catch-up of many files is one write. */
@@ -186,6 +197,8 @@ export interface SyncOnceOptions {
 	moving?: ProjectLink;
 	/** The team took one of this copy's saves: how a move counts its files up. */
 	onSaved?: (path: string) => void;
+	/** The caller is closing: the sync stops where it is, with `SyncStopped`. */
+	signal?: AbortSignal;
 }
 
 /**
@@ -206,11 +219,27 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 		},
 		false,
 	);
+	const { signal } = options;
+	let stop = () => {};
+	const stopped = new Promise<never>((_, reject) => {
+		stop = () => reject(new SyncStopped("spool is closing"));
+		if (signal?.aborted === true) stop();
+		else signal?.addEventListener("abort", stop, { once: true });
+	});
 	try {
-		await copy.idle();
+		await Promise.race([copy.idle(), stopped]);
 	} finally {
+		signal?.removeEventListener("abort", stop);
 		copy.close();
 	}
+}
+
+/** Why a one-off sync's connection closed, from the close code spool.page gave, if any. */
+function closedOnce(code: number | undefined): SpoolError {
+	if (code === CLOSE_SIGNED_OUT) return new SpoolError("not signed in; run `spool login`");
+	if (code === CLOSE_NOT_EDITOR) return new SpoolError("you can't edit this team project");
+	if (code === CLOSE_UNAVAILABLE) return new SyncDropped("spool.page is unavailable");
+	return new SyncDropped("the connection to spool.page dropped");
 }
 
 /** The sync socket's address for a team project. */
@@ -671,7 +700,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				yielding.clear();
 				presence.lost();
 				if (closed) return;
-				if (!live) return fail(new SpoolError(`spool.page closed the sync connection for ${link.url}`));
+				if (!live) return fail(closedOnce(code));
 				if (code === CLOSE_SIGNED_OUT) signedOut();
 				// cut off, or refused before it opened: spool.page says whether this machine still edits the project
 				if (code === CLOSE_NOT_EDITOR || !opened) return void askStanding();
