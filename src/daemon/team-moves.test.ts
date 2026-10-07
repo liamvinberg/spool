@@ -610,7 +610,7 @@ describe("Move to team under the save limit", () => {
 		["project_full", "site didn't move: the team's design/ is at its 1 GB limit. Nothing changed here."],
 		[
 			"monthly_limit",
-			"site didn't move: you've made 30,000 saves to this project this month. Nothing changed here.",
+			"site didn't move: you've made 30,000 saves to this project this month. It lifts on 1 June. Nothing changed here.",
 		],
 	] as const)
 		it(`stops on ${reason} and says so, changing nothing here`, { timeout: 30_000 }, async () => {

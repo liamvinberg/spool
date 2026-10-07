@@ -181,6 +181,8 @@ const GIVE_UP_ROUNDS = 10;
 /** What stopped a move that won't be waited out, said plainly, ending its sentence. */
 function stopReason(error: unknown): string {
 	if (error instanceof SyncPaused) {
+		if (error.reason === "monthly_limit")
+			return `${error.why}. It lifts on ${new Date(Date.now() + error.seconds * 1_000).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}. Nothing changed here.`;
 		return `${error.why}. Nothing changed here.`;
 	}
 	const why = error instanceof Error ? error.message : String(error);
