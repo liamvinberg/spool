@@ -1,0 +1,44 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap");
+
+/* blueprint: a drafting sheet. Palette values are set per appearance on the root
+ * from blueprint.tsx (one source for the swatches the parts sheet prints); this
+ * file owns the type roles and the lettering. */
+
+.id-blueprint {
+	font-family: "IBM Plex Sans Condensed", "Instrument Sans Variable", sans-serif;
+	color: var(--bp-ink);
+	-webkit-font-smoothing: antialiased;
+	font-feature-settings: "tnum";
+}
+
+/* title: a project, a panel's subject */
+.id-blueprint .bp-title {
+	font: 600 16px/20px "IBM Plex Sans Condensed", sans-serif;
+	letter-spacing: -0.005em;
+}
+
+/* body: anything a person says: buttons, menu items, placeholders */
+.id-blueprint .bp-body {
+	font: 400 13px/16px "IBM Plex Sans Condensed", sans-serif;
+}
+.id-blueprint .bp-body-strong {
+	font: 500 13px/16px "IBM Plex Sans Condensed", sans-serif;
+}
+
+/* label: anything the machine prints: names, paths, values */
+.id-blueprint .bp-label {
+	font: 400 11px/16px "Fragment Mono", monospace;
+	letter-spacing: 0;
+}
+
+/* caption: field names, column heads, ruler figures, sheet numbers */
+.id-blueprint .bp-caption {
+	font: 400 10px/12px "Fragment Mono", monospace;
+	letter-spacing: 0.04em;
+}
+
+/* figure: the dimension text, set like a drafter's numerals */
+.id-blueprint .bp-figure {
+	font: 400 11px/12px "Fragment Mono", monospace;
+	letter-spacing: 0.02em;
+}
