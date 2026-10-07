@@ -744,3 +744,14 @@ function moved(roots: readonly string[], from: number, to: number): readonly str
 function sameRoots(roots: readonly string[], tabs: readonly TabProject[]): boolean {
 	return roots.length === tabs.length && roots.every((root, index) => tabs[index]?.root === root);
 }
+
+/**
+ * Which tab takes focus when the focused one closes, as a browser decides: the
+ * tab after it, or the one before when it was last. Null only when it was the
+ * only tab, and then Home is what is left.
+ */
+export function focusAfterClose(roots: readonly string[], closing: string): string | null {
+	const index = roots.indexOf(closing);
+	if (index === -1) return null;
+	return roots[index + 1] ?? roots[index - 1] ?? null;
+}

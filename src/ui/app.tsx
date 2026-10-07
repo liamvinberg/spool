@@ -36,7 +36,7 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { SharedControl, useShares } from "./shares";
-import { type TabProject, TabStrip } from "./tab-strip";
+import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
 import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
@@ -380,7 +380,7 @@ export function App() {
 			const next = openRef.current.filter((r) => r !== root);
 			setOpen(next);
 			putSession(root, false);
-			if (focused === root) focusProject(null);
+			if (focused === root) focusProject(focusAfterClose(openRef.current, root));
 		},
 		[focused, focusProject],
 	);

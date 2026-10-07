@@ -3,7 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TabStrip } from "./tab-strip";
+import { focusAfterClose, TabStrip } from "./tab-strip";
 
 /**
  * The tabs, arranged. Every box reads as zero under happy-dom, so each tab is
@@ -297,4 +297,19 @@ it("closes a tab by the middle button, and puts its menu away with it", async ()
 		"/w/alpha",
 		"/w/gamma",
 	]);
+});
+
+describe("focusAfterClose", () => {
+	const roots = ["/w/alpha", "/w/beta", "/w/gamma"];
+	it("hands focus to the tab after the one that closed", () => {
+		expect(focusAfterClose(roots, "/w/beta")).toBe("/w/gamma");
+		expect(focusAfterClose(roots, "/w/alpha")).toBe("/w/beta");
+	});
+	it("falls back to the tab before when the last one closed", () => {
+		expect(focusAfterClose(roots, "/w/gamma")).toBe("/w/beta");
+	});
+	it("goes Home only when the only tab closed", () => {
+		expect(focusAfterClose(["/w/alpha"], "/w/alpha")).toBeNull();
+		expect(focusAfterClose(roots, "/w/missing")).toBeNull();
+	});
 });
