@@ -359,7 +359,7 @@ type GitRun = { ok: true; stdout: string } | { ok: false; missing: boolean };
  * inherited `GIT_INDEX_FILE`, and every one of them would aim a save somewhere
  * else. Nothing here ever prompts and nothing here ever waits forever.
  */
-async function git(cwd: string, args: readonly string[], indexFile?: string): Promise<GitRun> {
+async function git(cwd: string, args: readonly string[], indexFile?: string, signal?: AbortSignal): Promise<GitRun> {
 	const env: Record<string, string | undefined> = {
 		...process.env,
 		GIT_DIR: undefined,
@@ -368,7 +368,13 @@ async function git(cwd: string, args: readonly string[], indexFile?: string): Pr
 		GIT_TERMINAL_PROMPT: "0",
 	};
 	try {
-		const { stdout } = await run("git", [...args], { cwd, env, timeout: GIT_TIMEOUT_MS, windowsHide: true });
+		const { stdout } = await run("git", [...args], {
+			cwd,
+			env,
+			timeout: GIT_TIMEOUT_MS,
+			windowsHide: true,
+			...(signal === undefined ? {} : { signal }),
+		});
 		return { ok: true, stdout };
 	} catch (error) {
 		return { ok: false, missing: (error as NodeJS.ErrnoException | null)?.code === "ENOENT" };
@@ -647,56 +653,102 @@ export async function commitMoveIn(root: string, options: MoveCommitOptions = {}
 	return { kind: "failed" };
 }
 
+/** How many of the most recent unmerged branches a move checks for design/ changes. */
+export const BRANCH_CHECK_LIMIT = 50;
+
+/** How long that check may take before the sheet shows what it found by then. */
+const BRANCH_CHECK_MS = 3_000;
+
 /** How many branches are asked about at once. */
 const BRANCH_LOOKS = 8;
+
+/** The branches a move would conflict with, and how many were checked when not all of them were. */
+export interface BranchesTouchingDesign {
+	/** Short names, most recent first: `feature`, `origin/feature`. */
+	branches: string[];
+	/** How many of the unmerged branches, the most recent, were checked; null when every one was. */
+	checkedOnly: number | null;
+}
+
+export interface BranchCheckOptions {
+	/** How many of the most recent unmerged branches are checked. */
+	limit?: number;
+	/** How long the whole check may take, in ms; what was found by then is the answer. */
+	within?: number;
+	/** The asker went away: stop. */
+	signal?: AbortSignal;
+}
 
 /**
  * The branches a move would leave conflicting (DEV-236): local and remote-tracking branches not merged into HEAD
  * whose changes since their merge base with it touch `design/`. Once the move commit takes `design/` out of git,
  * merging one of these is a modify/delete conflict. Skipped: the current branch, symbolic refs such as
  * `origin/HEAD`, and a remote-tracking branch that a listed local branch tracks. One `for-each-ref` and then one
- * `diff` per unmerged branch, never per file. A project in no git work tree, or with no commit yet, names none.
+ * `diff` for each of the `limit` most recent unmerged branches, never per file, all within `within`. A project in no
+ * git work tree, or with no commit yet, names none.
  */
-export async function branchesTouchingDesign(root: string): Promise<string[]> {
+export async function branchesTouchingDesign(
+	root: string,
+	options: BranchCheckOptions = {},
+): Promise<BranchesTouchingDesign> {
+	const none = { branches: [], checkedOnly: null };
 	let designDir: string;
 	try {
 		designDir = realDesignDir(root);
 	} catch {
-		return [];
+		return none;
 	}
 	const top = await git(root, ["rev-parse", "--show-toplevel"]);
-	if (!top.ok) return [];
+	if (!top.ok) return none;
 	const repo = top.stdout.trim();
-	if (!(await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok) return [];
+	if (!(await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok) return none;
 	const scope = designPath(repo, designDir);
 	const refs = await git(repo, [
 		"for-each-ref",
 		"--no-merged=HEAD",
+		"--sort=-committerdate",
 		"--format=%(refname)%00%(symref)%00%(upstream)",
 		"refs/heads",
 		"refs/remotes",
 	]);
-	if (!refs.ok) return [];
+	if (!refs.ok) return none;
 	const unmerged = refs.stdout
 		.split("\n")
 		.map((line) => line.split("\0"))
 		.filter(([ref, symref]) => ref !== undefined && ref !== "" && symref === "")
 		.map(([ref, , upstream]) => ({ ref: ref as string, upstream: upstream ?? "" }));
+	const asked = unmerged.slice(0, options.limit ?? BRANCH_CHECK_LIMIT);
+	const stop = AbortSignal.any([
+		AbortSignal.timeout(options.within ?? BRANCH_CHECK_MS),
+		...(options.signal === undefined ? [] : [options.signal]),
+	]);
 	const touching: typeof unmerged = [];
-	for (let start = 0; start < unmerged.length; start += BRANCH_LOOKS) {
-		const batch = unmerged.slice(start, start + BRANCH_LOOKS);
+	let checked = 0;
+	for (let start = 0; start < asked.length && !stop.aborted; start += BRANCH_LOOKS) {
+		const batch = asked.slice(start, start + BRANCH_LOOKS);
 		const looked = await Promise.all(
-			batch.map(({ ref }) => git(repo, ["diff", "--name-only", `HEAD...${ref}`, "--", scope])),
+			batch.map(({ ref }) => git(repo, ["diff", "--name-only", `HEAD...${ref}`, "--", scope], undefined, stop)),
 		);
-		batch.forEach((branch, index) => {
+		// a batch the time limit cut short counts only up to its first unanswered branch
+		for (const [index, branch] of batch.entries()) {
 			const diff = looked[index];
+			if (diff?.ok !== true && stop.aborted) break;
+			checked += 1;
 			if (diff?.ok === true && diff.stdout.trim() !== "") touching.push(branch);
-		});
+		}
 	}
-	const tracked = new Set(touching.filter(({ ref }) => ref.startsWith("refs/heads/")).map(({ upstream }) => upstream));
-	return touching
-		.filter(({ ref }) => !tracked.has(ref))
-		.map(({ ref }) => ref.replace(/^refs\/(heads|remotes)\//u, ""));
+	// a local branch tracking another local branch is two branches to merge; only its remote twin is the same one
+	const tracked = new Set(
+		touching
+			.filter(({ ref, upstream }) => ref.startsWith("refs/heads/") && upstream.startsWith("refs/remotes/"))
+			.map(({ upstream }) => upstream),
+	);
+	return {
+		branches: touching
+			.filter(({ ref }) => !tracked.has(ref))
+			.map(({ ref }) => ref.replace(/^refs\/(heads|remotes)\//u, "")),
+		checkedOnly: checked < unmerged.length ? checked : null,
+	};
 }
 
 /** The paths under `design/` the commit HEAD stands on tracks that `keep` keeps in git, as git spells them. */

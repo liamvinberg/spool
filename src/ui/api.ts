@@ -19,6 +19,7 @@ import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { RungRead } from "../daemon/hand-lane";
 import type { EditedNode, Place as MovePlace, PatchRefusal, StampShift } from "../daemon/hand-write";
+import type { BranchesTouchingDesign } from "../daemon/history";
 import type { LocatedRange } from "../daemon/locate";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
@@ -1683,7 +1684,7 @@ export const teamActions = {
 	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 };
 
-export type { MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
+export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
 
 /** Who is inside a team project right now, as its cover says it. */
 export type HerePerson = TeamProjectHere["people"][number];
@@ -1766,14 +1767,22 @@ export async function fetchMoveStays(path: string): Promise<{ path: string; why:
 	}
 }
 
-/** The branches whose design/ changes aren't merged yet, which would conflict once a move takes design/ out of git. */
-export async function fetchMoveBranches(path: string): Promise<string[]> {
+/**
+ * The branches whose design/ changes aren't merged yet, which would conflict once a move takes design/ out of git,
+ * and how many were checked when not all were. Nothing, when the daemon can't say.
+ */
+export async function fetchMoveBranches(path: string, signal?: AbortSignal): Promise<BranchesTouchingDesign> {
 	try {
-		const response = await controlFetch(`/api/cloud/move/branches?${new URLSearchParams({ path })}`);
-		const body = (response.ok ? await response.json() : null) as { branches?: unknown } | null;
-		return Array.isArray(body?.branches) ? (body.branches as string[]) : [];
+		const response = await controlFetch(`/api/cloud/move/branches?${new URLSearchParams({ path })}`, {
+			...(signal === undefined ? {} : { signal }),
+		});
+		const body = (response.ok ? await response.json() : null) as Partial<BranchesTouchingDesign> | null;
+		return {
+			branches: Array.isArray(body?.branches) ? body.branches : [],
+			checkedOnly: typeof body?.checkedOnly === "number" ? body.checkedOnly : null,
+		};
 	} catch {
-		return [];
+		return { branches: [], checkedOnly: null };
 	}
 }
 

@@ -115,7 +115,7 @@ export function teamProjectRoutes(options: {
 				const path = c.req.query("path");
 				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/project" }, 400);
 				try {
-					return c.json({ branches: await branchesTouchingDesign(realDir(path)) });
+					return c.json(await branchesTouchingDesign(realDir(path), { signal: c.req.raw.signal }));
 				} catch (error) {
 					return refused(c, error);
 				}
