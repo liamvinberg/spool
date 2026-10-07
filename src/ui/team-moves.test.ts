@@ -137,6 +137,34 @@ it("names what stays on this Mac and in git before it moves", async () => {
 	expect(host.querySelector("[data-move-stays]")?.textContent).toContain("design/README.md");
 });
 
+it("names the branches still changing design/ before it moves, and nothing when there are none", async () => {
+	const sheet = async (branches: string[]) => {
+		daemon((url) => (url.includes("/move/branches") ? Response.json({ branches }) : Response.json({ stays: [] })));
+		const host = mount(
+			createElement(MoveToTeamDialog, {
+				project: { root: "/Users/ana/site", name: "site" },
+				teams: [DEVOSURF],
+				onMoved: vi.fn(),
+				onClose: vi.fn(),
+			}),
+		);
+		await settle();
+		return host.querySelector("[data-move-branches]");
+	};
+	const two = await sheet(["redesign", "origin/theirs"]);
+	expect(two?.textContent).toContain(
+		"These 2 branches still change design/. Merge them first, or they'll conflict after the move:",
+	);
+	expect(Array.from(two?.querySelectorAll("li") ?? []).map((item) => item.textContent)).toEqual([
+		"redesign",
+		"origin/theirs",
+	]);
+	expect((await sheet(["redesign"]))?.textContent).toContain(
+		"This branch still changes design/. Merge it first, or it'll conflict after the move:",
+	);
+	expect(await sheet([])).toBeNull();
+});
+
 it("says on Home when a move's commit wasn't made, and nothing when it was", () => {
 	const moved = { root: "/Users/ana/site", name: "site" };
 	expect(moveCommitNote({ ...moved, commit: "committed" }, DEVOSURF)).toBeUndefined();
@@ -153,7 +181,9 @@ it("moves a project to the chosen team, saying history before the move stays in 
 	const asked = daemon((url) =>
 		url.includes("/move/stays")
 			? Response.json({ stays: [] })
-			: Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }),
+			: url.includes("/move/branches")
+				? Response.json({ branches: [] })
+				: Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }),
 	);
 	const onMoved = vi.fn();
 	const host = mount(
@@ -173,6 +203,7 @@ it("moves a project to the chosen team, saying history before the move stays in 
 	await act(async () => button(host, "Move to Tidemark").click());
 	await settle();
 	expect(asked).toEqual([
+		"GET /api/cloud/move/branches?path=%2FUsers%2Fana%2Fsite",
 		"GET /api/cloud/move/stays?path=%2FUsers%2Fana%2Fsite",
 		'POST /api/cloud/teams/tidemark/move {"path":"/Users/ana/site"}',
 	]);

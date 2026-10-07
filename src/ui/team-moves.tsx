@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
 	type CloudTeam,
+	fetchMoveBranches,
 	fetchMoveStays,
 	fetchTeamProjects,
 	getTeamProjectAt,
@@ -284,7 +285,42 @@ export function MoveToTeamDialog({
 					</ul>
 				</div>
 			)}
+			<MoveBranches root={project.root} />
 		</ConfirmDialog>
+	);
+}
+
+/**
+ * The branches that still change design/ (DEV-236): once the move commit takes design/ out of git, merging one is a
+ * modify/delete conflict. A warning, not a block; nothing shows when there are none or git can't say.
+ */
+function MoveBranches({ root }: { root: string }) {
+	const [branches, setBranches] = useState<string[]>([]);
+	useEffect(() => {
+		let current = true;
+		void fetchMoveBranches(root).then((found) => {
+			if (current) setBranches(found);
+		});
+		return () => {
+			current = false;
+		};
+	}, [root]);
+	if (branches.length === 0) return null;
+	return (
+		<div className="mb-[8px] flex flex-col gap-[4px]" data-move-branches="">
+			<p className="text-muted type-label">
+				{branches.length === 1
+					? "This branch still changes design/. Merge it first, or it'll conflict after the move:"
+					: `These ${branches.length} branches still change design/. Merge them first, or they'll conflict after the move:`}
+			</p>
+			<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
+				{branches.map((branch) => (
+					<li key={branch} className="font-mono text-text type-detail">
+						{branch}
+					</li>
+				))}
+			</ul>
+		</div>
 	);
 }
 
