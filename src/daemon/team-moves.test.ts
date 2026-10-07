@@ -603,4 +603,30 @@ describe("Move to team under the save limit", () => {
 		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe("this project took 120 saves in the last minute");
 		expect(progress.some((at) => at.up > 0 && at.up < at.total && at.paused === null)).toBe(true);
 	});
+
+	for (const [reason, said] of [
+		["project_full", "site didn't move: the team's design/ is at its 1 GB limit. Nothing changed here."],
+		["monthly_limit", "site didn't move: you've made 30,000 saves to this project this month. Nothing changed here."],
+	] as const)
+		it(`stops on ${reason} and says so, changing nothing here`, { timeout: 30_000 }, async () => {
+			const cloud = fakeTeam();
+			const ana = cloud.machine("ana");
+			const project = existingProject();
+			const before = git(project.root, "rev-parse", "HEAD");
+			cloud.limit(reason, 3_600);
+			const slept: number[] = [];
+
+			await expect(
+				moveIntoTeam(project.root, project.state, {
+					team: "devosurf",
+					origin: TEAM_ORIGIN,
+					request: ana.request,
+					openSocket: ana.openSocket,
+					wait: async (ms) => void slept.push(ms),
+				}),
+			).rejects.toThrow(said);
+			expect(slept).toEqual([]);
+			expect(existsSync(join(project.root, "spool.json"))).toBe(false);
+			expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
+		});
 });
