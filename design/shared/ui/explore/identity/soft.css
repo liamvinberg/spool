@@ -1,0 +1,97 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap");
+
+/* soft: warm tinted neutrals, concentric radii, light from above instead of borders.
+ * Every colour is a role; the red thread is the only accent and keeps its hex. */
+.id-soft {
+	--k-sans: "Instrument Sans Variable", system-ui, sans-serif;
+	--k-mono: "DM Mono", ui-monospace, monospace;
+
+	--k-thread: #f5391a;
+	--k-on-thread: #ffffff;
+	--k-tint: rgb(245 57 26 / 0.12);
+	--k-mate: #3b82f6;
+
+	/* dark */
+	--k-chrome: #12100e;
+	--k-canvas: #1a1816;
+	--k-card: #221f1c;
+	--k-raised: #2e2a26;
+	--k-well: #191715;
+	--k-hover: rgb(255 240 225 / 0.05);
+	--k-line: rgb(255 240 225 / 0.08);
+	--k-text: #f2ede6;
+	--k-muted: #a39a90;
+	--k-faint: #7a7269;
+	--k-tip: #f2ede6;
+	--k-on-tip: #1a1816;
+	--k-dot: rgb(255 240 225 / 0.07);
+	--k-edge: inset 0 1px 0 rgb(255 244 232 / 0.06), inset 0 0 0 1px rgb(255 244 232 / 0.025);
+	--k-float: inset 0 1px 0 rgb(255 244 232 / 0.07), inset 0 0 0 1px rgb(255 244 232 / 0.04),
+		0 10px 24px -12px rgb(0 0 0 / 0.6);
+
+	font-family: var(--k-sans);
+	color: var(--k-text);
+	-webkit-font-smoothing: antialiased;
+}
+
+.id-soft[data-appearance="light"] {
+	--k-chrome: #e8e3db;
+	--k-canvas: #f3f0ea;
+	--k-card: #fbf9f6;
+	--k-raised: #ffffff;
+	--k-well: #f0ece5;
+	--k-hover: rgb(70 48 26 / 0.05);
+	--k-line: rgb(70 48 26 / 0.09);
+	--k-text: #2b2520;
+	--k-muted: #74695f;
+	--k-faint: #958a7e;
+	--k-tip: #2b2520;
+	--k-on-tip: #fbf9f6;
+	--k-dot: rgb(70 48 26 / 0.11);
+	--k-edge: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 0 0 1px rgb(80 56 32 / 0.07), 0 1px 2px rgb(80 56 32 / 0.06);
+	--k-float: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 0 0 1px rgb(80 56 32 / 0.08),
+		0 10px 24px -12px rgb(80 56 32 / 0.3);
+}
+
+/* the type ladder: five roles, four sizes */
+.id-soft .k-heading {
+	font: 600 16px/24px var(--k-sans);
+	letter-spacing: -0.012em;
+}
+.id-soft .k-body {
+	font: 400 13px/20px var(--k-sans);
+}
+.id-soft .k-strong {
+	font: 500 13px/20px var(--k-sans);
+}
+.id-soft .k-label {
+	font: 500 12px/16px var(--k-sans);
+}
+.id-soft .k-value {
+	font: 400 12px/16px var(--k-mono);
+}
+.id-soft .k-caption {
+	font: 400 11px/16px var(--k-mono);
+	letter-spacing: 0.01em;
+}
+
+/* raised surfaces are lit from above; floating ones also cast */
+.id-soft .k-edge {
+	box-shadow: var(--k-edge);
+}
+.id-soft .k-float {
+	box-shadow: var(--k-float);
+}
+
+.id-soft .k-grid {
+	background-color: var(--k-canvas);
+	background-image: radial-gradient(circle at 1px 1px, var(--k-dot) 1px, transparent 1.2px);
+	background-size: 20px 20px;
+	background-position: 10px 10px;
+}
+
+/* keys: the symbols ⌘ ⇧ ↵ ⌫ are set in the sans, where they sit at cap height */
+.id-soft .k-key {
+	font: 500 12px/16px var(--k-sans);
+	letter-spacing: 0.04em;
+}
