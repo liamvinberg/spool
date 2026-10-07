@@ -260,6 +260,7 @@ it("shows how many files are up while it moves, and counts the pause down each s
 	expect(progress()).toContain("240 of 1,922 files up");
 	expect(progress()).toContain("Paused: this project took 120 saves in the last minute. Carrying on in 48 seconds.");
 	await pass(3_000);
+	expect(progress()).toContain("Carrying on in 45 seconds.");
 	// a poll still out is never asked again over, so an older answer can't land after a newer one
 	expect(asked.filter((line) => line.startsWith("GET /api/cloud/move/progress"))).toHaveLength(3);
 });

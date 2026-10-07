@@ -371,10 +371,17 @@ function useMoveUnderWay(
 }
 
 /**
- * Files up of all that go, and while spool.page isn't taking saves, why and for how long. A move this sheet found under way names its team first.
+ * Files up of all that go, and while spool.page isn't taking saves, why and for how long, counted down each second
+ * here between the daemon's answers. A move this sheet found under way names its team first.
  */
 function MoveProgressLine({ progress, team }: { progress: MoveProgress | null; team: string | undefined }) {
+	const [, tick] = useState(0);
 	const until = progress?.paused?.until;
+	useEffect(() => {
+		if (until === undefined) return;
+		const timer = setInterval(() => tick((n) => n + 1), 1_000);
+		return () => clearInterval(timer);
+	}, [until]);
 	if (progress === null || progress.total === 0)
 		return team === undefined ? null : (
 			<div className="mb-[8px]" role="status" data-move-progress="">
