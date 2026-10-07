@@ -49,6 +49,7 @@ import {
 	TextField,
 } from "shared/ui/spool/properties-fields";
 import { Across, Gap, MONO, NAME, Section, Sheet, Spec } from "shared/ui/spool/system-sheet";
+import { ProjectMark } from "shared/ui/spool/project-icon";
 import { TabStrip } from "shared/ui/spool/tab-strip";
 import { ThreadMark } from "shared/ui/spool/thread-mark";
 import { Toast } from "shared/ui/spool/toast";
@@ -165,14 +166,24 @@ export default function Primitives() {
 				says="The bar, the rail, the column and the tool bar, each with the states it actually wears."
 			>
 				<Across>
-					<Spec name="tab-strip.tsx" says="one focused, one not, and the door" width={320}>
+					<Spec name="tab-strip.tsx" says="icon, letter and team badge; one focused, and the door" width={440}>
 						<TabStrip
 							tabs={[
-								{ root: "~/kaffe", name: "kaffe" },
-								{ root: "~/spool", name: "spool" },
+								{ root: "~/kaffe", name: "kaffe", icon: { from: "file", art: "bean" } },
+								{ root: "~/checkout", name: "checkout", icon: { from: "file", art: "bag" }, teamAddress: "tidemark" },
+								{ root: "~/aria", name: "aria" },
 							]}
 							focused="~/kaffe"
 						/>
+					</Spec>
+					<Spec name="project-icon.tsx" says="file · favicon · letter · team badge · paused badge" width={320}>
+						<span className="flex items-center gap-5">
+							<ProjectMark name="kaffe" icon={{ from: "file", art: "bean" }} size={24} />
+							<ProjectMark name="notaker v2" icon={{ from: "favicon", art: "note" }} size={24} />
+							<ProjectMark name="aria" size={24} />
+							<ProjectMark name="checkout" icon={{ from: "file", art: "bag" }} team="tidemark" size={24} cut="var(--color-canvas)" />
+							<ProjectMark name="checkout" icon={{ from: "file", art: "bag" }} team="tidemark" paused size={24} cut="var(--color-canvas)" />
+						</span>
 					</Spec>
 					<Spec name="canvas-tools.tsx" says="select · edit · hand, and the tooltip on hover" width={280}>
 						<span className="relative block h-[52px] w-full">
@@ -425,6 +436,7 @@ export default function Primitives() {
 				says="Components that are whole screens, or that need a canvas and a running turn behind them. They are listed rather than left out, because a gap you can see is a list of work."
 			>
 				<div className="flex flex-wrap gap-x-6 gap-y-7">
+					<Gap name="project-tab-menu.tsx" says="opens from a tab: spool-canvas--tab-menu" />
 					<Gap name="canvas-screen.tsx" says="the canvas, whole" />
 					<Gap name="home-screen.tsx" says="the projects registry" />
 					<Gap name="empty-screen.tsx" says="a project with no frames" />
