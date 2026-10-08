@@ -84,7 +84,8 @@ describe("page tree", () => {
 		const { host } = await render({ onSwitchPage, onSelectFrame, onDoubleClickFrame });
 
 		expect(host.querySelector("[data-pages-count]")?.textContent).toBe("1");
-		expect(host.textContent).toContain("folder switches page");
+		// no foot under the tree: stacked, it stood in the middle of the side (#359)
+		expect(host.textContent).not.toContain("folder switches page");
 		// the root page has no row, so its own frame is already on the list
 		expect(host.querySelector('button[aria-label="home frame"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
@@ -806,7 +807,7 @@ describe("the sidebar scope", () => {
 		const { host } = await render({ activePage: "shop", onCopiesLanded, selected: ["home"] });
 		focusList(host);
 		await act(async () => press("c", ACCEL));
-		expect(host.textContent).toContain("1 copied");
+		expect(host.querySelector("[data-pages-copied]")?.textContent).toBe("1 copied");
 
 		await act(async () => press("v", ACCEL));
 		const paste = asked.find((call) => call.url.endsWith("/frames/duplicate"));
