@@ -135,12 +135,13 @@ export function Dock({
 		}
 		setWidthOf(shown)(next);
 	};
-	const { dragging, grip } = useRailDrag(
-		shown === null ? STRIP_WIDTH : widthOf(shown),
-		setLive,
-		shown === null ? PROPERTIES_WIDTH : widthOf(shown),
-		settle,
-	);
+	const { dragging, grip } = useRailDrag({
+		width: shown === null ? STRIP_WIDTH : widthOf(shown),
+		side: "right",
+		panel: shown === null ? PROPERTIES_WIDTH : widthOf(shown),
+		onWidth: setLive,
+		onSettle: settle,
+	});
 	/** what the standing surface is drawn at: the hand's number while there is one */
 	const standing = shown === null ? 0 : dragging && live !== null ? live : widthOf(shown);
 	const panel = shown === null ? 0 : standing;

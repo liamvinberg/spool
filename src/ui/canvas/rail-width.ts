@@ -74,31 +74,43 @@ export function useRailWidth(key: string, panel: number): [number, (next: number
 /**
  * The grip on a rail's inner edge, as behaviour rather than as markup (#256).
  *
- * Both rails carry the same one: a 12px column with pointer capture on it,
- * arrows that snap to either end, a drag clamped to the range, and a release
- * that settles where the vocabulary says. Only the label and the width it opens
- * to differ, so what is shared is handed back as props and each rail draws its
- * own button around them.
+ * A 12px column with pointer capture on it, arrows that snap to either end, a
+ * drag clamped to the range, and a release that settles where the vocabulary
+ * says. `side` is which edge of the window the rail stands on, which is all
+ * that makes the left and the right mirror images: which way a drag widens it,
+ * and which arrow opens it.
  *
  * `dragging` is out here too, because it is what a rail suppresses its width
  * transition on: a transition during a drag is the rail lagging the hand.
  */
-export function useRailDrag(
-	width: number,
-	onWidth: (next: number) => void,
-	panel: number,
+export function useRailDrag({
+	width,
+	side,
+	panel,
+	onWidth,
+	onSettle = onWidth,
+	floor = STRIP_WIDTH,
+	max = MAX_WIDTH,
+}: {
+	width: number;
+	side: "left" | "right";
+	/** what the open arrow settles at */
+	panel: number;
+	onWidth: (next: number) => void;
 	/**
-	 * Where the hand let go, when the release is a different act from the move.
-	 *
-	 * A rail that owns its own width wants neither: every value the drag produces
-	 * is its width, settled or not. The dock does want it (`dock.tsx`), because
-	 * the far end of the range is not a width there — it is the column being shut
-	 * — and a mid-drag 44 is a hand passing through rather than a hand deciding.
+	 * Where the hand let go, when the release is a different act from the move:
+	 * the far end of the range can be a side collapsing rather than a width, and
+	 * a hand passing through it mid-drag has not decided anything.
 	 */
-	onSettle: (next: number) => void = onWidth,
-): { dragging: boolean; grip: RailGrip } {
+	onSettle?: (next: number) => void;
+	/** the narrowest the hand may draw it mid-drag */
+	floor?: number;
+	/** the widest, which the canvas's own floor can bring in under the ceiling */
+	max?: number;
+}): { dragging: boolean; grip: RailGrip } {
 	const [dragging, setDragging] = useState(false);
 	const held = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
+	const opens = side === "left" ? "ArrowRight" : "ArrowLeft";
 
 	const finish = (target: HTMLElement, pointerId: number) => {
 		const current = held.current;
@@ -106,7 +118,7 @@ export function useRailDrag(
 		target.releasePointerCapture(pointerId);
 		held.current = null;
 		setDragging(false);
-		onSettle(settledWidth(current.latestWidth));
+		onSettle(settledWidth(Math.min(current.latestWidth, max)));
 	};
 
 	return {
@@ -117,8 +129,7 @@ export function useRailDrag(
 				// hotkey dispatch, or the same press would nudge the selection
 				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 				event.stopPropagation();
-				if (event.key === "ArrowLeft") onSettle(panel);
-				if (event.key === "ArrowRight") onSettle(STRIP_WIDTH);
+				onSettle(event.key === opens ? panel : STRIP_WIDTH);
 			},
 			onPointerDown: (event) => {
 				if (event.button !== 0) return;
@@ -129,10 +140,8 @@ export function useRailDrag(
 			onPointerMove: (event) => {
 				const current = held.current;
 				if (current === null || current.pointerId !== event.pointerId) return;
-				const next = Math.min(
-					MAX_WIDTH,
-					Math.max(STRIP_WIDTH, current.startWidth + current.startX - event.clientX),
-				);
+				const travel = side === "left" ? event.clientX - current.startX : current.startX - event.clientX;
+				const next = Math.min(max, Math.max(floor, current.startWidth + travel));
 				current.latestWidth = next;
 				onWidth(next);
 			},
