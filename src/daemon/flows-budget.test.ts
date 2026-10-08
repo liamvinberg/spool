@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { expectTiming } from "../test-performance";
+import { expectTiming, measuringPerformance } from "../test-performance";
 import type { Flows } from "./flows";
 
 /**
@@ -37,8 +37,9 @@ import type { Flows } from "./flows";
  * millisecond figure is wall clock, and the suite runs test files in parallel, so
  * a saturated machine stretches gaps that the handler did not cause. The time
  * budget therefore runs only with test:performance, which measures these suites
- * serially. The smallest reading across rounds filters incidental scheduling noise;
- * the exact turn count and current graph are checked in every run.
+ * serially. The smallest reading across rounds filters incidental scheduling noise,
+ * so only a measuring run pays for five rebuilds; the exact turn count and current
+ * graph need one, and are checked in every run.
  *
  * Sized so the derivation dominates: without the yield each rebuild is one block
  * of about 85 ms, and with it the longest turn is a few — so the test really
@@ -46,7 +47,7 @@ import type { Flows } from "./flows";
  */
 
 const FRAMES = 200;
-const ROUNDS = 5;
+const ROUNDS = measuringPerformance ? 5 : 1;
 const BUDGET_MS = 10;
 
 interface ThreadReading {
@@ -142,11 +143,11 @@ export default function Frame() {
 	// three links each, less the two frames whose own next or row already points
 	// at the frame the shared nav goes to — one arrow holds every site claiming it
 	expect(flows.edges).toHaveLength(FRAMES * 3 - 2);
-	// the last round's rows walk seven along: the graph is the edit, not the cache
+	// the last round's rows walk 2 + ROUNDS along: the graph is the edit, not the cache
 	expect(flows.edges.filter((edge) => edge.from === "frame-1").map((edge) => edge.to)).toEqual([
 		"frame-0",
 		"frame-2",
-		"frame-8",
+		`frame-${1 + 2 + ROUNDS}`,
 	]);
 	// the thread came back once per frame, every round — the guarantee itself,
 	// which no amount of machine load can inflate away
