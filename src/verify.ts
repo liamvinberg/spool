@@ -50,7 +50,14 @@ function controlHeaders(controlToken: string): HeadersInit {
 export type ShotOutcome =
 	| { kind: "broken"; message: string }
 	| { kind: "missing"; message: string }
-	| { kind: "shot"; files: string[]; bootErrors: string[]; contentHeight: number };
+	| {
+			kind: "shot";
+			files: string[];
+			bootErrors: string[];
+			/** Every console error and uncaught throw of the boot, as `[type] text` lines the way logs prints them. */
+			consoleErrors: string[];
+			contentHeight: number;
+	  };
 
 export type LogsOutcome =
 	| { kind: "broken"; message: string }
@@ -63,7 +70,83 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	if (probe.kind === "missing") return probe;
 	const boot = await bootFrame(deps);
 	if (boot.kind !== "booted") return boot;
-	return { kind: "shot", files: boot.files, bootErrors: boot.errors, contentHeight: boot.contentHeight };
+	return {
+		kind: "shot",
+		files: boot.files,
+		bootErrors: boot.errors,
+		consoleErrors: boot.entries
+			.filter((entry) => entry.type === "error" || entry.type === "pageerror")
+			.map((entry) => `[${entry.type}] ${entry.text}`),
+		contentHeight: boot.contentHeight,
+	};
+}
+
+/** One frame of a batched shot: its outcome, or why the CLI could not get one. */
+export interface BatchShot {
+	frame: string;
+	outcome: ShotOutcome | { kind: "failed"; message: string };
+}
+
+/**
+ * `spool shot a b c` (#360): every frame asked of the daemon at once, so the
+ * photo booth's tabs share them the way they share covers, and answered in the
+ * order they were named as each is ready. One frame's failure is that frame's
+ * answer, never the batch's. A line the daemon narrates for every frame alike,
+ * the one-time browser fetch, is said once.
+ */
+export async function* shotFrames(deps: Omit<BootDeps, "frame">, frames: readonly string[]): AsyncGenerator<BatchShot> {
+	const said = new Set<string>();
+	const narrate = (line: string) => {
+		if (said.has(line)) return;
+		said.add(line);
+		deps.narrate(line);
+	};
+	const pending = [...new Set(frames)].map(
+		(frame): Promise<BatchShot> =>
+			shotFrame({ ...deps, frame, narrate }).then(
+				(outcome) => ({ frame, outcome }),
+				(error: unknown) => ({
+					frame,
+					outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
+				}),
+			),
+	);
+	for (const shot of pending) yield await shot;
+}
+
+/** Whether a batched frame's answer is one the batch exits 1 for. */
+export function batchShotFailed(shot: BatchShot): boolean {
+	return shot.outcome.kind !== "shot" || shot.outcome.bootErrors.length > 0;
+}
+
+/**
+ * One frame's block of a batched shot: a head line naming the frame and how it
+ * went, then its files and its console errors, or the reason it has none,
+ * indented under it. Everything an agent would have run `spool logs` for after
+ * the shot is here, so the batch is the whole check.
+ */
+export function formatBatchShot(shot: BatchShot): string {
+	const { frame, outcome } = shot;
+	const indent = (text: string) =>
+		text
+			.split("\n")
+			.map((line) => `  ${line}`)
+			.join("\n");
+	switch (outcome.kind) {
+		case "shot": {
+			const errors = outcome.consoleErrors.length;
+			const head = `${frame}: shot, content ${outcome.contentHeight}px tall, ${errors === 0 ? "no console errors" : errors === 1 ? "1 console error" : `${errors} console errors`}`;
+			return [head, ...outcome.files, ...outcome.consoleErrors]
+				.map((line, i) => (i === 0 ? line : indent(line)))
+				.join("\n");
+		}
+		case "broken":
+			return `${frame}: does not compile\n${indent(outcome.message)}`;
+		case "missing":
+			return `${frame}: not found\n${indent(outcome.message)}`;
+		case "failed":
+			return `${frame}: failed\n${indent(outcome.message)}`;
+	}
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
