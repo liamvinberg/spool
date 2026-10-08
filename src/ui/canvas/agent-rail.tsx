@@ -981,7 +981,7 @@ function DeadComposer() {
 		<div data-agent-dead="" className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
 			<div className="flex flex-col rounded-md border border-border/70 bg-surface/40 px-3 py-2.5">
 				<span className="text-muted type-body" style={{ height: MIN_H }}>
-					say what to change
+					Say what to change
 				</span>
 			</div>
 			<div className="flex h-[18px] items-center" />
