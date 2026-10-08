@@ -173,6 +173,24 @@ export function chooseAgent(spoolDir: string, choice: { engine?: AgentEngineId; 
 	if (choice.mode !== undefined) defaults.setMode(choice.mode);
 }
 
+/**
+ * The machine's agent choice saved through the served daemon, which tells every open page.
+ * A chat on spool's bundled engine keeps its own model picker until that engine goes
+ * (#363), and that picker offers no other agent, so a test that leaves spool for a blank
+ * Claude chat saves the choice the way any other door does.
+ */
+export async function saveAgentChoice(
+	project: { url: string; name: string; controlToken: string },
+	engine: AgentEngineId,
+): Promise<void> {
+	const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/agent/engines`, {
+		method: "PUT",
+		headers: { "content-type": "application/json", [CONTROL_HEADER]: project.controlToken },
+		body: JSON.stringify({ preferred: engine }),
+	});
+	if (!res.ok) throw new Error(`the daemon refused ${engine}: ${await res.text()}`);
+}
+
 /** A registered project behind a really-served daemon on an ephemeral port. */
 export async function serveProject(options?: Partial<Parameters<typeof serveDaemon>[0]>) {
 	const spoolDir = join(makeTempDir(), ".spool");

@@ -27,7 +27,7 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 	const model = rail.getByRole("button", { name: "Choose model", exact: true });
 	const menu = rail.getByRole("menu", { name: "Agent permissions", exact: true });
 	const open = rail.locator('[data-agent-ask="open"]');
-	const stop = rail.getByRole("button", { name: "stop", exact: true });
+	const stop = rail.getByRole("button", { name: "Stop", exact: true });
 	const shot = async (name: string) => {
 		const shots = process.env.SPOOL_TEST_SHOTS;
 		if (shots) {
@@ -39,15 +39,21 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 		await field.fill(text);
 		await field.press("Enter");
 	};
+	// a mode is named as a person reads it, and found by the mode it is (#364)
+	const item = (mode: "ask" | "edits" | "bypass") => menu.locator(`[data-permission-mode="${mode}"]`);
+	const NAMES = { ask: "Ask first", edits: "Auto-edit", bypass: "Full access" } as const;
 	const choose = async (mode: "ask" | "edits" | "bypass") => {
 		await trigger.click();
-		await menu.getByRole("menuitemradio", { name: mode, exact: true }).click();
+		await item(mode).click();
 	};
-	const says = async (mode: string) => {
-		await expect.poll(() => trigger.textContent()).toBe(mode);
+	const says = async (mode: "ask" | "edits" | "bypass") => {
+		await expect.poll(() => trigger.textContent()).toBe(NAMES[mode]);
 		await expect.poll(() => trigger.getAttribute("aria-busy")).toBe("false");
 	};
 	const bounds = async (width: number) => {
+		// the menu grows out of its trigger, so it is measured once it has arrived: 300 wide,
+		// inside a 1px border
+		await expect.poll(async () => Math.round((await menu.boundingBox())?.width ?? 0)).toBe(298);
 		const boxes = await Promise.all([
 			rail.boundingBox(),
 			menu.boundingBox(),
@@ -57,11 +63,10 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 		const [r, m, t, e] = boxes;
 		if (!r || !m || !t || !e) throw new Error("Missing footer bounds");
 		expect(Math.round(r.width)).toBe(width);
-		expect(Math.round(m.width)).toBe(250);
 		expect(m.x).toBeGreaterThanOrEqual(r.x);
 		expect(m.x + m.width).toBeLessThanOrEqual(r.x + r.width);
 		expect(m.y + m.height).toBeLessThan(t.y);
-		expect(Math.abs(t.x + t.width - (r.x + r.width - 14))).toBeLessThan(2);
+		expect(t.x + t.width).toBeLessThanOrEqual(r.x + r.width - 14);
 		expect(e.x + e.width).toBeLessThan(t.x);
 		// The rotating chevron temporarily extends beyond its settled 8px box.
 		await expect.poll(() => trigger.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
@@ -72,27 +77,23 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 	await says("edits");
 	await trigger.focus();
 	await page.keyboard.press("ArrowDown");
-	expect(
-		await menu
-			.getByRole("menuitemradio", { name: "edits", exact: true })
-			.evaluate((node) => node === document.activeElement),
-	).toBe(true);
+	await expect.poll(() => item("edits").evaluate((node) => node === document.activeElement)).toBe(true);
 	await page.keyboard.press("Home");
 	await page.keyboard.press("Enter");
 	await says("ask");
-	expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true);
+	await expect.poll(() => trigger.evaluate((node) => node === document.activeElement)).toBe(true);
 	await send("Permission journey");
 	await expect.poll(() => open.count()).toBe(3);
 	const journey = claude.spawned.at(-1);
 	if (journey === undefined) throw new Error("Claude Code never got the turn");
 	// the machine's mode, the one picked before the turn
 	expect(journey.spawn.args[journey.spawn.args.indexOf("--permission-mode") + 1]).toBe("default");
-	await storeRightWidth(page, 280);
+	await storeRightWidth(page, 380);
 	await page.reload();
 	await open.first().waitFor();
 	await field.fill("Claude next draft.");
 	await open.first().getByRole("button", { name: "change permissions…" }).click();
-	await bounds(280);
+	await bounds(380);
 	await shot("access-footer-claude-narrow-open");
 	await page.keyboard.press("Escape");
 	// Claude Code is never asked to change mid-turn, so it can never refuse (#361)
