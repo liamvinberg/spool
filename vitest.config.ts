@@ -46,8 +46,10 @@ class HeavyFirstSequencer extends BaseSequencer {
  * a machine shared with other runs gets fewer workers, not slower ones. Never
  * fewer than the 3 measured on an 8-core M1 (2026-09-09, heavy subset: 2 workers
  * 973s, 3 workers 812s, 4 workers 760s with load failures), which is also what
- * the 4-vCPU CI runners get. SPOOL_TEST_WORKERS sets it outright, and
- * `--maxWorkers` still overrides both.
+ * the 4-vCPU CI runners get. Never more than 8: on a shared 22-thread Linux box
+ * (2026-10-08), 7 workers ran the suite in 531s against 1204s for 3, while 12
+ * ran no faster than 8 and failed several times as many timing-bound cases.
+ * SPOOL_TEST_WORKERS sets it outright, and `--maxWorkers` still overrides both.
  */
 const CORES_PER_WORKER = 2.5;
 const MIN_WORKERS = 3;
