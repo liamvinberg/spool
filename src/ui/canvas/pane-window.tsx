@@ -4,7 +4,6 @@ import { createPortal } from "react-dom";
 import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
-import { CloseIcon } from "../icons";
 import { useRemembered } from "../remembered";
 import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
@@ -1231,7 +1230,10 @@ function PaneSection({
 						onClick={context.hide}
 						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-[color,background-color] duration-150 hover:bg-surface hover:text-text"
 					>
-						<CloseIcon />
+						{/* a dash rather than a cross: Pages' collapse-all already stands beside it as two chevrons */}
+						<svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+							<path d="M2 5h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+						</svg>
 					</button>
 				</div>
 			</header>
