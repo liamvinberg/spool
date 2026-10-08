@@ -38,8 +38,10 @@ async function setup() {
 	return { root, directory, runtime, contexts };
 }
 
+// three cold `spool check` processes, each a TypeScript program from scratch: a
+// few seconds each alone, and many times that on a runner other suites saturate
 it("type-checks frames offline with this package and returns diagnostics to the model", {
-	timeout: 30_000,
+	timeout: 120_000,
 }, async () => {
 	const { root, directory, runtime, contexts } = await setup();
 	markProject(root);
