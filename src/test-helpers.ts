@@ -555,7 +555,7 @@ export async function pagePointOf(page: Page, world: { x: number; y: number }): 
 
 /**
  * A browser whose right side starts collapsed at `width`, so the first press on
- * the agent's rail icon stands the agent alone at that width. Only seeds a
+ * the agent's toggle stands the agent alone at that width. Only seeds a
  * browser that has no layout yet, so a reload keeps what the test did.
  */
 export async function seedAgentWidth(page: Page, width: number): Promise<void> {

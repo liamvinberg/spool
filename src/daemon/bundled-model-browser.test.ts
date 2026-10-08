@@ -66,7 +66,7 @@ it.each([
 		};
 		await seedAgentWidth(page, 420);
 		await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-		await page.locator('[data-rail-icon="agent"]').click();
+		await page.locator('[data-pane-toggle="agent"]').click();
 		const field = page.locator("[data-agent-rail] textarea");
 		const trigger = page.getByRole("button", { name: "Choose model" });
 		await expect.poll(() => trigger.textContent(), { timeout: 15_000 }).toContain("Test image model");

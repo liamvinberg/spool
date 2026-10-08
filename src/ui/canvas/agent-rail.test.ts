@@ -460,12 +460,12 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
 			// properties are what the right side shows by default (#359), so a file
-			// about the agent shows the agent alone: ⌥ on its rail icon, which is
+			// about the agent shows the agent alone: ⌥ on its toggle, which is
 			// what every test here starts from
 			await act(async () => {
 				await draftsFor("test").ready;
 			});
-			const icon = host.querySelector<HTMLElement>('[data-rail-icon="agent"]');
+			const icon = host.querySelector<HTMLElement>('[data-pane-toggle="agent"]');
 			if (icon !== null && icon.getAttribute("aria-pressed") !== "true") {
 				await act(async () => {
 					icon.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
@@ -684,10 +684,10 @@ describe("the rail", () => {
 		await drag(200);
 		expect(stack(canvas.host)?.style.width).toBe("480px");
 		// pushed under the snap point: the side collapses rather than standing at an
-		// unreadable width, and what is left is the rail it is opened from again
+		// unreadable width, and its toggle is what opens it again
 		await drag(1400);
 		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
-		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
+		expect(canvas.host.querySelector('[data-pane-toggle="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 });
 
@@ -3451,10 +3451,10 @@ describe("the thread plate", () => {
 		expect(plate(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 		expect(rail(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 
-		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
+		await press(canvas.host.querySelector('[data-pane-toggle="agent"]'));
 
 		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
-		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
+		expect(canvas.host.querySelector('[data-pane-toggle="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 
 	/** the plus is a button on the plate, so the keyboard reaches it the way it reaches any */

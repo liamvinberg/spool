@@ -599,14 +599,16 @@ html {
 }
 
 /* The Mac window keeps its real traffic lights inside this 44px header. Only
- * empty header space drags the window; tabs retain their own drag gesture. */
+ * empty header space drags the window; tabs, pane toggles and every menu keep
+ * their own pointer. */
 :root[data-desktop] .app-header {
 	app-region: drag;
 	user-select: none;
 	padding-left: 96px;
 }
 
-:root[data-desktop] .app-header :is(button, nav) {
+:root[data-desktop] .app-header :is(button, nav, [data-pane-toggles]),
+:root[data-desktop] [role="menu"] {
 	app-region: no-drag;
 }
 

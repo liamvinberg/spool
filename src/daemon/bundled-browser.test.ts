@@ -51,7 +51,7 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 		}
 	};
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await expect
 		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())

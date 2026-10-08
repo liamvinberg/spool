@@ -62,7 +62,7 @@ it.each([false, true])(
 		// the agent alone at 420, the width these layouts are read at
 		await seedAgentWidth(page, 420);
 		await page.goto(`${daemon.url}/p/${encodeURIComponent(name)}`);
-		await page.locator('[data-rail-icon="agent"]').click();
+		await page.locator('[data-pane-toggle="agent"]').click();
 		await page
 			.getByRole("dialog", { name: "Use your usual agent.", exact: true })
 			.getByRole("button", { name: "Continue in spool", exact: true })

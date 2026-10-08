@@ -37,7 +37,7 @@ it("answers the accepted question in the served rail, preserves draft/history on
 	// the agent alone at 420, the width these layouts are read at
 	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const open = page.locator('[data-agent-ask="open"]');

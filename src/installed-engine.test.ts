@@ -355,7 +355,7 @@ it("completes a deterministic journey through the clean installed host and deliv
 				(await observedPage.locator("body").textContent())?.slice(0, 1200),
 			);
 	});
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	await page
 		.getByRole("dialog", { name: "Use your usual agent.", exact: true })
 		.getByRole("button", { name: "Continue in spool", exact: true })
@@ -755,7 +755,7 @@ try {
 	observedPage = reopened;
 	if (electron) await reopened.waitForURL((address) => address.protocol === "http:", { timeout: 30_000 });
 	await reopened.goto(`${url}/p/${basename(project)}`);
-	const agentGlyph = reopened.locator('[data-rail-icon="agent"]');
+	const agentGlyph = reopened.locator('[data-pane-toggle="agent"]');
 	await agentGlyph.waitFor();
 	const dockWasOpen = (await agentGlyph.getAttribute("aria-pressed")) === "true";
 	// Electron restores this profile's pane layout; a fresh browser context does not.

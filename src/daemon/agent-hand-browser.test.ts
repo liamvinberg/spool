@@ -140,7 +140,7 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	await expect.poll(says, { timeout: 30_000 }).toBe("open until six");
 
 	// properties have the panel until the agent's glyph in the strip is pressed
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT);
 	await field.press("Enter");

@@ -1,12 +1,16 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { hotkeyKey } from "../hotkeys";
 import { CogIcon } from "../icons";
 import { MenuItem } from "./context-menu";
 
-/** What stands at the foot of the right rail: doors out of the canvas rather than panes (#282). */
-export function RailFoot({
+const BUTTON =
+	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface active:scale-90 motion-reduce:transition-none";
+
+/** What stands in the window bar just inside the right side's toggles: doors out of the canvas rather than panes (#282). */
+export function BarEnd({
 	onSettings,
 	onUseAgent,
 }: {
@@ -15,14 +19,14 @@ export function RailFoot({
 }) {
 	return (
 		<>
-			{onUseAgent && <RailHelp onUseAgent={onUseAgent} />}
+			{onUseAgent && <BarHelp onUseAgent={onUseAgent} />}
 			<button
 				type="button"
-				data-rail-foot="settings"
+				data-bar-end="settings"
 				aria-label="Settings"
 				title={`Settings ${hotkeyKey("app.settings")}`}
 				onClick={onSettings}
-				className="relative flex h-8 w-8 items-center justify-center rounded-sm text-muted/70 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-text active:scale-90 motion-reduce:transition-none"
+				className={cn(BUTTON, "text-muted/70 hover:text-text")}
 			>
 				<CogIcon />
 			</button>
@@ -30,10 +34,10 @@ export function RailFoot({
 	);
 }
 
-function RailHelp({ onUseAgent }: { onUseAgent: () => void }) {
+function BarHelp({ onUseAgent }: { onUseAgent: () => void }) {
 	const [open, setOpen] = useState(false);
+	const [at, setAt] = useState<{ right: number; top: number } | null>(null);
 	const id = useId();
-	const root = useRef<HTMLDivElement>(null);
 	const button = useRef<HTMLButtonElement>(null);
 	const menu = useRef<HTMLDivElement>(null);
 	const focusItem = () => menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
@@ -41,12 +45,17 @@ function RailHelp({ onUseAgent }: { onUseAgent: () => void }) {
 		button.current?.focus();
 		setOpen(false);
 	};
+	const show = () => {
+		const box = button.current?.getBoundingClientRect();
+		if (box !== undefined) setAt({ right: window.innerWidth - box.right, top: box.bottom + 6 });
+		setOpen(true);
+	};
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
 		if (event.key === "ArrowDown" || event.key === "ArrowUp" || (open && ["Home", "End"].includes(event.key))) {
 			event.preventDefault();
 			event.stopPropagation();
 			if (open) focusItem();
-			else setOpen(true);
+			else show();
 		} else if (open && event.key === "Escape") {
 			event.preventDefault();
 			event.stopPropagation();
@@ -61,7 +70,9 @@ function RailHelp({ onUseAgent }: { onUseAgent: () => void }) {
 		if (!open) return;
 		const detach = attachHotkeyLayer({ scope: "picker", handlers: {} });
 		const away = (event: Event) => {
-			if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
+			if (!(event.target instanceof Node)) return;
+			if (button.current?.contains(event.target) || menu.current?.contains(event.target)) return;
+			setOpen(false);
 		};
 		document.addEventListener("pointerdown", away, true);
 		document.addEventListener("focusin", away);
@@ -73,44 +84,46 @@ function RailHelp({ onUseAgent }: { onUseAgent: () => void }) {
 	}, [open]);
 
 	return (
-		<div ref={root} className="relative">
+		<>
 			<button
 				ref={button}
 				type="button"
-				data-rail-foot="help"
+				data-bar-end="help"
 				aria-label="Help"
 				title="Help"
 				aria-haspopup="menu"
 				aria-expanded={open}
 				aria-controls={open ? id : undefined}
-				onClick={() => setOpen(!open)}
+				onClick={() => (open ? setOpen(false) : show())}
 				onKeyDown={onKeyDown}
-				className={cn(
-					"flex h-8 w-8 items-center justify-center rounded-sm text-[15px] transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
-					open ? "bg-control text-text" : "text-muted/70 hover:text-text",
-				)}
+				className={cn(BUTTON, "text-[15px]", open ? "bg-surface text-text" : "text-muted/70 hover:text-text")}
 			>
 				<span aria-hidden="true">?</span>
 			</button>
-			{open && (
-				<div
-					ref={menu}
-					id={id}
-					role="menu"
-					aria-label="Help"
-					onKeyDown={onKeyDown}
-					className="absolute right-full bottom-0 z-30 mr-2 flex w-[220px] flex-col rounded-md border border-border-raised bg-raised p-unit [&>button:focus-visible]:bg-surface"
-				>
-					<MenuItem
-						label="Open in your agent"
-						keys="↗"
-						onClick={() => {
-							close();
-							onUseAgent();
-						}}
-					/>
-				</div>
-			)}
-		</div>
+			{/* out of the bar's own layer, so the sides below it never cover it */}
+			{open &&
+				at !== null &&
+				createPortal(
+					<div
+						ref={menu}
+						id={id}
+						role="menu"
+						aria-label="Help"
+						onKeyDown={onKeyDown}
+						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit [&>button:focus-visible]:bg-surface"
+						style={{ right: at.right, top: at.top }}
+					>
+						<MenuItem
+							label="Open in your agent"
+							keys="↗"
+							onClick={() => {
+								close();
+								onUseAgent();
+							}}
+						/>
+					</div>,
+					document.body,
+				)}
+		</>
 	);
 }

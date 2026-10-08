@@ -70,7 +70,7 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	await expect
 		.poll(() => page.frameLocator('iframe[title="home"]').locator("#title").textContent(), { timeout: 30_000 })
 		.toBe("Original title");
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	const send = async (calls: { name: string; arguments: Record<string, unknown> }[]) => {
 		await field.fill(`file tools: ${JSON.stringify(calls)}`);
