@@ -50,7 +50,14 @@ function controlHeaders(controlToken: string): HeadersInit {
 export type ShotOutcome =
 	| { kind: "broken"; message: string }
 	| { kind: "missing"; message: string }
-	| { kind: "shot"; files: string[]; bootErrors: string[]; contentHeight: number };
+	| {
+			kind: "shot";
+			files: string[];
+			bootErrors: string[];
+			/** The boot's console errors and uncaught errors, in the order the frame raised them. */
+			consoleErrors: LogEntry[];
+			contentHeight: number;
+	  };
 
 export type LogsOutcome =
 	| { kind: "broken"; message: string }
@@ -63,7 +70,79 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	if (probe.kind === "missing") return probe;
 	const boot = await bootFrame(deps);
 	if (boot.kind !== "booted") return boot;
-	return { kind: "shot", files: boot.files, bootErrors: boot.errors, contentHeight: boot.contentHeight };
+	return {
+		kind: "shot",
+		files: boot.files,
+		bootErrors: boot.errors,
+		consoleErrors: boot.entries.filter((entry) => entry.type === "error" || entry.type === "pageerror"),
+		contentHeight: boot.contentHeight,
+	};
+}
+
+/** One frame of a batched shot: its outcome, or why spool could not get one. */
+export interface BatchedShot {
+	frame: string;
+	outcome: ShotOutcome | { kind: "failed"; message: string };
+}
+
+/**
+ * `spool shot a b c`: every frame at once, each its own boot in the photo
+ * booth's browser, so the booth's tabs take them in parallel ahead of any
+ * cover. One frame failing never stops the others. A narration every boot
+ * hears alike (the first-run fetch) is said once.
+ */
+export async function shotFrames(deps: Omit<BootDeps, "frame">, frames: readonly string[]): Promise<BatchedShot[]> {
+	const said = new Set<string>();
+	const narrate = (line: string) => {
+		if (said.has(line)) return;
+		said.add(line);
+		deps.narrate(line);
+	};
+	return Promise.all(
+		[...new Set(frames)].map(async (frame): Promise<BatchedShot> => {
+			try {
+				return { frame, outcome: await shotFrame({ ...deps, frame, narrate }) };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return { frame, outcome: { kind: "failed", message } };
+			}
+		}),
+	);
+}
+
+/**
+ * A batched shot as the agent reads it: one block per frame, in the order
+ * asked, each with its printed paths, content height and console errors. It
+ * failed when any frame did not shoot or threw uncaught while booting, the
+ * same rule a single shot exits 1 by.
+ */
+export function describeShots(shots: readonly BatchedShot[]): { text: string; failed: boolean } {
+	const indent = (text: string, by: string) =>
+		text
+			.split("\n")
+			.map((line) => `${by}${line}`)
+			.join("\n");
+	let failed = false;
+	const blocks = shots.map(({ frame, outcome }) => {
+		const lines = [`${frame}:`];
+		if (outcome.kind === "shot") {
+			lines.push(...outcome.files.map((file) => `  ${file}`));
+			lines.push(`  content height: ${outcome.contentHeight}px`);
+			if (outcome.consoleErrors.length === 0) {
+				lines.push("  console errors: none");
+			} else {
+				lines.push("  console errors:");
+				lines.push(...outcome.consoleErrors.map((entry) => indent(`[${entry.type}] ${entry.text}`, "    ")));
+			}
+			if (outcome.bootErrors.length > 0) failed = true;
+		} else {
+			failed = true;
+			const what = { broken: "does not compile", missing: "not found", failed: "not shot" }[outcome.kind];
+			lines.push(`  ${what}:`, indent(outcome.message, "    "));
+		}
+		return lines.join("\n");
+	});
+	return { text: `${blocks.join("\n\n")}\n`, failed };
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {

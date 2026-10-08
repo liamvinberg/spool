@@ -248,6 +248,49 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		expect(result.stderr).toBe('spool: "tall" content height: 1800px\n');
 	});
 
+	it("shoots several frames in one call, one block per frame with its console errors", async () => {
+		try {
+			const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+			await browser.close();
+		} catch {
+			return;
+		}
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "calm", "export default function Calm() { return <main>calm</main>; }\n");
+		writeFrame(
+			root,
+			"grumpy",
+			'console.error("grumpy at boot");\nexport default function Grumpy() { return <main>grumpy</main>; }\n',
+		);
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+		const result = await spoolAsync(["shot", "calm", "grumpy", "--viewport", "160x120"], home, root, {
+			HOME: process.env.HOME ?? home,
+			SPOOL_DIR: spoolDir,
+		});
+
+		const verify = join(root, "design", ".spool", "verify");
+		expect(result.status).toBe(0);
+		expect(result.stderr).toBe("");
+		expect(result.stdout).toBe(
+			[
+				"calm:",
+				`  ${join(verify, "calm.png")}`,
+				"  content height: 120px",
+				"  console errors: none",
+				"",
+				"grumpy:",
+				`  ${join(verify, "grumpy.png")}`,
+				"  content height: 120px",
+				"  console errors:",
+				"    [error] grumpy at boot",
+				"",
+			].join("\n"),
+		);
+	});
+
 	it("says a replayed cache matches current compiled source", async () => {
 		const home = makeTempDir();
 		const spoolDir = join(home, ".spool");

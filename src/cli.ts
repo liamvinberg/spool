@@ -51,7 +51,7 @@ import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
-import { logsFrame, shotFrame } from "./verify";
+import { describeShots, logsFrame, shotFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = resolveSpoolDir(process.env);
@@ -477,6 +477,11 @@ function parseFrame(value: string): string {
 	return value;
 }
 
+/** Commander's variadic parser: each name checked as one frame, accumulated in order. */
+function parseFrames(value: string, previous: string[] | undefined): string[] {
+	return [...(previous ?? []), parseFrame(value)];
+}
+
 function parseScenario(value: string): string {
 	if (!isSafeName(value)) {
 		throw new SpoolError(`--scenario must be a scenario name without a leading dot or slash, got "${value}"`);
@@ -516,13 +521,22 @@ program
 
 program
 	.command("shot")
-	.description("save a headless screenshot of a frame")
-	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
+	.description("save a headless screenshot of a frame, or of several at once")
+	.argument("<frames...>", "frame names, each its path under design/frames", parseFrames)
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
 	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
-	.action(async (frame: string, options: VerifyOptions) => {
+	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
+		if (frames.length > 1) {
+			// one block per frame on stdout, every boot at once in the booth's tabs
+			const shots = await shotFrames({ daemonUrl, controlToken, root, name, narrate, ...options }, frames);
+			const { text, failed } = describeShots(shots);
+			process.stdout.write(text);
+			if (failed) process.exitCode = 1;
+			return;
+		}
+		const frame = frames[0] as string;
 		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
