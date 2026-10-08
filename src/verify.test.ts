@@ -8,7 +8,7 @@ import { writeCaptureError } from "./daemon/thumbs";
 import { planShot, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { headlessShellArgs } from "./headless-shell";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
-import { type BootDeps, logsFrame, shotFrame } from "./verify";
+import { type BatchShot, type BootDeps, formatBatchShot, logsFrame, shotFrame, shotFrames } from "./verify";
 
 /**
  * shot/logs against a really-served daemon. The compile paths never need a
@@ -159,6 +159,42 @@ describe("shot and logs, compile paths", () => {
 		);
 		const cleanLogs = await logsFrame(deps("clean"));
 		expect((cleanLogs as { captureError?: unknown }).captureError).toBeUndefined();
+	});
+
+	it("answers a batch in the order named, each frame its own outcome, without a browser", async () => {
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
+		const { frame: _, ...batch } = deps("unused");
+
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames(batch, ["nope", "broken", "nope"])) shots.push(shot);
+
+		// a name given twice is shot once
+		expect(shots.map((shot) => [shot.frame, shot.outcome.kind])).toEqual([
+			["nope", "missing"],
+			["broken", "broken"],
+		]);
+		expect(formatBatchShot(shots[0] as BatchShot)).toBe(
+			'nope: not found\n  no frame "nope" on the canvas — a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder',
+		);
+		const broken = formatBatchShot(shots[1] as BatchShot).split("\n");
+		expect(broken[0]).toBe("broken: does not compile");
+		expect(broken.slice(1).join("\n")).toContain("Unexpected end of file");
+		expect(broken.slice(1).every((line) => line.startsWith("  "))).toBe(true);
+	});
+
+	it("reports a frame the daemon fails on as that frame's answer, not the batch's", async () => {
+		const { deps } = await serveVerifyProject();
+		const { frame: _, ...batch } = deps("unused");
+
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames({ ...batch, name: "no-such-project" }, ["one", "two"])) shots.push(shot);
+
+		expect(shots.map((shot) => [shot.frame, shot.outcome.kind])).toEqual([
+			["one", "failed"],
+			["two", "failed"],
+		]);
+		expect(formatBatchShot(shots[0] as BatchShot)).toMatch(/^one: failed\n {2}\S/);
 	});
 
 	it("refuses a fixed wait longer than any shot waits", async () => {
@@ -408,6 +444,47 @@ export default function Noisy() {
 		const errors = (thrown as { bootErrors: string[] }).bootErrors;
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors.join("\n")).toContain("boom at boot");
+	});
+
+	it("shoots a batch in parallel, each frame with its own console errors", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(root, "calm", "export default function Calm() { return <main>calm</main>; }\n");
+		writeFrame(
+			root,
+			"loud",
+			`console.error("loud at boot");
+console.log("not an error");
+
+export default function Loud() {
+	throw new Error("boom in a batch");
+}
+`,
+		);
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
+		const { frame: _, ...batch } = deps("unused", { viewport: { width: 160, height: 120 } });
+
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames(batch, ["calm", "loud", "broken"])) shots.push(shot);
+
+		expect(shots.map((shot) => shot.frame)).toEqual(["calm", "loud", "broken"]);
+		const verify = join(root, "design", ".spool", "verify");
+		expect(formatBatchShot(shots[0] as BatchShot)).toBe(
+			`calm: shot, content 120px tall, no console errors\n  ${join(verify, "calm.png")}`,
+		);
+		const loud = shots[1]?.outcome;
+		if (loud?.kind !== "shot") throw new Error("loud was not shot");
+		expect(loud.consoleErrors[0]).toBe("[error] loud at boot");
+		expect(
+			loud.consoleErrors.some((line) => line.startsWith("[pageerror]") && line.includes("boom in a batch")),
+		).toBe(true);
+		expect(loud.consoleErrors.join("\n")).not.toContain("not an error");
+		const block = formatBatchShot(shots[1] as BatchShot).split("\n");
+		expect(block[0]).toBe(`loud: shot, content 120px tall, ${loud.consoleErrors.length} console errors`);
+		expect(block.slice(1)).toEqual([join(verify, "loud.png"), ...loud.consoleErrors].map((line) => `  ${line}`));
+		expect(existsSync(join(verify, "loud.png"))).toBe(true);
+		expect(shots[2]?.outcome.kind).toBe("broken");
 	});
 
 	it("settles the way a cover does, or waits exactly as long as --at says", { timeout: 120_000 }, async () => {

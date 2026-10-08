@@ -51,7 +51,7 @@ import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
-import { logsFrame, shotFrame } from "./verify";
+import { batchShotFailed, formatBatchShot, logsFrame, shotFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = resolveSpoolDir(process.env);
@@ -516,13 +516,29 @@ program
 
 program
 	.command("shot")
-	.description("save a headless screenshot of a frame")
-	.argument("<frame>", "frame name, its path under design/frames", parseFrame)
+	.description("save a headless screenshot of each frame, several at once")
+	.argument(
+		"<frames...>",
+		"frame names, each its path under design/frames",
+		(value: string, previous: string[] | undefined) => [...(previous ?? []), parseFrame(value)],
+	)
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
 	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
-	.action(async (frame: string, options: VerifyOptions) => {
+	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
+		const names = [...new Set(frames)];
+		const [frame] = names;
+		if (names.length > 1 || frame === undefined) {
+			// one block per frame, in the order named, each with its console errors
+			let first = true;
+			for await (const shot of shotFrames({ daemonUrl, controlToken, root, name, narrate, ...options }, names)) {
+				process.stdout.write(`${first ? "" : "\n"}${formatBatchShot(shot)}\n`);
+				first = false;
+				if (batchShotFailed(shot)) process.exitCode = 1;
+			}
+			return;
+		}
 		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {

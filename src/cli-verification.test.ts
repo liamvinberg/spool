@@ -175,6 +175,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		[["shot", "cart", "--at", "soon"], "--at must be whole milliseconds"],
 		[["shot", "cart", "--scenario", "review/error"], "--scenario must be a scenario name"],
 		[["logs", "cart", "--scenario", ".private"], "--scenario must be a scenario name"],
+		[["shot", "cart", "../cart"], "a frame is named by its path under design/frames"],
 	] as const)("rejects an invalid verification option before resolving the project", (args, message) => {
 		const result = spool([...args], makeTempDir());
 
@@ -246,6 +247,27 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		expect(result.status).toBe(0);
 		expect(result.stdout).toBe(`${join(root, "design", ".spool", "verify", "tall.png")}\n`);
 		expect(result.stderr).toBe('spool: "tall" content height: 1800px\n');
+	});
+
+	it("prints one block per frame for a batched shot and exits 1 when any frame fails", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+
+		const result = await spoolAsync(["shot", "nope", "broken"], home, root);
+
+		expect(result.status).toBe(1);
+		const blocks = result.stdout.split("\n\n");
+		expect(blocks).toHaveLength(2);
+		expect(blocks[0]).toBe(
+			'nope: not found\n  no frame "nope" on the canvas — a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder',
+		);
+		expect(blocks[1]).toMatch(/^broken: does not compile\n {2}/);
+		expect(blocks[1]).toContain("Unexpected end of file");
+		expect(result.stderr).toBe("");
 	});
 
 	it("says a replayed cache matches current compiled source", async () => {
