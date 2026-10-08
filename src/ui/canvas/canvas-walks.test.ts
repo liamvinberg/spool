@@ -199,8 +199,13 @@ describe("the walk layer", () => {
 			return 1;
 		});
 		const drawn: { page: boolean; transform: string }[] = [];
+		// and the clock stands still unless a frame moves it, so the flight is
+		// asked for and drawn at the moments the test names, however long a
+		// loaded runner takes over the click in between
+		const start = performance.now();
+		vi.spyOn(performance, "now").mockReturnValue(start);
 		const frame = (ahead: number) => {
-			const now = performance.now() + ahead;
+			const now = start + ahead;
 			for (const callback of due.splice(0)) callback(now);
 			drawn.push({
 				page: canvas.host.querySelector('[data-frame-label="shop/checkout"]') !== null,
