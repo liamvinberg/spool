@@ -175,8 +175,10 @@ async function strip({ width = 900, reduced = false, names = ["alpha", "beta", "
 }
 
 /**
- * Run `act` in the page, then read `probe` on every frame for `ms`. The probe is
- * the body of a function of `box(selector)` (a rect, or null) and `scroller`.
+ * Run `act` in the page, then read `probe` on every frame for `ms`, and on until
+ * its reading holds still: a loaded runner paints the same motion in fewer, later
+ * frames, and the last sample is still where it came to rest. The probe is the
+ * body of a function of `box(selector)` (a rect, or null) and `scroller`.
  */
 async function frames(page: Page, act: string, probe: string, ms = 420): Promise<Sample[]> {
 	return page.evaluate(
@@ -195,9 +197,15 @@ async function frames(page: Page, act: string, probe: string, ms = 420): Promise
 			const start = performance.now();
 			samples.push({ t: -1, ...read(box, scroller) });
 			new Function(act)();
-			while (performance.now() - start < ms) {
+			let still = 0;
+			let last = "";
+			while (performance.now() - start < ms || still < 3) {
 				await new Promise((resolve) => requestAnimationFrame(resolve));
-				samples.push({ t: performance.now() - start, ...read(box, scroller) });
+				const reading = read(box, scroller);
+				const now = JSON.stringify(reading);
+				still = now === last ? still + 1 : 0;
+				last = now;
+				samples.push({ t: performance.now() - start, ...reading });
 			}
 			return samples;
 		},
@@ -205,17 +213,74 @@ async function frames(page: Page, act: string, probe: string, ms = 420): Promise
 	);
 }
 
-/** a value that travels from `from` to `to` over several frames, never back and never in one leap */
-function expectGlide(values: readonly number[], from: number, to: number) {
+/**
+ * How far into a settle every painted frame must still show the value on its
+ * way. The house curve is 200 ms and steep: by 60 ms even a 30 px move is still
+ * pixels from its end, so a frame then that has arrived is a leap or a cut
+ * duration, not a slow machine.
+ */
+const UNDER_WAY_MS = 60;
+
+/**
+ * A value that travels from `from` to `to` over several frames, never back and
+ * never in one leap. "Several" is read off the clock rather than counted: a
+ * loaded runner paints fewer frames of the same motion, but every one of them
+ * that lands early in it still shows the value part way.
+ */
+function expectGlide(samples: readonly Sample[], key: string, from: number, to: number) {
+	const values = samples.map((sample) => sample[key] ?? 0);
+	const trace = samples.map((sample, index) => `${Math.round(sample.t)}ms ${values[index]}`).join(", ");
 	const direction = Math.sign(to - from);
 	expect(values[0]).toBeCloseTo(from, 0);
 	expect(values[values.length - 1]).toBeCloseTo(to, 0);
 	for (let index = 1; index < values.length; index += 1) {
 		const step = ((values[index] ?? 0) - (values[index - 1] ?? 0)) * direction;
-		expect(step, `frame ${index}: ${values.join(", ")}`).toBeGreaterThan(-0.5);
+		expect(step, `frame ${index}: ${trace}`).toBeGreaterThan(-0.5);
 	}
-	const between = values.filter((value) => Math.abs(value - from) > 1 && Math.abs(value - to) > 1);
-	expect(between.length, values.join(", ")).toBeGreaterThanOrEqual(4);
+	const away = (value: number) => Math.abs(value - from) > 1 && Math.abs(value - to) > 1;
+	const moved = values.findIndex((value) => Math.abs(value - from) > 1);
+	expect(moved, trace).toBeGreaterThan(0);
+	// the motion began after the last frame that still showed `from`
+	const began = samples[moved - 1]?.t ?? 0;
+	expect(away(values[moved] ?? to), `the first frame to move leapt: ${trace}`).toBe(true);
+	for (let index = moved; index < samples.length && (samples[index]?.t ?? 0) <= began + UNDER_WAY_MS; index += 1) {
+		expect(away(values[index] ?? to), `${Math.round(samples[index]?.t ?? 0)}ms in: ${trace}`).toBe(true);
+	}
+}
+
+/**
+ * Wait out the strip's motion: until every slot, tab, selection and the scroll
+ * hold still across a few painted frames, however slowly a loaded runner
+ * paints them. A fixed pause guesses at the machine; this reads the row.
+ */
+async function atRest(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		const read = () => {
+			const parts = [...document.querySelectorAll(".project-tab-slot, [data-tab], .project-tab-selection")].map(
+				(element) => {
+					const box = element.getBoundingClientRect();
+					return `${box.left},${box.width},${getComputedStyle(element).opacity}`;
+				},
+			);
+			return `${document.querySelector(".project-tabs-scroll")?.scrollLeft}|${parts.join(";")}`;
+		};
+		let last = read();
+		for (let still = 0; still < 3; ) {
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+			const now = read();
+			still = now === last ? still + 1 : 0;
+			last = now;
+		}
+	});
+}
+
+/** Wait for the selection to come to rest over a tab, however long a loaded runner takes to paint its slide. */
+async function selectionRestsOn(page: Page, tab: string): Promise<{ x: number } | null> {
+	const box = await page.locator(`[data-tab="${tab}"]`).boundingBox();
+	await expect
+		.poll(() => page.evaluate(() => document.querySelector(".project-tab-selection")?.getBoundingClientRect().left))
+		.toBeCloseTo(box?.x ?? 0, 0);
+	return box;
 }
 
 it("closes a tab between others by shrinking it while the ones after slide into its place", async () => {
@@ -240,8 +305,7 @@ it("closes a tab between others by shrinking it while the ones after slide into 
 			measured: document.querySelectorAll('[data-tab]').length,
 		};`,
 	);
-	const gamma = samples.map((sample) => sample.gamma ?? Number.NaN);
-	expectGlide(gamma, before["/w/gamma-delta"] ?? 0, before["/w/beta"] ?? 0);
+	expectGlide(samples, "gamma", before["/w/gamma-delta"] ?? 0, before["/w/beta"] ?? 0);
 	// the tabs after it move as one
 	for (const sample of samples)
 		expect((sample.epsilon ?? 0) - (sample.gamma ?? 0)).toBeCloseTo(
@@ -271,16 +335,15 @@ it("opens a tab by growing it in place, and scrolls a full strip along with it",
 		const view = scroller.getBoundingClientRect();
 		return { width: slot?.width ?? null, scroll: scroller.scrollLeft, overhang: slot === null ? null : slot.right - view.right };`,
 	);
-	const widths = samples.slice(1).map((sample) => sample.width ?? 0);
-	const full = widths[widths.length - 1] ?? 0;
+	const full = samples[samples.length - 1]?.width ?? 0;
 	expect(full).toBeGreaterThan(112);
-	expectGlide([0, ...widths], 0, full);
+	expectGlide(samples, "width", 0, full);
 	const scrolls = samples.map((sample) => sample.scroll ?? 0);
 	const max = await page.evaluate(() => {
 		const scroller = document.querySelector(".project-tabs-scroll") as HTMLElement;
 		return scroller.scrollWidth - scroller.clientWidth;
 	});
-	expectGlide(scrolls, scrolls[0] ?? 0, max);
+	expectGlide(samples, "scroll", scrolls[0] ?? 0, max);
 	// the new tab ends wholly in view
 	expect(samples[samples.length - 1]?.overhang).toBeLessThanOrEqual(0.5);
 	expect(await page.locator('[data-tab="/w/zeta-the-new-one"] .project-tab-label').getAttribute("aria-current")).toBe(
@@ -291,7 +354,7 @@ it("opens a tab by growing it in place, and scrolls a full strip along with it",
 it("closes a tab in a strip scrolled to its end without the row jumping", async () => {
 	const page = await strip({ width: 420, names: ["alpha", "beta", "gamma-delta", "epsilon", "zeta"] });
 	// scrolled away from the focused first tab, to the far end
-	await page.waitForTimeout(100);
+	await atRest(page);
 	const end = await page.evaluate(() => {
 		const scroller = document.querySelector(".project-tabs-scroll") as HTMLElement;
 		scroller.scrollLeft = scroller.scrollWidth;
@@ -309,7 +372,7 @@ it("closes a tab in a strip scrolled to its end without the row jumping", async 
 	const first = samples.map((sample) => sample.first ?? 0);
 	const settled = first[first.length - 1] ?? 0;
 	expect(settled).toBeGreaterThan(first[0] ?? 0);
-	expectGlide(first, first[0] ?? 0, settled);
+	expectGlide(samples, "first", first[0] ?? 0, settled);
 });
 
 it("keeps rapid closes and an open closed straight away free of ghosts and half tabs", async () => {
@@ -332,15 +395,24 @@ it("keeps rapid closes and an open closed straight away free of ghosts and half 
 	);
 	await page.waitForTimeout(60);
 	await page.evaluate(() => (window as unknown as { strip: { open: (name: string) => void } }).strip.open("zeta"));
-	await page.waitForTimeout(500);
-	const slots = await page.evaluate(() =>
-		[...document.querySelectorAll<HTMLElement>(".project-tab-slot")].map((slot) => ({
-			root: slot.dataset.tabSlot ?? null,
-			width: slot.getBoundingClientRect().width,
-			inner: (slot.firstElementChild as HTMLElement).getBoundingClientRect().width,
-			opacity: getComputedStyle(slot).opacity,
-		})),
-	);
+	const read = () =>
+		page.evaluate(() =>
+			[...document.querySelectorAll<HTMLElement>(".project-tab-slot")].map((slot) => ({
+				root: slot.dataset.tabSlot ?? null,
+				width: slot.getBoundingClientRect().width,
+				inner: (slot.firstElementChild as HTMLElement).getBoundingClientRect().width,
+				opacity: getComputedStyle(slot).opacity,
+			})),
+		);
+	// waited out rather than timed: a loaded runner paints the same motion late,
+	// while a ghost or a half tab never settles at all
+	await expect.poll(async () => (await read()).map((slot) => slot.root)).toEqual(["/w/alpha", "/w/eta", "/w/zeta"]);
+	await expect
+		.poll(async () =>
+			(await read()).every((slot) => Math.abs(slot.width - slot.inner - 2) < 0.05 && slot.opacity === "1"),
+		)
+		.toBe(true);
+	const slots = await read();
 	expect(slots.map((slot) => slot.root)).toEqual(["/w/alpha", "/w/eta", "/w/zeta"]);
 	for (const slot of slots) {
 		expect(slot.width).toBeCloseTo(slot.inner + 2, 1);
@@ -355,32 +427,27 @@ it("slides the selection on to the tab that takes over from a closed focused tab
 	const selection = `return { x: box(".project-tab-selection")?.left ?? null };`;
 	// a tab between: its right-hand neighbour slides in under the selection, which stays put
 	await page.locator('[data-tab="/w/beta"] .project-tab-label').click();
-	await page.waitForTimeout(300);
-	const beta = await page.locator('[data-tab="/w/beta"]').boundingBox();
+	const beta = await selectionRestsOn(page, "/w/beta");
 	const between = await frames(
 		page,
 		`document.querySelector('[data-tab="/w/beta"] .project-tab-close').click();`,
 		selection,
 	);
-	for (const sample of between) expect(Math.abs((sample.x ?? 0) - (beta?.x ?? 0))).toBeLessThan(1);
+	const trace = between.map((sample) => `${Math.round(sample.t)}ms ${sample.x}`).join(", ");
+	for (const sample of between) expect(Math.abs((sample.x ?? 0) - (beta?.x ?? 0)), trace).toBeLessThan(1);
 	expect(await page.locator('[data-tab="/w/gamma-delta"] .project-tab-label').getAttribute("aria-current")).toBe(
 		"page",
 	);
 	// the last tab: the selection glides back to the tab on its left
 	await page.locator('[data-tab="/w/epsilon"] .project-tab-label').click();
-	await page.waitForTimeout(300);
-	const epsilon = await page.locator('[data-tab="/w/epsilon"]').boundingBox();
+	const epsilon = await selectionRestsOn(page, "/w/epsilon");
 	const gamma = await page.locator('[data-tab="/w/gamma-delta"]').boundingBox();
 	const last = await frames(
 		page,
 		`document.querySelector('[data-tab="/w/epsilon"] .project-tab-close').click();`,
 		selection,
 	);
-	expectGlide(
-		last.map((sample) => sample.x ?? Number.NaN),
-		epsilon?.x ?? 0,
-		gamma?.x ?? 0,
-	);
+	expectGlide(last, "x", epsilon?.x ?? 0, gamma?.x ?? 0);
 });
 
 it("animates a reorder that arrives from elsewhere", async () => {
@@ -392,11 +459,7 @@ it("animates a reorder that arrives from elsewhere", async () => {
 		`window.strip.order(["/w/epsilon", "/w/alpha", "/w/beta", "/w/gamma-delta"]);`,
 		`return { x: box('[data-tab="/w/epsilon"]').left };`,
 	);
-	expectGlide(
-		samples.map((sample) => sample.x ?? 0),
-		before?.x ?? 0,
-		alpha?.x ?? 0,
-	);
+	expectGlide(samples, "x", before?.x ?? 0, alpha?.x ?? 0);
 });
 
 it("drags a tab while another is still closing, keeping it under the pointer", async () => {
@@ -426,8 +489,8 @@ it("drags a tab while another is still closing, keeping it under the pointer", a
 	}
 	// within a frame of the row's slide: a loaded machine can show one frame's step, never a tab left behind
 	for (const offset of offsets.slice(1)) expect(Math.abs(offset - (offsets[0] ?? 0))).toBeLessThan(3);
-	// then carried just past the centre of the tab after it, with the row long settled
-	await page.waitForTimeout(250);
+	// then carried just past the centre of the tab after it, with the row settled
+	await atRest(page);
 	const slots = await page.evaluate(() =>
 		[...document.querySelectorAll<HTMLElement>("[data-tab-slot]")].map((slot) => {
 			const box = slot.getBoundingClientRect();
@@ -437,7 +500,7 @@ it("drags a tab while another is still closing, keeping it under the pointer", a
 	const travelled = (slots[from + 1]?.center ?? 0) + 6 - (slots[from]?.right ?? 0);
 	await page.mouse.move(x - 12 + travelled, y, { steps: 4 });
 	await page.mouse.up();
-	await page.waitForTimeout(450);
+	await atRest(page);
 	order.splice(from, 1);
 	order.splice(from + 1, 0, held ?? "");
 	expect(await page.evaluate(() => (window as unknown as { strip: { roots: () => string[] } }).strip.roots())).toEqual(
@@ -456,15 +519,14 @@ it("closes a tab by the middle button, and scrolls a full strip by a vertical wh
 	if (box === null) throw new Error("missing beta");
 	await page.mouse.click(box.x + 30, box.y + 18, { button: "middle" });
 	expect(await page.locator("body").getAttribute("data-closed")).toBe("/w/beta;");
-	await page.waitForTimeout(300);
+	await atRest(page);
 	const scroller = page.locator(".project-tabs-scroll");
 	await scroller.evaluate((element) => {
 		element.scrollLeft = 0;
 	});
 	await page.mouse.move(box.x + 30, box.y + 18);
 	await page.mouse.wheel(0, 60);
-	await page.waitForTimeout(50);
-	expect(await scroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+	await expect.poll(() => scroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 });
 
 it("does all of it at once under reduced motion", async () => {
@@ -496,11 +558,7 @@ it("animates a close from the keyboard too, and hands the keyboard on to the nex
 		`document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); document.activeElement.click();`,
 		`return { x: box('[data-tab="/w/gamma-delta"]').left };`,
 	);
-	expectGlide(
-		samples.map((sample) => sample.x ?? 0),
-		gamma?.x ?? 0,
-		before?.x ?? 0,
-	);
+	expectGlide(samples, "x", gamma?.x ?? 0, before?.x ?? 0);
 	expect(await page.evaluate(() => document.activeElement?.closest<HTMLElement>("[data-tab]")?.dataset.tab)).toBe(
 		"/w/gamma-delta",
 	);
