@@ -1,16 +1,19 @@
 import { type Dirent, lstatSync, readdirSync } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
 import type { Rect } from "../page-box";
 import { isFramePath, isSafeName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
+import { flatPages, mergePageTree } from "../ui/canvas/order";
+import { type CanvasOrder, readOrder } from "./canvas-order";
 import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
+import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { type Footprint, readSidecar, writePlacement } from "./geometry";
+import { type Footprint, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import { type Unseen, unseenNow } from "./seen";
-import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
+import { readCoverAwaited, scanCovers } from "./thumbs";
 
 export { frameFolder } from "../page-path";
 export { pageObjectBox, placePages } from "./placement";
@@ -459,7 +462,11 @@ export interface CoveredFrame {
 
 export interface ProjectSummary {
 	frameCount: number;
-	/** Up to three covered frames, freshest capture first. */
+	/**
+	 * The card's picture when the project has no thumbnail file: the still of its top-left frame, the one frame
+	 * that stands first on the canvas, so it stays put however the stills are retaken. Empty while that frame has
+	 * no still, and for a project with no frames.
+	 */
 	covers: CoveredFrame[];
 }
 
@@ -482,27 +489,75 @@ export interface ProjectCard extends ProjectSummary {
  * The home card's read: a pure scan, never fills sidecars, tolerates a vanished
  * disk. Asynchronous because the home list is the app's first request and asks
  * for one of these per registered project — every one of them a walk of a whole
- * design folder, which no other request should have to wait behind.
+ * design folder, which no other request should have to wait behind. Past the
+ * walk it reads only the sidecars of one page and one frame's still.
  */
 export async function summarizeProject(root: string): Promise<ProjectSummary> {
-	const [discovery, held] = await Promise.all([discoverAwaited(root), readDatedCovers(root)]);
+	const discovery = await discoverAwaited(root);
 	if (discovery === undefined) return { frameCount: 0, covers: [] };
-	const covers = discovery.frames
-		.flatMap(({ name }) => {
-			const dated = held.get(name);
-			return dated === undefined ? [] : [{ frame: name, ...dated }];
-		})
-		.sort((a, b) => b.shotAt - a.shotAt)
-		.slice(0, 3)
-		.map(({ frame, cover }) => ({ frame, cover }));
-	return { frameCount: discovery.frames.length, covers };
+	const frame = await topLeftFrame(root, discovery);
+	const cover = frame === undefined ? undefined : await readCoverQuietly(root, frame);
+	return {
+		frameCount: discovery.frames.length,
+		covers: frame === undefined || cover === undefined ? [] : [{ frame, cover }],
+	};
 }
 
-async function readDatedCovers(root: string): Promise<Map<string, DatedCover>> {
+/**
+ * The frame a project's card pictures: on the root page, the one with the smallest top edge, ties to the smallest
+ * left. A root page with no frames gives way to the pages in rail order (Order, merged the way the rail merges it),
+ * a page before the pages it holds, and the first of them with frames is asked the same.
+ */
+async function topLeftFrame(root: string, discovery: Discovery): Promise<string | undefined> {
+	const byPage = new Map<string, DiscoveredFrame[]>();
+	for (const frame of discovery.frames) {
+		const page = frame.page ?? ROOT_PAGE;
+		byPage.set(page, [...(byPage.get(page) ?? []), frame]);
+	}
+	const rail = byPage.has(ROOT_PAGE)
+		? [ROOT_PAGE]
+		: flatPages(mergePageTree(readStoredOrder(root).pages, discovery.pages));
+	const page = rail.find((each) => byPage.has(each));
+	const frames = page === undefined ? undefined : byPage.get(page);
+	if (frames === undefined) return undefined;
+	const placed = await Promise.all(
+		frames.map(async (frame) => ({ frame, sidecar: await readSidecarAwaited(frame.dir, discovery.designDir) })),
+	);
+	// a frame not placed yet is about to be put beside the others, so it stands after every placed one
+	const at = (sidecar: Sidecar) =>
+		sidecar.kind === "placed" ? sidecar.geometry : { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY };
+	placed.sort((a, b) => {
+		const one = at(a.sidecar);
+		const other = at(b.sidecar);
+		return one.y - other.y || one.x - other.x || a.frame.name.localeCompare(b.frame.name);
+	});
+	return placed[0]?.frame.name;
+}
+
+/** A sidecar read off the event loop; anything outside design/ or unreadable reads as none. */
+async function readSidecarAwaited(frameDir: string, designDir: string): Promise<Sidecar> {
 	try {
-		return await scanDatedCovers(root);
+		const file = await realpath(join(frameDir, "frame.json"));
+		if (!isWithin(designDir, file)) return { kind: "none" };
+		return parseSidecar(JSON.parse(await readFile(file, "utf8")));
+	} catch {
+		return { kind: "none" };
+	}
+}
+
+function readStoredOrder(root: string): CanvasOrder {
+	try {
+		return readOrder(root);
+	} catch {
+		return {};
+	}
+}
+
+async function readCoverQuietly(root: string, frame: string): Promise<Cover | undefined> {
+	try {
+		return await readCoverAwaited(root, frame);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
-		return new Map();
+		return undefined;
 	}
 }

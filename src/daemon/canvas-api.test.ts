@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Cover } from "../cover";
@@ -267,7 +267,7 @@ describe("the project registry for home", () => {
 		expect(projects.map((p) => p.name)).toEqual([newer.name, older.name]);
 	});
 
-	it("summarizes across pages: three freshest covers, one folder name on two pages counted twice", async () => {
+	it("counts frames across pages, one folder name on two pages counted twice", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root } = makeProject(spoolDir);
 		writeFrame(root, "one", frameTsx("one"));
@@ -278,19 +278,12 @@ describe("the project registry for home", () => {
 		writeFrame(root, "twin", frameTsx("twin"));
 		writePageFrame(root, "shop", "twin", frameTsx("twin"));
 		const app = makeApp(spoolDir);
-		for (const frame of ["one", "two", "shop/three", "shop/four"]) writeCover(root, frame, PNG_BYTES);
-		// the store's own folder times order the cards, so name them rather than race the clock
-		const shotAt = { one: 1_000, two: 4_000, "shop/three": 2_000, "shop/four": 3_000 };
-		for (const [frame, seconds] of Object.entries(shotAt)) {
-			utimesSync(join(root, "design", ".spool", "thumbs", encodeURIComponent(frame)), seconds, seconds);
-		}
 
 		const { projects } = (await (await app.request("/api/projects")).json()) as {
-			projects: { frameCount: number; covers: { frame: string }[] }[];
+			projects: { frameCount: number }[];
 		};
 
 		expect(projects[0]?.frameCount).toBe(6);
-		expect(projects[0]?.covers.map((cover) => cover.frame)).toEqual(["two", "shop/four", "shop/three"]);
 	});
 
 	it("keeps listing projects whose disk has vanished", async () => {
