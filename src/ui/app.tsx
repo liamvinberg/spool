@@ -10,6 +10,7 @@ import {
 	fetchSession,
 	postForgetProject,
 	postUpgrade,
+	putActiveTab,
 	putSession,
 	putSessionOrder,
 	reloadForNewBundle,
@@ -155,14 +156,29 @@ export function App() {
 		[patchCard],
 	);
 
+	/**
+	 * When this page last reported each tab active, as the daemon answered. A
+	 * list read while that report was on its way says the older time, and a card
+	 * keeps whichever is later.
+	 */
+	const visited = useRef(new Map<string, string>());
+	const withVisits = useCallback(
+		(cards: ProjectCard[]) =>
+			cards.map((card) => {
+				const openedAt = visited.current.get(card.root);
+				return openedAt !== undefined && openedAt > card.openedAt ? { ...card, openedAt } : card;
+			}),
+		[],
+	);
+
 	const refetch = useCallback(async () => {
 		const revision = ++projectRevision.current;
 		const [cards, session] = await Promise.all([fetchProjects(), fetchSession()]);
 		if (revision !== projectRevision.current) return;
-		setProjects(cards);
+		setProjects(withVisits(cards));
 		setProjectsLoaded(true);
 		setOpen(session);
-	}, []);
+	}, [withVisits]);
 
 	/*
 	 * Boot: the session first, alone, and the registry behind it.
@@ -189,11 +205,11 @@ export function App() {
 			const revision = projectRevision.current;
 			const cards = await fetchProjects();
 			if (revision === projectRevision.current) {
-				setProjects(cards);
+				setProjects(withVisits(cards));
 				setProjectsLoaded(true);
 			}
 		})();
-	}, []);
+	}, [withVisits]);
 
 	// a project the path names that the session did not have yet: `spool open` in
 	// a shell lands as a session event, and the tab it opens is the one this page
@@ -203,6 +219,18 @@ export function App() {
 		const root = pathFocus(open);
 		if (root !== null) setFocused(root);
 	}, [booted, focused, open]);
+
+	// Recent is where you were last on this Mac: the tab you land on or switch
+	// to, and none of the others a launch restores. The card moves here as the
+	// daemon answers, so Home is in order the moment you come back to it.
+	useEffect(() => {
+		if (focused === null) return;
+		void putActiveTab(focused).then((openedAt) => {
+			if (openedAt === undefined) return;
+			visited.current.set(focused, openedAt);
+			patchCard(focused, (card) => ({ ...card, openedAt }));
+		});
+	}, [focused, patchCard]);
 
 	const offerUpdate = useCallback((latest: string) => {
 		if (desktopBridge() !== undefined || dismissedLatest.current === latest) return;

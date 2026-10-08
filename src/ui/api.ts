@@ -138,6 +138,17 @@ export function putSession(root: string, open: boolean): void {
 	void client.api.session.$put({ json: { root, open } });
 }
 
+/** The tab this page landed on or switched to; the daemon answers with when its project was opened, now. */
+export async function putActiveTab(root: string): Promise<string | undefined> {
+	try {
+		const res = await client.api.session.active.$put({ json: { root } });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { openedAt: string }).openedAt;
+	} catch {
+		return undefined;
+	}
+}
+
 /** The tabs in the order somebody dragged them into. */
 export function putSessionOrder(order: readonly string[]): void {
 	void client.api.session.order.$put({ json: { order: [...order] } });
