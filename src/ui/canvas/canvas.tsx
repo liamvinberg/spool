@@ -310,6 +310,11 @@ const COPY_CASCADE_PX = 24;
 /** how long a hand edit's outgoing document may stand before the still returns */
 const HOLD_PAINT_MS = 3000;
 /**
+ * how long something waits on a reloaded document that never says loaded nor
+ * broke, as one that throws while its modules evaluate never does (#340)
+ */
+const LOAD_WAIT_MS = 10_000;
+/**
  * How far past the viewport a follower keeps drawing while the camera moves,
  * as a fraction of the viewport on every side: a pan reaches it a few frames
  * before it reaches the screen (#81).
@@ -2147,8 +2152,13 @@ export function ProjectCanvas({
 	/**
 	 * Run once the frame's document is there to ask (#340): now, or when a
 	 * reload the canvas caused has loaded. A frame with no document mounted
-	 * has nothing to wait for, and one that never loads is waited on no
-	 * longer than its held paint stands.
+	 * has nothing to wait for, and one that broke says so instead of loaded.
+	 *
+	 * The bound is for a document that says neither, not for a slow one: on a
+	 * loaded machine a document boots for longer than its held paint stands,
+	 * and one asked before it has loaded answers that the element is gone,
+	 * which drops the selection to the frame and turns the next arrow into a
+	 * nudge of the whole frame.
 	 */
 	const whenLoaded = useCallback((frame: string, then: () => void) => {
 		if (!reloading.current.has(frame) || !iframes.current.has(frame)) {
@@ -2162,7 +2172,7 @@ export function ProjectCanvas({
 			then();
 		};
 		loadWaiters.current.set(frame, [...(loadWaiters.current.get(frame) ?? []), once]);
-		setTimeout(once, HOLD_PAINT_MS);
+		setTimeout(once, LOAD_WAIT_MS);
 	}, []);
 
 	/** The DOM half of undo and redo: the frame puts one edit's words back itself, and says whether it could. */
@@ -3313,6 +3323,15 @@ export function ProjectCanvas({
 				if (run.queue.length < 8) run.queue.push(() => moveStepRef.current(step));
 				return true;
 			}
+			// the last move's turn can run out before its reload has loaded, and
+			// a document still booting names no siblings: the press waits for it,
+			// once, and one that never loads takes it nowhere
+			if (reloading.current.has(first.frame)) {
+				whenLoaded(first.frame, () => {
+					if (!reloading.current.has(first.frame)) moveStepRef.current(step);
+				});
+				return true;
+			}
 			if (picks.length > 1) {
 				showRefusal({
 					frame: first.frame,
@@ -3342,7 +3361,7 @@ export function ProjectCanvas({
 			);
 			return true;
 		},
-		[askFrame, claimMove, moveBeside, nextMove, showRefusal],
+		[askFrame, claimMove, moveBeside, nextMove, showRefusal, whenLoaded],
 	);
 	const moveStepRef = useRef(moveStep);
 	moveStepRef.current = moveStep;
@@ -3947,6 +3966,12 @@ export function ProjectCanvas({
 					// a walk boot that broke falls back to the honest cover: the quiet
 					// still must not dress a dead document as a settled one (#28)
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
+					// a document that broke will never say loaded: what waited on it asks what there is
+					if (reloading.current.delete(message.frame)) {
+						const waiting = loadWaiters.current.get(message.frame) ?? [];
+						loadWaiters.current.delete(message.frame);
+						for (const then of waiting) then();
+					}
 					return;
 				case "session?": {
 					const own = allFramesRef.current.find((candidate) => candidate.name === message.frame);
