@@ -5588,8 +5588,9 @@ export function ProjectCanvas({
 					agentReady={deck.engine !== undefined || deck.legacy}
 					legacy={deck.legacy}
 					request={agentRequest}
-					// an agent that never asks has no mode to pick, so the rail draws no mode menu (#363)
-					permissions={model.offer.modes === false ? undefined : permissions}
+					// an agent that never asks has no mode to pick, so the rail draws no mode menu (#363);
+					// nor does one whose word on it has not come, so pi's never flashes in (#364)
+					permissions={model.modes === true ? permissions : undefined}
 					width={width}
 					entries={turn.entries}
 					plan={turn.plan}

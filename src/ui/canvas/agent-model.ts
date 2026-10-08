@@ -134,6 +134,9 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 	};
 }
 
+/** what each engine last said about having modes, for the wait before its next offer */
+const engineModes = new Map<AgentEngineId, boolean>();
+
 export interface AgentModelDeck {
 	readonly engine?: AgentEngineId;
 	readonly project?: string;
@@ -142,6 +145,12 @@ export interface AgentModelDeck {
 	readonly offer: AgentOffer;
 	/** The current chat has not received its own model offer yet. */
 	readonly loading?: boolean;
+	/**
+	 * Whether this engine has permission modes to pick (#363, #364): its offer's word once it
+	 * has come, the engine's last word before then, and undefined while neither is known. The
+	 * mode menu is drawn only on true, so an agent with none never flashes one while it loads.
+	 */
+	readonly modes?: boolean;
 	/** Await this chat's offer without treating an unanswered request as signed out. */
 	readonly ready?: () => Promise<AgentOffer | null>;
 	/** the readout, and the trigger's own label */
@@ -248,12 +257,16 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 	// on draws the report it has rather than the last thread's finger
 	const current = reported?.owner === owner ? reported.offer : NO_OFFER;
 	const offer = pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
+	const loaded = reported?.owner === owner;
+	if (loaded && engine !== undefined) engineModes.set(engine, current.modes !== false);
+	const modes = loaded ? current.modes !== false : engine === undefined ? undefined : engineModes.get(engine);
 
 	return {
 		...(engine === undefined ? {} : { engine }),
 		project,
 		offer,
-		loading: reported?.owner !== owner,
+		loading: !loaded,
+		...(modes === undefined ? {} : { modes }),
 		ready: async () => {
 			const at = presses.current;
 			const read = pending.current?.owner === owner ? await pending.current.reply : null;
