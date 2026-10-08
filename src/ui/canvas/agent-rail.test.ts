@@ -660,15 +660,15 @@ describe("the rail", () => {
 		expect(rail(canvas.host)?.textContent).not.toContain("enter to send");
 	});
 
-	it("opens at the right side's width, inside the range it already had", async () => {
+	it("opens no narrower than the agent's 380 floor (#364)", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(stack(canvas.host)?.style.width).toBe("300px");
+		expect(stack(canvas.host)?.style.width).toBe("380px");
 	});
 
 	/** nothing may assume 420: the range is what every later strip is measured against */
-	it("holds the drag between the 200 floor and the 480 ceiling, and snaps the side shut", async () => {
+	it("holds the drag between the 380 floor and the 560 ceiling, and snaps the side shut", async () => {
 		const canvas = mount();
 		await canvas.render();
 		const grip = canvas.host.querySelector<HTMLElement>('[aria-label="Resize right side"]');
@@ -692,10 +692,10 @@ describe("the rail", () => {
 
 		// pulled far past the ceiling
 		await drag(200);
-		expect(stack(canvas.host)?.style.width).toBe("480px");
+		expect(stack(canvas.host)?.style.width).toBe("560px");
 		// pushed under the snap point: the side collapses rather than standing at an
 		// unreadable width, and what is left is the rail it is opened from again
-		await drag(1400);
+		await drag(1500);
 		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
 		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});

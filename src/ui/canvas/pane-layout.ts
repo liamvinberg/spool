@@ -1,4 +1,12 @@
-import { MAX_WIDTH, MIN_WIDTH, PAGES_WIDTH, PROPERTIES_WIDTH, SNAP_BELOW, STRIP_WIDTH } from "./rail-width";
+import {
+	AGENT_MIN_WIDTH,
+	MAX_WIDTH,
+	MIN_WIDTH,
+	PAGES_WIDTH,
+	PROPERTIES_WIDTH,
+	SNAP_BELOW,
+	STRIP_WIDTH,
+} from "./rail-width";
 
 /**
  * Where the canvas window's panes stand, as data (#359).
@@ -104,9 +112,15 @@ export function stackOf(layout: Layout, id: SideId): string[] {
 	return side.rail.filter((pane) => side.lit.includes(pane));
 }
 
-const clampWidth = (width: number) => Math.min(LIMITS.sideMax, Math.max(LIMITS.sideMin, Math.round(width)));
+/** the narrowest a side may be: the agent rail's own floor while it shows there (#364) */
+const minOf = (side: Side) =>
+	side.lit.includes("agent") && side.rail.includes("agent") ? AGENT_MIN_WIDTH : LIMITS.sideMin;
+/** the narrowest side `id` may be drawn at as the layout stands */
+export const sideMin = (layout: Layout, id: SideId): number => minOf(layout[id]);
+const clampWidth = (width: number, side?: Side) =>
+	Math.min(LIMITS.sideMax, Math.max(side === undefined ? LIMITS.sideMin : minOf(side), Math.round(width)));
 const wantsOpen = (side: Side) => side.open && side.lit.some((pane) => side.rail.includes(pane));
-const outerOf = (side: Side, open: boolean) => LIMITS.rail + (open ? clampWidth(side.width) : 0);
+const outerOf = (side: Side, open: boolean) => LIMITS.rail + (open ? clampWidth(side.width, side) : 0);
 
 export interface SideFit {
 	readonly open: boolean;
@@ -139,7 +153,7 @@ export function fitWindow(layout: Layout, env: Env): Fit {
 	}
 	const one = (id: SideId): SideFit => ({
 		open: open[id],
-		width: clampWidth(layout[id].width),
+		width: clampWidth(layout[id].width, layout[id]),
 		outer: outerOf(layout[id], open[id]),
 		shown: open[id] ? stackOf(layout, id) : [],
 	});
@@ -245,7 +259,7 @@ function openSide(next: Draft, id: SideId, before?: Layout, env?: Env): void {
 		const o = other(id);
 		const otherOpen = fitWindow(before, env)[o].open && wantsOpen(next[o]);
 		const room = env.width - outerOf(next[o], otherOpen) - LIMITS.rail - LIMITS.canvasMin;
-		side.width = clampWidth(Math.min(side.width, room));
+		side.width = clampWidth(Math.min(side.width, room), side);
 	}
 	side.open = true;
 	side.touched = tick(next);
@@ -430,7 +444,7 @@ export function reduce(layout: Layout, action: Action, env?: Env): Layout {
 			const next = draft(layout);
 			const limit = env === undefined ? LIMITS.sideMax : maxWidth(layout, action.side, env);
 			const side = next[action.side];
-			side.width = clampWidth(Math.min(action.width, Math.max(LIMITS.sideMin, limit)));
+			side.width = clampWidth(Math.min(action.width, Math.max(minOf(side), limit)), side);
 			const first = side.rail[0];
 			if (stackOf(next, action.side).length === 0 && first !== undefined) side.lit = [first];
 			side.open = true;

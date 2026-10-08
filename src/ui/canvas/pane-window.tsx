@@ -22,6 +22,7 @@ import {
 	reduce,
 	resizeSplit,
 	type SideId,
+	sideMin,
 	sideOf,
 	stackHeights,
 	stackOf,
@@ -713,7 +714,7 @@ export function PaneWindow({
 		side: id,
 		panel: fits[id].width,
 		floor: 0,
-		max: env === null ? LIMITS.sideMax : Math.max(LIMITS.sideMin, maxWidth(layout, id, env)),
+		max: env === null ? LIMITS.sideMax : Math.max(sideMin(layout, id), maxWidth(layout, id, env)),
 		onWidth: (next: number) => setLive((was) => ({ ...was, [id]: next })),
 		onSettle: (next: number) => {
 			setLive((was) => ({ ...was, [id]: null }));
@@ -860,7 +861,7 @@ export function PaneWindow({
 		const f = fits[id];
 		const hand = live[id];
 		const edgeDrag = id === "left" ? leftEdge : rightEdge;
-		const stackWidth = hand === null ? f.width : Math.max(LIMITS.sideMin, hand);
+		const stackWidth = hand === null ? f.width : Math.max(sideMin(layout, id), hand);
 		const outer = hand === null ? f.outer : LIMITS.rail + hand;
 		const open = hand === null ? f.open : hand > 0;
 		const stack = stackOf(layout, id);
@@ -1104,7 +1105,7 @@ export function PaneWindow({
 								? fits.right.width
 								: live[side] === null
 									? fits[side].width
-									: Math.max(LIMITS.sideMin, live[side] ?? 0),
+									: Math.max(sideMin(layout, side), live[side] ?? 0),
 						visible: visible.includes(def.id),
 						hide: () => apply({ type: "hide", pane: def.id }),
 					};

@@ -171,10 +171,19 @@ describe("hiding and removing", () => {
 });
 
 describe("widths", () => {
-	it("keeps a side between 200 and 480 wide", () => {
+	it("keeps a side between 200 and 560 wide", () => {
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 120 }, WIDE).left.width).toBe(200);
-		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 900 }, WIDE).left.width).toBe(480);
+		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 900 }, WIDE).left.width).toBe(560);
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 320 }, WIDE).left.width).toBe(320);
+	});
+
+	it("keeps a side showing the agent between 380 and 560 wide (#364)", () => {
+		const agent = reduce(defaultLayout(), { type: "show", pane: "agent" }, WIDE);
+		expect(reduce(agent, { type: "width", side: "right", width: 200 }, WIDE).right.width).toBe(380);
+		expect(reduce(agent, { type: "width", side: "right", width: 900 }, WIDE).right.width).toBe(560);
+		expect(reduce(agent, { type: "width", side: "right", width: 440 }, WIDE).right.width).toBe(440);
+		// a width saved narrower draws at the agent's floor while the agent shows
+		expect(fitWindow(agent, WIDE).right.width).toBe(380);
 	});
 
 	it("never lets a drag take the canvas under 480", () => {
