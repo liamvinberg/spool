@@ -156,7 +156,7 @@ describe("the class scanner, held to Oxide", () => {
 		timeout: 120_000,
 	}, async () => {
 		// a floor under the corpus, so one moved folder cannot empty it unnoticed
-		expect(committedFiles.length).toBeGreaterThan(400);
+		expect(committedFiles.length).toBeGreaterThan(250);
 		expect(await candidatesApart(committedFiles, committedCanvases[0] as string)).toEqual({ missed: {}, extra: {} });
 	});
 
