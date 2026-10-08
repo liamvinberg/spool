@@ -12,6 +12,7 @@ import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-
 import { type Footprint, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
+import type { ProjectThumbnail } from "./project-thumbnail";
 import { type Unseen, unseenNow } from "./seen";
 import { readCoverAwaited, scanCovers } from "./thumbs";
 
@@ -481,6 +482,8 @@ export interface ProjectCard extends ProjectSummary {
 	ended?: string;
 	/** What its tab and its cover draw: its icon file or its repo's favicon; absent, the name's first letter. */
 	icon?: ProjectIcon;
+	/** What its cover shows over its top-left frame: its `design/shared/thumbnail.*`, when it has one. */
+	thumbnail?: ProjectThumbnail;
 	/** A team project's local copy whose sync is paused on a limit, and why: its team mark goes hollow. */
 	syncPaused?: string;
 }
