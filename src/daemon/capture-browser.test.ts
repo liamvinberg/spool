@@ -342,7 +342,7 @@ async function stopTargetPerformance(browser: Browser, frame: Frame) {
 		// time is just as brief.
 		return within.reduce((sum, slice) => sum + (slice.tdur ?? slice.dur ?? 0), 0) / 1000;
 	});
-	return { supported, longTaskThreadTimes };
+	return { supported, longTaskThreadTimes, longTaskWallTimes: longTasks.map(({ duration }) => duration) };
 }
 
 async function requestCapture(page: Page, captureOrigin: string) {
@@ -699,6 +699,9 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	const performance = await stopTargetPerformance(browser, authored);
 	expect(performance.supported).toBe(true);
 	expect(performance.longTaskThreadTimes.filter((milliseconds) => milliseconds > 50)).toEqual([]);
+	// Thread time misses a thread blocked waiting, as on a synchronous readback:
+	// a loose wall-clock bound still catches that, far above what load stretches.
+	expect(performance.longTaskWallTimes.filter((milliseconds) => milliseconds > 1000)).toEqual([]);
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
 
 	const unsafe = await directWorkerRequest(
