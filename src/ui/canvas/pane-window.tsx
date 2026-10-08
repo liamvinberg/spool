@@ -965,11 +965,11 @@ export function PaneWindow({
 						</button>
 					))}
 				</div>
-				{/* the one hairline, on the edge that faces the canvas */}
+				{/* the one hairline, on the edge that faces the canvas, over whatever a pane draws to its edge */}
 				<span
 					aria-hidden="true"
 					className={cn(
-						"pointer-events-none absolute inset-y-0 z-20 w-px bg-border",
+						"pointer-events-none absolute inset-y-0 z-40 w-px bg-border",
 						id === "left" ? "right-0" : "left-0",
 					)}
 				/>
@@ -979,7 +979,7 @@ export function PaneWindow({
 						aria-label={`Resize ${id} side`}
 						{...edgeDrag.grip}
 						className={cn(
-							"group absolute top-0 z-30 h-full w-1.5 cursor-col-resize touch-none outline-none",
+							"group absolute top-0 z-50 h-full w-1.5 cursor-col-resize touch-none outline-none",
 							id === "left" ? "right-0" : "left-0",
 						)}
 					>
