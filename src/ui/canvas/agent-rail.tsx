@@ -429,7 +429,11 @@ export function AgentRail({
 	return (
 		<RecoveryActions value={{ login, modelRequest, preferred }}>
 			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
-				<div data-agent-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
+				<div
+					data-agent-rail=""
+					data-agent-rail-engine={model.engine}
+					className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg"
+				>
 					{install.none ? (
 						/*
 						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
