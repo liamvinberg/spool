@@ -202,6 +202,9 @@ export function AgentMenu({
 
 	const group = (engine: AgentEngineId, index: number) => {
 		const mine = engine === own;
+		// an agent that answered with nothing to list, or whose list could not be read, is
+		// still an agent to pick, on whatever it answers with by default
+		const bare = !mine && others[engine] !== undefined && (others[engine]?.offer?.models.length ?? 0) === 0;
 		const facts = ENGINE_FACTS[engine];
 		const signedOut = mine ? login?.out === true : others[engine]?.signedIn === false;
 		const models = modelsOf(engine).filter((entry) => matches(engine, entry, query));
@@ -340,7 +343,7 @@ export function AgentMenu({
 						);
 					})
 				)}
-				{!mine && !signedOut && others[engine]?.offer?.models.length === 0 && query.trim() === "" ? (
+				{bare && !signedOut && query.trim() === "" ? (
 					/* an agent with nothing to list is still an agent to pick: the row names it, and
 					   it answers on its own default */
 					<button
@@ -363,7 +366,7 @@ export function AgentMenu({
 						{engineName(engine)}
 					</button>
 				) : null}
-				{!mine && started && others[engine]?.offer?.models.length === 0 ? (
+				{bare && started ? (
 					<Reveal open={pending?.engine === engine && pending.value === ""}>
 						<NewChatNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
 					</Reveal>

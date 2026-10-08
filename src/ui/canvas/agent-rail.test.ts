@@ -285,7 +285,12 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	 */
 	const engines = {
 		listed: [{ id: "claude", installed: true }] as { id: string; installed: boolean }[],
-		codex: { offer: CODEX_OFFERED, signedIn: true, chose: [] as { value?: string; effort?: string }[] },
+		// null is a models door that fails
+		codex: {
+			offer: CODEX_OFFERED as AgentOffer | null,
+			signedIn: true,
+			chose: [] as { value?: string; effort?: string }[],
+		},
 		calls: [] as string[],
 	};
 	/** the mode the thread doors answer with, and every pick that was saved */
@@ -313,7 +318,10 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			const method = init?.method ?? (input instanceof Request ? input.method : "GET");
 			// the second agent's own doors, ahead of the thread doors their endings share (#364)
-			if (url.pathname.endsWith("/agent/engines/codex/models")) return Response.json(engines.codex.offer);
+			if (url.pathname.endsWith("/agent/engines/codex/models"))
+				return engines.codex.offer === null
+					? new Response("", { status: 500 })
+					: Response.json(engines.codex.offer);
 			if (url.pathname.endsWith("/agent/engines/codex/model")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
 				engines.codex.chose.push(JSON.parse(body) as { value?: string; effort?: string });
@@ -5696,6 +5704,31 @@ describe("another agent in the menu", () => {
 		await settle(50);
 		expect(canvas.turn.streams[0]?.thread).toBe(thread);
 		expect(canvas.turn.attachments[0]?.[0]?.media).toBe("image/png");
+	});
+
+	/** the agent is the choice; its models are only how it is chosen, so a list it cannot give is no bar */
+	it("still offers an agent whose models could not be read, as one row named after it", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		canvas.engines.codex.offer = null;
+		await canvas.render();
+		await until(() => canvas.offered.asked.length > 0);
+		const thread = canvas.offered.asked[0];
+		await openModelMenu(canvas);
+		await until(() => modelRow(canvas.host, "Codex") !== null);
+
+		expect(live(canvas.host, '[data-agent-group="codex"] [data-agent-model-row]')).toHaveLength(1);
+		await act(async () => modelRow(canvas.host, "Codex")?.click());
+		await settle(100);
+
+		// nothing to choose a model from, so nothing is chosen: the empty chat moves in place
+		expect(canvas.engines.codex.chose).toEqual([]);
+		expect(canvas.engines.calls).toEqual(["PUT engines codex"]);
+		expect(canvas.machine.preferred).toBe("codex");
+		expect(await cells(canvas.host)).toEqual(["new thread"]);
+		await send(canvas.host, "on codex");
+		await settle(50);
+		expect(canvas.turn.streams[0]?.thread).toBe(thread);
 	});
 
 	/**
