@@ -16,6 +16,19 @@ import type { AgentEntry } from "./agent-transcript";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
+ * Codex as an agent the client will name (#364).
+ *
+ * This branch's engine union stops at claude and spool, so the client drops any other id
+ * the daemon reports, and the menu's paths for another agent — a second group, a sign-in
+ * line, asking before a started chat changes agent — are only reachable with a third.
+ * Only the tests that put codex on the machine ever report it.
+ */
+vi.mock("../../daemon/agent-engine", async (actual) => ({
+	...(await actual<typeof import("../../daemon/agent-engine")>()),
+	isAgentEngineId: (value: unknown) => value === "claude" || value === "spool" || value === "codex",
+}));
+
+/**
  * The agent rail as the canvas drives it (#192, #193, #194).
  *
  * One turn, end to end: the composer takes a sentence, the daemon's stream answers
@@ -190,6 +203,25 @@ const OFFERED: AgentOffer = {
 	current: { value: "opus[1m]", resolved: "claude-opus-5[1m]", name: "Opus 5", effort: "high", pin: null },
 };
 
+/**
+ * A second agent's offer, so the menu has another group to draw (#364): two models, the
+ * first with effort levels, neither of them a name Claude's reply uses.
+ */
+const CODEX_OFFERED: AgentOffer = {
+	models: [
+		{
+			value: "gpt-5.5",
+			resolvedModel: "gpt-5.5",
+			displayName: "GPT-5.5",
+			description: "",
+			supportsEffort: true,
+			supportedEffortLevels: ["low", "medium", "high"],
+		},
+		{ value: "gpt-5.5-mini", resolvedModel: "gpt-5.5-mini", displayName: "GPT-5.5 mini", description: "" },
+	],
+	current: { value: "gpt-5.5", resolved: "gpt-5.5", name: "GPT-5.5", effort: "medium", pin: null },
+};
+
 /** the daemon's own answer to a choice: the binary's report of what it is now running */
 function reported(offer: AgentOffer, wanted: { value?: string; effort?: string }): AgentOffer {
 	const picked = offer.models.find((model) => model.value === wanted.value);
@@ -235,14 +267,29 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	 */
 	const preflight = {
 		installed: null as boolean | null,
-		/** which engines the machine has, as the engines door names them (#363) */
-		engines: [{ id: "claude", installed: true }] as { id: string; installed: boolean }[] | null,
+		/** which engines the machine has, as the engines door names them (#363); null leaves it to `engines.listed` */
+		engines: null as { id: string; installed: boolean }[] | null,
 		login: { signedIn: false, account: null } as { signedIn: boolean; account: string | null },
 		looks: 0,
 		asked: 0,
 	};
 	/** the model door, and every choice that went through it (#199) */
 	const machine = { preferred: "claude", mode: "edits" };
+	/**
+	 * The agents the daemon reports, and a second one a test can install (#364).
+	 *
+	 * Claude alone by default, which is every claim about one agent's menu. A test about
+	 * switching agents puts codex beside it, and codex answers its own doors: its models,
+	 * a choice of model for its next chat, and whether it is signed in. `calls` is the order
+	 * the switch's two writes went out in, which is what says the choice was saved first.
+	 */
+	const engines = {
+		listed: [{ id: "claude", installed: true }] as { id: string; installed: boolean }[],
+		codex: { offer: CODEX_OFFERED, signedIn: true, chose: [] as { value?: string; effort?: string }[] },
+		calls: [] as string[],
+	};
+	/** the mode the thread doors answer with, and every pick that was saved */
+	const permissions = { mode: "ask", picks: [] as string[] };
 	const offered = {
 		offer: OFFERED,
 		/** every thread the rail asked the offer about, in order */
@@ -264,13 +311,26 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+			// the second agent's own doors, ahead of the thread doors their endings share (#364)
+			if (url.pathname.endsWith("/agent/engines/codex/models")) return Response.json(engines.codex.offer);
+			if (url.pathname.endsWith("/agent/engines/codex/model")) {
+				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
+				engines.codex.chose.push(JSON.parse(body) as { value?: string; effort?: string });
+				engines.calls.push("POST codex model");
+				return Response.json(engines.codex.offer);
+			}
+			if (url.pathname.endsWith("/agent/login") && url.searchParams.get("engine") === "codex") {
+				return Response.json({ signedIn: engines.codex.signedIn, account: null });
+			}
 			// the machine's agent choice (#361), saved by a PUT and read back by every GET
 			if (url.pathname.endsWith("/agent/engines")) {
-				if ((init?.method ?? (input instanceof Request ? input.method : "GET")) === "PUT") {
+				if (method === "PUT") {
 					const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
 					machine.preferred = (JSON.parse(body) as { preferred: string }).preferred;
+					engines.calls.push(`PUT engines ${machine.preferred}`);
 				}
-				return Response.json(preflight.engines === null ? machine : { ...machine, engines: preflight.engines });
+				return Response.json({ ...machine, engines: preflight.engines ?? engines.listed });
 			}
 			// is there an agent on this machine at all: a `which`, asked when the rail opens
 			// and again on every press behind the wall (#201)
@@ -331,6 +391,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			if (url.pathname.endsWith("/models")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/models$/, "") ?? "";
 				offered.asked.push(thread);
+				// a chat on codex is answered by codex
+				if (url.searchParams.get("engine") === "codex") return Response.json(engines.codex.offer);
 				return Response.json(offered.offer);
 			}
 			if (url.pathname.endsWith("/model")) {
@@ -344,7 +406,15 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				offered.offer = offered.reply(offered.offer, wanted);
 				return Response.json(offered.offer);
 			}
-			if (url.pathname.endsWith("/permissions")) return Response.json({ mode: "ask" });
+			// the machine's one mode (#361), which a pick in the mode menu saves
+			if (url.pathname.endsWith("/permissions")) {
+				if (method === "PUT") {
+					const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
+					permissions.mode = (JSON.parse(body) as { mode: string }).mode;
+					permissions.picks.push(permissions.mode);
+				}
+				return Response.json({ mode: permissions.mode });
+			}
 			if (url.pathname.includes("/agent/threads/")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/close$/, "") ?? "";
 				if (url.pathname.endsWith("/close")) stored.closed.push(thread);
@@ -447,6 +517,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		stored,
 		offered,
 		machine,
+		engines,
+		permissions,
 		preflight,
 		/** the log's body changed size: what a browser tells the rail's watcher after a layout */
 		grew: async () => {
@@ -489,6 +561,15 @@ const rail = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent
 /** the right side's stack, whose width is what the agent is laid out at */
 const stack = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-side-stack="right"]');
 const field = (host: HTMLElement) => host.querySelector<HTMLTextAreaElement>("textarea");
+/**
+ * What matches and is not on its way out (#364).
+ *
+ * A float that closes stays mounted for its exit, inert, before it unmounts; it is not
+ * there to be read or pressed. A browser would say so with `:not([inert] *)`, which
+ * happy-dom does not read, so the leaving ones are filtered by hand.
+ */
+const live = <T extends Element = HTMLElement>(host: ParentNode, selector: string): T[] =>
+	[...host.querySelectorAll<T>(selector)].filter((element) => element.closest("[inert]") === null);
 /** the paragraphs of the agent's words on screen, in order */
 const paragraphs = (host: HTMLElement) =>
 	[...host.querySelectorAll("[data-agent-paragraph]")].map((paragraph) => paragraph.textContent);
@@ -655,7 +736,7 @@ describe("the rail", () => {
 		// the composer is the whole of what an empty rail says, and the footer under it
 		// says which machine is answering — the send hint's slot, because that outranks a
 		// keyboard hint you learn once (#184)
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
 		expect(rail(canvas.host)?.textContent).not.toContain("enter to send");
 	});
@@ -1013,7 +1094,7 @@ describe("one turn", () => {
 
 		expect(rail(canvas.host)?.textContent).toContain("spawn claude ENOENT");
 		// and the composer comes back: the turn is over, so the next thing said is a send
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 	});
 });
 
@@ -1038,7 +1119,8 @@ describe("a long message", () => {
 		canvas.turn.close();
 		await until(() => canvas.host.querySelectorAll("[data-agent-log] pre").length === 2);
 
-		const said = canvas.host.querySelector("[data-agent-log]")?.firstElementChild?.lastElementChild;
+		// the last entry rather than the log's last child: the queue's place follows it (#364)
+		const said = [...canvas.host.querySelectorAll("[data-agent-log] > div > [data-agent-arrive]")].at(-1);
 		if (!(said instanceof HTMLElement)) throw new Error("no message");
 		const chunks = chunksOf(DOCUMENT);
 		// every block of it is on screen: the whole message, nothing dropped
@@ -2630,7 +2712,7 @@ describe("a question in the log", () => {
 
 		// the field is the path the tool prefers: it tests a typed sentence before the
 		// picked ones and tells the agent to follow what the person actually said
-		expect(field(canvas.host)?.placeholder).toBe("or say it in your own words");
+		expect(field(canvas.host)?.placeholder).toBe("Or say it in your own words");
 		await send(canvas.host, "neither, leave my install alone");
 
 		expect(canvas.turn.answers.at(-1)).toEqual({
@@ -2701,8 +2783,9 @@ describe("a question in the log", () => {
 		// already gives the person's words, and the option list is gone
 		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("Ship it unverified");
 		expect(canvas.host.querySelector("[data-agent-dismiss]")).toBeNull();
-		// and the composer is a composer again
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		// and the composer is a composer again, asking for what follows the turn that is
+		// still running rather than for an answer (#364)
+		expect(field(canvas.host)?.placeholder).toBe("Say what comes next");
 	});
 });
 
@@ -2778,15 +2861,19 @@ describe("an approval in the log", () => {
 		await until(() => options(canvas.host).length > 0);
 
 		// the field is a field, not a way of allowing something: typing "wait, don't"
-		// at an approval must never be the thing that lets the command through
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		// at an approval must never be the thing that lets the command through. It asks for
+		// what comes next, because that is what a press does to a turn still running (#364)
+		expect(field(canvas.host)?.placeholder).toBe("Say what comes next");
 		await send(canvas.host, "wait, do not run that");
 
 		expect(canvas.turn.answers).toEqual([]);
-		// and parked is not finished, so the press is refused rather than spawning a
-		// second agent into a turn that is still holding the repo
+		// and parked is not finished, so the press is held rather than spawning a second
+		// agent into a turn that is still holding the repo: it waits in the queue at the end
+		// of the log, and is no row of the transcript
 		expect(canvas.turn.prompts).toEqual(["shoot the receipt"]);
-		expect(canvas.host.querySelector("[data-agent-log]")?.textContent).not.toContain("wait, do not run that");
+		expect(queuedRows(canvas.host)).toEqual(["wait, do not run that"]);
+		const entries = [...canvas.host.querySelectorAll("[data-agent-log] > div > [data-agent-arrive]")];
+		expect(entries.map((entry) => entry.textContent).join("")).not.toContain("wait, do not run that");
 	});
 
 	it("lets the clock run again when nobody answered and the agent moved on", async () => {
@@ -2821,15 +2908,22 @@ describe("an approval in the log", () => {
  * words back, and taking one back by hand is the same act with the same outcome.
  */
 
-/** the press in the footer, which is the exit that works from wherever the eyes are */
+/**
+ * The press in the composer's foot, which is the exit that works from wherever the eyes
+ * are: Send, turned to Stop for as long as the turn is a process (#364).
+ */
 const stopPress = (host: HTMLElement) =>
-	[...host.querySelectorAll<HTMLButtonElement>('[aria-label="Agent"] button')].find(
-		(button) => button.textContent?.startsWith("stop") === true,
-	) ?? null;
+	rail(host)?.querySelector<HTMLButtonElement>('[data-agent-stop][aria-label="Stop"]') ?? null;
 
-/** every message waiting in the composer, in the order it will fire */
+/** the send it stands in for, which is there whenever the stop is not */
+const sendPress = (host: HTMLElement) =>
+	rail(host)?.querySelector<HTMLButtonElement>('[data-agent-send][aria-label="Send"]') ?? null;
+
+/** every message waiting at the end of the log, in the order it will fire (#364) */
 const queuedRows = (host: HTMLElement) =>
-	[...host.querySelectorAll("[data-agent-queued] p")].map((row) => row.textContent);
+	[...host.querySelectorAll("[data-agent-log] [data-agent-queue] [data-agent-queued] p")].map(
+		(row) => row.textContent,
+	);
 
 /**
  * The stroke every row's mark actually draws, in the log's own order.
@@ -2941,13 +3035,16 @@ describe("stopping a turn", () => {
 		const canvas = mount();
 		await canvas.render();
 
-		// nothing has been said, so there is nothing to stop
+		// nothing has been said, so there is nothing to stop: the place holds Send, and it is
+		// dead while the box is empty
 		expect(stopPress(canvas.host)).toBeNull();
+		expect(sendPress(canvas.host)?.disabled).toBe(true);
 
 		await send(canvas.host, "shoot the receipt");
 		canvas.turn.push(waiting);
 		await settle();
 		expect(stopPress(canvas.host)).not.toBeNull();
+		expect(sendPress(canvas.host)).toBeNull();
 
 		// a parked turn is spending nothing and moving nowhere, and it is still a process
 		// standing in the repo: the question's own dismiss answers the question, and this is
@@ -2973,6 +3070,34 @@ describe("stopping a turn", () => {
 		canvas.turn.close();
 		await settle();
 		expect(stopPress(canvas.host)).toBeNull();
+		expect(sendPress(canvas.host)).not.toBeNull();
+	});
+
+	/** Send is the Enter a pointer can reach: it takes the same words the same way (#364) */
+	it("sends from the Send press, which is Stop while a turn runs", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, "tidy the receipt"));
+		expect(sendPress(canvas.host)?.disabled).toBe(false);
+
+		await act(async () => sendPress(canvas.host)?.click());
+		await settle(50);
+		expect(canvas.turn.prompts).toEqual(["tidy the receipt"]);
+		expect(field(canvas.host)?.value).toBe("");
+
+		// while the turn runs the press is Stop, so the words wait on Enter instead, and the
+		// field says that what it takes now is what comes next
+		canvas.turn.push(waiting);
+		await settle();
+		expect(stopPress(canvas.host)).not.toBeNull();
+		expect(field(canvas.host)?.placeholder).toBe("Say what comes next");
+		expect(field(canvas.host)?.getAttribute("aria-label")).toBe("Say what comes next");
+
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle();
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 	});
 
 	it("stops a turn parked on a question, and hands its queue back", async () => {
@@ -3015,12 +3140,17 @@ describe("the queue", () => {
 		// nothing went down the wire mid-turn, and nothing was interrupted for it
 		expect(canvas.turn.prompts).toEqual(["start a habit tracker"]);
 		expect(canvas.turn.stops).toEqual([]);
-		// it stacks inside the composer, dimmed, with a mono `queued` and a take-back
+		// it waits at the end of the log, shaped as the ask it will become and faint on a
+		// dashed hairline because it has not gone out, with a Take back under it (#364)
 		expect(queuedRows(canvas.host)).toEqual(["hold off on add-habit until i've seen home"]);
-		const row = canvas.host.querySelector("[data-agent-queued]");
+		const row = canvas.host.querySelector("[data-agent-log] [data-agent-queued]");
 		expect(row?.querySelector("p")?.className).toContain("text-muted");
-		expect(row?.textContent).toContain("queued");
-		expect(row?.querySelector('button[aria-label^="take back"]')).not.toBeNull();
+		expect(row?.querySelector("p")?.className).toContain("border-dashed");
+		const back = row?.querySelector('button[aria-label^="take back"]');
+		expect(back?.textContent).toBe("Take back");
+		expect(back?.getAttribute("aria-label")).toBe("take back hold off on add-habit until i've seen home");
+		// and the composer holds none of it: the box is where the next words go
+		expect(canvas.host.querySelector("[data-agent-composer] [data-agent-queue]")).toBeNull();
 		// and the field is empty again, because the message has been taken
 		expect(field(canvas.host)?.value).toBe("");
 	});
@@ -3093,17 +3223,29 @@ describe("the queue", () => {
 		expect(queuedRows(canvas.host)).toEqual([]);
 	});
 
-	it("caps its own height and scrolls inside itself rather than taking the log's room", async () => {
+	/**
+	 * The queue is the end of the log, so the log follows to it as it would to a reply: a
+	 * message held where nobody could see it would read as one that was lost (#364).
+	 */
+	it("stands after the last entry, and leaves on a fade when it is taken back", async () => {
 		const canvas = mount();
 		await running(canvas);
-		for (const words of ["one", "two", "three", "four", "five", "six"]) await send(canvas.host, words);
+		await send(canvas.host, "one");
+		await send(canvas.host, "two");
 
-		expect(queuedRows(canvas.host)).toHaveLength(6);
-		// the composer grows upward, so a queue with no ceiling is a transcript pushed off
-		// the top of the rail: the cost of holding words on screen lands here instead
-		const box = canvas.host.querySelector<HTMLElement>("[data-agent-queue]");
-		expect(box?.style.maxHeight).toBe("164px");
-		expect(box?.className).toContain("overflow-y-auto");
+		const body = canvas.host.querySelector("[data-agent-log] > div");
+		const queue = canvas.host.querySelector("[data-agent-queue]");
+		expect(body?.lastElementChild?.contains(queue ?? null)).toBe(true);
+		expect(queuedRows(canvas.host)).toEqual(["one", "two"]);
+
+		await act(async () => canvas.host.querySelector<HTMLButtonElement>('[aria-label="take back one"]')?.click());
+		// gone from the queue at once, and still drawn, inert, for the fade it leaves on
+		expect(queuedRows(canvas.host)).toEqual(["two"]);
+		const leaving = [...(queue?.querySelectorAll("p") ?? [])].find((row) => row.textContent === "one");
+		expect(leaving?.closest("[inert]")).not.toBeNull();
+		await settle(200);
+		expect([...(queue?.querySelectorAll("p") ?? [])].map((row) => row.textContent)).toEqual(["two"]);
+		expect(field(canvas.host)?.value).toBe("one");
 	});
 
 	it("hands the reference back with the words rather than dropping it", async () => {
@@ -3162,23 +3304,24 @@ describe("the queue", () => {
 
 /* ---------- the threads, and what survives a restart (#120, #136, #200, #205) ---------- */
 
-/** the plate over the log: the open thread's ask, the marks of the rest, and the way to them */
-const plate = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-plate]");
+/**
+ * The pane's own header, which the chat's title is drawn into in place of the pane's name,
+ * beside the + (#364): the title is the switcher, and there is no plate under it any more.
+ */
+const header = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-pane-head="agent"]');
 
-/** the press on the plate that drops the list */
-const plateAsk = (host: HTMLElement) => plate(host)?.querySelector<HTMLElement>("[data-agent-plate-ask]") ?? null;
+/** the chat's title in the header, which is the press that drops the list */
+const plateAsk = (host: HTMLElement) => header(host)?.querySelector<HTMLElement>("[data-agent-plate-ask]") ?? null;
 
 /** the thread you are in, which is the one place its name is written outside the list */
-const nameplate = (host: HTMLElement) => plate(host)?.querySelector("[data-agent-plate-ask] > span")?.textContent ?? "";
+const nameplate = (host: HTMLElement) => plateAsk(host)?.querySelector(":scope > span")?.textContent ?? "";
 
-/** the marks on the plate, which are the lives of the threads moving somewhere you are not looking */
+/** the dot on the agent's dock icon, which says another chat has news (#364) */
 const elsewhere = (host: HTMLElement) =>
-	[...(plate(host)?.querySelectorAll("[data-agent-elsewhere] [data-agent-mark]") ?? [])].map((mark) =>
-		mark.getAttribute("data-agent-mark"),
-	);
+	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]') !== null;
 
-/** the list dropped over the log, or null while it is shut */
-const threadList = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-threads]");
+/** the list dropped from the title over the log, or null while it is shut or on its way out */
+const threadList = (host: HTMLElement) => live(host, "[data-agent-threads]")[0] ?? null;
 
 async function press(element: Element | null | undefined) {
 	if (element === null || element === undefined) throw new Error("nothing to press");
@@ -3195,13 +3338,15 @@ async function listed(host: HTMLElement) {
 
 /** the rows, in the order the list lays them out: newest at the top, fixed once */
 async function cells(host: HTMLElement) {
-	await listed(host);
-	return [...host.querySelectorAll("[data-agent-thread]")].map((row) => row.getAttribute("data-agent-thread"));
+	const list = await listed(host);
+	return [...(list?.querySelectorAll("[data-agent-thread]") ?? [])].map((row) =>
+		row.getAttribute("data-agent-thread"),
+	);
 }
 
 async function cell(host: HTMLElement, name: string) {
-	await listed(host);
-	return host.querySelector<HTMLElement>(`[data-agent-thread="${name}"]`);
+	const list = await listed(host);
+	return list?.querySelector<HTMLElement>(`[data-agent-thread="${name}"]`) ?? null;
 }
 
 const lifeOfCell = async (host: HTMLElement, name: string) =>
@@ -3211,6 +3356,7 @@ const lifeOfCell = async (host: HTMLElement, name: string) =>
 const marks = async (host: HTMLElement, name: string) => {
 	const mark = (await cell(host, name))?.querySelector("[data-agent-mark]");
 	return {
+		marked: mark !== null && mark !== undefined,
 		turning: mark?.querySelectorAll(".animate-agent-spin").length ?? 0,
 		drawn: mark?.children.length ?? 0,
 	};
@@ -3222,11 +3368,12 @@ const openCell = async (host: HTMLElement, name: string) => press(await cell(hos
 /** the ✕ on a row, which appears on hover and is off the ask so a miss opens rather than closes */
 const closeThread = async (host: HTMLElement, name: string) => {
 	await cell(host, name);
-	await press(host.querySelector(`[data-agent-thread-close="${name}"]`));
+	await press(threadList(host)?.querySelector(`[data-agent-thread-close="${name}"]`));
 };
 
+/** the + in the pane's header */
 const newThread = async (host: HTMLElement) => {
-	await press(host.querySelector('[aria-label="New chat"]'));
+	await press(header(host)?.querySelector('button[aria-label="New chat"]'));
 };
 
 /** the words in the log, which is how a test says whose transcript is on screen */
@@ -3306,21 +3453,27 @@ const written = (count: number): ServedThread[] =>
 	);
 
 describe("the thread plate", () => {
-	it("opens on one thread, its ask on the plate and no list until asked", async () => {
+	it("opens on one thread, its title in the pane's header and no list until asked", async () => {
 		const canvas = mount();
 		await canvas.render();
 
 		expect(nameplate(canvas.host)).toBe("New chat");
 		expect(threadList(canvas.host)).toBeNull();
 		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
-		// the plus is the pane's own verb, in the header over the plate (#359)
-		expect(canvas.host.querySelector('[data-pane-head="agent"] button[aria-label="New chat"]')).not.toBeNull();
-		// and nothing else moves in the panel while nothing is moving elsewhere
-		expect(elsewhere(canvas.host)).toEqual([]);
+		expect(plateAsk(canvas.host)?.getAttribute("aria-haspopup")).toBe("dialog");
+		// the title stands where the pane's name was: the header says which chat, not "Agent"
+		expect(header(canvas.host)?.querySelector("h2")).toBeNull();
+		// the plus is the pane's own verb, in the header beside the title (#359)
+		expect(header(canvas.host)?.querySelector('button[aria-label="New chat"]')).not.toBeNull();
+		// and there is no plate under the header, and no marks of other chats in it: those are
+		// the dock icon's one dot (#364)
+		expect(canvas.host.querySelector("[data-agent-plate]")).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-elsewhere]")).toBeNull();
+		expect(elsewhere(canvas.host)).toBe(false);
 	});
 
 	/** every thread has a row of its own: nothing is elided into an overflow */
-	it.each([1, 4, 12])("lists %i threads whole, and the plate stays one line", async (count) => {
+	it.each([1, 4, 12])("lists %i threads whole, and each title stays one line", async (count) => {
 		const canvas = mount();
 		canvas.stored.served = written(count);
 		await canvas.render();
@@ -3329,12 +3482,18 @@ describe("the thread plate", () => {
 		expect(await cells(canvas.host)).toHaveLength(count);
 		expect(await cells(canvas.host)).toContain(`ask ${count - 1}`);
 		expect(await cells(canvas.host)).toContain("ask 0");
-		expect(plate(canvas.host)?.className).toContain("h-11");
-		expect(stack(canvas.host)?.style.width).toBe("300px");
+		for (const row of threadList(canvas.host)?.querySelectorAll(".agent-thread-ask") ?? []) {
+			expect(row.className).toContain("truncate");
+		}
+		expect(plateAsk(canvas.host)?.querySelector(":scope > span")?.className).toContain("truncate");
+		expect(stack(canvas.host)?.style.width).toBe("380px");
 	});
 
-	/** the ask is the name, in sentence type; the frames it wrote are the line under it */
-	it("names the open thread by its ask and puts the frames it wrote under it", async () => {
+	/**
+	 * The ask is the name, in sentence type, and a row is one line: the title, and its age.
+	 * The line under it that said which frames it wrote is gone (#364); the log says that.
+	 */
+	it("names the open thread by its ask, and a row is its title and its age", async () => {
 		const canvas = mount();
 		canvas.stored.served = [
 			storedThread({ id: ONE, ask: "tighten the header", frame: "home", at: Date.now() - 5 * 60_000 }),
@@ -3344,55 +3503,71 @@ describe("the thread plate", () => {
 
 		expect(nameplate(canvas.host)).toBe("tighten the header");
 		// sentence type rather than the machine register: the ask is something somebody said
-		expect(plate(canvas.host)?.querySelector("[data-agent-plate-ask] > span")?.className).not.toContain("font-mono");
+		expect(plateAsk(canvas.host)?.querySelector(":scope > span")?.className).not.toContain("font-mono");
 
 		const row = await cell(canvas.host, "tighten the header");
-		expect(row?.textContent).toContain("tighten the header");
-		expect(row?.textContent).toContain("home");
-		expect(row?.textContent).toContain("5m");
-		// the ask wraps to three lines in the list and truncates to one on the plate
-		expect(row?.querySelector(".agent-thread-ask")?.className).toContain("line-clamp-3");
-		expect(plate(canvas.host)?.querySelector("[data-agent-plate-ask] > span")?.className).toContain("truncate");
+		expect(row?.textContent).toBe("tighten the header5m");
+		// a read chat draws no mark, and it runs on the usual agent, so no agent is named
+		expect(row?.querySelector("[data-agent-mark]")).toBeNull();
+		expect(row?.querySelector("[data-agent-thread-engine]")).toBeNull();
 	});
 
-	it("says what a thread did where it has written nothing", async () => {
+	it("calls a chat nothing has been said in a new chat", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect((await cell(canvas.host, "new thread"))?.textContent).toContain("nothing yet");
-
-		await send(canvas.host, "shoot home");
-		canvas.turn.push(ready);
-		canvas.turn.push(called("s1", "Read", { file_path: "/project/design/.spool/verify/home.png" }));
-		await settle(120);
-
-		// the last line it drew, in the rail's own nouns, until it writes a frame
-		expect((await cell(canvas.host, "shoot home"))?.textContent).toContain("look home");
+		expect((await cell(canvas.host, "new thread"))?.querySelector(".agent-thread-ask")?.textContent).toBe("New chat");
 	});
 
 	/**
-	 * The column's one glanceable answer, kept: what is moving in a thread you are not looking
-	 * at. The plate carries their marks and no names, and nothing for the thread you are in
-	 * or for one that is read, because the log beside it is already the first and the plate
-	 * says what is moving.
+	 * The column's one glanceable answer, kept: something is moving in a chat you are not
+	 * looking at. It is one dot on the dock's agent icon now (#364), lit or not, and nothing
+	 * for the chat you are in or for one that is read, because the log beside it is already
+	 * the first.
 	 */
-	it("carries the marks of the threads moving elsewhere, and none for the one you are in", async () => {
+	it("dots the dock icon for another chat's news, and never for the one you are in", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the empty cart");
 		canvas.turn.push(waiting);
 		await settle();
-		expect(elsewhere(canvas.host)).toEqual([]);
+		expect(elsewhere(canvas.host)).toBe(false);
 
+		// running elsewhere, with the pane lit
 		await newThread(canvas.host);
-		expect(elsewhere(canvas.host)).toEqual(["running"]);
+		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("true");
+		expect(elsewhere(canvas.host)).toBe(true);
+		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-label")).toBe(
+			"Agent, another chat has news",
+		);
 
+		// landed where nobody was looking
 		await answerTurn(canvas.turn.streams[0] as Stream, "Three takes are up.");
-		expect(elsewhere(canvas.host)).toEqual(["unread"]);
+		expect(elsewhere(canvas.host)).toBe(true);
 
 		await openCell(canvas.host, "three takes on the empty cart");
-		// opened, so read; and the new thread beside it has nothing happening in it
-		expect(elsewhere(canvas.host)).toEqual([]);
+		// opened, so read; and the new chat beside it has nothing happening in it
+		expect(elsewhere(canvas.host)).toBe(false);
+	});
+
+	/** the open chat's own marks on a hidden pane say more than news elsewhere, so they win */
+	it("gives way on the dock to the open chat's own working mark while the pane is hidden", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the empty cart");
+		canvas.turn.push(waiting);
+		await settle();
+		await newThread(canvas.host);
+		await send(canvas.host, "write the copy deck");
+		canvas.turn.push(waiting);
+		await settle();
+		expect(elsewhere(canvas.host)).toBe(true);
+
+		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
+		const icon = canvas.host.querySelector('[data-rail-icon="agent"]');
+		expect(icon?.getAttribute("aria-pressed")).toBe("false");
+		expect(icon?.querySelector('[data-rail-mark="working"]')).not.toBeNull();
+		expect(elsewhere(canvas.host)).toBe(false);
 	});
 
 	it("drops the list on a press and takes it away on the next", async () => {
@@ -3401,10 +3576,30 @@ describe("the thread plate", () => {
 
 		await press(plateAsk(canvas.host));
 		expect(threadList(canvas.host)).not.toBeNull();
+		expect(threadList(canvas.host)?.getAttribute("role")).toBe("dialog");
+		expect(threadList(canvas.host)?.getAttribute("aria-label")).toBe("Chats");
 		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("true");
 
 		await press(plateAsk(canvas.host));
 		expect(threadList(canvas.host)).toBeNull();
+		// it leaves the way it came: still drawn for its exit, inert so nothing in it can be
+		// pressed, and then gone (#364)
+		const leaving = canvas.host.querySelector("[data-agent-threads]")?.closest("[data-float]");
+		expect(leaving?.hasAttribute("inert")).toBe(true);
+		expect(leaving?.hasAttribute("data-leaving")).toBe(true);
+		await settle(200);
+		expect(canvas.host.querySelector("[data-agent-threads]")).toBeNull();
+	});
+
+	/** where stillness was asked for an exit is a cut */
+	it("goes at once when stillness is asked for", async () => {
+		const canvas = mount({ still: true });
+		await canvas.render();
+
+		await press(plateAsk(canvas.host));
+		expect(threadList(canvas.host)).not.toBeNull();
+		await press(plateAsk(canvas.host));
+		expect(canvas.host.querySelector("[data-agent-threads]")).toBeNull();
 	});
 
 	it("goes on escape and on a press anywhere outside it", async () => {
@@ -3436,10 +3631,11 @@ describe("the thread plate", () => {
 		expect(await cells(canvas.host)).toEqual(["write the swedish copy deck", "tighten the header"]);
 		expect(canvas.turn.streams[0]?.thread).not.toBe(canvas.turn.streams[1]?.thread);
 		expect(log(canvas.host)).toContain("The copy deck landed.");
-		// the open row is shaded and carries the accent
+		// the open row holds the lightest wash, and no accent: the accent is the selection's
 		const open = threadList(canvas.host)?.querySelector('[data-agent-thread][aria-current="true"]');
 		expect(open?.getAttribute("data-agent-thread")).toBe("write the swedish copy deck");
-		expect(open?.querySelector(".bg-thread")).not.toBeNull();
+		expect(open?.classList.contains("bg-raised")).toBe(true);
+		expect(open?.querySelector(".bg-thread")).toBeNull();
 
 		await openCell(canvas.host, "tighten the header");
 
@@ -3458,7 +3654,7 @@ describe("the thread plate", () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(plate(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
+		expect(header(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 		expect(rail(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 
 		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
@@ -3512,12 +3708,11 @@ describe("the thread plate", () => {
 
 describe("a thread's mark", () => {
 	/**
-	 * All five lives draw, and the two working ones draw the same thing.
+	 * Every life but read draws, and the two working ones draw the same thing.
 	 *
-	 * The cell is the only place a column says whether a thread is moving, and the thread
-	 * you are looking at is the one you are most likely to be waiting on. Leaving it blank
-	 * left an empty square next to neighbours that all carried a mark, which reads as a
-	 * fault rather than as a distinction.
+	 * The thread you are looking at is the one you are most likely to be waiting on, so its
+	 * row turns as a chat elsewhere does. A read chat draws nothing (#364): the row is its
+	 * title now, and needs no mark to be something to press.
 	 */
 	it("turns for the thread in the rail while its turn runs", async () => {
 		const canvas = mount();
@@ -3554,23 +3749,28 @@ describe("a thread's mark", () => {
 
 		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
 		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("unread");
+		expect((await marks(canvas.host, "shoot home")).drawn).toBe(1);
 
 		await openCell(canvas.host, "shoot home");
 		// opening a thread is what reads it, wherever the opening happened
 		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("read");
+		expect((await marks(canvas.host, "shoot home")).marked).toBe(false);
 	});
 
-	it("keeps a collapsed read thread pressable with a hollow dot", async () => {
+	/**
+	 * A row is its title, so a read chat needs no mark to be pressable: the mark is kept for
+	 * a chat with something to say, and quiet is the rest of them (#364).
+	 */
+	it("draws nothing for a read thread but its age", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "shoot home");
 		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
 		await newThread(canvas.host);
 
-		// out here the mark is the thread, and a thread you cannot see is one you cannot
-		// press, so read falls back to the strength a disabled thing gets
 		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("read");
-		expect((await marks(canvas.host, "shoot home")).drawn).toBe(1);
+		expect((await marks(canvas.host, "shoot home")).marked).toBe(false);
+		expect((await cell(canvas.host, "shoot home"))?.textContent).toBe("shoot homenow");
 	});
 });
 
@@ -3785,7 +3985,7 @@ describe("what survives a restart", () => {
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		// and the composer says what the next thing said will actually do, in the field it is
 		// a fact about — #184 gave the footer's own 18px line to the model readout
-		expect(field(canvas.host)?.placeholder).toBe("say what to change · this starts a new thread");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change · this starts a new chat");
 		expect(rail(canvas.host)?.textContent).not.toMatch(/resume/i);
 
 		await send(canvas.host, "and now the receipt");
@@ -3935,7 +4135,7 @@ describe("closing a thread", () => {
 		await closeThread(canvas.host, "tighten the header");
 
 		expect(await cells(canvas.host)).toEqual(["new thread"]);
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 	});
 
 	/**
@@ -4053,16 +4253,23 @@ describe("what the composer keeps", () => {
 
 const modelTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="Choose model"]');
 
-const modelMenu = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-menu]:not([inert] *)");
+/** the menu while it is up, and not the one fading out after a close */
+const modelMenu = (host: HTMLElement) => live(host, "[data-agent-model-menu]")[0] ?? null;
 
 /** every row in the menu, in the order the reply listed them */
 const modelRows = (host: HTMLElement) =>
-	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")].map(
-		(row) => row.getAttribute("data-agent-model-row") ?? "",
-	);
+	live<HTMLButtonElement>(host, "[data-agent-model-row]").map((row) => row.getAttribute("data-agent-model-row") ?? "");
 
 const modelRow = (host: HTMLElement, label: string) =>
-	host.querySelector<HTMLButtonElement>(`[data-agent-model-row="${label}"]`);
+	live<HTMLButtonElement>(host, `[data-agent-model-row="${label}"]`)[0] ?? null;
+
+/** the chosen row's effort control, which opens the levels in place under it (#364) */
+const effortToggle = (host: HTMLElement) => live<HTMLButtonElement>(host, "[data-agent-effort-toggle]")[0] ?? null;
+
+/** the levels, while they are open: shut, they are in the menu and inert */
+const effortPills = (host: HTMLElement) => live<HTMLButtonElement>(host, "[data-agent-effort]");
+const effortPill = (host: HTMLElement, level: string) =>
+	live<HTMLButtonElement>(host, `[data-agent-effort="${level}"]`)[0] ?? null;
 
 const usageLine = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-usage]")?.textContent ?? null;
 
@@ -4097,16 +4304,7 @@ async function resizeRail(host: HTMLElement, width: number) {
 	});
 }
 
-async function modelAction(host: HTMLElement, label: string) {
-	const button = [...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-menu] button")].find(
-		(entry) => entry.getAttribute("aria-label") === label || entry.textContent === label,
-	);
-	if (!button) throw new Error(`Missing ${label}`);
-	await act(async () => button.click());
-	await settle(50);
-}
-
-/** the 18px line the model and the stop share, which is what the menu is measured against */
+/** the left of the composer's foot, where attach, the model and the mode sit (#364) */
 const footerRow = (host: HTMLElement) => modelTrigger(host)?.parentElement?.parentElement ?? null;
 
 /** the usage window as the two captures carry it: `seven_day` at 92%, resetting Wednesday */
@@ -4124,52 +4322,30 @@ const warned: AgentEvent = {
 };
 
 describe("the model menu", () => {
-	it("changes a new chat's agent without replacing its draft, image or thread", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await until(() => canvas.offered.asked.length > 0);
-		const thread = canvas.offered.asked[0];
-		const composer = field(canvas.host);
-		if (!composer) throw new Error("Missing composer");
-		await act(async () => type(composer, "keep this draft"));
-		await drop(canvas.host, shot());
-		await settle(50);
-		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
-		await press(canvas.host.querySelector('[data-agent-engine="pi"]'));
-		await settle(50);
-		expect(field(canvas.host)?.value).toBe("keep this draft");
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("pi");
-		await send(canvas.host, "keep this draft");
-		await settle(50);
-		expect(canvas.turn.streams[0]?.thread).toBe(thread);
-		expect(canvas.turn.attachments[0]?.[0]?.media).toBe("image/png");
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
-		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("pi");
-	});
-
-	it("starts immediately with the last chosen agent and preserves the older chat's draft", async () => {
+	/**
+	 * A blank chat follows the machine's agent, and a chat that has an agent keeps it: the
+	 * row of one on another agent says which, because the list leaves the usual one unsaid.
+	 */
+	it("starts a new chat on the machine's agent and keeps the older chat's draft and agent", async () => {
 		const canvas = mount();
 		canvas.stored.served = [storedThread({ id: ONE, ask: "original chat", engine: "pi", draft: "original draft" })];
 		await canvas.render();
 		await settle();
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
 		await newThread(canvas.host);
 		await settle(50);
-		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
 		expect(field(canvas.host)?.value).toBe("");
 		expect(document.activeElement).toBe(field(canvas.host));
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe(
-			"Claude Code",
-		);
-		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
-		await press(canvas.host.querySelector('[data-agent-engine="pi"]'));
-		await newThread(canvas.host);
-		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("pi");
+		// Claude is the usual agent, so the trigger names the model alone
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+		expect(modelTrigger(canvas.host)?.querySelector("[data-agent-trigger-engine]")).toBeNull();
+
+		const original = await cell(canvas.host, "original chat");
+		expect(original?.querySelector("[data-agent-thread-engine]")?.textContent).toBe("pi");
+		expect((await cell(canvas.host, "new thread"))?.querySelector("[data-agent-thread-engine]")).toBeNull();
+
 		await openCell(canvas.host, "original chat");
 		await settle(50);
 		expect(field(canvas.host)?.value).toBe("original draft");
-		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("pi");
 	});
 
 	it("marks pi's local models and waits for the accepted model before changing the footer", async () => {
@@ -4243,6 +4419,57 @@ describe("the model menu", () => {
 		]);
 		// and it asks again on the way open, because the answer is the installed CLI's
 		expect(modelMenu(canvas.host)).not.toBeNull();
+		// one menu for the agent and its model, the agent a group over its models, and the
+		// chosen row checked as the one that is current (#364)
+		expect(modelMenu(canvas.host)?.getAttribute("role")).toBe("menu");
+		expect(modelMenu(canvas.host)?.getAttribute("aria-label")).toBe("Agent and model");
+		expect(live(canvas.host, "[data-agent-group]").map((group) => group.getAttribute("data-agent-group"))).toEqual([
+			"claude",
+		]);
+		const chosen = modelRow(canvas.host, "Opus (1M context)");
+		expect(chosen?.getAttribute("role")).toBe("menuitemradio");
+		expect(chosen?.getAttribute("aria-checked")).toBe("true");
+		expect(chosen?.getAttribute("aria-current")).toBe("true");
+		expect(chosen?.getAttribute("data-agent-model-engine")).toBe("claude");
+		expect(modelRow(canvas.host, "Sonnet")?.getAttribute("aria-checked")).toBe("false");
+		// five models is too few to need finding
+		expect(modelMenu(canvas.host)?.querySelector('input[aria-label="Find a model"]')).toBeNull();
+	});
+
+	/** past twelve models a field to find one stands at the top, and narrows every group */
+	it("offers a find field past twelve models, and narrows the rows to what it holds", async () => {
+		const canvas = mount();
+		const many = Array.from({ length: 13 }, (_, at) => ({
+			value: `model-${at}`,
+			resolvedModel: `model-${at}`,
+			displayName: at === 7 ? "Sonnet" : `Model ${at}`,
+			description: "",
+		}));
+		canvas.offered.offer = { models: many, current: { ...OFFERED.current, value: "model-0", effort: null } };
+		await canvas.render();
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Model 0") === true);
+		await act(async () => modelTrigger(canvas.host)?.click());
+		await settle(50);
+
+		expect(modelRows(canvas.host)).toHaveLength(13);
+		const find = modelMenu(canvas.host)?.querySelector<HTMLInputElement>('input[aria-label="Find a model"]');
+		expect(find).not.toBeNull();
+		// the field is where the keys go first
+		expect(document.activeElement).toBe(find);
+		await act(async () => {
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+			setter?.call(find, "sonn");
+			find?.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		expect(modelRows(canvas.host)).toEqual(["Sonnet"]);
+
+		await act(async () => {
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+			setter?.call(find, "nothing like it");
+			find?.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		expect(modelRows(canvas.host)).toEqual([]);
+		expect(modelMenu(canvas.host)?.textContent).toContain("No models match “nothing like it”.");
 	});
 
 	it("keeps model descriptions available without repeating them in the list", async () => {
@@ -4252,20 +4479,43 @@ describe("the model menu", () => {
 		const row = modelRow(canvas.host, "Sonnet");
 		expect(row?.title).toBe("Sonnet 5 · Efficient for routine tasks");
 		expect(row?.textContent).not.toContain("Efficient for routine tasks");
-		expect(canvas.host.querySelector("[data-fixed-agent]")).toBeNull();
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).not.toBeNull();
 	});
 
-	it("opens supported effort levels on their own page and restores focus on back", async () => {
+	/**
+	 * Effort is a property of the chosen model, so it opens in place under that row rather
+	 * than on a page of its own (#364): the models stay where they were, and the level held
+	 * is the one pressed.
+	 */
+	it("opens supported effort levels in place under the chosen model", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await openModelMenu(canvas);
-		await modelAction(canvas.host, "Change effort");
-		expect(modelRows(canvas.host)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-		expect(document.activeElement).toBe(modelRow(canvas.host, "high"));
-		await modelAction(canvas.host, "Back to models");
+
+		const toggle = effortToggle(canvas.host);
+		expect(toggle?.getAttribute("aria-label")).toBe("Effort, high");
+		expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+		expect(effortPills(canvas.host)).toEqual([]);
+		// only the chosen row carries one
+		expect(live(canvas.host, "[data-agent-effort-toggle]")).toHaveLength(1);
+
+		await act(async () => toggle?.click());
+		expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+		expect(effortPills(canvas.host).map((pill) => pill.getAttribute("data-agent-effort"))).toEqual([
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+		expect(effortPill(canvas.host, "high")?.getAttribute("aria-pressed")).toBe("true");
+		expect(effortPill(canvas.host, "low")?.getAttribute("aria-pressed")).toBe("false");
+		// and the models are still the list it opened under
 		expect(modelRows(canvas.host)).toContain("Sonnet");
-		expect(document.activeElement?.getAttribute("aria-label")).toBe("Change effort");
+		expect(modelMenu(canvas.host)?.textContent).not.toContain("Change effort");
+		expect(modelMenu(canvas.host)?.textContent).not.toContain("Back to models");
+
+		await act(async () => toggle?.click());
+		expect(effortPills(canvas.host)).toEqual([]);
 	});
 
 	it("shows no effort control at all on a model that reports no levels", async () => {
@@ -4288,6 +4538,9 @@ describe("the model menu", () => {
 			"Haiku",
 		]);
 		expect(modelMenu(canvas.host)?.textContent).not.toContain("effort");
+		expect(effortToggle(canvas.host)).toBeNull();
+		// the level held was not carried to a model that has none to take it
+		expect(canvas.offered.chose).toEqual([{ thread: canvas.offered.asked[0], value: "haiku" }]);
 		// and the readout drops the level with it, because the model says it has none
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Haiku");
 		expect(modelTrigger(canvas.host)?.textContent).not.toContain("high");
@@ -4303,8 +4556,11 @@ describe("the model menu", () => {
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet");
-		// the menu closes on a model, because that was the decision
+		// the menu closes on a model, because that was the decision, and is gone once its
+		// exit has played
 		expect(modelMenu(canvas.host)).toBeNull();
+		await settle(200);
+		expect(canvas.host.querySelector("[data-agent-model-menu]")).toBeNull();
 		// and it went to the thread that is open, because that is what the answer is about
 		expect(canvas.offered.chose[0]?.thread).toBe(canvas.offered.asked[0]);
 	});
@@ -4341,6 +4597,7 @@ describe("the model menu", () => {
 		// the reply is a spawn away — about a second on a cold binary — and nothing on
 		// screen waits for it. The level rides across because sonnet offers it
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
+		expect(canvas.offered.chose[0]?.effort).toBe("high");
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet");
 
 		canvas.offered.hold = null;
@@ -4404,12 +4661,15 @@ describe("the model menu", () => {
 		await canvas.render();
 		await openModelMenu(canvas);
 
-		await modelAction(canvas.host, "Change effort");
-		await act(async () => modelRow(canvas.host, "xhigh")?.click());
+		await act(async () => effortToggle(canvas.host)?.click());
+		await act(async () => effortPill(canvas.host, "xhigh")?.click());
 		await settle(50);
 
-		expect(canvas.offered.chose.map((one) => one.effort)).toEqual(["xhigh"]);
+		// the level alone, set in place: the model above it is not sent again
+		expect(canvas.offered.chose).toEqual([{ thread: canvas.offered.asked[0], effort: "xhigh" }]);
 		expect(modelMenu(canvas.host)).not.toBeNull();
+		expect(effortPill(canvas.host, "xhigh")?.getAttribute("aria-pressed")).toBe("true");
+		expect(effortToggle(canvas.host)?.getAttribute("aria-label")).toBe("Effort, xhigh");
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context)");
 	});
 
@@ -4422,28 +4682,63 @@ describe("the model menu", () => {
 		await canvas.render();
 		await openModelMenu(canvas);
 
-		await modelAction(canvas.host, "Change effort");
-		expect(modelMenu(canvas.host)?.querySelector('[role="status"]')?.textContent).toContain(
-			"CLAUDE_CODE_EFFORT_LEVEL=max",
+		await act(async () => effortToggle(canvas.host)?.click());
+		expect(modelMenu(canvas.host)?.querySelector('[role="status"]')?.textContent).toBe(
+			"CLAUDE_CODE_EFFORT_LEVEL=max is set in the environment.",
 		);
-		expect(modelRow(canvas.host, "low")?.disabled).toBe(true);
-		expect(modelRow(canvas.host, "max")?.disabled).toBe(false);
+		expect(effortPill(canvas.host, "low")?.disabled).toBe(true);
+		expect(effortPill(canvas.host, "max")?.disabled).toBe(false);
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context)");
 	});
 });
 
 describe("the footer the model hangs off", () => {
-	it("holds the model, stop and right-hand permission mode", async () => {
+	/**
+	 * The foot is two ends (#364): who answers and what it may do on the left, after the
+	 * attach, and the press that sends or stops on the right, which is where a hand that
+	 * just typed is.
+	 */
+	it("holds attach, model and mode on the left, and the stop on the right", async () => {
 		const canvas = mount();
 		await running(canvas);
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
 		const footer = footerRow(canvas.host);
 		if (footer === null) throw new Error("no footer");
 
-		// The effective permission mode stays rightmost; model text gives way first.
-		expect(footer.textContent).toBe("Opus (1M context)stopask");
+		const controls = [...footer.querySelectorAll<HTMLButtonElement>(":scope > button, :scope > span > button")];
+		expect(controls.map((button) => button.getAttribute("aria-label"))).toEqual([
+			"Attach an image",
+			"Choose model",
+			"Agent permissions: Ask first",
+		]);
+		// the mode in the words a person reads, never the setting's own value
+		expect(footer.textContent).toBe("Opus (1M context)Ask first");
 		expect(footer.textContent).not.toContain("weekly limit");
 		expect(footer.textContent).not.toContain("enter to");
+		// and the stop is the other end, outside the left group
+		expect(footer.contains(stopPress(canvas.host))).toBe(false);
+		expect(footer.parentElement?.lastElementChild?.contains(stopPress(canvas.host))).toBe(true);
+	});
+
+	/** a picture is pasted or dropped, and a pointer can also go and get one */
+	it("attaches an image from the file the Attach press opens", async () => {
+		const canvas = mount();
+		await canvas.render();
+		const input = footerRow(canvas.host)?.querySelector<HTMLInputElement>('input[type="file"]');
+		expect(input?.hidden).toBe(true);
+		let opened = 0;
+		if (input)
+			input.click = () => {
+				opened += 1;
+			};
+		await press(footerRow(canvas.host)?.querySelector('[aria-label="Attach an image"]'));
+		expect(opened).toBe(1);
+
+		await act(async () => {
+			Object.defineProperty(input, "files", { configurable: true, value: [shot()] });
+			input?.dispatchEvent(new Event("change", { bubbles: true }));
+		});
+		await until(() => canvas.host.querySelectorAll("[data-agent-attached]").length === 1);
 	});
 
 	it("truncates the name and never shortens it, across the whole drag range", async () => {
@@ -4451,7 +4746,7 @@ describe("the footer the model hangs off", () => {
 		await canvas.render();
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
 
-		for (const width of [200, 260, 300, 360, 420, 480]) {
+		for (const width of [380, 420, 480, 560]) {
 			await resizeRail(canvas.host, width);
 			expect(stack(canvas.host)?.style.width).toBe(`${width}px`);
 			const name = modelTrigger(canvas.host)?.querySelector("span");
@@ -4473,6 +4768,110 @@ describe("the footer the model hangs off", () => {
 	});
 });
 
+/**
+ * How full the window is (#364): a ring by the send, only once there is something to do
+ * about it, and pressed it says how full and the one thing to do.
+ */
+describe("the context ring", () => {
+	const ring = (host: HTMLElement) => live<HTMLButtonElement>(host, "[data-agent-context]")[0] ?? null;
+	const note = (host: HTMLElement) => live(host, "[data-agent-context-note]")[0] ?? null;
+	const used = (share: number): AgentEvent => ({
+		kind: "context",
+		used: share * 200_000,
+		window: 200_000,
+		parent: null,
+	});
+
+	it("stays hidden under 60% of the window, because there is nothing to act on yet", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+		canvas.turn.push(waiting);
+		canvas.turn.push(used(0.59));
+		await settle();
+
+		expect(ring(canvas.host)).toBeNull();
+	});
+
+	it("shows past it, and pressed says how full and offers a new chat", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		canvas.turn.push(waiting);
+		canvas.turn.push(used(0.72));
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle();
+
+		expect(ring(canvas.host)?.getAttribute("data-agent-context")).toBe("72");
+		expect(ring(canvas.host)?.getAttribute("aria-label")).toBe("72% of context used.");
+		expect(ring(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
+		// it stands with the send, on the right of the foot
+		expect(ring(canvas.host)?.parentElement?.parentElement?.contains(sendPress(canvas.host))).toBe(true);
+		expect(note(canvas.host)).toBeNull();
+
+		await press(ring(canvas.host));
+		expect(ring(canvas.host)?.getAttribute("aria-expanded")).toBe("true");
+		expect(note(canvas.host)?.textContent).toContain("72% of context used.");
+		expect(note(canvas.host)?.textContent).toContain("A new chat starts fresh.");
+
+		await press(
+			[...(note(canvas.host)?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "New chat"),
+		);
+		// a new chat, and the note goes with the press
+		expect(note(canvas.host)).toBeNull();
+		expect(nameplate(canvas.host)).toBe("New chat");
+		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
+		// and a new chat has a window with nothing in it
+		expect(ring(canvas.host)).toBeNull();
+	});
+});
+
+/**
+ * The machine's one mode, from the foot (#361, #364): three modes in a person's words,
+ * each with what it lets the agent do, and a footnote that it is every chat's.
+ */
+describe("the mode menu", () => {
+	const trigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>("[data-permission-trigger]");
+	const menu = (host: HTMLElement) => live(host, "[data-permission-menu]")[0] ?? null;
+
+	it("names the three modes and what each lets the agent do, and a pick saves for every chat", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await until(() => trigger(canvas.host)?.textContent === "Ask first");
+
+		await press(trigger(canvas.host));
+		expect(trigger(canvas.host)?.getAttribute("aria-expanded")).toBe("true");
+		const items = [...(menu(canvas.host)?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
+		expect(items.map((item) => item.getAttribute("data-permission-mode"))).toEqual(["ask", "edits", "bypass"]);
+		expect(items.map((item) => item.textContent)).toEqual([
+			"Ask firstAsks before it edits outside design/ or runs commands.",
+			"Auto-editEdits files without asking. Asks before commands.",
+			"Full accessNever asks.",
+		]);
+		expect(items.map((item) => item.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+		expect(menu(canvas.host)?.querySelector("p")?.textContent).toBe("Applies to every chat.");
+
+		await press(items[1]);
+		await settle(50);
+		expect(menu(canvas.host)).toBeNull();
+		expect(canvas.permissions.picks).toEqual(["edits"]);
+		expect(trigger(canvas.host)?.textContent).toBe("Auto-edit");
+	});
+
+	/** an agent that has no modes to offer is not offered a menu of them */
+	it("is not drawn for an agent that reports no modes", async () => {
+		const canvas = mount();
+		canvas.offered.offer = { ...OFFERED, modes: false };
+		await canvas.render();
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+		await settle(50);
+
+		expect(trigger(canvas.host)).toBeNull();
+	});
+});
+
 describe("the usage window", () => {
 	it("is absent until the binary warns, and draws no gauge below that", async () => {
 		const canvas = mount();
@@ -4490,6 +4889,8 @@ describe("the usage window", () => {
 
 		expect(usageLine(canvas.host)).toBeNull();
 		expect(modelMenu(canvas.host)?.textContent).not.toContain("%");
+		// and nothing on the trigger hints at a line the menu does not have
+		expect(modelTrigger(canvas.host)?.querySelector("[data-agent-limit-dot]")).toBeNull();
 
 		// and nothing about overage at any status: billing spool has no relationship to
 		// narrate, and it is moot anyway, since overage being on means the limit is not
@@ -4497,6 +4898,8 @@ describe("the usage window", () => {
 		canvas.turn.push({ kind: "limit", limit: { ...warned.limit, usingOverage: true }, parent: null });
 		await settle(150);
 		expect(usageLine(canvas.host)).toMatch(/^weekly limit 92% · resets [a-z]{3}$/);
+		// once there is a line, one quiet dot on the trigger says the menu has it (#364)
+		expect(modelTrigger(canvas.host)?.querySelector("[data-agent-limit-dot]")).not.toBeNull();
 		expect(modelMenu(canvas.host)?.textContent).not.toMatch(/overage|credit/i);
 		expect(rail(canvas.host)?.textContent).not.toMatch(/overage/i);
 	});
@@ -4509,18 +4912,21 @@ describe("the usage window", () => {
 		await settle(150);
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
 
-		for (const width of [200, 300, 420, 480]) {
+		for (const width of [380, 420, 480, 560]) {
 			await resizeRail(canvas.host, width);
 			await act(async () => modelTrigger(canvas.host)?.click());
 			// the reset time is half of what the readout is for: ninety-two per cent of a
 			// week is a different fact depending on whether it comes back Wednesday or in
 			// an hour. In the footer at 420 it clipped to `resets…`
 			expect(usageLine(canvas.host)).toMatch(/^weekly limit 92% · resets [a-z]{3}$/);
-			const panel = canvas.host.querySelector<HTMLElement>("[data-resize-popover]");
-			expect(panel?.className).toContain("w-[320px]");
+			// inside this agent's own group, under its name
+			expect(modelMenu(canvas.host)?.querySelector('[data-agent-group="claude"] [data-agent-usage]')).not.toBeNull();
+			const panel = modelMenu(canvas.host)?.closest<HTMLElement>("[data-float]");
+			expect(panel?.className).toContain("w-[384px]");
 			expect(panel?.className).toContain("max-w-full");
-			expect(footerRow(canvas.host)?.contains(panel)).toBe(true);
+			expect(footerRow(canvas.host)?.contains(panel ?? null)).toBe(true);
 			await act(async () => modelTrigger(canvas.host)?.click());
+			await settle(200);
 		}
 	});
 
@@ -4662,7 +5068,7 @@ describe("no agent on this machine", () => {
 		await checkAgain(wall(canvas.host));
 
 		expect(wall(canvas.host)).toBeNull();
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 		await send(canvas.host, "shoot home");
 		expect(canvas.turn.prompts).toEqual(["shoot home"]);
 	});
@@ -4832,7 +5238,7 @@ describe("signed out", () => {
 		// nothing local knows any better than the last spawn did, so the composer stays live
 		// and the next send is a send: it would answer wrong the moment somebody signs in
 		// without telling it
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 		await send(canvas.host, "again then");
 		expect(canvas.turn.prompts).toEqual(["shoot home"]);
 		expect(field(canvas.host)?.value).toBe("again then");
@@ -4924,7 +5330,10 @@ describe("signed out", () => {
 		canvas.turn.close();
 		await settle();
 
-		expect(rail(canvas.host)?.querySelectorAll("input")).toHaveLength(0);
+		// the one input the rail has is the picture picker behind Attach, and it takes images
+		const inputs = [...(rail(canvas.host)?.querySelectorAll("input") ?? [])];
+		expect(inputs.map((input) => input.type)).toEqual(["file"]);
+		expect(inputs[0]?.accept).toMatch(/^image\//);
 		expect(rail(canvas.host)?.textContent).not.toContain("API key");
 		expect(rail(canvas.host)?.textContent).not.toContain("ANTHROPIC");
 	});
