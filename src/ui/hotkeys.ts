@@ -26,6 +26,7 @@ export type HotkeyScope =
 	| "settings"
 	| "toast"
 	| "sidebar"
+	| "panes"
 	| "canvas"
 	| "home"
 	| "app";
@@ -37,7 +38,8 @@ export type HotkeyScope =
  *
  * The sidebar sits above the canvas and is not exclusive (#229): while the
  * rail has focus its own list answers ⌫, ↵ and the arrows, and every key it
- * does not claim carries on to the canvas exactly as it did before.
+ * does not claim carries on to the canvas exactly as it did before. The panes
+ * answer only chords nothing else binds, so where they sit in the walk is moot.
  */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"dialog",
@@ -47,6 +49,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"help",
 	"settings",
 	"sidebar",
+	"panes",
 	"canvas",
 	"home",
 	"app",
@@ -63,6 +66,7 @@ export const HOTKEY_GROUPS = [
 	"Find and jump",
 	"Threads",
 	"Pages",
+	"Panes",
 	"Undo",
 	"Home",
 	"Settings",
@@ -87,6 +91,8 @@ interface HotkeySpec {
 	readonly repeats?: false;
 	/** false: dispatch-only plumbing, never a row on the sheet */
 	readonly listed?: false;
+	/** true: answers even from a text field, for chords that mean nothing to text */
+	readonly typing?: true;
 }
 
 /** The accel face without its joining `+`: `⌘`, `ctrl`. */
@@ -432,6 +438,79 @@ export const HOTKEYS = [
 		gesture: "⌥ click a chevron",
 	},
 	{ id: "sidebar.close-menu", scope: "sidebar", group: "Pages", label: "", keys: ["escape"], listed: false },
+
+	// --- Panes: the canvas window's two sides (#359) -----------------------------
+	// ⌘B is the side bar's key in most editors, and ⌥ makes it the other side.
+	// The pane keys are ⌘⇧ and a letter no browser on a Mac holds on to:
+	// ⇧A is Chrome's tab search and ⇧P Firefox's private window, so Pages is
+	// E (the explorer), Properties I (the inspector) and Agent K, beside the ⌘K
+	// palette its commands live in.
+	{
+		id: "panes.left",
+		scope: "panes",
+		group: "Panes",
+		label: "Show or hide the left side",
+		keys: ["accel+b"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "panes.right",
+		scope: "panes",
+		group: "Panes",
+		label: "Show or hide the right side",
+		keys: ["accel+alt+b"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "panes.pages",
+		scope: "panes",
+		group: "Panes",
+		label: "Show Pages and focus it",
+		keys: ["accel+shift+e"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "panes.properties",
+		scope: "panes",
+		group: "Panes",
+		label: "Show Properties and focus it",
+		keys: ["accel+shift+i"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "panes.agent",
+		scope: "panes",
+		group: "Panes",
+		label: "Show the agent and focus its composer",
+		keys: ["accel+shift+k"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "panes.only",
+		scope: "panes",
+		group: "Panes",
+		label: "Show only that pane on its side",
+		gesture: "⌥ click a rail icon",
+	},
+	{
+		id: "panes.move",
+		scope: "panes",
+		group: "Panes",
+		label: "Move a pane, or split it with another",
+		gesture: "drag a rail icon or a pane's header",
+	},
+	{
+		id: "panes.menu",
+		scope: "panes",
+		group: "Panes",
+		label: "Move a pane to the other side, or off its rail",
+		gesture: "right-click a rail icon",
+	},
 
 	// --- Undo -------------------------------------------------------------------
 	{ id: "canvas.undo", scope: "canvas", group: "Undo", label: "Undo", keys: ["accel+z"] },

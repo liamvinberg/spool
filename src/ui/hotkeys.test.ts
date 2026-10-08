@@ -49,6 +49,12 @@ describe("combo matching", () => {
 		expect(matchesCombo(press({ key: "o", metaKey: true }), combo)).toBe(false);
 	});
 
+	it("letters under ⌥ match by code, the way ⌥B is ∫ before it is a B", () => {
+		const combo = parseCombo("accel+alt+b");
+		expect(matchesCombo(press({ key: "∫", code: "KeyB", metaKey: true, altKey: true }), combo)).toBe(true);
+		expect(matchesCombo(press({ key: "b", code: "KeyB", metaKey: true }), combo)).toBe(false);
+	});
+
 	it("letters survive caps lock", () => {
 		expect(matchesCombo(press({ key: "P" }), parseCombo("p"))).toBe(true);
 	});

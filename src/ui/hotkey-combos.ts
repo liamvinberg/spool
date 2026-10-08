@@ -124,7 +124,9 @@ export function matchesCombo(event: ComboEvent, combo: ParsedCombo, platform = c
 		// by key, exactly as the old handler read them
 		return combo.shift ? event.code === `Digit${combo.key}` : event.key === combo.key;
 	}
-	if (/^[a-z]$/.test(combo.key)) return event.key.toLowerCase() === combo.key;
+	// ⌥ spells a letter as something else on a Mac (⌥B is ∫), so under it the key's place is the letter
+	if (/^[a-z]$/.test(combo.key))
+		return combo.alt ? event.code === `Key${combo.key.toUpperCase()}` : event.key.toLowerCase() === combo.key;
 	return event.key === KEY_OF[combo.key];
 }
 

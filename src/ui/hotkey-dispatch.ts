@@ -43,6 +43,7 @@ interface DispatchEntry {
 	id: HotkeyId;
 	combos: readonly ParsedCombo[];
 	repeats: boolean;
+	typing: boolean;
 }
 
 const entriesByScope = new Map<HotkeyScope, readonly DispatchEntry[]>();
@@ -53,6 +54,7 @@ for (const scope of SCOPE_PRIORITY) {
 			id: entry.id,
 			combos: entry.keys.map(parseCombo),
 			repeats: !("repeats" in entry && entry.repeats === false),
+			typing: "typing" in entry && entry.typing === true,
 		})),
 	);
 }
@@ -75,11 +77,12 @@ function activeLayers(scope: HotkeyScope): HotkeyLayer[] {
 }
 
 export function dispatchHotkeyEvent(event: KeyboardEvent): void {
-	if (isTyping(event.target)) return;
+	const typing = isTyping(event.target);
 	for (const scope of SCOPE_PRIORITY) {
 		const up = activeLayers(scope);
 		if (up.length === 0) continue;
 		for (const entry of entriesByScope.get(scope) ?? []) {
+			if (typing && !entry.typing) continue;
 			if (!entry.repeats && event.repeat) continue;
 			if (!entry.combos.some((combo) => matchesCombo(event, combo))) continue;
 			for (const layer of up) {

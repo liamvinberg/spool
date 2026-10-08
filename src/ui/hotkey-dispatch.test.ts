@@ -63,6 +63,16 @@ describe("hotkey dispatch", () => {
 		input.remove();
 	});
 
+	it("lets the pane keys through a text field, so the composer is no dead end", () => {
+		const left = vi.fn();
+		attach({ scope: "panes", handlers: { "panes.left": left } });
+		const input = document.createElement("textarea");
+		document.body.append(input);
+		input.dispatchEvent(key({ key: "b", code: "KeyB", metaKey: true }));
+		expect(left).toHaveBeenCalledTimes(1);
+		input.remove();
+	});
+
 	it("ignores held-key repeats only where the register says so", () => {
 		const enter = vi.fn();
 		const nudge = vi.fn();
