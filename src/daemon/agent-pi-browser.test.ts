@@ -76,6 +76,7 @@ it("shows pi's live models with local ones marked and no mode menu, and opens an
 	await agent.click();
 	expect(await rail.locator("[data-agent-engine]").evaluateAll((rows) => rows.map((row) => row.textContent))).toEqual([
 		"Claude CodeNot installed on this computer.",
+		"CodexNot installed on this computer.",
 		"piUses your own pi, with its sign-in and models.",
 	]);
 	expect(pi.spawned.every((proc) => proc.mismatches.length === 0)).toBe(true);
