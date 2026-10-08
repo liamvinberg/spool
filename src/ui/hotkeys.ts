@@ -495,21 +495,21 @@ export const HOTKEYS = [
 		scope: "panes",
 		group: "Panes",
 		label: "Show only that pane on its side",
-		gesture: "⌥ click a rail icon",
+		gesture: "⌥ click a pane toggle",
 	},
 	{
 		id: "panes.move",
 		scope: "panes",
 		group: "Panes",
 		label: "Move a pane, or split it with another",
-		gesture: "drag a rail icon or a pane's header",
+		gesture: "drag a pane toggle or a pane's title",
 	},
 	{
 		id: "panes.menu",
 		scope: "panes",
 		group: "Panes",
-		label: "Move a pane to the other side, or off its rail",
-		gesture: "right-click a rail icon",
+		label: "Hide, move or remove a pane",
+		gesture: "right-click a pane toggle",
 	},
 
 	// --- Undo -------------------------------------------------------------------
