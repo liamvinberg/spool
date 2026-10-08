@@ -60,6 +60,13 @@ export interface PaneDef {
 	readonly focus?: ((body: HTMLElement) => void) | undefined;
 	/** a turn in flight: rides its rail icon while the pane is out of sight, and leaves a mark when it lands there */
 	readonly working?: boolean | undefined;
+	/**
+	 * Something elsewhere in the pane has news: for the agent, another chat runs, waits on a
+	 * person or landed unread (#364). One small dot on the icon, lit or not.
+	 */
+	readonly elsewhere?: boolean | undefined;
+	/** the pane draws its own title into its header (`PaneTitle`), and the window's name and icon step aside */
+	readonly titled?: boolean | undefined;
 }
 
 const STORAGE_KEY = "panes.layout";
@@ -93,6 +100,18 @@ const PaneSlot = createContext<HTMLElement | null | undefined>(undefined);
 export function PaneActions({ children }: { children: ReactNode }) {
 	const slot = useContext(PaneSlot);
 	if (slot === undefined) return <div className="flex items-center">{children}</div>;
+	return slot === null ? null : createPortal(children, slot);
+}
+
+const PaneTitleSlot = createContext<HTMLElement | null | undefined>(undefined);
+
+/**
+ * A pane's own title, drawn into its header in place of the name the window gives it
+ * (#364): the agent's header is its chat's title, which is also the chat switcher.
+ */
+export function PaneTitle({ children }: { children: ReactNode }) {
+	const slot = useContext(PaneTitleSlot);
+	if (slot === undefined) return <div className="flex min-w-0 items-center">{children}</div>;
 	return slot === null ? null : createPortal(children, slot);
 }
 
@@ -1143,6 +1162,7 @@ function PaneSection({
 	onTouch: () => void;
 }) {
 	const [slot, setSlot] = useState<HTMLElement | null>(null);
+	const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
 	return (
 		<section
 			data-pane={def.id}
@@ -1158,8 +1178,14 @@ function PaneSection({
 					held && "opacity-35",
 				)}
 			>
-				<span className="flex h-4 w-4 shrink-0 items-center justify-center">{def.icon}</span>
-				<h2 className="min-w-0 flex-1 truncate font-semibold text-text type-control">{def.title}</h2>
+				{def.titled === true ? (
+					<div ref={setTitleSlot} className="-ml-1.5 flex min-w-0 flex-1 items-center" />
+				) : (
+					<>
+						<span className="flex h-4 w-4 shrink-0 items-center justify-center">{def.icon}</span>
+						<h2 className="min-w-0 flex-1 truncate font-semibold text-text type-control">{def.title}</h2>
+					</>
+				)}
 				<div ref={setSlot} className="flex shrink-0 items-center" />
 				<button
 					type="button"
@@ -1172,7 +1198,11 @@ function PaneSection({
 				</button>
 			</header>
 			<div data-pane-body={def.id} className="relative min-h-0 flex-1 overflow-hidden">
-				<PaneSlot.Provider value={slot}>{def.render(context)}</PaneSlot.Provider>
+				<PaneSlot.Provider value={slot}>
+					<PaneTitleSlot.Provider value={def.titled === true ? titleSlot : undefined}>
+						{def.render(context)}
+					</PaneTitleSlot.Provider>
+				</PaneSlot.Provider>
 			</div>
 		</section>
 	);
@@ -1207,7 +1237,7 @@ function RailIcon({
 		<button
 			type="button"
 			data-rail-icon={def.id}
-			aria-label={def.title}
+			aria-label={def.elsewhere === true && !working && !unread ? `${def.title}, another chat has news` : def.title}
 			aria-pressed={lit}
 			title={`${def.title} ${hotkeyKey(def.hotkey)}`}
 			onPointerDown={onPress}
@@ -1236,6 +1266,12 @@ function RailIcon({
 					aria-hidden="true"
 					data-rail-mark="unread"
 					className="-right-0.5 absolute top-0.5 h-1.5 w-1.5 animate-unseen-in rounded-full bg-thread"
+				/>
+			) : def.elsewhere === true ? (
+				<span
+					aria-hidden="true"
+					data-rail-mark="elsewhere"
+					className="absolute top-1 right-1 h-1.5 w-1.5 animate-agent-fade-in rounded-full bg-text/85"
 				/>
 			) : null}
 		</button>
