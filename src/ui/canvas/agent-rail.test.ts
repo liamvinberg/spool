@@ -25,7 +25,7 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  */
 vi.mock("../../daemon/agent-engine", async (actual) => ({
 	...(await actual<typeof import("../../daemon/agent-engine")>()),
-	isAgentEngineId: (value: unknown) => value === "claude" || value === "spool" || value === "codex",
+	isAgentEngineId: (value: unknown) => value === "claude" || value === "pi" || value === "codex",
 }));
 
 /**
@@ -303,6 +303,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		reply: reported,
 		/** the door held shut, which is where the second between a press and its reply is */
 		hold: null as Promise<void> | null,
+		/** the offer's own door held shut, which is the wait before a chat's first offer */
+		reading: null as Promise<void> | null,
 	};
 	if (still) {
 		vi.stubGlobal("matchMedia", (query: string) => ({
@@ -399,6 +401,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			if (url.pathname.endsWith("/models")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/models$/, "") ?? "";
 				offered.asked.push(thread);
+				if (offered.reading !== null) await offered.reading;
 				// a chat on codex is answered by codex
 				if (url.searchParams.get("engine") === "codex") return Response.json(engines.codex.offer);
 				return Response.json(offered.offer);
@@ -4386,25 +4389,34 @@ describe("the model menu", () => {
 			},
 			modes: false,
 		};
+		// before pi has said it has no modes, there is no mode menu to flash in and out
+		let answer: (() => void) | undefined;
+		canvas.offered.reading = new Promise<void>((resolve) => {
+			answer = resolve;
+		});
 		await canvas.render();
+		await until(() => canvas.offered.asked.length > 0);
+		await settle(50);
+		expect(canvas.host.querySelector("[data-permission-trigger]")).toBeNull();
+		canvas.offered.reading = null;
+		await act(async () => answer?.());
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("GPT-5.6 Luna") === true);
 		await act(async () => modelTrigger(canvas.host)?.click());
 		await settle(50);
-		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
 		expect(modelRows(canvas.host)).toEqual(["GPT-5.6 Luna", "Qwen3 8B"]);
-		const local = [...canvas.host.querySelectorAll("[data-model-offer]")].map(
-			(row) => row.querySelector("[data-agent-model-local]") !== null,
+		// the model on this machine says so after its name, and only that one (#363)
+		const local = ["GPT-5.6 Luna", "Qwen3 8B"].map(
+			(name) => modelRow(canvas.host, name)?.querySelector("[data-agent-model-local]") !== null,
 		);
 		expect(local).toEqual([false, true]);
+		expect(modelRow(canvas.host, "Qwen3 8B")?.querySelector("[data-agent-model-local]")?.textContent).toBe("local");
+		// pi never asks, so this chat has no mode menu once it has said so either
+		expect(canvas.host.querySelector("[data-permission-trigger]")).toBeNull();
 		let release: (() => void) | undefined;
 		canvas.offered.hold = new Promise<void>((resolve) => {
 			release = resolve;
 		});
-		await act(async () =>
-			canvas.host
-				.querySelector<HTMLButtonElement>('[data-model-offer="ollama/qwen3:8b"] [data-agent-model-row]')
-				?.click(),
-		);
+		await act(async () => modelRow(canvas.host, "Qwen3 8B")?.click());
 		expect(modelMenu(canvas.host)).toBeNull();
 		expect(canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model")).toBe("Qwen3 8B");
 		await act(async () => release?.());
@@ -5197,7 +5209,7 @@ describe("no supported agent at all (#363)", () => {
 		await settle(50);
 		expect(canvas.preflight.looks).toBeGreaterThan(looks);
 		expect(theWall(canvas.host)).toBeNull();
-		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		expect(field(canvas.host)?.placeholder).toBe("Say what to change");
 	});
 });
 
