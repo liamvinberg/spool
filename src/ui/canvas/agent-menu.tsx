@@ -166,7 +166,9 @@ export function AgentMenu({
 		offer.current.resolved ??
 		(model.loading ? "Loading…" : "Choose model");
 	const unusual = preferred !== undefined && preferred !== null && own !== preferred;
-	const effort = offer.current.effort ?? (levels.length > 0 ? "auto" : null);
+	// a model that reports no levels has no effort control, whatever level the report still
+	// carries from the model before it
+	const effort = levels.length === 0 ? null : (offer.current.effort ?? "auto");
 	const pin = offer.current.pin;
 
 	const pick = (engine: AgentEngineId, entry: AgentModel) => {
