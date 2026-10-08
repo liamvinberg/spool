@@ -204,6 +204,16 @@ describe("what the union carries", () => {
 		expect(clean?.kind === "ended" && clean.reason).toBe("completed");
 	});
 
+	it("says how full the window was on the last request, just before the turn ends", () => {
+		const events = project("claude-turn");
+		const at = events.findIndex((event) => event.kind === "context");
+		const context = events[at];
+
+		// the last iteration's prompt over the 1M window modelUsage reports
+		expect(context).toEqual({ kind: "context", used: 2 + 107327 + 311, window: 1_000_000, parent: null });
+		expect(events[at + 1]?.kind).toBe("ended");
+	});
+
 	it("reads a compaction as its own two beats", () => {
 		const events = project("claude-compact");
 

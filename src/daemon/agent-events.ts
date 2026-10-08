@@ -299,6 +299,19 @@ export interface AgentLimitEvent extends AgentEventBase {
 	readonly limit: AgentLimit;
 }
 
+/**
+ * How full the model's context window is after the turn's last request (#364).
+ *
+ * `used` is the tokens the last request sent (prompt, cache reads and writes), and
+ * `window` the model's whole window, both as the agent reports them. The composer's
+ * ring reads the share; nothing else does.
+ */
+export interface AgentContext extends AgentEventBase {
+	readonly kind: "context";
+	readonly used: number;
+	readonly window: number;
+}
+
 /** The context is being compacted; the turn continues from the summary it writes. */
 export interface AgentCompacting extends AgentEventBase {
 	readonly kind: "compacting";
@@ -372,6 +385,7 @@ export type AgentEvent =
 	| AgentTaskStep
 	| AgentTaskDone
 	| AgentLimitEvent
+	| AgentContext
 	| AgentCompacting
 	| AgentCompacted
 	| AgentEnded

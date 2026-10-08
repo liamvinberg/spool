@@ -212,8 +212,12 @@ export function createClaudeAdapter() {
 				return user(wire, base);
 			case "control_request":
 				return asked(wire, base);
-			case "result":
-				return [ended(wire, base)];
+			case "result": {
+				const context = contextOf(wire);
+				return context === undefined || parent !== null
+					? [ended(wire, base)]
+					: [{ kind: "context", ...context, ...base }, ended(wire, base)];
+			}
 			case "rate_limit_event":
 				return [{ kind: "limit", limit: limitOf(wire.rate_limit_info ?? {}), ...base }];
 			default:
@@ -526,6 +530,31 @@ export function createClaudeAdapter() {
 	}
 
 	return { read };
+}
+
+/**
+ * How full the window was on the turn's last request: its prompt (fresh, cache read and
+ * cache written) over the window `modelUsage` reports for the model. Absent where the
+ * result says neither.
+ */
+function contextOf(line: WireLine): { used: number; window: number } | undefined {
+	const record = (value: unknown): Record<string, unknown> | undefined =>
+		typeof value === "object" && value !== null && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: undefined;
+	const wire = line as Record<string, unknown>;
+	const usage = record(wire.usage);
+	const iterations = Array.isArray(usage?.iterations) ? usage.iterations : [];
+	const last = record(iterations.at(-1)) ?? usage;
+	if (last === undefined) return undefined;
+	const used =
+		(number(last.input_tokens) ?? 0) +
+		(number(last.cache_read_input_tokens) ?? 0) +
+		(number(last.cache_creation_input_tokens) ?? 0);
+	const models = Object.values(record(wire.modelUsage) ?? {}).map((entry) => record(entry));
+	const window = Math.max(0, ...models.map((entry) => number(entry?.contextWindow) ?? 0));
+	if (used <= 0 || window <= 0) return undefined;
+	return { used, window };
 }
 
 function foreignOf(meta: {

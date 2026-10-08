@@ -192,6 +192,11 @@ export interface AgentTurn {
 	 */
 	readonly limit: AgentLimit | null;
 	/**
+	 * How full the model's context window was after the open thread's last request, as a
+	 * share from 0 to 1, or null before any turn of this page has said (#364).
+	 */
+	readonly context: number | null;
+	/**
 	 * Every write this turn has landed, in the order they landed (#214).
 	 *
 	 * The turn in flight and nothing else: a thread read back off disk has a log and no
@@ -305,6 +310,8 @@ interface Live {
 	recovery: AgentRecovery | null;
 	ending: ServedThread["ending"];
 	pending: readonly AgentQueued[];
+	/** how full the model's window was after this thread's last request, as a share (#364) */
+	context: number | null;
 	/**
 	 * Climbs whenever what the fold reads has moved, which is what dates the fold.
 	 *
@@ -386,6 +393,7 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		recovery: null,
 		ending: null,
 		pending: [],
+		context: null,
 		rev: 0,
 		folded: null,
 		ticked: 0,
@@ -818,6 +826,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				// the standing window, lifted out of the turn: it was true before this one
 				// started and it will still be true after it ends (#122)
 				if (event.kind === "limit") setLimit(event.limit);
+				if (event.kind === "context") thread.context = Math.min(1, event.used / event.window);
 				if (event.kind === "ended") thread.ending = event.ending;
 				if (event.kind === "closed")
 					thread.ending ??= thread.stopping ? "stopped" : event.code === 0 ? "done" : "failed";
@@ -1515,6 +1524,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				[later, drafts, keepDraft],
 			),
 			limit,
+			context: here.context,
 		},
 	};
 }
