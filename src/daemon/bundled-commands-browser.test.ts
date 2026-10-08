@@ -60,7 +60,7 @@ it.each([false, true])(
 		const browser = await testBrowser();
 		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 		await page.goto(`${daemon.url}/p/${encodeURIComponent(name)}`);
-		await page.locator('[data-dock-glyph="agent"]').click();
+		await page.locator('[data-rail-icon="agent"]').click();
 		await page
 			.getByRole("dialog", { name: "Use your usual agent.", exact: true })
 			.getByRole("button", { name: "Continue in spool", exact: true })

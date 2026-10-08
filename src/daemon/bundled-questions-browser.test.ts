@@ -35,7 +35,7 @@ it("answers the accepted question in the served rail, preserves draft/history on
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const open = page.locator('[data-agent-ask="open"]');

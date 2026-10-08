@@ -37,7 +37,7 @@ async function mount(held: Held) {
 		onGeometryPreview: vi.fn(),
 		onGeometryCommit: vi.fn(),
 	};
-	await act(() => root.render(createElement(PropertiesRail, { held, acts, width: 300, onCollapse: () => {} })));
+	await act(() => root.render(createElement(PropertiesRail, { held, acts })));
 	onTestFinished(async () => {
 		await act(() => root.unmount());
 		host.remove();

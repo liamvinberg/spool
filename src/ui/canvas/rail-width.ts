@@ -1,6 +1,5 @@
 import type { KeyboardEvent, PointerEvent } from "react";
 import { useRef, useState } from "react";
-import { useRemembered } from "../remembered";
 
 /**
  * How wide a rail is, and where it is allowed to stop.
@@ -14,9 +13,8 @@ import { useRemembered } from "../remembered";
  * The two positions a settled rail can be in are the strip and the panel. There is nothing
  * between `STRIP_WIDTH` and `MIN_WIDTH`, and that gap is the point: a rail is either a
  * column you read or an edge you press, and the drag picks whichever the hand was nearer.
- * On the right the strip stopped being a rail's own shut state and became the column's
- * index (`dock.tsx`), so there the far end of the range is the column shutting rather than
- * a width — which is what `onSettle` is for.
+ * The strip is a side's rail now (`pane-window.tsx`), always there, so the far end of the
+ * range is the side collapsing rather than a width — which is what `onSettle` is for.
  */
 
 /** shut: an edge with the one control that opens it */
@@ -26,8 +24,6 @@ export const MIN_WIDTH = 200;
 export const MAX_WIDTH = 480;
 /** let go below this and the rail shuts rather than sitting at an unusable width */
 export const SNAP_BELOW = 144;
-/** at or under this the rail draws as the strip: it is shut, whatever the number says */
-export const COLLAPSED_BELOW = 72;
 
 /**
  * The properties rail's panel width (#256).
@@ -45,31 +41,6 @@ export const PAGES_WIDTH = 248;
 /** where a rail lands when the hand lets go of it */
 export const settledWidth = (latest: number): number =>
 	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, latest));
-
-/**
- * Whether a remembered number is a width this rail could actually be in.
- *
- * The guard is the strict one on purpose (`remembered.ts` explains why): a stored width is
- * trusted by a component that will lay itself out with it, and the gap between the strip and
- * the floor is a real part of the vocabulary, so a value inside that gap is not a narrow
- * rail — it is a shape this app never puts a rail in, and it is discarded rather than
- * clamped into range.
- */
-export const isRailWidth = (value: unknown): value is number =>
-	typeof value === "number" &&
-	Number.isFinite(value) &&
-	(value === STRIP_WIDTH || (value >= MIN_WIDTH && value <= MAX_WIDTH));
-
-/**
- * A rail's width, remembered across reloads.
- *
- * `panel` is where the rail opens to and what a browser that has never been dragged gets.
- * It differs per rail — 248 for the pages navigator, 420 for the agent — which is why it is
- * an argument rather than a constant here.
- */
-export function useRailWidth(key: string, panel: number): [number, (next: number) => void] {
-	return useRemembered(`rail.${key}.width`, panel, isRailWidth);
-}
 
 /**
  * The grip on a rail's inner edge, as behaviour rather than as markup (#256).
@@ -159,8 +130,3 @@ export interface RailGrip {
 	onPointerUp: (event: PointerEvent<HTMLElement>) => void;
 	onPointerCancel: (event: PointerEvent<HTMLElement>) => void;
 }
-
-/** the hairline that lights under the pointer, which both rails draw the same way */
-export const GRIP_CLASS = "group -left-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none";
-export const GRIP_HAIR =
-	"absolute top-0 right-[5px] bottom-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread";

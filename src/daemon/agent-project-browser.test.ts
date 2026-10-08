@@ -38,7 +38,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 	const page = await browser.newPage();
 	const url = `${project.url}/p/${encodeURIComponent(project.name)}`;
 	await page.goto(url);
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	await field.fill("Finish this while I look at another project.");
@@ -52,7 +52,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 	expect(working.killed).toBe(false);
 	await page.locator(`[data-tab="${project.root}"] .project-tab-label`).click();
 	await page.locator('[data-frame-label="home"]').waitFor();
-	const glyph = page.locator('[data-dock-glyph="agent"]');
+	const glyph = page.locator('[data-rail-icon="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 	await rail.locator('[data-agent-wait="running"]').waitFor();
 	expect(await rail.locator('[data-agent-wait="running"]').textContent()).not.toContain("1440:");

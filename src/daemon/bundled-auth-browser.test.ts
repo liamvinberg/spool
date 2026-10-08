@@ -49,7 +49,7 @@ it("renders every generic provider interaction through the shared host and keeps
 		}
 	};
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await expect
 		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())

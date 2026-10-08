@@ -61,7 +61,7 @@ it.each([
 				localStorage.setItem("spool.rail.agent.width", "420");
 		});
 		await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-		await page.locator('[data-dock-glyph="agent"]').click();
+		await page.locator('[data-rail-icon="agent"]').click();
 		const field = page.locator("[data-agent-rail] textarea");
 		const trigger = page.getByRole("button", { name: "Choose model" });
 		await expect.poll(() => trigger.textContent(), { timeout: 15_000 }).toContain("Test image model");

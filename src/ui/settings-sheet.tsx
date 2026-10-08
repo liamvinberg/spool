@@ -28,7 +28,7 @@ import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 /**
  * The settings sheet (#282): everything a person is allowed to change, drawn
  * from the registry and written through it. Opens the way the shortcut sheet
- * opens, from the cog at the foot of the dock or ⌘,, and goes on esc.
+ * opens, from the cog at the foot of the right rail or ⌘,, and goes on esc.
  *
  * Nothing about a setting is typed twice here. A row is its entry's label, its
  * `says` under it, and the control its shape names, so a new registry entry is
@@ -1022,7 +1022,7 @@ function Chevron({ open }: { open: boolean }) {
 	);
 }
 
-/** The face the dock's cog wears in its tooltip, from the register. */
+/** The face the rail cog wears in its tooltip, from the register. */
 export function settingsHotkeyFace(): string {
 	return hotkeyKey("app.settings");
 }

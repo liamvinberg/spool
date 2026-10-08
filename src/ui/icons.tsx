@@ -125,7 +125,7 @@ export function PropertiesIcon() {
 }
 
 /**
- * The settings door at the foot of the dock (#282). A cog, because that is the
+ * The settings door at the foot of the right rail (#282). A cog, because that is the
  * one glyph every person already reads as settings, drawn at the strip's own
  * weight so it sits with the two above it.
  */

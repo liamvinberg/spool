@@ -87,12 +87,12 @@ describe("reading what was written", () => {
 		expect(raw("rail.agent.width")).toBeNull();
 	});
 
-	it("holds keys apart, so one rail's width is not another's", () => {
-		keep("rail.agent.width", 420);
-		keep("rail.pages.width", 248);
+	it("holds keys apart, so one width is not another's", () => {
+		keep("side.left.width", 420);
+		keep("side.right.width", 248);
 
-		expect(recall("rail.agent.width", isWidth)).toBe(420);
-		expect(recall("rail.pages.width", isWidth)).toBe(248);
+		expect(recall("side.left.width", isWidth)).toBe(420);
+		expect(recall("side.right.width", isWidth)).toBe(248);
 	});
 
 	/**

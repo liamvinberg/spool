@@ -43,7 +43,7 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 	await picker.getByRole("button", { name: "Copy project path", exact: true }).click();
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(project.root);
 	await picker.press("Escape");
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	const notice = page.getByRole("dialog", { name: "Use your usual agent.", exact: true });
 	await notice.waitFor();
 	await shot("notice");
@@ -58,7 +58,7 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 		.toBe(true);
 	await picker.waitFor();
 	await picker.getByRole("button", { name: "Back to canvas" }).click();
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	await page.locator("[data-agent-rail] textarea").fill("Keep my draft");
 	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	const help = page.getByRole("button", { name: "Help", exact: true });
@@ -91,9 +91,9 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 		.click({ position: { x: 30, y: 100 } });
 	expect(await menu.count()).toBe(0);
 	await page.reload();
-	await page.locator('[data-dock-glyph="agent"]').waitFor();
-	if ((await page.locator('[data-dock-glyph="agent"]').getAttribute("aria-pressed")) === "false")
-		await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').waitFor();
+	if ((await page.locator('[data-rail-icon="agent"]').getAttribute("aria-pressed")) === "false")
+		await page.locator('[data-rail-icon="agent"]').click();
 	await page.locator("[data-agent-rail] textarea").waitFor();
 	expect(await notice.count()).toBe(0);
 	expect(await page.locator("[data-agent-rail] textarea").inputValue()).toBe("Keep my draft");
@@ -113,7 +113,7 @@ it("skips Claude Code chats, then starts a Claude chat from the spool recommenda
 	store.write("agent.introductionSeen", false);
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1440, height: 900 } });
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	const choice = page.getByRole("button", { name: "Choose agent for this new chat", exact: true });
 	await expect.poll(() => choice.textContent()).toContain("Claude Code");
 	expect(await page.locator("dialog").count()).toBe(0);

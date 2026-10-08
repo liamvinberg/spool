@@ -459,23 +459,25 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				);
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
-			// the column holds one surface and properties have it by default (#256),
-			// so a file about the agent opens the agent: its glyph in the strip is
-			// the switch, and pressing it is what every test here starts from
+			// properties are what the right side shows by default (#359), so a file
+			// about the agent shows the agent alone: ⌥ on its rail icon, which is
+			// what every test here starts from
 			await act(async () => {
 				await draftsFor("test").ready;
 			});
-			const expand = host.querySelector<HTMLElement>('[aria-label="Expand agent"]');
-			if (expand !== null) {
+			const icon = host.querySelector<HTMLElement>('[data-rail-icon="agent"]');
+			if (icon !== null && icon.getAttribute("aria-pressed") !== "true") {
 				await act(async () => {
-					expand.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+					icon.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
 				});
 			}
 		},
 	};
 }
 
-const rail = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Agent"]');
+const rail = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-rail]");
+/** the right side's stack, whose width is what the agent is laid out at */
+const stack = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-side-stack="right"]');
 const field = (host: HTMLElement) => host.querySelector<HTMLTextAreaElement>("textarea");
 /** the paragraphs of the agent's words on screen, in order */
 const paragraphs = (host: HTMLElement) =>
@@ -648,18 +650,18 @@ describe("the rail", () => {
 		expect(rail(canvas.host)?.textContent).not.toContain("enter to send");
 	});
 
-	it("opens at 420, inside the range it already had", async () => {
+	it("opens at the right side's width, inside the range it already had", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(rail(canvas.host)?.style.width).toBe("420px");
+		expect(stack(canvas.host)?.style.width).toBe("300px");
 	});
 
 	/** nothing may assume 420: the range is what every later strip is measured against */
-	it("holds the drag between the 200 floor and the 480 ceiling, and snaps the column shut", async () => {
+	it("holds the drag between the 200 floor and the 480 ceiling, and snaps the side shut", async () => {
 		const canvas = mount();
 		await canvas.render();
-		const grip = canvas.host.querySelector<HTMLElement>('[aria-label="Resize agent"]');
+		const grip = canvas.host.querySelector<HTMLElement>('[aria-label="Resize right side"]');
 		if (grip === null) throw new Error("no grip");
 		grip.setPointerCapture = () => {};
 		grip.releasePointerCapture = () => {};
@@ -680,12 +682,12 @@ describe("the rail", () => {
 
 		// pulled far past the ceiling
 		await drag(200);
-		expect(rail(canvas.host)?.style.width).toBe("480px");
-		// pushed under the snap point: the column shuts rather than standing at an
-		// unreadable width, and what is left is the index it is opened from again
+		expect(stack(canvas.host)?.style.width).toBe("480px");
+		// pushed under the snap point: the side collapses rather than standing at an
+		// unreadable width, and what is left is the rail it is opened from again
 		await drag(1400);
-		expect(canvas.host.querySelector<HTMLElement>("[data-dock-panel]")?.style.width).toBe("0px");
-		expect(canvas.host.querySelector('[aria-label="Expand agent"]')).not.toBeNull();
+		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
+		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 });
 
@@ -3262,8 +3264,8 @@ describe("the thread plate", () => {
 		expect(nameplate(canvas.host)).toBe("New chat");
 		expect(threadList(canvas.host)).toBeNull();
 		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
-		// the plate ends on the plus: the way to a new thread is on the line that names this one
-		expect(plate(canvas.host)?.querySelector('button[aria-label="New chat"]')).not.toBeNull();
+		// the plus is the pane's own verb, in the header over the plate (#359)
+		expect(canvas.host.querySelector('[data-pane-head="agent"] button[aria-label="New chat"]')).not.toBeNull();
 		// and nothing else moves in the panel while nothing is moving elsewhere
 		expect(elsewhere(canvas.host)).toEqual([]);
 	});
@@ -3279,7 +3281,7 @@ describe("the thread plate", () => {
 		expect(await cells(canvas.host)).toContain(`ask ${count - 1}`);
 		expect(await cells(canvas.host)).toContain("ask 0");
 		expect(plate(canvas.host)?.className).toContain("h-11");
-		expect(rail(canvas.host)?.style.width).toBe("420px");
+		expect(stack(canvas.host)?.style.width).toBe("300px");
 	});
 
 	/** the ask is the name, in sentence type; the frames it wrote are the line under it */
@@ -3399,21 +3401,21 @@ describe("the thread plate", () => {
 	});
 
 	/**
-	 * The dock glyph that opened the panel is the thing that shuts it (#256), so the plate
+	 * The rail icon that lit the pane is the thing that hides it (#256, #359), so the plate
 	 * carries no caret of its own: a second control for the same act was the doubling in
 	 * miniature.
 	 */
-	it("has no collapse caret, and the dock glyph still shuts the panel", async () => {
+	it("has no collapse caret, and the rail icon still hides the pane", async () => {
 		const canvas = mount();
 		await canvas.render();
 
 		expect(plate(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 		expect(rail(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 
-		await press(canvas.host.querySelector('[aria-label="Shut agent"]'));
+		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
 
-		expect(canvas.host.querySelector<HTMLElement>("[data-dock-panel]")?.style.width).toBe("0px");
-		expect(canvas.host.querySelector('[aria-label="Expand agent"]')).not.toBeNull();
+		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
+		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 
 	/** the plus is a button on the plate, so the keyboard reaches it the way it reaches any */
@@ -4029,12 +4031,12 @@ async function openModelMenu(canvas: ReturnType<typeof mount>) {
  * because the handler reads state each time.
  */
 async function resizeRail(host: HTMLElement, width: number) {
-	const grip = host.querySelector<HTMLElement>('[aria-label="Resize agent"]');
+	const grip = host.querySelector<HTMLElement>('[aria-label="Resize right side"]');
 	if (grip === null) throw new Error("no grip");
 	grip.setPointerCapture = () => {};
 	grip.releasePointerCapture = () => {};
 	const from = 1000;
-	const at = Number(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width.replace("px", "") ?? 420);
+	const at = Number(stack(host)?.style.width.replace("px", "") ?? 300);
 	await act(async () => {
 		grip.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, button: 0, clientX: from, bubbles: true }));
 	});
@@ -4411,7 +4413,7 @@ describe("the footer the model hangs off", () => {
 
 		for (const width of [200, 260, 300, 360, 420, 480]) {
 			await resizeRail(canvas.host, width);
-			expect(rail(canvas.host)?.style.width).toBe(`${width}px`);
+			expect(stack(canvas.host)?.style.width).toBe(`${width}px`);
 			const name = modelTrigger(canvas.host)?.querySelector("span");
 			// `Opus (1M context)` cut to `Opus` would be the correct name of a *different*
 			// machine — `/model opus` resolves without the 1M window — so the string stays

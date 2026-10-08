@@ -6,16 +6,14 @@ import { cn } from "../cn";
 import { MenuItem } from "./context-menu";
 import type { PickedHit } from "./protocol";
 import { NumField, popoverAt, Row, Section, useCloseOnPressAway, VALUE } from "./rail-fields";
-import { PanelCaret } from "./sidebar";
 
 /**
  * The properties rail (#256): the right column, holding one thing.
  *
  * Properties are what the column shows by default. Never a tab row: the agent
  * rail killed its own on purpose, and two rails side by side do not fit.
- * Where this surface stands, how wide it is and how it is reached are all
- * `dock.tsx`'s; what arrives here is a width and one act, which is that the
- * head's caret shuts the column.
+ * Where this surface stands, how wide it is and how it is reached are all the
+ * pane window's (`pane-window.tsx`), header included.
  *
  * What it says about a frame is the frame's own geometry, which is
  * `frame.json` and never source. An element says the same about the frame it
@@ -80,30 +78,19 @@ export function PropertiesRail({
 	recovery,
 	held,
 	acts,
-	width,
-	onCollapse,
 }: {
 	recovery?: ReactNode;
 	held: Held | null;
 	acts: PropertiesActs;
-	/** what the dock has given this surface, which is its own remembered width */
-	width: number;
-	/** the caret in the head: it shuts the column rather than this rail (`dock.tsx`) */
-	onCollapse: () => void;
 }) {
 	return (
-		<section
-			aria-label="Properties"
-			data-properties-rail=""
-			style={{ width }}
-			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
-		>
-			<Head held={held} acts={acts} onCollapse={onCollapse} />
+		<div data-properties-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
+			<Head held={held} acts={acts} />
 			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
 				<Body held={held} acts={acts} />
 			</div>
 			{recovery}
-		</section>
+		</div>
 	);
 }
 
@@ -232,17 +219,18 @@ function Empty({ says }: { says: string }) {
  * frame's name that heads it; where in the frame an element sits is the
  * canvas's to show, on the element itself.
  */
-function Head({ held, acts, onCollapse }: { held: Held | null; acts: PropertiesActs; onCollapse: () => void }) {
+function Head({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 	const frame =
 		held?.kind === "frame" ? held.name : held?.kind === "element" || held?.kind === "elements" ? held.frame : null;
+	// the pane's own header already says what this is; with no frame held there is nothing to add
+	if (frame === null && !(acts.onAsk && held)) return null;
 	return (
 		<div className="shrink-0 border-border border-b">
 			<div className="flex h-9 items-center gap-2 px-2.5">
 				<span data-properties-head="" className={cn("min-w-0 flex-1 truncate", VALUE)}>
-					{frame === null ? <span className="text-muted">properties</span> : pageName(frame)}
+					{frame === null ? null : pageName(frame)}
 				</span>
 				{acts.onAsk && held ? <Actions onAsk={acts.onAsk} /> : null}
-				<CollapseCaret onCollapse={onCollapse} />
 			</div>
 		</div>
 	);
@@ -305,19 +293,6 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 const MENU_WIDTH = 200;
 const MENU_ROW = 30;
 const MENU_PAD = 8;
-
-function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
-	return (
-		<button
-			type="button"
-			aria-label="Collapse properties"
-			onClick={onCollapse}
-			className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors hover:text-text"
-		>
-			<PanelCaret dir="right" className="h-3.5 w-2.5" />
-		</button>
-	);
-}
 
 /* ---------- the frame: frame.json, in raw pixels ---------- */
 

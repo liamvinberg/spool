@@ -113,25 +113,29 @@ describe("canvas boot", () => {
 		expect(capture).not.toHaveBeenCalled();
 	});
 
-	it("lists both surfaces in the column, and stands neither until one is pressed", async () => {
+	it("puts every pane on a rail, and stands the agent only once it is pressed", async () => {
 		stubEmptyProject();
 		const host = mountCanvas();
 		await flush();
 
-		// the strip is the index: the agent is a glyph in it rather than a rail
-		// standing, and properties have the panel until something is pressed
-		const glyph = host.querySelector<HTMLElement>('[data-dock-glyph="agent"]');
-		expect(glyph).not.toBeNull();
+		// Pages on the left and Properties on the right stand by default (#359);
+		// the agent is an icon on the right rail, mounted and out of sight
+		expect(host.querySelector('[data-rail="left"] [data-rail-icon="pages"]')?.getAttribute("aria-pressed")).toBe(
+			"true",
+		);
+		const icon = host.querySelector<HTMLElement>('[data-rail="right"] [data-rail-icon="agent"]');
+		expect(icon?.getAttribute("aria-pressed")).toBe("false");
 		const agent = host.querySelector("[data-agent-rail]");
-		expect(agent).not.toBeNull();
-		expect(agent?.parentElement?.hasAttribute("inert")).toBe(true);
-		expect(agent?.parentElement?.getAttribute("aria-hidden")).toBe("true");
-		expect(agent?.parentElement?.style.visibility).toBe("hidden");
-		expect(host.querySelector("[data-properties-rail]")).not.toBeNull();
+		const slot = agent?.closest("[data-pane-slot]");
+		expect(slot?.hasAttribute("inert")).toBe(true);
+		expect(slot?.getAttribute("aria-hidden")).toBe("true");
+		expect(host.querySelector("[data-properties-rail]")?.closest("[data-pane-slot]")?.hasAttribute("inert")).toBe(
+			false,
+		);
 
-		await act(async () => glyph?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+		await act(async () => icon?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 		expect(host.querySelector("[data-agent-rail]")).toBe(agent);
-		expect(agent?.parentElement?.hasAttribute("inert")).toBe(false);
+		expect(slot?.hasAttribute("inert")).toBe(false);
 	});
 });
 

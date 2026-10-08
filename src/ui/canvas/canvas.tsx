@@ -58,6 +58,7 @@ import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
+import { AgentIcon, FolderIcon, PropertiesIcon } from "../icons";
 import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { SHARES_CHANGED, useShares } from "../shares";
@@ -91,7 +92,6 @@ import {
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { ContextMenu, contextMenuSize } from "./context-menu";
-import { Dock } from "./dock";
 import { type Drop, dropAt, moveAsk } from "./element-move";
 import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
@@ -166,6 +166,7 @@ import {
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
+import { type PaneDef, PaneWindow, usePaneCommands } from "./pane-window";
 import { PictureCanvas, PictureClaims } from "./picture-canvas";
 import type { PictureFrame } from "./picture-layer";
 import { createPresenceRoom, type PresenceRoom } from "./presence";
@@ -197,6 +198,7 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
+import { RailFoot } from "./rail-foot";
 import { setAsideAsk, useSetAside } from "./set-aside";
 import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
@@ -370,7 +372,7 @@ export function ProjectCanvas({
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
-	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
+	/** the cog at the right rail's foot (#282): the sheet is the shell's, so the door only asks */
 	onSettings?: (() => void) | undefined;
 }) {
 	/**
@@ -5526,9 +5528,19 @@ export function ProjectCanvas({
 	railRungsRef.current = railRungs;
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
 
-	return (
-		<div className="relative flex h-full w-full">
-			<div className="relative z-20 flex shrink-0">
+	/**
+	 * The window's panes (#359), in the order a fresh layout puts them: where
+	 * each one stands is the pane window's, and a pane is mounted for as long as
+	 * the canvas is, so drafts and scroll outlive it being out of sight.
+	 */
+	const panes: readonly PaneDef[] = [
+		{
+			id: "pages",
+			title: "Pages",
+			icon: <FolderIcon className="h-4 w-4" />,
+			hotkey: "panes.pages",
+			focus: (body) => body.querySelector<HTMLElement>('[role="tree"]')?.focus({ preventScroll: true }),
+			render: () => (
 				<CanvasSidebar
 					project={project}
 					pages={navigatorPages}
@@ -5558,419 +5570,448 @@ export function ProjectCanvas({
 					under={elementTree.under}
 					onSharePage={projectShares?.state === "ready" && projectShares.manage ? setSharingPage : undefined}
 				/>
-			</div>
-			<div
-				ref={viewportRef}
-				role="application"
-				aria-label={`${project} canvas`}
-				// biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas is one keyboard composite; focus returns here from its iframe
-				tabIndex={0}
-				// clip, never hidden: hidden still leaves a scroll container, and the
-				// frame layer gives it thousands of pixels to scroll. Anything a frame
-				// document focuses — an authored autoFocus, a tab into an iframe — has
-				// the browser reveal it by scrolling this box, which carries the canvas
-				// chrome away and offsets every pointer coordinate from the camera's.
-				// The camera owns where the canvas sits; nothing else may move it.
-				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
-				style={{ cursor }}
-				onPointerDown={onPointerDown}
-				// the second half of the double-click that opened an edit must not
-				// take the focus out of the frame, or the frame reads it as the blur
-				// that saves. Here rather than on the pointer press, because a
-				// cancelled pointerdown takes the double-click with it (#314)
-				onMouseDown={(event) => {
-					const openEdit = editingRef.current;
-					const cam = camera.get();
-					if (openEdit === null || openEdit.phase !== "opening" || cam === null) return;
-					if (frameAtWorld(toWorld(localPoint(event), cam)) === openEdit.frame) event.preventDefault();
-				}}
-				onPointerMove={onPointerMove}
-				onPointerUp={onPointerUp}
-				onPointerCancel={cancelGesture}
-				onPointerLeave={() => {
-					setPreview(null);
-					hideFrameHover();
-				}}
-				onDoubleClick={onDoubleClick}
-				onContextMenu={onContextMenu}
+			),
+		},
+		{
+			id: "properties",
+			title: "Properties",
+			icon: <PropertiesIcon />,
+			hotkey: "panes.properties",
+			render: () => (
+				<PropertiesRail
+					held={railHeld}
+					acts={{
+						onAsk: askAgent,
+						onGeometry: setFrameGeometry,
+						onGeometryPreview: previewFrameGeometry,
+						onGeometryCommit: commitFrameGeometry,
+					}}
+				/>
+			),
+		},
+		{
+			id: "agent",
+			title: "Agent",
+			icon: <AgentIcon />,
+			hotkey: "panes.agent",
+			working: turn.phase === "playing",
+			focus: (body) => body.querySelector("textarea")?.focus({ preventScroll: true }),
+			render: ({ width, visible, hide }) => (
+				<AgentRail
+					active={visible}
+					agentReady={engineLoaded && (model.started || deck.engine === preferredEngine)}
+					onUseAgent={
+						root === undefined
+							? undefined
+							: () => {
+									hide();
+									setAgentHandoff(true);
+								}
+					}
+					request={agentRequest}
+					permissions={permissions}
+					width={width}
+					entries={turn.entries}
+					plan={turn.plan}
+					phase={turn.phase}
+					elapsed={turn.elapsed}
+					jump={jump}
+					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
+					threads={{
+						list: deck.threads,
+						open: deck.open,
+						finished: deck.finished,
+						onOpen: deck.onOpen,
+						onClose: deck.onClose,
+						onNew: (engine) => {
+							// Typing immediately after + belongs to the new chat, even while settings save.
+							deck.onNew(engine);
+							if (engine !== undefined) rememberEngine(engine);
+						},
+					}}
+					install={install}
+					login={deck.login}
+					queued={turn.queued}
+					handback={turn.handback}
+					draft={turn.draft}
+					attached={turn.attached}
+					onAttach={turn.onAttach}
+					onDraft={turn.onDraft}
+					running={turn.running}
+					model={model}
+					limit={turn.limit}
+					onSend={turn.send}
+					onQueue={turn.queue}
+					onUnqueue={turn.unqueue}
+					onStop={turn.stop}
+					onAnswer={turn.answer}
+				/>
+			),
+		},
+	];
+
+	return (
+		<div className="relative flex h-full w-full">
+			<PaneWindow
+				panes={panes}
+				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
+				foot={
+					<RailFoot
+						onSettings={onSettings}
+						onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
+					/>
+				}
 			>
-				{restCamera !== null && (
-					<CameraField camera={camera} layer="under">
-						{/* the threads live under the frames: the map, never a hit target */}
-						{arrowsOn && (
-							<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
-						)}
-						{/* the pages standing on this field (#265). Under the frames,
+				<div
+					ref={viewportRef}
+					role="application"
+					aria-label={`${project} canvas`}
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas is one keyboard composite; focus returns here from its iframe
+					tabIndex={0}
+					// clip, never hidden: hidden still leaves a scroll container, and the
+					// frame layer gives it thousands of pixels to scroll. Anything a frame
+					// document focuses — an authored autoFocus, a tab into an iframe — has
+					// the browser reveal it by scrolling this box, which carries the canvas
+					// chrome away and offsets every pointer coordinate from the camera's.
+					// The camera owns where the canvas sits; nothing else may move it.
+					className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
+					style={{ cursor }}
+					onPointerDown={onPointerDown}
+					// the second half of the double-click that opened an edit must not
+					// take the focus out of the frame, or the frame reads it as the blur
+					// that saves. Here rather than on the pointer press, because a
+					// cancelled pointerdown takes the double-click with it (#314)
+					onMouseDown={(event) => {
+						const openEdit = editingRef.current;
+						const cam = camera.get();
+						if (openEdit === null || openEdit.phase !== "opening" || cam === null) return;
+						if (frameAtWorld(toWorld(localPoint(event), cam)) === openEdit.frame) event.preventDefault();
+					}}
+					onPointerMove={onPointerMove}
+					onPointerUp={onPointerUp}
+					onPointerCancel={cancelGesture}
+					onPointerLeave={() => {
+						setPreview(null);
+						hideFrameHover();
+					}}
+					onDoubleClick={onDoubleClick}
+					onContextMenu={onContextMenu}
+				>
+					{restCamera !== null && (
+						<CameraField camera={camera} layer="under">
+							{/* the threads live under the frames: the map, never a hit target */}
+							{arrowsOn && (
+								<FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} camera={camera} />
+							)}
+							{/* the pages standing on this field (#265). Under the frames,
 						    because a frame is a live document and a page is a picture of
 						    some: the press that reaches a page is the press no frame
 						    answered. */}
-						{pageObjects.map((object) => (
-							<PageObjectView
-								key={object.page}
-								project={project}
-								object={object}
-								camera={camera}
-								selected={selectedPage === object.page}
-								hovered={pointerTool && hoveredPage === object.page}
-							/>
-						))}
-					</CameraField>
-				)}
-				{/* every frame standing as its picture, on the GPU (#81): over the
+							{pageObjects.map((object) => (
+								<PageObjectView
+									key={object.page}
+									project={project}
+									object={object}
+									camera={camera}
+									selected={selectedPage === object.page}
+									hovered={pointerTool && hoveredPage === object.page}
+								/>
+							))}
+						</CameraField>
+					)}
+					{/* every frame standing as its picture, on the GPU (#81): over the
 				    arrows and pages, under every shell, label and tag */}
-				<PictureCanvas camera={camera} frames={pictureFrames} claims={pictureClaims} booting={documentsBooting} />
-				{restCamera !== null && (
-					<CameraField camera={camera}>
-						{visibleFrames.map((frame) => {
-							const state = lifecycle.states[frame.name] ?? "picture";
-							const isEntered = entered === frame.name;
-							// a picture with a still is the picture layer's to draw; a shell
-							// is for a document, or for a frame with nothing to draw but its
-							// placeholder
-							if (
-								state === "picture" &&
-								!isEntered &&
-								frame.cover !== undefined &&
-								externalLink?.frame !== frame.name
-							) {
-								return null;
-							}
-							return (
-								<FrameSlot key={frame.name} name={frame.name} frame={frame} claims={pictureClaims}>
-									<ShellClip camera={camera} near={near} frame={frame}>
-										<FrameShell
-											project={project}
-											name={frame.name}
-											state={state}
-											ready={lifecycle.ready.has(frame.name)}
-											settled={lifecycle.settled.has(frame.name)}
-											entered={isEntered}
-											active={selectionTargets.has(frame.name)}
-											// ⌘ borrows an entered frame's pointer to reach an element under it
-											// an open in-place edit gives the frame its pointer back, so
-											// the words can be typed into the element itself (#255) —
-											// once it is open: for one double-click interval the canvas
-											// still hears the second half of the click that opened it.
-											// ⌘ borrows an entered frame's pointer to reach an element
-											// under it; an open edit is already inside one
-											interactive={
-												editing?.frame === frame.name && editing.phase === "open"
-													? true
-													: isEntered && !accelDown
-											}
-											pointerOnly={editing?.frame === frame.name ? editedBox : null}
-											docNonce={docNonces[frame.name] ?? 0}
-											holdNonce={heldPaint[frame.name] ?? null}
-											cover={frame.cover}
-											walkArrival={walkArrivals.has(frame.name)}
-											onIframe={onIframe}
-										/>
-										{externalLink?.frame === frame.name && (
-											<ExternalLinkDialog
-												href={externalLink.href}
-												onStay={() => setExternalLink(null)}
-												onOpen={() => setExternalLink(null)}
+					<PictureCanvas
+						camera={camera}
+						frames={pictureFrames}
+						claims={pictureClaims}
+						booting={documentsBooting}
+					/>
+					{restCamera !== null && (
+						<CameraField camera={camera}>
+							{visibleFrames.map((frame) => {
+								const state = lifecycle.states[frame.name] ?? "picture";
+								const isEntered = entered === frame.name;
+								// a picture with a still is the picture layer's to draw; a shell
+								// is for a document, or for a frame with nothing to draw but its
+								// placeholder
+								if (
+									state === "picture" &&
+									!isEntered &&
+									frame.cover !== undefined &&
+									externalLink?.frame !== frame.name
+								) {
+									return null;
+								}
+								return (
+									<FrameSlot key={frame.name} name={frame.name} frame={frame} claims={pictureClaims}>
+										<ShellClip camera={camera} near={near} frame={frame}>
+											<FrameShell
+												project={project}
+												name={frame.name}
+												state={state}
+												ready={lifecycle.ready.has(frame.name)}
+												settled={lifecycle.settled.has(frame.name)}
+												entered={isEntered}
+												active={selectionTargets.has(frame.name)}
+												// ⌘ borrows an entered frame's pointer to reach an element under it
+												// an open in-place edit gives the frame its pointer back, so
+												// the words can be typed into the element itself (#255) —
+												// once it is open: for one double-click interval the canvas
+												// still hears the second half of the click that opened it.
+												// ⌘ borrows an entered frame's pointer to reach an element
+												// under it; an open edit is already inside one
+												interactive={
+													editing?.frame === frame.name && editing.phase === "open"
+														? true
+														: isEntered && !accelDown
+												}
+												pointerOnly={editing?.frame === frame.name ? editedBox : null}
+												docNonce={docNonces[frame.name] ?? 0}
+												holdNonce={heldPaint[frame.name] ?? null}
+												cover={frame.cover}
+												walkArrival={walkArrivals.has(frame.name)}
+												onIframe={onIframe}
 											/>
-										)}
-									</ShellClip>
-								</FrameSlot>
-							);
-						})}
-					</CameraField>
-				)}
-				{/* Labels share one layer above every frame. A transformed frame is
+											{externalLink?.frame === frame.name && (
+												<ExternalLinkDialog
+													href={externalLink.href}
+													onStay={() => setExternalLink(null)}
+													onOpen={() => setExternalLink(null)}
+												/>
+											)}
+										</ShellClip>
+									</FrameSlot>
+								);
+							})}
+						</CameraField>
+					)}
+					{/* Labels share one layer above every frame. A transformed frame is
 				    its own stacking context, so keeping its label inside would let a
 				    later neighboring frame paint over the label regardless of the
 				    label's own z-index. */}
-				{restCamera !== null && (
-					<LabelField camera={camera}>
-						{visibleFrames.map((frame) => {
-							const isEntered = entered === frame.name;
-							const isSelected = selected.includes(frame.name);
-							const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
-							return (
-								// Mono, muted; thread when selected. Entered swaps it for the
-								// state chip (#28).
-								<FrameLabel
-									key={`${frame.name}:label`}
-									name={frame.name}
-									frame={frame}
-									near={near}
+					{restCamera !== null && (
+						<LabelField camera={camera}>
+							{visibleFrames.map((frame) => {
+								const isEntered = entered === frame.name;
+								const isSelected = selected.includes(frame.name);
+								const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
+								return (
+									// Mono, muted; thread when selected. Entered swaps it for the
+									// state chip (#28).
+									<FrameLabel
+										key={`${frame.name}:label`}
+										name={frame.name}
+										frame={frame}
+										near={near}
+										camera={camera}
+										entered={isEntered}
+										selected={isSelected}
+										hovered={isHovered}
+										unseen={unseen.get(frame.name)}
+										sharing={(() => {
+											const state = sharing.state(frame.name);
+											return state?.chip === undefined
+												? undefined
+												: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
+										})()}
+										onPlay={() => playFrame(frame.name)}
+										setAside={setAside.label(frame.name)}
+									/>
+								);
+							})}
+						</LabelField>
+					)}
+					{restCamera !== null && (
+						<CameraField camera={camera} layer="over">
+							{pageObjects.map((object) => (
+								<PageObjectLabel
+									key={`${object.page}:label`}
+									object={object}
 									camera={camera}
-									entered={isEntered}
-									selected={isSelected}
-									hovered={isHovered}
-									unseen={unseen.get(frame.name)}
-									sharing={(() => {
-										const state = sharing.state(frame.name);
-										return state?.chip === undefined
-											? undefined
-											: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
-									})()}
-									onPlay={() => playFrame(frame.name)}
-									setAside={setAside.label(frame.name)}
+									selected={selectedPage === object.page}
+									hovered={pointerTool && hoveredPage === object.page}
 								/>
-							);
-						})}
-					</LabelField>
-				)}
-				{restCamera !== null && (
-					<CameraField camera={camera} layer="over">
-						{pageObjects.map((object) => (
-							<PageObjectLabel
-								key={`${object.page}:label`}
-								object={object}
-								camera={camera}
-								selected={selectedPage === object.page}
-								hovered={pointerTool && hoveredPage === object.page}
-							/>
-						))}
-						{/* the tags ride over the frames, because pressing one travels —
+							))}
+							{/* the tags ride over the frames, because pressing one travels —
 						    the leaders under them are the map and take no pointer */}
-						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} camera={camera} onOpen={landOnFrame} />}
-					</CameraField>
-				)}
+							{arrowsOn && (
+								<WalkLayer walks={walks} frames={visibleFrames} camera={camera} onOpen={landOnFrame} />
+							)}
+						</CameraField>
+					)}
 
-				{restCamera !== null && (
-					<>
-						<SelectionOverlay
-							camera={camera}
-							frames={visibleFrames}
-							selected={selected}
-							entered={entered}
-							// a row in the rail pointing at a frame gets the ring the pointer itself
-							// would draw, which is the weaker of the two out here: pointing at a frame is
-							// a weaker claim than having gone to it, and the accent stays with the
-							// selection either way
-							hovered={
-								pointedFrame !== null
-									? { frame: pointedFrame, visible: true }
-									: effectiveTool === "select"
-										? hovered
-										: null
-							}
-							editable={effectiveTool === "select"}
-							picked={picked}
-							/*
-							 * A chip and the box it names are one object, so the cursor on one marks the
-							 * other (#116). Only an element's box takes a mark: a chip can only name a
-							 * frame that is selected or entered, and out here that frame is already
-							 * ringed at full strength, so there is nothing left to say about it — where
-							 * five element outlines look alike and the strip is the only thing that can
-							 * say which one a row means.
-							 */
-							lit={lit}
-							preview={pointerTool ? preview : null}
-							editing={editing}
-							refused={refused}
-							onAsk={() => askAgent(refused ?? undefined)}
-							onOpenFile={(path, line) => copySourcePath(`${path}:${line}`)}
-							marks={marks}
-							marquee={marquee}
-							dropLine={dropLine}
-						/>
-						{/* the agent's hand (#214), in the same screen space as the furniture
+					{restCamera !== null && (
+						<>
+							<SelectionOverlay
+								camera={camera}
+								frames={visibleFrames}
+								selected={selected}
+								entered={entered}
+								// a row in the rail pointing at a frame gets the ring the pointer itself
+								// would draw, which is the weaker of the two out here: pointing at a frame is
+								// a weaker claim than having gone to it, and the accent stays with the
+								// selection either way
+								hovered={
+									pointedFrame !== null
+										? { frame: pointedFrame, visible: true }
+										: effectiveTool === "select"
+											? hovered
+											: null
+								}
+								editable={effectiveTool === "select"}
+								picked={picked}
+								/*
+								 * A chip and the box it names are one object, so the cursor on one marks the
+								 * other (#116). Only an element's box takes a mark: a chip can only name a
+								 * frame that is selected or entered, and out here that frame is already
+								 * ringed at full strength, so there is nothing left to say about it — where
+								 * five element outlines look alike and the strip is the only thing that can
+								 * say which one a row means.
+								 */
+								lit={lit}
+								preview={pointerTool ? preview : null}
+								editing={editing}
+								refused={refused}
+								onAsk={() => askAgent(refused ?? undefined)}
+								onOpenFile={(path, line) => copySourcePath(`${path}:${line}`)}
+								marks={marks}
+								marquee={marquee}
+								dropLine={dropLine}
+							/>
+							{/* the agent's hand (#214), in the same screen space as the furniture
 						    beside it: presence on any visible frame at any zoom, and a located
 						    mark wherever a document was live enough to be measured */}
-						<AgentHandLayer camera={camera} frames={visibleFrames} hand={hand} marks={handMarks} />
-						{/* teammates on a team canvas (DEV-196), over everything on the field */}
-						{team && (
-							<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
-						)}
-					</>
-				)}
-				{followed !== undefined && <FollowMark mate={followed} />}
+							<AgentHandLayer camera={camera} frames={visibleFrames} hand={hand} marks={handMarks} />
+							{/* teammates on a team canvas (DEV-196), over everything on the field */}
+							{team && (
+								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
+							)}
+						</>
+					)}
+					{followed !== undefined && <FollowMark mate={followed} />}
 
-				{menu !== null && (
-					<ContextMenu
-						at={menu}
-						tidyLabel={selected.length > 1 ? `Tidy ${selected.length} frames` : "Tidy page"}
-						onTidy={() => {
-							setMenu(null);
-							arrangeFrames();
-						}}
-						exportAction={
-							menu.selection === "element"
-								? null
-								: {
-										selectionCount: selected.includes(menu.frame) ? selected.length : 1,
-										onSelect: () => {
-											const names = selectedRef.current.includes(menu.frame)
-												? [...selectedRef.current]
-												: [menu.frame];
-											const returnMenu = menu;
-											setMenu(null);
-											openExport(names, returnMenu);
-										},
-									}
-						}
-						share={
-							sharingAvailable
-								? {
-										shared: sharing.state(menu.frame)?.shared ?? sharing.listed(menu.frame),
-										onCopy: () => {
-											sharing.copy(menu.frame);
-											setMenu(null);
-										},
-										onManage: () => {
-											sharing.show(menu.frame);
-											setMenu(null);
-										},
-										onStop: () => {
-											sharing.show(menu.frame, "stop");
-											setMenu(null);
-										},
-									}
-								: undefined
-						}
-						onPlay={() => {
-							const frame = menu.frame;
-							setMenu(null);
-							playFrame(frame);
-						}}
-						onCopyPath={() => {
-							const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
-							copySourcePath(pick !== undefined ? sourcePathOf(pick) : frameSourcePath(menu.frame));
-							setMenu(null);
-						}}
-						onReload={() => {
-							const frame = menu.frame;
-							reloadFrameDocument(frame);
-							setMenu(null);
-						}}
-						onTrash={() => {
-							const names = selectedRef.current.includes(menu.frame) ? [...selectedRef.current] : [menu.frame];
-							setMenu(null);
-							stageTrash(names);
-						}}
-					/>
-				)}
+					{menu !== null && (
+						<ContextMenu
+							at={menu}
+							tidyLabel={selected.length > 1 ? `Tidy ${selected.length} frames` : "Tidy page"}
+							onTidy={() => {
+								setMenu(null);
+								arrangeFrames();
+							}}
+							exportAction={
+								menu.selection === "element"
+									? null
+									: {
+											selectionCount: selected.includes(menu.frame) ? selected.length : 1,
+											onSelect: () => {
+												const names = selectedRef.current.includes(menu.frame)
+													? [...selectedRef.current]
+													: [menu.frame];
+												const returnMenu = menu;
+												setMenu(null);
+												openExport(names, returnMenu);
+											},
+										}
+							}
+							share={
+								sharingAvailable
+									? {
+											shared: sharing.state(menu.frame)?.shared ?? sharing.listed(menu.frame),
+											onCopy: () => {
+												sharing.copy(menu.frame);
+												setMenu(null);
+											},
+											onManage: () => {
+												sharing.show(menu.frame);
+												setMenu(null);
+											},
+											onStop: () => {
+												sharing.show(menu.frame, "stop");
+												setMenu(null);
+											},
+										}
+									: undefined
+							}
+							onPlay={() => {
+								const frame = menu.frame;
+								setMenu(null);
+								playFrame(frame);
+							}}
+							onCopyPath={() => {
+								const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
+								copySourcePath(pick !== undefined ? sourcePathOf(pick) : frameSourcePath(menu.frame));
+								setMenu(null);
+							}}
+							onReload={() => {
+								const frame = menu.frame;
+								reloadFrameDocument(frame);
+								setMenu(null);
+							}}
+							onTrash={() => {
+								const names = selectedRef.current.includes(menu.frame)
+									? [...selectedRef.current]
+									: [menu.frame];
+								setMenu(null);
+								stageTrash(names);
+							}}
+						/>
+					)}
 
-				{notice !== null ? <Toast notice={notice} /> : null}
+					{notice !== null ? <Toast notice={notice} /> : null}
 
-				{pendingTrash !== null && (
-					<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />
-				)}
-				{/* The agent rail stays available beside an empty canvas. The path also
+					{pendingTrash !== null && (
+						<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />
+					)}
+					{/* The agent rail stays available beside an empty canvas. The path also
 				    lets somebody use an agent in their own terminal. */}
-				{/* the wait before the projection lands (#244): the field used to render
+					{/* the wait before the projection lands (#244): the field used to render
 				    nothing at all until the daemon answered, so a slow reply and a project
 				    with no frames in it were the same picture. */}
-				<BootCurtain ready={loaded} />
-				{projectEmpty && (
-					<div data-canvas-empty="" className="pointer-events-none absolute inset-0">
-						<ProjectEmpty
-							onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
-							project={project}
-							root={root}
-							onRename={onRename}
-							onFolder={onFolder}
-							focusName={focusName}
-							onNameFocused={onNameFocused}
-						/>
-					</div>
-				)}
-				{/* one page nobody has written into (#265), which is a different fact
+					<BootCurtain ready={loaded} />
+					{projectEmpty && (
+						<div data-canvas-empty="" className="pointer-events-none absolute inset-0">
+							<ProjectEmpty
+								onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
+								project={project}
+								root={root}
+								onRename={onRename}
+								onFolder={onFolder}
+								focusName={focusName}
+								onNameFocused={onNameFocused}
+							/>
+						</div>
+					)}
+					{/* one page nobody has written into (#265), which is a different fact
 				    from an untouched project and now says so. A page of pages draws its
 				    pages and never lands here. */}
-				{pageEmpty && (
-					<div
-						data-page-empty={activePage}
-						className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 pb-20"
-					>
-						<p className="text-muted type-value">no frames yet</p>
-						<p className="text-muted type-detail">an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx</p>
-					</div>
-				)}
-				{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
-				{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={chooseTool} />}
-				{finding ? (
-					<FindPalette
-						frames={navigatorFrames}
-						unseen={unseen}
-						onPick={setFindLit}
-						onClose={() => setFinding(false)}
-						onLand={(name) => {
-							setFinding(false);
-							landOnFrame(name);
-						}}
-					/>
-				) : null}
-			</div>
-			{/* the right column, and the index of what can stand in it (`dock.tsx`).
-			    Properties by default, the agent one glyph below, one of them in the
-			    panel at a time. */}
-			<Dock
-				request={agentRequest?.id}
-				agentWorking={turn.phase === "playing"}
-				onSettings={onSettings}
-				onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
-				properties={(width, shut) => (
-					<PropertiesRail
-						held={railHeld}
-						width={width}
-						onCollapse={shut}
-						acts={{
-							onAsk: askAgent,
-							onGeometry: setFrameGeometry,
-							onGeometryPreview: previewFrameGeometry,
-							onGeometryCommit: commitFrameGeometry,
-						}}
-					/>
-				)}
-				agent={(width, shut, active) => (
-					<AgentRail
-						active={active}
-						agentReady={engineLoaded && (model.started || deck.engine === preferredEngine)}
-						onUseAgent={
-							root === undefined
-								? undefined
-								: () => {
-										shut();
-										setAgentHandoff(true);
-									}
-						}
-						request={agentRequest}
-						permissions={permissions}
-						width={width}
-						onCollapse={shut}
-						entries={turn.entries}
-						plan={turn.plan}
-						phase={turn.phase}
-						elapsed={turn.elapsed}
-						jump={jump}
-						pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
-						threads={{
-							list: deck.threads,
-							open: deck.open,
-							finished: deck.finished,
-							onOpen: deck.onOpen,
-							onClose: deck.onClose,
-							onNew: (engine) => {
-								// Typing immediately after + belongs to the new chat, even while settings save.
-								deck.onNew(engine);
-								if (engine !== undefined) rememberEngine(engine);
-							},
-						}}
-						install={install}
-						login={deck.login}
-						queued={turn.queued}
-						handback={turn.handback}
-						draft={turn.draft}
-						attached={turn.attached}
-						onAttach={turn.onAttach}
-						onDraft={turn.onDraft}
-						running={turn.running}
-						model={model}
-						limit={turn.limit}
-						onSend={turn.send}
-						onQueue={turn.queue}
-						onUnqueue={turn.unqueue}
-						onStop={turn.stop}
-						onAnswer={turn.answer}
-					/>
-				)}
-			/>
+					{pageEmpty && (
+						<div
+							data-page-empty={activePage}
+							className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 pb-20"
+						>
+							<p className="text-muted type-value">no frames yet</p>
+							<p className="text-muted type-detail">
+								an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx
+							</p>
+						</div>
+					)}
+					{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
+					{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={chooseTool} />}
+					{finding ? (
+						<PanePalette
+							frames={navigatorFrames}
+							unseen={unseen}
+							onPick={setFindLit}
+							onClose={() => setFinding(false)}
+							onLand={(name) => {
+								setFinding(false);
+								landOnFrame(name);
+							}}
+						/>
+					) : null}
+				</div>
+			</PaneWindow>
 			{sharing.node}
 			{sharingPage !== null && (
 				<ShareSheet
@@ -6077,4 +6118,9 @@ function withoutFrame(names: ReadonlySet<string>, frame: string): ReadonlySet<st
 /** "frame-label" → "frameLabel": dataset keys camel-case their attribute. */
 function camelize(attribute: string): string {
 	return attribute.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+}
+
+/** The ⌘K palette, carrying the pane window's commands from inside it. */
+function PanePalette(props: Omit<Parameters<typeof FindPalette>[0], "commands">) {
+	return <FindPalette {...props} commands={usePaneCommands()} />;
 }

@@ -55,7 +55,7 @@ import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
  * The read-only canvas (DEV-114): the shipped canvas with every authoring
  * control taken off, for anyone looking at a team project in a browser. The
  * pages rail stays, the camera is this browser's own, frames are live, and a
- * click grows a frame into the player. There is no tool, dock, agent or
+ * click grows a frame into the player. There is no tool, pane, agent or
  * selection, and nothing here sends anything anywhere but reads: it is fed one
  * project by `readProject`, and every frame's document comes from the frames'
  * own origin.

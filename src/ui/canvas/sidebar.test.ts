@@ -83,7 +83,7 @@ describe("page tree", () => {
 		const onDoubleClickFrame = vi.fn();
 		const { host } = await render({ onSwitchPage, onSelectFrame, onDoubleClickFrame });
 
-		expect(host.textContent).toContain("Pages1");
+		expect(host.querySelector("[data-pages-count]")?.textContent).toBe("1");
 		expect(host.textContent).toContain("folder switches page");
 		// the root page has no row, so its own frame is already on the list
 		expect(host.querySelector('button[aria-label="home frame"]')).not.toBeNull();
@@ -205,42 +205,6 @@ describe("page tree", () => {
 		});
 		await rerender({ under: null, selected: [] });
 		expect(checkout(host)).not.toBeNull();
-	});
-
-	it("collapses to a bare strip: the rail is the navigator, so a shut one lists nothing", async () => {
-		const { host } = await render();
-
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Collapse pages"]')?.click();
-		});
-		expect(host.querySelector('button[aria-label="Expand pages"]')).not.toBeNull();
-		expect(host.querySelector('button[aria-label="shop page"]')).toBeNull();
-
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand pages"]')?.click();
-		});
-		expect(host.querySelector('button[aria-label="shop page"]')).not.toBeNull();
-	});
-
-	it("resizes up to 480 pixels and snaps to the page strip below 144 pixels", async () => {
-		const { host } = await render();
-		const aside = host.querySelector<HTMLElement>("aside");
-		const grip = host.querySelector<HTMLButtonElement>('button[aria-label="Resize pages"]');
-		expect(aside?.style.width).toBe("248px");
-
-		await act(async () => {
-			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 248, pointerId: 1 }));
-			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 600, pointerId: 1 }));
-			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 600, pointerId: 1 }));
-		});
-		expect(aside?.style.width).toBe("480px");
-
-		await act(async () => {
-			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 480, pointerId: 2 }));
-			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, pointerId: 2 }));
-			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, pointerId: 2 }));
-		});
-		expect(aside?.style.width).toBe("44px");
 	});
 
 	it("does not open a page activated outside the tree", async () => {
@@ -547,7 +511,7 @@ describe("renaming in place", () => {
 		});
 		expect(host.querySelector('input[aria-label="New page name"]')).toBeNull();
 		expect(asked.some((call) => call.url.endsWith("/pages/create"))).toBe(false);
-		expect(host.textContent).toContain("Pages1");
+		expect(host.querySelector("[data-pages-count]")?.textContent).toBe("1");
 	});
 });
 
@@ -1144,7 +1108,7 @@ describe("the root page has no row", () => {
 		expect(pagesListed(host)).toEqual([]);
 		expect(host.querySelector('[aria-label="Pages tree"] button[aria-label^="Expand "]')).toBeNull();
 		// no pages to count, so the header says Pages and stops
-		expect(host.querySelector("h1")?.parentElement?.textContent).toBe("Pages");
+		expect(host.querySelector("[data-pages-count]")).toBeNull();
 
 		// a loose frame is a treeitem at the top level, and there is no page row
 		// above it for a spine to hang off

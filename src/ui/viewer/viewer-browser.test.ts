@@ -235,7 +235,7 @@ const cameraOf = (page: Page) =>
 	page.locator("[data-canvas-camera]").evaluate((el) => (el as HTMLElement).style.transform);
 
 describe("the read-only canvas", () => {
-	it("shows the pages and live frames with no tool, dock, agent or selection", { timeout: 60_000 }, async () => {
+	it("shows the pages and live frames with no tool, pane, agent or selection", { timeout: 60_000 }, async () => {
 		const { page, requests } = await open();
 		await expect.poll(() => page.frameLocator('iframe[title="home"]').locator("h1").textContent()).toBe("home");
 		await page.frameLocator('iframe[title="menu"]').locator("h1").waitFor();
@@ -243,7 +243,7 @@ describe("the read-only canvas", () => {
 		expect(await page.getByText("view only").count()).toBe(1);
 		for (const name of [/select/i, /edit/i, /hand/i, /agent/i, /new page/i, /rename/i, /share/i, /delete/i, /trash/i])
 			expect(await page.getByRole("button", { name }).count(), String(name)).toBe(0);
-		expect(await page.locator("[data-canvas-tools], [data-dock], textarea, input").count()).toBe(0);
+		expect(await page.locator("[data-canvas-tools], [data-pane-window], textarea, input").count()).toBe(0);
 		expect(await page.locator("body > #root > div").evaluate((el) => getComputedStyle(el).userSelect)).toBe("none");
 
 		// a frame dragged moves the camera, never the frame

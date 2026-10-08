@@ -46,7 +46,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 			localStorage.setItem("spool.rail.agent.width", "420");
 	});
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-dock-glyph="agent"]').click();
+	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const trigger = rail.locator("[data-permission-trigger]");

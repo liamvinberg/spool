@@ -229,7 +229,7 @@ export function Row({
 			cancel();
 		};
 		cancelScrub.current = cancel;
-		// The dock stops bubbling pointer events before they can move the canvas.
+		// Captured, so nothing that stops a move bubbling on its way up can lose the scrub.
 		doc.addEventListener("pointermove", move, true);
 		doc.addEventListener("pointerup", up, true);
 		doc.addEventListener("pointercancel", cancelPointer, true);

@@ -46,6 +46,7 @@ import {
 	withPageOrder,
 } from "./order";
 import { framesOnPage, pageLabel, pageOf } from "./pages";
+import { PaneActions } from "./pane-window";
 import { PagePicker } from "./rail-move";
 import {
 	type BornRow,
@@ -69,7 +70,6 @@ import {
 	rowKey,
 	sameLanding,
 } from "./rail-rows";
-import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
 import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
 import { UnseenMark } from "./unseen-mark";
 
@@ -108,7 +108,6 @@ import { UnseenMark } from "./unseen-mark";
  * bundle and this rail does not add one.
  */
 
-const PANEL_WIDTH = 248;
 /** how far a press travels before it is a drag rather than a click */
 const SLOP = 5;
 /** the band at each end of the list that pulls the scroll along */
@@ -321,8 +320,6 @@ export function CanvasSidebar({
 	/** Share a page with outsiders, where this project can (DEV-193): a page row's right-click offers it. */
 	onSharePage?: ((page: string) => void) | undefined;
 }) {
-	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
-	const [resizing, setResizing] = useState(false);
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 	const [order, setOrder] = useState<CanvasOrder>({});
 	const [cursor, setCursor] = useState<string | null>(null);
@@ -353,10 +350,7 @@ export function CanvasSidebar({
 	const landingRef = useRef<Landing | null>(null);
 	/** a press that became a drag must not also read as a click on the row it left */
 	const justDragged = useRef(false);
-	const grip = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
 	const typed = useRef({ buffer: "", at: 0 });
-
-	const collapsed = width <= COLLAPSED_BELOW;
 
 	/**
 	 * The unseen inside each page, for the rows that are shut over it. A page is
@@ -1541,15 +1535,6 @@ export function CanvasSidebar({
 
 	/* ── drawing ─────────────────────────────────────────────────────── */
 
-	function finishResize(target: HTMLElement, pointerId: number) {
-		const current = grip.current;
-		if (current === null || current.pointerId !== pointerId) return;
-		target.releasePointerCapture(pointerId);
-		grip.current = null;
-		setResizing(false);
-		setWidth(settledWidth(current.latestWidth));
-	}
-
 	const menuRow = menu === null ? null : (rows.find((row) => rowKey(row) === targetKey(menu.target)) ?? null);
 	/** what the open menu's row would move, and where it could go */
 	const menuMove =
@@ -1573,197 +1558,153 @@ export function CanvasSidebar({
 				: chosenFrames.filter((name) => unseen.has(name)).length;
 
 	return (
-		<aside
-			ref={asideRef}
-			className={cn(
-				"relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg",
-				!resizing &&
-					"transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-			)}
-			style={{ width }}
-		>
-			{collapsed ? (
-				/* an edge with the one control that opens it, and nothing else. A strip of
-				   folder icons was a second navigator that disagreed with the first: it
-				   listed every page at every depth, so a project whose tree was folded
-				   read as more folders shut than open. The rail is the navigator, and
-				   the way to navigate is to open it */
-				<div className="flex h-full w-11 flex-col items-center">
-					<button
-						type="button"
-						aria-label="Expand pages"
-						onClick={() => setWidth(PANEL_WIDTH)}
-						className="flex h-11 w-11 items-center justify-center text-muted/70 hover:text-text"
-					>
-						<PanelCaret dir="right" className="h-3.5 w-2.5" />
-					</button>
-				</div>
-			) : (
-				<div className="flex h-full min-w-[200px] flex-col">
-					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
-						<div className="flex items-baseline gap-2">
-							<h1 className="font-semibold type-control">Pages</h1>
-							{/* a count of nothing is a number saying nothing: zero reads as absence */}
-							{orderedPages.length === 0 ? null : (
-								<span className="text-muted type-detail">{orderedPages.length}</span>
-							)}
-						</div>
-						<div className="flex items-center">
-							<button
-								type="button"
-								aria-label="New page"
-								onClick={() => newPage()}
-								className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none"
-							>
-								<PlusIcon className="h-2.5 w-2.5" />
-							</button>
-							{/* a fully open tree has no empty space left to right-click, which is
-							    where this verb used to be the only place it was. Dimmed rather
-							    than taken away when everything is already shut: a header that
-							    reflows as you fold the tree is a header you cannot aim at */}
-							<button
-								type="button"
-								aria-label="Collapse all"
-								disabled={expanded.size === 0}
-								onClick={collapseAll}
-								className={cn(
-									"flex h-7 w-7 items-center justify-center rounded-sm transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-									expanded.size === 0
-										? "text-muted/25"
-										: "text-muted/60 hover:bg-surface hover:text-text active:scale-90",
-								)}
-							>
-								<FoldIcon className="h-2.5 w-2.5" />
-							</button>
-							<button
-								type="button"
-								aria-label="Collapse pages"
-								onClick={() => setWidth(STRIP_WIDTH)}
-								className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 hover:text-text"
-							>
-								<PanelCaret dir="left" className="h-3.5 w-2.5" />
-							</button>
-						</div>
-					</div>
-
-					<div
-						ref={listRef}
-						role="tree"
-						tabIndex={0}
-						aria-label="Pages tree"
-						className="pages-scrollbar min-h-0 flex-1 overflow-y-auto py-2 outline-none"
-						onPointerDown={() => {
-							setMenu(null);
-							setCursor(null);
-						}}
-						onContextMenu={(event) => openMenu(event, { kind: "empty" })}
-						onScroll={() => {
-							// both of these stand at a point the scroll just moved out from under
-							setMenu(null);
-							setMoving(null);
-						}}
-						onKeyDown={typeAhead}
-					>
-						<div className="relative" style={{ height: total, minHeight: "100%" }}>
-							{rows.map((row) => {
-								const rename: RenameHandle | null =
-									renaming === null || renaming.key !== rowKey(row)
-										? null
-										: {
-												state: renaming,
-												onDraft: (draft) => setRenaming((was) => (was === null ? null : { ...was, draft })),
-												onCommit: () => void commitRename(),
-												onCancel: cancelRename,
-											};
-								if (row.kind === "born") {
-									return rename === null ? null : <NewPageRow key="born" row={row} rename={rename} />;
+		<aside ref={asideRef} className="relative flex h-full flex-col bg-bg">
+			<PaneActions>
+				{/* a count of nothing is a number saying nothing: zero reads as absence */}
+				{orderedPages.length === 0 ? null : (
+					<span data-pages-count="" className="mr-1.5 text-muted type-detail">
+						{orderedPages.length}
+					</span>
+				)}
+				<button
+					type="button"
+					aria-label="New page"
+					onClick={() => newPage()}
+					className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none"
+				>
+					<PlusIcon className="h-2.5 w-2.5" />
+				</button>
+				{/* a fully open tree has no empty space left to right-click, which is
+				    where this verb used to be the only place it was. Dimmed rather
+				    than taken away when everything is already shut: a header that
+				    reflows as you fold the tree is a header you cannot aim at */}
+				<button
+					type="button"
+					aria-label="Collapse all"
+					disabled={expanded.size === 0}
+					onClick={collapseAll}
+					className={cn(
+						"flex h-7 w-7 items-center justify-center rounded-sm transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+						expanded.size === 0
+							? "text-muted/25"
+							: "text-muted/60 hover:bg-surface hover:text-text active:scale-90",
+					)}
+				>
+					<FoldIcon className="h-2.5 w-2.5" />
+				</button>
+			</PaneActions>
+			<div
+				ref={listRef}
+				role="tree"
+				tabIndex={0}
+				aria-label="Pages tree"
+				className="pages-scrollbar min-h-0 flex-1 overflow-y-auto py-2 outline-none"
+				onPointerDown={() => {
+					setMenu(null);
+					setCursor(null);
+				}}
+				onContextMenu={(event) => openMenu(event, { kind: "empty" })}
+				onScroll={() => {
+					// both of these stand at a point the scroll just moved out from under
+					setMenu(null);
+					setMoving(null);
+				}}
+				onKeyDown={typeAhead}
+			>
+				<div className="relative" style={{ height: total, minHeight: "100%" }}>
+					{rows.map((row) => {
+						const rename: RenameHandle | null =
+							renaming === null || renaming.key !== rowKey(row)
+								? null
+								: {
+										state: renaming,
+										onDraft: (draft) => setRenaming((was) => (was === null ? null : { ...was, draft })),
+										onCommit: () => void commitRename(),
+										onCancel: cancelRename,
+									};
+						if (row.kind === "born") {
+							return rename === null ? null : <NewPageRow key="born" row={row} rename={rename} />;
+						}
+						return (
+							<TreeRow
+								key={rowKey(row)}
+								row={row}
+								activePage={activePage}
+								litPage={litPage}
+								selected={row.kind === "frame" && selected.includes(row.name)}
+								holding={row.kind === "frame" && row.name === holding}
+								mark={
+									row.kind === "frame" ? unseen.get(row.name) : row.open ? undefined : unseenIn.get(row.page)
 								}
-								return (
-									<TreeRow
-										key={rowKey(row)}
-										row={row}
-										activePage={activePage}
-										litPage={litPage}
-										selected={row.kind === "frame" && selected.includes(row.name)}
-										holding={row.kind === "frame" && row.name === holding}
-										mark={
-											row.kind === "frame"
-												? unseen.get(row.name)
-												: row.open
-													? undefined
-													: unseenIn.get(row.page)
-										}
-										cursored={cursor === rowKey(row)}
-										lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
-										into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
-										springing={row.kind === "page" && springing === row.page}
-										rename={rename}
-										onPress={pressRow}
-										onActivate={() => {
-											if (justDragged.current || row.kind !== "page") return;
-											enterPage(row.page);
-										}}
-										onSelect={(event) => {
-											if (justDragged.current || row.kind !== "frame") return;
-											onSelectFrame(row.name, modifiersOf(event), (anchor) =>
-												framesBetween(now.current.rows, anchor, rowKey(row)),
-											);
-										}}
-										onOpen={(deep) => {
-											if (row.kind !== "page") return;
-											setOpen(row.page, !row.open, deep);
-										}}
-										onRename={() => beginRename(row)}
-										onFly={() => {
-											if (row.kind === "frame") onDoubleClickFrame(row.name);
-										}}
-										onMenu={openMenu}
-									/>
-								);
-							})}
+								cursored={cursor === rowKey(row)}
+								lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
+								into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
+								springing={row.kind === "page" && springing === row.page}
+								rename={rename}
+								onPress={pressRow}
+								onActivate={() => {
+									if (justDragged.current || row.kind !== "page") return;
+									enterPage(row.page);
+								}}
+								onSelect={(event) => {
+									if (justDragged.current || row.kind !== "frame") return;
+									onSelectFrame(row.name, modifiersOf(event), (anchor) =>
+										framesBetween(now.current.rows, anchor, rowKey(row)),
+									);
+								}}
+								onOpen={(deep) => {
+									if (row.kind !== "page") return;
+									setOpen(row.page, !row.open, deep);
+								}}
+								onRename={() => beginRename(row)}
+								onFly={() => {
+									if (row.kind === "frame") onDoubleClickFrame(row.name);
+								}}
+								onMenu={openMenu}
+							/>
+						);
+					})}
 
-							{under === null || underRow?.kind !== "frame" ? null : (
-								<div
-									// the room folds on the house curve over 300ms and moves with its
-									// row; reduced motion opens and folds it at once, and it still
-									// slides with its row the way every row does
-									className="absolute inset-x-0 overflow-clip bg-bg [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:transform_280ms_cubic-bezier(0.23,1,0.32,1)]"
-									style={{
-										transform: `translateY(${underRow.top + underRow.height}px)`,
-										height: underRow.below,
-									}}
-									inert={!under.open}
-								>
-									{/* the page's spine runs on past the room to the frames below it */}
-									{underRow.page === ROOT_PAGE || underRow.last ? null : (
-										<span
-											className="absolute inset-y-0 w-px bg-border-raised"
-											style={{ left: guideX(underRow.depth) }}
-										/>
-									)}
-									<div style={{ paddingLeft: contentX(underRow.depth) - 18 }}>{under.content}</div>
-								</div>
+					{under === null || underRow?.kind !== "frame" ? null : (
+						<div
+							// the room folds on the house curve over 300ms and moves with its
+							// row; reduced motion opens and folds it at once, and it still
+							// slides with its row the way every row does
+							className="absolute inset-x-0 overflow-clip bg-bg [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:transform_280ms_cubic-bezier(0.23,1,0.32,1)]"
+							style={{
+								transform: `translateY(${underRow.top + underRow.height}px)`,
+								height: underRow.below,
+							}}
+							inert={!under.open}
+						>
+							{/* the page's spine runs on past the room to the frames below it */}
+							{underRow.page === ROOT_PAGE || underRow.last ? null : (
+								<span
+									className="absolute inset-y-0 w-px bg-border-raised"
+									style={{ left: guideX(underRow.depth) }}
+								/>
 							)}
-
-							{landing === null || landing.kind === "into" ? null : (
-								<div
-									aria-hidden="true"
-									className="pointer-events-none absolute z-20 h-[2px]"
-									style={{ left: landingGuideX(landing), top: landing.y - 1, right: 10 }}
-								>
-									<span className="block h-full w-full rounded-full bg-thread" />
-									<span className="-left-px -top-[1.5px] absolute h-[5px] w-[5px] rounded-full bg-thread" />
-								</div>
-							)}
+							<div style={{ paddingLeft: contentX(underRow.depth) - 18 }}>{under.content}</div>
 						</div>
-					</div>
+					)}
 
-					<div className="flex h-9 shrink-0 items-center justify-between border-border border-t px-3.5 text-muted type-detail">
-						<span>folder switches page</span>
-						{clipboard.length > 0 ? <span className="text-muted">{clipboard.length} copied</span> : null}
-					</div>
+					{landing === null || landing.kind === "into" ? null : (
+						<div
+							aria-hidden="true"
+							className="pointer-events-none absolute z-20 h-[2px]"
+							style={{ left: landingGuideX(landing), top: landing.y - 1, right: 10 }}
+						>
+							<span className="block h-full w-full rounded-full bg-thread" />
+							<span className="-left-px -top-[1.5px] absolute h-[5px] w-[5px] rounded-full bg-thread" />
+						</div>
+					)}
 				</div>
-			)}
+			</div>
+
+			<div className="flex h-9 shrink-0 items-center justify-between border-border border-t px-3.5 text-muted type-detail">
+				<span>folder switches page</span>
+				{clipboard.length > 0 ? <span className="text-muted">{clipboard.length} copied</span> : null}
+			</div>
 
 			{kit === null
 				? null
@@ -1841,45 +1782,6 @@ export function CanvasSidebar({
 						/>,
 						document.body,
 					)}
-
-			<button
-				type="button"
-				aria-label="Resize pages"
-				onKeyDown={(event) => {
-					// a focused grip answers its arrows itself; stop them short of
-					// the hotkey dispatch, or the same press would nudge the selection
-					if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-					event.stopPropagation();
-					if (event.key === "ArrowLeft") setWidth(STRIP_WIDTH);
-					if (event.key === "ArrowRight") setWidth(PANEL_WIDTH);
-				}}
-				onPointerDown={(event) => {
-					if (event.button !== 0) return;
-					event.currentTarget.setPointerCapture(event.pointerId);
-					grip.current = {
-						pointerId: event.pointerId,
-						startWidth: width,
-						startX: event.clientX,
-						latestWidth: width,
-					};
-					setResizing(true);
-				}}
-				onPointerMove={(event) => {
-					const current = grip.current;
-					if (current === null || current.pointerId !== event.pointerId) return;
-					const next = Math.min(
-						MAX_WIDTH,
-						Math.max(STRIP_WIDTH, current.startWidth + event.clientX - current.startX),
-					);
-					current.latestWidth = next;
-					setWidth(next);
-				}}
-				onPointerUp={(event) => finishResize(event.currentTarget, event.pointerId)}
-				onPointerCancel={(event) => finishResize(event.currentTarget, event.pointerId)}
-				className="group -right-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
-			>
-				<span className="absolute top-0 bottom-0 left-[5px] w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
-			</button>
 		</aside>
 	);
 }
@@ -2370,15 +2272,6 @@ export function ChevronIcon({ open, className }: { open: boolean; className?: st
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			/>
-		</svg>
-	);
-}
-
-export function PanelCaret({ dir, className }: { dir: "left" | "right"; className?: string }) {
-	const d = dir === "left" ? "m7.5 3.5-4 4.5 4 4.5" : "m4.5 3.5 4 4.5-4 4.5";
-	return (
-		<svg viewBox="0 0 12 16" className={className} fill="none" aria-hidden="true">
-			<path d={d} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
 		</svg>
 	);
 }

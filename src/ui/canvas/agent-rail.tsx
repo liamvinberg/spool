@@ -29,7 +29,8 @@ import {
 	type RowState,
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
-import { ChevronIcon, PanelCaret } from "./sidebar";
+import { PaneActions } from "./pane-window";
+import { ChevronIcon } from "./sidebar";
 import { useStillness } from "./stillness";
 
 /**
@@ -63,21 +64,6 @@ import { useStillness } from "./stillness";
  * settled once a stroke has drawn itself through the space it leaves. The accent
  * stays with the selection, which is the one thing on screen the human owns.
  */
-
-/**
- * The rail's default, inside the drag range it has always had.
- *
- * `inspector.tsx` shipped 300 in the same 200–480 range; #144 moved the default to
- * 420 because the transcript is a column of prose rather than a list of names.
- * Nothing below may assume it: the range is the constraint every later footer and
- * strip decision is measured against.
- *
- * It is what the dock opens this surface to rather than what the rail starts at:
- * the column holds one surface at a time and its strip is the index of what can
- * stand there (#256, `dock.tsx`), so where the rail stands is not the rail's to
- * hold.
- */
-export const AGENT_WIDTH = 420;
 
 /** the mark's own width and the gap beside it, so a disclosure lines up under the verb */
 const INDENT = 14 + 10;
@@ -220,7 +206,6 @@ export function AgentRail({
 	agentReady = true,
 	onUseAgent,
 	width,
-	onCollapse,
 	permissions,
 	entries,
 	plan,
@@ -247,18 +232,9 @@ export function AgentRail({
 	onStop,
 	onAnswer,
 }: {
-	/**
-	 * How wide the dock is drawing this surface (#256, `dock.tsx`).
-	 *
-	 * The column holds one surface at a time and the strip is the index of what
-	 * can stand in it, so where the rail stands is one fact the dock holds rather
-	 * than two the rails argue about. The number still matters here: the composer
-	 * measures its chip strip against it.
-	 */
+	/** the pane's settled width (`pane-window.tsx`), which the composer measures its chip strip against */
 	width: number;
 	permissions?: PermissionDeck;
-	/** the carets inside the rail: they shut the column, which is the dock's state */
-	onCollapse: () => void;
 	entries: readonly AgentEntry[];
 	/** the plan, off the log and onto the shelf; absent until the turn writes one */
 	plan: AgentPlan | null;
@@ -445,12 +421,7 @@ export function AgentRail({
 	return (
 		<RecoveryActions value={{ login, modelRequest }}>
 			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
-				<section
-					aria-label="Agent"
-					data-agent-rail=""
-					style={{ width }}
-					className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
-				>
+				<div data-agent-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
 					{install.missing && model.engine === undefined ? (
 						/*
 						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
@@ -462,8 +433,6 @@ export function AgentRail({
 						<div className="flex h-full min-w-[200px] flex-col">
 							<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 								<InstallWall install={install} />
-								{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
-								<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
 							</div>
 							<DeadComposer />
 						</div>
@@ -586,7 +555,7 @@ export function AgentRail({
 							/>
 						</div>
 					)}
-				</section>
+				</div>
 				{onUseAgent && (
 					<AgentRecommendation
 						active={active && agentReady && open !== ""}
@@ -609,7 +578,7 @@ export function AgentRail({
  * plate spends one line the rail already spends, and the list is drawn only while it is
  * asked for.
  *
- * No collapse caret on the plate: the dock glyph that opened the panel is the thing that
+ * No collapse caret on the plate: the rail icon that lit the pane is the thing that
  * shuts it, and a second control for the same act was the doubling in miniature.
  *
  * Nothing is coloured and nothing re-sorts. State in this rail is motion, the one accent
@@ -648,9 +617,10 @@ function ThreadPlate({
 	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
 	const elsewhere = list.filter((thread) => thread.id !== open && thread.life !== "read");
 	const listed = listing !== null;
+	const plate = useRef<HTMLDivElement>(null);
 	return (
 		<div className="relative z-40 shrink-0 border-border border-b bg-bg">
-			<div data-agent-plate="" className="flex h-11 items-center gap-1 px-3.5">
+			<div ref={plate} data-agent-plate="" className="flex h-11 items-center gap-1 px-3.5">
 				<button
 					type="button"
 					data-agent-plate-ask=""
@@ -670,22 +640,25 @@ function ThreadPlate({
 					)}
 					<ChevronIcon open={listed} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
 				</button>
-				<button
-					type="button"
-					aria-label="New chat"
-					onClick={(event) => {
-						onList(null);
-						onMenu(null);
-						onNew();
-						event.currentTarget
-							.closest("[data-agent-rail]")
-							?.querySelector("textarea")
-							?.focus({ preventScroll: true });
-					}}
-					className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
-				>
-					<PlusIcon />
-				</button>
+				{/* in the pane's header, where the pane's own verbs are */}
+				<PaneActions>
+					<button
+						type="button"
+						aria-label="New chat"
+						onClick={() => {
+							onList(null);
+							onMenu(null);
+							onNew();
+							plate.current
+								?.closest("[data-agent-rail]")
+								?.querySelector("textarea")
+								?.focus({ preventScroll: true });
+						}}
+						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-colors duration-150 hover:bg-surface hover:text-text"
+					>
+						<PlusIcon />
+					</button>
+				</PaneActions>
 			</div>
 			<AgentChoice model={model} open={menu === "agent"} onOpen={(open) => onMenu(open ? "agent" : null)} />
 		</div>
@@ -860,30 +833,6 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
 				<span className="h-[5px] w-[5px] rounded-full border border-muted/45" />
 			) : null}
 		</span>
-	);
-}
-
-/**
- * The way back to the strip, on the wall alone.
- *
- * Everywhere else the dock glyph that opened the panel is the thing that shuts it, and the
- * plate carries no caret (#205). The wall has no plate and no glyph in reach of a reader
- * who has never opened the dock, and a rail you cannot collapse is a rail that has taken
- * the column hostage over a state nobody caused, so here alone the caret floats.
- */
-function CollapseCaret({ onCollapse, className }: { onCollapse: () => void; className?: string }) {
-	return (
-		<button
-			type="button"
-			aria-label="Collapse agent"
-			onClick={onCollapse}
-			className={cn(
-				"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/40 transition-colors hover:text-text",
-				className,
-			)}
-		>
-			<PanelCaret dir="right" className="h-3.5 w-2.5" />
-		</button>
 	);
 }
 
