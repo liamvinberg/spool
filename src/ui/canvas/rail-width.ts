@@ -39,6 +39,9 @@ export const COLLAPSED_BELOW = 72;
  */
 export const PROPERTIES_WIDTH = 300;
 
+/** the pages navigator's panel width */
+export const PAGES_WIDTH = 248;
+
 /** where a rail lands when the hand lets go of it */
 export const settledWidth = (latest: number): number =>
 	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, latest));
