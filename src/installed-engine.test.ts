@@ -66,9 +66,12 @@ async function holdInspectorPort(): Promise<() => void> {
 					writeFileSync(owner, String(process.pid));
 					return true;
 				} catch {
-					// an owner that died holding the lock left nobody to release it
-					const pid = Number(existsSync(owner) ? readFileSync(owner, "utf8") : 0);
-					if (pid && !alive(pid)) rmSync(lock, { recursive: true, force: true });
+					// an owner that died holding the lock left nobody to release it; the
+					// second read keeps a waiter that saw it dead from freeing it after
+					// another waiter already did and a live run took it
+					const holder = () => Number(existsSync(owner) ? readFileSync(owner, "utf8") : 0);
+					const pid = holder();
+					if (pid && !alive(pid) && holder() === pid) rmSync(lock, { recursive: true, force: true });
 					return false;
 				}
 			},
@@ -157,6 +160,11 @@ async function injectTransport(pid: number) {
 		await new Promise<void>((resolve) => {
 			if (socket.readyState !== WebSocket.OPEN) return resolve();
 			socket.onclose = () => resolve();
+			// a host that never drops the session would hold this run's turn on the port
+			setTimeout(() => {
+				socket.close();
+				resolve();
+			}, 5000);
 			socket.send(
 				JSON.stringify({
 					id: ++id,
