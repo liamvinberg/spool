@@ -79,6 +79,7 @@ const topics: Record<string, () => string> = {
   shared/scenarios/*.json    named seeds (topic: scenarios)
   shared/assets/             images and fonts more than one frame uses (below)
   shared/icon.*              the project's icon on its tab and on Home: one icon.svg, .png, .webp or .jpg
+  shared/thumbnail.*         the project's picture on Home: one thumbnail.svg, .png, .webp or .jpg, yours to design (an SVG, or a PNG you shot of a draft frame with \`spool shot\` and saved here); without one Home shows the top-left frame
   AGENTS.md, CLAUDE.md       init's signposts pointing here; .gitignore covers .spool/
   canvas.json, .spool/       app-owned — never write these
 
