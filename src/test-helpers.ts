@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import type { Page } from "playwright-core";
 import { inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
+import { createAgentDefaults } from "./daemon/agent-defaults";
+import type { AgentEngineId } from "./daemon/agent-engine";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
 import type { AgentSpawn } from "./daemon/agent-spawn";
 import { createDaemonApp } from "./daemon/app";
@@ -14,6 +16,7 @@ import { serveDaemon } from "./daemon/server";
 import { createSettingsStore } from "./daemon/settings";
 import { initProject } from "./init";
 import { lookupProjectByName } from "./registry";
+import type { AgentPermissions } from "./settings/registry";
 import { canvasJson } from "./templates";
 import { defaultLayout } from "./ui/canvas/pane-layout";
 
@@ -163,12 +166,20 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 	};
 }
 
+/** The machine's agent choice, as a person's pick would save it (#361). */
+export function chooseAgent(spoolDir: string, choice: { engine?: AgentEngineId; mode?: AgentPermissions }): void {
+	const defaults = createAgentDefaults(spoolDir, () => []);
+	if (choice.engine !== undefined) defaults.setEngine(choice.engine);
+	if (choice.mode !== undefined) defaults.setMode(choice.mode);
+}
+
 /** A registered project behind a really-served daemon on an ephemeral port. */
 export async function serveProject(options?: Partial<Parameters<typeof serveDaemon>[0]>) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
-	// A Claude fixture names the engine this browser test intends to exercise.
-	if (options?.agentExecutor !== undefined) createSettingsStore(spoolDir).write("agent.engine", "claude", root);
+	// A Claude fixture, or the first engine a test hands over, is the one it intends to exercise.
+	if (options?.agentExecutor !== undefined) chooseAgent(spoolDir, { engine: "claude" });
+	else if (options?.agentEngines?.[0] !== undefined) chooseAgent(spoolDir, { engine: options.agentEngines[0].id });
 	// Agent fixtures exercise an established chat; the introduction has its own first-use tests.
 	if (options?.agentExecutor !== undefined || options?.agentEngines !== undefined)
 		createSettingsStore(spoolDir).write("agent.introductionSeen", true);

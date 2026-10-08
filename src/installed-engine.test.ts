@@ -298,6 +298,11 @@ it("completes a deterministic journey through the clean installed host and deliv
 	writeFrame(project, "next", "export default () => <h1>Arrived</h1>");
 	writeFrame(project, "error", 'console.error("installed runtime log"); export default () => <h1>Log</h1>');
 	writeFileSync(join(state, "config.json"), JSON.stringify({ port, updateCheck: false }));
+	// this journey is the bundled engine's, on Ask: the machine's agent choice says so (#361)
+	writeFileSync(
+		join(state, "agent.json"),
+		JSON.stringify({ engine: "spool", mode: "ask", models: {}, migrated: true }),
+	);
 	let daemonChild: ChildProcess | undefined;
 	let electron: ElectronApplication | undefined;
 	if (appPath) electron = await _electron.launch({ executablePath: executable, env, timeout: 30_000 });
@@ -566,6 +571,10 @@ try {
 		.getByRole("menu", { name: "Agent permissions" })
 		.getByRole("menuitemradio", { name: "bypass", exact: true })
 		.click();
+	// the pick waits for the next turn: this one's ask is still the person's to answer (#361)
+	await expect.poll(() => rail.locator("[data-permission-trigger]").textContent()).toBe("bypass");
+	expect(existsSync(join(project, "bypass"))).toBe(false);
+	await open.getByRole("button", { name: "allow once", exact: true }).click();
 	await expect.poll(() => existsSync(join(project, "bypass"))).toBe(true);
 	await settled();
 	await send([

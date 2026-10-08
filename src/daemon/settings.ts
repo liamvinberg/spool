@@ -4,7 +4,6 @@ import { writeAtomic } from "../atomic-write";
 import { getNested, mutateMachineState, setNested } from "../machine-state";
 import { readMachineRegistry } from "../machine-state-files";
 import {
-	type AgentPermissions,
 	isSettingKey,
 	parseSetting,
 	SETTING_KEYS,
@@ -51,8 +50,6 @@ export interface SettingsStore {
 	 * should see nine of them land
 	 */
 	writeMany(writes: readonly { key: string; value: unknown }[], root?: string): SettingsWrite;
-	/** the fence a spawn for this project gets, read from the file at spawn time */
-	agentPermissions(root: string): AgentPermissions;
 }
 
 export function createSettingsStore(spoolDir: string): SettingsStore {
@@ -178,7 +175,6 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 			return { ok: true, reading: written.readings[0] as SettingReading };
 		},
 		writeMany,
-		agentPermissions: (root) => reading("agent.permissions", root).value,
 	};
 }
 

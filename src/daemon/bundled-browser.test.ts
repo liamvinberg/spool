@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, makeTempDir, seedAgentWidth, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { createClaudeEngine } from "./agent-engine-claude";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
+import { permissionClaude } from "./fixtures/claude-permissions";
 
 it("connects through the rendered canvas, preserves image and queued selection, stops and resumes the exact host session", {
 	timeout: 180_000,
@@ -36,7 +38,11 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 		);
 	});
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir, agentEngines: [createSpoolEngine(directory, client)] });
+	// Claude Code is only ever picked here: a pick the daemon saves names an engine it runs (#361)
+	const project = await serveProject({
+		uiDir,
+		agentEngines: [createSpoolEngine(directory, client), createClaudeEngine(permissionClaude().executor, () => true)],
+	});
 	writeFrame(project.root, "home", "export default function Home() { return <h1>Reference frame</h1>; }");
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":600,"h":400}');
 	const browser = await testBrowser();

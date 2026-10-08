@@ -1,6 +1,6 @@
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
@@ -110,8 +110,11 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	expect(await field.inputValue()).toBe("Unsent draft follows the agent choice.");
 	await page.keyboard.press("Escape");
 
+	// a machine with nothing saved starts on Auto-edit (#361)
+	await says("edits");
+	await choose("ask");
 	await says("ask");
-	// An unrelated file grant must survive the project mode changes below.
+	// An unrelated file grant must survive the mode changes below.
 	await send(
 		`file tools: ${JSON.stringify([{ name: "write", arguments: { path: "granted/first", content: "first" } }])}`,
 	);
@@ -153,24 +156,24 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	).toBe(true);
 	await page.keyboard.press("Home");
 	await page.keyboard.press("ArrowDown");
-	writeFileSync(join(directory, "reject-permissions"), "reject");
 	await page.keyboard.press("Enter");
-	await expect
-		.poll(() => rail.getByRole("status").textContent())
-		.toContain("The bundled engine could not complete this operation.");
-	await says("ask");
-	expect(existsSync(join(project.root, "src/ui/receipt.css"))).toBe(false);
-	expect(await field.inputValue()).toBe("Next draft stays here.");
-	rmSync(join(directory, "reject-permissions"));
-	await choose("edits");
+	// a mode picked mid-turn is saved at once and waits for the next turn: the asks this
+	// turn already holds stay for the person to answer (#361)
 	await says("edits");
 	expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true);
+	await expect.poll(() => trigger.getAttribute("title")).toContain("from the next turn");
+	expect(existsSync(join(project.root, "src/ui/receipt.css"))).toBe(false);
+	expect(await open.textContent()).toContain("Allow edits in src/ui/?");
+	expect(await field.inputValue()).toBe("Next draft stays here.");
+	await open.getByRole("button", { name: "allow once", exact: true }).click();
 	await expect.poll(() => existsSync(join(project.root, "src/ui/receipt.css"))).toBe(true);
 	await expect.poll(() => open.textContent()).toContain("Allow commands");
 	expect(existsSync(join(project.root, "outside"))).toBe(false);
 	await shot("access-footer-edits-command");
 	await choose("bypass");
 	await says("bypass");
+	expect(await open.textContent()).toContain("Allow commands");
+	await open.getByRole("button", { name: "allow once", exact: true }).click();
 	await expect.poll(() => open.textContent()).toContain("Where should the order number go?");
 	expect(readFileSync(join(project.root, "outside"), "utf8")).toBe("command");
 	await shot("access-footer-bypass-question");
@@ -207,35 +210,45 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	await expect.poll(() => model.getAttribute("title")).toContain("Default (recommended)");
 	await send("Permission journey");
 	await expect.poll(() => open.count()).toBe(3);
+	const journey = claude.spawned.at(-1);
+	if (journey === undefined) throw new Error("Claude Code never got the turn");
+	// the machine's mode, the last one picked in the spool chat
+	expect(journey.spawn.args[journey.spawn.args.indexOf("--permission-mode") + 1]).toBe("default");
 	await field.fill("Claude next draft.");
 	await open.first().getByRole("button", { name: "change permissions…" }).click();
 	await bounds(280);
 	await shot("access-footer-claude-narrow-open");
 	await page.keyboard.press("Escape");
+	// Claude Code is never asked to change mid-turn, so it can never refuse (#361)
 	claude.reject(true);
 	await choose("edits");
-	await expect.poll(() => rail.getByRole("status").textContent()).toContain("Claude Code refused");
-	await says("ask");
-	expect(claude.answers).toEqual([]);
-	claude.reject(false);
-	await choose("edits");
 	await says("edits");
-	await expect.poll(() => open.count()).toBe(2);
-	expect(claude.answers).toEqual(["file"]);
+	await expect.poll(() => trigger.getAttribute("title")).toContain("from the next turn");
 	await choose("bypass");
 	await says("bypass");
-	await expect.poll(() => open.count()).toBe(1);
-	expect(claude.answers).toEqual(["file", "command"]);
-	expect(await open.textContent()).toContain("Where should the order number go?");
+	expect(await rail.getByRole("status").count()).toBe(0);
+	expect(claude.changes).toEqual([]);
+	expect(claude.answers).toEqual([]);
+	expect(await open.count()).toBe(3);
 	expect(await field.inputValue()).toBe("Claude next draft.");
 	await shot("access-footer-claude-narrow-bypass");
 	await storeRightWidth(page, 420);
 	await page.reload();
-	await open.waitFor();
+	await open.first().waitFor();
+	await says("bypass");
 	await trigger.click();
 	await bounds(420);
 	await shot("access-footer-claude-open-420");
 	await page.keyboard.press("Escape");
+	await stop.click();
+	await expect.poll(() => stop.count()).toBe(0);
+	// and the next turn starts on the pick
+	const spawned = claude.spawned.length;
+	await send("Permission journey, again");
+	await expect.poll(() => claude.spawned.length).toBeGreaterThan(spawned);
+	const next = claude.spawned.at(-1);
+	expect(next?.spawn.args[(next?.spawn.args.indexOf("--permission-mode") ?? 0) + 1]).toBe("bypassPermissions");
+	expect(await trigger.getAttribute("title")).not.toContain("from the next turn");
 	await stop.click();
 	await expect.poll(() => stop.count()).toBe(0);
 	await page.keyboard.press("Meta+,");

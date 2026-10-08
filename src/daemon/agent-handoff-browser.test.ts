@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, fixtureAgentExecutor, serveProject } from "../test-helpers";
+import { builtUi, chooseAgent, fixtureAgentExecutor, serveProject } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
 it("hands off from the empty canvas, first recommendation, and Help menu without losing the chat", {
@@ -14,7 +14,7 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 		agentLook: () => true,
 	});
 	const store = createSettingsStore(project.spoolDir);
-	store.write("agent.engine", "spool", project.root);
+	chooseAgent(project.spoolDir, { engine: "spool" });
 	store.write("agent.introductionSeen", false);
 	const browser = await testBrowser();
 	const page = await browser.newPage({

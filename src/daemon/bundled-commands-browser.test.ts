@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeProject, makeTempDir, seedAgentWidth, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	chooseAgent,
+	makeProject,
+	makeTempDir,
+	seedAgentWidth,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { serveDaemon } from "./server";
 
@@ -45,6 +53,8 @@ it.each([false, true])(
 		});
 		await client.request({ kind: "connect", provider: "openai", key: "fixture-key" });
 		const { root, name } = makeProject(spoolDir);
+		// spool on Ask, the approvals these commands are about (#361)
+		chooseAgent(spoolDir, { engine: "spool", mode: "ask" });
 		writeFrame(root, "home", "export default () => <h1>Command fixture</h1>");
 		writeDesignFile(root, "frames/home/frame.json", '{"w":600,"h":2600}');
 		const uiDir = await builtUi();

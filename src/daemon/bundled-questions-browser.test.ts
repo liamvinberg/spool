@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, seedAgentWidth, serveProject, writeFrame } from "../test-helpers";
+import { builtUi, chooseAgent, makeTempDir, seedAgentWidth, serveProject, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
 import { orderQuestion } from "./fixtures/bundled-question";
@@ -91,12 +91,7 @@ it("answers the accepted question in the served rail, preserves draft/history on
 	expect(await field.inputValue()).toBe("Next draft stays here.");
 	expect(calls().at(-1)).toContain("dismissed the question without answering it");
 	expect(calls().at(-1)).not.toContain("Next draft stays here.");
-	const mode = await fetch(`${project.url}/api/settings`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json", "X-Spool-Control": project.controlToken },
-		body: JSON.stringify({ key: "agent.permissions", value: "bypass", project: project.name }),
-	});
-	expect(mode.ok).toBe(true);
+	chooseAgent(project.spoolDir, { mode: "bypass" });
 	await send("Ask about the order number");
 	await open.waitFor();
 	await field.fill("Next draft while waiting under bypass.");

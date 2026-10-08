@@ -21,11 +21,12 @@ import { finishMoves } from "../move-in";
 import { fetchLocalCopy, openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
-import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
+import { AGENT_PERMISSIONS, type AgentPermissions, appearanceOf, themeInline } from "../settings/registry";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
+import { createAgentDefaults } from "./agent-defaults";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { createSpoolEngine } from "./agent-engine-spool";
@@ -1132,7 +1133,8 @@ export function createDaemonApp({
 		).map((engine) => [engine.id, engine]),
 	);
 
-	const permissionChanges = new Set<string>();
+	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)
+	const agentDefaults = createAgentDefaults(spoolDir, () => engines.values());
 	const projectRenames = new Set<string>();
 
 	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
@@ -1143,9 +1145,10 @@ export function createDaemonApp({
 		if (saved !== undefined && requested !== undefined && requested !== saved.engine) {
 			return { response: c.text("a thread's engine cannot change", 409) };
 		}
-		const id = saved?.engine ?? requested ?? "claude";
-		const engine = engines.get(id);
-		if (engine === undefined) return { response: c.text(`engine "${id}" is unavailable`, 503) };
+		// a thread with no model session yet takes the machine's choice, never a guess of its own
+		const id = saved?.engine ?? requested ?? agentDefaults.read().engine;
+		const engine = id === undefined ? undefined : engines.get(id);
+		if (engine === undefined) return { response: c.text(`engine "${id ?? "none"}" is unavailable`, 503) };
 		return { engine, session: saved?.session ?? { id: thread ?? "" } };
 	}
 	/**
@@ -1159,7 +1162,12 @@ export function createDaemonApp({
 	 * and names the turn instead (#165).
 	 */
 	const liveTurns = createAgentTurns();
-	const modelPreferences = createAgentModelPreferences(spoolDir);
+	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
+	/** a running turn started on another mode than the machine's: the pick waits for its next turn */
+	function pendingMode(root: string, thread: string, mode: AgentPermissions): boolean {
+		const held = liveTurns.get(root, thread);
+		return held?.running === true && held.permissions?.applied !== mode;
+	}
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -1735,7 +1743,7 @@ export function createDaemonApp({
 			async (c) => {
 				const { root, name } = c.req.valid("json");
 				const target = join(dirname(root), name.trim());
-				if (projectRenames.has(root) || projectRenames.has(target) || permissionChanges.has(root))
+				if (projectRenames.has(root) || projectRenames.has(target))
 					return c.json({ error: "Project change is in progress." }, 409);
 				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
 				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
@@ -2347,15 +2355,36 @@ export function createDaemonApp({
 		 * opened by a hand on `check again`.
 		 */
 
+		/*
+		 * The machine's agent choice (#361): the same in every project, saved before it is
+		 * answered, so what comes back is what the next thread will really use.
+		 */
 		.get("/api/p/:project/agent/engines", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
+			const choice = agentDefaults.read();
 			return c.json({
-				preferred:
-					settings.read(project.root).entries.find((entry) => entry.key === "agent.engine")?.value ?? "spool",
+				preferred: choice.engine ?? null,
+				mode: choice.mode,
 				engines: [...engines.values()].map((engine) => ({ id: engine.id, installed: engine.installed() })),
 			});
 		})
+		.put(
+			"/api/p/:project/agent/engines",
+			validator("json", (value, c) => {
+				const engine = (typeof value === "object" && value !== null ? value : {}) as { preferred?: unknown };
+				if (!isAgentEngineId(engine.preferred) || !engines.has(engine.preferred))
+					return c.text('a choice is { "preferred": "<engine>" }, one this daemon runs', 400);
+				return { preferred: engine.preferred };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const choice = agentDefaults.setEngine(c.req.valid("json").preferred);
+				emitAppEvent({ kind: "settings" });
+				return c.json({ preferred: choice.engine ?? null, mode: choice.mode });
+			},
+		)
 		.post(
 			"/api/p/:project/agent/account",
 			validator("json", (value, c) => {
@@ -2560,7 +2589,7 @@ export function createDaemonApp({
 					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
 					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
-					permissions: settings.agentPermissions(project.root),
+					permissions: agentDefaults.read().mode,
 					said: said.map((one) => ({
 						prompt: one.prompt,
 						selection: selectionBlock(one.selection ?? selections.get(project.root)),
@@ -2624,54 +2653,39 @@ export function createDaemonApp({
 				return attachTurn(c, held, c.req.valid("query").from);
 			},
 		)
+		/*
+		 * The permission mode, which is the machine's and never refused (#361).
+		 *
+		 * A pick is saved at once and is what every new turn spawns with. A turn already
+		 * running keeps the mode it started on until its next turn boundary, so `pending`
+		 * says the menu's pick is waiting on that turn rather than in force. It used to be
+		 * applied to the running process first and saved only if that worked, and every
+		 * refusal there (a spawn or host not ready yet, a second pick while the first was
+		 * waiting, a turn ending) left the old mode saved and the menu reading it back.
+		 */
 		.get("/api/p/:project/agent/threads/:thread/permissions", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const thread = c.req.param("thread");
-			const selected = engineFor(c, project.root, thread);
-			if ("response" in selected) return selected.response;
-			const held = liveTurns.get(project.root, thread);
-			return c.json({
-				mode: held?.running
-					? (held.permissions?.applied ?? settings.agentPermissions(project.root))
-					: settings.agentPermissions(project.root),
-			});
+			if (!isThreadId(thread)) return c.text("a thread is named by its uuid", 400);
+			const mode = agentDefaults.read().mode;
+			return c.json({ mode, pending: pendingMode(project.root, thread, mode) });
 		})
 		.put(
 			"/api/p/:project/agent/threads/:thread/permissions",
 			validator("json", (value, c) => {
 				const body = (typeof value === "object" && value !== null ? value : {}) as { mode?: unknown };
-				const parsed = parseSetting("agent.permissions", body.mode);
-				return parsed.ok ? { mode: parsed.value } : c.text(parsed.reason, 400);
+				const mode = AGENT_PERMISSIONS.find((one) => one === body.mode);
+				return mode === undefined ? c.text(`"mode" must be one of ${AGENT_PERMISSIONS.join(", ")}`, 400) : { mode };
 			}),
-			async (c) => {
+			(c) => {
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const thread = c.req.param("thread");
-				const selected = engineFor(c, project.root, thread);
-				if ("response" in selected) return selected.response;
-				if (permissionChanges.has(project.root))
-					return c.text("A permission change is already being applied.", 409);
-				permissionChanges.add(project.root);
-				try {
-					const held = liveTurns.get(project.root, thread);
-					const { mode } = c.req.valid("json");
-					if (held?.running) {
-						if (!held.permissions) return c.text("This engine cannot change permissions during a turn.", 409);
-						try {
-							const applied = await held.permissions.apply(mode);
-							if (applied !== mode) return c.text("The engine did not apply the requested permissions.", 409);
-						} catch (error) {
-							return c.text(error instanceof Error ? error.message : "Permissions were not applied.", 409);
-						}
-					}
-					const written = settings.write("agent.permissions", mode, project.root);
-					if (!written.ok) return c.text(written.reason, written.status);
-					emitAppEvent({ kind: "settings" });
-					return c.json({ mode });
-				} finally {
-					permissionChanges.delete(project.root);
-				}
+				if (!isThreadId(thread)) return c.text("a thread is named by its uuid", 400);
+				const { mode } = agentDefaults.setMode(c.req.valid("json").mode);
+				emitAppEvent({ kind: "settings" });
+				return c.json({ mode, pending: pendingMode(project.root, thread, mode) });
 			},
 		)
 		.post(

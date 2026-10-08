@@ -173,7 +173,7 @@ describe("engine ownership through the daemon", () => {
 		expect(spool.starts[0]).toMatchObject({
 			session: (await threads()).find((thread) => thread.id === TWO)?.session,
 			said: [{ prompt: "two", selection: "", attachments: [{ data: "aGk=" }] }],
-			permissions: "ask",
+			permissions: "edits",
 		});
 		expect((await threads()).map((thread) => [thread.engine, thread.live, thread.continuable])).toEqual([
 			["claude", true, true],

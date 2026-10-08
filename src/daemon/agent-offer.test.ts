@@ -535,7 +535,7 @@ describe("the doors", () => {
 			body: JSON.stringify(body),
 		});
 
-	it("new threads inherit the project's last model and effort", async () => {
+	it("new threads in every project start on the machine's last model and effort", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
 		const binary = fakeBinary();
@@ -548,26 +548,27 @@ describe("the doors", () => {
 		expect(args[args.indexOf("--effort") + 1]).toBe("xhigh");
 		expect(await response.json()).toMatchObject({ current: { value: "sonnet", effort: "xhigh" } });
 
+		// a later pick moves every blank thread with it, the one already read included
 		await post(app, name, { value: "haiku" });
 		const cold = fakeBinary();
 		const restarted = makeApp(spoolDir, { agentExecutor: cold.executor });
 		const restored = await restarted.request(`/api/p/${name}/agent/threads/${OTHER}/models`);
-		expect(await restored.json()).toMatchObject({ current: { value: "sonnet", effort: "xhigh" } });
-		const third = "3a1b3c4d-5e6f-4788-9900-aabbccddeeff";
-		const fresh = await restarted.request(`/api/p/${name}/agent/threads/${third}/models`);
-		expect(await fresh.json()).toMatchObject({ current: { value: "haiku" } });
+		expect(await restored.json()).toMatchObject({ current: { value: "haiku" } });
 		expect(cold.spawned.at(-1)?.spawn.args).not.toContain("--effort");
+		const elsewhere = makeProject(spoolDir);
+		const third = "3a1b3c4d-5e6f-4788-9900-aabbccddeeff";
+		const fresh = await restarted.request(`/api/p/${elsewhere.name}/agent/threads/${third}/models`);
+		expect(await fresh.json()).toMatchObject({ current: { value: "haiku" } });
 
 		const spawns = cold.spawned.length;
-		void restarted.request(`/api/p/${name}/agent/turn`, {
+		void restarted.request(`/api/p/${elsewhere.name}/agent/turn`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ thread: OTHER, said: [{ prompt: "use my saved model" }] }),
+			body: JSON.stringify({ thread: third, said: [{ prompt: "use my saved model" }] }),
 		});
 		await until(() => cold.spawned.length > spawns);
 		const turnArgs = cold.spawned.at(-1)?.spawn.args ?? [];
-		expect(turnArgs[turnArgs.indexOf("--model") + 1]).toBe("sonnet");
-		expect(turnArgs[turnArgs.indexOf("--effort") + 1]).toBe("xhigh");
+		expect(turnArgs[turnArgs.indexOf("--model") + 1]).toBe("haiku");
 	});
 
 	it("answers the offer on a read", async () => {
@@ -665,26 +666,40 @@ describe("the doors", () => {
 		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--effort");
 	});
 
-	it("is one thread's choice and not another thread's", async () => {
+	it("is a started thread's choice, which a pick in another thread leaves alone", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
 		const binary = fakeBinary();
 		const app = makeApp(spoolDir, { agentExecutor: binary.executor });
+		const turn = async () => {
+			const spawns = binary.spawned.length;
+			// the thread's last turn may still be letting go of its process
+			await expect
+				.poll(
+					async () =>
+						(
+							await app.request(`/api/p/${name}/agent/turn`, {
+								method: "POST",
+								headers: { "content-type": "application/json" },
+								body: JSON.stringify({ thread: OTHER, said: [{ prompt: "tidy the cart" }] }),
+							})
+						).status,
+				)
+				.toBe(200);
+			await until(() => binary.spawned.length > spawns);
+			const proc = binary.spawned.at(-1);
+			proc?.exit(0);
+			return proc?.spawn.args ?? [];
+		};
 
-		await app.request(`/api/p/${name}/agent/threads/${OTHER}/models`);
+		await post(app, name, { value: "sonnet" });
+		const started = await turn();
+		expect(started[started.indexOf("--model") + 1]).toBe("sonnet");
+		// a project runs one thread on Sonnet and another on Haiku, so a pick in the open
+		// thread must not carry into a conversation already under way
 		await post(app, name, { value: "haiku" });
-		const spawns = binary.spawned.length;
-		// a project runs one thread on Opus and another on Haiku, so a project-wide ask
-		// would carry the open thread's choice into the one you switched to
-		void app.request(`/api/p/${name}/agent/turn`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ thread: OTHER, said: [{ prompt: "tidy the cart" }] }),
-		});
-		await until(() => binary.spawned.length > spawns);
-
-		const args = binary.spawned.at(-1)?.spawn.args ?? [];
-		expect(args[args.indexOf("--model") + 1]).toBe("claude-fable-5[1m]");
+		const again = await turn();
+		expect(again[again.indexOf("--model") + 1]).toBe("sonnet");
 	});
 
 	it("refuses a thread that is not named by a session's own uuid", async () => {
@@ -699,25 +714,6 @@ describe("the doors", () => {
 			body: JSON.stringify({ value: "haiku" }),
 		});
 		expect(chosen.status).toBe(400);
-	});
-
-	it("is one project's choice and not another's", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const first = makeProject(spoolDir);
-		const second = makeProject(spoolDir);
-		const binary = fakeBinary();
-		const app = makeApp(spoolDir, { agentExecutor: binary.executor });
-
-		await post(app, first.name, { value: "haiku" });
-		const spawns = binary.spawned.length;
-		void app.request(`/api/p/${second.name}/agent/turn`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ thread: THREAD, said: [{ prompt: "tidy the cart" }] }),
-		});
-		await until(() => binary.spawned.length > spawns);
-
-		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--model");
 	});
 
 	it("keeps a closed thread's choice with its saved conversation", async () => {

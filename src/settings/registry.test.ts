@@ -16,8 +16,8 @@ describe("settings registry", () => {
 		expect(parseSetting("history", true)).toEqual({ ok: true, value: true });
 		expect(parseSetting("history", "true").ok).toBe(false);
 		expect(parseSetting("canvas.threads", false)).toEqual({ ok: true, value: false });
-		expect(parseSetting("agent.permissions", "bypass")).toEqual({ ok: true, value: "bypass" });
-		expect(parseSetting("agent.permissions", "yolo").ok).toBe(false);
+		expect(parseSetting("appearance", "light")).toEqual({ ok: true, value: "light" });
+		expect(parseSetting("appearance", "sepia").ok).toBe(false);
 		expect(parseSetting("theme.dark.thread", " #2F6FE0 ")).toEqual({ ok: true, value: "#2f6fe0" });
 		expect(parseSetting("theme.dark.thread", "#fff").ok).toBe(false);
 		expect(parseSetting("theme.dark.thread", "red").ok).toBe(false);

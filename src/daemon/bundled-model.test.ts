@@ -10,7 +10,7 @@ import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agen
 import { readThread } from "./agent-threads";
 import { deterministicModelRuntime } from "./fixtures/bundled-model-provider";
 
-it("inherits project choices in new chats and restores each chat after daemon and host restart", {
+it("starts new chats in every project on the machine's last choice and restores each chat after daemon and host restart", {
 	timeout: 30_000,
 }, async () => {
 	const directory = makeTempDir();
@@ -58,7 +58,6 @@ it("inherits project choices in new chats and restores each chat after daemon an
 	expect(await (await app.request(`${path(second)}/models?engine=spool`)).json()).toMatchObject({
 		current: selected,
 	});
-	await choose(second, { value: "spool/google/api_key/quick-image" });
 	const turn = await app.request(`/api/p/${project.name}/agent/turn`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
@@ -71,6 +70,8 @@ it("inherits project choices in new chats and restores each chat after daemon an
 	const session = readFileSync(join(client.directory, "sessions", `${saved.session.id}.jsonl`), "utf8");
 	expect(session).toContain('"provider":"google"');
 	expect(session).toContain('"thinkingLevel":"high"');
+	// a later pick in a new chat moves the machine's choice and leaves the started chat alone (#361)
+	await choose(second, { value: "spool/google/api_key/quick-image" });
 	client.close();
 	const restarted = start().app;
 	expect(await (await restarted.request(`${path(first)}/models?engine=spool`)).json()).toMatchObject({
@@ -83,7 +84,7 @@ it("inherits project choices in new chats and restores each chat after daemon an
 	}
 	expect(
 		await (await restarted.request(`${path(randomUUID(), otherProject.name)}/models?engine=spool`)).json(),
-	).toMatchObject({ current: { value: "spool/openai/api_key/spool-test", effort: "medium" } });
+	).toMatchObject({ current: { value: "spool/google/api_key/quick-image", effort: null } });
 });
 
 it("keeps model, connection method, effort and engine identity across account replacement and host restart", async () => {

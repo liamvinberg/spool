@@ -493,7 +493,7 @@ describe("settings (#281)", () => {
 		expect((await put({ key: "nope", value: true })).status).toBe(404);
 		expect((await put({ key: "history", value: "yes", project: name })).status).toBe(400);
 		expect((await put({ key: "history", value: true })).status).toBe(400);
-		expect((await put({ key: "agent.permissions", value: "bypass", project: "missing" })).status).toBe(404);
+		expect((await put({ key: "history", value: true, project: "missing" })).status).toBe(404);
 		expect((await app.fetch("/api/settings")).status).toBe(401);
 	});
 });

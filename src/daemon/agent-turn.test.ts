@@ -389,7 +389,8 @@ describe("one turn over the wire", () => {
 		expect(spawn?.command).toBe("claude");
 		expect(args).toContain("--include-partial-messages");
 		expect(args[args.indexOf("--setting-sources") + 1]).toBe("user");
-		expect(args[args.indexOf("--permission-mode") + 1]).toBe("default");
+		// a machine with nothing saved is on Auto-edit (#361), set explicitly rather than left to the user's settings
+		expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
 		// the agent really arrives knowing what spool is: this is the text the
 		// child is handed, not a function a test called on its own
 		expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(agentFraming());

@@ -49,8 +49,9 @@ export type SettingPrimitive = boolean | string;
  * How a spawned agent is fenced (#121, #281). `ask` is the fence as built:
  * the allow rules make design/ quiet and everything else asks. `edits` accepts
  * file edits and still asks for the rest. `bypass` hands the harness its own
- * bypass mode, at which point the allow rules and the sandbox buy nothing, which
- * is why this is a local setting: trust never travels in the repo.
+ * bypass mode, at which point the allow rules and the sandbox buy nothing. The
+ * mode is this machine's, never the repo's, and lives with the rest of the
+ * agent choice in `daemon/agent-defaults.ts` rather than in this registry (#361).
  */
 export const AGENT_PERMISSIONS = ["ask", "edits", "bypass"] as const;
 export type AgentPermissions = (typeof AGENT_PERMISSIONS)[number];
@@ -158,14 +159,6 @@ export const SETTINGS = {
 		label: "Agent introduction seen",
 		says: "The first-open recommendation has been dismissed on this installation.",
 	},
-	"agent.engine": {
-		scope: "local",
-		group: "agent",
-		shape: { kind: "choice", choices: ["spool", "claude"] },
-		fallback: "spool",
-		label: "Agent engine",
-		says: "The engine for new threads in this project on this machine.",
-	},
 	"projects.location": {
 		scope: "machine",
 		group: "general",
@@ -206,14 +199,6 @@ export const SETTINGS = {
 		label: "Show threads",
 		says: "The arrows between frames and the tags for walks that leave the page. T turns them on and off.",
 	},
-	"agent.permissions": {
-		scope: "local",
-		group: "agent",
-		shape: { kind: "choice", choices: AGENT_PERMISSIONS },
-		fallback: "ask",
-		label: "Agent permissions",
-		says: "What the agent may do here without asking. Kept on this machine, never in the repo.",
-	},
 	appearance: {
 		scope: "machine",
 		group: "appearance",
@@ -228,11 +213,9 @@ export const SETTINGS = {
 export type SettingKey = keyof typeof SETTINGS;
 export type SettingValue<Key extends SettingKey> = (typeof SETTINGS)[Key]["fallback"] extends boolean
 	? boolean
-	: Key extends "agent.permissions"
-		? AgentPermissions
-		: Key extends "appearance"
-			? Appearance
-			: string;
+	: Key extends "appearance"
+		? Appearance
+		: string;
 
 export const SETTING_KEYS = Object.keys(SETTINGS) as readonly SettingKey[];
 

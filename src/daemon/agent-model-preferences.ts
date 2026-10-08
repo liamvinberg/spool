@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
+import type { AgentDefaults } from "./agent-defaults";
 import type { AgentEngine, AgentEngineId } from "./agent-engine";
 import { type AgentAsk, type AgentOffer, isEffortShaped, isModelShaped } from "./agent-offer";
 import { isThreadId, readThread, threadsDir } from "./agent-threads";
@@ -19,19 +20,24 @@ const ask = z
 	);
 const engines = z.object({ claude: ask.optional(), spool: ask.optional() });
 const preferences = z.object({
-	defaults: engines,
+	/** read once by the #361 migration; the machine's choice lives in agent defaults now */
+	defaults: engines.optional(),
 	threads: z.record(z.string().refine(isThreadId), engines),
 });
 
-/** Accepted choices live beside the project's threads and move with them on rename. */
-export function createAgentModelPreferences(spoolDir: string) {
+/**
+ * A started thread's accepted choice lives beside the project's threads and moves with them
+ * on rename. A thread with no model session yet reads the machine's choice, whatever an
+ * earlier model read left for it, so a stale blank thread never pins an old pick.
+ */
+export function createAgentModelPreferences(spoolDir: string, defaults: AgentDefaults) {
 	const file = (root: string) => join(threadsDir(spoolDir, root), "models.json");
 	function read(root: string): z.infer<typeof preferences> {
 		let raw: string;
 		try {
 			raw = readFileSync(file(root), "utf8");
 		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ENOENT") return { defaults: {}, threads: {} };
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return { threads: {} };
 			throw error;
 		}
 		// An unreadable preference file must never be overwritten with a fresh default.
@@ -39,12 +45,9 @@ export function createAgentModelPreferences(spoolDir: string) {
 	}
 	return {
 		read(root: string, thread: string, engine: AgentEngineId): AgentAsk {
-			const saved = read(root);
-			const held = saved.threads[thread]?.[engine];
-			if (held !== undefined) return held;
-			// Existing conversations still have their engine-owned model session.
-			if (readThread(spoolDir, root, thread) !== undefined) return {};
-			return saved.defaults[engine] ?? {};
+			// Existing conversations keep what they started on, or the engine's own session state.
+			if (readThread(spoolDir, root, thread) !== undefined) return read(root).threads[thread]?.[engine] ?? {};
+			return defaults.model(engine);
 		},
 		keep(root: string, thread: string, engine: AgentEngineId, choice: AgentAsk, chosen = false): void {
 			const saved = read(root);
@@ -52,8 +55,8 @@ export function createAgentModelPreferences(spoolDir: string) {
 			if (!chosen && saved.threads[thread]?.[engine] !== undefined) return;
 			const checked = ask.parse(choice);
 			saved.threads[thread] = { ...saved.threads[thread], [engine]: checked };
-			if (chosen) saved.defaults[engine] = checked;
 			writeAtomic(file(root), `${JSON.stringify(saved, null, "\t")}\n`);
+			if (chosen) defaults.setModel(engine, checked);
 		},
 	};
 }

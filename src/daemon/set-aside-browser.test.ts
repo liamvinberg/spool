@@ -7,6 +7,7 @@ import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { testBrowser } from "../test-browser";
 import {
 	builtUi,
+	chooseAgent,
 	closeAfterTest,
 	fixtureAgentExecutor,
 	makeApp,
@@ -48,7 +49,7 @@ async function team() {
 	await fetchLocalCopy(benRoot, benState, { origin: TEAM_ORIGIN, request: ben.request, openSocket: ben.openSocket });
 	openProject(benRoot, benState);
 	const settings = createSettingsStore(benState);
-	settings.write("agent.engine", "claude", benRoot);
+	chooseAgent(benState, { engine: "claude" });
 	settings.write("agent.introductionSeen", true);
 	makeApp(anaState, { cloud: ana.cloud, teamNotice: () => {} });
 	const agent = fixtureAgentExecutor();

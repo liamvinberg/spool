@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, seedAgentWidth, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	chooseAgent,
+	makeTempDir,
+	seedAgentWidth,
+	serveProject,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 
 const BEFORE = `export default function Home() {
@@ -44,6 +52,8 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	await client.request({ kind: "connect", provider: "openai", key: "fixture-key" });
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, agentEngines: [createSpoolEngine(directory, client)] });
+	// what spool asks outside design, which Auto-edit would wave through
+	chooseAgent(project.spoolDir, { mode: "ask" });
 	writeFrame(project.root, "home", BEFORE);
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":600,"h":400}');
 	writeDesignFile(project.root, ".spool/state.json", '{"camera":{"x":60,"y":60,"k":1}}');
@@ -177,12 +187,7 @@ it("runs file tools through the real host and served canvas, maps every changed 
 	expect(children).toHaveLength(2);
 	expect(existsSync(join(project.root, "src/ui/restarted.css"))).toBe(false);
 	for (const mode of ["edits", "bypass"] as const) {
-		const changed = await fetch(`${project.url}/api/settings`, {
-			method: "PUT",
-			headers: { "Content-Type": "application/json", "X-Spool-Control": project.controlToken },
-			body: JSON.stringify({ key: "agent.permissions", value: mode, project: project.name }),
-		});
-		expect(changed.ok).toBe(true);
+		chooseAgent(project.spoolDir, { mode });
 		await send([write(`outside-${mode}`)]);
 		await expect.poll(() => existsSync(join(project.root, `outside-${mode}`))).toBe(true);
 		await settled();

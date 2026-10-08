@@ -8,7 +8,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import * as atomicWrite from "../atomic-write";
 import { initProject } from "../init";
 import { readRegistry } from "../registry";
-import { COVER_PNG, makeTempDir, writeFrame } from "../test-helpers";
+import { COVER_PNG, chooseAgent, makeTempDir, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import type { AgentEvent } from "./agent-events";
 import { readThread } from "./agent-threads";
@@ -22,6 +22,8 @@ async function fixture() {
 	mkdirSync(folder);
 	const { root } = initProject(folder, spoolDir);
 	writeFrame(root, "home", "before");
+	// these turns are about what spool asks before, which Auto-edit would wave through
+	chooseAgent(spoolDir, { engine: "spool", mode: "ask" });
 	const directory = join(spoolDir, "bundled");
 	const children: ChildProcess[] = [];
 	const newClient = () =>
