@@ -18,7 +18,7 @@
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -53,28 +53,39 @@ function testFiles(dir: string): string[] {
 	if (!existsSync(full)) return [];
 	return readdirSync(full, { recursive: true, withFileTypes: true }).flatMap((entry) =>
 		entry.isFile() && entry.name.endsWith(".test.ts") && !entry.parentPath.includes("node_modules")
-			? [relative(root, join(entry.parentPath, entry.name))]
+			? [posix(relative(root, join(entry.parentPath, entry.name)))]
 			: [],
 	);
 }
 
+/** Git's separators, which `path` swaps for backslashes on Windows. */
+const posix = (file: string) => file.split(sep).join("/");
 const withoutExtension = (file: string) => file.slice(0, file.length - extname(file).length);
 
 const args = process.argv.slice(2);
 const deep = args.includes("--deep");
 const at = args.indexOf("--base");
+if (at !== -1 && (args[at + 1] === undefined || args[at + 1]?.startsWith("-"))) {
+	console.error("test:changed: --base needs a ref, such as --base main");
+	process.exit(2);
+}
 const base = baseRef(at === -1 ? undefined : args[at + 1]);
 const passed = args.filter((arg, index) => arg !== "--deep" && (at === -1 || (index !== at && index !== at + 1)));
 
 const changed = [
 	...new Set([
-		...git("diff", "--name-only", base).split("\n"),
-		...git("ls-files", "--others", "--exclude-standard").split("\n"),
+		// -z, or git quotes a path with non-ASCII in it
+		...git("diff", "--name-only", "-z", base).split("\0"),
+		...git("ls-files", "--others", "--exclude-standard", "-z").split("\0"),
 	]),
 ].filter((file) => file !== "" && existsSync(join(root, file)));
 
 function run(vitestArgs: string[]): never {
-	const result = spawnSync("pnpm", ["exec", "vitest", ...vitestArgs, ...passed], { cwd: root, stdio: "inherit" });
+	const result = spawnSync("pnpm", ["exec", "vitest", ...vitestArgs, ...passed], {
+		cwd: root,
+		stdio: "inherit",
+		shell: process.platform === "win32",
+	});
 	process.exit(result.status ?? 1);
 }
 
@@ -90,19 +101,25 @@ if (wide.length > 0) {
 }
 
 const tests = testDirs.flatMap(testFiles);
-const sources = changed.filter((file) => /\.(ts|tsx|css)$/.test(file) && !file.endsWith(".test.ts"));
+const sources = changed.filter((file) => /\.(ts|tsx|js|mjs|css|html)$/.test(file) && !file.endsWith(".test.ts"));
 const stems = new Set(sources.map(withoutExtension));
 /** The source paths, without extension, that a test imports by a relative specifier. */
 const imported = (test: string, text: string) =>
-	[...text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g)].flatMap(([, specifier]) => {
-		const target = relative(root, resolve(root, dirname(test), specifier ?? ""));
-		return [withoutExtension(target), target, join(target, "index")];
-	});
-/** Runtime the daemon bundles and serves from disk, which no test imports: its own suites stand in. */
+	[...text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+|new\s+URL\(\s*)["'](\.{1,2}\/[^"']+)["']/g)].flatMap(
+		([, specifier]) => {
+			const target = posix(relative(root, resolve(root, dirname(test), specifier ?? "")));
+			return [withoutExtension(target), target, join(target, "index")];
+		},
+	);
+/**
+ * Runtime the daemon bundles and serves from disk, which no test imports: its
+ * own suites stand in, with the two that play a whole project in a browser.
+ */
 const served = sources.some((source) => source.startsWith("src/runtime/"));
+const playing = ["src/daemon/player-parity-browser.test.ts", "src/publication/website-browser.test.ts"];
 const picked = tests.filter((test) => {
 	if (changed.includes(test)) return true;
-	if (served && test.startsWith("src/runtime/")) return true;
+	if (served && (test.startsWith("src/runtime/") || playing.includes(test))) return true;
 	const name = basename(test, ".test.ts");
 	const text = readFileSync(join(root, test), "utf8");
 	return (
