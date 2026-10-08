@@ -1207,10 +1207,13 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 		// judging the screen, so the fallback would reveal the 500 box this test
 		// is asking the shell to wait out.
 		const setTimeout = window.setTimeout;
-		window.setTimeout = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
-			String(handler).includes("announceGeometry")
-				? 0
-				: setTimeout(handler, timeout, ...rest)) as typeof window.setTimeout;
+		const held = { fallbacks: 0 };
+		Object.defineProperty(window, "__spoolHeldFallbacks", { value: held });
+		window.setTimeout = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) => {
+			if (!String(handler).includes("announceGeometry")) return setTimeout(handler, timeout, ...rest);
+			held.fallbacks += 1;
+			return 0;
+		}) as typeof window.setTimeout;
 		const visibleSizes: string[] = [];
 		Object.defineProperty(window, "__spoolVisibleSizes", { value: visibleSizes });
 		const record = () => {
@@ -1357,6 +1360,13 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	);
 	expect(visibleSizes).not.toContain("500px");
 	expect(visibleSizes.at(-1)).toBe("600px");
+	// the hold above names the bridge's fallback by its source: a rename there
+	// would let the fallback run again, so make sure it was held at all
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { __spoolHeldFallbacks: { fallbacks: number } }).__spoolHeldFallbacks.fallbacks,
+		),
+	).toBeGreaterThan(0);
 
 	await inner.locator("#to-target").click();
 	await page.waitForFunction(() => document.querySelector(".spool-bar-name")?.textContent === "target");
