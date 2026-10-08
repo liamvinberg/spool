@@ -129,8 +129,15 @@ export function PermissionMenu({
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
-		ref.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
-		return () => trigger.current?.focus();
+		const menu = ref.current;
+		menu?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+		// the menu goes a beat after it is closed (#364), and by then focus may have moved on
+		// to whatever was pressed meanwhile: it comes back to the trigger only from the menu
+		// itself, or from nowhere
+		return () => {
+			const at = document.activeElement;
+			if (at === null || at === document.body || menu?.contains(at)) trigger.current?.focus();
+		};
 	}, [trigger]);
 	return (
 		<div

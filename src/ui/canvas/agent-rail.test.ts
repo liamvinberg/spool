@@ -4868,6 +4868,33 @@ describe("the mode menu", () => {
 		expect(trigger(canvas.host)?.textContent).toBe("Auto-edit");
 	});
 
+	/**
+	 * The menu leaves a beat after it closes, and hands focus back to its trigger as it
+	 * goes. Whatever was pressed in that beat keeps the focus it took (#364).
+	 */
+	it("hands focus back to its trigger as it goes, but never takes it from what came next", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await until(() => trigger(canvas.host)?.textContent === "Ask first");
+
+		await press(trigger(canvas.host));
+		const checked = menu(canvas.host)?.querySelector<HTMLButtonElement>('[aria-checked="true"]');
+		expect(document.activeElement).toBe(checked);
+		await act(async () => {
+			checked?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+		});
+		await settle(200);
+		expect(document.activeElement).toBe(trigger(canvas.host));
+
+		await press(trigger(canvas.host));
+		await press(trigger(canvas.host));
+		// pressed while the menu is still leaving
+		field(canvas.host)?.focus();
+		await settle(200);
+		expect(canvas.host.querySelector("[data-permission-menu]")).toBeNull();
+		expect(document.activeElement).toBe(field(canvas.host));
+	});
+
 	/** an agent that has no modes to offer is not offered a menu of them */
 	it("is not drawn for an agent that reports no modes", async () => {
 		const canvas = mount();
