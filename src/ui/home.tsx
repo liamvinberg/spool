@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { HerePerson, ProjectCard } from "./api";
+import { type HerePerson, type ProjectCard, thumbnailUrl } from "./api";
 import { cn } from "./cn";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
@@ -36,6 +36,7 @@ export function Home({
 	onMoveToTeam,
 	onChangeIcon,
 	onRemoveIcon,
+	onRemoveThumbnail,
 	account,
 	switcher,
 	notice,
@@ -58,6 +59,8 @@ export function Home({
 	onChangeIcon?: (project: { root: string; name: string }) => void;
 	/** "Remove icon" on a cover whose icon is the project's own file. */
 	onRemoveIcon?: (project: { root: string; name: string }) => void;
+	/** "Remove thumbnail" on a cover showing the project's own thumbnail file. */
+	onRemoveThumbnail?: (project: { root: string; name: string }) => void;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
 	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
@@ -273,6 +276,7 @@ export function Home({
 								{...(onMoveToTeam === undefined ? {} : { onMoveToTeam })}
 								{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
 								{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
+								{...(onRemoveThumbnail === undefined ? {} : { onRemoveThumbnail })}
 							/>
 						)}
 					</main>
@@ -357,6 +361,7 @@ export function ProjectGrid({
 	onMoveToTeam,
 	onChangeIcon,
 	onRemoveIcon,
+	onRemoveThumbnail,
 	here,
 }: {
 	projects: readonly ProjectCover[];
@@ -371,6 +376,7 @@ export function ProjectGrid({
 	onMoveToTeam?: (project: { root: string; name: string }) => void;
 	onChangeIcon?: (project: { root: string; name: string }) => void;
 	onRemoveIcon?: (project: { root: string; name: string }) => void;
+	onRemoveThumbnail?: (project: { root: string; name: string }) => void;
 	/** Who is inside each team project now, by its name in the team. */
 	here?: ReadonlyMap<string, readonly HerePerson[]>;
 }) {
@@ -398,6 +404,9 @@ export function ProjectGrid({
 						{...(onRemoveIcon === undefined || project.icon?.from !== "file"
 							? {}
 							: { onRemoveIcon: () => onRemoveIcon(project) })}
+						{...(onRemoveThumbnail === undefined || project.thumbnail === undefined
+							? {}
+							: { onRemoveThumbnail: () => onRemoveThumbnail(project) })}
 					/>
 				))}
 			</div>
@@ -428,6 +437,7 @@ function ProjectTile({
 	onMoveToTeam,
 	onChangeIcon,
 	onRemoveIcon,
+	onRemoveThumbnail,
 }: {
 	project: ProjectCard;
 	copies: number;
@@ -443,6 +453,7 @@ function ProjectTile({
 	onMoveToTeam?: () => void;
 	onChangeIcon?: () => void;
 	onRemoveIcon?: () => void;
+	onRemoveThumbnail?: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const tileRef = useRef<HTMLElement>(null);
@@ -485,15 +496,25 @@ function ProjectTile({
 				onClick={onOpen}
 			>
 				<div className="pj-cover-art relative aspect-[1.82] overflow-hidden rounded-[8px] bg-canvas">
-					{cover && (
-						<Thumbnail
-							project={project.name}
-							frame={cover.frame}
-							cover={cover.cover}
-							alt={cover.frame}
+					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
+					{project.thumbnail !== undefined ? (
+						<img
+							src={thumbnailUrl(project.name, project.thumbnail.hash)}
+							alt=""
 							draggable={false}
-							className="h-full w-full object-cover object-top"
+							className="h-full w-full object-contain"
 						/>
+					) : (
+						cover && (
+							<Thumbnail
+								project={project.name}
+								frame={cover.frame}
+								cover={cover.cover}
+								alt={cover.frame}
+								draggable={false}
+								className="h-full w-full object-contain"
+							/>
+						)
 					)}
 					<HerePill people={here} />
 					<span className="pj-cover-enter absolute right-[12px] bottom-[12px] grid h-[30px] w-[30px] place-items-center rounded-[6px] border border-border-raised bg-bg text-text opacity-0 [transform:translateX(-3px)] group-focus-visible/cover:opacity-100 group-focus-visible/cover:[transform:none] group-hover/cover:opacity-100 group-hover/cover:[transform:none] motion-reduce:transition-none">
@@ -570,6 +591,16 @@ function ProjectTile({
 								manageRef.current?.focus();
 								onCloseMenu();
 								onRemoveIcon();
+							}}
+						/>
+					)}
+					{onRemoveThumbnail && (
+						<MenuItem
+							label="Remove thumbnail"
+							onClick={() => {
+								manageRef.current?.focus();
+								onCloseMenu();
+								onRemoveThumbnail();
 							}}
 						/>
 					)}

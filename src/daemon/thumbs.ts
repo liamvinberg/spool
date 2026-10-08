@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { type Dirent, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme, Cover } from "../cover";
@@ -91,36 +91,10 @@ export function scanCovers(root: string): Map<string, Cover> {
 	return covers;
 }
 
-/** One cover and the moment its folder last changed. */
-export interface DatedCover {
-	cover: Cover;
-	shotAt: number;
-}
-
-/**
- * Every stored cover with its freshness, without holding the event loop. The
- * home list reads each registered project's whole store this way, so one walk
- * answers both what a frame's picture is and how recent it is — asking the
- * store for the picture and then stating each folder separately would resolve
- * the design boundary again per cover, and do all of it in a row.
- */
-export async function scanDatedCovers(root: string): Promise<Map<string, DatedCover>> {
-	const store = coverStoreDir(root);
-	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-	const scanned = await Promise.all(
-		folders.map(async (folder) => {
-			const frame = segmentFrame(folder);
-			if (frame === undefined) return undefined;
-			const dir = join(store, folder);
-			const cover = coverAmong((await listed(dir)).filter((entry) => entry.isFile()).map((entry) => entry.name));
-			return cover === undefined ? undefined : { frame, cover, shotAt: (await modified(dir)) ?? 0 };
-		}),
-	);
-	const covers = new Map<string, DatedCover>();
-	for (const entry of scanned) {
-		if (entry !== undefined) covers.set(entry.frame, { cover: entry.cover, shotAt: entry.shotAt });
-	}
-	return covers;
+/** One frame's cover, without holding the event loop: what a Home card reads for its picture. */
+export async function readCoverAwaited(root: string, frame: string): Promise<Cover | undefined> {
+	const dir = coverDir(root, frame);
+	return coverAmong((await listed(dir)).filter((entry) => entry.isFile()).map((entry) => entry.name));
 }
 
 async function listed(dir: string): Promise<Dirent[]> {
@@ -128,14 +102,6 @@ async function listed(dir: string): Promise<Dirent[]> {
 		return await readdir(dir, { withFileTypes: true });
 	} catch {
 		return [];
-	}
-}
-
-async function modified(dir: string): Promise<number | undefined> {
-	try {
-		return (await stat(dir)).mtimeMs;
-	} catch {
-		return undefined;
 	}
 }
 

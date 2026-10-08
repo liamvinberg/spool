@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { changeProjectIcon, type ProjectIcon, removeProjectIcon } from "./api";
+import {
+	changeProjectIcon,
+	type ProjectIcon,
+	type ProjectThumbnail,
+	removeProjectIcon,
+	removeProjectThumbnail,
+} from "./api";
 import { type Notice, Toast } from "./canvas/toast";
 
 /** The images an icon may be; the daemon reads the kind from the bytes and refuses anything else. */
@@ -12,8 +18,13 @@ const ICON_ACCEPT = "image/svg+xml,image/png,image/webp,image/jpeg";
  * goes to the daemon, which writes it as the project's `design/shared/icon.<ext>`. `onIcon` takes what the project
  * wears after either, so the tab and Home change at once; the app event the daemon sends says the same thing to
  * every other page. A refusal is said the way the app says a failed export.
+ *
+ * "Remove thumbnail" rides here too, the cover's other picture: `onThumbnail` takes what the cover shows after it.
  */
-export function useIconChange(onIcon: (root: string, icon: ProjectIcon | undefined) => void) {
+export function useIconChange(
+	onIcon: (root: string, icon: ProjectIcon | undefined) => void,
+	onThumbnail?: (root: string, thumbnail: ProjectThumbnail | undefined) => void,
+) {
 	const input = useRef<HTMLInputElement>(null);
 	const target = useRef<{ root: string; name: string } | null>(null);
 	const [notice, setNotice] = useState<Notice | null>(null);
@@ -33,6 +44,12 @@ export function useIconChange(onIcon: (root: string, icon: ProjectIcon | undefin
 			void removeProjectIcon(project.root).then(
 				(icon) => onIcon(project.root, icon),
 				(error: unknown) => said(error, "Could not remove the icon. Try again."),
+			);
+		},
+		removeThumbnail: (project: { root: string; name: string }) => {
+			void removeProjectThumbnail(project.root).then(
+				() => onThumbnail?.(project.root, undefined),
+				(error: unknown) => said(error, "Could not remove the thumbnail. Try again."),
 			);
 		},
 		surface: (

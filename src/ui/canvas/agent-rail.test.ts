@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { IDBFactory } from "fake-indexeddb";
+import { IDBDatabase, IDBFactory } from "fake-indexeddb";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -2435,6 +2435,45 @@ describe("an attached image", () => {
 		expect(canvas.host.querySelector("[data-agent-lightbox]")).toBeNull();
 		expect(canvas.host.querySelector("[data-agent-attached]")).not.toBeNull();
 
+		await send(canvas.host, "match this");
+		expect(canvas.turn.attachments.at(-1)?.[0]?.data).toBe("iVBORw0KGgoBAgM=");
+	});
+
+	/** a tile that can be pressed Enter on is one the turn will take */
+	it("does not show before the browser has stored it", async () => {
+		// the browser's store answers when it answers: here, when the test lets it
+		let release = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const transaction = IDBDatabase.prototype.transaction;
+		vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (
+			this: IDBDatabase,
+			...args: Parameters<IDBDatabase["transaction"]>
+		) {
+			const opened = transaction.apply(this, args);
+			if (args[1] !== "readwrite") return opened;
+			Object.defineProperty(opened, "oncomplete", {
+				set(done: (event: Event) => void) {
+					opened.addEventListener("complete", (event) => void held.then(() => done.call(opened, event)));
+				},
+			});
+			return opened;
+		});
+		const canvas = mount();
+		await canvas.render();
+
+		await act(async () => {
+			const event = new Event("paste", { bubbles: true });
+			Object.defineProperty(event, "clipboardData", { value: { files: [shot()] } });
+			field(canvas.host)?.dispatchEvent(event);
+		});
+		// the rail goes on drawing while the bytes are on their way to disk
+		await settle(1000);
+		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
+
+		release();
+		await until(() => canvas.host.querySelector("[data-agent-attached]") !== null);
 		await send(canvas.host, "match this");
 		expect(canvas.turn.attachments.at(-1)?.[0]?.data).toBe("iVBORw0KGgoBAgM=");
 	});

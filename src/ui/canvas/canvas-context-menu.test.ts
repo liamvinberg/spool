@@ -10,7 +10,9 @@ import { openEventStream } from "./test-event-stream";
 /** The deep-select modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
-const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240 }];
+const frames: { name: string; x: number; y: number; w: number; h: number; cover?: { hash: string } }[] = [
+	{ name: "home", x: 0, y: 0, w: 320, h: 240 },
+];
 
 describe("canvas context menu", () => {
 	it("reloads a frame with a fresh document", async () => {
@@ -104,6 +106,36 @@ describe("canvas context menu", () => {
 		await openFrameMenu(canvas);
 
 		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
+	});
+
+	it("sets a frame with a still as the project's thumbnail, after Reload frame", async () => {
+		const { host, canvas, requests } = await renderCanvas([
+			{ name: "home", x: 0, y: 0, w: 320, h: 240, cover: { hash: "c".repeat(32) } },
+		]);
+		await openFrameMenu(canvas);
+		const labels = [...host.querySelectorAll('[role="menuitem"] > span:first-child')].map((node) => node.textContent);
+		expect(labels.indexOf("Set as thumbnail")).toBe(labels.indexOf("Reload frame") + 1);
+
+		await clickMenuItem(host, "Set as thumbnail");
+
+		const set = requests.mock.calls.find(([input]) => {
+			const raw = input instanceof Request ? input.url : String(input);
+			return new URL(raw, window.location.href).pathname === "/api/p/test/thumbnail";
+		});
+		expect(set).toBeDefined();
+		const [input, init] = set ?? [];
+		const body = input instanceof Request ? await input.clone().text() : String(init?.body);
+		expect(JSON.parse(body)).toEqual({ frame: "home" });
+		expect(host.querySelector('[role="menu"]')).toBeNull();
+	});
+
+	it("offers Set as thumbnail disabled while the frame has no still yet", async () => {
+		const { host, canvas } = await renderCanvas();
+		await openFrameMenu(canvas);
+		const item = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+			(candidate) => candidate.querySelector("span")?.textContent === "Set as thumbnail",
+		);
+		expect(item?.disabled).toBe(true);
 	});
 
 	it("trashes the selected frame from the Delete key", async () => {

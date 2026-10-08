@@ -4,10 +4,11 @@
  *
  * It stands in for Tailwind's own scanner, Oxide, which is native code and
  * cannot run in a Cloudflare Worker. The canvas and Spool Cloud scan with this
- * one, so they never disagree about which classes a frame uses. Over the 2,383
- * files of Spool's own canvas it finds every candidate Oxide finds that makes
- * Tailwind emit CSS, and one more, `--spacing`, in two files (spool-cloud
- * research 117). `class-scanner.test.ts` holds it to Oxide.
+ * one, so they never disagree about which classes a frame uses. It finds
+ * every candidate Oxide finds that makes Tailwind emit CSS, and one more,
+ * `--spacing` (spool-cloud research 117). `class-scanner.test.ts` holds it to
+ * Oxide over the committed canvases and UI, and `pnpm test:canvas` over Spool's
+ * own live canvas.
  *
  * A candidate is a run of text between boundaries, offered whole and with
  * trailing punctuation peeled off, and kept only where the characters on
@@ -183,9 +184,35 @@ function bracketBalance(text: string, from: number, to: number): number {
  * `z-(--layer-*)` is no candidate, `z-(--layer)` and `bg-(color:--ink)/50` are.
  */
 function offered(found: Set<string>, candidate: string): void {
+	if (candidate.includes("[") && !propertyNamed(candidate)) return;
 	const shorthand = candidate.includes("-(") ? shorthandAt(candidate) : -1;
 	if (shorthand === -1 || SHORTHAND.test(candidate.slice(shorthand + 1))) found.add(candidate);
 }
+
+/**
+ * Whether a candidate that ends in an arbitrary property, `[mask-type:alpha]`,
+ * names one as Oxide takes it: lowercase and dashes, or a custom property. A
+ * selector in code, `'[data-part="token:screen"]'`, is none. A candidate that
+ * ends in no arbitrary property passes.
+ */
+function propertyNamed(candidate: string): boolean {
+	// the utility is what follows the last ":" outside brackets, its variants before it
+	let depth = 0;
+	let utility = 0;
+	for (let at = 0; at < candidate.length; at++) {
+		const char = candidate[at];
+		if (char === "[" || char === "(") depth++;
+		else if (char === "]" || char === ")") depth--;
+		else if (depth === 0 && char === ":") utility = at + 1;
+	}
+	if (candidate[utility] !== "[") return true;
+	const colon = candidate.indexOf(":", utility);
+	if (colon === -1) return true;
+	return PROPERTY.test(candidate.slice(utility + 1, colon));
+}
+
+/** An arbitrary property's name as Oxide takes one. */
+const PROPERTY = /^(?:[a-z-]+|--[A-Za-z0-9_-]+)$/;
 
 /** Where a candidate's `-(` shorthand starts, outside any arbitrary value in brackets; -1 when it has none. */
 function shorthandAt(candidate: string): number {

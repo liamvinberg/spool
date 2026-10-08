@@ -532,6 +532,9 @@ export function AgentRail({
 									const adding = next.some((image) => !was.attached.includes(image));
 									// A visible new thumbnail is already stored. Removing one is immediate;
 									// its text recovery record prevents an old image returning after refresh.
+									// The thread holds the image before its store lands, so the composer
+									// keeps drawing its own copy rather than the thread's until then.
+									if (adding) write(() => was);
 									if (adding) await onAttach(next, target);
 									write((current) => ({ ...current, attached: next }));
 									if (!adding) await onAttach(next, target);

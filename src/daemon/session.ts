@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
-import { mutateMachineState, type SessionMutationResult } from "../machine-state";
+import { mutateMachineState, type SessionMutationResult, type VisitResult } from "../machine-state";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
 import type { ProjectIcon } from "./project-icon";
+import type { ProjectThumbnail } from "./project-thumbnail";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -28,6 +29,8 @@ export type AppEvent =
 	| { kind: "account" }
 	/** a project's icon changed on disk: its card takes this one (null for none), with no reread of the list */
 	| { kind: "icon"; root: string; icon: ProjectIcon | null }
+	/** a project's thumbnail file changed: its card takes this one, and its top-left frame again for null */
+	| { kind: "thumbnail"; root: string; thumbnail: ProjectThumbnail | null }
 	/** a team project's local copy paused or resumed its sync: its card takes the reason, null once it lifts */
 	| { kind: "sync"; root: string; paused: string | null }
 	// the checkout rebuilt its UI bundle under the pages already running the old
@@ -86,6 +89,11 @@ export function registerAndOpenProject(spoolDir: string, root: string): void {
 /** Open or close one tab against the current list, preserving concurrent changes. */
 export function updateSession(spoolDir: string, root: string, open: boolean): SessionMutationResult {
 	return mutateMachineState(spoolDir, { kind: "update-session", root, open });
+}
+
+/** A registered project's tab became the active one: it is now the most recently opened. */
+export function visitProject(spoolDir: string, root: string): VisitResult {
+	return mutateMachineState(spoolDir, { kind: "visit-project", root });
 }
 
 /** Arrange the tabs somebody dragged, opening and closing nothing. */

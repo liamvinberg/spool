@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountFoot } from "./account-foot";
-import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon } from "./api";
+import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
 import {
 	cancelCloudSignIn,
 	daemonShares,
@@ -10,6 +10,7 @@ import {
 	fetchSession,
 	postForgetProject,
 	postUpgrade,
+	putActiveTab,
 	putSession,
 	putSessionOrder,
 	reloadForNewBundle,
@@ -154,15 +155,35 @@ export function App() {
 		(root: string, icon: ProjectIcon | undefined) => patchCard(root, (card) => withIcon(card, icon)),
 		[patchCard],
 	);
+	const setThumbnail = useCallback(
+		(root: string, thumbnail: ProjectThumbnail | undefined) =>
+			patchCard(root, (card) => withThumbnail(card, thumbnail)),
+		[patchCard],
+	);
+
+	/**
+	 * When this page last reported each tab active, as the daemon answered. A
+	 * list read while that report was on its way says the older time, and a card
+	 * keeps whichever is later.
+	 */
+	const visited = useRef(new Map<string, string>());
+	const withVisits = useCallback(
+		(cards: ProjectCard[]) =>
+			cards.map((card) => {
+				const openedAt = visited.current.get(card.root);
+				return openedAt !== undefined && openedAt > card.openedAt ? { ...card, openedAt } : card;
+			}),
+		[],
+	);
 
 	const refetch = useCallback(async () => {
 		const revision = ++projectRevision.current;
 		const [cards, session] = await Promise.all([fetchProjects(), fetchSession()]);
 		if (revision !== projectRevision.current) return;
-		setProjects(cards);
+		setProjects(withVisits(cards));
 		setProjectsLoaded(true);
 		setOpen(session);
-	}, []);
+	}, [withVisits]);
 
 	/*
 	 * Boot: the session first, alone, and the registry behind it.
@@ -189,11 +210,11 @@ export function App() {
 			const revision = projectRevision.current;
 			const cards = await fetchProjects();
 			if (revision === projectRevision.current) {
-				setProjects(cards);
+				setProjects(withVisits(cards));
 				setProjectsLoaded(true);
 			}
 		})();
-	}, []);
+	}, [withVisits]);
 
 	// a project the path names that the session did not have yet: `spool open` in
 	// a shell lands as a session event, and the tab it opens is the one this page
@@ -203,6 +224,18 @@ export function App() {
 		const root = pathFocus(open);
 		if (root !== null) setFocused(root);
 	}, [booted, focused, open]);
+
+	// Recent is where you were last on this Mac: the tab you land on or switch
+	// to, and none of the others a launch restores. The card moves here as the
+	// daemon answers, so Home is in order the moment you come back to it.
+	useEffect(() => {
+		if (focused === null) return;
+		void putActiveTab(focused).then((openedAt) => {
+			if (openedAt === undefined) return;
+			visited.current.set(focused, openedAt);
+			patchCard(focused, (card) => ({ ...card, openedAt }));
+		});
+	}, [focused, patchCard]);
 
 	const offerUpdate = useCallback((latest: string) => {
 		if (desktopBridge() !== undefined || dismissedLatest.current === latest) return;
@@ -260,6 +293,11 @@ export function App() {
 						const icon = (data as { icon?: ProjectIcon | null }).icon ?? undefined;
 						return setIcon(event.root, icon);
 					}
+					// its thumbnail file changed: the card shows it, or its top-left frame again
+					if (event.kind === "thumbnail" && typeof event.root === "string") {
+						const thumbnail = (data as { thumbnail?: ProjectThumbnail | null }).thumbnail ?? undefined;
+						return setThumbnail(event.root, thumbnail);
+					}
 					if (event.kind === "sync" && typeof event.root === "string") {
 						const paused = (data as { paused?: unknown }).paused;
 						return patchCard(event.root, (card) =>
@@ -281,7 +319,7 @@ export function App() {
 			// or forgotten in a shell across that gap left no other trace here
 			{ onReconnect: () => void refetch() },
 		);
-	}, [refetch, offerUpdate, remapProject, readAccount, setIcon, patchCard]);
+	}, [refetch, offerUpdate, remapProject, readAccount, setIcon, setThumbnail, patchCard]);
 
 	const startUpgrade = useCallback(async () => {
 		setToast({ kind: "updating", stage: "installing" });
@@ -492,7 +530,7 @@ export function App() {
 		});
 	}, [appWindow, openSettings]);
 
-	const icons = useIconChange(setIcon);
+	const icons = useIconChange(setIcon, setThumbnail);
 	const transfer = useProjectTransfer(async (project) => {
 		await refetch();
 		openTab(project);
@@ -514,6 +552,7 @@ export function App() {
 					onExportProject={transfer.exportProject}
 					onChangeIcon={icons.change}
 					onRemoveIcon={icons.remove}
+					onRemoveThumbnail={icons.removeThumbnail}
 					here={here}
 				/>
 			);
@@ -631,6 +670,7 @@ export function App() {
 							onExportProject={transfer.exportProject}
 							onChangeIcon={icons.change}
 							onRemoveIcon={icons.remove}
+							onRemoveThumbnail={icons.removeThumbnail}
 							onOpenProject={(project) => openTab(project)}
 							onForgetProject={(project) => void forgetProject(project)}
 							onTrashProject={setTrashRequest}
@@ -779,6 +819,11 @@ export function App() {
 function withIcon(card: ProjectCard, icon: ProjectIcon | undefined): ProjectCard {
 	const { icon: _was, ...rest } = card;
 	return icon === undefined ? rest : { ...rest, icon };
+}
+
+function withThumbnail(card: ProjectCard, thumbnail: ProjectThumbnail | undefined): ProjectCard {
+	const { thumbnail: _was, ...rest } = card;
+	return thumbnail === undefined ? rest : { ...rest, thumbnail };
 }
 
 function withPause(card: ProjectCard, paused: string | undefined): ProjectCard {

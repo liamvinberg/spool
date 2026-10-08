@@ -103,8 +103,17 @@ import {
 	writeProjectIcon,
 } from "./project-icon";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
+import {
+	createThumbnailWatch,
+	findProjectThumbnail,
+	readProjectThumbnail,
+	removeProjectThumbnail,
+	setThumbnailFromFrame,
+	ThumbnailRefused,
+} from "./project-thumbnail";
 import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import {
+	describeMissingFrame,
 	FRAME_BIRTH,
 	frameDirectories,
 	frameExists,
@@ -138,6 +147,7 @@ import {
 	orderSession,
 	readSession,
 	updateSession,
+	visitProject,
 	watchMachineState,
 } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
@@ -873,9 +883,16 @@ export function createDaemonApp({
 		subscribe: (root, listener) => hub.subscribe(root, listener),
 		changed: (root, icon) => emitAppEvent({ kind: "icon", root, icon: icon ?? null }),
 	});
+	// and its thumbnail: its card refetches what it shows
+	const thumbnailWatch = createThumbnailWatch({
+		subscribe: (root, listener) => hub.subscribe(root, listener),
+		changed: (root, thumbnail) => emitAppEvent({ kind: "thumbnail", root, thumbnail: thumbnail ?? null }),
+	});
 	/** The icon watch rides the hub's watchers, which a really-listening daemon holds open for the booth anyway. */
 	function iconKeeping(): void {
-		if (selfOrigin !== undefined) iconWatch.keeping(registeredRoots());
+		if (selfOrigin === undefined) return;
+		iconWatch.keeping(registeredRoots());
+		thumbnailWatch.keeping(registeredRoots());
 	}
 	const cloudAccount = createCloudAccount({
 		spoolDir,
@@ -1455,6 +1472,25 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
+		// the tab this page landed on or switched to: recent is where you were last
+		// on this Mac. The page that said so updates its own cards; the others hear
+		// nothing, so a tab switch costs no page a walk of every project.
+		.put(
+			"/api/session/active",
+			validator("json", (value, c) => {
+				const { root } = value as { root?: unknown };
+				if (typeof root !== "string") return c.text('an active tab must be { "root": string }', 400);
+				return { root };
+			}),
+			(c) => {
+				const result = visitProject(spoolDir, c.req.valid("json").root);
+				if (result.kind === "unregistered") {
+					return c.text(`not a registered project root: ${result.root}`, 400);
+				}
+				machineStateWatch.acknowledgeRegistry(result.registry);
+				return c.json({ openedAt: result.openedAt });
+			},
+		)
 		// tabs dragged into an arrangement: the list is the whole mutation, and it
 		// opens and closes nothing — a root it no longer names stays open
 		.put(
@@ -1866,9 +1902,10 @@ export function createDaemonApp({
 					const link = followedLink(project.root);
 					const ended = endedWith(project.root);
 					const paused = link === undefined ? null : teamSync.state(project.root).paused;
-					const [summary, icon] = await Promise.all([
+					const [summary, icon, thumbnail] = await Promise.all([
 						summarizeProject(project.root),
 						findProjectIcon(project.root),
+						findProjectThumbnail(project.root),
 					]);
 					return {
 						name: basename(project.root),
@@ -1877,6 +1914,7 @@ export function createDaemonApp({
 						...(link === undefined ? {} : { team: { url: link.url, team: link.team, project: link.project } }),
 						...(ended === undefined ? {} : { ended }),
 						...(icon === undefined ? {} : { icon }),
+						...(thumbnail === undefined ? {} : { thumbnail }),
 						...(paused === null ? {} : { syncPaused: paused }),
 						...summary,
 					};
@@ -1902,6 +1940,18 @@ export function createDaemonApp({
 			const found = await readProjectIcon(project.root);
 			if (found === undefined || found.icon.hash !== hash) return c.text("no such icon", 404);
 			immutableCover(c, iconType(found.icon.path));
+			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+			return c.body(new Uint8Array(found.bytes));
+		})
+		// a project's thumbnail, by its content, exactly as its icon is served
+		.get("/thumbnails/:project/:hash", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const hash = c.req.param("hash");
+			if (!isIconHash(hash)) return c.text("no such thumbnail", 404);
+			const found = await readProjectThumbnail(project.root);
+			if (found === undefined || found.thumbnail.hash !== hash) return c.text("no such thumbnail", 404);
+			immutableCover(c, iconType(found.thumbnail.path));
 			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
 			return c.body(new Uint8Array(found.bytes));
 		})
@@ -1962,6 +2012,54 @@ export function createDaemonApp({
 				iconWatch.saw(root, icon);
 				emitAppEvent({ kind: "icon", root, icon: icon ?? null });
 				return c.json({ icon: icon ?? null });
+			},
+		)
+		// "Set as thumbnail": the frame's still as it is now becomes design/shared/thumbnail.<ext>, the only one there
+		.post(
+			"/api/p/:project/thumbnail",
+			validator("json", (value, c) => {
+				const parsed = z.object({ frame: z.string().min(1) }).safeParse(value);
+				return parsed.success ? parsed.data : c.json({ error: "Expected a frame." }, 400);
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { root } = project;
+				const { frame } = c.req.valid("json");
+				try {
+					if (!frameExists(root, frame)) return c.json({ error: describeMissingFrame(frame) }, 404);
+					const thumbnail = setThumbnailFromFrame(root, frame);
+					thumbnailWatch.saw(root, thumbnail);
+					emitAppEvent({ kind: "thumbnail", root, thumbnail });
+					return c.json({ thumbnail });
+				} catch (error) {
+					if (error instanceof ThumbnailRefused) return c.json({ error: error.message }, 409);
+					if (error instanceof DesignBoundaryError) return c.json({ error: error.message }, 400);
+					return c.json({ error: `Could not set the thumbnail: ${(error as Error).message}` }, 409);
+				}
+			},
+		)
+		// "Remove thumbnail": design/shared/thumbnail.* goes, and the card shows its top-left frame again
+		.post(
+			"/api/projects/thumbnail/remove",
+			validator("json", (value, c) => {
+				const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
+				return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
+			}),
+			(c) => {
+				const { root } = c.req.valid("json");
+				if (!registeredRoots().includes(root))
+					return c.json({ error: "This project is no longer registered." }, 404);
+				if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
+				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
+				try {
+					removeProjectThumbnail(root);
+				} catch (error) {
+					return c.json({ error: `Could not remove the thumbnail: ${(error as Error).message}` }, 409);
+				}
+				thumbnailWatch.saw(root, undefined);
+				emitAppEvent({ kind: "thumbnail", root, thumbnail: null });
+				return c.json({ thumbnail: null });
 			},
 		)
 		.get("/api/p/:project/frames", (c) => {
@@ -3961,6 +4059,7 @@ export function createDaemonApp({
 			for (const stop of boothWatches.values()) stop();
 			boothWatches.clear();
 			iconWatch.close();
+			thumbnailWatch.close();
 			hub.close();
 			updateChecker.stop();
 			const closed = await Promise.allSettled([compiled, ...stoppedEngines, booth.close(), goReader.close()]);

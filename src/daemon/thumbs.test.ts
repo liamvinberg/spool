@@ -7,10 +7,10 @@ import {
 	imageSize,
 	readCaptureError,
 	readCover,
+	readCoverAwaited,
 	readCoverImage,
 	scanCoverSchemes,
 	scanCovers,
-	scanDatedCovers,
 	scanPaces,
 	scanPreBoothCovers,
 	writeCaptureError,
@@ -62,7 +62,7 @@ describe("writing a cover", () => {
 		expect(existsSync(join(storeDir(root), `${cover.hash}.png`))).toBe(true);
 	});
 
-	it("scans every covered frame and exposes its freshness", async () => {
+	it("scans every covered frame, and reads one off the event loop", async () => {
 		const root = project();
 		const home = writeCover(root, "home", JPEG);
 		const cart = writeCover(root, "cart", PNG);
@@ -72,19 +72,15 @@ describe("writing a cover", () => {
 				["home", home],
 			]),
 		);
-		const dated = await scanDatedCovers(root);
-		expect([...dated].map(([frame, held]) => [frame, held.cover]).sort()).toEqual([
-			["cart", cart],
-			["home", home],
-		]);
-		expect(dated.get("home")?.shotAt).toBeTypeOf("number");
+		expect(await readCoverAwaited(root, "home")).toEqual(home);
 	});
 
-	it("dates nothing for a frame whose folder holds no readable cover", async () => {
+	it("reads no cover for a frame whose folder holds no readable cover", async () => {
 		const root = project();
 		mkdirSync(storeDir(root), { recursive: true });
 		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.780.jpg`), JPEG);
-		expect(await scanDatedCovers(root)).toEqual(new Map());
+		expect(await readCoverAwaited(root, "home")).toBeUndefined();
+		expect(await readCoverAwaited(root, "nobody")).toBeUndefined();
 	});
 
 	it("answers only the exact immutable address", () => {

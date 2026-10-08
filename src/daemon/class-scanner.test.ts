@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,12 +24,32 @@ import { compileFrameCss, designStylesheets, ROOT_CSS } from "./tailwind";
  */
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
-const designDir = join(repo, "design");
+
+/** What a frame's closure can hold that is text: what the scanner reads. */
+const SCANNED: ReadonlySet<string> = new Set([".tsx", ".ts", ".jsx", ".js", ".mjs", ".css", ".json", ".html", ".md"]);
+
 /**
- * Spool's own canvas is the corpus, and it is a team project: design/ is out of git, so a fresh checkout (CI's) has
- * none until a signed-in verb fetches it. The corpus is checked wherever it has been.
+ * The corpus every run holds the scanner to, all of it in git: the committed
+ * canvases with their frames and shared code, and the Tailwind TSX of Spool's
+ * own UI and runtime. Fixed, so a run passes or fails the same everywhere.
  */
-const canvas = existsSync(join(designDir, "canvas.json"));
+const committedCanvases = [join(repo, "prototype-editing/design"), join(repo, "fixtures/compile/design")];
+const committedFiles = [
+	...new Set([
+		...committedCanvases.flatMap((canvas) => [...walk(join(canvas, "frames")), ...walk(join(canvas, "shared"))]),
+		...walk(join(repo, "src/ui")),
+		...walk(join(repo, "src/runtime")),
+		...walk(join(repo, "fixtures")),
+	]),
+].filter((file) => SCANNED.has(extname(file)));
+
+/**
+ * A live canvas, swept only on request: `pnpm test:canvas` sweeps Spool's own
+ * design/, a team project out of git whose size and contents change under any
+ * run; `SPOOL_TEST_CANVAS=<design dir>` sweeps another.
+ */
+const live = process.env.SPOOL_TEST_CANVAS;
+const liveCanvas = live === undefined || live === "" ? undefined : live === "1" ? join(repo, "design") : live;
 
 /**
  * Candidates this scanner finds that Oxide does not and that Tailwind builds
@@ -47,22 +67,17 @@ function walk(directory: string): string[] {
 	);
 }
 
-/** Every file a frame's closure can hold: the canvas's frames and shared/, and the repo's fixtures. */
-const files = canvas
-	? [...walk(join(designDir, "frames")), ...walk(join(designDir, "shared")), ...walk(join(repo, "fixtures"))]
-	: [];
-
 function scanned(file: string): ScannedFile {
 	return { content: readFileSync(file, "utf8"), extension: extname(file).slice(1) };
 }
 
 /**
- * Whether Tailwind builds anything from a candidate, with this canvas's own
+ * Whether Tailwind builds anything from a candidate, with a canvas's own
  * tokens: a utility it has CSS for, or a custom property its theme holds, which
  * build() then emits. Asked of Tailwind's design system, one candidate at a
  * time, rather than of build(), which keeps every candidate it has seen.
  */
-async function buildsSomething(): Promise<(candidate: string) => boolean> {
+async function buildsSomething(designDir: string): Promise<(candidate: string) => boolean> {
 	const system = await __unstable__loadDesignSystem(
 		ROOT_CSS,
 		designStylesheets(designDir, diskDesignFiles, pinnedTailwind),
@@ -73,7 +88,62 @@ async function buildsSomething(): Promise<(candidate: string) => boolean> {
 			: system.candidatesToCss([candidate])[0] !== null;
 }
 
-/** The version of a package as installed, which a pin alone doesn't say. */
+/**
+ * Each file scanned alone by both scanners: the candidates Oxide finds that
+ * this one misses, and the ones this one finds besides the documented extras,
+ * of those Tailwind builds something from, each with a file it came from.
+ */
+async function candidatesApart(files: readonly string[], designDir: string) {
+	const builds = await buildsSomething(designDir);
+	const missed = new Map<string, string>();
+	const extra = new Map<string, string>();
+	for (const file of files) {
+		const source = [scanned(file)];
+		const ours = new Set(scanCandidates(source));
+		const theirs = new Set(oxide(source));
+		for (const candidate of theirs) if (!ours.has(candidate)) missed.set(candidate, file);
+		for (const candidate of ours) if (!theirs.has(candidate)) extra.set(candidate, file);
+	}
+	// only what Tailwind builds something from changes a stylesheet
+	for (const found of [missed, extra])
+		for (const candidate of found.keys())
+			if (!builds(candidate) || DOCUMENTED_EXTRAS.has(candidate)) found.delete(candidate);
+	return { missed: Object.fromEntries(missed), extra: Object.fromEntries(extra) };
+}
+
+/** Each frame of a canvas built with both scanners: how many compiled, and which built another stylesheet. */
+async function stylesheetsApart(designDir: string) {
+	const frames = walk(join(designDir, "frames")).filter((file) => file.endsWith("/frame.tsx"));
+	const differ: string[] = [];
+	let compared = 0;
+	await inParallel(frames, 8, async (entry) => {
+		const reads = createDesignReads(designDir, diskDesignFiles);
+		let sourceFiles: string[];
+		try {
+			({ sourceFiles } = await buildDesignEntry(esbuild, {
+				designDir,
+				resolveDir: join(entry, ".."),
+				sourcefile: "<spool-styles>",
+				contents: 'import frame from "./frame.tsx";\nexport default frame;\n',
+				label: entry,
+				files: diskDesignFiles,
+				reads: () => reads,
+			}));
+		} catch {
+			// a frame that does not compile has no stylesheet to compare
+			return;
+		}
+		const sources = cssSources(reads, sourceFiles);
+		const from = { files: diskDesignFiles, tailwind: pinnedTailwind };
+		const ours = await compileFrameCss(designDir, sources, from);
+		const theirs = await compileFrameCss(designDir, sources, { ...from, scan: oxide });
+		compared++;
+		if (ours.css !== theirs.css) differ.push(entry.slice(designDir.length + 1));
+	});
+	return { frames: frames.length, compared, differ: differ.sort() };
+}
+
+/** The installed version of a package, which its pin alone doesn't give. */
 const installed = (name: string): string =>
 	(createRequire(import.meta.url)(`${name}/package.json`) as { version: string }).version;
 
@@ -82,78 +152,62 @@ describe("the class scanner, held to Oxide", () => {
 		expect(installed("@tailwindcss/oxide")).toBe(installed("tailwindcss"));
 	});
 
-	it.runIf(canvas)(
-		"finds every class Oxide finds in each file, and only the documented extra besides",
-		{
-			timeout: 120_000,
-		},
-		async () => {
-			const builds = await buildsSomething();
-			const missed = new Map<string, string>();
-			const extra = new Map<string, string>();
-			for (const file of files) {
-				const source = [scanned(file)];
-				const ours = new Set(scanCandidates(source));
-				const theirs = new Set(oxide(source));
-				for (const candidate of theirs) if (!ours.has(candidate)) missed.set(candidate, file);
-				for (const candidate of ours) if (!theirs.has(candidate)) extra.set(candidate, file);
-			}
-			// only what Tailwind builds something from changes a stylesheet
-			for (const found of [missed, extra])
-				for (const candidate of found.keys()) if (!builds(candidate)) found.delete(candidate);
+	it("finds every class Oxide finds in each committed file, and only the documented extra besides", {
+		timeout: 120_000,
+	}, async () => {
+		// a floor under the corpus, so one moved folder cannot empty it unnoticed
+		expect(committedFiles.length).toBeGreaterThan(250);
+		expect(await candidatesApart(committedFiles, committedCanvases[0] as string)).toEqual({ missed: {}, extra: {} });
+	});
 
-			expect(files.length).toBeGreaterThan(2000);
-			expect(Object.fromEntries(missed)).toEqual({});
-			expect([...extra.keys()].filter((candidate) => !DOCUMENTED_EXTRAS.has(candidate))).toEqual([]);
-		},
-	);
-
-	// what other canvases than Spool's own showed it, each where Oxide takes a
-	// candidate this scanner once missed or took one Oxide does not
-	it.runIf(canvas).each([
+	// what other canvases than the committed ones showed it, each where Oxide
+	// takes a candidate this scanner once missed or took one Oxide does not
+	it.each([
 		["a key", "const [filter, setFilter] = useState<Filter>({ q: '' });"],
 		["a closing bracket", "const [blurRef, blur] = useComputed<HTMLDivElement>(readFilter);"],
 		["a parameter's name", "export function watchVisible(onChange: (visible: boolean) => void) {}"],
 		["a callback's parameter", "const emit = useCallback((block: Block) => setBlocks([block]), []);"],
 		["a shorthand Oxide refuses", '<Note says="Each takes its z-(--layer-*) class and a portal container." />'],
 		["a shorthand inside a value", '<div className="max-h-[calc(100dvh-(--spacing(16)))] overflow-auto" />'],
+		["a selector in code", "const screen = root.querySelector('[data-part=\"token:screen\"]');"],
+		["arbitrary properties", '<div className="[mask-type:alpha] hover:[--glow:1px] md:[-webkit-x:y] [Mask:x]" />'],
 	])("builds what Oxide builds from %s", async (_, content) => {
-		const builds = await buildsSomething();
+		const builds = await buildsSomething(committedCanvases[0] as string);
 		const source = [{ content, extension: "tsx" }];
 
 		expect(scanCandidates(source).filter(builds).sort()).toEqual(oxide(source).filter(builds).sort());
 	});
 
-	it.runIf(canvas)("builds every frame on the canvas the stylesheet Oxide would", { timeout: 300_000 }, async () => {
-		const frames = files.filter((file) => file.startsWith(join(designDir, "frames")) && file.endsWith("/frame.tsx"));
-		const differ: string[] = [];
-		let compared = 0;
-		await inParallel(frames, 8, async (entry) => {
-			const reads = createDesignReads(designDir, diskDesignFiles);
-			let sourceFiles: string[];
-			try {
-				({ sourceFiles } = await buildDesignEntry(esbuild, {
-					designDir,
-					resolveDir: join(entry, ".."),
-					sourcefile: "<spool-styles>",
-					contents: 'import frame from "./frame.tsx";\nexport default frame;\n',
-					label: entry,
-					files: diskDesignFiles,
-					reads: () => reads,
-				}));
-			} catch {
-				// a frame that does not compile has no stylesheet to compare
-				return;
-			}
-			const sources = cssSources(reads, sourceFiles);
-			const from = { files: diskDesignFiles, tailwind: pinnedTailwind };
-			const ours = await compileFrameCss(designDir, sources, from);
-			const theirs = await compileFrameCss(designDir, sources, { ...from, scan: oxide });
-			compared++;
-			if (ours.css !== theirs.css) differ.push(entry.slice(designDir.length + 1));
-		});
+	it.each(committedCanvases.map((canvas) => [canvas.slice(repo.length), canvas]))(
+		"builds every frame of %s the stylesheet Oxide would",
+		{ timeout: 120_000 },
+		async (_, canvas) => {
+			const { frames, compared, differ } = await stylesheetsApart(canvas);
 
-		expect(compared).toBeGreaterThan(800);
+			// every committed frame compiles, so every one is compared
+			expect(compared).toBe(frames);
+			expect(frames).toBeGreaterThan(0);
+			expect(differ).toEqual([]);
+		},
+	);
+});
+
+describe.runIf(liveCanvas !== undefined)("the class scanner, held to Oxide over a live canvas", () => {
+	const designDir = liveCanvas as string;
+
+	it("finds every class Oxide finds in each file, and only the documented extra besides", {
+		timeout: 300_000,
+	}, async () => {
+		const files = [...walk(join(designDir, "frames")), ...walk(join(designDir, "shared"))];
+
+		expect(files.length).toBeGreaterThan(0);
+		expect(await candidatesApart(files, designDir)).toEqual({ missed: {}, extra: {} });
+	});
+
+	it("builds every frame the stylesheet Oxide would", { timeout: 600_000 }, async () => {
+		const { compared, differ } = await stylesheetsApart(designDir);
+
+		expect(compared).toBeGreaterThan(0);
 		expect(differ).toEqual([]);
 	});
 });

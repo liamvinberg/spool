@@ -23,6 +23,7 @@ import type { BranchesTouchingDesign } from "../daemon/history";
 import type { LocatedRange } from "../daemon/locate";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
+import type { ProjectThumbnail } from "../daemon/project-thumbnail";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
@@ -71,6 +72,7 @@ export type {
 	ProjectedFrame,
 	ProjectIcon,
 	Projection,
+	ProjectThumbnail,
 	RungRead,
 	SelectionEntry,
 	SelectionPut,
@@ -136,6 +138,17 @@ export async function fetchSession(): Promise<string[]> {
 
 export function putSession(root: string, open: boolean): void {
 	void client.api.session.$put({ json: { root, open } });
+}
+
+/** The tab this page landed on or switched to; the daemon answers with when its project was opened, now. */
+export async function putActiveTab(root: string): Promise<string | undefined> {
+	try {
+		const res = await client.api.session.active.$put({ json: { root } });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { openedAt: string }).openedAt;
+	} catch {
+		return undefined;
+	}
 }
 
 /** The tabs in the order somebody dragged them into. */
@@ -285,6 +298,24 @@ export async function removeProjectIcon(root: string): Promise<ProjectIcon | und
 	const res = await client.api.projects.icon.remove.$post({ json: { root } });
 	if (!res.ok) throw new Error(await errorText(res));
 	return ((await res.json()) as { icon: ProjectIcon | null }).icon ?? undefined;
+}
+
+/** A project's thumbnail by its content, as its icon is. */
+export function thumbnailUrl(project: string, hash: string): string {
+	return `/thumbnails/${encodeURIComponent(project)}/${hash}`;
+}
+
+/** "Set as thumbnail": the frame's still as it is now becomes the project's design/shared/thumbnail.<ext>. */
+export async function setProjectThumbnail(project: string, frame: string): Promise<ProjectThumbnail> {
+	const res = await client.api.p[":project"].thumbnail.$post({ param: { project }, json: { frame } });
+	if (!res.ok) throw new Error(await errorText(res));
+	return ((await res.json()) as { thumbnail: ProjectThumbnail }).thumbnail;
+}
+
+/** "Remove thumbnail": design/shared/thumbnail.* goes, and the card shows its top-left frame again. */
+export async function removeProjectThumbnail(root: string): Promise<void> {
+	const res = await client.api.projects.thumbnail.remove.$post({ json: { root } });
+	if (!res.ok) throw new Error(await errorText(res));
 }
 
 export async function trashProject(root: string): Promise<void> {
