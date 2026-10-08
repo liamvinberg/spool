@@ -65,6 +65,8 @@ pnpm check        # biome
 
 All three must pass. Run `pnpm test` rather than a single file when your change has behavioral reach beyond one module.
 
+While you work, `pnpm test:changed` runs just the tests closest to what your branch changed, in seconds to a few minutes; the full `pnpm test` is for the end. The suite runs as many files at once as the machine has free cores for (`SPOOL_TEST_WORKERS` overrides it).
+
 Run `pnpm test:performance` on a quiet machine to measure the hand-editing and flow-graph latency budgets. It runs these cases one at a time with no retries. The regular suite checks rendered edits, request counts, file writes and undo; its pass/fail result does not depend on sub-frame wall-clock deadlines while other tests use the same CPUs.
 
 Two things about the edit loop:
