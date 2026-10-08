@@ -38,22 +38,25 @@ it("keeps the agent and mode a person picked across a reload, a new chat and ano
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");
 	writeFrame(other.root, "other", "export default () => <h1>Other</h1>");
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1400, height: 900 } });
-	// every label the agent and mode controls ever drew, from the first paint on
+	// every agent the rail said its chat runs on and every mode it drew, from the first paint on
 	await page.addInitScript(() => {
 		const seen: string[] = [];
 		(window as unknown as { agentLabels: string[] }).agentLabels = seen;
 		new MutationObserver(() => {
-			for (const node of document.querySelectorAll(
-				'[aria-label="Choose agent for this new chat"], [data-fixed-agent], [data-permission-trigger]',
-			)) {
-				const text = node.textContent ?? "";
-				if (seen.at(-1) !== text && !seen.includes(text)) seen.push(text);
+			const engine = document.querySelector("[data-agent-rail]")?.getAttribute("data-agent-rail-engine");
+			const mode = document.querySelector("[data-permission-trigger]")?.textContent;
+			for (const text of [engine, mode]) {
+				if (text && seen.at(-1) !== text && !seen.includes(text)) seen.push(text);
 			}
-		}).observe(document, { subtree: true, childList: true, characterData: true });
+		}).observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
 	});
 	const labels = () => page.evaluate(() => (window as unknown as { agentLabels: string[] }).agentLabels);
 	const rail = page.locator("[data-agent-rail]");
-	const agent = rail.getByRole("button", { name: "Choose agent for this new chat", exact: true });
+	// the agent of a new chat is picked from its group in the model menu (#364)
+	const agent = async (engine: string) => {
+		await rail.getByRole("button", { name: "Choose model", exact: true }).click();
+		await rail.locator(`[data-agent-group="${engine}"] [data-agent-model-row]`).first().click();
+	};
 	const mode = rail.locator("[data-permission-trigger]");
 	const open = async (name: string) => {
 		await page.goto(`${project.url}/p/${encodeURIComponent(name)}`);
@@ -62,37 +65,35 @@ it("keeps the agent and mode a person picked across a reload, a new chat and ano
 		await mode.waitFor();
 	};
 	const settled = async (engine: string, permissions: string) => {
-		await expect.poll(() => agent.textContent()).toBe(engine);
+		await expect.poll(() => rail.getAttribute("data-agent-rail-engine")).toBe(engine);
 		await expect.poll(() => mode.textContent()).toBe(permissions);
 		await expect.poll(() => mode.getAttribute("aria-busy")).toBe("false");
 	};
 
 	await open(project.name);
 	// a machine with nothing saved: the first installed engine, on Auto-edit
-	await settled("Claude Code", "edits");
+	await settled("claude", "Auto-edit");
 	await mode.click();
-	await rail.getByRole("menuitemradio", { name: "bypass", exact: true }).click();
-	await agent.click();
-	await rail.locator('[data-agent-engine="pi"]').click();
-	await settled("pi", "bypass");
+	await rail.locator('[data-permission-mode="bypass"]').click();
+	await agent("pi");
+	await settled("pi", "Full access");
 
 	await page.reload();
 	await page.locator('[data-rail-icon="agent"]').waitFor();
 	const glyph = page.locator('[data-rail-icon="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
-	await settled("pi", "bypass");
-	expect(await labels()).toEqual(["pi", "bypass"]);
+	await settled("pi", "Full access");
+	expect(await labels()).toEqual(["pi", "Full access"]);
 
-	await rail.getByRole("button", { name: "New chat", exact: true }).click();
-	await settled("pi", "bypass");
+	await page.locator('[data-pane-head="agent"] button[aria-label="New chat"]').click();
+	await settled("pi", "Full access");
 	await open(other.name);
-	await settled("pi", "bypass");
-	expect(await labels()).toEqual(["pi", "bypass"]);
+	await settled("pi", "Full access");
+	expect(await labels()).toEqual(["pi", "Full access"]);
 
 	// back to Claude Code, and a mode picked while its turn runs shows at once and sticks
-	await agent.click();
-	await rail.locator('[data-agent-engine="claude"]').click();
-	await settled("Claude Code", "bypass");
+	await agent("claude");
+	await settled("claude", "Full access");
 	const field = rail.locator("textarea");
 	await field.fill("Permission journey");
 	await field.press("Enter");
@@ -102,14 +103,14 @@ it("keeps the agent and mode a person picked across a reload, a new chat and ano
 	if (running === undefined) throw new Error("Claude Code never got the turn");
 	expect(running.spawn.args[running.spawn.args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
 	await mode.click();
-	await rail.getByRole("menuitemradio", { name: "ask", exact: true }).click();
-	await expect.poll(() => mode.textContent()).toBe("ask");
+	await rail.locator('[data-permission-mode="ask"]').click();
+	await expect.poll(() => mode.textContent()).toBe("Ask first");
 	await expect.poll(() => mode.getAttribute("title")).toContain("from the next turn");
 	expect(running.inputs.some((line) => line.includes("set_permission_mode"))).toBe(false);
 	await page.reload();
 	await page.locator('[data-rail-icon="agent"]').waitFor();
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
-	await expect.poll(() => mode.textContent()).toBe("ask");
-	expect(await labels()).not.toContain("bypass");
+	await expect.poll(() => mode.textContent()).toBe("Ask first");
+	expect(await labels()).not.toContain("Full access");
 	running.exit(0);
 });
