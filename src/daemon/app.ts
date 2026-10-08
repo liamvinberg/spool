@@ -29,6 +29,7 @@ import { parseAgentReply } from "./agent-control";
 import { createAgentDefaults } from "./agent-defaults";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
+import { createCodexEngine } from "./agent-engine-codex";
 import { createPiEngine } from "./agent-engine-pi";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
@@ -1121,9 +1122,18 @@ export function createDaemonApp({
 	// behind the control token, the same boundary #41 drew.
 	const executor = agentExecutor ?? claudeExecutor();
 	const engines = new Map<AgentEngineId, AgentEngine>(
-		(agentEngines ?? [createClaudeEngine(executor, agentLook), createPiEngine(spoolDir, executor, agentLook)]).map(
-			(engine) => [engine.id, engine],
-		),
+		(
+			agentEngines ?? [
+				createClaudeEngine(executor, agentLook),
+				createCodexEngine({
+					executor,
+					spoolDir,
+					version,
+					...(agentLook === undefined ? {} : { look: agentLook }),
+				}),
+				createPiEngine(spoolDir, executor, agentLook),
+			]
+		).map((engine) => [engine.id, engine]),
 	);
 
 	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)

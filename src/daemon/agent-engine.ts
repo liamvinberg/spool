@@ -5,7 +5,7 @@ import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
 
 /** The installed agents spool drives, each through its own adapter. */
-export const AGENT_ENGINE_IDS = ["claude", "pi"] as const;
+export const AGENT_ENGINE_IDS = ["claude", "codex", "pi"] as const;
 
 export type AgentEngineId = (typeof AGENT_ENGINE_IDS)[number];
 

@@ -88,3 +88,32 @@ Scrubbed: pi's system prompt sections are markers (`<pi tools section
 elided>`), the scratch project path is `$ROOT` (replayed as the test's own
 project), and home and install paths are `/home/person` and
 `/usr/local/lib/node_modules`. Model and session ids are as recorded.
+
+## Codex app-server sessions
+
+The `codex-*` files are a different shape (#362): whole `codex app-server`
+connections recorded through spool's own Codex engine, as a JSON array of
+`{"in": …}` (a line spool wrote) and `{"out": …}` (a line Codex printed) steps.
+`scriptedAgentExecutor` in `src/test-helpers.ts` replays them: it matches each
+line spool writes against the next `in` by method, prints the `out` steps after
+it with the request ids rewritten to spool's own, and keeps whatever did not
+match in `mismatches`. `$ROOT` in a capture is the spawn's working directory.
+
+All were recorded on `codex-cli` 0.161.0 against a ChatGPT login, on
+`gpt-5.6-luna` at `low` effort, in a scratch git project with a stand-in `spool`
+on the path that only echoes its arguments.
+
+| capture | steps | what it holds |
+| --- | --- | --- |
+| `codex-models.json` | 7 | The offer probe: `model/list` and `config/read`. `gpt-5.6-terra` reports an `ultra` effort. |
+| `codex-account.json` | 6 | The account probe, signed in. |
+| `codex-signed-out.json` | 5 | `account/read` with no login (an empty `CODEX_HOME`); a turn stops here too. |
+| `codex-turn.json` | 28 | A new thread under edits (`on-request`, `workspace-write`): one shell call, then one word. |
+| `codex-resume.json` | 24 | The next turn on that thread, through `thread/resume` with `excludeTurns`. |
+| `codex-ask.json` | 78 | Ask first (`untrusted`): an `apply_patch` into `design/` and `spool skill`, both answered by spool, then `touch outside.txt`, answered by the person. |
+| `codex-bypass.json` | 47 | Bypass (`never`, `danger-full-access`): one shell call with no approval. |
+| `codex-interrupt.json` | 34 | `sleep 30` stopped by `turn/interrupt`; the turn ends `interrupted`. |
+
+Scrubbed: the project path is `$ROOT`, home directories are `/home/user`, the
+account email is `you@example.com`, the ChatGPT account id is zeroed, and
+`config/read`'s reply keeps only the model fields spool reads.

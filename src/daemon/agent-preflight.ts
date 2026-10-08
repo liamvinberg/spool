@@ -75,15 +75,27 @@ export function agentInstalled(
 	/** the bare name each engine spawns: `claude` unless an engine says otherwise */
 	command: string = AGENT_COMMAND,
 ): boolean {
+	return agentPath(env, look, command) !== undefined;
+}
+
+/** The path a bare command resolves to on this PATH, the first one a shell would run. */
+export function agentPath(
+	env: Readonly<Record<string, string | undefined>>,
+	look: Look = runnable,
+	command: string = AGENT_COMMAND,
+): string | undefined {
 	const names = candidates(env, command);
 	for (const dir of (env.PATH ?? "").split(delimiter)) {
 		// an empty entry means the working directory to a shell, and spool is not a shell:
 		// resolving a bare command name against the project root would make a `claude` file
 		// somebody committed into a repo the thing spool spawns
 		if (dir === "") continue;
-		for (const name of names) if (look(join(dir, name))) return true;
+		for (const name of names) {
+			const path = join(dir, name);
+			if (look(path)) return path;
+		}
 	}
-	return false;
+	return undefined;
 }
 
 /**

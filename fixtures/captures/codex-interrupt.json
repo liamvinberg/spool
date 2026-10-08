@@ -1,0 +1,633 @@
+[
+	{
+		"in": {
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"clientInfo": {
+					"name": "spool",
+					"title": "Spool",
+					"version": "0.33.1"
+				},
+				"capabilities": {
+					"experimentalApi": false,
+					"requestAttestation": false,
+					"optOutNotificationMethods": [
+						"mcpServer/startupStatus/updated",
+						"remoteControl/status/changed",
+						"turn/diff/updated",
+						"item/reasoning/summaryTextDelta",
+						"item/reasoning/summaryPartAdded",
+						"item/reasoning/textDelta",
+						"item/commandExecution/outputDelta",
+						"item/fileChange/outputDelta"
+					]
+				}
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 1,
+			"result": {
+				"userAgent": "spool/0.161.0 (Ubuntu 24.4.0; x86_64) unknown (spool; 0.33.1)",
+				"codexHome": "/home/user/.codex",
+				"platformFamily": "unix",
+				"platformOs": "linux"
+			}
+		}
+	},
+	{
+		"in": {
+			"method": "initialized"
+		}
+	},
+	{
+		"in": {
+			"id": 2,
+			"method": "account/read",
+			"params": {}
+		}
+	},
+	{
+		"out": {
+			"method": "account/updated",
+			"params": {
+				"authMode": "chatgpt",
+				"planType": "free"
+			},
+			"emittedAtMs": 1791490804264
+		}
+	},
+	{
+		"out": {
+			"id": 2,
+			"result": {
+				"account": {
+					"type": "chatgpt",
+					"email": "you@example.com",
+					"planType": "free"
+				},
+				"requiresOpenaiAuth": true,
+				"workspaceRouting": {
+					"chatgptAccountId": "00000000-0000-4000-8000-000000000000",
+					"backendOrigin": "https://chatgpt.com",
+					"accountRoutingOverride": "NO_CONSTRAINT"
+				}
+			}
+		}
+	},
+	{
+		"in": {
+			"id": 3,
+			"method": "thread/start",
+			"params": {
+				"cwd": "$ROOT",
+				"approvalPolicy": "on-request",
+				"sandbox": "workspace-write",
+				"model": "gpt-5.6-luna"
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 3,
+			"result": {
+				"thread": {
+					"id": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+					"environments": [
+						{
+							"environmentId": "local",
+							"cwd": "$ROOT",
+							"runtimeWorkspaceRoots": [
+								"$ROOT"
+							]
+						}
+					],
+					"extra": null,
+					"sessionId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+					"forkedFromId": null,
+					"parentThreadId": null,
+					"preview": "",
+					"ephemeral": false,
+					"section": null,
+					"sectionEnteredAt": null,
+					"projectId": null,
+					"historyMode": "paginated",
+					"modelProvider": "openai",
+					"model": "gpt-5.6-luna",
+					"reasoningEffort": null,
+					"createdAt": 1791490804,
+					"updatedAt": 1791490804,
+					"recencyAt": 1791490804,
+					"status": {
+						"type": "idle"
+					},
+					"path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T22-20-04-01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34.jsonl",
+					"cwd": "$ROOT",
+					"cliVersion": "0.161.0",
+					"originator": "spool",
+					"source": "vscode",
+					"canAcceptDirectInput": true,
+					"threadSource": null,
+					"agentNickname": null,
+					"agentRole": null,
+					"gitInfo": null,
+					"name": null,
+					"daybreakEnabled": null,
+					"turns": []
+				},
+				"model": "gpt-5.6-luna",
+				"modelProvider": "openai",
+				"serviceTier": null,
+				"disabledPluginIds": [],
+				"cwd": "$ROOT",
+				"runtimeWorkspaceRoots": [
+					"$ROOT"
+				],
+				"instructionSources": [],
+				"approvalPolicy": "on-request",
+				"approvalsReviewer": "user",
+				"sandbox": {
+					"type": "workspaceWrite",
+					"writableRoots": [],
+					"networkAccess": true,
+					"excludeTmpdirEnvVar": false,
+					"excludeSlashTmp": false
+				},
+				"activePermissionProfile": null,
+				"reasoningEffort": null,
+				"multiAgentMode": "explicitRequestOnly"
+			}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/started",
+			"params": {
+				"thread": {
+					"id": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+					"environments": [
+						{
+							"environmentId": "local",
+							"cwd": "$ROOT",
+							"runtimeWorkspaceRoots": [
+								"$ROOT"
+							]
+						}
+					],
+					"extra": null,
+					"sessionId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+					"forkedFromId": null,
+					"parentThreadId": null,
+					"preview": "",
+					"ephemeral": false,
+					"section": null,
+					"sectionEnteredAt": null,
+					"projectId": null,
+					"historyMode": "paginated",
+					"modelProvider": "openai",
+					"model": "gpt-5.6-luna",
+					"reasoningEffort": null,
+					"createdAt": 1791490804,
+					"updatedAt": 1791490804,
+					"recencyAt": 1791490804,
+					"status": {
+						"type": "idle"
+					},
+					"path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T22-20-04-01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34.jsonl",
+					"cwd": "$ROOT",
+					"cliVersion": "0.161.0",
+					"originator": "spool",
+					"source": "vscode",
+					"canAcceptDirectInput": true,
+					"threadSource": null,
+					"agentNickname": null,
+					"agentRole": null,
+					"gitInfo": null,
+					"name": null,
+					"daybreakEnabled": null,
+					"turns": []
+				}
+			},
+			"emittedAtMs": 1791490804658
+		}
+	},
+	{
+		"in": {
+			"id": 4,
+			"method": "turn/start",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"input": [
+					{
+						"type": "text",
+						"text": "Run the shell command `sleep 30` and then reply with the single word done.",
+						"text_elements": []
+					}
+				],
+				"effort": "low"
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 4,
+			"result": {
+				"turn": {
+					"id": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+					"items": [],
+					"itemsView": "notLoaded",
+					"status": "inProgress",
+					"error": null,
+					"startedAt": null,
+					"completedAt": null,
+					"durationMs": null
+				}
+			}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/status/changed",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"status": {
+					"type": "active",
+					"activeFlags": []
+				}
+			},
+			"emittedAtMs": 1791490804783
+		}
+	},
+	{
+		"out": {
+			"method": "turn/started",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turn": {
+					"id": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+					"items": [],
+					"itemsView": "notLoaded",
+					"status": "inProgress",
+					"error": null,
+					"startedAt": 1791490804,
+					"completedAt": null,
+					"durationMs": null
+				}
+			},
+			"emittedAtMs": 1791490804783
+		}
+	},
+	{
+		"out": {
+			"method": "item/started",
+			"params": {
+				"item": {
+					"type": "userMessage",
+					"id": "01a11d2c-53ac-7553-94a8-65ba1d89f035",
+					"clientId": null,
+					"content": [
+						{
+							"type": "text",
+							"text": "Run the shell command `sleep 30` and then reply with the single word done.",
+							"text_elements": []
+						}
+					]
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"startedAtMs": 1791490806708
+			},
+			"emittedAtMs": 1791490806708
+		}
+	},
+	{
+		"out": {
+			"method": "item/completed",
+			"params": {
+				"item": {
+					"type": "userMessage",
+					"id": "01a11d2c-53ac-7553-94a8-65ba1d89f035",
+					"clientId": null,
+					"content": [
+						{
+							"type": "text",
+							"text": "Run the shell command `sleep 30` and then reply with the single word done.",
+							"text_elements": []
+						}
+					]
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"completedAtMs": 1791490806708
+			},
+			"emittedAtMs": 1791490806724
+		}
+	},
+	{
+		"out": {
+			"method": "item/started",
+			"params": {
+				"item": {
+					"type": "reasoning",
+					"id": "rs_08107484638c8f2d016ac7faf7b0b48191898da74707cd8918",
+					"summary": [],
+					"content": []
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"startedAtMs": 1791490807719
+			},
+			"emittedAtMs": 1791490807719
+		}
+	},
+	{
+		"out": {
+			"method": "item/completed",
+			"params": {
+				"item": {
+					"type": "reasoning",
+					"id": "rs_08107484638c8f2d016ac7faf7b0b48191898da74707cd8918",
+					"summary": [],
+					"content": []
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"completedAtMs": 1791490807720
+			},
+			"emittedAtMs": 1791490807725
+		}
+	},
+	{
+		"out": {
+			"method": "item/started",
+			"params": {
+				"item": {
+					"type": "agentMessage",
+					"id": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+					"text": "",
+					"phase": "commentary",
+					"memoryCitation": null,
+					"delivery": null,
+					"questions": null
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"startedAtMs": 1791490807768
+			},
+			"emittedAtMs": 1791490807768
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": "Running"
+			},
+			"emittedAtMs": 1791490807768
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": " `"
+			},
+			"emittedAtMs": 1791490807795
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": "sleep"
+			},
+			"emittedAtMs": 1791490807795
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": " "
+			},
+			"emittedAtMs": 1791490807795
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": "30"
+			},
+			"emittedAtMs": 1791490807796
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": "`"
+			},
+			"emittedAtMs": 1791490807796
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": " now"
+			},
+			"emittedAtMs": 1791490807796
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"itemId": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+				"delta": "."
+			},
+			"emittedAtMs": 1791490807796
+		}
+	},
+	{
+		"out": {
+			"method": "item/completed",
+			"params": {
+				"item": {
+					"type": "agentMessage",
+					"id": "msg_08107484638c8f2d016ac7faf7ba88819180e1f54201761fe7",
+					"text": "Running `sleep 30` now.",
+					"phase": "commentary",
+					"memoryCitation": null,
+					"delivery": null,
+					"questions": null
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"completedAtMs": 1791490807804
+			},
+			"emittedAtMs": 1791490807811
+		}
+	},
+	{
+		"out": {
+			"method": "item/started",
+			"params": {
+				"item": {
+					"type": "commandExecution",
+					"id": "exec-c47e77f7-ba77-427a-86eb-9cf9bd3c2fed",
+					"pluginId": null,
+					"scriptPath": null,
+					"command": "/usr/bin/zsh -lc 'sleep 30'",
+					"cwd": "$ROOT",
+					"processId": "21853",
+					"source": "unifiedExecStartup",
+					"status": "inProgress",
+					"commandActions": [
+						{
+							"type": "unknown",
+							"command": "sleep 30"
+						}
+					],
+					"aggregatedOutput": null,
+					"exitCode": null,
+					"durationMs": null
+				},
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"startedAtMs": 1791490808420
+			},
+			"emittedAtMs": 1791490808422
+		}
+	},
+	{
+		"in": {
+			"id": 5,
+			"method": "turn/interrupt",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764"
+			}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/tokenUsage/updated",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turnId": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+				"tokenUsage": {
+					"total": {
+						"totalTokens": 15734,
+						"inputTokens": 15648,
+						"cachedInputTokens": 8960,
+						"cacheWriteInputTokens": 0,
+						"outputTokens": 86,
+						"reasoningOutputTokens": 28
+					},
+					"last": {
+						"totalTokens": 15734,
+						"inputTokens": 15648,
+						"cachedInputTokens": 8960,
+						"cacheWriteInputTokens": 0,
+						"outputTokens": 86,
+						"reasoningOutputTokens": 28
+					},
+					"modelContextWindow": 258400
+				}
+			},
+			"emittedAtMs": 1791490808967
+		}
+	},
+	{
+		"out": {
+			"method": "account/rateLimits/updated",
+			"params": {
+				"rateLimits": {
+					"limitId": "codex",
+					"limitName": null,
+					"normalModelSlug": null,
+					"primary": {
+						"usedPercent": 100,
+						"windowDurationMins": 43200,
+						"resetsAt": 1793807958
+					},
+					"secondary": null,
+					"credits": {
+						"hasCredits": true,
+						"unlimited": false,
+						"balance": "62489.8317980000"
+					},
+					"individualLimit": null,
+					"spendControlReached": null,
+					"planType": "free",
+					"rateLimitReachedType": null
+				}
+			},
+			"emittedAtMs": 1791490808967
+		}
+	},
+	{
+		"out": {
+			"id": 5,
+			"result": {}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/status/changed",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"status": {
+					"type": "idle"
+				}
+			},
+			"emittedAtMs": 1791490808986
+		}
+	},
+	{
+		"out": {
+			"method": "turn/completed",
+			"params": {
+				"threadId": "01a11d2c-4a6a-7ba0-bd39-bbef5f2c3a34",
+				"turn": {
+					"id": "01a11d2c-4bbf-76c2-85d4-690f9237e764",
+					"items": [],
+					"itemsView": "notLoaded",
+					"status": "interrupted",
+					"error": null,
+					"startedAt": 1791490804,
+					"completedAt": 1791490808,
+					"durationMs": 4277
+				}
+			},
+			"emittedAtMs": 1791490808986
+		}
+	}
+]
