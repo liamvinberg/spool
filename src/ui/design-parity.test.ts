@@ -108,6 +108,42 @@ describe("the stylesheet the arrival lives in", () => {
 	});
 });
 
+/**
+ * The rail's floats and fades (#364): every popup rises or drops in and leaves the way it
+ * came a little quicker, and the timers that unmount them are these same numbers.
+ */
+describe("the rail's floats", () => {
+	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
+	const TOKENS = canvas ? readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8") : "";
+	const NAMES = ["float-in", "float-out", "drop-in", "drop-out", "fade-in", "fade-out"];
+
+	it("leaves on the timers the rail unmounts by", async () => {
+		const { FADE_OUT_MS, FLOAT_OUT_MS } = await import("./canvas/agent-motion");
+		expect(CSS).toContain(`--animate-agent-float-out: agent-float-out ${FLOAT_OUT_MS}ms`);
+		expect(CSS).toContain(`--animate-agent-drop-out: agent-drop-out ${FLOAT_OUT_MS}ms`);
+		expect(CSS).toContain(`--animate-agent-fade-out: agent-fade-out ${FADE_OUT_MS}ms`);
+		expect(CSS).toContain("--shadow-agent-float:");
+	});
+
+	it("cuts every float in and out when stillness is asked for", () => {
+		const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+		const still = CSS.slice(at, CSS.indexOf("\n}", at));
+		for (const name of NAMES) expect(still).toContain(`.animate-agent-${name}`);
+	});
+
+	it.runIf(canvas)("is mirrored by the design canvas", () => {
+		for (const name of [...NAMES.map((one) => `--animate-agent-${one}:`), "--shadow-agent-float:"]) {
+			const line = CSS.split("\n").find((one) => one.includes(name));
+			expect(line).toBeDefined();
+			expect(TOKENS).toContain(line ?? "");
+		}
+		for (const name of NAMES) {
+			const at = CSS.indexOf(`@keyframes agent-${name} {`);
+			expect(TOKENS).toContain(CSS.slice(at, CSS.indexOf("\n\t}", at)));
+		}
+	});
+});
+
 describe("thread stylesheet", () => {
 	/**
 	 * The close lands on the first line's end, so on hover that corner of the ask fades out

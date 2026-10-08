@@ -105,6 +105,17 @@
 	 * that dropped down from a trigger at the bottom of the rail would be travelling
 	 * away from where it came from */
 	--animate-agent-menu-in: agent-menu-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the rail's floats (#364): a menu rises off the composer and the chat list drops from
+	 * the header, one step up on a hairline and a soft shadow, and each leaves the way it
+	 * came, a little quicker. Nothing in the rail appears or goes in one frame: a thing
+	 * that is not a float fades in and out over the same curve. */
+	--animate-agent-float-in: agent-float-in 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-float-out: agent-float-out 120ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--animate-agent-drop-in: agent-drop-in 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-drop-out: agent-drop-out 120ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--animate-agent-fade-in: agent-fade-in 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-fade-out: agent-fade-out 160ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--shadow-agent-float: 0 8px 24px -6px rgb(0 0 0 / 0.36), 0 2px 6px -2px rgb(0 0 0 / 0.24);
 
 	/* the agent's hand on a frame (#214). Nothing here fades in: every one of these is
 	 * drawn on from where it means something, and the timings are the canonical frame's
@@ -329,6 +340,46 @@
 		}
 	}
 
+	@keyframes agent-float-in {
+		from {
+			opacity: 0;
+			transform: translateY(4px) scale(0.98);
+		}
+	}
+
+	@keyframes agent-float-out {
+		to {
+			opacity: 0;
+			transform: translateY(4px) scale(0.98);
+		}
+	}
+
+	@keyframes agent-drop-in {
+		from {
+			opacity: 0;
+			transform: translateY(-4px) scale(0.98);
+		}
+	}
+
+	@keyframes agent-drop-out {
+		to {
+			opacity: 0;
+			transform: translateY(-4px) scale(0.98);
+		}
+	}
+
+	@keyframes agent-fade-in {
+		from {
+			opacity: 0;
+		}
+	}
+
+	@keyframes agent-fade-out {
+		to {
+			opacity: 0;
+		}
+	}
+
 	@keyframes agent-menu-in {
 		from {
 			opacity: 0;
@@ -468,6 +519,9 @@
 	.animate-agent-word,
 	.animate-agent-step,
 	.animate-agent-menu-in,
+	.animate-agent-float-in,
+	.animate-agent-drop-in,
+	.animate-agent-fade-in,
 	.animate-agent-spin,
 	.animate-agent-wind {
 		animation: none;
@@ -501,6 +555,13 @@
 	 * would sit there at full strength over the words that replaced it — and nothing ends
 	 * the animation that would have taken it down, because it never ran. */
 	.animate-agent-leave {
+		display: none;
+	}
+
+	/* a float or a fade on its way out is out, for the same reason */
+	.animate-agent-float-out,
+	.animate-agent-drop-out,
+	.animate-agent-fade-out {
 		display: none;
 	}
 
