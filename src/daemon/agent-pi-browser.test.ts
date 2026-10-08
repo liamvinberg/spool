@@ -58,27 +58,30 @@ it("shows pi's live models with local ones marked and no mode menu, and opens an
 	await rail.locator("[data-agent-legacy]").waitFor();
 	expect(await rail.textContent()).toContain("Softened the header.");
 	expect(await rail.locator("[data-agent-legacy]").textContent()).toContain("can’t be continued");
+	// and nothing answers it, so there is no agent or mode to pick on it (#364)
+	expect(await rail.getByRole("button", { name: "Choose model", exact: true }).count()).toBe(0);
+	expect(await rail.locator("[data-permission-trigger]").count()).toBe(0);
 
-	await page.locator('button[aria-label="New chat"]').click();
+	await page.locator('[data-pane-head="agent"] button[aria-label="New chat"]').click();
 	const model = rail.getByRole("button", { name: "Choose model", exact: true });
 	await expect.poll(() => model.textContent()).toContain("qwen3-coder:30b");
 	expect(await rail.locator("[data-agent-legacy]").count()).toBe(0);
 	// pi never asks, so there is no mode to pick
 	expect(await rail.locator("[data-permission-trigger]").count()).toBe(0);
 	await model.click();
-	const rows = rail.locator("[data-model-offer]");
+	// pi is the one agent here, so the menu is its group alone, and Claude Code is an install line
+	const menu = rail.locator("[data-agent-model-menu]:not([inert] *)");
+	await expect
+		.poll(() => menu.locator("[data-agent-group]").evaluateAll((all) => all.map((one) => one.dataset.agentGroup)))
+		.toEqual(["pi"]);
+	const rows = menu.locator('[data-agent-group="pi"] [data-agent-model-row]');
 	await expect.poll(() => rows.count()).toBe(2);
-	expect(await rail.locator("[data-model-offer] [data-agent-model-local]").count()).toBe(2);
+	expect(await menu.locator("[data-agent-model-row] [data-agent-model-local]").count()).toBe(2);
+	await menu.getByRole("button", { name: "Get more agents" }).click();
+	await expect
+		.poll(() => menu.locator("[data-agent-install]").evaluateAll((all) => all.map((one) => one.dataset.agentInstall)))
+		.toEqual(["claude", "codex"]);
 	await page.keyboard.press("Escape");
-
-	const agent = rail.getByRole("button", { name: "Choose agent for this new chat", exact: true });
-	expect(await agent.textContent()).toBe("pi");
-	await agent.click();
-	expect(await rail.locator("[data-agent-engine]").evaluateAll((rows) => rows.map((row) => row.textContent))).toEqual([
-		"Claude CodeNot installed on this computer.",
-		"CodexNot installed on this computer.",
-		"piUses your own pi, with its sign-in and models.",
-	]);
 	expect(pi.spawned.every((proc) => proc.mismatches.length === 0)).toBe(true);
 	expect(errors).toEqual([]);
 });
