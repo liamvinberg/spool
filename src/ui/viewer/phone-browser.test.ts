@@ -21,7 +21,12 @@ const FRAMES = "https://frames.test/f/grant/";
 const PATH = "/devosurf/checkout";
 const PHONE = { width: 393, height: 852 };
 const INSETS = { top: 62, bottom: 34 };
-const now = Math.floor(Date.now() / 1000);
+/**
+ * A moment `seconds` before the page asks, in epoch seconds. The fixtures read it
+ * through getters, which the routed JSON evaluates per request, so "2 min ago" holds
+ * however long the cases before took on a loaded runner.
+ */
+const ago = (seconds: number) => Math.floor(Date.now() / 1000) - seconds;
 
 /** A project the size of spool’s own: 105 pages nested five deep, each with a few frames, one of them desktop-sized. */
 function bigCanvas(): ViewerProject["canvas"] {
@@ -54,9 +59,27 @@ const member: ViewerProject = {
 	role: "viewer",
 	covers: { home: "/covers/home" },
 	recent: [
-		{ frame: "menu", by: "jonas", at: now - 120 },
-		{ frame: "area-3/part-2/deep/screen-1", by: "mira", at: now - 7200 },
-		{ frame: "home", by: "ana", at: now - 3 * 86400 },
+		{
+			frame: "menu",
+			by: "jonas",
+			get at() {
+				return ago(120);
+			},
+		},
+		{
+			frame: "area-3/part-2/deep/screen-1",
+			by: "mira",
+			get at() {
+				return ago(7200);
+			},
+		},
+		{
+			frame: "home",
+			by: "ana",
+			get at() {
+				return ago(3 * 86400);
+			},
+		},
 	],
 };
 
@@ -75,7 +98,13 @@ const outsider: ViewerProject = {
 		],
 	},
 	frames: FRAMES,
-	shared: { by: "ana", pages: ["shop"], updated: now - 150 },
+	shared: {
+		by: "ana",
+		pages: ["shop"],
+		get updated() {
+			return ago(150);
+		},
+	},
 };
 
 /**
