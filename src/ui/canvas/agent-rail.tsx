@@ -7,11 +7,12 @@ import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { AgentChoice, ENGINE_NAMES } from "./agent-choice";
+import { Chevron, Float } from "./agent-float";
+import { AgentMenu, engineName } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
-import { AgentModelPicker } from "./agent-model-picker";
+import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
-import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
+import { MODE_NAMES, type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
 import { Caret } from "./agent-said";
@@ -28,7 +29,7 @@ import {
 	type RowState,
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
-import { PaneActions } from "./pane-window";
+import { PaneActions, PaneTitle } from "./pane-window";
 import { ChevronIcon } from "./sidebar";
 import { useStillness } from "./stillness";
 
@@ -225,6 +226,8 @@ export function AgentRail({
 	running,
 	model,
 	limit,
+	context = null,
+	preferred,
 	onSend,
 	onQueue,
 	onUnqueue,
@@ -276,6 +279,10 @@ export function AgentRail({
 	model: AgentModelDeck;
 	/** the usage window, absent until the binary warns, which is most of a session (#122) */
 	limit: AgentLimit | null;
+	/** how full the open thread's window was after its last request, as a share (#364) */
+	context?: number | null;
+	/** the machine's usual agent: what a chat's row and the model trigger leave unsaid (#364) */
+	preferred?: AgentEngineId | null | undefined;
 	/** it says whether the words were taken, and the box only empties on a yes (#234) */
 	onSend: (text: string, sent: AgentSent) => boolean;
 	/** Enter against a running turn: the words are taken and held rather than sent */
@@ -288,7 +295,7 @@ export function AgentRail({
 }) {
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
-	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | "agent" | null>(null);
+	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | null>(null);
 	/** the clock read when the thread list was dropped over the log, or null while it is shut */
 	const [listing, setListing] = useState<number | null>(null);
 	/**
@@ -420,7 +427,7 @@ export function AgentRail({
 	const [modelRequest, requestModel] = useState(0);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<RecoveryActions value={{ login, modelRequest }}>
+		<RecoveryActions value={{ login, modelRequest, preferred }}>
 			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
 				<div data-agent-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
 					{install.none ? (
@@ -432,6 +439,9 @@ export function AgentRail({
 						 * conversation you cannot continue on a machine with no agent on it.
 						 */
 						<div className="flex h-full min-w-[200px] flex-col">
+							<PaneTitle>
+								<span className="px-1.5 font-semibold text-text type-control">Agent</span>
+							</PaneTitle>
 							<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 								<InstallWall install={install} />
 							</div>
@@ -448,17 +458,10 @@ export function AgentRail({
 					    belongs to, and it is where the others are reached from */}
 							<ThreadPlate
 								threads={threads}
-								ready={agentReady}
-								model={model}
 								listing={listing}
 								onList={(at) => {
 									setFooterMenu(null);
 									setListing(at);
-								}}
-								menu={footerMenu === "agent" ? footerMenu : null}
-								onMenu={(menu) => {
-									setListing(null);
-									setFooterMenu(menu);
 								}}
 							/>
 							{/* the list drops over the shelf and the log together, so it hangs off the plate
@@ -491,15 +494,20 @@ export function AgentRail({
 											/>
 										)
 									}
+									queued={queued}
+									onUnqueue={onUnqueue}
 									live={phase === "playing"}
 									spoke={spoke}
 									elapsed={elapsed}
 									jump={jump}
 									onAnswer={onAnswer}
 								/>
-								{listing === null ? null : (
-									<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
-								)}
+								<ThreadDrop
+									threads={threads}
+									preferred={preferred}
+									now={listing}
+									onDone={() => setListing(null)}
+								/>
 							</div>
 							{/* the strip is measured against the composer's own inner width: the same three
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
@@ -548,9 +556,17 @@ export function AgentRail({
 									write((current) => ({ ...current, attached: next }));
 									if (!adding) await onAttach(next, target);
 								}}
-								queued={queued}
 								model={model}
 								limit={limit}
+								context={context}
+								onSwitch={(engine, fresh) => {
+									if (fresh) threads.onNew();
+									model.onEngine?.(engine);
+								}}
+								onNewChat={() => {
+									threads.onNew();
+									setListing(null);
+								}}
 								onSend={(text, sent) => {
 									if (!agentReady || install.missing || login.recovery) return false;
 									const took = onSend(text, sent);
@@ -560,8 +576,12 @@ export function AgentRail({
 									return took;
 								}}
 								running={running}
-								onQueue={onQueue}
-								onUnqueue={onUnqueue}
+								onQueue={(text, sent) => {
+									const took = onQueue(text, sent);
+									// the words wait at the end of the log, so the log follows to show them
+									if (took) setSpoke((count) => count + 1);
+									return took;
+								}}
 								onStop={onStop}
 								onAnswer={onAnswer}
 							/>
@@ -573,127 +593,102 @@ export function AgentRail({
 	);
 }
 
-/* ---------- the threads, on the plate over the log (#136, #161, #200, #205) ----------
- * One panel, and every other conversation reached from the line at the top of it. The
- * plate carries the open thread's ask, the marks of whatever is moving in another thread,
- * a chevron that drops the list over the log, and the plus. The column this replaced put a
- * mark per thread down the rail's outer edge and the rest behind a hover; it was a third
- * edge on a 420px rail, and every thread you were not looking at cost a blank cell. The
- * plate spends one line the rail already spends, and the list is drawn only while it is
- * asked for.
+/* ---------- the threads, on the plate over the log (#136, #161, #200, #205, #364) ----------
+ * One panel, and every other conversation reached from its title. The header holds the
+ * chat's title, which opens the switcher, and the + that starts a new chat, and nothing
+ * else: what is moving in another chat is the dock glyph's one small dot, and who answers
+ * is the composer's. The list drops from the title over the log, one step up on a
+ * hairline and a soft shadow, and leaves the way it came.
  *
- * No collapse caret on the plate: the rail icon that lit the pane is the thing that
- * shuts it, and a second control for the same act was the doubling in miniature.
+ * No collapse caret: the rail icon that lit the pane is the thing that shuts it.
  *
- * Nothing is coloured and nothing re-sorts. State in this rail is motion, the one accent
- * belongs to the selection and to the row that is open, and the order is recency fixed
- * once, so a row never moves out from under a cursor already reaching for it.
+ * Nothing is coloured and nothing re-sorts. State in this rail is motion, and the order is
+ * recency fixed once, so a row never moves out from under a cursor already reaching for it.
  */
 
 /**
- * The plate: which thread this is, what is moving elsewhere, and the way to the rest.
- *
- * The ask is drawn in sentence type because it is a sentence somebody said, and it
- * truncates to the one line the plate has: the list under it is where it wraps. The marks
- * carry no names, which is exactly what the column was, so a ring turning here means
- * something is working in another thread and a dot means one finished while you were
- * here. A thread that is read draws nothing, because the plate says what is moving.
+ * The header: which chat this is, as the switcher's trigger, and the +.
  *
  * `listing` is the clock read when the list was opened, or null while it is shut: the
  * moment the list opened is the moment the ages in it are about.
  */
 function ThreadPlate({
 	threads,
-	ready,
-	model,
-	menu,
-	onMenu,
 	listing,
 	onList,
 }: {
 	threads: Threads;
-	ready: boolean;
-	model: AgentModelDeck;
-	menu: "agent" | null;
-	onMenu: (menu: "agent" | null) => void;
 	listing: number | null;
 	onList: (at: number | null) => void;
 }) {
 	const { list, open, onNew } = threads;
 	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
-	const elsewhere = list.filter((thread) => thread.id !== open && thread.life !== "read");
 	const listed = listing !== null;
-	const plate = useRef<HTMLDivElement>(null);
+	const plate = useRef<HTMLButtonElement>(null);
 	return (
-		<div className="relative z-40 shrink-0 border-border border-b bg-bg">
-			<div ref={plate} data-agent-plate="" className="flex h-11 items-center gap-1 px-3.5">
+		<>
+			{/* the header the pane already has: the title in place of the pane's name, and the + */}
+			<PaneTitle>
 				<button
+					ref={plate}
 					type="button"
 					data-agent-plate-ask=""
+					aria-haspopup="dialog"
 					aria-expanded={listed}
+					title="Switch chat"
 					onClick={() => onList(listed ? null : Date.now())}
-					className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
+					className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-text transition-colors duration-150 hover:bg-surface aria-expanded:bg-surface"
 				>
-					<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
+					<span className="min-w-0 truncate font-semibold type-control">
 						{name === UNSAID ? "New chat" : name}
 					</span>
-					{elsewhere.length === 0 ? null : (
-						<span data-agent-elsewhere="" className="flex shrink-0 items-center gap-1">
-							{elsewhere.map((thread) => (
-								<ThreadMark key={thread.id} life={thread.life} />
-							))}
-						</span>
-					)}
-					<ChevronIcon open={listed} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
+					<Chevron open={listed} className="text-muted" />
 				</button>
-				{/* in the pane's header, where the pane's own verbs are */}
-				<PaneActions>
-					<button
-						type="button"
-						aria-label="New chat"
-						onClick={() => {
-							onList(null);
-							onMenu(null);
-							onNew();
-							plate.current
-								?.closest("[data-agent-rail]")
-								?.querySelector("textarea")
-								?.focus({ preventScroll: true });
-						}}
-						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-colors duration-150 hover:bg-surface hover:text-text"
-					>
-						<PlusIcon />
-					</button>
-				</PaneActions>
-			</div>
-			{ready ? (
-				<AgentChoice model={model} open={menu === "agent"} onOpen={(open) => onMenu(open ? "agent" : null)} />
-			) : (
-				<div className="h-8" />
-			)}
-		</div>
+			</PaneTitle>
+			<PaneActions>
+				<button
+					type="button"
+					aria-label="New chat"
+					onClick={() => {
+						onList(null);
+						onNew();
+						plate.current?.closest("[data-pane]")?.querySelector("textarea")?.focus({ preventScroll: true });
+					}}
+					className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+				>
+					<PlusIcon />
+				</button>
+			</PaneActions>
+		</>
 	);
 }
 
 /**
- * The list, dropped over the log for as long as it is asked for.
+ * The list, dropped from the title over the log for as long as it is asked for.
  *
- * One row per thread: the mark, the ask wrapping to three lines, and under it the frames
- * it wrote or, where it has written none, the last line it drew, with its age on the
- * right. The open row is shaded and carries the accent. A close appears on hover at the
- * top right, off the ask so a miss opens rather than closes, and the end of the first
- * line fades out under it (`.agent-thread-ask` in `ui.css`) rather than the two
- * overprinting.
+ * One row per chat: its title, the agent it runs on only where that is not the usual one,
+ * and its age, quiet, with a turning ring or a dot before the age while it runs or waits
+ * unread. The open row holds the lightest wash. A close appears on hover.
  *
- * It goes the way a menu goes: a press on a row, on the plate, or anywhere else, and
- * escape. The press outside is a backdrop rather than a document listener, which is how
- * the model menu does it; escape is taken on the way down, before the composer or the
- * canvas can read it as theirs, because while the list is up it is the thing escape is
- * about.
+ * It goes the way a menu goes: a press on a row, on the title, or anywhere else, and
+ * escape, taken on the way down before the composer or the canvas can read it as theirs.
  */
-function ThreadDrop({ threads, now, onDone }: { threads: Threads; now: number; onDone: () => void }) {
+function ThreadDrop({
+	threads,
+	preferred,
+	now,
+	onDone,
+}: {
+	threads: Threads;
+	preferred: AgentEngineId | null | undefined;
+	now: number | null;
+	onDone: () => void;
+}) {
 	const { list, open, onOpen, onClose } = threads;
+	const shown = now !== null;
+	const at = useHeld(now) ?? Date.now();
 	useEffect(() => {
+		if (!shown) return;
 		const onKey = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
 			event.preventDefault();
@@ -702,33 +697,35 @@ function ThreadDrop({ threads, now, onDone }: { threads: Threads; now: number; o
 		};
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
-	}, [onDone]);
+	}, [shown, onDone]);
 	return (
 		<>
-			<button
-				type="button"
-				aria-label="close the threads"
-				className="fixed inset-0 z-10 cursor-default"
-				onClick={onDone}
-			/>
-			<div
-				data-agent-threads=""
-				className="absolute inset-x-0 top-0 z-20 animate-agent-menu-in border-border border-b bg-bg p-1.5"
-			>
-				{list.map((thread) => (
-					<ThreadRow
-						key={thread.id}
-						thread={thread}
-						on={thread.id === open}
-						now={now}
-						onPick={() => {
-							onOpen(thread.id);
-							onDone();
-						}}
-						onClose={() => onClose(thread.id)}
-					/>
-				))}
-			</div>
+			{shown ? (
+				<button
+					type="button"
+					aria-label="close the threads"
+					className="fixed inset-0 z-10 cursor-default"
+					onClick={onDone}
+				/>
+			) : null}
+			<Float open={shown} from="down" className="absolute inset-x-2 -top-1 z-20 max-h-[60%] overflow-y-auto p-1">
+				<div role="dialog" aria-label="Chats" data-agent-threads="" className="flex flex-col">
+					{list.map((thread) => (
+						<ThreadRow
+							key={thread.id}
+							thread={thread}
+							on={thread.id === open}
+							named={thread.engine !== undefined && preferred != null && thread.engine !== preferred}
+							now={at}
+							onPick={() => {
+								onOpen(thread.id);
+								onDone();
+							}}
+							onClose={() => onClose(thread.id)}
+						/>
+					))}
+				</div>
+			</Float>
 		</>
 	);
 }
@@ -736,19 +733,20 @@ function ThreadDrop({ threads, now, onDone }: { threads: Threads; now: number; o
 function ThreadRow({
 	thread,
 	on,
+	named,
 	now,
 	onPick,
 	onClose,
 }: {
 	thread: Thread;
 	on: boolean;
+	/** it runs on another agent than the usual one, so the row says which */
+	named: boolean;
 	now: number;
 	onPick: () => void;
 	onClose: () => void;
 }) {
-	// what it did, in one line: where the work landed, or what it was doing where it has
-	// not landed anywhere yet
-	const line = thread.wrote !== "" ? thread.wrote : thread.last !== "" ? thread.last : "nothing yet";
+	const marked = thread.life !== "read";
 	return (
 		<div className="group agent-thread-row relative flex">
 			<button
@@ -758,31 +756,32 @@ function ThreadRow({
 				aria-current={on ? "true" : undefined}
 				onClick={onPick}
 				className={cn(
-					"relative flex min-w-0 flex-1 items-start gap-2.5 rounded-sm px-2 py-2 text-left transition-colors duration-150",
-					on ? "bg-surface/70" : "hover:bg-surface/40",
+					"relative flex h-9 min-w-0 flex-1 items-center gap-3 rounded-sm pr-2 pl-2.5 text-left transition-colors duration-150",
+					on ? "bg-raised" : "hover:bg-raised/60",
 				)}
 			>
-				{on ? (
-					<span className="pointer-events-none absolute inset-y-0 left-0 w-[2px] rounded-full bg-thread" />
-				) : null}
-				<ThreadMark life={thread.life} className="mt-px" />
-				<span className="flex min-w-0 flex-1 flex-col gap-1">
-					<span className={cn("agent-thread-ask line-clamp-3 type-label", "text-text")}>{thread.name}</span>
-					<span className="flex items-center gap-2">
-						<span className="min-w-0 flex-1 truncate text-muted type-detail">{line}</span>
-						<span className="shrink-0 text-muted type-detail">{ageOf(thread.at, now)}</span>
-					</span>
+				<span className="agent-thread-ask min-w-0 flex-1 truncate text-text type-control">
+					{thread.name === UNSAID ? "New chat" : thread.name}
+					{named ? (
+						<span data-agent-thread-engine={thread.engine} className="pl-2 text-muted type-label">
+							{engineName(thread.engine)}
+						</span>
+					) : null}
+				</span>
+				<span className="flex shrink-0 items-center gap-1.5 transition-opacity duration-[180ms] group-focus-within:opacity-0 group-hover:opacity-0">
+					{marked ? <ThreadMark life={thread.life} /> : null}
+					<span className="text-muted type-label tabular-nums">{ageOf(thread.at, now)}</span>
 				</span>
 			</button>
 			{/* a close is a tidy rather than a delete: neither the agent's own session nor
 			    spool's stored picture goes with the row */}
-			<span className="absolute top-2 right-2 opacity-0 transition-opacity duration-[180ms] group-focus-within:opacity-100 group-hover:opacity-100">
+			<span className="absolute top-1/2 right-2 -translate-y-1/2 opacity-0 transition-opacity duration-[180ms] group-focus-within:opacity-100 group-hover:opacity-100">
 				<button
 					type="button"
 					data-agent-thread-close={thread.name}
 					aria-label={`close ${thread.name}`}
 					onClick={onClose}
-					className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted/45 transition-colors duration-150 hover:text-text"
+					className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:text-text"
 				>
 					<CloseIcon />
 				</button>
@@ -1109,6 +1108,8 @@ export function followTo(box: { readonly scrollHeight: number; readonly clientHe
 function Transcript({
 	afterLog,
 	entries,
+	queued,
+	onUnqueue,
 	live,
 	spoke,
 	elapsed,
@@ -1117,6 +1118,9 @@ function Transcript({
 }: {
 	afterLog?: ReactNode;
 	entries: readonly AgentEntry[];
+	/** what waits for this turn to end, drawn at the end of the log (#364) */
+	queued: readonly AgentQueued[];
+	onUnqueue: (id: string) => void;
 	/** whether the turn is still writing, which is the word the chip picks for what is below */
 	live: boolean;
 	/**
@@ -1204,7 +1208,7 @@ function Transcript({
 			return;
 		}
 		setAway(adrift(box));
-	}, [entries, elapsed, follow, spoke]);
+	}, [entries, elapsed, follow, spoke, queued.length]);
 
 	/*
 	 * The pin above re-runs when the list changes; height changes on more than the
@@ -1307,6 +1311,9 @@ function Transcript({
 						</Arrive>
 					))}
 					{afterLog ? <div className="mt-5">{afterLog}</div> : null}
+					<div className={cn(queued.length > 0 && "mt-5")}>
+						<QueueTail queued={queued} onUnqueue={onUnqueue} />
+					</div>
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
@@ -2230,11 +2237,12 @@ function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
  * session has aged out, and otherwise saying the next thing. A question wins over a
  * finished thread, because a parked turn is a live process and there is nothing to start.
  */
-function fieldSays(answering: string | null, finished: boolean): string {
-	if (answering !== null) return "or say it in your own words";
-	return finished ? "say what to change · this starts a new thread" : "say what to change";
+function fieldSays(answering: string | null, finished: boolean, running: boolean): string {
+	if (answering !== null) return "Or say it in your own words";
+	// Enter queues while a turn runs, so the field asks for what follows it (#364)
+	if (running) return "Say what comes next";
+	return finished ? "Say what to change · this starts a new chat" : "Say what to change";
 }
-
 function Composer({
 	thread,
 	ready,
@@ -2252,22 +2260,23 @@ function Composer({
 	onDraft,
 	attached,
 	onAttach,
-	queued,
 	model,
 	limit,
+	context,
 	running,
 	onSend,
 	onQueue,
-	onUnqueue,
 	onStop,
 	onAnswer,
+	onSwitch,
+	onNewChat,
 }: {
 	thread: string;
 	ready: boolean;
 	request: string | undefined;
 	permissions: PermissionDeck | undefined;
-	menu: "models" | "permissions" | "agent" | null;
-	onMenu: (menu: "models" | "permissions" | "agent" | null) => void;
+	menu: "models" | "permissions" | null;
+	onMenu: (menu: "models" | "permissions" | null) => void;
 	phase: TurnPhase;
 	/** how long the request now out has been silent, which is all the stroke reads (#231) */
 	waited: number;
@@ -2301,18 +2310,22 @@ function Composer({
 	 */
 	attached: readonly Attachment[];
 	onAttach: (update: (held: readonly Attachment[]) => readonly Attachment[]) => Promise<void>;
-	queued: readonly AgentQueued[];
 	model: AgentModelDeck;
 	limit: AgentLimit | null;
+	/** how full the window was after the last request, as a share, or null before one said */
+	context: number | null;
 	/** whether a turn is in flight at the instant of the press, off the turn itself (#234) */
 	running: () => boolean;
 	/** both of them say whether the words were taken, and the field empties on a yes (#234) */
 	onSend: (text: string, sent: AgentSent) => boolean;
 	onQueue: (text: string, sent: AgentSent) => boolean;
-	onUnqueue: (id: string) => void;
 	onStop: () => void;
 	onAnswer: (request: string, reply: AgentReply) => void;
+	/** another agent was picked in the menu: in this chat while it is empty, or a new one */
+	onSwitch: (engine: AgentEngineId, fresh: boolean) => void;
+	onNewChat: () => void;
 }) {
+	const [ringOpen, setRingOpen] = useState(false);
 	const currentThread = useRef(thread);
 	currentThread.current = thread;
 	const field = useRef<HTMLTextAreaElement>(null);
@@ -2395,10 +2408,29 @@ function Composer({
 		return true;
 	};
 
+	const submit = (box: HTMLTextAreaElement | null) => {
+		const text = draft.trim();
+		if (text === "") return;
+		// answering answers, busy queues, otherwise sends — the three meanings of
+		// one press, resolved by what the turn is doing (#170)
+		if (answering !== null) {
+			onDraft("");
+			if (box !== null) box.style.height = `${MIN_H}px`;
+			onAnswer(answering, { kind: "said", text });
+			return;
+		}
+		void take(text).then((took) => {
+			if (took && box !== null) box.style.height = `${MIN_H}px`;
+		});
+	};
+	const says = fieldSays(answering, finished, cutting);
+	const file = useRef<HTMLInputElement>(null);
+	const showRing = context !== null && context >= CONTEXT_SHOWN_AT;
+
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: a drop target is not a control, and its keyboard path is the paste the field already takes
 		<div
-			className="relative flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
+			className="relative flex shrink-0 flex-col gap-2 px-3.5 pb-3.5"
 			onDragOver={(event) => {
 				// `items` rather than `files`: while a drag is in flight the data store is in
 				// protected mode and `files` is empty, so a guard that read it would never
@@ -2415,147 +2447,275 @@ function Composer({
 				attachFiles(files);
 			}}
 		>
-			<WindStroke phase={phase} waited={waited} />
-			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
-				<QueueBox queued={queued} onUnqueue={onUnqueue} />
-				{attached.length > 0 && (
-					<div className="flex flex-wrap gap-2">
-						{attached.map((image, index) => (
-							<Attached
-								key={referenceKey(image)}
-								attached={image}
-								onDrop={() => onAttach((held) => held.filter((_, at) => at !== index))}
-							/>
-						))}
-					</div>
-				)}
-				<SelectionStrip strip={strip} pointing={pointing} />
-				{/*
-				 * What the field is for, and what the press will do with it.
-				 *
-				 * #200's word about a thread whose session has aged out lives here rather than in
-				 * the footer: the footer's 18px line went to the model (#184), and "this starts a
-				 * new thread" is a fact about the words being typed rather than about which
-				 * machine is answering.
-				 */}
-				<textarea
-					ref={field}
-					value={draft}
-					rows={3}
-					spellCheck={false}
-					placeholder={fieldSays(answering, finished)}
-					aria-label={fieldSays(answering, finished)}
-					onChange={(event) => {
-						onDraft(event.target.value);
-						resize(event.target);
-					}}
-					onPaste={(event) => {
-						// a screenshot in the clipboard is the commonest reference there is, and
-						// pasting one is how it gets here: a browser never reveals a path, so
-						// there is nothing else a paste could mean
-						const files = attachmentsIn(event.clipboardData);
-						if (files.length === 0) return;
-						event.preventDefault();
-						attachFiles(files);
-					}}
-					onKeyDown={(event) => {
-						if (event.key !== "Enter" || event.shiftKey) return;
-						event.preventDefault();
-						const text = draft.trim();
-						if (text === "") return;
-						// answering answers, busy queues, otherwise sends — the three meanings of
-						// one press, resolved by what the turn is doing (#170)
-						if (answering !== null) {
-							onDraft("");
-							event.currentTarget.style.height = `${MIN_H}px`;
-							onAnswer(answering, { kind: "said", text });
-							return;
-						}
-						const box = event.currentTarget;
-						void take(text).then((took) => {
-							if (took) box.style.height = `${MIN_H}px`;
-						});
-					}}
-					className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted type-body"
-					style={{ height: MIN_H }}
-				/>
-			</div>
 			{permissions?.reason ? (
-				<p role="status" className="text-2xs text-muted leading-4">
+				<p role="status" className="px-1 text-muted type-caption">
 					{permissions.reason}
 				</p>
 			) : null}
-			<div className="relative flex h-[18px] min-w-0 items-center justify-between gap-2.5">
-				<div className="relative flex min-w-0 flex-1 items-center gap-4">
-					{ready ? (
-						<ModelMenu
-							model={model}
-							limit={limit}
-							open={menu === "models"}
-							interrupted={menu !== null && menu !== "models"}
-							onOpen={(next) => onMenu(next ? "models" : null)}
-						/>
-					) : null}
-					{cutting ? <StopButton onStop={onStop} /> : null}
-					{permissions === undefined ? null : (
-						<button
-							ref={permissionTrigger}
-							type="button"
-							data-permission-trigger=""
-							aria-label={`Agent permissions: ${permissions.mode}`}
-							aria-haspopup="menu"
-							aria-expanded={menu === "permissions"}
-							title={
-								permissions.pending
-									? `Agent permissions: ${permissions.mode}, from the next turn`
-									: `Agent permissions: ${permissions.mode}`
-							}
-							aria-busy={permissions.saving}
-							onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
-							onKeyDown={(event) => {
-								if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-									event.preventDefault();
-									onMenu("permissions");
-								}
-							}}
-							className={cn(
-								QUIET,
-								"relative z-30 flex shrink-0 items-center gap-1 py-1 text-muted hover:text-text",
-							)}
-						>
-							{permissions.mode}
-							<ChevronIcon open={menu === "permissions"} className="h-2 w-2 shrink-0" />
-						</button>
+			{/* the box's own frame, which the floats over it are placed against: the box is
+			    not positioned itself, so a menu rising off its foot can stand outside it */}
+			<div className="relative">
+				{/* the stroke runs along the box's top hairline, inside its rounded corners */}
+				<span aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-px block">
+					<WindStroke phase={phase} waited={waited} />
+				</span>
+				<div
+					data-agent-composer=""
+					className="flex min-h-0 flex-col gap-2 rounded-lg border border-border bg-bg px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-muted/45"
+				>
+					{attached.length > 0 && (
+						<div className="flex flex-wrap gap-2">
+							{attached.map((image, index) => (
+								<Attached
+									key={referenceKey(image)}
+									attached={image}
+									onDrop={() => onAttach((held) => held.filter((_, at) => at !== index))}
+								/>
+							))}
+						</div>
 					)}
-					{permissions !== undefined && menu === "permissions" ? (
-						<>
+					<SelectionStrip strip={strip} pointing={pointing} />
+					{/*
+					 * What the field is for, and what the press will do with it.
+					 *
+					 * #200's word about a thread whose session has aged out lives here: "this starts
+					 * a new chat" is a fact about the words being typed rather than about which
+					 * machine is answering. While a turn runs it asks for what comes next, because
+					 * Enter then queues (#364).
+					 */}
+					<textarea
+						ref={field}
+						value={draft}
+						rows={2}
+						spellCheck={false}
+						placeholder={says}
+						aria-label={says}
+						onChange={(event) => {
+							onDraft(event.target.value);
+							resize(event.target);
+						}}
+						onPaste={(event) => {
+							// a screenshot in the clipboard is the commonest reference there is, and
+							// pasting one is how it gets here: a browser never reveals a path, so
+							// there is nothing else a paste could mean
+							const files = attachmentsIn(event.clipboardData);
+							if (files.length === 0) return;
+							event.preventDefault();
+							attachFiles(files);
+						}}
+						onKeyDown={(event) => {
+							if (event.key !== "Enter" || event.shiftKey) return;
+							event.preventDefault();
+							submit(event.currentTarget);
+						}}
+						className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted type-body"
+						style={{ height: MIN_H }}
+					/>
+					{/* the foot: small grey controls, who answers and what it may do on the left,
+					    how full the window is and the send on the right (#364) */}
+					<div className="-mx-1 flex h-7 min-w-0 items-center justify-between gap-2">
+						<div className="flex min-w-0 flex-1 items-center gap-0.5">
 							<button
 								type="button"
-								tabIndex={-1}
-								aria-label="close the permission menu"
-								className="fixed inset-0 z-10 cursor-default"
-								onClick={() => onMenu(null)}
-							/>
-							<PermissionMenu
-								mode={permissions.mode}
-								pending={permissions.pending}
-								engine={ENGINE_NAMES[model.engine ?? "claude"]}
-								trigger={permissionTrigger}
-								onChange={(next) => {
-									onMenu(null);
-									permissions.choose(next);
+								aria-label="Attach an image"
+								title="Attach an image"
+								onClick={() => file.current?.click()}
+								className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+							>
+								<ClipIcon />
+							</button>
+							<input
+								ref={file}
+								type="file"
+								accept={[...ATTACHMENT_MEDIA].join(",")}
+								multiple
+								hidden
+								onChange={(event) => {
+									const files = [...(event.currentTarget.files ?? [])].filter((one) =>
+										isSendableAttachment(one),
+									);
+									event.currentTarget.value = "";
+									if (files.length > 0) attachFiles(files);
 								}}
-								onClose={() => onMenu(null)}
 							/>
-						</>
-					) : null}
+							{ready ? (
+								<ModelMenu
+									model={model}
+									limit={limit}
+									open={menu === "models"}
+									interrupted={menu !== null && menu !== "models"}
+									onOpen={(next) => onMenu(next ? "models" : null)}
+									onSwitch={onSwitch}
+								/>
+							) : null}
+							{permissions === undefined || model.offer.modes === false ? null : (
+								<>
+									<button
+										ref={permissionTrigger}
+										type="button"
+										data-permission-trigger=""
+										aria-label={`Agent permissions: ${MODE_NAMES[permissions.mode]}`}
+										aria-haspopup="menu"
+										aria-expanded={menu === "permissions"}
+										title={
+											permissions.pending
+												? `${MODE_NAMES[permissions.mode]}, from the next turn. Applies to every chat.`
+												: `${MODE_NAMES[permissions.mode]}. Applies to every chat.`
+										}
+										aria-busy={permissions.saving}
+										onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
+										onKeyDown={(event) => {
+											if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+												event.preventDefault();
+												onMenu("permissions");
+											}
+										}}
+										className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
+									>
+										{MODE_NAMES[permissions.mode]}
+										<Chevron open={menu === "permissions"} />
+									</button>
+									{menu === "permissions" ? (
+										<button
+											type="button"
+											tabIndex={-1}
+											aria-label="close the permission menu"
+											className="fixed inset-0 z-10 cursor-default"
+											onClick={() => onMenu(null)}
+										/>
+									) : null}
+									<Float
+										open={menu === "permissions"}
+										from="up"
+										className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full"
+									>
+										<PermissionMenu
+											mode={permissions.mode}
+											pending={permissions.pending}
+											engine={engineName(model.engine ?? "claude")}
+											trigger={permissionTrigger}
+											onChange={(next) => {
+												onMenu(null);
+												permissions.choose(next);
+											}}
+											onClose={() => onMenu(null)}
+										/>
+									</Float>
+								</>
+							)}
+						</div>
+						<div className="flex shrink-0 items-center gap-1.5">
+							{showRing && context !== null ? (
+								<ContextRing used={context} open={ringOpen} onOpen={setRingOpen} onNewChat={onNewChat} />
+							) : null}
+							{cutting ? (
+								<StopButton onStop={onStop} />
+							) : (
+								<button
+									type="button"
+									aria-label="Send"
+									data-agent-send=""
+									disabled={draft.trim() === ""}
+									onClick={() => submit(field.current)}
+									className="flex h-7 w-7 shrink-0 animate-agent-fade-in items-center justify-center rounded-full bg-text text-bg transition-opacity duration-150 hover:opacity-90 disabled:bg-raised disabled:text-muted"
+								>
+									<SendIcon />
+								</button>
+							)}
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>
 	);
 }
 
-const QUIET = "type-detail";
+/** past this share of the window the ring shows; under it there is nothing to act on (#364) */
+export const CONTEXT_SHOWN_AT = 0.6;
+
+/**
+ * How full the context window is, as a ring with the used share filled in as a wedge, so it
+ * reads as an amount and never as the turning working ring (#364). It shows only past
+ * 60%, and pressed it says how full and the one thing to do about it.
+ */
+function ContextRing({
+	used,
+	open,
+	onOpen,
+	onNewChat,
+}: {
+	used: number;
+	open: boolean;
+	onOpen: (open: boolean) => void;
+	onNewChat: () => void;
+}) {
+	const share = Math.min(1, Math.max(0, used));
+	const said = `${Math.round(share * 100)}% of context used.`;
+	const turn = share * 2 * Math.PI;
+	const r = 3.5;
+	const x = 7 + r * Math.sin(turn);
+	const y = 7 - r * Math.cos(turn);
+	const wedge =
+		share >= 0.999
+			? `M7 ${7 - r}A${r} ${r} 0 1 1 6.99 ${7 - r}Z`
+			: `M7 7V${7 - r}A${r} ${r} 0 ${share > 0.5 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)}Z`;
+	return (
+		<span className="flex">
+			<button
+				type="button"
+				aria-label={said}
+				aria-expanded={open}
+				title={said}
+				data-agent-context={Math.round(share * 100)}
+				onClick={() => onOpen(!open)}
+				className="relative z-30 flex h-7 w-7 animate-agent-fade-in items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
+			>
+				<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
+					<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
+					<path d={wedge} fill="currentColor" />
+				</svg>
+			</button>
+			{open ? (
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-label="close the context note"
+					className="fixed inset-0 z-10 cursor-default"
+					onClick={() => onOpen(false)}
+				/>
+			) : null}
+			<Float open={open} from="up" className="absolute right-0 bottom-full z-30 mb-2 w-[288px] max-w-full">
+				<div
+					role="dialog"
+					aria-label="Context"
+					data-agent-context-note=""
+					onKeyDown={(event) => {
+						if (event.key !== "Escape") return;
+						event.preventDefault();
+						event.stopPropagation();
+						onOpen(false);
+					}}
+					className="flex items-center gap-4 py-3 pr-3 pl-4"
+				>
+					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span className="text-text type-control tabular-nums">{said}</span>
+						<span className="text-muted type-label">A new chat starts fresh.</span>
+					</span>
+					<button
+						type="button"
+						onClick={() => {
+							onOpen(false);
+							onNewChat();
+						}}
+						className="h-7 shrink-0 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+					>
+						New chat
+					</button>
+				</div>
+			</Float>
+		</span>
+	);
+}
 
 function ModelMenu(props: {
 	model: AgentModelDeck;
@@ -2563,113 +2723,143 @@ function ModelMenu(props: {
 	open: boolean;
 	onOpen: (open: boolean) => void;
 	interrupted: boolean;
+	onSwitch: (engine: AgentEngineId, fresh: boolean) => void;
 }) {
 	const recovery = useContext(RecoveryActions);
-	return <AgentModelPicker {...props} login={recovery?.login} modelRequest={recovery?.modelRequest} />;
+	const { model, limit, open, onOpen, onSwitch } = props;
+	return (
+		<AgentMenu
+			project={model.project ?? ""}
+			model={model}
+			preferred={recovery?.preferred}
+			started={model.started === true}
+			limit={limit}
+			login={recovery?.login}
+			open={open}
+			onOpen={onOpen}
+			onSwitch={onSwitch}
+		/>
+	);
+}
+
+/** a paperclip on the 16 grid: attach */
+function ClipIcon() {
+	return (
+		<svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+			<path
+				d="m12.75 7.5-4.9 4.9a3 3 0 0 1-4.25-4.25l5.3-5.3a2 2 0 0 1 2.83 2.83L6.5 10.9a1 1 0 0 1-1.41-1.41l4.6-4.6"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** an arrow up: send */
+function SendIcon() {
+	return (
+		<svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+			<path
+				d="M8 12.5v-9M4 7.5l4-4 4 4"
+				stroke="currentColor"
+				strokeWidth="1.6"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
 }
 
 /**
- * The way out of a turn that is already running (#165).
- *
- * It sits in the footer rather than in the composer box or at the live edge. The box
- * loses because spool has no send button to morph — Enter sends — so it would be
- * adding the slot it deliberately lacks and leaving it empty whenever no turn runs.
- * The live edge loses because it travels, fastest exactly when rows are piling up,
- * and scrolls away the moment you read back.
- *
- * Stopping requires this button. Escape only dismisses or leaves UI surfaces.
+ * The way out of a turn that is already running (#165): Send becomes Stop for as long as
+ * the turn is a process (#364). Stopping requires this button; Escape only dismisses or
+ * leaves UI surfaces.
  */
 function StopButton({ onStop }: { onStop: () => void }) {
 	return (
 		<button
 			type="button"
+			aria-label="Stop"
+			data-agent-stop=""
 			onClick={onStop}
-			className="flex h-[18px] w-fit shrink-0 items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45"
+			className="flex h-7 w-7 shrink-0 animate-agent-fade-in items-center justify-center rounded-full bg-text transition-opacity duration-150 hover:opacity-90"
 		>
-			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
-			<span className="text-text type-detail">stop</span>
+			<span className="h-2 w-2 rounded-[1.5px] bg-bg" />
 		</button>
 	);
 }
 
-/* ---------- the queue, inside the composer (#170, #176) ----------
- * A queued message has not left your hands. The log is where things that have
- * happened live and the composer is where your words live, so a message committed and
- * not sent stays in the second one — dimmed, because committed is not sent, and above
- * the field, because the thing being written now is the one nearest the cursor.
+/* ---------- the queue, at the end of the log (#170, #364) ----------
+ * A message sent while the turn runs waits at the end of the log, shaped as the ask it
+ * will become and faint, on a dashed hairline, because it has not gone out yet. Firing is
+ * the send it already is: the dashed message becomes the ask in the same place. Take back
+ * puts it back in the box, into the draft that is there — the take-back invariant: words
+ * that leave the queue un-fired land in the composer and nowhere else.
  *
- * It makes three things geometry rather than rules. Firing is the send it already is:
- * the stack leaves this box and lands in the log, the exact journey every message in
- * the transcript already made. Take-back is a drop rather than a jump: the row is
- * sitting on the field it returns to, which is the invariant drawn instead of stated.
- * And the stack is what fires together, because every held message goes out at once
- * and the binary reads all of them as one turn.
- *
- * What it costs is room, and the cost lands on the log: an unbounded queue would push
- * the transcript off the top, so it caps and scrolls inside itself. */
+ * Each message comes and goes on a fade; a queue that fires together leaves together. */
 
-/** as much of the composer as the queue may take before it scrolls inside itself */
-const QUEUE_H = 164;
-
-function QueueBox({ queued, onUnqueue }: { queued: readonly AgentQueued[]; onUnqueue: (id: string) => void }) {
-	if (queued.length === 0) return null;
+function QueueTail({ queued, onUnqueue }: { queued: readonly AgentQueued[]; onUnqueue: (id: string) => void }) {
+	const held = useRef(new Map<string, AgentQueued>());
+	const [, redraw] = useState(0);
+	const live = new Set(queued.map((one) => one.id));
+	for (const one of queued) held.current.set(one.id, one);
+	const drawn = [...held.current.values()];
 	return (
-		<div className="flex min-h-0 flex-col gap-2.5">
-			<div
-				data-agent-queue=""
-				className="pages-scrollbar flex min-h-0 flex-col gap-3.5 overflow-x-hidden overflow-y-auto"
-				style={{ maxHeight: QUEUE_H }}
-			>
-				{queued.map((message) => (
-					<QueuedRow key={message.id} message={message} onDrop={() => onUnqueue(message.id)} />
-				))}
-			</div>
-			{/* the composer's own internal rule, the one the selection strip already sits
-			    above: a second border would read as a second place to type */}
-			<span className="h-px shrink-0 bg-border-raised" />
+		<div data-agent-queue="" className={cn("flex flex-col gap-3", drawn.length === 0 && "hidden")}>
+			{drawn.map((message) => (
+				<QueuedAsk
+					key={message.id}
+					message={message}
+					open={live.has(message.id)}
+					onGone={() => {
+						held.current.delete(message.id);
+						redraw((count) => count + 1);
+					}}
+					onTakeBack={() => onUnqueue(message.id)}
+				/>
+			))}
 		</div>
 	);
 }
 
-/**
- * One waiting message, which is the log's own user row and not a new object.
- *
- * A queued message is the only thing this rail draws that has not happened yet, so it
- * cannot wear the transcript's receipt — but it is about to become one, which is why
- * the anatomy has to match to the pixel: the same 2px rail, the same text size, the
- * same mono line under it that a context sits on. Every one of those is dimmed and
- * the line says `queued`. The moment it fires it is not replaced by a row, it is the
- * row.
- *
- * The rail is the one thing that does not dim: it says whose words these are, and
- * that was settled the moment they were typed. What is provisional is only whether
- * they have gone out.
- *
- * The ✕ stands alone rather than splitting the row's click, because one destination
- * cannot need two targets — words that leave the queue un-fired land back in the box,
- * and there is nowhere else for them to go. It is on hover, in the vocabulary a chip's
- * own removal already uses, because the resting state here is two lines of your own
- * words waiting their turn.
- */
-function QueuedRow({ message, onDrop }: { message: AgentQueued; onDrop: () => void }) {
+function QueuedAsk({
+	message,
+	open,
+	onGone,
+	onTakeBack,
+}: {
+	message: AgentQueued;
+	open: boolean;
+	onGone: () => void;
+	onTakeBack: () => void;
+}) {
+	const shown = useLeaving(open, FADE_OUT_MS);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: told once, when the exit has finished
+	useEffect(() => {
+		if (shown === null) onGone();
+	}, [shown]);
+	if (shown === null) return null;
+	const leaving = shown === "leaving";
 	return (
-		<div data-agent-queued="" className="group relative flex shrink-0 animate-agent-entry flex-col gap-1 pl-3.5">
-			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
-			<span className="flex h-3.5 items-center gap-1.5">
-				<span className="text-muted type-detail">queued</span>
-				{/* no plate behind it, unlike the composer chip's own ✕: in a dimmed row a
-				    filled box is the brightest thing on the line, and the row is what is
-				    being read */}
-				<button
-					type="button"
-					onClick={onDrop}
-					aria-label={`take back ${message.text}`}
-					className="flex h-3.5 w-3.5 items-center justify-center text-muted/0 transition-colors duration-150 hover:text-text group-hover:text-muted/50"
-				>
-					<CloseIcon />
-				</button>
-			</span>
+		<div
+			data-agent-queued={leaving ? undefined : ""}
+			inert={leaving}
+			aria-hidden={leaving || undefined}
+			className={cn("flex flex-col items-end gap-0.5", leaving ? "animate-agent-fade-out" : "animate-agent-fade-in")}
+		>
+			<p className="max-w-[85%] whitespace-pre-wrap rounded-lg border border-border border-dashed px-3 py-2 text-muted type-body">
+				{message.text}
+			</p>
+			<button
+				type="button"
+				onClick={onTakeBack}
+				aria-label={`take back ${message.text}`}
+				className="-mr-1.5 h-7 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-control"
+			>
+				Take back
+			</button>
 		</div>
 	);
 }
@@ -2950,7 +3140,12 @@ function Chip({
 	);
 }
 
-const RecoveryActions = createContext<{ login: LoginDeck; modelRequest: number } | null>(null);
+const RecoveryActions = createContext<{
+	login: LoginDeck;
+	modelRequest: number;
+	/** the machine's usual agent, which the model trigger names only another of (#364) */
+	preferred?: AgentEngineId | null | undefined;
+} | null>(null);
 
 function RecoveryView({
 	install,
@@ -2970,7 +3165,7 @@ function RecoveryView({
 	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
 	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
 	if (engine !== undefined && (install.missing || login.out || recovery?.kind === "login")) {
-		const name = ENGINE_NAMES[engine];
+		const name = engineName(engine);
 		const wanted = INSTALL_LINES.find((agent) => agent.id === engine);
 		return (
 			<div data-recovery={engine} className="flex flex-col gap-3">

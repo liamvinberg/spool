@@ -5578,6 +5578,9 @@ export function ProjectCanvas({
 			icon: <AgentIcon />,
 			hotkey: "panes.agent",
 			working: turn.phase === "playing",
+			titled: true,
+			// another chat is running, waiting on a person, or landed unread (#364)
+			elsewhere: deck.threads.some((thread) => thread.id !== deck.open && thread.life !== "read"),
 			focus: (body) => body.querySelector("textarea")?.focus({ preventScroll: true }),
 			render: ({ width, visible }) => (
 				<AgentRail
@@ -5614,6 +5617,8 @@ export function ProjectCanvas({
 					running={turn.running}
 					model={model}
 					limit={turn.limit}
+					context={turn.context}
+					preferred={agentDefaults.engine}
 					onSend={turn.send}
 					onQueue={turn.queue}
 					onUnqueue={turn.unqueue}

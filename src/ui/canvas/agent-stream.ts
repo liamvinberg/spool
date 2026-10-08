@@ -1205,6 +1205,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				life: lifeFor(thread, open, shown),
 				at: thread.at,
 				last: lastOf(drawn),
+				engine: thread.engine,
 			};
 		});
 

@@ -1,7 +1,8 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import type { AgentPermissions } from "../../settings/registry";
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
+import { CheckIcon } from "../icons";
 import { useSettings } from "../settings";
 import { AGENT_DEFAULTS_RETRY_MS, learnAgentMode } from "./agent-defaults";
 
@@ -86,7 +87,30 @@ export function useAgentPermissions(
 	};
 }
 
-/** The machine's one mode for every engine; each engine enforces its own modes. */
+/** the three modes as a person reads them (#364) */
+export const MODE_NAMES: Readonly<Record<AgentPermissions, string>> = {
+	ask: "Ask first",
+	edits: "Auto-edit",
+	bypass: "Full access",
+};
+
+/** what each mode lets the agent do, in a sentence; `design/` is set as the path it is */
+/** what each mode lets the agent do, the ask line naming whose approval rules it is (#362) */
+const modeSays = (engine: string): Readonly<Record<AgentPermissions, ReactNode>> => ({
+	ask: (
+		<>
+			{engine} asks before it edits outside <span className="type-detail">design/</span> or runs commands.
+		</>
+	),
+	edits: "Edits files without asking. Asks before commands.",
+	bypass: "Never asks.",
+});
+
+/**
+ * The machine's one mode for every chat and every agent (#361, #364): each mode its name
+ * and what it means, the chosen one checked, and a quiet footnote that it is global.
+ * Each engine enforces the mode its own way; the words are the promise all of them keep.
+ */
 export function PermissionMenu({
 	mode,
 	pending,
@@ -114,7 +138,7 @@ export function PermissionMenu({
 			role="menu"
 			aria-label="Agent permissions"
 			data-permission-menu=""
-			className="absolute right-0 bottom-full z-30 mb-2 w-[250px] max-w-full animate-agent-menu-in rounded-md border border-border-raised bg-raised p-1.5"
+			className="flex flex-col p-1"
 			onKeyDown={(event) => {
 				if (event.key === "Escape" || event.key === "Tab") {
 					event.preventDefault();
@@ -142,41 +166,19 @@ export function PermissionMenu({
 					type="button"
 					role="menuitemradio"
 					aria-checked={choice === mode}
-					aria-label={choice}
+					data-permission-mode={choice}
 					onClick={() => onChange(choice)}
-					className={cn(
-						"flex w-full items-start gap-3 rounded-sm px-2 py-2 text-left outline-none hover:bg-surface focus-visible:bg-surface",
-						choice === mode && "bg-surface",
-					)}
+					className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised"
 				>
-					<span className="flex min-w-0 flex-1 flex-col gap-1">
-						<span className="font-mono text-xs text-text leading-4">{choice}</span>
-						<span className="text-2xs text-muted leading-4">
-							{choice === "ask"
-								? `Use ${engine}’s approval rules.`
-								: choice === "edits"
-									? "Allow file edits. Ask before commands."
-									: "Skip tool approvals."}
-						</span>
+					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+						<span className="text-text type-control">{MODE_NAMES[choice]}</span>
+						<span className="text-muted type-label [text-wrap:pretty]">{modeSays(engine)[choice]}</span>
 					</span>
-					<svg
-						aria-hidden="true"
-						viewBox="0 0 16 16"
-						fill="none"
-						className={cn("mt-0.5 h-3 w-3 shrink-0 text-muted", choice !== mode && "invisible")}
-					>
-						<path
-							d="m3.5 8 3 3 6-6"
-							stroke="currentColor"
-							strokeWidth="1.5"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						/>
-					</svg>
+					<CheckIcon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-text", choice !== mode && "invisible")} />
 				</button>
 			))}
-			<p className="border-border border-t px-2 pt-2 pb-1 text-2xs text-muted leading-4">
-				{pending ? "Applies when this turn ends. " : null}Every new chat on this machine starts here.
+			<p className="mx-3 mt-1 border-border border-t pt-2 pb-1.5 text-muted type-caption">
+				{pending ? "Applies when this turn ends. " : null}Applies to every chat.
 			</p>
 		</div>
 	);

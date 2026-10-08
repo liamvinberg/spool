@@ -128,24 +128,24 @@ describe("engine ownership through the daemon", () => {
 
 	it("offers any engine's models to a new chat and keeps a pick for that engine's next chat", async () => {
 		const claude = fakeEngine("claude");
-		const spool = fakeEngine("spool");
-		const { app, path, send } = setup([claude.engine, spool.engine]);
-		const read = await app.request(`${path}/engines/spool/models`);
+		const pi = fakeEngine("pi");
+		const { app, path, send } = setup([claude.engine, pi.engine]);
+		const read = await app.request(`${path}/engines/pi/models`);
 		expect(read.status).toBe(200);
-		expect(((await read.json()) as AgentOffer).models.map((model) => model.value)).toEqual(["spool"]);
-		expect(spool.offers.at(-1)?.ask).toEqual({});
+		expect(((await read.json()) as AgentOffer).models.map((model) => model.value)).toEqual(["pi"]);
+		expect(pi.offers.at(-1)?.ask).toEqual({});
 
-		const chose = await send("engines/spool/model", { value: "spool" });
+		const chose = await send("engines/pi/model", { value: "pi" });
 		expect(chose.status).toBe(200);
-		expect(spool.offers.at(-1)?.choose).toEqual({ value: "spool" });
+		expect(pi.offers.at(-1)?.choose).toEqual({ value: "pi" });
 		// a blank chat on that engine starts from the pick, and the other engine is untouched
-		await app.request(`${path}/threads/${ONE}/models?engine=spool`);
-		expect(spool.offers.at(-1)?.ask).toEqual({ value: "spool" });
+		await app.request(`${path}/threads/${ONE}/models?engine=pi`);
+		expect(pi.offers.at(-1)?.ask).toEqual({ value: "pi" });
 		await app.request(`${path}/engines/claude/models`);
 		expect(claude.offers.at(-1)?.ask).toEqual({});
 
 		expect((await app.request(`${path}/engines/nope/models`)).status).toBe(404);
-		expect((await send("engines/spool/model", { value: "-rf" })).status).toBe(400);
+		expect((await send("engines/pi/model", { value: "-rf" })).status).toBe(400);
 	});
 
 	it("keeps each agent's model choices separate before a chat's first message", async () => {

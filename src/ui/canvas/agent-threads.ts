@@ -1,3 +1,4 @@
+import type { ThreadEngine } from "../../daemon/agent-engine";
 import type { StoredLife } from "../../daemon/agent-threads";
 import { signedOut } from "./agent-preflight";
 import type { TurnPhase } from "./agent-stream";
@@ -60,6 +61,8 @@ export interface Thread {
 	readonly at: number;
 	/** the last line it drew, in the rail's own nouns, or empty where it has drawn none */
 	readonly last: string;
+	/** the agent it runs on, which the switcher names only when it is not the usual one (#364) */
+	readonly engine?: ThreadEngine;
 }
 
 /**
