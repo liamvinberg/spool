@@ -113,6 +113,72 @@ it("shows a team project once however many local copies this Mac holds, opening 
 	expect(callbacks.onOpenProject).toHaveBeenCalledWith(lane);
 });
 
+describe("a project's picture on its cover", () => {
+	const thumbnail = { path: "design/shared/thumbnail.png", hash: "a".repeat(32) };
+	const pictureOf = (host: HTMLElement) => host.querySelector<HTMLImageElement>(".pj-cover-art img");
+
+	it("fits the top-left frame's still whole on the canvas colour, never cropped", () => {
+		const shot = {
+			...project("shop", "2026-09-01T00:00:00Z"),
+			covers: [{ frame: "home", cover: { hash: "b".repeat(32) } }],
+		};
+		const host = mount(createElement(Home, { projects: [shot], ...actions() }));
+		const picture = pictureOf(host);
+		expect(picture?.getAttribute("src")).toBe(`/covers/shop/home/${"b".repeat(32)}`);
+		expect(picture?.classList).toContain("object-contain");
+		expect(picture?.classList).not.toContain("object-cover");
+		expect(host.querySelector(".pj-cover-art")?.classList).toContain("bg-canvas");
+	});
+
+	it("shows the thumbnail file over the top-left frame, fitted the same way", () => {
+		const shot = {
+			...project("shop", "2026-09-01T00:00:00Z"),
+			covers: [{ frame: "home", cover: { hash: "b".repeat(32) } }],
+			thumbnail,
+		};
+		const host = mount(createElement(Home, { projects: [shot], ...actions() }));
+		const picture = pictureOf(host);
+		expect(picture?.getAttribute("src")).toBe(`/thumbnails/shop/${"a".repeat(32)}`);
+		expect(picture?.classList).toContain("object-contain");
+		expect(host.querySelectorAll(".pj-cover-art img")).toHaveLength(1);
+	});
+
+	it("keeps the empty card for a project with no frames and no thumbnail", () => {
+		const host = mount(createElement(Home, { projects: [project("empty", "2026-09-01T00:00:00Z")], ...actions() }));
+		expect(pictureOf(host)).toBeNull();
+	});
+
+	it("shows a team project's thumbnail on its one card", () => {
+		const team = { url: "https://spool.page/devosurf/checkout", team: "devosurf", project: "checkout" };
+		const older = { ...project("checkout", "2026-09-01T00:00:00Z"), team, thumbnail };
+		const lane = { ...project("lane", "2026-09-03T00:00:00Z"), team, thumbnail };
+		const host = mount(createElement(Home, { projects: [older, lane], ...actions() }));
+		expect(host.querySelectorAll(".pj-cover-art img")).toHaveLength(1);
+		expect(pictureOf(host)?.getAttribute("src")).toBe(`/thumbnails/lane/${"a".repeat(32)}`);
+	});
+
+	it("offers Remove thumbnail beside Remove icon only while the project has the file", () => {
+		const onRemoveThumbnail = vi.fn();
+		const withFile = { ...project("shop", "2026-09-02T00:00:00Z"), thumbnail };
+		const without = project("plain", "2026-09-01T00:00:00Z");
+		const host = mount(
+			createElement(Home, {
+				projects: [withFile, without],
+				...actions(),
+				onChangeIcon: vi.fn(),
+				onRemoveIcon: vi.fn(),
+				onRemoveThumbnail,
+			}),
+		);
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage plain"]')?.click());
+		expect(host.textContent).not.toContain("Remove thumbnail");
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage shop"]')?.click());
+		act(() => button(host, "Remove thumbnail").click());
+		expect(onRemoveThumbnail).toHaveBeenCalledExactlyOnceWith(withFile);
+		expect(host.textContent).not.toContain("Remove thumbnail");
+	});
+});
+
 describe("the account at the foot of Home's sidebar", () => {
 	const foot = (account: CloudAccountState) => {
 		const calls = { onSignIn: vi.fn(), onReopen: vi.fn(), onCancel: vi.fn(), onSignOut: vi.fn() };

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountFoot } from "./account-foot";
-import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon } from "./api";
+import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
 import {
 	cancelCloudSignIn,
 	daemonShares,
@@ -155,6 +155,11 @@ export function App() {
 		(root: string, icon: ProjectIcon | undefined) => patchCard(root, (card) => withIcon(card, icon)),
 		[patchCard],
 	);
+	const setThumbnail = useCallback(
+		(root: string, thumbnail: ProjectThumbnail | undefined) =>
+			patchCard(root, (card) => withThumbnail(card, thumbnail)),
+		[patchCard],
+	);
 
 	/**
 	 * When this page last reported each tab active, as the daemon answered. A
@@ -288,6 +293,11 @@ export function App() {
 						const icon = (data as { icon?: ProjectIcon | null }).icon ?? undefined;
 						return setIcon(event.root, icon);
 					}
+					// its thumbnail file changed: the card shows it, or its top-left frame again
+					if (event.kind === "thumbnail" && typeof event.root === "string") {
+						const thumbnail = (data as { thumbnail?: ProjectThumbnail | null }).thumbnail ?? undefined;
+						return setThumbnail(event.root, thumbnail);
+					}
 					if (event.kind === "sync" && typeof event.root === "string") {
 						const paused = (data as { paused?: unknown }).paused;
 						return patchCard(event.root, (card) =>
@@ -309,7 +319,7 @@ export function App() {
 			// or forgotten in a shell across that gap left no other trace here
 			{ onReconnect: () => void refetch() },
 		);
-	}, [refetch, offerUpdate, remapProject, readAccount, setIcon, patchCard]);
+	}, [refetch, offerUpdate, remapProject, readAccount, setIcon, setThumbnail, patchCard]);
 
 	const startUpgrade = useCallback(async () => {
 		setToast({ kind: "updating", stage: "installing" });
@@ -520,7 +530,7 @@ export function App() {
 		});
 	}, [appWindow, openSettings]);
 
-	const icons = useIconChange(setIcon);
+	const icons = useIconChange(setIcon, setThumbnail);
 	const transfer = useProjectTransfer(async (project) => {
 		await refetch();
 		openTab(project);
@@ -542,6 +552,7 @@ export function App() {
 					onExportProject={transfer.exportProject}
 					onChangeIcon={icons.change}
 					onRemoveIcon={icons.remove}
+					onRemoveThumbnail={icons.removeThumbnail}
 					here={here}
 				/>
 			);
@@ -659,6 +670,7 @@ export function App() {
 							onExportProject={transfer.exportProject}
 							onChangeIcon={icons.change}
 							onRemoveIcon={icons.remove}
+							onRemoveThumbnail={icons.removeThumbnail}
 							onOpenProject={(project) => openTab(project)}
 							onForgetProject={(project) => void forgetProject(project)}
 							onTrashProject={setTrashRequest}
@@ -807,6 +819,11 @@ export function App() {
 function withIcon(card: ProjectCard, icon: ProjectIcon | undefined): ProjectCard {
 	const { icon: _was, ...rest } = card;
 	return icon === undefined ? rest : { ...rest, icon };
+}
+
+function withThumbnail(card: ProjectCard, thumbnail: ProjectThumbnail | undefined): ProjectCard {
+	const { thumbnail: _was, ...rest } = card;
+	return thumbnail === undefined ? rest : { ...rest, thumbnail };
 }
 
 function withPause(card: ProjectCard, paused: string | undefined): ProjectCard {
