@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Unseen } from "../../daemon/seen";
-import { charWeights, runsIn, type Weight } from "../../name-match";
+import { charWeights, matchName, runsIn, type Weight } from "../../name-match";
 import { pageName } from "../../page-path";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
@@ -43,9 +43,37 @@ const EMPTY: ReadonlyMap<string, Unseen> = new Map();
 const VISIBLE = 10;
 const ROW = 30;
 
+/**
+ * Something the palette can do rather than somewhere it can land: the pane
+ * layout's commands ride here (#359), so ⌘K stays the one palette. They answer
+ * a typed query only, under the frames, so an empty query is still every frame.
+ */
+export interface PaletteCommand {
+	readonly id: string;
+	readonly label: string;
+	/** the key face beside it */
+	readonly keys?: string | undefined;
+	/** why it cannot run now, said in its row */
+	readonly refused?: string | undefined;
+	readonly run: () => void;
+}
+
+const NO_COMMANDS: readonly PaletteCommand[] = [];
+
+function findCommands(query: string, commands: readonly PaletteCommand[]) {
+	const wanted = query.trim().toLowerCase();
+	if (wanted.length === 0) return [];
+	return commands
+		.map((command) => ({ command, found: matchName(wanted, command.label.toLowerCase()) }))
+		.filter((hit): hit is { command: PaletteCommand; found: NonNullable<typeof hit.found> } => hit.found !== null)
+		.sort((a, b) => b.found.score - a.found.score)
+		.map((hit) => ({ command: hit.command, matched: hit.found.matched }));
+}
+
 export function FindPalette({
 	frames,
 	unseen = EMPTY,
+	commands = NO_COMMANDS,
 	onPick,
 	onLand,
 	onClose,
@@ -62,6 +90,7 @@ export function FindPalette({
 	 * already the rows under the caret when the palette opens.
 	 */
 	unseen?: ReadonlyMap<string, Unseen> | undefined;
+	commands?: readonly PaletteCommand[] | undefined;
 	/** the page under the pick, so the rail can light the row holding it */
 	onPick: (page: string | null) => void;
 	onLand: (name: string) => void;
@@ -76,7 +105,15 @@ export function FindPalette({
 
 	const fresh = useMemo(() => newestFirst(frames), [frames]);
 	const hits = useMemo(() => findFrames(query, fresh), [query, fresh]);
+	const doing = useMemo(() => findCommands(query, commands), [query, commands]);
 	const picked = hits[at];
+	const pickedCommand = doing[at - hits.length];
+	const rows = hits.length + doing.length;
+	const runCommand = (command: PaletteCommand) => {
+		if (command.refused !== undefined) return;
+		command.run();
+		onClose();
+	};
 
 	useEffect(() => {
 		inputRef.current?.focus();
@@ -98,12 +135,12 @@ export function FindPalette({
 		setMore(list !== null && list.scrollTop + list.clientHeight < list.scrollHeight - 1);
 	}, []);
 	useEffect(() => {
-		if (hits.length === 0) {
+		if (rows === 0) {
 			setMore(false);
 			return;
 		}
 		measureMore();
-	}, [hits.length, measureMore]);
+	}, [rows, measureMore]);
 
 	const empty = query.trim().length === 0;
 
@@ -150,13 +187,14 @@ export function FindPalette({
 							onKeyDown={(event) => {
 								if (event.key === "ArrowDown") {
 									event.preventDefault();
-									setAt((n) => Math.min(n + 1, Math.max(hits.length - 1, 0)));
+									setAt((n) => Math.min(n + 1, Math.max(rows - 1, 0)));
 								} else if (event.key === "ArrowUp") {
 									event.preventDefault();
 									setAt((n) => Math.max(n - 1, 0));
 								} else if (event.key === "Enter") {
 									event.preventDefault();
 									if (picked !== undefined) onLand(picked.frame.name);
+									else if (pickedCommand !== undefined) runCommand(pickedCommand.command);
 								} else if (event.key === "Escape") {
 									event.preventDefault();
 									onClose();
@@ -186,11 +224,10 @@ export function FindPalette({
 							// an overflowing list stops half a row short, so the cut is the thing
 							// that says there is more, rather than a trough down the side of it
 							style={{
-								height:
-									Math.min(Math.max(hits.length, 1), VISIBLE) * ROW + 12 + (hits.length > VISIBLE ? 15 : 0),
+								height: Math.min(Math.max(rows, 1), VISIBLE) * ROW + 12 + (rows > VISIBLE ? 15 : 0),
 							}}
 						>
-							{hits.length === 0 ? (
+							{rows === 0 ? (
 								<div className="flex h-[30px] items-center px-4 text-muted type-value">
 									nothing answers to that
 								</div>
@@ -211,6 +248,17 @@ export function FindPalette({
 									/>
 								))
 							)}
+							{doing.map((hit, index) => (
+								<CommandRow
+									key={hit.command.id}
+									command={hit.command}
+									matched={hit.matched}
+									index={hits.length + index}
+									picked={hits.length + index === at}
+									onPoint={() => setAt(hits.length + index)}
+									onRun={() => runCommand(hit.command)}
+								/>
+							))}
 						</div>
 						{more ? (
 							<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/85 to-transparent" />
@@ -291,6 +339,50 @@ function FindRow({
 					<span className="truncate text-muted type-detail">{page}</span>
 				</span>
 			</span>
+		</button>
+	);
+}
+
+function CommandRow({
+	command,
+	matched,
+	index,
+	picked,
+	onPoint,
+	onRun,
+}: {
+	command: PaletteCommand;
+	matched: readonly number[];
+	index: number;
+	picked: boolean;
+	onPoint: () => void;
+	onRun: () => void;
+}) {
+	const weights = charWeights(command.label, matched);
+	const refused = command.refused !== undefined;
+	return (
+		<button
+			type="button"
+			data-at={index}
+			data-command={command.id}
+			aria-disabled={refused}
+			onMouseMove={onPoint}
+			onClick={onRun}
+			className={cn(
+				"relative flex w-full items-center gap-5 px-4 text-left transition-colors duration-100",
+				picked && "bg-control",
+			)}
+			style={{ height: ROW }}
+		>
+			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-thread" /> : null}
+			<span className={cn("min-w-0 flex-1 truncate type-value", refused && "opacity-50")}>
+				{runsIn(command.label, weights).map((run) => (
+					<span key={run.at} className={TONE[run.weight]}>
+						{run.text}
+					</span>
+				))}
+			</span>
+			<span className="shrink-0 text-muted type-detail">{command.refused ?? command.keys ?? ""}</span>
 		</button>
 	);
 }
