@@ -138,6 +138,7 @@ import {
 	orderSession,
 	readSession,
 	updateSession,
+	visitProject,
 	watchMachineState,
 } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
@@ -1453,6 +1454,25 @@ export function createDaemonApp({
 				machineStateWatch.acknowledgeSession(result.session);
 				emitAppEvent({ kind: "session" });
 				return c.body(null, 204);
+			},
+		)
+		// the tab this page landed on or switched to: recent is where you were last
+		// on this Mac. The page that said so updates its own cards; the others hear
+		// nothing, so a tab switch costs no page a walk of every project.
+		.put(
+			"/api/session/active",
+			validator("json", (value, c) => {
+				const { root } = value as { root?: unknown };
+				if (typeof root !== "string") return c.text('an active tab must be { "root": string }', 400);
+				return { root };
+			}),
+			(c) => {
+				const result = visitProject(spoolDir, c.req.valid("json").root);
+				if (result.kind === "unregistered") {
+					return c.text(`not a registered project root: ${result.root}`, 400);
+				}
+				machineStateWatch.acknowledgeRegistry(result.registry);
+				return c.json({ openedAt: result.openedAt });
 			},
 		)
 		// tabs dragged into an arrangement: the list is the whole mutation, and it

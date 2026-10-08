@@ -24,6 +24,8 @@ export type MachineStateMutation =
 	| { kind: "write-session"; session: AppSession }
 	| { kind: "register-project"; root: string }
 	| { kind: "register-and-open-project"; root: string }
+	/** you landed on or switched to a registered project's tab: it becomes the most recent */
+	| { kind: "visit-project"; root: string }
 	| { kind: "update-session"; root: string; open: boolean }
 	| { kind: "order-session"; order: readonly string[] }
 	| { kind: "remove-project"; root: string }
@@ -43,7 +45,13 @@ export type MachineStateMutationResult<Mutation extends MachineStateMutation> = 
 				? ProjectRename
 				: Mutation extends { kind: "set-project-setting" }
 					? { kind: "written" } | { kind: "unregistered"; root: string }
-					: undefined;
+					: Mutation extends { kind: "visit-project" }
+						? VisitResult
+						: undefined;
+
+export type VisitResult =
+	| { kind: "written"; registry: Registry; openedAt: string }
+	| { kind: "unregistered"; root: string };
 
 /**
  * Execute one closed registry/session operation across spool processes.
@@ -85,6 +93,8 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 			}
 			return;
 		}
+		case "visit-project":
+			return visitProjectUnlocked(spoolDir, mutation.root);
 		case "update-session":
 			return updateSessionUnlocked(spoolDir, mutation.root, mutation.open);
 		case "order-session":
@@ -158,6 +168,15 @@ function registerProjectUnlocked(spoolDir: string, root: string, registry = read
 		existing.openedAt = openedAt;
 	}
 	writeMachineRegistry(spoolDir, registry);
+}
+
+function visitProjectUnlocked(spoolDir: string, root: string): VisitResult {
+	const registry = readMachineRegistry(spoolDir);
+	const project = registry.projects.find((candidate) => candidate.root === root);
+	if (project === undefined) return { kind: "unregistered", root };
+	project.openedAt = new Date().toISOString();
+	writeMachineRegistry(spoolDir, registry);
+	return { kind: "written", registry, openedAt: project.openedAt };
 }
 
 function writeMachineRegistry(spoolDir: string, registry: Registry): void {
@@ -253,6 +272,7 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 		}
 		case "register-project":
 		case "register-and-open-project":
+		case "visit-project":
 		case "remove-project": {
 			if (!hasExactDataKeys(mutation, ["kind", "root"])) return undefined;
 			const root = dataValue(mutation, "root");

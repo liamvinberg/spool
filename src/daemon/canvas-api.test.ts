@@ -532,6 +532,44 @@ describe("the app session", () => {
 	});
 
 	/**
+	 * Recent is where you were last on this Mac: the tab the app lands on or
+	 * switches to moves its project to the top of the list, and nothing else does.
+	 */
+	it("lists the project whose tab became active first", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-03T12:00:00.000Z") });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const older = makeProject(spoolDir);
+		vi.setSystemTime(new Date("2026-10-03T12:01:00.000Z"));
+		const newer = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		const names = async () =>
+			((await (await app.request("/api/projects")).json()) as { projects: { name: string }[] }).projects.map(
+				(project) => project.name,
+			);
+		expect(await names()).toEqual([newer.name, older.name]);
+
+		vi.setSystemTime(new Date("2026-10-03T12:02:00.000Z"));
+		const put = await app.request("/api/session/active", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: older.root }),
+		});
+		expect(put.status).toBe(200);
+		expect(await put.json()).toEqual({ openedAt: "2026-10-03T12:02:00.000Z" });
+		expect(await names()).toEqual([older.name, newer.name]);
+
+		const rogue = await app.request("/api/session/active", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: "/somewhere/never-registered" }),
+		});
+		expect(rogue.status).toBe(400);
+	});
+
+	/**
 	 * Tabs dragged into an arrangement. The list is the whole mutation: it says
 	 * where the open tabs stand and nothing about which ones are open, so a root
 	 * it never names stays exactly where it was rather than being closed by it.

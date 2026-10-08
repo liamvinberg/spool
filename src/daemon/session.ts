@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { mutateMachineState, type SessionMutationResult } from "../machine-state";
+import { mutateMachineState, type SessionMutationResult, type VisitResult } from "../machine-state";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
 import type { ProjectIcon } from "./project-icon";
 import { watchFolder } from "./watch-tree";
@@ -86,6 +86,11 @@ export function registerAndOpenProject(spoolDir: string, root: string): void {
 /** Open or close one tab against the current list, preserving concurrent changes. */
 export function updateSession(spoolDir: string, root: string, open: boolean): SessionMutationResult {
 	return mutateMachineState(spoolDir, { kind: "update-session", root, open });
+}
+
+/** A registered project's tab became the active one: it is now the most recently opened. */
+export function visitProject(spoolDir: string, root: string): VisitResult {
+	return mutateMachineState(spoolDir, { kind: "visit-project", root });
 }
 
 /** Arrange the tabs somebody dragged, opening and closing nothing. */
