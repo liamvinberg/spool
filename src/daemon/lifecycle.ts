@@ -403,6 +403,9 @@ export interface EnsureResult {
 	controlToken: string;
 }
 
+/** How long ensureDaemon still looks for a daemon after the one it spawned has exited. */
+const EXITED_GRACE_MS = 3000;
+
 /**
  * Tmux-style auto-start: reuse the healthy daemon or spawn one detached,
  * logging to ~/.spool/daemon.log, and wait until it reports healthy.
@@ -428,19 +431,19 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 		stdio: ["ignore", log, log],
 		env: { ...process.env, ...options.env },
 	});
-	let exited = false;
+	let exitedAt: number | undefined;
 	child.once("exit", () => {
-		exited = true;
+		exitedAt = Date.now();
 	});
 	child.unref();
 	closeSync(log);
 
 	// a child that has exited will never come up, so the deadline only bounds one
-	// still starting; the last probe after its exit catches a sibling that won
-	let gone = false;
+	// still starting. It may have lost the port to a sibling started at the same
+	// moment, whose health probe a loaded machine can slow past a single try, so
+	// the probes go on a little after the exit before giving up.
 	const live = await poll(timeoutMs, async () => {
-		if (gone) return null;
-		gone = exited;
+		if (exitedAt !== undefined && Date.now() - exitedAt > EXITED_GRACE_MS) return null;
 		return liveDaemon(spoolDir);
 	});
 	if (live !== undefined && live !== null)
