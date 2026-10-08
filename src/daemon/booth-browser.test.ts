@@ -391,6 +391,25 @@ async function coveredAndQuiet(project: Awaited<ReturnType<typeof served>>, fram
 	});
 }
 
+/**
+ * Reads the project, the way an open canvas keeps reading it, until the frame
+ * has sat again (`sat`). One read is not always enough: on a slow machine the
+ * sitting for the frame's own write can still be in its tab, timing its redraws,
+ * when the cover is forgotten, and that tab counts the missing picture as the
+ * one it is making; only a read after it lets go owes the frame again.
+ */
+async function readUntilSat(project: Awaited<ReturnType<typeof served>>, sat: () => boolean) {
+	await expect
+		.poll(
+			async () => {
+				if (!sat()) await project.projection();
+				return sat();
+			},
+			{ timeout: 45_000, interval: 500 },
+		)
+		.toBe(true);
+}
+
 it("photographs again a frame whose canvas changed scheme while it sat", { timeout: 120_000 }, async () => {
 	if (!(await shellAvailable())) return;
 	const project = await served();
@@ -414,10 +433,9 @@ export default function Frame() {
 	);
 	await coveredAndQuiet(project, "night");
 	armed = true;
-	await project.projection();
+	await readUntilSat(project, () => !armed);
 
 	await expect.poll(() => project.scheme("night"), { timeout: 45_000 }).toBe("dark");
-	expect(armed).toBe(false);
 });
 
 it("photographs in a new browser the frames that were in one that died, and blames none of them", {
@@ -480,8 +498,7 @@ it("owes a project that left nothing more, even when another folder now answers 
 	writeFrame(project.root, "home", frameOf("#f5391a", hook("home")));
 	await coveredAndQuiet(project, "home");
 	armed = true;
-	await project.projection();
-	await expect.poll(() => armed, { timeout: 45_000 }).toBe(false);
+	await readUntilSat(project, () => !armed);
 
 	// the picture of the old source is owed again only while its project is kept
 	await new Promise((done) => setTimeout(done, 6000));

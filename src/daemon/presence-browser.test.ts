@@ -123,22 +123,57 @@ it("draws a teammate's named pointer, holds the name after they stop, and dims a
 		.poll(async () => Math.hypot((await tip(page, "ben")).x - goal.x, (await tip(page, "ben")).y - goal.y))
 		.toBeLessThan(1);
 
-	// moving: the pointer eases toward each new place, never past it, and the name is said
-	say(BEN, at(420, 260));
+	// moving: the pointer eases toward each new place, never past it, and the name is said. The page notes
+	// every redraw of Ben as it lands, by the wall clock it shares with this test: reading the tip and the pill
+	// from here is too slow and too late on a loaded machine to see the easing or time the hold.
+	await page.evaluate(() => {
+		const cursor = document.querySelector('[data-presence-cursor="ben"]');
+		if (cursor === null) throw new Error("no pointer for ben");
+		const note = () => {
+			const pointer = cursor.querySelector<HTMLElement>(":scope > div");
+			const match = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(pointer?.style.transform ?? "");
+			const field = cursor.closest("[data-presence-layer]")?.getBoundingClientRect();
+			return {
+				at: Date.now(),
+				x: Number(match?.[1]) + 1 + (field?.left ?? 0),
+				y: Number(match?.[2]) + 1 + (field?.top ?? 0),
+				said: cursor.querySelector('[data-presence-pill="ben"][data-presence-said]') !== null,
+			};
+		};
+		const drawn = [note()];
+		(window as unknown as { __benDrawn: typeof drawn }).__benDrawn = drawn;
+		new MutationObserver(() => drawn.push(note())).observe(cursor, {
+			subtree: true,
+			attributes: true,
+			attributeFilter: ["style", "data-presence-said"],
+		});
+	});
+	const drawn = () =>
+		page.evaluate(
+			() => (window as unknown as { __benDrawn: { at: number; x: number; y: number; said: boolean }[] }).__benDrawn,
+		);
 	const stopped = Date.now();
+	say(BEN, at(420, 260));
 	const there = await pagePointOf(page, { x: 420, y: 260 });
-	const path: { x: number; y: number }[] = [];
-	for (let frame = 0; frame < 8; frame += 1) path.push(await tip(page, "ben"));
+	// still: the name holds about 1.4s, then goes
+	const since = async () => {
+		const [before, ...after] = await drawn();
+		const moving = after.findIndex((draw) => draw.x !== before?.x || draw.y !== before?.y);
+		return moving < 0 ? [] : after.slice(moving);
+	};
+	await expect.poll(async () => (await since()).some((draw) => !draw.said)).toBe(true);
+	const path = await since();
 	expect(path.every((point) => point.x <= there.x + 0.5 && point.y <= there.y + 0.5)).toBe(true);
 	expect(new Set(path.map((point) => point.x)).size).toBeGreaterThan(1);
-	// still: the name holds about 1.4s, then goes
-	await page.waitForTimeout(Math.max(0, 1_000 - (Date.now() - stopped)));
-	expect(await page.locator('[data-presence-pill="ben"][data-presence-said]').count()).toBe(1);
-	await expect
-		.poll(() => page.locator('[data-presence-pill="ben"][data-presence-said]').count(), { timeout: 3_000 })
-		.toBe(0);
-	expect(Date.now() - stopped).toBeGreaterThanOrEqual(1_350);
-	expect(Date.now() - stopped).toBeLessThan(2_200);
+	// said from the moment the pointer set off, without a break, until it went quiet once
+	const quiet = path.findIndex((draw) => !draw.said);
+	expect(quiet).toBeGreaterThan(0);
+	expect(path.slice(quiet).every((draw) => !draw.said)).toBe(true);
+	// the team heard Ben after `stopped` and the pointer set off after that, so these bound the hold both ways
+	const [setOff, wentQuiet] = [path[0], path[quiet]];
+	if (setOff === undefined || wentQuiet === undefined) throw new Error("ben never went quiet");
+	expect(wentQuiet.at - stopped).toBeGreaterThanOrEqual(1_350);
+	expect(wentQuiet.at - setOff.at).toBeLessThan(2_200);
 	// a press says it again
 	say(BEN, at(420, 260, { pressed: true }));
 	await expect.poll(() => page.locator('[data-presence-pill="ben"][data-presence-said]').count()).toBe(1);
