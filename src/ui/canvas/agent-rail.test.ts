@@ -3140,12 +3140,12 @@ describe("the queue", () => {
 		// nothing went down the wire mid-turn, and nothing was interrupted for it
 		expect(canvas.turn.prompts).toEqual(["start a habit tracker"]);
 		expect(canvas.turn.stops).toEqual([]);
-		// it waits at the end of the log, shaped as the ask it will become and faint on a
-		// dashed hairline because it has not gone out, with a Take back under it (#364)
+		// it waits at the end of the log, shaped as the ask it will become and faint, its rail
+		// dashed because it has not gone out, with a Take back under it (#364)
 		expect(queuedRows(canvas.host)).toEqual(["hold off on add-habit until i've seen home"]);
 		const row = canvas.host.querySelector("[data-agent-log] [data-agent-queued]");
 		expect(row?.querySelector("p")?.className).toContain("text-muted");
-		expect(row?.querySelector("p")?.className).toContain("border-dashed");
+		expect(row?.querySelector(".border-dashed")).not.toBeNull();
 		const back = row?.querySelector('button[aria-label^="take back"]');
 		expect(back?.textContent).toBe("Take back");
 		expect(back?.getAttribute("aria-label")).toBe("take back hold off on add-habit until i've seen home");
@@ -4773,7 +4773,7 @@ describe("the footer the model hangs off", () => {
  * about it, and pressed it says how full and the one thing to do.
  */
 describe("the context ring", () => {
-	const ring = (host: HTMLElement) => live<HTMLButtonElement>(host, "[data-agent-context]")[0] ?? null;
+	const ring = (host: HTMLElement) => live<HTMLButtonElement>(host, "[data-agent-context-ring]")[0] ?? null;
 	const note = (host: HTMLElement) => live(host, "[data-agent-context-note]")[0] ?? null;
 	const used = (share: number): AgentEvent => ({
 		kind: "context",
@@ -4804,7 +4804,7 @@ describe("the context ring", () => {
 		canvas.turn.close();
 		await settle();
 
-		expect(ring(canvas.host)?.getAttribute("data-agent-context")).toBe("72");
+		expect(ring(canvas.host)?.getAttribute("data-agent-context-ring")).toBe("72");
 		expect(ring(canvas.host)?.getAttribute("aria-label")).toBe("72% of context used.");
 		expect(ring(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
 		// it stands with the send, on the right of the foot

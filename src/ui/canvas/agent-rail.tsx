@@ -2666,7 +2666,7 @@ function ContextRing({
 				aria-label={said}
 				aria-expanded={open}
 				title={said}
-				data-agent-context={Math.round(share * 100)}
+				data-agent-context-ring={Math.round(share * 100)}
 				onClick={() => onOpen(!open)}
 				className="relative z-30 flex h-7 w-7 animate-agent-fade-in items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
 			>
@@ -2847,16 +2847,20 @@ function QueuedAsk({
 			data-agent-queued={leaving ? undefined : ""}
 			inert={leaving}
 			aria-hidden={leaving || undefined}
-			className={cn("flex flex-col items-end gap-0.5", leaving ? "animate-agent-fade-out" : "animate-agent-fade-in")}
+			className={cn(
+				"relative flex flex-col items-start gap-0.5 pl-3.5",
+				leaving ? "animate-agent-fade-out" : "animate-agent-fade-in",
+			)}
 		>
-			<p className="max-w-[85%] whitespace-pre-wrap rounded-lg border border-border border-dashed px-3 py-2 text-muted type-body">
-				{message.text}
-			</p>
+			{/* the ask's own anatomy, its rail dashed and its words faint: it becomes that ask
+			    in the same place when it goes out, rather than jumping to it */}
+			<span className="absolute top-[3px] bottom-[31px] left-0 w-0 border-border-raised border-l-2 border-dashed" />
+			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
 			<button
 				type="button"
 				onClick={onTakeBack}
 				aria-label={`take back ${message.text}`}
-				className="-mr-1.5 h-7 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-control"
+				className="-ml-1.5 h-7 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-control"
 			>
 				Take back
 			</button>
