@@ -190,10 +190,13 @@ export function AgentMenu({
 		void switchTo(engine, entry.value, false);
 	};
 
-	const switchTo = async (engine: AgentEngineId, value: string, fresh: boolean) => {
+	/** another agent, on one of its models, or on whatever it answers with where it offered none */
+	const switchTo = async (engine: AgentEngineId, value: string | null, fresh: boolean) => {
 		show(false);
-		const ask: AgentAsk = { value };
-		await chooseEngineModel(project, engine, ask);
+		if (value !== null) {
+			const ask: AgentAsk = { value };
+			await chooseEngineModel(project, engine, ask);
+		}
 		onSwitch(engine, fresh);
 	};
 
@@ -330,24 +333,41 @@ export function AgentMenu({
 								) : null}
 								{started && !mine ? (
 									<Reveal open={waiting}>
-										<div data-agent-new-chat={engine} className="flex items-center gap-3 pt-1 pr-1 pb-2 pl-7">
-											<p className="min-w-0 flex-1 text-muted type-label">
-												Starts a new chat on {engineName(engine)}. This one stays in your chats.
-											</p>
-											<button
-												type="button"
-												onClick={() => void switchTo(engine, entry.value, true)}
-												className="h-7 shrink-0 rounded-sm bg-text px-2.5 text-bg transition-opacity duration-150 hover:opacity-90 type-control"
-											>
-												New chat
-											</button>
-										</div>
+										<NewChatNote engine={engine} onAccept={() => void switchTo(engine, entry.value, true)} />
 									</Reveal>
 								) : null}
 							</Fragment>
 						);
 					})
 				)}
+				{!mine && !signedOut && others[engine]?.offer?.models.length === 0 && query.trim() === "" ? (
+					/* an agent with nothing to list is still an agent to pick: the row names it, and
+					   it answers on its own default */
+					<button
+						type="button"
+						role="menuitemradio"
+						aria-checked={false}
+						data-agent-model-row={engineName(engine)}
+						data-agent-model-engine={engine}
+						onClick={() =>
+							started
+								? setPending((was) => (was?.engine === engine ? null : { engine, value: "" }))
+								: void switchTo(engine, null, false)
+						}
+						className={cn(
+							"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-text outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised type-control",
+							pending?.engine === engine && "bg-raised",
+						)}
+					>
+						<span className="h-3.5 w-3.5 shrink-0" />
+						{engineName(engine)}
+					</button>
+				) : null}
+				{!mine && started && others[engine]?.offer?.models.length === 0 ? (
+					<Reveal open={pending?.engine === engine && pending.value === ""}>
+						<NewChatNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
+					</Reveal>
+				) : null}
 				{mine && !signedOut && models.length === 0 && query.trim() === "" ? (
 					<p className="px-7 py-2 text-muted type-label">
 						{model.loading ? "Loading models…" : "No models offered."}
@@ -510,6 +530,24 @@ function usageOf(limit: AgentLimit | null, login: LoginDeck | undefined): string
 		return `${recovery.account} limit reached${reset ? ` · resets ${reset}` : ""}`;
 	}
 	return limit === null ? null : limitReadout(limit, Date.now());
+}
+
+/** a model on another agent, picked in a started chat: what happens, and the one act */
+function NewChatNote({ engine, onAccept }: { engine: string; onAccept: () => void }) {
+	return (
+		<div data-agent-new-chat={engine} className="flex items-center gap-3 pt-1 pr-1 pb-2 pl-7">
+			<p className="min-w-0 flex-1 text-muted type-label">
+				Starts a new chat on {engineName(engine)}. This one stays in your chats.
+			</p>
+			<button
+				type="button"
+				onClick={onAccept}
+				className="h-7 shrink-0 rounded-sm bg-text px-2.5 text-bg transition-opacity duration-150 hover:opacity-90 type-control"
+			>
+				New chat
+			</button>
+		</div>
+	);
 }
 
 function Quiet({ children }: { children: ReactNode }) {

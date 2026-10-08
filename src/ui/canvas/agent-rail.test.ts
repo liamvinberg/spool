@@ -5594,12 +5594,11 @@ describe("the stylesheet the stroke lives in", () => {
  * these tests leave it on codex, so nothing that expects Claude comes after them. */
 
 describe("another agent in the menu", () => {
-	/** codex on the machine beside Claude, installed or not; spool is reported and never a group */
+	/** codex on the machine beside Claude, installed or not */
 	const withCodex = (canvas: ReturnType<typeof mount>, installed = true) => {
 		canvas.engines.listed = [
 			{ id: "claude", installed: true },
 			{ id: "codex", installed },
-			{ id: "spool", installed: true },
 		];
 	};
 	const groups = (host: HTMLElement) =>
