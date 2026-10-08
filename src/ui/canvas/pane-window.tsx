@@ -1186,6 +1186,10 @@ export function PaneWindow({
 
 /* ── one pane ───────────────────────────────────────────────────────── */
 
+/**
+ * The pane's one quiet row: its name, which is also the handle it is carried
+ * by. Its verbs and its hide wait for the pointer or the keyboard.
+ */
 function PaneSection({
 	def,
 	context,
@@ -1211,22 +1215,23 @@ function PaneSection({
 				data-pane-head={def.id}
 				onPointerDown={onPress}
 				className={cn(
-					"group/head flex h-9 shrink-0 cursor-grab touch-none select-none items-center gap-2 border-border border-b pr-1.5 pl-3 text-muted transition-opacity duration-150 ease-out",
+					"group/head flex h-9 shrink-0 cursor-grab touch-none select-none items-center gap-2 pr-1.5 pl-3 transition-opacity duration-150 ease-out",
 					held && "opacity-35",
 				)}
 			>
-				<span className="flex h-4 w-4 shrink-0 items-center justify-center">{def.icon}</span>
-				<h2 className="min-w-0 flex-1 truncate font-semibold text-text type-control">{def.title}</h2>
-				<div ref={setSlot} className="flex shrink-0 items-center" />
-				<button
-					type="button"
-					aria-label={`Hide ${def.title}`}
-					onPointerDown={(event) => event.stopPropagation()}
-					onClick={context.hide}
-					className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 opacity-0 transition-opacity duration-150 ease-out hover:text-text focus-visible:opacity-100 group-hover/head:opacity-100"
-				>
-					<CloseIcon />
-				</button>
+				<h2 className="min-w-0 flex-1 truncate text-muted type-label">{def.title}</h2>
+				<div className="flex shrink-0 items-center opacity-0 transition-opacity duration-150 ease-out group-focus-within/head:opacity-100 group-hover/head:opacity-100 motion-reduce:transition-none">
+					<div ref={setSlot} className="flex shrink-0 items-center" />
+					<button
+						type="button"
+						aria-label={`Hide ${def.title}`}
+						onPointerDown={(event) => event.stopPropagation()}
+						onClick={context.hide}
+						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-[color,background-color] duration-150 hover:bg-surface hover:text-text"
+					>
+						<CloseIcon />
+					</button>
+				</div>
 			</header>
 			<div data-pane-body={def.id} className="relative min-h-0 flex-1 overflow-hidden">
 				<PaneSlot.Provider value={slot}>{def.render(context)}</PaneSlot.Provider>
