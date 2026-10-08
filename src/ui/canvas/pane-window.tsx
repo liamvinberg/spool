@@ -1064,7 +1064,7 @@ export function PaneWindow({
 				{/* with no window bar around it, the window keeps its toggles in a bar of its own */}
 				{bar === null ? (
 					<div
-						data-pane-bar=""
+						data-pane-bar-own=""
 						className="flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4"
 					>
 						<div className="flex h-full items-center">{leftBar}</div>

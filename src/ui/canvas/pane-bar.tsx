@@ -45,8 +45,6 @@ export function ToggleGroup({
 		<div
 			ref={groupRef}
 			data-pane-toggles={side}
-			role="toolbar"
-			aria-label={`${side === "left" ? "Left" : "Right"} panes`}
 			// the right group hangs from the bar's end, so a toggle arriving there lands where it stays
 			className={cn("flex h-full shrink-0 items-center gap-0.5", side === "right" && "justify-end")}
 			style={{ width: groupWidth(count), transition: motion === "none" ? "none" : `width ${motion}` }}

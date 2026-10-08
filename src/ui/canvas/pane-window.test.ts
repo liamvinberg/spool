@@ -110,7 +110,7 @@ describe("the window bar", () => {
 	it("draws each side's toggles at that side's end of the bar it is given, help and settings inside the right's", async () => {
 		const { host, bar } = await mount({ bar: true });
 		const [left, right] = bar;
-		expect(host.querySelector("[data-pane-bar]")).toBeNull();
+		expect(host.querySelector("[data-pane-bar-own]")).toBeNull();
 		expect(
 			[...left.querySelectorAll<HTMLElement>("[data-pane-toggle]")].map((item) => item.dataset.paneToggle),
 		).toEqual(["pages"]);
