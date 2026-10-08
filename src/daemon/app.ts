@@ -2778,6 +2778,63 @@ export function createDaemonApp({
 		 * conversation: the rows are the binary's and the same for all of them, and which of
 		 * those rows is answering is not.
 		 */
+		/*
+		 * What one engine offers a new chat, for the agent menu's other groups (#364). The
+		 * thread routes below answer for the thread's own engine; these answer for any engine
+		 * this daemon runs, against the machine's choice for it, so the menu can list every
+		 * installed agent's models and a pick on one carries to the next chat that uses it.
+		 */
+		.get("/api/p/:project/agent/engines/:engine/models", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const id = c.req.param("engine");
+			const engine = isAgentEngineId(id) ? engines.get(id) : undefined;
+			if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
+			return c.json(
+				await engine.offer({
+					root: project.root,
+					session: { id: "" },
+					ask: agentDefaults.model(engine.id),
+					signal: c.req.raw.signal,
+				}),
+			);
+		})
+		.post(
+			"/api/p/:project/agent/engines/:engine/model",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as {
+					value?: unknown;
+					effort?: unknown;
+				};
+				if (body.value !== undefined && !isModelShaped(body.value))
+					return c.text('"value" is one of the choices the engine offered', 400);
+				if (body.effort !== undefined && !isEffortShaped(body.effort))
+					return c.text('"effort" is one of the levels the model said it supports', 400);
+				if (body.value === undefined && body.effort === undefined)
+					return c.text('a choice is { "value": "…" } or { "effort": "…" }', 400);
+				return {
+					...(body.value === undefined ? {} : { value: body.value as string }),
+					...(body.effort === undefined ? {} : { effort: body.effort }),
+				} satisfies AgentAsk;
+			}),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const id = c.req.param("engine");
+				const engine = isAgentEngineId(id) ? engines.get(id) : undefined;
+				if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
+				const held = agentDefaults.model(engine.id);
+				const offer = await engine.offer({
+					root: project.root,
+					session: { id: "" },
+					ask: held,
+					choose: c.req.valid("json"),
+				});
+				if (offer.current.value !== null)
+					agentDefaults.setModel(engine.id, acceptedModelChoice(engine, offer, held));
+				return c.json(offer);
+			},
+		)
 		.get(
 			"/api/p/:project/agent/threads/:thread/models",
 			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),

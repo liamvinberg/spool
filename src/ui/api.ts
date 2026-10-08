@@ -1531,6 +1531,50 @@ export async function chooseAgentModel(
 	return res.ok ? await res.json() : undefined;
 }
 
+/** What one engine offers a new chat (#364): the agent menu's group for an engine this chat is not on. */
+export async function engineModelOffer(project: string, engine: AgentEngineId): Promise<unknown> {
+	try {
+		const res = await client.api.p[":project"].agent.engines[":engine"].models.$get({ param: { project, engine } });
+		return res.ok ? await res.json() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Choose a model or effort for an engine's next new chat (#364); the answer is the engine's own report. */
+export async function chooseEngineModel(project: string, engine: AgentEngineId, next: AgentAsk): Promise<unknown> {
+	try {
+		const res = await client.api.p[":project"].agent.engines[":engine"].model.$post({
+			param: { project, engine },
+			json: next,
+		});
+		return res.ok ? await res.json() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The engines this daemon runs and whether each is installed here (#364), or undefined when unread. */
+export async function fetchAgentEngines(
+	project: string,
+): Promise<readonly { id: AgentEngineId; installed: boolean }[] | undefined> {
+	try {
+		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
+		if (!res.ok) return undefined;
+		const body = (await res.json()) as { engines?: unknown };
+		if (!Array.isArray(body.engines)) return undefined;
+		return body.engines.flatMap((entry: unknown) => {
+			const one = (typeof entry === "object" && entry !== null ? entry : {}) as {
+				id?: unknown;
+				installed?: unknown;
+			};
+			return isAgentEngineId(one.id) ? [{ id: one.id, installed: one.installed === true }] : [];
+		});
+	} catch {
+		return undefined;
+	}
+}
+
 /** The machine's agent choice (#361), or undefined when it could not be read: never a guess. */
 export async function fetchAgentDefaults(
 	project: string,
