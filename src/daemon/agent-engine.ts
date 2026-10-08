@@ -1,14 +1,31 @@
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { Attachment } from "../attachment";
 import type { AgentPermissions } from "../settings/registry";
 import type { AgentAsk, AgentOffer } from "./agent-offer";
 import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
 
-export type AgentEngineId = "claude" | "spool";
+/** The installed agents spool drives, each through its own adapter. */
+export const AGENT_ENGINE_IDS = ["claude", "pi"] as const;
+
+export type AgentEngineId = (typeof AGENT_ENGINE_IDS)[number];
 
 export function isAgentEngineId(value: unknown): value is AgentEngineId {
-	return value === "claude" || value === "spool";
+	return (AGENT_ENGINE_IDS as readonly unknown[]).includes(value);
+}
+
+/**
+ * The bundled engine's owner id, kept for the threads it left behind (#363).
+ *
+ * The engine itself is gone. Its threads still name it, so their saved rail picture stays
+ * readable, and no engine answers for it, so they can never be continued.
+ */
+export const LEGACY_ENGINE = "spool";
+
+/** Who a stored thread belongs to: an engine spool drives, or the removed bundled one. */
+export type ThreadEngine = AgentEngineId | typeof LEGACY_ENGINE;
+
+export function isThreadEngine(value: unknown): value is ThreadEngine {
+	return value === LEGACY_ENGINE || isAgentEngineId(value);
 }
 
 /** An engine resolves this opaque id inside its own storage. It is never a path. */
@@ -17,7 +34,7 @@ export interface AgentSessionRef {
 }
 
 export interface AgentOwnership {
-	readonly engine: AgentEngineId;
+	readonly engine: ThreadEngine;
 	readonly session: AgentSessionRef;
 }
 
@@ -47,22 +64,17 @@ export interface EngineTurnOptions {
 
 /**
  * The daemon owns live turns and rendered history; an engine owns model conversations.
- * Starting returns a turn immediately, including while a process or host is starting,
- * so the daemon can reserve the thread and accept Stop before initialization completes.
+ * Starting returns a turn immediately, including while a process is starting, so the
+ * daemon can reserve the thread and accept Stop before initialization completes.
  * Answers, interruption and abandonment use AgentTurn for every engine.
+ *
+ * Every engine is an agent the person installed and signed in to on their own: spool owns
+ * no login, so signing in is always the agent's own command in a terminal.
  */
 export interface AgentEngine {
 	readonly id: AgentEngineId;
 	readonly authentication: AgentAuthentication;
 	close?(): void | Promise<void>;
-	prepareRename?(
-		root: string,
-		target: string,
-		sessions: readonly AgentSessionRef[],
-	): Promise<{
-		token: string;
-		finish(committed: boolean): Promise<void>;
-	}>;
 	installed(): boolean;
 	account(root: string, signal?: AbortSignal): Promise<AgentLogin>;
 	offer(options: EngineOfferOptions): Promise<AgentOffer>;
@@ -72,32 +84,8 @@ export interface AgentEngine {
 	continuable(root: string, session: AgentSessionRef): boolean | Promise<boolean>;
 }
 
-/** Non-secret login progress. Submitted secrets belong to the engine, never the rail. */
-export type AgentAuthStep =
-	| AuthEvent
-	| Omit<Extract<AuthPrompt, { type: "text" | "secret" | "manual_code" }>, "signal">
-	| Omit<Extract<AuthPrompt, { type: "select" }>, "signal">;
-
-export type AgentLoginProgress =
-	| {
-			readonly kind: "step";
-			readonly id: string;
-			readonly revision: number;
-			readonly step: AgentAuthStep;
-			readonly browser?: Extract<AuthEvent, { type: "auth_url" }>;
-	  }
-	| { readonly kind: "connected" }
-	| { readonly kind: "cancelled" }
-	| { readonly kind: "error"; readonly message: string };
-
-/** External authentication stays external; managed engines own the entire login flow. */
-export type AgentAuthentication =
-	| { readonly kind: "external"; readonly command: string }
-	| {
-			readonly kind: "managed";
-			start(provider: string, method: string): Promise<AgentLoginProgress>;
-			poll(id: string): Promise<AgentLoginProgress>;
-			input(id: string, value: string, revision?: number): Promise<AgentLoginProgress>;
-			cancel(id: string): Promise<void>;
-			logout(provider: string): Promise<void>;
-	  };
+/** Sign-in stays in the agent's own terminal flow: the rail names the command and never runs it. */
+export interface AgentAuthentication {
+	readonly kind: "external";
+	readonly command: string;
+}

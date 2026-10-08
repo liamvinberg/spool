@@ -27,24 +27,16 @@ import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
 import { createAgentDefaults } from "./agent-defaults";
-import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
+import { type AgentEngine, type AgentEngineId, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
-import { createSpoolEngine } from "./agent-engine-spool";
+import { createPiEngine } from "./agent-engine-pi";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { Look } from "./agent-preflight";
-import {
-	closeThread,
-	isThreadId,
-	parseThreadPut,
-	putThread,
-	readThread,
-	readThreads,
-	serveThreads,
-} from "./agent-threads";
+import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { CanvasFileError } from "./canvas-file";
 import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
@@ -1127,10 +1119,11 @@ export function createDaemonApp({
 	// #191's ADR: the daemon spawns the developer's own agent when the hands ask
 	// for it. Project code never reaches this — it is a control-plane route
 	// behind the control token, the same boundary #41 drew.
+	const executor = agentExecutor ?? claudeExecutor();
 	const engines = new Map<AgentEngineId, AgentEngine>(
-		(
-			agentEngines ?? [createClaudeEngine(agentExecutor ?? claudeExecutor(), agentLook), createSpoolEngine(spoolDir)]
-		).map((engine) => [engine.id, engine]),
+		(agentEngines ?? [createClaudeEngine(executor, agentLook), createPiEngine(spoolDir, executor, agentLook)]).map(
+			(engine) => [engine.id, engine],
+		),
 	);
 
 	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)
@@ -1142,6 +1135,8 @@ export function createDaemonApp({
 			return { response: c.text("a thread is named by its uuid", 400) };
 		if (requested !== undefined && !isAgentEngineId(requested)) return { response: c.text("unknown engine", 400) };
 		const saved = thread === undefined ? undefined : readThread(spoolDir, root, thread);
+		// the bundled engine's threads are read-only: their picture stays, and nothing continues them
+		if (saved?.engine === LEGACY_ENGINE) return { response: c.text("this thread's engine was removed", 409) };
 		if (saved !== undefined && requested !== undefined && requested !== saved.engine) {
 			return { response: c.text("a thread's engine cannot change", 409) };
 		}
@@ -1166,7 +1161,7 @@ export function createDaemonApp({
 	/** a running turn started on another mode than the machine's: the pick waits for its next turn */
 	function pendingMode(root: string, thread: string, mode: AgentPermissions): boolean {
 		const held = liveTurns.get(root, thread);
-		return held?.running === true && held.permissions?.applied !== mode;
+		return held?.running === true && held.mode !== mode;
 	}
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
@@ -1751,33 +1746,8 @@ export function createDaemonApp({
 				}
 				projectRenames.add(root);
 				projectRenames.add(target);
-				let prepared: Awaited<ReturnType<NonNullable<AgentEngine["prepareRename"]>>> | undefined;
-				let committed = false;
 				try {
-					if (target !== root && isSafeName(name.trim())) {
-						const sessions = readThreads(spoolDir, root, true)
-							.filter((thread) => thread.engine === "spool")
-							.map((thread) => thread.session);
-						if (sessions.length) {
-							const engine = engines.get("spool");
-							if (!engine?.prepareRename)
-								throw new SpoolError("The bundled engine cannot prepare this project rename.");
-							try {
-								prepared = await engine.prepareRename(root, target, sessions);
-							} catch (error) {
-								throw new SpoolError(
-									error instanceof Error ? error.message : "Could not prepare the project rename.",
-								);
-							}
-						}
-					}
-					const result = mutateMachineState(spoolDir, {
-						kind: "rename-project",
-						root,
-						name,
-						...(prepared ? { bundled: prepared.token } : {}),
-					});
-					committed = true;
+					const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
 					if (result.root !== root) {
 						hub.forget(root);
 						liveTurns.relocate(root, result.root);
@@ -1785,15 +1755,12 @@ export function createDaemonApp({
 					}
 					machineStateWatch.acknowledgeRegistry(result.registry);
 					machineStateWatch.acknowledgeSession(result.session);
-					await prepared?.finish(true);
-					prepared = undefined;
 					emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
 					return c.json({ root: result.root, name: result.name });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
 					return c.json({ error: error.message }, 409);
 				} finally {
-					await prepared?.finish(committed);
 					projectRenames.delete(root);
 					projectRenames.delete(target);
 				}
@@ -2385,47 +2352,6 @@ export function createDaemonApp({
 				return c.json({ preferred: choice.engine ?? null, mode: choice.mode });
 			},
 		)
-		.post(
-			"/api/p/:project/agent/account",
-			validator("json", (value, c) => {
-				const body = z
-					.discriminatedUnion("action", [
-						z.object({ action: z.literal("start"), provider: z.string(), method: z.string() }),
-						z.object({
-							action: z.literal("input"),
-							id: z.string(),
-							value: z.string().max(16384),
-							revision: z.number().int().optional(),
-						}),
-						z.object({ action: z.literal("poll"), id: z.string() }),
-						z.object({ action: z.literal("cancel"), id: z.string() }),
-						z.object({ action: z.literal("disconnect"), provider: z.string() }),
-					])
-					.safeParse(value);
-				return body.success ? body.data : c.text("Invalid account operation", 400);
-			}),
-			async (c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const auth = engines.get("spool")?.authentication;
-				if (auth?.kind !== "managed") return c.text("Bundled accounts are unavailable", 503);
-				const operation = c.req.valid("json");
-				switch (operation.action) {
-					case "start":
-						return c.json(await auth.start(operation.provider, operation.method));
-					case "input":
-						return c.json(await auth.input(operation.id, operation.value, operation.revision));
-					case "poll":
-						return c.json(await auth.poll(operation.id));
-					case "cancel":
-						await auth.cancel(operation.id);
-						return c.json({ kind: "cancelled" as const });
-					case "disconnect":
-						await auth.logout(operation.provider);
-						return c.json({ kind: "cancelled" as const });
-				}
-			},
-		)
 		.get("/api/p/:project/agent-app", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -2585,11 +2511,12 @@ export function createDaemonApp({
 						draft: "",
 					});
 				}
+				const mode = agentDefaults.read().mode;
 				const turn = selected.engine.start({
 					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
 					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
-					permissions: agentDefaults.read().mode,
+					permissions: mode,
 					said: said.map((one) => ({
 						prompt: one.prompt,
 						selection: selectionBlock(one.selection ?? selections.get(project.root)),
@@ -2609,6 +2536,7 @@ export function createDaemonApp({
 					root: project.root,
 					thread,
 					turn,
+					mode,
 					...(named === undefined ? {} : { id: named }),
 				});
 				return attachTurn(c, held, 0);
@@ -2772,7 +2700,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const threads = await Promise.all(
 				serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }).map(async (thread) => {
-					const engine = engines.get(thread.engine);
+					const engine = isAgentEngineId(thread.engine) ? engines.get(thread.engine) : undefined;
 					let continuable = false;
 					try {
 						continuable =

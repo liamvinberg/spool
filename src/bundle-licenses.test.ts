@@ -8,9 +8,9 @@ describe("bundled package licenses", () => {
 		);
 		expect(
 			packageDirectory(
-				"/repo/node_modules/.pnpm/@earendil-works+pi-ai@0.85.1_ws@8.21.1/node_modules/@earendil-works/pi-ai/dist/index.js?commonjs-proxy",
+				"/repo/node_modules/.pnpm/@hono+node-server@2.0.10_hono@4.12.31/node_modules/@hono/node-server/dist/index.js?commonjs-proxy",
 			),
-		).toBe("/repo/node_modules/.pnpm/@earendil-works+pi-ai@0.85.1_ws@8.21.1/node_modules/@earendil-works/pi-ai");
+		).toBe("/repo/node_modules/.pnpm/@hono+node-server@2.0.10_hono@4.12.31/node_modules/@hono/node-server");
 		expect(packageDirectory("\0/repo/node_modules/pako/index.js")).toBe("/repo/node_modules/pako");
 		expect(packageDirectory("src/daemon/app.ts")).toBeUndefined();
 	});
@@ -24,14 +24,14 @@ describe("bundled package licenses", () => {
 		};
 		const page = renderLicenses([
 			zod,
-			{ name: "@earendil-works/pi-ai", version: "0.85.1", license: "MIT", texts: [] },
+			{ name: "@hono/node-server", version: "2.0.10", license: "MIT", texts: [] },
 			zod,
 		]);
 		expect(page.match(/## zod 4\.4\.3/g)).toHaveLength(1);
-		expect(page.indexOf("## @earendil-works/pi-ai 0.85.1")).toBeLessThan(page.indexOf("## zod 4.4.3"));
+		expect(page.indexOf("## @hono/node-server 2.0.10")).toBeLessThan(page.indexOf("## zod 4.4.3"));
 		expect(page).toContain("License: MIT.\n\n```\nMIT License\n\nCopyright (c) Colin McDonnell\n```");
 		expect(page).toContain(
-			"## @earendil-works/pi-ai 0.85.1\n\nLicense: MIT.\n\nThe published package carries no license file",
+			"## @hono/node-server 2.0.10\n\nLicense: MIT.\n\nThe published package carries no license file",
 		);
 	});
 });

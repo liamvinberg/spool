@@ -112,48 +112,48 @@ function setup(engines: readonly AgentEngine[]) {
 
 describe("engine ownership through the daemon", () => {
 	it("keeps the last accepted model when an engine cannot report a new choice", async () => {
-		const spool = fakeEngine("spool");
-		const { app, path, send } = setup([spool.engine]);
-		await send(`threads/${ONE}/model?engine=spool`, { value: "spool" });
-		const offer = spool.engine.offer;
-		spool.engine.offer = async () => ({
+		const pi = fakeEngine("pi");
+		const { app, path, send } = setup([pi.engine]);
+		await send(`threads/${ONE}/model?engine=pi`, { value: "pi" });
+		const offer = pi.engine.offer;
+		pi.engine.offer = async () => ({
 			models: [],
 			current: { value: null, resolved: null, name: null, effort: null, pin: null },
 		});
-		await send(`threads/${ONE}/model?engine=spool`, { effort: "high" });
-		spool.engine.offer = offer;
-		await app.request(`${path}/threads/${TWO}/models?engine=spool`);
-		expect(spool.offers.at(-1)?.ask).toEqual({ value: "spool" });
+		await send(`threads/${ONE}/model?engine=pi`, { effort: "high" });
+		pi.engine.offer = offer;
+		await app.request(`${path}/threads/${TWO}/models?engine=pi`);
+		expect(pi.offers.at(-1)?.ask).toEqual({ value: "pi" });
 	});
 
 	it("keeps each agent's model choices separate before a chat's first message", async () => {
 		const claude = fakeEngine("claude");
-		const spool = fakeEngine("spool");
-		const { app, path, send, spoolDir } = setup([claude.engine, spool.engine]);
+		const pi = fakeEngine("pi");
+		const { app, path, send, spoolDir } = setup([claude.engine, pi.engine]);
 		await send(`threads/${ONE}/model?engine=claude`, { value: "claude" });
-		await app.request(`${path}/threads/${ONE}/models?engine=spool`);
-		expect(spool.offers.at(-1)?.ask).toEqual({});
-		await send(`threads/${ONE}/model?engine=spool`, { value: "spool" });
+		await app.request(`${path}/threads/${ONE}/models?engine=pi`);
+		expect(pi.offers.at(-1)?.ask).toEqual({});
+		await send(`threads/${ONE}/model?engine=pi`, { value: "pi" });
 		await app.request(`${path}/threads/${ONE}/models?engine=claude`);
 		expect(claude.offers.at(-1)?.ask).toEqual({ value: "claude" });
 		const view = agentReader(
-			await send("turn", { thread: ONE, turn: "one", engine: "spool", said: [{ prompt: "first message" }] }),
+			await send("turn", { thread: ONE, turn: "one", engine: "pi", said: [{ prompt: "first message" }] }),
 		);
 		await view.next();
-		expect(spool.starts[0]?.ask).toEqual({ value: "spool" });
+		expect(pi.starts[0]?.ask).toEqual({ value: "pi" });
 		await send("interrupt", { turn: "one" });
 		await view.cancel();
-		const restarted = makeApp(spoolDir, { agentEngines: [claude.engine, spool.engine] });
+		const restarted = makeApp(spoolDir, { agentEngines: [claude.engine, pi.engine] });
 		await restarted.request(`${path}/threads/${TWO}/models?engine=claude`);
 		expect(claude.offers.at(-1)?.ask).toEqual({ value: "claude" });
-		await restarted.request(`${path}/threads/${TWO}/models?engine=spool`);
-		expect(spool.offers.at(-1)?.ask).toEqual({ value: "spool" });
+		await restarted.request(`${path}/threads/${TWO}/models?engine=pi`);
+		expect(pi.offers.at(-1)?.ask).toEqual({ value: "pi" });
 	});
 
 	it("routes independent turns, offers, accounts, answers and Stop while replay survives a departing viewer", async () => {
 		const claude = fakeEngine("claude");
-		const spool = fakeEngine("spool");
-		const { app, path, send, threads } = setup([claude.engine, spool.engine]);
+		const pi = fakeEngine("pi");
+		const { app, path, send, threads } = setup([claude.engine, pi.engine]);
 		const first = agentReader(
 			await send("turn", { thread: ONE, turn: "one", engine: "claude", said: [{ prompt: "one" }] }),
 		);
@@ -161,43 +161,41 @@ describe("engine ownership through the daemon", () => {
 			await send("turn", {
 				thread: TWO,
 				turn: "two",
-				engine: "spool",
+				engine: "pi",
 				said: [{ prompt: "two", selection: [], attachments: [{ media: "image/png", data: "aGk=" }] }],
 			}),
 		);
 		expect((await first.next()).data).toMatchObject({ text: "claude" });
-		expect((await second.next()).data).toMatchObject({ text: "spool" });
+		expect((await second.next()).data).toMatchObject({ text: "pi" });
 		await first.cancel();
 		expect(claude.abandoned).toBe(0);
 		expect((await send("turn", { thread: ONE, said: [{ prompt: "duplicate" }] })).status).toBe(409);
-		expect(spool.starts[0]).toMatchObject({
+		expect(pi.starts[0]).toMatchObject({
 			session: (await threads()).find((thread) => thread.id === TWO)?.session,
 			said: [{ prompt: "two", selection: "", attachments: [{ data: "aGk=" }] }],
 			permissions: "edits",
 		});
 		expect((await threads()).map((thread) => [thread.engine, thread.live, thread.continuable])).toEqual([
 			["claude", true, true],
-			["spool", true, true],
+			["pi", true, true],
 		]);
 		expect(await (await app.request(`${path}/threads/${TWO}/models`)).json()).toMatchObject({
-			current: { value: "spool" },
+			current: { value: "pi" },
 		});
 		expect(await (await app.request(`${path}/login?thread=${TWO}`)).json()).toMatchObject({
-			account: "spool@example.test",
+			account: "pi@example.test",
 		});
-		expect(await (await send(`threads/${TWO}/model`, { value: "spool" })).json()).toMatchObject({
-			current: { value: "spool" },
+		expect(await (await send(`threads/${TWO}/model`, { value: "pi" })).json()).toMatchObject({
+			current: { value: "pi" },
 		});
-		expect((await send("answer", { request: "spool-ask", reply: { kind: "said", text: "keep it" } })).status).toBe(
-			204,
-		);
-		expect(spool.replies).toEqual([{ kind: "said", text: "keep it" }]);
+		expect((await send("answer", { request: "pi-ask", reply: { kind: "said", text: "keep it" } })).status).toBe(204);
+		expect(pi.replies).toEqual([{ kind: "said", text: "keep it" }]);
 		expect(claude.replies).toEqual([]);
 		const replay = agentReader(await app.request(`${path}/turn/${ONE}`));
 		expect((await replay.next()).data).toMatchObject({ text: "claude" });
 		expect((await send("interrupt", { turn: "one" })).status).toBe(204);
 		expect((await replay.next()).data).toMatchObject({ kind: "closed" });
-		expect(spool.stopped).toBe(0);
+		expect(pi.stopped).toBe(0);
 		await send("interrupt", { turn: "two" });
 		expect((await second.next()).data).toMatchObject({ kind: "closed" });
 		await replay.cancel();
@@ -223,8 +221,65 @@ describe("engine ownership through the daemon", () => {
 	});
 
 	it("resumes the engine's saved reference even when it differs from the rail thread id", async () => {
-		const spool = fakeEngine("spool");
-		const { spoolDir, root, send } = setup([spool.engine]);
+		const pi = fakeEngine("pi");
+		const { spoolDir, root, send } = setup([pi.engine]);
+		writeThread(spoolDir, root, {
+			...picture,
+			id: ONE,
+			engine: "pi",
+			session: { id: TWO },
+			stopped: false,
+			closed: false,
+		});
+		expect((await send(`threads/${ONE}`, picture, "PUT")).status).toBe(204);
+		const view = agentReader(await send("turn", { thread: ONE, turn: "resume", said: [{ prompt: "continue" }] }));
+		await view.next();
+		expect(pi.starts[0]?.session).toEqual({ id: TWO });
+		expect(readThread(spoolDir, root, ONE)).toMatchObject({ ...picture, session: { id: TWO } });
+		await send("interrupt", { turn: "resume" });
+		await view.cancel();
+	});
+
+	it("rejects reassignment and all client session references, including before the first picture save", async () => {
+		const pi = fakeEngine("pi");
+		const { spoolDir, root, send } = setup([pi.engine, fakeEngine("claude").engine]);
+		const view = agentReader(
+			await send("turn", { thread: ONE, turn: "one", engine: "pi", said: [{ prompt: "go" }] }),
+		);
+		await view.next();
+		expect((await send(`threads/${ONE}`, { ...picture, engine: "claude" }, "PUT")).status).toBe(409);
+		expect((await send(`threads/${ONE}`, picture, "PUT")).status).toBe(204);
+		expect(readThread(spoolDir, root, ONE)?.engine).toBe("pi");
+		for (const session of [{ id: TWO }, { path: "/tmp/arbitrary.jsonl" }, "../../elsewhere"]) {
+			expect((await send(`threads/${TWO}`, { ...picture, session }, "PUT")).status).toBe(400);
+			expect((await send("turn", { thread: TWO, session, said: [{ prompt: "go" }] })).status).toBe(400);
+		}
+		await send("interrupt", { turn: "one" });
+		await view.cancel();
+		await until(() => pi.stopped === 1);
+		expect((await send("turn", { thread: ONE, engine: "claude", said: [{ prompt: "switch" }] })).status).toBe(409);
+	});
+
+	it("keeps unavailable engine and missing session history readable while another engine works", async () => {
+		const pi = fakeEngine("pi");
+		const { spoolDir, root, app, path, send, threads } = setup([pi.engine]);
+		putThread(spoolDir, root, ONE, { ...picture, engine: "claude" });
+		putThread(spoolDir, root, TWO, { ...picture, engine: "pi" });
+		expect((await threads()).map((thread) => [thread.engine, thread.continuable])).toEqual([
+			["claude", false],
+			["pi", true],
+		]);
+		expect((await send("turn", { thread: ONE, said: [{ prompt: "continue" }] })).status).toBe(503);
+		expect((await app.request(`${path}/threads/${ONE}/models`)).status).toBe(503);
+		pi.missingSession();
+		expect((await threads())[1]).toMatchObject({ ...picture, continuable: false });
+		pi.unavailable();
+		expect((await threads())[1]).toMatchObject({ ...picture, continuable: false });
+	});
+
+	it("keeps a removed bundled-engine thread readable and continues it nowhere", async () => {
+		const claude = fakeEngine("claude");
+		const { spoolDir, root, app, path, send, threads } = setup([claude.engine]);
 		writeThread(spoolDir, root, {
 			...picture,
 			id: ONE,
@@ -233,49 +288,13 @@ describe("engine ownership through the daemon", () => {
 			stopped: false,
 			closed: false,
 		});
-		expect((await send(`threads/${ONE}`, picture, "PUT")).status).toBe(204);
-		const view = agentReader(await send("turn", { thread: ONE, turn: "resume", said: [{ prompt: "continue" }] }));
-		await view.next();
-		expect(spool.starts[0]?.session).toEqual({ id: TWO });
-		expect(readThread(spoolDir, root, ONE)).toMatchObject({ ...picture, session: { id: TWO } });
-		await send("interrupt", { turn: "resume" });
-		await view.cancel();
-	});
-
-	it("rejects reassignment and all client session references, including before the first picture save", async () => {
-		const spool = fakeEngine("spool");
-		const { spoolDir, root, send } = setup([spool.engine, fakeEngine("claude").engine]);
-		const view = agentReader(
-			await send("turn", { thread: ONE, turn: "one", engine: "spool", said: [{ prompt: "go" }] }),
-		);
-		await view.next();
-		expect((await send(`threads/${ONE}`, { ...picture, engine: "claude" }, "PUT")).status).toBe(409);
-		expect((await send(`threads/${ONE}`, picture, "PUT")).status).toBe(204);
-		expect(readThread(spoolDir, root, ONE)?.engine).toBe("spool");
-		for (const session of [{ id: TWO }, { path: "/tmp/arbitrary.jsonl" }, "../../elsewhere"]) {
-			expect((await send(`threads/${TWO}`, { ...picture, session }, "PUT")).status).toBe(400);
-			expect((await send("turn", { thread: TWO, session, said: [{ prompt: "go" }] })).status).toBe(400);
-		}
-		await send("interrupt", { turn: "one" });
-		await view.cancel();
-		await until(() => spool.stopped === 1);
-		expect((await send("turn", { thread: ONE, engine: "claude", said: [{ prompt: "switch" }] })).status).toBe(409);
-	});
-
-	it("keeps unavailable engine and missing session history readable while another engine works", async () => {
-		const spool = fakeEngine("spool");
-		const { spoolDir, root, app, path, send, threads } = setup([spool.engine]);
-		putThread(spoolDir, root, ONE, { ...picture, engine: "claude" });
-		putThread(spoolDir, root, TWO, { ...picture, engine: "spool" });
-		expect((await threads()).map((thread) => [thread.engine, thread.continuable])).toEqual([
-			["claude", false],
-			["spool", true],
-		]);
-		expect((await send("turn", { thread: ONE, said: [{ prompt: "continue" }] })).status).toBe(503);
-		expect((await app.request(`${path}/threads/${ONE}/models`)).status).toBe(503);
-		spool.missingSession();
-		expect((await threads())[1]).toMatchObject({ ...picture, continuable: false });
-		spool.unavailable();
-		expect((await threads())[1]).toMatchObject({ ...picture, continuable: false });
+		expect((await threads())[0]).toMatchObject({ ...picture, engine: "spool", continuable: false, live: false });
+		expect((await send(`threads/${ONE}`, { ...picture, life: "unread" }, "PUT")).status).toBe(204);
+		expect((await send("turn", { thread: ONE, said: [{ prompt: "continue" }] })).status).toBe(409);
+		expect((await app.request(`${path}/threads/${ONE}/models`)).status).toBe(409);
+		expect((await app.request(`${path}/installed?thread=${ONE}`)).status).toBe(409);
+		// nothing new is ever made on it
+		expect((await send(`threads/${TWO}`, { ...picture, engine: "spool" }, "PUT")).status).toBe(409);
+		expect(claude.starts).toEqual([]);
 	});
 });

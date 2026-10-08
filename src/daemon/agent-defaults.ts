@@ -185,7 +185,7 @@ export function migrateAgentDefaults(spoolDir: string): Stored {
 	const recent = [...projects].sort((one, two) => Date.parse(two.openedAt) - Date.parse(one.openedAt));
 	const engine = recent
 		.map((project) => getNested(project.settings, ["agent", "engine"]))
-		.find((value): value is AgentEngineId => isAgentEngineId(value) && value !== "spool");
+		.find((value): value is AgentEngineId => isAgentEngineId(value));
 	const mode = recent.map((project) => getNested(project.settings, ["agent", "permissions"])).find(isMode);
 	const files = projects
 		.map((project) => {

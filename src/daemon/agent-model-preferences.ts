@@ -18,7 +18,8 @@ const ask = z
 			...(choice.effort === undefined ? {} : { effort: choice.effort }),
 		}),
 	);
-const engines = z.object({ claude: ask.optional(), spool: ask.optional() });
+/** keyed by engine id; a removed engine's entries are kept and never read */
+const engines = z.record(z.string(), ask);
 const preferences = z.object({
 	/** read once by the #361 migration; the machine's choice lives in agent defaults now */
 	defaults: engines.optional(),

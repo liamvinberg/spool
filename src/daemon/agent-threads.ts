@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import { type AgentEngineId, type AgentOwnership, isAgentEngineId } from "./agent-engine";
+import { type AgentOwnership, isThreadEngine, LEGACY_ENGINE, type ThreadEngine } from "./agent-engine";
 import type { AgentEnded, AgentRecovery } from "./agent-events";
 
 /**
@@ -152,7 +152,7 @@ export function isThreadId(value: unknown): value is string {
 
 /** what a client may say about a thread, which is the envelope minus spool's own flags */
 export type ThreadPut = Omit<StoredThread, "id" | "stopped" | "closed" | "engine" | "session"> & {
-	readonly engine?: AgentEngineId;
+	readonly engine?: ThreadEngine;
 };
 
 /**
@@ -206,7 +206,7 @@ function parseThread(value: unknown): StoredThread | undefined {
 	if (!isThreadId(record.id)) return undefined;
 	if (typeof record.stopped !== "boolean" || typeof record.closed !== "boolean") return undefined;
 	const engine = record.engine === undefined ? "claude" : record.engine;
-	if (!isAgentEngineId(engine)) return undefined;
+	if (!isThreadEngine(engine)) return undefined;
 	const session = record.session === undefined && record.engine === undefined ? { id: record.id } : record.session;
 	if (typeof session !== "object" || session === null || !("id" in session) || !isThreadId(session.id))
 		return undefined;
@@ -230,8 +230,8 @@ export function parseThreadPut(value: unknown): ThreadPut | undefined {
 	const envelope = parseEnvelope(value);
 	if (envelope === undefined) return undefined;
 	const record = value as Record<string, unknown>;
-	if ("session" in record || (record.engine !== undefined && !isAgentEngineId(record.engine))) return undefined;
-	return { ...envelope, ...(record.engine === undefined ? {} : { engine: record.engine as AgentEngineId }) };
+	if ("session" in record || (record.engine !== undefined && !isThreadEngine(record.engine))) return undefined;
+	return { ...envelope, ...(record.engine === undefined ? {} : { engine: record.engine as ThreadEngine }) };
 }
 
 /**
@@ -249,11 +249,13 @@ export function putThread(spoolDir: string, root: string, id: string, put: Threa
 	if (!isThreadId(id)) return false;
 	const had = readThread(spoolDir, root, id);
 	if (had !== undefined && put.engine !== undefined && put.engine !== had.engine) return false;
+	// the bundled engine's threads are only ever ones it left behind, never new ones
+	if (had === undefined && put.engine === LEGACY_ENGINE) return false;
 	writeThread(spoolDir, root, {
 		id,
 		...put,
 		engine: had?.engine ?? put.engine ?? "claude",
-		session: had?.session ?? { id: put.engine === "spool" ? randomUUID() : id },
+		session: had?.session ?? { id },
 		// a thread the hands are sending into is a thread that is running again, so a new
 		// turn is what clears the mark a restart left on it
 		stopped: false,

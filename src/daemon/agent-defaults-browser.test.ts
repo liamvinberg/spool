@@ -5,10 +5,13 @@ import type { AgentEngine } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { permissionClaude } from "./fixtures/claude-permissions";
 
-/** The bundled engine as the menu lists it, only ever picked here, never started. */
-const spoolStandIn: AgentEngine = {
-	id: "spool",
-	authentication: { kind: "external", command: "spool" },
+/**
+ * A second engine as the menu lists it, only ever picked here, never started. Its offer keeps
+ * the mode menu, so the machine's mode stays on screen while it is picked.
+ */
+const piStandIn: AgentEngine = {
+	id: "pi",
+	authentication: { kind: "external", command: "pi" },
 	installed: () => true,
 	account: async () => ({ signedIn: true, account: null }),
 	offer: async () => ({ models: [], current: { value: null, resolved: null, name: null, effort: null, pin: null } }),
@@ -29,7 +32,7 @@ it("keeps the agent and mode a person picked across a reload, a new chat and ano
 	const claude = permissionClaude();
 	const project = await serveProject({
 		uiDir: await builtUi(),
-		agentEngines: [createClaudeEngine(claude.executor, () => true), spoolStandIn],
+		agentEngines: [createClaudeEngine(claude.executor, () => true), piStandIn],
 	});
 	const other = makeProject(project.spoolDir);
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");
@@ -70,21 +73,21 @@ it("keeps the agent and mode a person picked across a reload, a new chat and ano
 	await mode.click();
 	await rail.getByRole("menuitemradio", { name: "bypass", exact: true }).click();
 	await agent.click();
-	await rail.locator('[data-agent-engine="spool"]').click();
-	await settled("spool", "bypass");
+	await rail.locator('[data-agent-engine="pi"]').click();
+	await settled("pi", "bypass");
 
 	await page.reload();
 	await page.locator('[data-rail-icon="agent"]').waitFor();
 	const glyph = page.locator('[data-rail-icon="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
-	await settled("spool", "bypass");
-	expect(await labels()).toEqual(["spool", "bypass"]);
+	await settled("pi", "bypass");
+	expect(await labels()).toEqual(["pi", "bypass"]);
 
 	await rail.getByRole("button", { name: "New chat", exact: true }).click();
-	await settled("spool", "bypass");
+	await settled("pi", "bypass");
 	await open(other.name);
-	await settled("spool", "bypass");
-	expect(await labels()).toEqual(["spool", "bypass"]);
+	await settled("pi", "bypass");
+	expect(await labels()).toEqual(["pi", "bypass"]);
 
 	// back to Claude Code, and a mode picked while its turn runs shows at once and sticks
 	await agent.click();

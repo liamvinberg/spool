@@ -172,6 +172,20 @@ const AGENT_SETTING_SOURCES = "user";
  * load — and a read that can be skipped is a smaller cost than a settings source
  * that grants.
  */
+const ASKS = `Reading anywhere, searching the web, shell commands, and writing under design/ are
+all silent. Editing files outside design/ asks the human first: say what you are
+about to do before the ask lands, and make changes outside design/ with the file
+tools rather than the shell, so the ask actually happens.`;
+
+/**
+ * Pi's version of the boundary paragraph (#363). Pi never asks before it acts, so the
+ * line promising an ask would be false; what stays is saying what is about to happen
+ * outside design/ before it does, and making those changes with the file tools.
+ */
+const PI_ASKS = `Nothing you do asks the human first. Say what you are about to do outside design/
+before you do it, and make changes outside design/ with the file tools rather than the
+shell, so the human can follow them.`;
+
 const FRAMING = `You are the agent inside Spool, a live prototyping canvas. The human is looking at
 frames on that canvas and talking to you from a rail beside them.
 
@@ -184,10 +198,7 @@ That is what "this" and "that" mean.
 Read the project's own CLAUDE.md or AGENTS.md before your first change. Spool does
 not load it for you.
 
-Reading anywhere, searching the web, shell commands, and writing under design/ are
-all silent. Editing files outside design/ asks the human first: say what you are
-about to do before the ask lands, and make changes outside design/ with the file
-tools rather than the shell, so the ask actually happens.`;
+${ASKS}`;
 
 /**
  * The framing plus the skill overview, which is a call into the same function
@@ -200,6 +211,11 @@ tools rather than the shell, so the ask actually happens.`;
  */
 export function agentFraming(): string {
 	return `${FRAMING}\n\n---\n\n${skillText()}`;
+}
+
+/** The same framing for pi, whose agent never asks; pi loads the project's AGENTS.md itself. */
+export function piFraming(): string {
+	return `${FRAMING.replace(ASKS, PI_ASKS)}\n\n---\n\n${skillText()}`;
 }
 
 /** Everything the child process is: what to run, where, and with what. */

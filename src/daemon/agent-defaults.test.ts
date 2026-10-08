@@ -31,18 +31,19 @@ function standIn(id: AgentEngineId, installed = true): AgentEngine {
 }
 
 describe("the fallback", () => {
-	it("is the first installed engine in the order, never the bundled one", () => {
+	it("is the first installed engine in the order", () => {
 		expect(ENGINE_ORDER).toEqual(["claude", "codex", "pi"]);
-		expect(fallbackEngine([standIn("spool"), standIn("claude")])).toBe("claude");
+		expect(fallbackEngine([standIn("pi"), standIn("claude")])).toBe("claude");
+		expect(fallbackEngine([standIn("pi"), standIn("claude", false)])).toBe("pi");
 		// nothing installed still names the first engine in the order, whose wall says how to get it
-		expect(fallbackEngine([standIn("spool"), standIn("claude", false)])).toBe("claude");
-		expect(fallbackEngine([standIn("spool")])).toBeUndefined();
+		expect(fallbackEngine([standIn("pi", false), standIn("claude", false)])).toBe("claude");
+		expect(fallbackEngine([])).toBeUndefined();
 	});
 
 	it("starts a machine with nothing saved on that engine and on Auto-edit", async () => {
 		const spoolDir = makeTempDir();
 		const { name } = makeProject(spoolDir);
-		const app = makeApp(spoolDir, { agentEngines: [standIn("spool"), standIn("claude", false)] });
+		const app = makeApp(spoolDir, { agentEngines: [standIn("pi", false), standIn("claude", false)] });
 		expect(await (await app.request(`/api/p/${name}/agent/engines`)).json()).toMatchObject({
 			preferred: "claude",
 			mode: "edits",
@@ -51,7 +52,7 @@ describe("the fallback", () => {
 });
 
 describe("the machine's agent choice", () => {
-	const engines = () => [standIn("spool"), createClaudeEngine(fixtureAgentExecutor().executor, () => true)];
+	const engines = () => [standIn("pi"), createClaudeEngine(fixtureAgentExecutor().executor, () => true)];
 
 	it("is saved before it is answered and read the same after a restart and in every project", async () => {
 		const spoolDir = makeTempDir();
@@ -61,8 +62,8 @@ describe("the machine's agent choice", () => {
 			app.request(`/api/p/${first.name}/agent/engines`, { method: "PUT", ...json({ preferred }) });
 
 		expect((await choose("nope")).status).toBe(400);
-		expect(await (await choose("spool")).json()).toMatchObject({ preferred: "spool" });
-		expect(JSON.parse(readFileSync(agentDefaultsFile(spoolDir), "utf8"))).toMatchObject({ engine: "spool" });
+		expect(await (await choose("pi")).json()).toMatchObject({ preferred: "pi" });
+		expect(JSON.parse(readFileSync(agentDefaultsFile(spoolDir), "utf8"))).toMatchObject({ engine: "pi" });
 		expect(await (await choose("claude")).json()).toMatchObject({ preferred: "claude" });
 
 		const restarted = makeApp(spoolDir, { agentEngines: engines() });
@@ -78,14 +79,14 @@ describe("the machine's agent choice", () => {
 		const spoolDir = makeTempDir();
 		const { name } = makeProject(spoolDir);
 		const app = makeApp(spoolDir, { agentEngines: engines() });
-		await app.request(`/api/p/${name}/agent/engines`, { method: "PUT", ...json({ preferred: "spool" }) });
+		await app.request(`/api/p/${name}/agent/engines`, { method: "PUT", ...json({ preferred: "pi" }) });
 		await app.request(`/api/p/${name}/agent/threads/${THREAD}/permissions`, {
 			method: "PUT",
 			...json({ mode: "bypass" }),
 		});
 		writeFileSync(agentDefaultsFile(spoolDir), "{ half a write");
 		expect(await (await app.request(`/api/p/${name}/agent/engines`)).json()).toMatchObject({
-			preferred: "spool",
+			preferred: "pi",
 			mode: "bypass",
 		});
 	});
@@ -95,7 +96,7 @@ describe("the machine's agent choice", () => {
 		const { name } = makeProject(spoolDir);
 		const claude = fixtureAgentExecutor();
 		const app = makeApp(spoolDir, {
-			agentEngines: [standIn("spool"), createClaudeEngine(claude.executor, () => true)],
+			agentEngines: [standIn("pi"), createClaudeEngine(claude.executor, () => true)],
 		});
 		// nothing saved: the turn takes the fallback rather than any engine of its own
 		void app.request(`/api/p/${name}/agent/turn`, {
@@ -109,21 +110,21 @@ describe("the machine's agent choice", () => {
 				.threads;
 		await expect.poll(async () => (await threads())[0]?.engine).toBe("claude");
 
-		createAgentDefaults(spoolDir, () => []).setEngine("spool");
+		createAgentDefaults(spoolDir, () => []).setEngine("pi");
 		// the started thread refuses another engine; a new one takes the machine's
 		const refused = await app.request(`/api/p/${name}/agent/turn`, {
 			method: "POST",
-			...json({ thread: THREAD, engine: "spool", said: [{ prompt: "again" }] }),
+			...json({ thread: THREAD, engine: "pi", said: [{ prompt: "again" }] }),
 		});
 		expect(refused.status).toBe(409);
 		const login = async (thread: string) =>
 			(await (await app.request(`/api/p/${name}/agent/login?thread=${thread}`)).json()) as { account: string };
-		expect((await login(OTHER)).account).toBe("spool");
+		expect((await login(OTHER)).account).toBe("pi");
 	});
 });
 
 describe("the one-time migration", () => {
-	it("takes the most recently written per-project values, and never the bundled engine", () => {
+	it("takes the most recently written per-project values, and never the removed bundled engine", () => {
 		const spoolDir = makeTempDir();
 		const older = makeProject(spoolDir);
 		const newer = makeProject(spoolDir);
@@ -148,10 +149,10 @@ describe("the one-time migration", () => {
 		models(older.root, { claude: { value: "haiku", effort: "low" } }, 1000);
 		models(newer.root, { claude: { value: "opus", effort: "high" }, spool: { value: "spool/x" } }, 2000);
 
-		const defaults = createAgentDefaults(spoolDir, () => [standIn("spool"), standIn("claude")]);
+		const defaults = createAgentDefaults(spoolDir, () => [standIn("pi"), standIn("claude")]);
 		expect(defaults.read()).toEqual({ engine: "claude", mode: "bypass" });
 		expect(defaults.model("claude")).toEqual({ value: "opus", effort: "high" });
-		expect(defaults.model("spool")).toEqual({});
+		expect(defaults.model("pi")).toEqual({});
 
 		// once: a later per-project value is not read again
 		set(older.root, ["agent", "permissions"], "edits");

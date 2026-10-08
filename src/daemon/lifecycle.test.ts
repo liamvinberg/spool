@@ -8,7 +8,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { SpoolError } from "../errors";
 import { makeTempDir } from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
-import { createSpoolEngine } from "./agent-engine-spool";
+import { createPiEngine } from "./agent-engine-pi";
 import {
 	configuredPort,
 	ensureDaemon,
@@ -305,7 +305,9 @@ describe("serveDaemon", () => {
 					},
 				},
 				{
-					...createSpoolEngine(spoolDir),
+					...createPiEngine(spoolDir, () => {
+						throw new Error("No agent turn should start");
+					}),
 					close: async () => {
 						await held;
 						writeFileSync(marker, "finished");

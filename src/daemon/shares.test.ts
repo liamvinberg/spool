@@ -132,7 +132,7 @@ function fakeCloud() {
 /** An agent whose turn does one thing to the project and ends. */
 function endingEngine(work: () => void): AgentEngine {
 	return {
-		id: "spool",
+		id: "pi",
 		authentication: { kind: "external", command: "fixture login" },
 		installed: () => true,
 		account: async () => ({ signedIn: true, account: "agent@example.test" }),
@@ -159,7 +159,7 @@ async function turn(daemon: ReturnType<typeof makeApp>, project: string): Promis
 	const response = await daemon.request(`/api/p/${project}/agent/turn`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ thread: THREAD, turn: "one", engine: "spool", said: [{ prompt: "go" }] }),
+		body: JSON.stringify({ thread: THREAD, turn: "one", engine: "pi", said: [{ prompt: "go" }] }),
 	});
 	expect(response.status).toBe(200);
 	const reader = agentReader(response);

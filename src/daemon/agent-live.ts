@@ -1,3 +1,4 @@
+import type { AgentPermissions } from "../settings/registry";
 import type { AgentReply } from "./agent-control";
 import type { AgentEvent } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
@@ -52,7 +53,8 @@ export interface AgentHeld {
 	/** how much has arrived, which is what a fresh viewer is told it is replaying */
 	readonly logged: number;
 	readonly elapsed: number;
-	readonly permissions: AgentTurn["permissions"];
+	/** the permission mode the turn was spawned with, which holds until it ends (#361) */
+	readonly mode: AgentPermissions | undefined;
 	answer(request: string, reply: AgentReply): boolean;
 	interrupt(): boolean;
 	/** the blunt one: the daemon is closing, or this thread is being talked to again */
@@ -66,6 +68,7 @@ export interface AgentHoldOptions {
 	readonly thread: string;
 	readonly id?: string | undefined;
 	readonly turn: AgentTurn;
+	readonly mode?: AgentPermissions | undefined;
 	/** the process is gone: the caller starts its own grace window from here */
 	readonly onEnded?: ((events: readonly AgentEvent[]) => void) | undefined;
 }
@@ -78,7 +81,7 @@ export interface AgentHoldOptions {
  * process had to die with the request. Here the drain is the turn's own, started the
  * moment it is held, and a viewer is a second reader of what it wrote down.
  */
-export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOptions): AgentHeld {
+export function holdAgentTurn({ root, thread, id, turn, mode, onEnded }: AgentHoldOptions): AgentHeld {
 	const log: AgentEvent[] = [];
 	let running = true;
 	const started = Date.now();
@@ -164,9 +167,7 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 		get logged() {
 			return log.length;
 		},
-		get permissions() {
-			return turn.permissions;
-		},
+		mode,
 		answer: (request, reply) => turn.answer(request, reply),
 		interrupt: () => turn.interrupt(),
 		abandon: () => {
