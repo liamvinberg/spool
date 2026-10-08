@@ -1,0 +1,15 @@
+[
+{"in":{"id":"spool-1","type":"get_state"}},
+{"out":{"id":"spool-1","type":"response","command":"get_state","success":true,"data":{"model":{"id":"qwen3-coder:30b","name":"qwen3-coder:30b","api":"openai-completions","provider":"ollama","baseUrl":"http://localhost:11434/v1","reasoning":true,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":128000,"maxTokens":16384},"thinkingLevel":"medium","isStreaming":false,"isCompacting":false,"steeringMode":"one-at-a-time","followUpMode":"one-at-a-time","sessionId":"01a11d20-c4d0-7598-92a8-48f741f6a5e9","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}},
+{"in":{"id":"spool-2","type":"get_available_models"}},
+{"out":{"id":"spool-2","type":"response","command":"get_available_models","success":true,"data":{"models":[{"id":"qwen3-coder:30b","name":"qwen3-coder:30b","api":"openai-completions","provider":"ollama","baseUrl":"http://localhost:11434/v1","reasoning":true,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":128000,"maxTokens":16384},{"id":"llama3.2:3b","name":"llama3.2:3b","api":"openai-completions","provider":"ollama","baseUrl":"http://localhost:11434/v1","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":128000,"maxTokens":16384}]}}},
+{"in":{"id":"spool-3","type":"set_model","provider":"ollama","modelId":"qwen3-coder:30b"}},
+{"out":{"id":"spool-3","type":"response","command":"set_model","success":true,"data":{"id":"qwen3-coder:30b","name":"qwen3-coder:30b","api":"openai-completions","provider":"ollama","baseUrl":"http://localhost:11434/v1","reasoning":true,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":128000,"maxTokens":16384}}},
+{"in":{"id":"spool-4","type":"get_available_thinking_levels"}},
+{"out":{"id":"spool-4","type":"response","command":"get_available_thinking_levels","success":true,"data":{"levels":["off","minimal","low","medium","high"]}}},
+{"in":{"id":"spool-5","type":"set_model","provider":"ollama","modelId":"llama3.2:3b"}},
+{"out":{"type":"thinking_level_changed","level":"off"}},
+{"out":{"id":"spool-5","type":"response","command":"set_model","success":true,"data":{"id":"llama3.2:3b","name":"llama3.2:3b","api":"openai-completions","provider":"ollama","baseUrl":"http://localhost:11434/v1","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":128000,"maxTokens":16384}}},
+{"in":{"id":"spool-6","type":"get_available_thinking_levels"}},
+{"out":{"id":"spool-6","type":"response","command":"get_available_thinking_levels","success":true,"data":{"levels":["off"]}}}
+]

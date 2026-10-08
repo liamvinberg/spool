@@ -63,3 +63,28 @@ prose because it never ran: a permission rule refused it
 The same elision covers tool and skill listings, long file bodies, long tool
 output, and one real email address that was scrubbed out of the 3,372-character
 message.
+
+## pi rpc sessions
+
+Five recordings of the person's own `pi --mode rpc` (pi 1.0.3), taken through
+the same commands spool's pi engine sends, on 2026-10-08, in a scratch project
+with `--offline --no-context-files --no-skills --no-prompt-templates
+--no-extensions` so nothing of the recording machine's own setup rode along.
+Unlike the Claude windows they are whole sessions, and they are scripts rather
+than streams: an array of `{"in": …}` (a command spool wrote) and `{"out": …}`
+(a line pi printed) steps, replayed by `scriptedAgentExecutor` in
+`src/test-helpers.ts`, which answers each `in` with the `out`s after it and
+rewrites the recorded command ids to spool's own.
+
+| capture | what it holds |
+| --- | --- |
+| `pi-turn.json` | `get_state`, then one prompt: a `read` tool call and its result, then the one-word answer, ending on `agent_settled`. Session created under a spool-chosen id (`--session-id`). |
+| `pi-resume.json` | The next turn of that session, opened by its exact file (`--session`). |
+| `pi-stop.json` | A prompt aborted after its first words: `abort` goes down mid-stream and the turn settles as `aborted`. |
+| `pi-models.json` | The offer probe (`--no-session`): `get_state`, `get_available_models`, then `set_model` and `get_available_thinking_levels` per model, on a ChatGPT login. |
+| `pi-models-local.json` | The same probe against two Ollama models (`baseUrl` `http://localhost:11434/v1`), one with no thinking levels but `off`. |
+
+Scrubbed: pi's system prompt sections are markers (`<pi tools section
+elided>`), the scratch project path is `$ROOT` (replayed as the test's own
+project), and home and install paths are `/home/person` and
+`/usr/local/lib/node_modules`. Model and session ids are as recorded.

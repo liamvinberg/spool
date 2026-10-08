@@ -499,6 +499,116 @@ export function fixtureAgentExecutor(
 }
 
 /**
+ * One step of a recorded stdio RPC session (#362, #363): a line spool wrote to the
+ * process (`in`) or a line the process printed (`out`). Codex app-server and pi rpc
+ * captures are arrays of these, recorded through spool's own engine.
+ */
+export type ScriptedStep = { readonly in: Record<string, unknown> } | { readonly out: Record<string, unknown> };
+
+/** what a line is, for matching: its method or type, or a response to a request */
+function stepKey(message: Record<string, unknown>): string {
+	if (typeof message.method === "string") return message.method;
+	if (message.type === "response") return "response";
+	if (typeof message.type === "string") return message.type;
+	return "response";
+}
+
+/** a line that is a request and so carries an id its response quotes */
+function isRequest(message: Record<string, unknown>): boolean {
+	return message.id !== undefined && message.id !== null && stepKey(message) !== "response";
+}
+
+/**
+ * A process that answers from a recorded session rather than a model.
+ *
+ * On every line spool writes it takes the next expected `in` step (matched by method or
+ * type), remembers the id spool used for a request, and prints every `out` step up to the
+ * next `in`, with the recorded request ids rewritten to spool's own. A line that is not
+ * the next expected one is kept in `mismatches` and answered with nothing, so a test that
+ * checks `mismatches` catches spool saying something the recording never did.
+ *
+ * `$ROOT` anywhere in the capture is the spawn's working directory, so a project path
+ * recorded in a scratch directory replays as the test's own project.
+ */
+export class ScriptedAgentProc extends FakeAgentProc {
+	readonly capture: string;
+	readonly mismatches: string[] = [];
+	private readonly steps: readonly ScriptedStep[];
+	private cursor = 0;
+	private readonly ids = new Map<string, unknown>();
+	constructor(spawn: AgentSpawn, capture: string) {
+		super(spawn);
+		this.capture = capture;
+		const root = JSON.stringify(spawn.cwd).slice(1, -1);
+		const file = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "captures", `${capture}.json`);
+		this.steps = JSON.parse(readFileSync(file, "utf8").replaceAll("$ROOT", root)) as ScriptedStep[];
+		this.whenWritten = (_proc, line) => this.heard(line);
+		this.whenEnded = () => setImmediate(() => this.exit(0));
+		// whatever the process prints before it is asked anything
+		setImmediate(() => this.speak());
+	}
+	/** the steps not yet reached, for a test that wants the whole recording spent */
+	get remaining(): readonly ScriptedStep[] {
+		return this.steps.slice(this.cursor);
+	}
+	private heard(line: string): void {
+		let message: Record<string, unknown>;
+		try {
+			message = JSON.parse(line) as Record<string, unknown>;
+		} catch {
+			this.mismatches.push(line);
+			return;
+		}
+		const next = this.steps[this.cursor];
+		if (next === undefined || !("in" in next) || stepKey(next.in) !== stepKey(message)) {
+			this.mismatches.push(line);
+			return;
+		}
+		if (isRequest(next.in)) this.ids.set(String(next.in.id), message.id);
+		this.cursor += 1;
+		setImmediate(() => this.speak());
+	}
+	private speak(): void {
+		for (;;) {
+			const next = this.steps[this.cursor];
+			if (next === undefined || !("out" in next) || this.killed) return;
+			this.cursor += 1;
+			const out = next.out;
+			const answers = !isRequest(out) && out.id !== undefined && this.ids.has(String(out.id));
+			this.emit(JSON.stringify(answers ? { ...out, id: this.ids.get(String(out.id)) } : out));
+		}
+	}
+}
+
+/**
+ * The executor for recorded stdio RPC sessions (#362, #363): Codex app-server and pi rpc.
+ *
+ * Every capture names its command by its prefix (`codex-turn` is `codex`, `pi-turn` is
+ * `pi`), so one executor serves every engine and routes by `spawn.command`. Each spawn of
+ * a command takes that command's next capture, in the order given, and the last one
+ * repeats. A command with no capture is a binary that is not there.
+ */
+export function scriptedAgentExecutor(captureName: string, ...more: readonly string[]) {
+	const spawned: ScriptedAgentProc[] = [];
+	const byCommand = new Map<string, string[]>();
+	for (const name of [captureName, ...more]) {
+		const command = name.split("-")[0] ?? name;
+		byCommand.set(command, [...(byCommand.get(command) ?? []), name]);
+	}
+	const taken = new Map<string, number>();
+	const executor: AgentExecutor = async (spawn) => {
+		const names = byCommand.get(spawn.command);
+		if (names === undefined) throw new Error(`spawn ${spawn.command} ENOENT`);
+		const index = taken.get(spawn.command) ?? 0;
+		taken.set(spawn.command, index + 1);
+		const proc = new ScriptedAgentProc(spawn, names[Math.min(index, names.length - 1)] as string);
+		spawned.push(proc);
+		return proc;
+	};
+	return { spawned, executor };
+}
+
+/**
  * A binary answering the login probe, and nothing else (#201).
  *
  * `claude auth status --json` prints a document and exits, so the fixture answers on the
