@@ -3,7 +3,7 @@ import type { Attachment } from "../attachment";
 import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamProjectHere, TeamRole } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
-import { type AgentEngineId, type AgentLoginProgress, isAgentEngineId } from "../daemon/agent-engine";
+import { type AgentEngineId, isAgentEngineId } from "../daemon/agent-engine";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
 import type { AgentLogin } from "../daemon/agent-preflight";
@@ -1481,25 +1481,9 @@ export async function fetchAgentLogin(
 			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
 		});
 		if (!res.ok) return null;
-		const login = (await res.json()) as { signedIn?: unknown; account?: unknown; connections?: unknown };
+		const login = (await res.json()) as { signedIn?: unknown; account?: unknown };
 		if (typeof login.signedIn !== "boolean") return null;
-		const connections: NonNullable<AgentLogin["connections"]>[number][] = [];
-		if (Array.isArray(login.connections))
-			for (const value of login.connections) {
-				if (typeof value !== "object" || value === null) continue;
-				const entry = value as Record<string, unknown>;
-				if (
-					typeof entry.provider === "string" &&
-					(entry.method === "oauth" || entry.method === "api_key") &&
-					typeof entry.label === "string"
-				)
-					connections.push({ provider: entry.provider, method: entry.method, label: entry.label });
-			}
-		return {
-			signedIn: login.signedIn,
-			account: typeof login.account === "string" ? login.account : null,
-			...(Array.isArray(login.connections) ? { connections } : {}),
-		};
+		return { signedIn: login.signedIn, account: typeof login.account === "string" ? login.account : null };
 	} catch {
 		return null;
 	}
@@ -1560,6 +1544,28 @@ export async function fetchAgentDefaults(
 	}
 }
 
+/**
+ * Which of this daemon's engines have a binary on this machine (#363), or null when the door
+ * said nothing. The wall goes up only on an answer that names none.
+ */
+export async function fetchInstalledEngines(project: string): Promise<readonly AgentEngineId[] | null> {
+	try {
+		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
+		if (!res.ok) return null;
+		const { engines } = (await res.json()) as { engines?: unknown };
+		if (!Array.isArray(engines)) return null;
+		return engines.flatMap((entry: unknown) => {
+			const { id, installed } = (typeof entry === "object" && entry !== null ? entry : {}) as {
+				id?: unknown;
+				installed?: unknown;
+			};
+			return isAgentEngineId(id) && installed === true ? [id] : [];
+		});
+	} catch {
+		return null;
+	}
+}
+
 /** Save the engine new threads start on; the answer is the value the daemon confirmed. */
 export async function saveAgentEngine(
 	project: string,
@@ -1583,25 +1589,6 @@ function agentDefaultsOf(body: unknown): { preferred: AgentEngineId | null; mode
 
 function isPermissionMode(value: unknown): value is AgentPermissions {
 	return value === "ask" || value === "edits" || value === "bypass";
-}
-
-export async function accountOperation(
-	project: string,
-	operation:
-		| { action: "start"; provider: string; method: string }
-		| { action: "input"; id: string; value: string; revision?: number }
-		| { action: "poll"; id: string }
-		| { action: "cancel"; id: string }
-		| { action: "disconnect"; provider: string },
-): Promise<AgentLoginProgress> {
-	try {
-		const response = await client.api.p[":project"].agent.account.$post({ param: { project }, json: operation });
-		return response.ok
-			? ((await response.json()) as AgentLoginProgress)
-			: { kind: "error", message: "Could not connect the account. Try again." };
-	} catch {
-		return { kind: "error", message: "Could not reach the bundled engine. Try again." };
-	}
 }
 
 /**

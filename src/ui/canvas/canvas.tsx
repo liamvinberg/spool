@@ -5579,20 +5579,14 @@ export function ProjectCanvas({
 			hotkey: "panes.agent",
 			working: turn.phase === "playing",
 			focus: (body) => body.querySelector("textarea")?.focus({ preventScroll: true }),
-			render: ({ width, visible, hide }) => (
+			render: ({ width, visible }) => (
 				<AgentRail
 					active={visible}
-					agentReady={deck.engine !== undefined}
-					onUseAgent={
-						root === undefined
-							? undefined
-							: () => {
-									hide();
-									setAgentHandoff(true);
-								}
-					}
+					agentReady={deck.engine !== undefined || deck.legacy}
+					legacy={deck.legacy}
 					request={agentRequest}
-					permissions={permissions}
+					// an agent that never asks has no mode to pick, so the rail draws no mode menu (#363)
+					permissions={model.offer.modes === false ? undefined : permissions}
 					width={width}
 					entries={turn.entries}
 					plan={turn.plan}

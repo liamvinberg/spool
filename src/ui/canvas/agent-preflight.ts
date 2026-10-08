@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentRecovery } from "../../daemon/agent-events";
-import { fetchAgentInstalled } from "../api";
+import { fetchAgentInstalled, fetchInstalledEngines } from "../api";
 
 /**
  * The two ways there is no agent to talk to, on the rail's side (#127, #201).
@@ -71,12 +71,27 @@ export interface LoginDeck {
 
 /** what the wall is drawn from: whether spool found an agent, and what a press did */
 export interface InstallDeck {
-	/** spool looked and there is nothing to spawn */
+	/** spool looked and this thread's engine has nothing to spawn */
 	readonly missing: boolean;
+	/** spool looked and no engine it runs has anything to spawn: the wall (#363) */
+	readonly none: boolean;
 	readonly checking: boolean;
 	/** the last look came back without one, which is allowed and says so */
 	readonly foundNothing: boolean;
 	readonly look: () => void;
+}
+
+/** what a look found: this thread's engine, and whether any engine is there at all */
+async function lookFor(
+	project: string,
+	engine: AgentEngineId | undefined,
+	thread: string | undefined,
+): Promise<{ there: boolean | null; any: boolean | null }> {
+	const [there, installed] = await Promise.all([
+		fetchAgentInstalled(project, engine, thread),
+		fetchInstalledEngines(project),
+	]);
+	return { there, any: installed === null ? null : installed.length > 0 };
 }
 
 /**
@@ -87,6 +102,9 @@ export interface InstallDeck {
  * goes out, comes back with the same answer, and says so in one quiet line, which is the
  * honest outcome and also the only way the button proves it did anything at all.
  *
+ * It looks again on its own whenever the window comes back into focus (#363), because the
+ * likeliest thing somebody did while away was run the install line in a terminal.
+ *
  * It never guesses in either direction. A wall is spool saying it looked, so only a look
  * that came back with an answer moves one: a door that said nothing leaves the rail
  * exactly as it found it, rather than putting a wall over a working agent or taking one
@@ -94,16 +112,25 @@ export interface InstallDeck {
  */
 export function useAgentInstall(project: string, engine?: AgentEngineId, thread?: string): InstallDeck {
 	const [missing, setMissing] = useState(false);
+	const [none, setNone] = useState(false);
 	const [checking, setChecking] = useState(false);
 	const [foundNothing, setFoundNothing] = useState(false);
 
 	useEffect(() => {
 		let gone = false;
-		void fetchAgentInstalled(project, engine, thread).then((there) => {
-			if (!gone && there !== null) setMissing(!there);
-		});
+		const quiet = () => {
+			void lookFor(project, engine, thread).then(({ there, any }) => {
+				if (gone) return;
+				if (there !== null) setMissing(!there);
+				if (any !== null) setNone(!any);
+				if (there === true || any === true) setFoundNothing(false);
+			});
+		};
+		quiet();
+		window.addEventListener("focus", quiet);
 		return () => {
 			gone = true;
+			window.removeEventListener("focus", quiet);
 		};
 	}, [project, engine, thread]);
 
@@ -111,14 +138,15 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 		if (checking) return;
 		setChecking(true);
 		setFoundNothing(false);
-		void fetchAgentInstalled(project, engine, thread).then((there) => {
+		void lookFor(project, engine, thread).then(({ there, any }) => {
 			setChecking(false);
 			if (there !== null) setMissing(!there);
+			if (any !== null) setNone(!any);
 			// the press left a mark whenever it did not turn one up, which includes a door
 			// that could not answer: what it says is that there is still nothing to talk to
 			setFoundNothing(there !== true);
 		});
 	}, [project, checking, engine, thread]);
 
-	return { missing, checking, foundNothing, look };
+	return { missing, none, checking, foundNothing, look };
 }

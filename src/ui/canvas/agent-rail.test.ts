@@ -235,6 +235,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	 */
 	const preflight = {
 		installed: null as boolean | null,
+		/** which engines the machine has, as the engines door names them (#363) */
+		engines: [{ id: "claude", installed: true }] as { id: string; installed: boolean }[] | null,
 		login: { signedIn: false, account: null } as { signedIn: boolean; account: string | null },
 		looks: 0,
 		asked: 0,
@@ -268,7 +270,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 					const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
 					machine.preferred = (JSON.parse(body) as { preferred: string }).preferred;
 				}
-				return Response.json({ ...machine, engines: [{ id: "claude", installed: true }] });
+				return Response.json(preflight.engines === null ? machine : { ...machine, engines: preflight.engines });
 			}
 			// is there an agent on this machine at all: a `which`, asked when the rail opens
 			// and again on every press behind the wall (#201)
@@ -4133,23 +4135,21 @@ describe("the model menu", () => {
 		await drop(canvas.host, shot());
 		await settle(50);
 		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
-		await press(canvas.host.querySelector('[data-agent-engine="spool"]'));
+		await press(canvas.host.querySelector('[data-agent-engine="pi"]'));
 		await settle(50);
 		expect(field(canvas.host)?.value).toBe("keep this draft");
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("spool");
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("pi");
 		await send(canvas.host, "keep this draft");
 		await settle(50);
 		expect(canvas.turn.streams[0]?.thread).toBe(thread);
 		expect(canvas.turn.attachments[0]?.[0]?.media).toBe("image/png");
 		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
-		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("spool");
+		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("pi");
 	});
 
 	it("starts immediately with the last chosen agent and preserves the older chat's draft", async () => {
 		const canvas = mount();
-		canvas.stored.served = [
-			storedThread({ id: ONE, ask: "original chat", engine: "spool", draft: "original draft" }),
-		];
+		canvas.stored.served = [storedThread({ id: ONE, ask: "original chat", engine: "pi", draft: "original draft" })];
 		await canvas.render();
 		await settle();
 		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
@@ -4162,77 +4162,70 @@ describe("the model menu", () => {
 			"Claude Code",
 		);
 		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
-		await press(canvas.host.querySelector('[data-agent-engine="spool"]'));
+		await press(canvas.host.querySelector('[data-agent-engine="pi"]'));
 		await newThread(canvas.host);
 		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("spool");
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("pi");
 		await openCell(canvas.host, "original chat");
 		await settle(50);
 		expect(field(canvas.host)?.value).toBe("original draft");
-		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("spool");
+		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("pi");
 	});
 
-	it("organizes spool favorites in place and waits for the accepted account-scoped model before changing the footer", async () => {
+	it("marks pi's local models and waits for the accepted model before changing the footer", async () => {
 		const canvas = mount();
-		canvas.stored.served = [storedThread({ id: ONE, ask: "saved thread", engine: "spool", draft: "keep my draft" })];
+		canvas.stored.served = [storedThread({ id: ONE, ask: "saved thread", engine: "pi", draft: "keep my draft" })];
 		canvas.offered.offer = {
 			models: [
 				{
-					value: "spool/openai/api_key/opus",
-					resolvedModel: "opus",
-					displayName: "Opus",
-					connection: "OpenAI API key",
-					description: "unused description",
+					value: "openai-codex/gpt-5.6-luna",
+					resolvedModel: "openai-codex/gpt-5.6-luna",
+					displayName: "GPT-5.6 Luna",
+					description: "openai-codex",
 					supportsEffort: true,
-					supportedEffortLevels: ["low", "high"],
+					supportedEffortLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
 				},
 				{
-					value: "spool/google/api_key/opus",
-					resolvedModel: "opus",
-					displayName: "Opus",
-					connection: "Google API key",
-					description: "unused description",
-					supportsEffort: false,
-					supportedEffortLevels: [],
+					value: "ollama/qwen3:8b",
+					resolvedModel: "ollama/qwen3:8b",
+					displayName: "Qwen3 8B",
+					description: "ollama",
+					local: true,
 				},
 			],
-			current: { value: "spool/openai/api_key/opus", resolved: "opus", name: "Opus", effort: "high", pin: null },
+			current: {
+				value: "openai-codex/gpt-5.6-luna",
+				resolved: "openai-codex/gpt-5.6-luna",
+				name: "GPT-5.6 Luna",
+				effort: "high",
+				pin: null,
+			},
+			modes: false,
 		};
 		await canvas.render();
-		await openModelMenu(canvas);
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("GPT-5.6 Luna") === true);
+		await act(async () => modelTrigger(canvas.host)?.click());
+		await settle(50);
 		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
-		const click = async (label: string) => {
-			const button = [...canvas.host.querySelectorAll<HTMLButtonElement>("button")].find(
-				(button) => button.textContent === label || button.getAttribute("aria-label") === label,
-			);
-			if (!button) throw new Error(`Missing ${label}`);
-			await act(async () => button.click());
-		};
-		await click("Favorite Opus through OpenAI API key");
-		await click("Find a model…");
-		await click("Favorite Opus through Google API key");
-		await click("Back to your models");
-		await click("Unfavorite Opus through OpenAI API key");
-		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(2);
-		expect(canvas.offered.chose).toHaveLength(0);
+		expect(modelRows(canvas.host)).toEqual(["GPT-5.6 Luna", "Qwen3 8B"]);
+		const local = [...canvas.host.querySelectorAll("[data-model-offer]")].map(
+			(row) => row.querySelector("[data-agent-model-local]") !== null,
+		);
+		expect(local).toEqual([false, true]);
 		let release: (() => void) | undefined;
 		canvas.offered.hold = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		await act(async () =>
 			canvas.host
-				.querySelector<HTMLButtonElement>('[data-model-offer="spool/google/api_key/opus"] [data-agent-model-row]')
+				.querySelector<HTMLButtonElement>('[data-model-offer="ollama/qwen3:8b"] [data-agent-model-row]')
 				?.click(),
 		);
 		expect(modelMenu(canvas.host)).toBeNull();
-		expect(canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model")).toBe("Opus · high");
+		expect(canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model")).toBe("Qwen3 8B");
 		await act(async () => release?.());
-		await until(() => canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model") === "Opus");
-		await openModelMenu(canvas);
-		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(1);
-		expect(modelRows(canvas.host)).toEqual(["Opus"]);
 		expect(field(canvas.host)?.value).toBe("keep my draft");
-		expect(canvas.offered.chose).toEqual([{ thread: ONE, value: "spool/google/api_key/opus" }]);
+		expect(canvas.offered.chose).toEqual([{ thread: ONE, value: "ollama/qwen3:8b" }]);
 	});
 
 	it("is populated by the binary rather than by a table spool ships", async () => {
@@ -4614,8 +4607,8 @@ describe("no agent on this machine", () => {
 
 		expect(wall(canvas.host)?.textContent).toContain("Claude Code isn’t installed.");
 		expect(canvas.host.querySelector("[data-agent-log]")).not.toBeNull();
-		// the docs root is the binary's own, and the sentence about why is spool's
-		expect(wall(canvas.host)?.querySelector("a")?.href).toBe("https://code.claude.com/docs/en/quickstart");
+		// the vendor's own install line, to paste into a terminal
+		expect(wall(canvas.host)?.querySelector("code")?.textContent).toBe("npm i -g @anthropic-ai/claude-code");
 		// nothing was sent, and nothing was asked about a login either: this state is
 		// answered by looking, and looking is free
 		expect(canvas.turn.prompts).toEqual([]);
@@ -4701,6 +4694,69 @@ describe("no agent on this machine", () => {
 		expect(wall(canvas.host)).not.toBeNull();
 		expect(canvas.host.querySelector("[data-agent-looked]")).not.toBeNull();
 		expect(field(canvas.host)).not.toBeNull();
+	});
+});
+
+describe("no supported agent at all (#363)", () => {
+	const theWall = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-wall]");
+	const none = [
+		{ id: "claude", installed: false },
+		{ id: "pi", installed: false },
+	];
+
+	it("is the wall: one install line per agent, each with its own copy, and a dead composer", async () => {
+		const canvas = mount();
+		canvas.preflight.engines = none;
+		canvas.preflight.installed = false;
+		const copied = vi.fn(async (_text: string) => {});
+		vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: copied } });
+		await canvas.render();
+		await settle(50);
+		const lines = [...(theWall(canvas.host)?.querySelectorAll("[data-agent-install] code") ?? [])].map(
+			(line) => line.textContent,
+		);
+		expect(lines).toEqual([
+			"npm i -g @anthropic-ai/claude-code",
+			"npm i -g @openai/codex",
+			"npm i -g @earendil-works/pi-coding-agent",
+		]);
+		expect(canvas.host.querySelector("[data-agent-dead]")).not.toBeNull();
+		await press(canvas.host.querySelector('[aria-label="Copy the pi install line"]'));
+		expect(copied).toHaveBeenCalledWith("npm i -g @earendil-works/pi-coding-agent");
+		expect(canvas.host.querySelector('[aria-label="Copy the pi install line"]')?.textContent).toBe("copied");
+	});
+
+	it("comes down on Check again once one is installed", async () => {
+		const canvas = mount();
+		canvas.preflight.engines = none;
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+		await checkAgain(theWall(canvas.host));
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
+		canvas.preflight.engines = [
+			{ id: "claude", installed: false },
+			{ id: "pi", installed: true },
+		];
+		await checkAgain(theWall(canvas.host));
+		expect(theWall(canvas.host)).toBeNull();
+	});
+
+	it("looks again on its own when the window comes back into focus", async () => {
+		const canvas = mount();
+		canvas.preflight.engines = none;
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+		expect(theWall(canvas.host)).not.toBeNull();
+		canvas.preflight.engines = [{ id: "claude", installed: true }];
+		canvas.preflight.installed = true;
+		const looks = canvas.preflight.looks;
+		await act(async () => window.dispatchEvent(new Event("focus")));
+		await settle(50);
+		expect(canvas.preflight.looks).toBeGreaterThan(looks);
+		expect(theWall(canvas.host)).toBeNull();
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 	});
 });
 

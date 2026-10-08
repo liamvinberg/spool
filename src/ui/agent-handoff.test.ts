@@ -3,15 +3,10 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { AgentHandoff, agentAppCommand } from "./agent-handoff";
-import { AgentRecommendation } from "./agent-recommendation";
 import { fetchAgentAppAvailable, openAgentApp } from "./api";
 
 vi.mock("./api", () => ({ fetchAgentAppAvailable: vi.fn(), openAgentApp: vi.fn() }));
-const settings = vi.hoisted(() => ({ seen: undefined as boolean | undefined, write: vi.fn() }));
-vi.mock("./settings", () => ({ useSetting: () => settings.seen, useWriteSetting: () => settings.write }));
 beforeEach(() => {
-	settings.seen = false;
-	settings.write.mockReset().mockResolvedValue({ ok: true });
 	vi.mocked(fetchAgentAppAvailable).mockResolvedValue(false);
 	vi.mocked(openAgentApp).mockReset().mockResolvedValue();
 });
@@ -36,64 +31,6 @@ function button(name: string) {
 	if (!found) throw new Error(`Missing button ${name}`);
 	return found;
 }
-
-it("waits for settings and a visible spool chat, then remembers dismissal without taking another action", async () => {
-	const { root, trigger } = mount();
-	const onUseAgent = vi.fn();
-	const onClaude = vi.fn();
-	const render = (active: boolean, engine: "spool" | "claude" = "spool") =>
-		act(() => root.render(createElement(AgentRecommendation, { active, engine, onUseAgent, onClaude })));
-	settings.seen = undefined;
-	render(true);
-	expect(document.querySelector("dialog")).toBeNull();
-	settings.seen = false;
-	render(false);
-	expect(document.querySelector("dialog")).toBeNull();
-	render(true, "claude");
-	expect(document.querySelector("dialog")).toBeNull();
-	render(true);
-	expect(document.querySelector("dialog")?.textContent).toContain("no built-in web search");
-	await act(async () => button("Continue in spool").click());
-	expect(settings.write).toHaveBeenCalledExactlyOnceWith("agent.introductionSeen", true);
-	expect(document.querySelector("dialog")).toBeNull();
-	expect(document.activeElement).toBe(trigger);
-	render(false);
-	render(true);
-	expect(document.querySelector("dialog")).toBeNull();
-	expect(onUseAgent).not.toHaveBeenCalled();
-	expect(onClaude).not.toHaveBeenCalled();
-});
-
-it.each(["Use my agent", "Use Claude Code here", "cancel"])(
-	"remembers %s and takes only that action",
-	async (choice) => {
-		const { root } = mount();
-		const onUseAgent = vi.fn();
-		const onClaude = vi.fn();
-		act(() =>
-			root.render(createElement(AgentRecommendation, { active: true, engine: "spool", onUseAgent, onClaude })),
-		);
-		await act(async () => {
-			if (choice === "cancel")
-				document.querySelector("dialog")?.dispatchEvent(new Event("cancel", { cancelable: true }));
-			else button(choice).click();
-		});
-		expect(settings.write).toHaveBeenCalledExactlyOnceWith("agent.introductionSeen", true);
-		expect(onUseAgent).toHaveBeenCalledTimes(choice === "Use my agent" ? 1 : 0);
-		expect(onClaude).toHaveBeenCalledTimes(choice === "Use Claude Code here" ? 1 : 0);
-	},
-);
-
-it("does not repeat the introduction on a new mount after the machine has seen it", () => {
-	settings.seen = true;
-	const { root } = mount();
-	act(() =>
-		root.render(
-			createElement(AgentRecommendation, { active: true, engine: "spool", onUseAgent: vi.fn(), onClaude: vi.fn() }),
-		),
-	);
-	expect(document.querySelector("dialog")).toBeNull();
-});
 
 it("offers exactly three apps, copies the actual folder, and keeps instructions optional", async () => {
 	const { root } = mount();

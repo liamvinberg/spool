@@ -1,15 +1,12 @@
 import { useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { AgentLimit } from "../../daemon/agent-events";
-import { fetchAgentLogin } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, SearchIcon } from "../icons";
 import { ResizePopover } from "../resize-popover";
-import { AgentAccountDialog } from "./agent-account";
 import { limitReadout, resetsIn } from "./agent-limit";
 import type { AgentModelDeck } from "./agent-model";
 import type { LoginDeck } from "./agent-preflight";
-import { favoriteModels, ModelFavorite, useModelFavorites } from "./model-favorites";
 import { ChevronIcon } from "./sidebar";
 
 export function AgentModelPicker({
@@ -32,27 +29,20 @@ export function AgentModelPicker({
 	const [view, setView] = useState<"models" | "search" | "effort">("models");
 	const [query, setQuery] = useState("");
 	const [keyboard, setKeyboard] = useState(false);
-	const [noAccounts, setNoAccounts] = useState(false);
 	const reduced = useReducedMotion() === true;
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 	const returnFocus = useRef<"search" | "effort" | null>(null);
-	const favorites = useModelFavorites(model.engine ?? "claude");
 	const { offer, levels } = model;
-	const bundled = model.engine === "spool";
-	const connectDirectly = bundled && !model.loading && offer.models.length === 0 && noAccounts;
 	const current = offer.models.find((entry) => entry.value === offer.current.value);
 	const name =
 		current?.displayName ??
 		offer.current.name ??
 		offer.current.resolved ??
-		(model.loading ? "Loading models…" : bundled ? "Connect account" : "Choose model");
-	const visible = favoriteModels(
-		offer.models,
-		offer.current.value,
-		favorites.values,
-		!bundled || view === "search",
-		query,
+		(model.loading ? "Loading models…" : "Choose model");
+	const needle = query.trim().toLocaleLowerCase();
+	const visible = offer.models.filter((entry) =>
+		`${entry.displayName} ${entry.description}`.toLocaleLowerCase().includes(needle),
 	);
 	const pin = offer.current.pin;
 	const recovery = login?.recovery;
@@ -71,17 +61,6 @@ export function AgentModelPicker({
 			model.refresh();
 		} else trigger.current?.focus({ preventScroll: true });
 	};
-	useEffect(() => {
-		setNoAccounts(false);
-		if (!bundled || model.loading || offer.models.length > 0 || model.project === undefined) return;
-		let live = true;
-		void fetchAgentLogin(model.project, "spool").then((account) => {
-			if (live) setNoAccounts(account?.signedIn === false);
-		});
-		return () => {
-			live = false;
-		};
-	}, [bundled, model.loading, model.project, offer]);
 	useEffect(() => {
 		if (modelRequest) {
 			setQuery("");
@@ -112,10 +91,6 @@ export function AgentModelPicker({
 		returnFocus.current = view === "effort" ? "effort" : "search";
 		setView("models");
 		setQuery("");
-	};
-	const connect = () => {
-		show(false);
-		model.connect?.();
 	};
 	const content = (
 		<div
@@ -282,18 +257,13 @@ export function AgentModelPicker({
 									</span>
 									<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 										<span className="truncate text-text type-value">{entry.displayName}</span>
-										{entry.connection ? (
-											<span className="text-muted type-caption">{entry.connection}</span>
+										{entry.local ? (
+											<span data-agent-model-local="" className="text-muted type-caption">
+												local
+											</span>
 										) : null}
 									</span>
 								</button>
-								{bundled ? (
-									<ModelFavorite
-										model={entry}
-										on={favorites.values.includes(entry.value)}
-										toggle={() => favorites.toggle(entry.value)}
-									/>
-								) : null}
 							</div>
 						))}
 						{visible.length === 0 ? (
@@ -307,8 +277,6 @@ export function AgentModelPicker({
 									</>
 								) : model.loading ? (
 									"Loading models…"
-								) : bundled ? (
-									"Connect an account to see its models."
 								) : (
 									"No models available."
 								)}
@@ -340,15 +308,6 @@ export function AgentModelPicker({
 							</span>
 						</button>
 					) : null}
-					{bundled && !model.loading && (view === "search" || offer.models.length === 0) ? (
-						<button
-							type="button"
-							onClick={connect}
-							className="flex h-10 w-full items-center border-border-raised border-t px-3 text-muted hover:text-text type-control"
-						>
-							Connect account…
-						</button>
-					) : null}
 				</>
 			)}
 			{usage !== null ? (
@@ -360,21 +319,6 @@ export function AgentModelPicker({
 	);
 	return (
 		<span data-agent-model={model.readout} className="flex min-w-0 flex-1">
-			{model.accountOpen && model.project !== undefined ? (
-				<AgentAccountDialog
-					project={model.project}
-					onClose={() => model.closeAccount?.()}
-					onConnected={model.refresh}
-					renewal={recovery?.kind === "login" ? recovery : undefined}
-					onAuthenticated={(provider, method) => {
-						if (
-							recovery?.kind === "login" &&
-							(!recovery.offer || recovery.offer.startsWith(`spool/${provider}/${method}/`))
-						)
-							login?.retry?.();
-					}}
-				/>
-			) : null}
 			{open ? (
 				<button
 					type="button"
@@ -387,18 +331,17 @@ export function AgentModelPicker({
 			<button
 				type="button"
 				ref={trigger}
-				aria-label={connectDirectly ? "Connect account" : "Choose model"}
+				aria-label="Choose model"
 				title={`${name}${levels.length ? ` · ${offer.current.effort ?? "auto"}` : ""}`}
-				aria-expanded={connectDirectly ? undefined : open}
+				aria-expanded={open}
 				onPointerDown={() => setKeyboard(false)}
 				onClick={(event) => {
 					setKeyboard(event.detail === 0);
-					if (connectDirectly) connect();
-					else show(!open);
+					show(!open);
 				}}
 				onKeyDown={(event) => {
 					setKeyboard(true);
-					if (!connectDirectly && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 						event.preventDefault();
 						show(true);
 					}
@@ -406,7 +349,7 @@ export function AgentModelPicker({
 				className="relative z-30 flex min-w-0 items-center gap-1.5 text-muted type-detail transition-colors hover:text-text"
 			>
 				<span className="min-w-0 truncate">{name}</span>
-				{connectDirectly ? null : <ChevronIcon open={open} className="h-2 w-2 shrink-0" />}
+				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
 			</button>
 			{interrupted ? null : (
 				<ResizePopover ref={panel} open={open} view={view} still={reduced || keyboard}>

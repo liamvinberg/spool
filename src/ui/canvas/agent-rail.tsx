@@ -3,12 +3,11 @@ import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../a
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
-import { AgentRecommendation } from "../agent-recommendation";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { AgentChoice } from "./agent-choice";
+import { AgentChoice, ENGINE_NAMES } from "./agent-choice";
 import type { AgentModelDeck } from "./agent-model";
 import { AgentModelPicker } from "./agent-model-picker";
 import { frameHolding } from "./agent-nouns";
@@ -204,7 +203,7 @@ const PermissionAction = createContext<(() => void) | undefined>(undefined);
 export function AgentRail({
 	active = true,
 	agentReady = true,
-	onUseAgent,
+	legacy = false,
 	width,
 	permissions,
 	entries,
@@ -256,7 +255,8 @@ export function AgentRail({
 	active?: boolean;
 	/** the machine's agent choice has loaded: until then no engine, model or mode is drawn (#361) */
 	agentReady?: boolean;
-	onUseAgent?: (() => void) | undefined;
+	/** the open thread was the removed bundled engine's, which nothing continues (#363) */
+	legacy?: boolean;
 	/** what this thread was left holding and nobody sent, off its own picture (#234) */
 	draft: string;
 	attached: readonly Attachment[];
@@ -423,7 +423,7 @@ export function AgentRail({
 		<RecoveryActions value={{ login, modelRequest }}>
 			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
 				<div data-agent-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
-					{install.missing && model.engine === undefined ? (
+					{install.none ? (
 						/*
 						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
 						 *
@@ -472,7 +472,13 @@ export function AgentRail({
 								<Transcript
 									entries={entries}
 									afterLog={
-										model.engine === undefined || !(install.missing || login.out || login.recovery) ? null : (
+										legacy ? (
+											<p data-agent-legacy="" className="text-muted type-detail">
+												This chat ran on spool’s built-in agent, which is gone. It can’t be continued; what
+												you send starts a new chat.
+											</p>
+										) : model.engine === undefined ||
+											!(install.missing || login.out || login.recovery) ? null : (
 											<RecoveryView
 												onNew={threads.onNew}
 												install={install}
@@ -562,18 +568,6 @@ export function AgentRail({
 						</div>
 					)}
 				</div>
-				{onUseAgent && (
-					<AgentRecommendation
-						active={active && agentReady && open !== ""}
-						engine={model.engine}
-						onUseAgent={onUseAgent}
-						onClaude={() => {
-							// a pick like the agent menu's: saved, and the new chat follows it
-							threads.onNew();
-							model.onEngine?.("claude");
-						}}
-					/>
-				)}
 			</PermissionAction>
 		</RecoveryActions>
 	);
@@ -864,8 +858,47 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
  * thing it says. Both step forward in brightness, which is the whole of the emphasis the
  * rest of the rail uses. */
 
-/** the binary's own docs root, as it links it itself */
-const DOCS = "code.claude.com/docs";
+/**
+ * One install line per agent spool runs (#363), in the fallback's own order. Codex is listed
+ * before spool runs it, because the wall is about what you can install, and the line is the
+ * vendor's own npm package either way.
+ */
+export const INSTALL_LINES = [
+	{ id: "claude", name: "Claude Code", line: "npm i -g @anthropic-ai/claude-code" },
+	{ id: "codex", name: "Codex", line: "npm i -g @openai/codex" },
+	{ id: "pi", name: "pi", line: "npm i -g @earendil-works/pi-coding-agent" },
+] as const;
+
+/** a line to paste, with the one control that puts it on the clipboard */
+function InstallLine({ name, line }: { name: string; line: string }) {
+	const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
+	return (
+		<div data-agent-install={name} className="flex flex-col gap-1">
+			<span className="text-muted type-caption">{name}</span>
+			<div className="flex items-center gap-2 rounded-sm border border-border/70 bg-surface/40 py-1 pr-1 pl-2">
+				<code className="min-w-0 flex-1 select-all truncate font-mono text-2xs text-text leading-4">{line}</code>
+				<button
+					type="button"
+					aria-label={`Copy the ${name} install line`}
+					onClick={() => {
+						void navigator.clipboard.writeText(line).then(
+							() => setCopied("copied"),
+							() => setCopied("failed"),
+						);
+					}}
+					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
+				>
+					{copied === "copied" ? "copied" : "copy"}
+				</button>
+			</div>
+			{copied === "failed" ? (
+				<span role="alert" className="text-muted type-caption">
+					Could not copy. Select the line and copy it.
+				</span>
+			) : null}
+		</div>
+	);
+}
 
 /**
  * Ask again: one control, in the rail's own weight, for both of these states.
@@ -900,42 +933,39 @@ function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 }
 
 /**
- * Nothing to spawn.
+ * Nothing to spawn, from any agent spool runs (#201, #363).
  *
  * The composer stays, and it is dead. Removing it would leave the rail as a sentence with
  * no evidence of what the rail is for; leaving it live would collect a prompt for nobody.
- * So it sits there at its resting height, dimmed, saying what it will say once there is
- * something behind it — the one thing a wall owes you past the bad news is a picture of
- * the good state.
  *
- * The threads go with the transcript, column and nameplate both. A conversation you cannot
- * continue is not something to switch to, and the wall is the whole of the rail's body
- * while it is up.
- *
- * The words are not spool's where they do not have to be: `code.claude.com/docs` is the
- * docs root the binary links itself. What spool writes is the sentence about why there is
- * nothing here, because that sentence is about spool.
+ * Spool ships no agent of its own, so the wall is the way to one: a line per agent to paste
+ * into a terminal, and a check. The check also happens on its own when the window comes back
+ * into focus, which is when the person has most likely just run one of the lines.
  */
 function InstallWall({ install }: { install: InstallDeck }) {
 	return (
 		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
 			<div className="animate-agent-entry flex flex-col gap-3">
-				<p className="text-text type-body">Claude Code is not installed</p>
+				<p className="text-text type-body">No agent is installed</p>
 				<p className="text-muted type-body">
-					Install Claude Code to continue with this engine, or start a new thread with spool.
+					Spool works with the agent you already use. Install one in a terminal, then check again.
 				</p>
-				<div className="flex flex-col gap-1.5 pt-1">
-					<div className="flex items-center justify-between">
-						<span className="text-muted type-detail">{DOCS}</span>
-						<Quiet busy={install.checking} onClick={install.look} />
-					</div>
+				<div className="flex flex-col gap-2.5 pt-1">
+					{INSTALL_LINES.map((agent) => (
+						<InstallLine key={agent.id} name={agent.name} line={agent.line} />
+					))}
+				</div>
+				<div className="flex items-center justify-between pt-1">
 					{/* the check is allowed to fail forever, and a press that leaves no mark reads
 					    as a broken button — so it leaves one line, in the composer's own mono */}
 					{install.foundNothing ? (
 						<span data-agent-looked="" className="animate-agent-entry text-muted type-detail">
 							still nothing on your PATH
 						</span>
-					) : null}
+					) : (
+						<span />
+					)}
+					<Quiet busy={install.checking} onClick={install.look} />
 				</div>
 			</div>
 		</div>
@@ -2298,7 +2328,6 @@ function Composer({
 		};
 	}, [request]);
 	const permissionTrigger = useRef<HTMLButtonElement>(null);
-	const preparing = useRef(false);
 	const reading = useRef(0);
 	const reads = useRef(Promise.resolve());
 	const attachFiles = (files: readonly File[]) => {
@@ -2339,23 +2368,12 @@ function Composer({
 	}, [draft]);
 
 	const take = async (text: string) => {
-		if (preparing.current || reading.current > 0) return false;
+		if (reading.current > 0) return false;
 		// captured here rather than read later: the chips that were up are the bytes
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
 		// canvas the hands have moved on from
 		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
-		if (!running() && model.engine === "spool") {
-			preparing.current = true;
-			const offer = model.loading ? await model.ready?.() : model.offer;
-			preparing.current = false;
-			// Changing chats or editing the draft while it loads cancels this pending press.
-			if (!offer || currentThread.current !== thread || field.current?.value !== draft) return false;
-			if (offer.models.length === 0) {
-				model.connect?.();
-				return false;
-			}
-		}
 		/*
 		 * Asked of the turn itself rather than of the last render (#234).
 		 *
@@ -2521,7 +2539,6 @@ function Composer({
 							<PermissionMenu
 								mode={permissions.mode}
 								pending={permissions.pending}
-								engine={model.engine ?? "claude"}
 								trigger={permissionTrigger}
 								onChange={(next) => {
 									onMenu(null);
@@ -2948,29 +2965,25 @@ function RecoveryView({
 	onNew: Threads["onNew"];
 }) {
 	const recovery = login.recovery;
-	const claude = model.engine === "claude";
+	const engine = model.engine;
 	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
 	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
-	const originalAccount = recovery?.offer?.split("/").slice(0, 3).join("/");
-	const sameAccount = claude || model.offer.current.value?.startsWith(`${originalAccount}/`);
-	if (claude && (install.missing || login.out))
+	if (engine !== undefined && (install.missing || login.out || recovery?.kind === "login")) {
+		const name = ENGINE_NAMES[engine];
+		const wanted = INSTALL_LINES.find((agent) => agent.id === engine);
 		return (
-			<div data-recovery="claude" className="flex flex-col gap-3">
+			<div data-recovery={engine} className="flex flex-col gap-3">
 				<p className="text-base text-text leading-base">
-					{install.missing ? "Claude Code isn’t installed." : "Sign in to Claude Code to continue."}
+					{install.missing ? `${name} isn’t installed.` : `Sign in to ${name} to continue.`}
 				</p>
 				{install.missing ? (
-					<a
-						href="https://code.claude.com/docs/en/quickstart"
-						target="_blank"
-						rel="noreferrer"
-						className="w-fit text-base text-muted underline underline-offset-4 hover:text-text"
-					>
-						Install Claude Code
-					</a>
+					wanted === undefined ? null : (
+						<InstallLine name={name} line={wanted.line} />
+					)
 				) : (
+					// each agent signs in in its own terminal flow: spool holds no login of its own
 					<p className="text-base text-muted leading-base">
-						Run <code className="font-mono text-xs">claude</code> in a terminal, then{" "}
+						Run <code className="font-mono text-xs">{engine}</code> in a terminal, then{" "}
 						<code className="font-mono text-xs">/login</code>.
 					</p>
 				)}
@@ -2984,32 +2997,24 @@ function RecoveryView({
 					>
 						{install.checking || login.checking ? "checking…" : "check again"}
 					</button>
-					<button type="button" className={action} onClick={() => onNew("spool")}>
-						new thread with spool
+					<button type="button" className={action} onClick={() => onNew()}>
+						new thread
 					</button>
 				</div>
 				{install.foundNothing ? (
 					<p data-agent-looked="" className="font-mono text-2xs text-muted">
-						Claude Code is still not installed.
+						{name} is still not installed.
 					</p>
 				) : null}
 			</div>
 		);
+	}
 	if (!recovery) return null;
-	if (changed && (!sameAccount || recovery.scope === "model"))
+	if (changed && recovery.scope === "model")
 		return (
 			<button type="button" className={action} onClick={login.retry}>
 				continue with this model
 			</button>
-		);
-	if (recovery.kind === "login")
-		return (
-			<div data-recovery="login" className="flex flex-col gap-3">
-				<p className="text-base text-text leading-base">Sign in to {recovery.account} to continue.</p>
-				<button type="button" className={`${action} w-fit`} onClick={model.connect}>
-					sign in again
-				</button>
-			</div>
 		);
 	const reset =
 		recovery.resetsAt === undefined

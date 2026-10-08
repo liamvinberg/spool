@@ -39,7 +39,7 @@ const string = (value: unknown): string | null => (typeof value === "string" && 
  */
 export function offerOf(body: unknown): AgentOffer | null {
 	if (typeof body !== "object" || body === null) return null;
-	const offer = body as { models?: unknown; current?: unknown };
+	const offer = body as { models?: unknown; current?: unknown; modes?: unknown };
 	if (!Array.isArray(offer.models)) return null;
 	const current = (typeof offer.current === "object" && offer.current !== null ? offer.current : {}) as Record<
 		string,
@@ -57,6 +57,7 @@ export function offerOf(body: unknown): AgentOffer | null {
 			effort: string(current.effort),
 			pin: string(current.pin),
 		},
+		...(offer.modes === false ? { modes: false as const } : {}),
 	};
 }
 
@@ -122,7 +123,7 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 	const wanted = offer.current.pin ?? press.effort ?? offer.current.effort;
 	const levels = model?.supportedEffortLevels ?? [];
 	return {
-		models: offer.models,
+		...offer,
 		current: {
 			...offer.current,
 			value,
@@ -138,9 +139,6 @@ export interface AgentModelDeck {
 	readonly project?: string;
 	readonly onEngine?: (engine: AgentEngineId) => void;
 	readonly started?: boolean;
-	readonly connect?: () => void;
-	readonly accountOpen?: boolean;
-	readonly closeAccount?: () => void;
 	readonly offer: AgentOffer;
 	/** The current chat has not received its own model offer yet. */
 	readonly loading?: boolean;
@@ -181,7 +179,6 @@ export interface AgentModelDeck {
  * screen rather than a claim nobody can now check.
  */
 export function useAgentModel(project: string, thread: string, engine?: AgentEngineId): AgentModelDeck {
-	const [accountOpen, setAccountOpen] = useState(false);
 	const owner = JSON.stringify([project, thread, engine]);
 	const activeOwner = useRef(owner);
 	activeOwner.current = owner;
@@ -250,15 +247,11 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 	// the press only ever answers for the thread it was made about, so a rail that moved
 	// on draws the report it has rather than the last thread's finger
 	const current = reported?.owner === owner ? reported.offer : NO_OFFER;
-	const offer =
-		engine === "spool" || pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
+	const offer = pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
 
 	return {
 		...(engine === undefined ? {} : { engine }),
 		project,
-		accountOpen,
-		connect: () => setAccountOpen(true),
-		closeAccount: () => setAccountOpen(false),
 		offer,
 		loading: reported?.owner !== owner,
 		ready: async () => {

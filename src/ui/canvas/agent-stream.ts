@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Attachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
-import type { AgentEngineId } from "../../daemon/agent-engine";
+import { type AgentEngineId, isAgentEngineId, LEGACY_ENGINE, type ThreadEngine } from "../../daemon/agent-engine";
 import type { AgentLimit, AgentRecovery } from "../../daemon/agent-events";
 import type { ServedThread } from "../../daemon/agent-threads";
 import {
@@ -210,8 +210,13 @@ export interface AgentTurn {
  * is the list of them and the fact that the others are still running.
  */
 export interface AgentDeck {
-	/** undefined while a blank thread waits for the machine's choice to load */
+	/** undefined while a blank thread waits for the machine's choice to load, and on a legacy thread */
 	readonly engine: AgentEngineId | undefined;
+	/**
+	 * The open thread was the removed bundled engine's (#363). Its picture stays readable and
+	 * nothing continues it: the next thing said starts a new thread, as on a finished one.
+	 */
+	readonly legacy: boolean;
 	/** the open blank thread takes the machine's choice again, after a pick was saved */
 	readonly follow: () => void;
 	readonly threads: readonly Thread[];
@@ -246,7 +251,7 @@ export interface AgentDeck {
  * act.
  */
 interface Live {
-	engine: AgentEngineId;
+	engine: ThreadEngine;
 	/**
 	 * A thread nobody has said anything to takes the machine's agent choice, whatever it was
 	 * when the thread or its draft was made (#361). It stops following at its first turn, or
@@ -606,7 +611,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 	preference.current = preferred;
 	/** the engine a thread is on, which for a blank one is the machine's, unknown until it loads */
 	const engineOf = useCallback(
-		(thread: Live): AgentEngineId | undefined => (thread.follows ? preference.current : thread.engine),
+		(thread: Live): AgentEngineId | undefined =>
+			thread.follows ? preference.current : isAgentEngineId(thread.engine) ? thread.engine : undefined,
 		[],
 	);
 	const start = useCallback((): Live => {
@@ -620,7 +626,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 		(thread: Live) => {
 			drafts.put({
 				id: thread.id,
-				engine: engineOf(thread) ?? thread.engine,
+				engine: engineOf(thread) ?? preference.current ?? "claude",
 				at: thread.at,
 				text: thread.draft,
 				attached: thread.attached,
@@ -926,13 +932,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 					 */
 					const stopped = thread.stopping;
 					thread.stopping = false;
-					const failed = thread.events.some(
-						({ event }) =>
-							(event.kind === "ended" && event.ending === "failed") ||
-							(event.kind === "closed" && event.code !== 0),
-					);
-					if (ending.kind !== "cut" && !stopped && !thread.recovery && !(thread.engine === "spool" && failed))
-						fireRef.current(thread);
+					if (ending.kind !== "cut" && !stopped && !thread.recovery) fireRef.current(thread);
 					redraw();
 				},
 			};
@@ -962,7 +962,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 						: {
 								say: {
 									thread: thread.id,
-									...(thread.follows ? {} : { engine: thread.engine }),
+									...(thread.follows || !isAgentEngineId(thread.engine) ? {} : { engine: thread.engine }),
 									turn: thread.named,
 									...(recovery?.token === undefined ? {} : { recovery: recovery.token }),
 									saying: opening.saying.map((words) => ({
@@ -1067,8 +1067,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				 * that ever fired one was a stream closing — and the next thing typed went out
 				 * ahead of them, which is the one order the queue exists to keep.
 				 */
-				if (!(thread.engine === "spool" && (one.stopped || one.ending === "failed" || one.ending === "stopped")))
-					fire(thread);
+				if (thread.engine !== LEGACY_ENGINE) fire(thread);
 			}
 			// the row opens on something either way, so this only ever runs before it has:
 			// a project with nothing stored gets one fresh thread, which is what the rail
@@ -1386,7 +1385,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 	}, [project, note, send, engineOf]);
 
 	return {
-		engine: here.follows ? preferred : here.engine,
+		engine: here.follows ? preferred : isAgentEngineId(here.engine) ? here.engine : undefined,
+		legacy: !here.follows && here.engine === LEGACY_ENGINE,
 		follow: () => {
 			const current = threads.current.get(open);
 			// Only the blank chat this choice was made in moves with it.

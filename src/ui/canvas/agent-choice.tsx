@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchAgentInstalled } from "../api";
+import { AGENT_ENGINE_IDS, type AgentEngineId } from "../../daemon/agent-engine";
+import { fetchInstalledEngines } from "../api";
 import { cn } from "../cn";
 import type { AgentModelDeck } from "./agent-model";
 import { ChevronIcon } from "./sidebar";
 
-const NAMES = { spool: "spool", claude: "Claude Code" };
+/** what the rail calls each engine, in a sentence */
+export const ENGINE_NAMES: Record<AgentEngineId, string> = { claude: "Claude Code", pi: "pi" };
+const NAMES = ENGINE_NAMES;
 
 export function AgentChoice({
 	model,
@@ -15,7 +18,7 @@ export function AgentChoice({
 	open: boolean;
 	onOpen: (open: boolean) => void;
 }) {
-	const [installed, setInstalled] = useState<boolean | null>(null);
+	const [installed, setInstalled] = useState<readonly AgentEngineId[] | null>(null);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 	const engine = model.engine ?? "claude";
@@ -24,7 +27,7 @@ export function AgentChoice({
 		let active = true;
 		panel.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 		if (model.project)
-			void fetchAgentInstalled(model.project, "claude").then((value) => {
+			void fetchInstalledEngines(model.project).then((value) => {
 				if (active) setInstalled(value);
 			});
 		return () => {
@@ -105,7 +108,7 @@ export function AgentChoice({
 							}
 						}}
 					>
-						{(["spool", "claude"] as const).map((value) => (
+						{AGENT_ENGINE_IDS.map((value) => (
 							<button
 								type="button"
 								key={value}
@@ -121,11 +124,9 @@ export function AgentChoice({
 							>
 								<span className="text-text type-control">{NAMES[value]}</span>
 								<span className="text-muted type-caption">
-									{value === "spool"
-										? "Uses your connected accounts."
-										: installed === false
-											? "Not installed on this Mac."
-											: "Uses Claude Code on this Mac."}
+									{installed !== null && !installed.includes(value)
+										? "Not installed on this computer."
+										: `Uses your own ${NAMES[value]}, with its sign-in and models.`}
 								</span>
 							</button>
 						))}
