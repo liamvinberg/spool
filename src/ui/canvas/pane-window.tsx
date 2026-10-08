@@ -443,7 +443,7 @@ export function PaneWindow({
 		for (const rail of d.zones.rails) {
 			if (!inside(rail.box, x, y)) continue;
 			const index = rail.items.findIndex((item) => y < item.box.y + item.box.h / 2);
-			return { kind: "rail", side: rail.side, index: index === -1 ? rail.items.length : index };
+			return { kind: "bar", side: rail.side, index: index === -1 ? rail.items.length : index };
 		}
 		for (const zone of d.zones.panes) {
 			if (!inside(zone.box, x, y)) continue;
@@ -459,7 +459,7 @@ export function PaneWindow({
 	};
 
 	const outlineOf = (d: Dragging, target: Target): Box => {
-		if (target.kind === "rail") {
+		if (target.kind === "bar") {
 			const rail = d.zones.rails.find((zone) => zone.side === target.side);
 			if (rail === undefined) return { x: 0, y: 0, w: 0, h: 0 };
 			const at = rail.items[target.index];
@@ -510,13 +510,13 @@ export function PaneWindow({
 			return;
 		}
 		if (verdict === "ok") {
-			placeOutline(outlineOf(d, aimed), null, aimed.kind === "rail");
+			placeOutline(outlineOf(d, aimed), null, aimed.kind === "bar");
 			return;
 		}
 		// a refusal says why where there is room to read it: over the stack the drop
 		// would have opened beside a rail, or over the whole pane it aimed at
 		let box = outlineOf(d, aimed);
-		if (aimed.kind === "rail") {
+		if (aimed.kind === "bar") {
 			const rail = d.zones.rails.find((zone) => zone.side === aimed.side);
 			const width = Math.max(LIMITS.sideMin, Math.min(LIMITS.sideMax, d.base[aimed.side].width));
 			if (rail !== undefined)
@@ -592,7 +592,7 @@ export function PaneWindow({
 		const extra = new Map<string, Box>();
 		const ghostBox = ghost.current === null ? null : rel(ghost.current.getBoundingClientRect());
 		// the moved icon flies in from the ghost's glyph
-		if (ghostBox !== null && target.kind === "rail")
+		if (ghostBox !== null && target.kind === "bar")
 			extra.set(d.pane, { x: ghostBox.x + 2, y: ghostBox.y, w: GHOST_H, h: GHOST_H });
 		const fresh =
 			target.kind === "stack" &&
@@ -812,7 +812,7 @@ export function PaneWindow({
 			const from = sideOf(layout, pane.id);
 			if (from === null) continue;
 			const to = other(from);
-			const target: Target = { kind: "rail", side: to, index: layout[to].rail.length };
+			const target: Target = { kind: "bar", side: to, index: layout[to].panes.length };
 			const verdict = check(layout, pane.id, target, at);
 			if (verdict === "noop") continue;
 			out.push({
@@ -861,7 +861,7 @@ export function PaneWindow({
 		const hand = live[id];
 		const edgeDrag = id === "left" ? leftEdge : rightEdge;
 		const stackWidth = hand === null ? f.width : Math.max(LIMITS.sideMin, hand);
-		const outer = hand === null ? f.outer : LIMITS.rail + hand;
+		const outer = STRIP_WIDTH + (hand === null ? f.outer : hand);
 		const open = hand === null ? f.open : hand > 0;
 		const stack = stackOf(layout, id);
 		const heights = stackHeights(
@@ -871,7 +871,7 @@ export function PaneWindow({
 		const tops = heights.map((_, i) => heights.slice(0, i).reduce((a, b) => a + b, 0));
 		const still = reduced || env === null || hand !== null;
 		const paneMotion = reduced || splitting ? "none" : `top ${DROP_MS}ms ${CURVE}, height ${DROP_MS}ms ${CURVE}`;
-		const railPanes = layout[id].rail;
+		const railPanes = layout[id].panes;
 		return (
 			<aside
 				aria-label={`${SIDE_NAME[id]} side`}
@@ -895,7 +895,7 @@ export function PaneWindow({
 					className="absolute inset-y-0"
 					style={{
 						width: stackWidth,
-						...(id === "left" ? { left: LIMITS.rail } : { right: LIMITS.rail }),
+						...(id === "left" ? { left: STRIP_WIDTH } : { right: STRIP_WIDTH }),
 						visibility: open ? "visible" : "hidden",
 						transition: open || still ? "none" : `visibility 0s linear ${SIDE_MS}ms`,
 					}}
@@ -946,7 +946,7 @@ export function PaneWindow({
 						"absolute inset-y-0 z-20 flex flex-col items-center gap-1 border-border bg-bg pt-1.5",
 						id === "left" ? "left-0 border-r" : "right-0 border-l",
 					)}
-					style={{ width: LIMITS.rail }}
+					style={{ width: STRIP_WIDTH }}
 				>
 					{railPanes.map((pane) => {
 						const def = byId.get(pane);
@@ -1080,7 +1080,7 @@ export function PaneWindow({
 								apply({
 									type: "move",
 									pane: menuPane.id,
-									to: { kind: "rail", side: to, index: layout[to].rail.length },
+									to: { kind: "bar", side: to, index: layout[to].panes.length },
 								});
 							}}
 						/>
