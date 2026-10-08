@@ -1,10 +1,10 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
-import { userInfo } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron, chromium, type ElectronApplication } from "playwright-core";
@@ -48,27 +48,74 @@ function childHost(pid: number): number | undefined {
 		return match && Number(match[2]) === pid && match[3]?.includes("bundled-host.js") ? [Number(match[1])] : [];
 	})[0];
 }
+/**
+ * SIGUSR1 opens a host's inspector on Node's default port: the host is forked
+ * with no inspector flags and none of the daemon's ambient ones, so 9229 is the
+ * only port there is. A concurrent run of this test on the same machine wants
+ * the same port, and a host that finds it taken fails silently while the other
+ * run's host answers in its place; this lock makes runs take turns on it.
+ */
+async function holdInspectorPort(): Promise<() => void> {
+	const lock = join(tmpdir(), "spool-installed-engine-inspector.lock");
+	const owner = join(lock, "pid");
+	await expect
+		.poll(
+			() => {
+				try {
+					mkdirSync(lock);
+					writeFileSync(owner, String(process.pid));
+					return true;
+				} catch {
+					// an owner that died holding the lock left nobody to release it
+					const pid = Number(existsSync(owner) ? readFileSync(owner, "utf8") : 0);
+					if (pid && !alive(pid)) rmSync(lock, { recursive: true, force: true });
+					return false;
+				}
+			},
+			{ timeout: 120_000, interval: 250 },
+		)
+		.toBe(true);
+	return () => rmSync(lock, { recursive: true, force: true });
+}
+interface InspectorTarget {
+	url: string;
+	webSocketDebuggerUrl: string;
+}
+const inspectorTargets = () =>
+	fetch("http://127.0.0.1:9229/json/list").then(
+		(response) => response.json() as Promise<InspectorTarget[]>,
+		() => undefined,
+	);
 /** A debugger changes only HTTP responses in this isolated host, never package files. */
 async function attachTransport(pid: number) {
-	const occupied = await fetch("http://127.0.0.1:9229/json/list").then(
-		() => true,
-		() => false,
-	);
-	if (occupied) throw new Error("Inspector port 9229 is occupied; leave that process untouched");
+	const release = await holdInspectorPort();
+	try {
+		return await injectTransport(pid);
+	} finally {
+		release();
+	}
+}
+async function injectTransport(pid: number) {
+	// a run from a checkout without the lock holds the port while its host
+	// lives, a minute or two; a process someone is debugging holds it for good
+	await expect
+		.poll(inspectorTargets, {
+			timeout: 60_000,
+			interval: 1_000,
+			message: "Inspector port 9229 is occupied; leave that process untouched",
+		})
+		.toBeUndefined();
 	process.kill(pid, "SIGUSR1");
+	// a run without the lock can still take the port first; its host is not
+	// this one, and is not ours to change
+	const args = spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" }).stdout;
+	const ours = (target: InspectorTarget) => target.url.startsWith("file:") && args.includes(fileURLToPath(target.url));
 	let endpoint = "";
 	await expect
 		.poll(
 			async () => {
-				try {
-					const targets = (await fetch("http://127.0.0.1:9229/json/list").then((response) => response.json())) as {
-						webSocketDebuggerUrl: string;
-					}[];
-					endpoint = targets[0]?.webSocketDebuggerUrl ?? "";
-					return endpoint !== "";
-				} catch {
-					return false;
-				}
+				endpoint = (await inspectorTargets())?.find(ours)?.webSocketDebuggerUrl ?? "";
+				return endpoint !== "";
 			},
 			{ timeout: 10_000 },
 		)
@@ -78,21 +125,23 @@ async function attachTransport(pid: number) {
 		socket.onopen = () => resolve();
 		socket.onerror = reject;
 	});
+	let id = 0;
 	const evaluate = (expression: string): Promise<unknown> =>
 		new Promise((resolve, reject) => {
+			const sent = ++id;
 			socket.onmessage = (event) => {
 				const response = JSON.parse(String(event.data)) as {
 					id?: number;
 					result?: { exceptionDetails?: unknown; result?: { value?: unknown } };
 					error?: unknown;
 				};
-				if (response.id !== 1) return;
+				if (response.id !== sent) return;
 				if (response.error || response.result?.exceptionDetails) reject(new Error(JSON.stringify(response)));
 				else resolve(response.result?.result?.value);
 			};
 			socket.send(
 				JSON.stringify({
-					id: 1,
+					id: sent,
 					method: "Runtime.evaluate",
 					params: { expression, awaitPromise: false, returnByValue: true },
 				}),
@@ -103,10 +152,22 @@ async function attachTransport(pid: number) {
 		expect(evidence).toMatchObject({ pid });
 		return evidence;
 	} finally {
+		// the host would hold 9229 for the rest of its life; closing its inspector
+		// drops this connection with it, and frees the port for the next run's turn
 		await new Promise<void>((resolve) => {
+			if (socket.readyState !== WebSocket.OPEN) return resolve();
 			socket.onclose = () => resolve();
-			socket.close();
+			socket.send(
+				JSON.stringify({
+					id: ++id,
+					method: "Runtime.evaluate",
+					params: { expression: 'process.getBuiltinModule("node:inspector").close()' },
+				}),
+			);
 		});
+		await expect
+			.poll(async () => (await inspectorTargets())?.some((target) => target.webSocketDebuggerUrl === endpoint))
+			.not.toBe(true);
 	}
 }
 

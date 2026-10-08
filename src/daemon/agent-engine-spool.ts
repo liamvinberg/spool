@@ -60,6 +60,9 @@ export class BundledHostClient {
 	constructor(
 		readonly directory: string,
 		private readonly start = launch,
+		// how long a host gets to answer close before it is killed; a test host
+		// boots through tsx, which a starved machine stretches past the default
+		private readonly closeGraceMs = 5_000,
 	) {}
 	private host(): ChildProcess {
 		if (this.closed) throw new Error("The bundled engine is closed.");
@@ -233,7 +236,7 @@ export class BundledHostClient {
 		const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
 		void this.request({ kind: "close" }).catch(() => child.kill());
 		this.closed = true;
-		const timeout = setTimeout(() => child.kill(), 5_000);
+		const timeout = setTimeout(() => child.kill(), this.closeGraceMs);
 		timeout.unref();
 		this.closing = exited.finally(() => clearTimeout(timeout));
 		return this.closing;

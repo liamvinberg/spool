@@ -21,7 +21,9 @@ afterEach(async () => {
 });
 
 describe("checkout development entry", () => {
-	it("serves rebuilt UI assets and stands down without leaving another watcher", { timeout: 60_000 }, async () => {
+	// a hang guard, not a budget: three tsx starts and two whole Vite builds take
+	// a minute on a starved machine
+	it("serves rebuilt UI assets and stands down without leaving another watcher", { timeout: 180_000 }, async () => {
 		const checkout = copyCheckout();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const home = makeTempDir();
