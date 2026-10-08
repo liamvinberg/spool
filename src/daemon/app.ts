@@ -178,7 +178,7 @@ import {
 	vendorSpoolJsxJs,
 } from "./vendor";
 import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_MS } from "./verify-record";
-import { createWebfonts } from "./webfonts";
+import { createWebfonts, type Webfonts } from "./webfonts";
 
 export interface DaemonOptions {
 	agentAppLauncher?: AgentAppLauncher;
@@ -244,6 +244,8 @@ export interface DaemonOptions {
 	teamNotice?: (message: string, root?: string) => void;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
+	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
+	webfonts?: Webfonts;
 }
 
 /** spool.page as the daemon reaches it: where it is, the session vault, the fetch, and the sync socket. */
@@ -482,6 +484,7 @@ export function createDaemonApp({
 	cloud,
 	teamNotice = (message) => console.error(`spool: ${message}`),
 	booth: boothSeams,
+	webfonts: providedWebfonts,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -539,7 +542,7 @@ export function createDaemonApp({
 	}
 
 	const startedAt = new Date().toISOString();
-	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
+	const webfonts = providedWebfonts ?? createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
