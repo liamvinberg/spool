@@ -575,7 +575,9 @@ export function PaneWindow({
 		const element = ghost.current;
 		if (element === null) return;
 		const x = Math.min(Math.max(d.point.x - d.grab.x, 4), window.innerWidth - element.offsetWidth - 4);
-		element.style.transform = `translate(${x}px, ${d.point.y - d.grab.y}px)`;
+		// over the bar the ghost hangs under the pointer, clear of the slot it is aiming at
+		const y = d.target?.kind === "bar" ? d.point.y + GHOST_H / 2 + 4 : d.point.y - d.grab.y;
+		element.style.transform = `translate(${x}px, ${y}px)`;
 	};
 
 	const endDrag = () => {
@@ -688,9 +690,9 @@ export function PaneWindow({
 				return;
 			}
 			d.point = local(e);
-			moveGhost(d);
 			const target = hit(d, d.point.x, d.point.y);
 			if (!sameTarget(target, d.target)) aim(d, target);
+			moveGhost(d);
 		};
 		const stop = () => {
 			window.removeEventListener("pointermove", move, true);
