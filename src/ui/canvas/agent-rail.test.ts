@@ -240,6 +240,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		asked: 0,
 	};
 	/** the model door, and every choice that went through it (#199) */
+	const machine = { preferred: "claude", mode: "edits" };
 	const offered = {
 		offer: OFFERED,
 		/** every thread the rail asked the offer about, in order */
@@ -261,8 +262,14 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-			if (url.pathname.endsWith("/agent/engines"))
-				return Response.json({ preferred: "claude", engines: [{ id: "claude", installed: true }] });
+			// the machine's agent choice (#361), saved by a PUT and read back by every GET
+			if (url.pathname.endsWith("/agent/engines")) {
+				if ((init?.method ?? (input instanceof Request ? input.method : "GET")) === "PUT") {
+					const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
+					machine.preferred = (JSON.parse(body) as { preferred: string }).preferred;
+				}
+				return Response.json({ ...machine, engines: [{ id: "claude", installed: true }] });
+			}
 			// is there an agent on this machine at all: a `which`, asked when the rail opens
 			// and again on every press behind the wall (#201)
 			if (url.pathname.endsWith("/agent/installed")) {
@@ -437,6 +444,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		pointed,
 		stored,
 		offered,
+		machine,
 		preflight,
 		/** the log's body changed size: what a browser tells the rail's watcher after a layout */
 		grew: async () => {

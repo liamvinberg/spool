@@ -100,7 +100,7 @@ function mount(stored: readonly ServedThread[] = []) {
 	});
 
 	function Probe() {
-		seen.push(useAgentThreads("test"));
+		seen.push(useAgentThreads("test", "claude"));
 		return null;
 	}
 

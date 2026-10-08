@@ -210,8 +210,10 @@ export interface AgentTurn {
  * is the list of them and the fact that the others are still running.
  */
 export interface AgentDeck {
-	readonly engine: AgentEngineId;
-	readonly chooseEngine: (engine: AgentEngineId) => void;
+	/** undefined while a blank thread waits for the machine's choice to load */
+	readonly engine: AgentEngineId | undefined;
+	/** the open blank thread takes the machine's choice again, after a pick was saved */
+	readonly follow: () => void;
 	readonly threads: readonly Thread[];
 	readonly open: string;
 	readonly turn: AgentTurn;
@@ -245,6 +247,12 @@ export interface AgentDeck {
  */
 interface Live {
 	engine: AgentEngineId;
+	/**
+	 * A thread nobody has said anything to takes the machine's agent choice, whatever it was
+	 * when the thread or its draft was made (#361). It stops following at its first turn, or
+	 * when it was opened on one engine on purpose.
+	 */
+	follows: boolean;
 	readonly id: string;
 	/** everything this thread's earlier turns drew, which is the conversation so far */
 	before: readonly AgentEntry[];
@@ -356,6 +364,7 @@ function born(id: string, over: Partial<Live> = {}): Live {
 	return {
 		id,
 		engine: "claude",
+		follows: false,
 		before: [],
 		after: [],
 		noted: 0,
@@ -545,7 +554,7 @@ function archive(entries: readonly AgentEntry[], token: string): AgentEntry[] {
 	return settledPicture(entries).map((entry) => ({ ...entry, key: `${token}:${entry.key}` }));
 }
 
-export function useAgentThreads(project: string, preferred: AgentEngineId = "claude", root = project): AgentDeck {
+export function useAgentThreads(project: string, preferred: AgentEngineId | undefined, root = project): AgentDeck {
 	const [drafts] = useState(() => draftsFor(root));
 	const pendingDraft = useRef<Live | null>(null);
 	const still = useStillness();
@@ -595,9 +604,14 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	 */
 	const preference = useRef(preferred);
 	preference.current = preferred;
+	/** the engine a thread is on, which for a blank one is the machine's, unknown until it loads */
+	const engineOf = useCallback(
+		(thread: Live): AgentEngineId | undefined => (thread.follows ? preference.current : thread.engine),
+		[],
+	);
 	const start = useCallback((): Live => {
 		const id = crypto.randomUUID();
-		const thread = born(id, { engine: preference.current });
+		const thread = born(id, { follows: true });
 		threads.current.set(id, thread);
 		return thread;
 	}, []);
@@ -606,13 +620,13 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		(thread: Live) => {
 			drafts.put({
 				id: thread.id,
-				engine: thread.engine,
+				engine: engineOf(thread) ?? thread.engine,
 				at: thread.at,
 				text: thread.draft,
 				attached: thread.attached,
 			});
 		},
-		[drafts],
+		[drafts, engineOf],
 	);
 
 	useEffect(() => {
@@ -761,6 +775,11 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			thread.said = attaching ? [] : opening.saying;
 			if (!attaching) {
 				thread.pending = opening.saying;
+			}
+			// the first turn fixes a blank thread's engine to the machine's current choice
+			if (!attaching && thread.follows && preference.current !== undefined) {
+				thread.engine = preference.current;
+				thread.follows = false;
 			}
 			thread.streaming = true;
 			thread.ending = null;
@@ -943,7 +962,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 						: {
 								say: {
 									thread: thread.id,
-									engine: thread.engine,
+									...(thread.follows ? {} : { engine: thread.engine }),
 									turn: thread.named,
 									...(recovery?.token === undefined ? {} : { recovery: recovery.token }),
 									saying: opening.saying.map((words) => ({
@@ -1017,7 +1036,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				if (threads.current.has(draft.id)) continue;
 				const saved = stored.find((one) => one.id === draft.id);
 				if (!saved && draft.text === "" && draft.attached.length === 0) continue;
-				const thread = saved ? restored(saved) : born(draft.id, { engine: draft.engine, at: draft.at });
+				// an unsent draft is a blank thread: it starts on the machine's choice, not the one it was typed under
+				const thread = saved ? restored(saved) : born(draft.id, { follows: true, at: draft.at });
 				thread.draft = draft.text;
 				thread.attached = draft.attached;
 				threads.current.set(draft.id, thread);
@@ -1149,20 +1169,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		};
 	}, []);
 
-	const here = threads.current.get(open) ?? born(open);
-	useEffect(() => {
-		const current = threads.current.get(openRef.current);
-		if (
-			current !== undefined &&
-			!current.restored &&
-			!current.streaming &&
-			current.before.length === 0 &&
-			current.events.length === 0
-		) {
-			current.engine = preferred;
-			redraw();
-		}
-	}, [preferred, redraw]);
+	const here = threads.current.get(open) ?? born(open, { follows: true });
 	const seen = shownOf(here);
 	const phase = phaseOf(here, seen);
 	const entries = entriesOf(here, seen);
@@ -1301,7 +1308,11 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	const onNew = useCallback(
 		(engine?: AgentEngineId) => {
 			const next = start();
-			if (engine !== undefined) next.engine = engine;
+			// opened on one engine on purpose (a recovery), which the machine's choice does not move
+			if (engine !== undefined) {
+				next.engine = engine;
+				next.follows = false;
+			}
 			setOpen(next.id);
 		},
 		[start],
@@ -1361,7 +1372,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		if (thread === undefined) return;
 		checkingRef.current = thread.id;
 		setCheckingOn(thread.id);
-		void fetchAgentLogin(project, thread.engine, thread.id).then((login) => {
+		void fetchAgentLogin(project, engineOf(thread), thread.id).then((login) => {
 			checkingRef.current = null;
 			setCheckingOn(null);
 			if (login?.signedIn !== true) {
@@ -1372,24 +1383,24 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			// the held prompt is the words the bounce was about, which the thread still has
 			if (thread.pending.length > 0 && !thread.streaming) send(thread, thread.pending, true);
 		});
-	}, [project, note, send]);
+	}, [project, note, send, engineOf]);
 
 	return {
-		engine: here.engine,
-		chooseEngine: (engine) => {
+		engine: here.follows ? preferred : here.engine,
+		follow: () => {
 			const current = threads.current.get(open);
-			// Only the blank chat this choice was opened for can change its agent.
+			// Only the blank chat this choice was made in moves with it.
 			if (
 				openRef.current !== open ||
 				current === undefined ||
-				current.engine === engine ||
+				current.follows ||
 				current.restored ||
 				current.streaming ||
 				current.before.length > 0 ||
 				current.events.length > 0
 			)
 				return;
-			current.engine = engine;
+			current.follows = true;
 			if (drafts.entries.has(current.id) || current.draft || current.attached.length > 0) keepDraft(current);
 			redraw();
 		},
@@ -1475,7 +1486,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 					let thread = threads.current.get(named ?? openRef.current);
 					if (!thread) {
 						if (named || openRef.current) return;
-						pendingDraft.current ??= born(crypto.randomUUID(), { engine: preference.current });
+						pendingDraft.current ??= born(crypto.randomUUID(), { follows: true });
 						thread = pendingDraft.current;
 						drafts.select(thread.id);
 					}
@@ -1490,7 +1501,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 					let thread = threads.current.get(named ?? openRef.current);
 					if (!thread) {
 						if (named || openRef.current) return;
-						pendingDraft.current ??= born(crypto.randomUUID(), { engine: preference.current });
+						pendingDraft.current ??= born(crypto.randomUUID(), { follows: true });
 						thread = pendingDraft.current;
 						drafts.select(thread.id);
 					}

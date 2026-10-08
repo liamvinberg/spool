@@ -1,100 +1,102 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
-import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentPermissions } from "../../settings/registry";
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
-import { settingsMoved, useSettings } from "../settings";
+import { useSettings } from "../settings";
+import { AGENT_DEFAULTS_RETRY_MS, learnAgentMode } from "./agent-defaults";
 
 export interface PermissionDeck {
+	/** the machine's mode, or the pick on its way to being saved */
 	readonly mode: AgentPermissions;
+	/** a pick is being saved */
+	readonly saving: boolean;
+	/** this thread's running turn started on another mode and takes this one at its next turn */
 	readonly pending: boolean;
 	readonly reason: string | undefined;
 	choose(mode: AgentPermissions): void;
 }
 
+/**
+ * The permission menu's reading (#361): the machine's mode, never a guess. Undefined until
+ * it is known, so the rail draws no mode it has not loaded; a failed read keeps what was
+ * known and tries again. A pick shows at once, is saved, and the menu then holds the value
+ * the daemon confirmed, which it never refuses.
+ */
 export function useAgentPermissions(
 	project: string,
 	thread: string,
-	engine: AgentEngineId,
 	phase: string,
-): PermissionDeck {
+	known: AgentPermissions | undefined,
+): PermissionDeck | undefined {
 	const settings = useSettings(project);
-	const [mode, setMode] = useState<AgentPermissions>("ask");
-	const [pending, setPending] = useState(false);
+	const [read, setRead] = useState<{ owner: string; mode: AgentPermissions; pending: boolean }>();
+	const [picked, setPicked] = useState<AgentPermissions>();
 	const [reason, setReason] = useState<string>();
-	const revision = useRef(0);
-	const owner = `${project}/${thread}/${engine}`;
+	const owner = `${project}/${thread}`;
 	const current = useRef(owner);
-	const applying = useRef(false);
-	const generation = useRef(0);
 	current.current = owner;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: changing thread ownership retires its pending UI operation
+	const picks = useRef(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a turn boundary or settings event is the cue to read again
 	useEffect(() => {
-		++generation.current;
-		applying.current = false;
-		setPending(false);
-		setReason(undefined);
-		return () => {
-			++generation.current;
+		if (thread === "") return;
+		let live = true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const ask = () => {
+			const picking = picks.current;
+			void agentPermissions(project, thread).then((result) => {
+				if (!live) return;
+				if (!("mode" in result)) {
+					timer = setTimeout(ask, AGENT_DEFAULTS_RETRY_MS);
+					return;
+				}
+				// a pick made while this read was out is newer than what it says
+				if (picks.current !== picking) return;
+				setRead({ owner, mode: result.mode, pending: result.pending });
+				learnAgentMode(result.mode);
+			});
 		};
-	}, [owner]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: a turn boundary or settings event invalidates the engine reading
-	useEffect(() => {
-		const read = ++revision.current;
-		void agentPermissions(project, thread, engine).then((result) => {
-			if (!applying.current && revision.current === read && current.current === owner && "mode" in result)
-				setMode(result.mode);
-		});
+		ask();
 		return () => {
-			++revision.current;
+			live = false;
+			if (timer !== undefined) clearTimeout(timer);
 		};
-	}, [project, thread, engine, owner, phase, settings]);
+	}, [project, thread, owner, phase, settings]);
+	const mine = read?.owner === owner ? read : undefined;
+	const mode = picked ?? mine?.mode ?? known;
+	if (mode === undefined || thread === "") return undefined;
 	return {
 		mode,
-		pending,
+		saving: picked !== undefined,
+		pending: picked === undefined && mine?.pending === true,
 		reason,
 		choose: (next) => {
-			if (applying.current) return;
-			applying.current = true;
-			++revision.current;
-			const born = generation.current;
-			setPending(true);
+			const pick = ++picks.current;
+			const born = owner;
+			setPicked(next);
 			setReason(undefined);
-			void agentPermissions(project, thread, engine, next).then(async (result) => {
-				if (current.current !== owner || generation.current !== born) return;
-				applying.current = false;
-				setPending(false);
+			void agentPermissions(project, thread, next).then((result) => {
+				if (picks.current !== pick) return;
+				setPicked(undefined);
 				if ("mode" in result) {
-					setMode(result.mode);
-					settingsMoved();
-				} else {
-					setReason(result.reason);
-					// A transport/save failure can follow an engine acknowledgement.
-					// Read the engine again instead of guessing which side took effect.
-					const read = ++revision.current;
-					const effective = await agentPermissions(project, thread, engine);
-					if (
-						current.current === owner &&
-						generation.current === born &&
-						revision.current === read &&
-						"mode" in effective
-					)
-						setMode(effective.mode);
-				}
+					learnAgentMode(result.mode);
+					if (current.current === born) setRead({ owner: born, mode: result.mode, pending: result.pending });
+				} else setReason(result.reason);
 			});
 		},
 	};
 }
 
-/** The same project preference for both engines; each engine enforces its own modes. */
+/** The machine's one mode for every engine; each engine enforces its own modes. */
 export function PermissionMenu({
 	mode,
+	pending,
 	engine,
 	trigger,
 	onChange,
 	onClose,
 }: {
 	mode: AgentPermissions;
+	pending: boolean;
 	engine: "spool" | "claude";
 	trigger: RefObject<HTMLButtonElement | null>;
 	onChange: (mode: AgentPermissions) => void;
@@ -177,7 +179,7 @@ export function PermissionMenu({
 				</button>
 			))}
 			<p className="border-border border-t px-2 pt-2 pb-1 text-2xs text-muted leading-4">
-				This project, on this machine.
+				{pending ? "Applies when this turn ends. " : null}Every new chat on this machine starts here.
 			</p>
 		</div>
 	);

@@ -79,9 +79,8 @@ it("draws every general entry as a row from the registry, in bands named by file
 		expect(text).toContain(entry.label);
 		expect(text).toContain(entry.says);
 	}
-	expect(text).not.toContain(SETTINGS["agent.engine"].label);
 	expect(text).toContain("design/canvas.json");
-	expect(text).not.toContain(SETTINGS["agent.permissions"].label);
+	expect(text).not.toContain("Agent permissions");
 	expect(text).toContain("~/.spool/config.json");
 	unmount();
 });

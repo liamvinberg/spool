@@ -32,7 +32,6 @@ import {
 	coverUrl,
 	daemonShares,
 	fetchCanvasState,
-	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
 	type MoveAsk,
@@ -45,7 +44,6 @@ import {
 	putPlaces,
 	putPresence,
 	putSelection,
-	putSetting,
 	readRungs,
 	resolveFlows,
 	revertPatch,
@@ -64,6 +62,7 @@ import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
+import { useAgentDefaults } from "./agent-defaults";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
@@ -573,31 +572,12 @@ export function ProjectCanvas({
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
-	const [preferredEngine, setPreferredEngine] = useState<AgentEngineId>("spool");
-	const [engineLoaded, setEngineLoaded] = useState(false);
-	const enginePreferenceVersion = useRef(0);
-	useEffect(() => {
-		let live = true;
-		const version = ++enginePreferenceVersion.current;
-		void fetchEnginePreference(project).then((engine) => {
-			if (live && version === enginePreferenceVersion.current) {
-				setPreferredEngine(engine);
-				setEngineLoaded(true);
-			}
-		});
-		return () => {
-			live = false;
-		};
-	}, [project]);
-	const rememberEngine = (engine: AgentEngineId) => {
-		setEngineLoaded(true);
-		enginePreferenceVersion.current += 1;
-		setPreferredEngine(engine);
-		void putSetting("agent.engine", engine, project);
-	};
+	// the machine's agent choice (#361): nothing agent-shaped is drawn until it has loaded
+	const agentDefaults = useAgentDefaults(project);
+	const preferredEngine = agentDefaults.engine ?? undefined;
 	const deck = useAgentThreads(project, preferredEngine, root);
 	const turn = deck.turn;
-	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
+	const permissions = useAgentPermissions(project, deck.open, turn.phase, agentDefaults.mode);
 	/**
 	 * A set-aside mark's Hand to agent: one press is a turn on the open thread, or the next one
 	 * if a turn is running, with both sides of the file. The rail opens on it. Where the rail has
@@ -629,9 +609,11 @@ export function ProjectCanvas({
 	const model = {
 		...offeredModel,
 		started: turn.entries.length > 0,
+		// saved before the menu moves: the blank chat then follows the confirmed choice
 		onEngine: (engine: AgentEngineId) => {
-			deck.chooseEngine(engine);
-			rememberEngine(engine);
+			void agentDefaults.choose(engine).then((confirmed) => {
+				if (confirmed) deck.follow();
+			});
 		},
 	};
 	/**
@@ -5600,7 +5582,7 @@ export function ProjectCanvas({
 			render: ({ width, visible, hide }) => (
 				<AgentRail
 					active={visible}
-					agentReady={engineLoaded && (model.started || deck.engine === preferredEngine)}
+					agentReady={deck.engine !== undefined}
 					onUseAgent={
 						root === undefined
 							? undefined
@@ -5624,11 +5606,8 @@ export function ProjectCanvas({
 						finished: deck.finished,
 						onOpen: deck.onOpen,
 						onClose: deck.onClose,
-						onNew: (engine) => {
-							// Typing immediately after + belongs to the new chat, even while settings save.
-							deck.onNew(engine);
-							if (engine !== undefined) rememberEngine(engine);
-						},
+						// a chat opened on one engine (a recovery) leaves the machine's choice alone
+						onNew: deck.onNew,
 					}}
 					install={install}
 					login={deck.login}

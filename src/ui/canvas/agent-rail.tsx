@@ -234,7 +234,7 @@ export function AgentRail({
 }: {
 	/** the pane's settled width (`pane-window.tsx`), which the composer measures its chip strip against */
 	width: number;
-	permissions?: PermissionDeck;
+	permissions?: PermissionDeck | undefined;
 	entries: readonly AgentEntry[];
 	/** the plan, off the log and onto the shelf; absent until the turn writes one */
 	plan: AgentPlan | null;
@@ -254,6 +254,7 @@ export function AgentRail({
 	handback: AgentHandback;
 	request?: AgentRequest | undefined;
 	active?: boolean;
+	/** the machine's agent choice has loaded: until then no engine, model or mode is drawn (#361) */
 	agentReady?: boolean;
 	onUseAgent?: (() => void) | undefined;
 	/** what this thread was left holding and nobody sent, off its own picture (#234) */
@@ -447,6 +448,7 @@ export function AgentRail({
 					    belongs to, and it is where the others are reached from */}
 							<ThreadPlate
 								threads={threads}
+								ready={agentReady}
 								model={model}
 								listing={listing}
 								onList={(at) => {
@@ -498,6 +500,7 @@ export function AgentRail({
 					    rather than one width */}
 							<Composer
 								thread={open}
+								ready={agentReady}
 								permissions={permissions}
 								menu={footerMenu}
 								onMenu={setFooterMenu}
@@ -543,7 +546,7 @@ export function AgentRail({
 								model={model}
 								limit={limit}
 								onSend={(text, sent) => {
-									if (install.missing || login.recovery) return false;
+									if (!agentReady || install.missing || login.recovery) return false;
 									const took = onSend(text, sent);
 									// the log follows the live edge again because something was said, so a press
 									// that said nothing must not move it
@@ -564,7 +567,11 @@ export function AgentRail({
 						active={active && agentReady && open !== ""}
 						engine={model.engine}
 						onUseAgent={onUseAgent}
-						onClaude={() => threads.onNew("claude")}
+						onClaude={() => {
+							// a pick like the agent menu's: saved, and the new chat follows it
+							threads.onNew();
+							model.onEngine?.("claude");
+						}}
 					/>
 				)}
 			</PermissionAction>
@@ -603,6 +610,7 @@ export function AgentRail({
  */
 function ThreadPlate({
 	threads,
+	ready,
 	model,
 	menu,
 	onMenu,
@@ -610,6 +618,7 @@ function ThreadPlate({
 	onList,
 }: {
 	threads: Threads;
+	ready: boolean;
 	model: AgentModelDeck;
 	menu: "agent" | null;
 	onMenu: (menu: "agent" | null) => void;
@@ -663,7 +672,11 @@ function ThreadPlate({
 					</button>
 				</PaneActions>
 			</div>
-			<AgentChoice model={model} open={menu === "agent"} onOpen={(open) => onMenu(open ? "agent" : null)} />
+			{ready ? (
+				<AgentChoice model={model} open={menu === "agent"} onOpen={(open) => onMenu(open ? "agent" : null)} />
+			) : (
+				<div className="h-8" />
+			)}
 		</div>
 	);
 }
@@ -2194,6 +2207,7 @@ function fieldSays(answering: string | null, finished: boolean): string {
 
 function Composer({
 	thread,
+	ready,
 	request,
 	permissions,
 	menu,
@@ -2219,6 +2233,7 @@ function Composer({
 	onAnswer,
 }: {
 	thread: string;
+	ready: boolean;
 	request: string | undefined;
 	permissions: PermissionDeck | undefined;
 	menu: "models" | "permissions" | "agent" | null;
@@ -2454,13 +2469,15 @@ function Composer({
 			) : null}
 			<div className="relative flex h-[18px] min-w-0 items-center justify-between gap-2.5">
 				<div className="relative flex min-w-0 flex-1 items-center gap-4">
-					<ModelMenu
-						model={model}
-						limit={limit}
-						open={menu === "models"}
-						interrupted={menu !== null && menu !== "models"}
-						onOpen={(next) => onMenu(next ? "models" : null)}
-					/>
+					{ready ? (
+						<ModelMenu
+							model={model}
+							limit={limit}
+							open={menu === "models"}
+							interrupted={menu !== null && menu !== "models"}
+							onOpen={(next) => onMenu(next ? "models" : null)}
+						/>
+					) : null}
 					{cutting ? <StopButton onStop={onStop} /> : null}
 					{permissions === undefined ? null : (
 						<button
@@ -2470,8 +2487,12 @@ function Composer({
 							aria-label={`Agent permissions: ${permissions.mode}`}
 							aria-haspopup="menu"
 							aria-expanded={menu === "permissions"}
-							title={`Agent permissions: ${permissions.mode}`}
-							aria-busy={permissions.pending}
+							title={
+								permissions.pending
+									? `Agent permissions: ${permissions.mode}, from the next turn`
+									: `Agent permissions: ${permissions.mode}`
+							}
+							aria-busy={permissions.saving}
 							onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
 							onKeyDown={(event) => {
 								if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -2499,6 +2520,7 @@ function Composer({
 							/>
 							<PermissionMenu
 								mode={permissions.mode}
+								pending={permissions.pending}
 								engine={model.engine ?? "claude"}
 								trigger={permissionTrigger}
 								onChange={(next) => {

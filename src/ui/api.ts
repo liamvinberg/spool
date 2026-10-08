@@ -31,7 +31,13 @@ import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
-import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
+import type {
+	AgentPermissions,
+	SettingKey,
+	SettingPrimitive,
+	SettingReading,
+	SettingsSnapshot,
+} from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
@@ -1541,15 +1547,44 @@ export async function chooseAgentModel(
 	return res.ok ? await res.json() : undefined;
 }
 
-export async function fetchEnginePreference(project: string): Promise<AgentEngineId> {
+/** The machine's agent choice (#361), or undefined when it could not be read: never a guess. */
+export async function fetchAgentDefaults(
+	project: string,
+): Promise<{ preferred: AgentEngineId | null; mode: AgentPermissions } | undefined> {
 	try {
 		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
-		const value = (await res.json()) as { preferred?: unknown };
-		return isAgentEngineId(value.preferred) ? value.preferred : "spool";
+		if (!res.ok) return undefined;
+		return agentDefaultsOf(await res.json());
 	} catch {
-		return "spool";
+		return undefined;
 	}
 }
+
+/** Save the engine new threads start on; the answer is the value the daemon confirmed. */
+export async function saveAgentEngine(
+	project: string,
+	preferred: AgentEngineId,
+): Promise<{ preferred: AgentEngineId | null; mode: AgentPermissions } | undefined> {
+	try {
+		const res = await client.api.p[":project"].agent.engines.$put({ param: { project }, json: { preferred } });
+		if (!res.ok) return undefined;
+		return agentDefaultsOf(await res.json());
+	} catch {
+		return undefined;
+	}
+}
+
+function agentDefaultsOf(body: unknown): { preferred: AgentEngineId | null; mode: AgentPermissions } | undefined {
+	if (typeof body !== "object" || body === null) return undefined;
+	const { preferred, mode } = body as { preferred?: unknown; mode?: unknown };
+	if (!(preferred === null || isAgentEngineId(preferred)) || !isPermissionMode(mode)) return undefined;
+	return { preferred, mode };
+}
+
+function isPermissionMode(value: unknown): value is AgentPermissions {
+	return value === "ask" || value === "edits" || value === "bypass";
+}
+
 export async function accountOperation(
 	project: string,
 	operation:
@@ -1569,28 +1604,26 @@ export async function accountOperation(
 	}
 }
 
+/**
+ * The machine's permission mode, read or picked from a thread (#361). `pending` says the
+ * thread's running turn started on another mode and takes this one at its next turn.
+ */
 export async function agentPermissions(
 	project: string,
 	thread: string,
-	engine: AgentEngineId,
-	mode?: "ask" | "edits" | "bypass",
-): Promise<{ mode: "ask" | "edits" | "bypass" } | { reason: string }> {
+	mode?: AgentPermissions,
+): Promise<{ mode: AgentPermissions; pending: boolean } | { reason: string }> {
 	try {
 		const route = client.api.p[":project"].agent.threads[":thread"].permissions;
-		const args = { param: { project, thread }, query: { engine } };
+		const args = { param: { project, thread } };
 		const res = mode === undefined ? await route.$get(args) : await route.$put({ ...args, json: { mode } });
 		if (!res.ok) return { reason: await res.text() };
 		const body: unknown = await res.json();
-		if (
-			typeof body === "object" &&
-			body !== null &&
-			"mode" in body &&
-			(body.mode === "ask" || body.mode === "edits" || body.mode === "bypass")
-		)
-			return { mode: body.mode };
-		return { reason: "The engine did not report its permissions." };
+		if (typeof body === "object" && body !== null && "mode" in body && isPermissionMode(body.mode))
+			return { mode: body.mode, pending: "pending" in body && body.pending === true };
+		return { reason: "Spool did not report the permission mode." };
 	} catch {
-		return { reason: "Could not reach the engine." };
+		return { reason: "Could not reach spool." };
 	}
 }
 
