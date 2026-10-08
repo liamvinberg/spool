@@ -1,7 +1,9 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
- * Play from here / Copy path / Reload / Tidy / adaptive export / the frame's
- * link / Move to Trash. Export exists only for a frame selection: one frame downloads
+ * Play from here / Copy path / Reload / Set as thumbnail / Tidy / adaptive
+ * export / the frame's link / Move to Trash. Set as thumbnail makes the frame's
+ * still as it is now the project's picture on Home; it waits, disabled, until
+ * the frame has one. Export exists only for a frame selection: one frame downloads
  * immediately; a multi-selection opens the format choice. Tidy is always here —
  * it lays out the field, so it answers to no one frame.
  * Play is the player's door (#13/#24); the player owns cinema in its own tab.
@@ -20,8 +22,8 @@ export interface MenuPlacement {
 }
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT_WITH_EXPORT = 222;
-const MENU_HEIGHT_WITHOUT_EXPORT = 192;
+const MENU_HEIGHT_WITH_EXPORT = 252;
+const MENU_HEIGHT_WITHOUT_EXPORT = 222;
 
 /** `shareRows` is the sharing verbs the menu carries: none, the one that makes a link, or a live link's three. */
 export function contextMenuSize(canExport: boolean, shareRows: 0 | 1 | 3 = 0): { w: number; h: number } {
@@ -93,6 +95,7 @@ export function ContextMenu({
 	share,
 	onCopyPath,
 	onReload,
+	onSetThumbnail,
 	onTrash,
 }: {
 	at: MenuPlacement;
@@ -103,6 +106,8 @@ export function ContextMenu({
 	share?: MenuShare | undefined;
 	onCopyPath: () => void;
 	onReload: () => void;
+	/** "Set as thumbnail"; absent while the frame has no still, which leaves the item disabled. */
+	onSetThumbnail?: (() => void) | undefined;
 	onTrash: () => void;
 }) {
 	return (
@@ -116,6 +121,11 @@ export function ContextMenu({
 			<MenuItem label="Play from here" keys={hotkeyKey("canvas.play")} onClick={onPlay} />
 			<MenuItem label="Copy path" onClick={onCopyPath} />
 			<MenuItem label="Reload frame" keys={hotkeyKey("canvas.reload")} onClick={onReload} />
+			<MenuItem
+				label="Set as thumbnail"
+				disabled={onSetThumbnail === undefined}
+				onClick={() => onSetThumbnail?.()}
+			/>
 			<MenuRule />
 			<MenuItem label={tidyLabel} keys={hotkeyKey("canvas.tidy")} onClick={onTidy} />
 			{exportAction !== null ? (

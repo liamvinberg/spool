@@ -50,6 +50,7 @@ import {
 	resolveFlows,
 	revertPatch,
 	saveCanvasState,
+	setProjectThumbnail,
 	subscribeSse,
 	writeElement,
 	writeText,
@@ -5838,6 +5839,25 @@ export function ProjectCanvas({
 							reloadFrameDocument(frame);
 							setMenu(null);
 						}}
+						onSetThumbnail={
+							frames.find((frame) => frame.name === menu.frame)?.cover === undefined
+								? undefined
+								: () => {
+										const frame = menu.frame;
+										setMenu(null);
+										void setProjectThumbnail(project, frame).then(
+											() => setNotice({ kind: "success", message: "Set as the project's thumbnail" }),
+											(error: unknown) =>
+												setNotice({
+													kind: "error",
+													message:
+														error instanceof Error && error.message
+															? error.message
+															: "Could not set the thumbnail. Try again.",
+												}),
+										);
+									}
+						}
 						onTrash={() => {
 							const names = selectedRef.current.includes(menu.frame) ? [...selectedRef.current] : [menu.frame];
 							setMenu(null);
