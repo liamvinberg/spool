@@ -77,6 +77,11 @@ export default defineConfig({
 		// The checked-out revision owns this selection, including release recovery.
 		...(process.env.SPOOL_TEST_DARWIN === "1" ? { testNamePattern: "macOS only" } : {}),
 		maxWorkers: testWorkers(),
+		// A hang guard, not a measure: no case is judged by its timeout, and the 5 s
+		// default reads a shared, loaded machine as a failure (a TypeScript check or
+		// a website build is a second or two alone, five on a busy devobee). A case
+		// that needs longer names its own.
+		testTimeout: 30_000,
 		// Keep one CI retry for process/browser scheduling noise; local failures remain visible.
 		retry: process.env.CI === undefined ? 0 : 1,
 		sequence: { sequencer: HeavyFirstSequencer },
