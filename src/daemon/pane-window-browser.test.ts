@@ -19,6 +19,10 @@ it("toggles a pane from its rail icon, and remembers it across a reload", { time
 	await icon.click();
 	expect(await icon.getAttribute("aria-pressed")).toBe("false");
 	await expect.poll(width).toBe(44);
+	// the layout is written once it settles, and a reload doesn't wait for that
+	await expect
+		.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("spool.panes.layout") ?? "null")?.left?.open))
+		.toBe(false);
 
 	await page.reload();
 	await page.locator("[data-frame-label]").first().waitFor();

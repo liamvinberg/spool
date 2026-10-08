@@ -15,6 +15,7 @@ import { createSettingsStore } from "./daemon/settings";
 import { initProject } from "./init";
 import { lookupProjectByName } from "./registry";
 import { canvasJson } from "./templates";
+import { defaultLayout } from "./ui/canvas/pane-layout";
 
 declare module "vitest" {
 	export interface ProvidedContext {
@@ -550,4 +551,28 @@ export async function pagePointOf(page: Page, world: { x: number; y: number }): 
 		const k = Number(camera[3]);
 		return { x: viewport.left + Number(camera[1]) + at.x * k, y: viewport.top + Number(camera[2]) + at.y * k };
 	}, world);
+}
+
+/**
+ * A browser whose right side starts collapsed at `width`, so the first press on
+ * the agent's rail icon stands the agent alone at that width. Only seeds a
+ * browser that has no layout yet, so a reload keeps what the test did.
+ */
+export async function seedAgentWidth(page: Page, width: number): Promise<void> {
+	const fresh = defaultLayout();
+	const layout = { ...fresh, right: { ...fresh.right, lit: [], open: false, width } };
+	await page.addInitScript((stored) => {
+		if (localStorage.getItem("spool.panes.layout") === null) localStorage.setItem("spool.panes.layout", stored);
+	}, JSON.stringify(layout));
+}
+
+/** The stored layout's right side at `width`, for the next load to draw. */
+export async function storeRightWidth(page: Page, width: number): Promise<void> {
+	await page.evaluate((next) => {
+		const stored = JSON.parse(localStorage.getItem("spool.panes.layout") ?? "{}");
+		localStorage.setItem(
+			"spool.panes.layout",
+			JSON.stringify({ ...stored, right: { ...stored.right, width: next } }),
+		);
+	}, width);
 }

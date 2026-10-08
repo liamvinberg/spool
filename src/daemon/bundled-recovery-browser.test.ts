@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, fixtureAgentExecutor, makeTempDir, readModelsReply, serveProject, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	fixtureAgentExecutor,
+	makeTempDir,
+	readModelsReply,
+	seedAgentWidth,
+	serveProject,
+	writeFrame,
+} from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
@@ -43,7 +51,7 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	writeFrame(project.root, "home", "export default () => <h1>Original title</h1>");
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-	await page.addInitScript(() => localStorage.setItem("spool.rail.agent.width", "420"));
+	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
@@ -278,7 +286,7 @@ it("keeps Claude setup and login in its own thread through failed checks and exp
 	writeFrame(project.root, "home", "export default () => <h1>Receipt</h1>");
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-	await page.addInitScript(() => localStorage.setItem("spool.rail.agent.width", "420"));
+	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");

@@ -272,8 +272,9 @@ it("keeps the canvas working through a lost context and draws again when it come
 	// nothing else noticed: a press still finds the frame by its place in the world
 	const origin = await canvasOrigin(page);
 	await page.mouse.click(origin.x + CAMERA.x + 340 * CAMERA.k + 75, origin.y + CAMERA.y + 50);
+	// read off the pages tree whether or not this narrow window leaves it standing
 	await expect
-		.poll(() => page.locator('[role="treeitem"][aria-selected="true"]').innerText(), { timeout: 10_000 })
+		.poll(() => page.locator('[role="treeitem"][aria-selected="true"]').textContent(), { timeout: 10_000 })
 		.toContain("green");
 	await page.keyboard.press("Escape");
 

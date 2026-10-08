@@ -557,7 +557,7 @@ try {
 	await settled();
 	expect(calls()).toContain("Put it beside the image.");
 	// A fresh conversation inherits no runtime grants. Opening its menu grants nothing.
-	await rail.getByRole("button", { name: "New chat", exact: true }).click();
+	await page.getByRole("button", { name: "New chat", exact: true }).click();
 	await send([bash("printf bypass > bypass", { unsandboxed: true })]);
 	await open.waitFor();
 	await rail.locator("[data-permission-trigger]").click();

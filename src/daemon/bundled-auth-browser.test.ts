@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, makeTempDir, seedAgentWidth, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
 
@@ -41,6 +41,8 @@ it("renders every generic provider interaction through the shared host and keeps
 	writeDesignFile(project.root, "frames/home/frame.json", '{"x":0,"y":0,"w":600,"h":400}');
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+	// the agent alone at 420, the width these layouts are read at
+	await seedAgentWidth(page, 420);
 	const shots = process.env.SPOOL_TEST_SHOTS;
 	const shot = async (name: string) => {
 		if (shots !== undefined) {

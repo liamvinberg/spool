@@ -1,7 +1,14 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, fixtureAgentExecutor, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	fixtureAgentExecutor,
+	seedAgentWidth,
+	serveProject,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
 
 /**
  * What the canvas draws while the agent works a frame, end to end (#214).
@@ -121,6 +128,8 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
 
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+	// the agent alone at 420, the width these layouts are read at
+	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 
 	const hours = page.frameLocator('iframe[title="home"]').locator("#hours");

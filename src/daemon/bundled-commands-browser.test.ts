@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, makeProject, makeTempDir, seedAgentWidth, writeDesignFile, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { serveDaemon } from "./server";
 
@@ -59,6 +59,8 @@ it.each([false, true])(
 		onTestFinished(() => daemon.close());
 		const browser = await testBrowser();
 		const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+		// the agent alone at 420, the width these layouts are read at
+		await seedAgentWidth(page, 420);
 		await page.goto(`${daemon.url}/p/${encodeURIComponent(name)}`);
 		await page.locator('[data-rail-icon="agent"]').click();
 		await page

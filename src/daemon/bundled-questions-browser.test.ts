@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, serveProject, writeFrame } from "../test-helpers";
+import { builtUi, makeTempDir, seedAgentWidth, serveProject, writeFrame } from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
 import { orderQuestion } from "./fixtures/bundled-question";
@@ -34,6 +34,8 @@ it("answers the accepted question in the served rail, preserves draft/history on
 	writeFrame(project.root, "receipt", "export default () => <main><h1>Order confirmed</h1><p>Order 1042</p></main>");
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+	// the agent alone at 420, the width these layouts are read at
+	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");

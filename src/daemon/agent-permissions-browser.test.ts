@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, serveProject, writeFrame } from "../test-helpers";
+import { builtUi, makeTempDir, seedAgentWidth, serveProject, storeRightWidth, writeFrame } from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
@@ -41,10 +41,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	writeFrame(project.root, "receipt", "export default () => <main><h1>Order confirmed</h1><p>Order 1042</p></main>");
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-	await page.addInitScript(() => {
-		if (localStorage.getItem("spool.rail.agent.width") === null)
-			localStorage.setItem("spool.rail.agent.width", "420");
-	});
+	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('[data-rail-icon="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
@@ -183,7 +180,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	expect(stored()[0]?.id).toBe(thread);
 	expect(stored()[0]?.session).toEqual(session);
 	expect(await field.inputValue()).toBe("Next draft stays here.");
-	await page.evaluate(() => localStorage.setItem("spool.rail.agent.width", "280"));
+	await storeRightWidth(page, 280);
 	await page.reload();
 	await open.waitFor();
 	await trigger.click();
@@ -203,7 +200,8 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	await expect.poll(() => stop.count()).toBe(0);
 	expect(await open.count()).toBe(0);
 	// Claude follows the same UI through its real adapter and deterministic wire peer.
-	await rail.getByRole("button", { name: "New chat", exact: true }).click();
+	// New chat sits in the pane's header, outside the rail
+	await page.getByRole("button", { name: "New chat", exact: true }).click();
 	await rail.getByRole("button", { name: "Choose agent for this new chat" }).click();
 	await rail.locator('[data-agent-engine="claude"]').click();
 	await expect.poll(() => model.getAttribute("title")).toContain("Default (recommended)");
@@ -231,7 +229,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	expect(await open.textContent()).toContain("Where should the order number go?");
 	expect(await field.inputValue()).toBe("Claude next draft.");
 	await shot("access-footer-claude-narrow-bypass");
-	await page.evaluate(() => localStorage.setItem("spool.rail.agent.width", "420"));
+	await storeRightWidth(page, 420);
 	await page.reload();
 	await open.waitFor();
 	await trigger.click();

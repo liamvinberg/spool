@@ -6,7 +6,15 @@ import { fileURLToPath } from "node:url";
 import type { Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	makeTempDir,
+	seedAgentWidth,
+	serveProject,
+	storeRightWidth,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
 import { BundledHostClient, bundledEnvironment, createSpoolEngine } from "./agent-engine-spool";
 import { readThreads } from "./agent-threads";
 
@@ -56,10 +64,7 @@ it.each([
 				await page.screenshot({ path: join(shots, `${name}.png`), animations: "disabled" });
 			}
 		};
-		await page.addInitScript(() => {
-			if (localStorage.getItem("spool.rail.agent.width") === null)
-				localStorage.setItem("spool.rail.agent.width", "420");
-		});
+		await seedAgentWidth(page, 420);
 		await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 		await page.locator('[data-rail-icon="agent"]').click();
 		const field = page.locator("[data-agent-rail] textarea");
@@ -174,7 +179,7 @@ it.each([
 			.getByRole("button", { name: "Favorite Test image model through OpenAI API key", exact: true })
 			.click();
 		await menu.getByRole("button", { name: "Back to your models", exact: true }).click();
-		await page.evaluate(() => localStorage.setItem("spool.rail.agent.width", "280"));
+		await storeRightWidth(page, 280);
 		await page.reload();
 		await trigger.click();
 		await openai
