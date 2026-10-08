@@ -199,7 +199,9 @@ async function frames(page: Page, act: string, probe: string, ms = 420): Promise
 			new Function(act)();
 			let still = 0;
 			let last = "";
-			while (performance.now() - start < ms || still < 3) {
+			// past the window, sample on until the reading holds still, but not for
+			// ever: motion that never ends should fail on its trace, not time out
+			while (performance.now() - start < ms || (still < 3 && performance.now() - start < ms + 5000)) {
 				await new Promise((resolve) => requestAnimationFrame(resolve));
 				const reading = read(box, scroller);
 				const now = JSON.stringify(reading);
@@ -265,7 +267,9 @@ async function atRest(page: Page): Promise<void> {
 			return `${document.querySelector(".project-tabs-scroll")?.scrollLeft}|${parts.join(";")}`;
 		};
 		let last = read();
-		for (let still = 0; still < 3; ) {
+		// a row that never settles is left to the assertions after, which say how
+		const until = performance.now() + 5000;
+		for (let still = 0; still < 3 && performance.now() < until; ) {
 			await new Promise((resolve) => requestAnimationFrame(resolve));
 			const now = read();
 			still = now === last ? still + 1 : 0;
