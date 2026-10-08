@@ -11,16 +11,26 @@ import { type AgentModelDeck, offerOf } from "./agent-model";
 import type { LoginDeck } from "./agent-preflight";
 
 /**
+ * One install line per agent spool runs (#363), in the fallback's own order. Codex is listed
+ * before spool runs it, because the wall is about what you can install, and the line is the
+ * vendor's own npm package either way.
+ */
+export const INSTALL_LINES = [
+	{ id: "claude", name: "Claude Code", line: "npm i -g @anthropic-ai/claude-code" },
+	{ id: "codex", name: "Codex", line: "npm i -g @openai/codex" },
+	{ id: "pi", name: "pi", line: "npm i -g @earendil-works/pi-coding-agent" },
+] as const;
+
+/**
  * What the rail says about each agent it can drive (#364): the name a person reads, and
  * the commands that install it and sign it in. A stopgap table on this side of the wire
- * until the engines say it themselves; the rows are only ever drawn for engines the daemon
- * reports, so an id here that the daemon does not run draws nothing.
+ * until the engines say it themselves; an agent is only ever drawn as a group when the
+ * daemon reports it installed, and a lacking one by its install line.
  */
 export const ENGINE_FACTS: Readonly<Record<string, { name: string; install: string; login: string }>> = {
-	claude: { name: "Claude Code", install: "npm i -g @anthropic-ai/claude-code", login: "claude auth login" },
-	codex: { name: "Codex", install: "npm i -g @openai/codex", login: "codex login" },
-	pi: { name: "pi", install: "npm i -g @earendil-works/pi-coding-agent", login: "pi, then /login" },
-	spool: { name: "spool", install: "", login: "" },
+	claude: { name: "Claude Code", install: INSTALL_LINES[0].line, login: "claude auth login" },
+	codex: { name: "Codex", install: INSTALL_LINES[1].line, login: "codex login" },
+	pi: { name: "pi", install: INSTALL_LINES[2].line, login: "pi, then /login" },
 };
 
 export const engineName = (engine: string | undefined): string =>
@@ -154,7 +164,12 @@ export function AgentMenu({
 
 	const installed = (engines ?? [{ id: own, installed: true }]).filter((one) => one.installed || one.id === own);
 	const groups = [own, ...installed.map((one) => one.id).filter((id) => id !== own)];
-	const lacking = (engines ?? []).filter((one) => !one.installed && one.id !== own);
+	// every agent spool can be pointed at that is not here, the wall's list (#363), as soon
+	// as the machine has said what is: one the daemon does not run yet is still installable
+	const lacking =
+		engines === null
+			? []
+			: INSTALL_LINES.filter((one) => one.id !== own && !engines.some((has) => has.id === one.id && has.installed));
 	const modelsOf = (engine: string) => (engine === own ? offer.models : (others[engine]?.offer?.models ?? []));
 	const total = groups.reduce((sum, engine) => sum + modelsOf(engine).length, 0);
 	const findable = total > FIND_AT;
@@ -276,6 +291,12 @@ export function AgentMenu({
 											{chosen ? <CheckIcon className="h-3.5 w-3.5 text-text" /> : null}
 										</span>
 										<ModelName name={entry.displayName} hit={query} />
+										{/* a model that runs on this machine says so, quietly, after its name (#363) */}
+										{entry.local ? (
+											<span data-agent-model-local="" className="shrink-0 text-muted type-caption">
+												local
+											</span>
+										) : null}
 									</button>
 									{chosen && effort !== null ? (
 										<button
@@ -500,10 +521,8 @@ export function AgentMenu({
 								<div className="flex flex-col gap-3 pt-1 pr-2 pb-2 pl-7">
 									{lacking.map((one) => (
 										<div key={one.id} data-agent-install={one.id} className="flex flex-col gap-1.5">
-											<span className="text-muted type-label">{engineName(one.id)}</span>
-											{ENGINE_FACTS[one.id]?.install ? (
-												<CommandLine command={ENGINE_FACTS[one.id]?.install ?? ""} />
-											) : null}
+											<span className="text-muted type-label">{one.name}</span>
+											<CommandLine command={one.line} />
 										</div>
 									))}
 									<span>

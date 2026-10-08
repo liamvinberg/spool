@@ -8,7 +8,7 @@ import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { Chevron, Float } from "./agent-float";
-import { AgentMenu, engineName } from "./agent-menu";
+import { AgentMenu, engineName, INSTALL_LINES } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
@@ -518,7 +518,8 @@ export function AgentRail({
 					    rather than one width */}
 							<Composer
 								thread={open}
-								ready={agentReady}
+								// a legacy chat is read-only: nothing answers it, so there is no one to pick (#363)
+								ready={agentReady && !legacy}
 								permissions={permissions}
 								menu={footerMenu}
 								onMenu={setFooterMenu}
@@ -860,17 +861,6 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
  * is not even a failure — you have not installed something yet — would break the only
  * thing it says. Both step forward in brightness, which is the whole of the emphasis the
  * rest of the rail uses. */
-
-/**
- * One install line per agent spool runs (#363), in the fallback's own order. Codex is listed
- * before spool runs it, because the wall is about what you can install, and the line is the
- * vendor's own npm package either way.
- */
-export const INSTALL_LINES = [
-	{ id: "claude", name: "Claude Code", line: "npm i -g @anthropic-ai/claude-code" },
-	{ id: "codex", name: "Codex", line: "npm i -g @openai/codex" },
-	{ id: "pi", name: "pi", line: "npm i -g @earendil-works/pi-coding-agent" },
-] as const;
 
 /** a line to paste, with the one control that puts it on the clipboard */
 function InstallLine({ name, line }: { name: string; line: string }) {
