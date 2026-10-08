@@ -5584,3 +5584,217 @@ describe("the stylesheet the stroke lives in", () => {
 		expect(still).toContain("transform: translateX(6.372%) scaleX(0.3406)");
 	});
 });
+
+/* ---------- another agent in the menu (#364) ----------
+ * Every installed agent is a group in the one menu, this chat's own first. A model on
+ * another agent changes an empty chat in place, and in a started chat says first that it
+ * starts a new one, because a conversation keeps the agent it was had with.
+ *
+ * Last in the file on purpose: the machine's agent choice is one value for the page, and
+ * these tests leave it on codex, so nothing that expects Claude comes after them. */
+
+describe("another agent in the menu", () => {
+	/** codex on the machine beside Claude, installed or not; spool is reported and never a group */
+	const withCodex = (canvas: ReturnType<typeof mount>, installed = true) => {
+		canvas.engines.listed = [
+			{ id: "claude", installed: true },
+			{ id: "codex", installed },
+			{ id: "spool", installed: true },
+		];
+	};
+	const groups = (host: HTMLElement) =>
+		live(host, "[data-agent-group]").map((group) => group.getAttribute("data-agent-group"));
+	/** the menu, open, with the other agents' doors answered */
+	const openWithOthers = async (canvas: ReturnType<typeof mount>) => {
+		await openModelMenu(canvas);
+		await until(
+			() => modelRow(canvas.host, "GPT-5.5") !== null || live(canvas.host, "[data-agent-signed-out]").length > 0,
+		);
+	};
+
+	it("groups each installed agent's models under its name, this chat's own first", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		await canvas.render();
+		await openWithOthers(canvas);
+
+		expect(groups(canvas.host)).toEqual(["claude", "codex"]);
+		const codex = live(canvas.host, '[data-agent-group="codex"]')[0];
+		expect(codex?.textContent).toContain("Codex");
+		expect(
+			live(codex ?? canvas.host, "[data-agent-model-row]").map((row) => row.getAttribute("data-agent-model-engine")),
+		).toEqual(["codex", "codex"]);
+		// the chosen model is this chat's, so nothing on the other agent is checked
+		expect(modelRow(canvas.host, "GPT-5.5")?.getAttribute("aria-checked")).toBe("false");
+		expect(modelRow(canvas.host, "Opus (1M context)")?.getAttribute("aria-checked")).toBe("true");
+		// an empty chat changes agent in place, so the other group asks nothing first
+		expect(codex?.textContent).not.toContain("new chat");
+		// and the find field stays away while seven models are all there are
+		expect(modelMenu(canvas.host)?.querySelector('input[aria-label="Find a model"]')).toBeNull();
+	});
+
+	/** the field counts every agent's models, and finds by the agent's name as well */
+	it("offers the find field once every agent's models together pass twelve", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		canvas.engines.codex.offer = {
+			...CODEX_OFFERED,
+			models: [
+				...CODEX_OFFERED.models,
+				...Array.from({ length: 6 }, (_, at) => ({
+					value: `gpt-old-${at}`,
+					resolvedModel: `gpt-old-${at}`,
+					displayName: `Old ${at}`,
+					description: "",
+				})),
+			],
+		};
+		await canvas.render();
+		await openWithOthers(canvas);
+
+		// five and eight, which is thirteen: past twelve, in all and never in one group
+		expect(modelRows(canvas.host)).toHaveLength(13);
+		const find = modelMenu(canvas.host)?.querySelector<HTMLInputElement>('input[aria-label="Find a model"]');
+		expect(find).not.toBeNull();
+		await act(async () => {
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(find, "codex");
+			find?.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		expect(groups(canvas.host)).toEqual(["codex"]);
+		expect(modelRows(canvas.host)).toHaveLength(8);
+	});
+
+	it("changes an empty chat's agent in place, keeping its draft, image and thread", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		await canvas.render();
+		await until(() => canvas.offered.asked.length > 0);
+		const thread = canvas.offered.asked[0];
+		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, "keep this draft"));
+		await drop(canvas.host, shot());
+		await settle(50);
+		await openWithOthers(canvas);
+
+		await act(async () => modelRow(canvas.host, "GPT-5.5 mini")?.click());
+		await settle(100);
+
+		// nothing asked first: the model is chosen for codex, and then codex is saved as the
+		// machine's agent, which is what the blank chat follows
+		expect(live(canvas.host, "[data-agent-new-chat]")).toEqual([]);
+		expect(canvas.engines.codex.chose).toEqual([{ value: "gpt-5.5-mini" }]);
+		expect(canvas.engines.calls).toEqual(["POST codex model", "PUT engines codex"]);
+		expect(canvas.machine.preferred).toBe("codex");
+		expect(modelMenu(canvas.host)).toBeNull();
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("GPT-5.5") === true);
+		// codex is the usual agent now, so the trigger names the model alone
+		expect(modelTrigger(canvas.host)?.querySelector("[data-agent-trigger-engine]")).toBeNull();
+
+		// and the chat is the same chat, with everything that was in its box
+		expect(field(canvas.host)?.value).toBe("keep this draft");
+		expect(canvas.host.querySelectorAll("[data-agent-attached]")).toHaveLength(1);
+		expect(await cells(canvas.host)).toEqual(["new thread"]);
+		await send(canvas.host, "keep this draft");
+		await settle(50);
+		expect(canvas.turn.streams[0]?.thread).toBe(thread);
+		expect(canvas.turn.attachments[0]?.[0]?.media).toBe("image/png");
+	});
+
+	/**
+	 * A conversation keeps the agent it was had with, so a model on another agent in a
+	 * started chat is a new chat, and the menu says so before anything changes.
+	 */
+	it("asks before a started chat changes agent, and starts a new chat on a yes", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		canvas.stored.served = [storedThread({ id: ONE, ask: "tighten the header" })];
+		await canvas.render();
+		await settle();
+		await openWithOthers(canvas);
+		const asking = () => live(canvas.host, '[data-agent-new-chat="codex"]')[0] ?? null;
+
+		expect(live(canvas.host, '[data-agent-group="codex"]')[0]?.textContent).toContain("new chat");
+		expect(asking()).toBeNull();
+
+		await act(async () => modelRow(canvas.host, "GPT-5.5")?.click());
+		// asked, and nothing sent: the press is a question until it is answered
+		expect(asking()?.textContent).toContain("Starts a new chat on Codex. This one stays in your chats.");
+		expect(canvas.engines.calls).toEqual([]);
+		expect(modelMenu(canvas.host)).not.toBeNull();
+		expect(modelRow(canvas.host, "Opus (1M context)")?.getAttribute("aria-checked")).toBe("true");
+		// the same press again takes the question back
+		await act(async () => modelRow(canvas.host, "GPT-5.5")?.click());
+		expect(asking()).toBeNull();
+		await act(async () => modelRow(canvas.host, "GPT-5.5")?.click());
+
+		await press([...(asking()?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "New chat"));
+		await settle(100);
+
+		expect(canvas.engines.codex.chose).toEqual([{ value: "gpt-5.5" }]);
+		expect(canvas.engines.calls).toEqual(["POST codex model", "PUT engines codex"]);
+		expect(canvas.machine.preferred).toBe("codex");
+		// a new chat, on codex, and the one that was open is still in the list, named by its
+		// agent now that its agent is not the usual one
+		expect(nameplate(canvas.host)).toBe("New chat");
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("GPT-5.5") === true);
+		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
+		expect(
+			(await cell(canvas.host, "tighten the header"))?.querySelector("[data-agent-thread-engine]")?.textContent,
+		).toBe("Claude Code");
+		expect(canvas.offered.chose).toEqual([]);
+	});
+
+	/** the trigger says who answers only when it is not who usually does */
+	it("names the chat's agent on the trigger only when it is not the machine's usual one", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		canvas.machine.preferred = "codex";
+		canvas.stored.served = [storedThread({ id: ONE, ask: "tighten the header" })];
+		await canvas.render();
+		await settle();
+		await until(() => modelTrigger(canvas.host)?.querySelector("[data-agent-trigger-engine]") !== null);
+
+		expect(modelTrigger(canvas.host)?.querySelector("[data-agent-trigger-engine]")?.textContent).toBe("Claude Code");
+		expect(modelTrigger(canvas.host)?.textContent).toBe("Claude Code·Opus (1M context)");
+	});
+
+	it("shows a signed-out agent's login line in place of its models, and looks again", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		canvas.engines.codex.signedIn = false;
+		await canvas.render();
+		await openWithOthers(canvas);
+
+		const out = live(canvas.host, '[data-agent-signed-out="codex"]')[0];
+		expect(out?.textContent).toContain("Codex is signed out. Sign in from a terminal and its models show up here.");
+		expect(out?.querySelector('[data-agent-command="codex login"]')).not.toBeNull();
+		expect(modelRow(canvas.host, "GPT-5.5")).toBeNull();
+		expect(live(canvas.host, '[data-agent-group="codex"]')[0]?.textContent).toContain("signed out");
+
+		canvas.engines.codex.signedIn = true;
+		await press([...(out?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "Check again"));
+		await until(() => modelRow(canvas.host, "GPT-5.5") !== null);
+		expect(live(canvas.host, "[data-agent-signed-out]")).toEqual([]);
+	});
+
+	it("keeps an agent the machine lacks to one quiet line that opens to its install line", async () => {
+		const canvas = mount();
+		withCodex(canvas, false);
+		await canvas.render();
+		await openModelMenu(canvas);
+		const more = () =>
+			live<HTMLButtonElement>(canvas.host, "[data-agent-model-menu] button").find(
+				(one) => one.textContent === "Get more agents",
+			);
+		await until(() => more() !== undefined);
+
+		expect(groups(canvas.host)).toEqual(["claude"]);
+		expect(more()?.getAttribute("aria-expanded")).toBe("false");
+		expect(live(canvas.host, '[data-agent-install="codex"]')).toEqual([]);
+
+		await press(more());
+		expect(more()?.getAttribute("aria-expanded")).toBe("true");
+		const install = live(canvas.host, '[data-agent-install="codex"]')[0];
+		expect(install?.textContent).toContain("Codex");
+		expect(install?.querySelector('[data-agent-command="npm i -g @openai/codex"]')).not.toBeNull();
+	});
+});
