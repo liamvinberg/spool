@@ -4,10 +4,9 @@ dist/
 .boot-tmp/
 .tmp/
 
-# The agent captures are tracked at fixtures/captures/. The canvas imports
-# them, and an import only resolves under design/, so `pnpm dev` mirrors them
-# here rather than linking.
-design/shared/captures/
+# The dogfood canvas lives on spool.page (see spool.json); `pnpm dev` fetches
+# a local copy here.
+design/
 
 # Maintainer-local agent context. Never ships.
 .claude/settings.local.json
