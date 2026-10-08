@@ -4760,6 +4760,49 @@ describe("no supported agent at all (#363)", () => {
 	});
 });
 
+describe("codex (#362)", () => {
+	it("is a row in the agent menu, and a new chat can start on it", async () => {
+		const canvas = mount();
+		canvas.preflight.engines = [
+			{ id: "claude", installed: true },
+			{ id: "codex", installed: true },
+		];
+		await canvas.render();
+		await settle(50);
+		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
+		const row = canvas.host.querySelector('[data-agent-engine="codex"]');
+		expect(row?.textContent).toContain("Uses your own Codex");
+		await press(row);
+		await settle(50);
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("Codex");
+	});
+
+	it("bounces a signed-out turn to codex login", async () => {
+		const canvas = mount();
+		canvas.machine.preferred = "codex";
+		canvas.preflight.engines = [{ id: "codex", installed: true }];
+		await canvas.render();
+		await settle(50);
+		await send(canvas.host, "shoot home");
+		canvas.turn.push({
+			kind: "ended",
+			ending: "failed",
+			reason: "Sign in to Codex to continue.",
+			stopReason: null,
+			recovery: { kind: "login", account: "Codex", scope: "account" },
+			parent: null,
+		});
+		canvas.turn.push({ kind: "closed", code: 0, parent: null });
+		canvas.turn.close();
+		await settle();
+
+		const strip = canvas.host.querySelector<HTMLElement>('[data-recovery="codex"]');
+		expect(strip?.textContent).toContain("Sign in to Codex to continue.");
+		expect(strip?.textContent).toContain("Run codex login in a terminal.");
+		expect(strip?.textContent).not.toContain("/login");
+	});
+});
+
 describe("signed out", () => {
 	/**
 	 * Nothing local knows the login is bad. The spawn is the question, so the words go out

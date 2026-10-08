@@ -373,11 +373,6 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 
 	return {
 		events: { [Symbol.asyncIterator]: () => events() },
-		permissions: {
-			applied: permissions,
-			// the mode is the turn's from its start; a new pick reaches the next turn's resume
-			apply: () => Promise.reject(new Error("Codex takes a new mode at the next turn.")),
-		},
 		answer,
 		interrupt: () => {
 			if (finished || ended) return false;

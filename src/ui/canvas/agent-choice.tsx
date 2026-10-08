@@ -6,7 +6,11 @@ import type { AgentModelDeck } from "./agent-model";
 import { ChevronIcon } from "./sidebar";
 
 /** what the rail calls each engine, in a sentence */
-export const ENGINE_NAMES: Record<AgentEngineId, string> = { claude: "Claude Code", pi: "pi" };
+export const ENGINE_NAMES: Record<AgentEngineId, string> = {
+	claude: "Claude Code",
+	codex: "Codex",
+	pi: "pi",
+};
 const NAMES = ENGINE_NAMES;
 
 export function AgentChoice({

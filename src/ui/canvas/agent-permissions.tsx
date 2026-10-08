@@ -90,11 +90,14 @@ export function useAgentPermissions(
 export function PermissionMenu({
 	mode,
 	pending,
+	engine = "Claude Code",
 	trigger,
 	onChange,
 	onClose,
 }: {
 	mode: AgentPermissions;
+	/** whose approval rules ask is, by the name the rail calls the thread's engine */
+	engine?: string;
 	pending: boolean;
 	trigger: RefObject<HTMLButtonElement | null>;
 	onChange: (mode: AgentPermissions) => void;
@@ -150,7 +153,7 @@ export function PermissionMenu({
 						<span className="font-mono text-xs text-text leading-4">{choice}</span>
 						<span className="text-2xs text-muted leading-4">
 							{choice === "ask"
-								? "Use Claude Code’s approval rules."
+								? `Use ${engine}’s approval rules.`
 								: choice === "edits"
 									? "Allow file edits. Ask before commands."
 									: "Skip tool approvals."}

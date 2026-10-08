@@ -2539,6 +2539,7 @@ function Composer({
 							<PermissionMenu
 								mode={permissions.mode}
 								pending={permissions.pending}
+								engine={ENGINE_NAMES[model.engine ?? "claude"]}
 								trigger={permissionTrigger}
 								onChange={(next) => {
 									onMenu(null);
@@ -2983,8 +2984,16 @@ function RecoveryView({
 				) : (
 					// each agent signs in in its own terminal flow: spool holds no login of its own
 					<p className="text-base text-muted leading-base">
-						Run <code className="font-mono text-xs">{engine}</code> in a terminal, then{" "}
-						<code className="font-mono text-xs">/login</code>.
+						{engine === "codex" ? (
+							<>
+								Run <code className="font-mono text-xs">codex login</code> in a terminal.
+							</>
+						) : (
+							<>
+								Run <code className="font-mono text-xs">{engine}</code> in a terminal, then{" "}
+								<code className="font-mono text-xs">/login</code>.
+							</>
+						)}
 					</p>
 				)}
 				<div className="flex flex-wrap items-center gap-3">
