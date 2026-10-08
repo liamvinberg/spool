@@ -371,3 +371,88 @@ it("publishes through the actual CLI and resumes without putting credentials or 
 		await new Promise<void>((done, fail) => server.close((error) => (error ? fail(error) : done())));
 	}
 });
+
+it("says a refused or signed-out cloud verb as a plain sentence, with the JSON still on stdout", {
+	timeout: 60_000,
+}, async () => {
+	const home = makeTempDir();
+	const spoolDir = join(home, "state");
+	const bin = join(home, "bin");
+	const key = join(home, "key.pem");
+	const certificate = join(home, "cert.pem");
+	mkdirSync(spoolDir);
+	mkdirSync(bin);
+	execFileSync(
+		"openssl",
+		[
+			"req",
+			"-x509",
+			"-newkey",
+			"rsa:2048",
+			"-nodes",
+			"-days",
+			"1",
+			"-subj",
+			"/CN=127.0.0.1",
+			"-keyout",
+			key,
+			"-out",
+			certificate,
+		],
+		{ stdio: "ignore" },
+	);
+	// a Mac reads its session from a stand-in Keychain, anywhere else from the session file
+	writeFileSync(
+		join(bin, "security"),
+		`#!/bin/sh\n[ "$1" = "find-generic-password" ] || exit 44\nprintf '%s' '${"t".repeat(43)}'\n`,
+	);
+	chmodSync(join(bin, "security"), 0o755);
+	const { root } = makeProject(spoolDir);
+	// signed in to an account that admins a team, but not approved to publish websites
+	const server = createServer({ key: readFileSync(key), cert: readFileSync(certificate) }, (request, response) => {
+		response.setHeader("content-type", "application/json");
+		response.statusCode = request.url === "/auth/publisher/session" ? 403 : 404;
+		response.end(JSON.stringify({ error: "publisher_not_approved" }));
+	});
+	await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("missing address");
+	const env = {
+		PATH: `${bin}:${process.env.PATH ?? ""}`,
+		SPOOL_DIR: spoolDir,
+		SPOOL_CLOUD_ORIGIN: `https://127.0.0.1:${address.port}`,
+		NODE_TLS_REJECT_UNAUTHORIZED: "0",
+		NODE_NO_WARNINGS: "1",
+	};
+	try {
+		const signedOut = await spoolAsync(["cloud", "list"], home, root, {
+			...env,
+			PATH: process.env.PATH ?? "",
+			SPOOL_CLOUD_ORIGIN: "https://127.0.0.1:9",
+		});
+		expect(signedOut.status).toBe(1);
+		if (process.platform !== "darwin") {
+			expect(signedOut.stderr).toBe("spool: not signed in; run `spool login`\n");
+			expect(JSON.parse(signedOut.stdout)).toMatchObject({ error: { code: "signed_out", retryable: false } });
+		}
+		mkdirSync(join(spoolDir, "cloud"));
+		writeFileSync(join(spoolDir, "cloud", `127.0.0.1:${address.port}.session`), "t".repeat(43), { mode: 0o600 });
+		for (const verb of [["list"], ["status", "publication"], ["stop", "publication"]]) {
+			const refused = await spoolAsync(["cloud", ...verb], home, root, env);
+			expect(refused.status).toBe(1);
+			expect(refused.stderr).toBe(
+				"spool: this account is not approved to publish websites yet: publishing is an invite-only beta, and teams on spool.page work without it\n",
+			);
+			expect(JSON.parse(refused.stdout)).toEqual({
+				error: {
+					code: "not_approved",
+					message:
+						"this account is not approved to publish websites yet: publishing is an invite-only beta, and teams on spool.page work without it",
+					retryable: false,
+				},
+			});
+		}
+	} finally {
+		await new Promise<void>((done, fail) => server.close((error) => (error ? fail(error) : done())));
+	}
+});

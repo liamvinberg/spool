@@ -1,10 +1,18 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
-import { type CloudTeamProject, cloudTeams } from "./cloud-teams";
+import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { carrySharesOver } from "./daemon/shares";
-import { staysOnThisMac, syncLocalCopy, unconfirmedFiles } from "./daemon/team-sync";
+import {
+	SyncDropped,
+	SyncPaused,
+	SyncRefused,
+	staysOnThisMac,
+	syncLocalCopy,
+	travellingFiles,
+	unconfirmedFiles,
+} from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
 import { chosenTeam, type TeamInitOptions, teamProjectRefusal } from "./init";
@@ -32,11 +40,24 @@ import {
  * remembered in `design/.spool/move-commit.json`, and the daemon makes the commit at its next start.
  */
 export interface MoveOptions extends TeamInitOptions {
-	/** Sleep between looks at a repo git is busy merging or rebasing in. */
+	/** Sleep out a sync pause, and between looks at a repo git is busy merging or rebasing in. */
 	wait?: (ms: number) => Promise<void>;
-	/** The daemon is closing: the commit stops waiting, and is made at its next start. */
+	/** The daemon is closing: a move waiting out a pause stops, and the commit is made at its next start. */
 	signal?: AbortSignal;
+	/** How far the upload has got, said as it goes. */
+	onProgress?: (progress: MoveProgress) => void;
 }
+
+/** How far a move's upload has got: files the team has confirmed of all that go, and a pause it is waiting out. */
+export interface MoveProgress {
+	up: number;
+	total: number;
+	/** Why spool.page isn't taking saves, and when (ms since the epoch) it may again. */
+	paused: { why: string; until: number } | null;
+}
+
+/** Limits that lift by themselves: a move waits them out. Any other stops it. */
+const WAITED_OUT = new Set(["rate_limited", "unavailable"]);
 
 export interface Moved {
 	root: string;
@@ -73,11 +94,7 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 		return made;
 	}
 
-	try {
-		await syncLocalCopy(root, spoolDir, { ...options, moving: link });
-	} catch {
-		throw new SpoolError(`spool.page couldn't take ${basename(root)} just now. Nothing changed here; try again.`);
-	}
+	await upload(root, spoolDir, link, options);
 	const missing = unconfirmedFiles(root, link);
 	if (missing.length > 0)
 		throw new SpoolError(
@@ -86,11 +103,16 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 
 	try {
 		await carrySharesOver(root, spoolDir, request, link);
-	} catch {
-		throw new SpoolError(
-			`spool.page couldn't take ${basename(root)}'s shares just now. Nothing changed here; try again.`,
-		);
+	} catch (error) {
+		const why =
+			error instanceof CloudTeamRefused
+				? `spool.page refused: ${error.code}`
+				: error instanceof SpoolError
+					? error.message
+					: "spool.page could not be reached";
+		throw new SpoolError(`${basename(root)}'s shares didn't move: ${why}. Nothing changed here; try again.`);
 	}
+	closing(basename(root), options);
 	writeProjectLink(root, link);
 	writeFileSync(join(design, ".gitignore"), TEAM_GITIGNORE);
 	// from here the move is made, and its commit is owed until git takes it, across restarts
@@ -99,6 +121,94 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	// the registry's change is what sets the daemon following the new local copy
 	registerProject(spoolDir, root);
 	return { root, link, commit: commitMove(root, options) };
+}
+
+/**
+ * Everything in design/ that travels goes up, a limit that lifts by itself and a dropped connection waited out, so
+ * a project bigger than a minute's saves moves in one go. Each round picks up where the last stopped, from what the
+ * copy's record says the team has. `GIVE_UP_ROUNDS` rounds in a row that get nothing up stop it, as does any other
+ * stop, named, and nothing here has changed.
+ */
+async function upload(root: string, spoolDir: string, link: ProjectLink, options: MoveOptions): Promise<void> {
+	const name = basename(root);
+	const total = travellingFiles(root).length;
+	const say = (paused: MoveProgress["paused"] = null) => options.onProgress?.({ up, total, paused });
+	let up = total - unconfirmedFiles(root, link).length;
+	let idle = 0;
+	let dropped = 0;
+	say();
+	for (;;) {
+		closing(name, options);
+		const was = up;
+		try {
+			await syncLocalCopy(root, spoolDir, {
+				...options,
+				moving: link,
+				onSaved: () => {
+					up = Math.min(total, up + 1);
+					say();
+				},
+			});
+			return;
+		} catch (error) {
+			closing(name, options);
+			up = total - unconfirmedFiles(root, link).length;
+			const waited =
+				error instanceof SyncPaused && WAITED_OUT.has(error.reason)
+					? { why: error.why, ms: error.seconds * 1_000 }
+					: error instanceof SyncDropped
+						? { why: error.why, ms: Math.min(DROP_WAIT_MS * 2 ** dropped++, DROP_WAIT_MAX_MS) }
+						: undefined;
+			if (waited === undefined) throw new SpoolError(`${name} didn't move: ${stopReason(error)}`);
+			if (up > was) {
+				idle = 0;
+				dropped = error instanceof SyncDropped ? dropped : 0;
+			} else if (++idle >= GIVE_UP_ROUNDS)
+				throw new SpoolError(`${name} didn't move: ${waited.why}. Nothing changed here; try again.`);
+			say({ why: waited.why, until: Date.now() + waited.ms });
+			await sleep(waited.ms, options);
+			closing(name, options);
+			say();
+		}
+	}
+}
+
+/** How long a move first waits after its connection drops, doubling each time to `DROP_WAIT_MAX_MS`. */
+const DROP_WAIT_MS = 2_000;
+const DROP_WAIT_MAX_MS = 30_000;
+/** Rounds in a row that get no file up before a move stops waiting and says why. */
+const GIVE_UP_ROUNDS = 10;
+
+/** What stopped a move that won't be waited out, said plainly, ending its sentence. */
+function stopReason(error: unknown): string {
+	if (error instanceof SyncPaused) {
+		if (error.reason === "monthly_limit")
+			return `${error.why}. It lifts on ${new Date(Date.now() + error.seconds * 1_000).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}. Nothing changed here.`;
+		return `${error.why}. Nothing changed here.`;
+	}
+	const why = error instanceof Error ? error.message : String(error);
+	return error instanceof SyncRefused ? `${why}. Nothing changed here.` : `${why}. Nothing changed here; try again.`;
+}
+
+/** The daemon is closing: the move stops before its next step, having changed nothing here. */
+function closing(name: string, options: Pick<MoveOptions, "signal">): void {
+	if (options.signal?.aborted === true)
+		throw new SpoolError(`spool closed before ${name} moved. Nothing changed here; move it again.`);
+}
+
+/** A pause slept out, cut short when the daemon closes. */
+function sleep(ms: number, options: Pick<MoveOptions, "wait" | "signal">): Promise<void> {
+	if (options.signal?.aborted === true) return Promise.resolve();
+	if (options.wait !== undefined) return options.wait(ms);
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			options.signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		options.signal?.addEventListener("abort", done, { once: true });
+	});
 }
 
 /** Where a move whose commit hasn't been made yet says so. */

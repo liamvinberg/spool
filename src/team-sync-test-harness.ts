@@ -78,10 +78,24 @@ export function fakeTeam(team = "devosurf") {
 	const projects = new Map<string, Project>();
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
+	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
+	let refusing: number | undefined;
 	/** Solo projects whose shares moved into a team project, as spool.page was asked. */
 	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
 	const project = (name: string) => projects.get(name);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
+	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
+	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
+	/** Whether the rate lets one more save through now; when it doesn't, the seconds until it may. */
+	const overRate = (): number | undefined => {
+		if (rate === undefined) return undefined;
+		if (rate.now() >= rate.start + rate.windowMs) Object.assign(rate, { start: rate.now(), taken: 0 });
+		if (rate.taken < rate.saves) {
+			rate.taken++;
+			return undefined;
+		}
+		return Math.max(1, Math.ceil((rate.start + rate.windowMs - rate.now()) / 1_000));
+	};
 	const edits = (person: Person) => person.role === "admin" || person.role === "editor";
 	const sockets = () => [...projects.values()].flatMap((each) => [...each.sockets]);
 
@@ -226,9 +240,13 @@ export function fakeTeam(team = "devosurf") {
 		} else if (!travels(path)) refuse("outside_layout");
 		else if ((bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) refuse("too_large");
 		else if (limited !== undefined) refuse(limited.reason, limited.retryAfter);
-		else if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
-			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
-		else apply(at, from, { ref, path, base, deleted }, current, bytes);
+		else {
+			const wait = overRate();
+			if (wait !== undefined) refuse("rate_limited", wait);
+			else if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
+				from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
+			else apply(at, from, { ref, path, base, deleted }, current, bytes);
+		}
 	}
 
 	/**
@@ -366,6 +384,7 @@ export function fakeTeam(team = "devosurf") {
 			// refused at the handshake, as the Worker refuses: no code reaches the daemon
 			if (person === undefined || person.revoked || at === undefined || !edits(person) || away.has(person.accountId))
 				connected.close();
+			else if (refusing !== undefined) connected.close(refusing);
 			else {
 				at.sockets.add(connected);
 				later(() => events.open());
@@ -451,6 +470,17 @@ export function fakeTeam(team = "devosurf") {
 		},
 		lift() {
 			limited = undefined;
+		},
+		/** Every sync connection is closed as it opens, with `code`, until the returned undo. */
+		refuseSync(code: number) {
+			refusing = code;
+			return () => {
+				refusing = undefined;
+			};
+		},
+		/** At most `saves` saves are taken in each window of `now`, and the rest refused as rate_limited. */
+		rateLimit(saves: number, windowMs: number, now: () => number) {
+			rate = { saves, windowMs, now, start: now(), taken: 0 };
 		},
 		/** Every connection to a project dropped at once, as a network going away. */
 		disconnect(name: string) {

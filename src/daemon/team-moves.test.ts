@@ -10,13 +10,14 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject, initTeamProject } from "../init";
-import { moveIntoTeam } from "../move-in";
+import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
+import { CLOSE_NOT_EDITOR, CLOSE_SIGNED_OUT } from "../team-sync-protocol";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { makeApp, makeTempDir, until, writeFrame } from "../test-helpers";
-import { commitMoveIn, MOVE_MESSAGE } from "./history";
+import { branchesTouchingDesign, commitMoveIn, MOVE_MESSAGE } from "./history";
 import { createSettingsStore } from "./settings";
 
 /**
@@ -329,6 +330,132 @@ describe("Move to team", () => {
 		expect(status(project.root)).toEqual([]);
 	});
 
+	it("names the branches whose design/ changes aren't merged yet, before it moves", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const daemon = makeApp(project.state, { cloud: cloud.machine("ana").cloud, teamNotice: () => {} });
+		const branches = async () =>
+			(await (
+				await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: project.root })}`)
+			).json()) as unknown;
+		expect(await branches()).toEqual({ branches: [], checkedOnly: null });
+
+		// a branch touching design/, one touching only code, one already merged, and the current branch's own work
+		git(project.root, "switch", "--quiet", "-c", "redesign");
+		writeFrame(project.root, "home", "export default () => <h1>New home</h1>;\n");
+		git(project.root, "commit", "--quiet", "-am", "redesign");
+		git(project.root, "switch", "--quiet", "-c", "code-only", "main");
+		writeFileSync(join(project.root, "README.md"), "# site, again\n");
+		git(project.root, "commit", "--quiet", "-am", "code");
+		git(project.root, "switch", "--quiet", "-c", "merged", "main");
+		writeFrame(project.root, "about", "export default () => <h1>About</h1>;\n");
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "about");
+		git(project.root, "switch", "--quiet", "main");
+		git(project.root, "merge", "--quiet", "--ff-only", "merged");
+		writeFrame(project.root, "main-only", "export default () => <h1>Main</h1>;\n");
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "main's own");
+		// a remote with the redesign branch, its HEAD pointing at main, and a branch only it has
+		git(project.root, "push", "--quiet", "pushed", "main", "redesign");
+		git(project.root, "switch", "--quiet", "-c", "theirs", "main~1");
+		writeFrame(project.root, "theirs", "export default () => <h1>Theirs</h1>;\n");
+		git(project.root, "add", "-A");
+		git(project.root, "commit", "--quiet", "-m", "theirs");
+		git(project.root, "push", "--quiet", "pushed", "theirs");
+		git(project.root, "switch", "--quiet", "main");
+		git(project.root, "branch", "--quiet", "-D", "theirs");
+		git(project.root, "fetch", "--quiet", "pushed");
+		git(project.root, "branch", "--quiet", "--set-upstream-to=pushed/redesign", "redesign");
+		git(project.root, "remote", "set-head", "pushed", "main");
+
+		const { branches: found, checkedOnly } = (await branches()) as { branches: string[]; checkedOnly: unknown };
+		expect([...found].sort()).toEqual(["pushed/theirs", "redesign"]);
+		expect(checkedOnly).toBeNull();
+	});
+
+	it("reads design/ where the project sits in its repo, not at the repo's top", { timeout: 30_000 }, async () => {
+		const top = repo("monorepo");
+		const state = join(makeTempDir(), ".spool");
+		mkdirSync(join(top, "web"));
+		const { root } = initProject(join(top, "web"), state);
+		mkdirSync(join(top, "design"));
+		writeFileSync(join(top, "design", "logo.txt"), "logo\n");
+		git(top, "add", "-A");
+		git(top, "commit", "--quiet", "-m", "start");
+		git(top, "switch", "--quiet", "-c", "brand");
+		writeFileSync(join(top, "design", "logo.txt"), "new logo\n");
+		git(top, "commit", "--quiet", "-am", "brand");
+		git(top, "switch", "--quiet", "-c", "web-redesign", "main");
+		writeFrame(root, "home", "export default () => <h1>Home</h1>;\n");
+		git(top, "add", "-A");
+		git(top, "commit", "--quiet", "-m", "web");
+		git(top, "switch", "--quiet", "main");
+		const daemon = makeApp(state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
+		const asked = await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: root })}`);
+		expect(await asked.json()).toEqual({ branches: ["web-redesign"], checkedOnly: null });
+	});
+
+	it("names a local branch another local branch tracks", { timeout: 30_000 }, async () => {
+		const project = existingProject();
+		git(project.root, "switch", "--quiet", "-c", "develop");
+		writeFrame(project.root, "home", "export default () => <h1>Develop</h1>;\n");
+		git(project.root, "commit", "--quiet", "-am", "develop");
+		git(project.root, "branch", "--quiet", "--track", "feature", "develop");
+		git(project.root, "switch", "--quiet", "feature");
+		writeFrame(project.root, "home", "export default () => <h1>Feature</h1>;\n");
+		git(project.root, "commit", "--quiet", "-am", "feature");
+		git(project.root, "switch", "--quiet", "main");
+		const daemon = makeApp(project.state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
+		const asked = await daemon.controlRequest(
+			`/api/cloud/move/branches?${new URLSearchParams({ path: project.root })}`,
+		);
+		const { branches } = (await asked.json()) as { branches: string[] };
+		expect([...branches].sort()).toEqual(["develop", "feature"]);
+	});
+
+	/** A branch off main changing design/, committed at a given time, so which branches are newest is known. */
+	const branchAt = (root: string, name: string, date: string) => {
+		git(root, "switch", "--quiet", "-c", name, "main");
+		writeFrame(root, name, `export default () => <h1>${name}</h1>;\n`);
+		git(root, "add", "-A");
+		execFileSync("git", ["commit", "--quiet", "-m", name], {
+			cwd: root,
+			env: { ...process.env, ...IDENTITY, GIT_COMMITTER_DATE: date },
+		});
+		git(root, "switch", "--quiet", "main");
+	};
+
+	it("checks only the most recent branches, and says how many it checked", { timeout: 30_000 }, async () => {
+		const project = existingProject();
+		branchAt(project.root, "oldest", "2024-01-01T00:00:00Z");
+		branchAt(project.root, "newest", "2024-03-01T00:00:00Z");
+		branchAt(project.root, "middle", "2024-02-01T00:00:00Z");
+		expect(await branchesTouchingDesign(project.root, { limit: 2 })).toEqual({
+			branches: ["newest", "middle"],
+			checkedOnly: 2,
+		});
+		expect(await branchesTouchingDesign(project.root, { limit: 3 })).toEqual({
+			branches: ["newest", "middle", "oldest"],
+			checkedOnly: null,
+		});
+	});
+
+	it("stops at its time limit, saying it only checked some", { timeout: 30_000 }, async () => {
+		const project = existingProject();
+		branchAt(project.root, "redesign", "2024-01-01T00:00:00Z");
+		expect(await branchesTouchingDesign(project.root, { within: 0 })).toEqual({ branches: [], checkedOnly: 0 });
+	});
+
+	it("names no branches for a project in no git repo", async () => {
+		const root = realpathSync(makeTempDir());
+		const state = join(makeTempDir(), ".spool");
+		initProject(root, state);
+		const daemon = makeApp(state, { cloud: fakeTeam().machine("ana").cloud, teamNotice: () => {} });
+		const asked = await daemon.controlRequest(`/api/cloud/move/branches?${new URLSearchParams({ path: root })}`);
+		expect(await asked.json()).toEqual({ branches: [], checkedOnly: null });
+	});
+
 	it("carries a solo project's shares over to the team project, so links already sent keep working", {
 		timeout: 30_000,
 	}, async () => {
@@ -559,5 +686,335 @@ describe("Move to team", () => {
 		expect(cloud.saves("site").filter((save) => save.by === "ben")).toEqual([]);
 		expect(cloud.file("site", "frames/home/frame.tsx")).toContain("Home");
 		expect(status(ben)).toEqual([]);
+	});
+});
+
+describe("Move to team under the save limit", () => {
+	/** An existing project with this many more frames than it started with, each one save. */
+	function bigProject(frames: number) {
+		const project = existingProject();
+		for (let at = 0; at < frames; at++) writeFrame(project.root, `f${at}`, `export default () => <p>${at}</p>;\n`);
+		return project;
+	}
+
+	it("waits out a cloud taking 120 saves a minute and moves 500 files in one go, saying how far it got", {
+		timeout: 60_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = bigProject(500);
+		let now = 0;
+		cloud.rateLimit(120, 60_000, () => now);
+		const slept: number[] = [];
+		const progress: MoveProgress[] = [];
+
+		const moved = await moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			wait: async (ms) => {
+				slept.push(ms);
+				now += ms;
+			},
+			onProgress: (at) => progress.push(at),
+		});
+
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(cloud.paths("site")).toContain("frames/f499/frame.tsx");
+		expect(cloud.paths("site").length).toBeGreaterThan(500);
+		// four waits of up to a minute: 120 files in each minute
+		expect(slept.filter((ms) => ms >= 1_000)).toHaveLength(4);
+		const last = progress.at(-1);
+		expect(last).toEqual({ up: last?.total, total: cloud.paths("site").length, paused: null });
+		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe(
+			"this project took 120 saves in the last minute",
+		);
+		expect(progress.some((at) => at.up > 0 && at.up < at.total && at.paused === null)).toBe(true);
+	});
+
+	for (const [reason, said] of [
+		["project_full", "site didn't move: the team's design/ is at its 1 GB limit. Nothing changed here."],
+		[
+			"monthly_limit",
+			"site didn't move: you've made 30,000 saves to this project this month. It lifts on 1 June. Nothing changed here.",
+		],
+	] as const)
+		it(`stops on ${reason} and says so, changing nothing here`, { timeout: 30_000 }, async () => {
+			vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-05-20T12:00:00Z") });
+			onTestFinished(() => void vi.useRealTimers());
+			const cloud = fakeTeam();
+			const ana = cloud.machine("ana");
+			const project = existingProject();
+			const before = git(project.root, "rev-parse", "HEAD");
+			// a month's saves lift at the turn of the month, twelve days on
+			cloud.limit(reason, 12 * 86_400);
+			const slept: number[] = [];
+
+			await expect(
+				moveIntoTeam(project.root, project.state, {
+					team: "devosurf",
+					origin: TEAM_ORIGIN,
+					request: ana.request,
+					openSocket: ana.openSocket,
+					wait: async (ms) => void slept.push(ms),
+				}),
+			).rejects.toThrow(said);
+			expect(slept).toEqual([]);
+			expect(existsSync(join(project.root, "spool.json"))).toBe(false);
+			expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
+		});
+
+	it("tells the move sheet how far the move has got and what it is waiting out, while it runs", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = bigProject(3);
+		const daemon = makeApp(project.state, { cloud: ana.cloud, teamNotice: () => {} });
+		const progress = async () =>
+			(
+				(await (
+					await daemon.controlRequest(`/api/cloud/move/progress?${new URLSearchParams({ path: project.root })}`)
+				).json()) as { progress: MoveProgress | null }
+			).progress;
+		expect(await progress()).toBeNull();
+		cloud.limit("rate_limited", 1);
+
+		const moving = daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		let seen = await progress();
+		for (const start = Date.now(); seen?.paused == null && Date.now() - start < 10_000; seen = await progress())
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		expect(seen).toMatchObject({ up: 0, paused: { why: "this project took 120 saves in the last minute" } });
+		expect(seen?.total).toBeGreaterThanOrEqual(5);
+		cloud.lift();
+
+		expect((await moving).status).toBe(200);
+		expect(await progress()).toBeNull();
+	});
+
+	/** Ana's daemon over a project, a move posted to it, and the move sheet's question of it. */
+	function sheetOver(cloud: ReturnType<typeof fakeTeam>, project: ReturnType<typeof existingProject>) {
+		const daemon = makeApp(project.state, { cloud: cloud.machine("ana").cloud, teamNotice: () => {} });
+		const ask = async () =>
+			(await (
+				await daemon.controlRequest(`/api/cloud/move/progress?${new URLSearchParams({ path: project.root })}`)
+			).json()) as { progress: MoveProgress | null; team: string | null; ended: unknown };
+		const move = (signal?: AbortSignal) =>
+			daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+				method: "POST",
+				headers: json,
+				body: JSON.stringify({ path: project.root }),
+				...(signal === undefined ? {} : { signal }),
+			});
+		const paused = async () => {
+			for (const start = Date.now(); Date.now() - start < 10_000; )
+				if ((await ask()).progress?.paused != null) return;
+				else await new Promise((resolve) => setTimeout(resolve, 25));
+			throw new Error("the move never paused");
+		};
+		return { ask, move, paused };
+	}
+
+	it("refuses a second move of a project already moving", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		cloud.limit("rate_limited", 1);
+		const first = sheet.move();
+		await sheet.paused();
+		const second = await sheet.move();
+		expect(second.status).toBe(409);
+		expect(await second.json()).toEqual({ error: "site is already moving." });
+		expect((await sheet.ask()).team).toBe("devosurf");
+		cloud.lift();
+		expect((await first).status).toBe(200);
+	});
+
+	it("keeps the outcome of a move whose sheet went away, and tells the next sheet once", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		cloud.limit("rate_limited", 1);
+		const reload = new AbortController();
+		const first = sheet.move(reload.signal);
+		await sheet.paused();
+		// the page reloads: the move's answer has nobody to go to
+		reload.abort();
+		cloud.lift();
+		await first;
+		expect(await sheet.ask()).toEqual({
+			progress: null,
+			team: "devosurf",
+			ended: { outcome: { root: project.root, name: "site", commit: "committed" } },
+		});
+		expect(await sheet.ask()).toEqual({ progress: null, team: null, ended: null });
+	});
+
+	it("keeps what stopped a move whose sheet went away", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		cloud.limit("rate_limited", 1);
+		const reload = new AbortController();
+		const first = sheet.move(reload.signal);
+		await sheet.paused();
+		reload.abort();
+		cloud.limit("project_full", 60);
+		await first;
+		expect(await sheet.ask()).toEqual({
+			progress: null,
+			team: "devosurf",
+			ended: { error: "site didn't move: the team's design/ is at its 1 GB limit. Nothing changed here." },
+		});
+	});
+
+	it("keeps no outcome its sheet already heard", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const sheet = sheetOver(cloud, project);
+		expect((await sheet.move()).status).toBe(200);
+		expect(await sheet.ask()).toEqual({ progress: null, team: null, ended: null });
+	});
+
+	/** Ana's move of a project, against this cloud, with these options on top. */
+	const moveAs = (
+		cloud: ReturnType<typeof fakeTeam>,
+		project: ReturnType<typeof existingProject>,
+		options: Partial<Parameters<typeof moveIntoTeam>[2]> = {},
+	) => {
+		const ana = cloud.machine("ana");
+		return moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			...options,
+		});
+	};
+	/** Nothing here changed: no spool.json, no commit. */
+	const unchanged = (project: ReturnType<typeof existingProject>, before: string) => {
+		expect(existsSync(join(project.root, "spool.json"))).toBe(false);
+		expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
+	};
+
+	it("waits out spool.page saying it can't check saves", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		cloud.limit("unavailable", 2);
+		const slept: number[] = [];
+		const moved = await moveAs(cloud, project, {
+			wait: async (ms) => {
+				slept.push(ms);
+				cloud.lift();
+			},
+		});
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(slept).toEqual([2_000]);
+	});
+
+	it("waits out spool.page closing the sync connection as unavailable, a little longer each time", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const undo = cloud.refuseSync(1011);
+		const slept: number[] = [];
+		const progress: MoveProgress[] = [];
+		const moved = await moveAs(cloud, project, {
+			wait: async (ms) => {
+				slept.push(ms);
+				if (slept.length === 3) undo();
+			},
+			onProgress: (at) => progress.push(at),
+		});
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(slept).toEqual([2_000, 4_000, 8_000]);
+		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe("spool.page is unavailable");
+	});
+
+	it("waits out a dropped connection, and gives up after ten tries in a row that get nothing up", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		cloud.offline("ana");
+		const slept: number[] = [];
+		await expect(moveAs(cloud, project, { wait: async (ms) => void slept.push(ms) })).rejects.toThrow(
+			"site didn't move: the connection to spool.page dropped. Nothing changed here; try again.",
+		);
+		expect(slept).toHaveLength(9);
+		expect(Math.max(...slept)).toBeLessThanOrEqual(30_000);
+		unchanged(project, before);
+	});
+
+	it("says a move stopped because this Mac was signed out", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		cloud.limit("rate_limited", 1);
+		await expect(
+			moveAs(cloud, project, {
+				// signed out while the move waits: spool.page closes the next connection as signed out
+				wait: async () => void cloud.refuseSync(CLOSE_SIGNED_OUT),
+			}),
+		).rejects.toThrow("site didn't move: not signed in; run `spool login`. Nothing changed here.");
+		unchanged(project, before);
+	});
+
+	it("says a move stopped because this Mac no longer edits the team project", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		cloud.limit("rate_limited", 1);
+		await expect(
+			moveAs(cloud, project, { wait: async () => void cloud.refuseSync(CLOSE_NOT_EDITOR) }),
+		).rejects.toThrow("site didn't move: you can't edit this team project. Nothing changed here.");
+	});
+
+	it("stops waiting when spool closes, even when it closed before the wait began", { timeout: 10_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		cloud.limit("rate_limited", 3_600);
+		const closing = new AbortController();
+		await expect(
+			moveAs(cloud, project, {
+				signal: closing.signal,
+				// spool closes as the pause is said, before the sleep starts: no real hour is slept
+				onProgress: (at) => {
+					if (at.paused !== null) closing.abort();
+				},
+			}),
+		).rejects.toThrow("spool closed before site moved. Nothing changed here; move it again.");
+		unchanged(project, before);
+	});
+
+	it("uploads nothing when spool is already closing", { timeout: 10_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		await expect(moveAs(cloud, project, { signal: AbortSignal.abort() })).rejects.toThrow("spool closed before");
+		expect(cloud.saves("site")).toEqual([]);
+		unchanged(project, before);
+	});
+
+	it("names what stopped the shares going over", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		mkdirSync(join(project.root, "design", ".spool"), { recursive: true });
+		writeFileSync(
+			join(project.root, "design", ".spool", "share.json"),
+			JSON.stringify({ origin: TEAM_ORIGIN, project: "nowhere" }),
+		);
+		await expect(moveAs(cloud, project)).rejects.toThrow(
+			/^site's shares didn't move: spool\.page refused: \w+\. Nothing changed here; try again\.$/,
+		);
 	});
 });

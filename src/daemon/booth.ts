@@ -4,6 +4,7 @@ import { COVER_QUALITY, type ColorScheme, type CoverShape, coverShape, SETTLE_BU
 import {
 	fetchHeadlessShell,
 	type HeadlessShell,
+	HeadlessShellCannotRunError,
 	launchHeadlessShell,
 	MissingHeadlessShellError,
 } from "../headless-shell";
@@ -517,8 +518,19 @@ class TimedOut extends Error {
 	}
 }
 
-/** A browser that would not start, as against a frame that would not draw. */
-class LaunchFailure extends Error {}
+/**
+ * A browser that would not start, as against a frame that would not draw.
+ * `cannotRun` is a machine that cannot run it at all until something is
+ * installed, where waiting a minute changes nothing.
+ */
+class LaunchFailure extends Error {
+	constructor(
+		message: string,
+		readonly cannotRun = false,
+	) {
+		super(message);
+	}
+}
 
 /** The browser went away under a sitting: the frame did nothing wrong. */
 class BrowserLost extends Error {
@@ -614,6 +626,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	let running: Running | undefined;
 	let fetching: Promise<void> | undefined;
 	let blockedUntil = 0;
+	/** Why a browser would not start, each said once in the log until one starts. */
+	const said = new Set<string>();
 	let retry: NodeJS.Timeout | undefined;
 	let linger: NodeJS.Timeout | undefined;
 	let closed = false;
@@ -683,7 +697,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 
 	/** Try the browser again once the wait after a failed launch is over. */
 	function armRetry(): void {
-		if (retry !== undefined || closed) return;
+		if (retry !== undefined || closed || blockedUntil === Number.POSITIVE_INFINITY) return;
 		retry = setTimeout(
 			() => {
 				retry = undefined;
@@ -752,7 +766,13 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const live: Running = { shell: start(), context: undefined, control: undefined, ended: undefined };
 		running = live;
 		live.shell.then(
-			(shell) => shell.browser.on("disconnected", () => lose(live)),
+			(shell) => {
+				// a browser started: whatever kept the covers waiting is over, and a
+				// later failure is news worth saying again
+				blockedUntil = 0;
+				said.clear();
+				shell.browser.on("disconnected", () => lose(live));
+			},
 			() => void end(live),
 		);
 		return live;
@@ -819,7 +839,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		try {
 			shell = await live.shell;
 		} catch (error) {
-			throw new LaunchFailure(describe(error));
+			throw new LaunchFailure(describe(error), error instanceof HeadlessShellCannotRunError);
 		}
 		try {
 			return await within(openTab(slot, live, shell), ANSWER_MS * 2, "opening a tab");
@@ -963,9 +983,18 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 	}
 
+	/**
+	 * Covers wait for a browser that starts: a minute, or, on a machine that
+	 * cannot run one at all, until one does (a shot still tries, and so does the
+	 * next daemon). The reason is logged once, never on every try.
+	 */
 	function blockRelaunch(error: Error): void {
-		blockedUntil = Date.now() + timing.relaunchAfterMs;
-		log(`the photo booth could not start a browser: ${error.message}`);
+		const cannotRun = error instanceof LaunchFailure && error.cannotRun;
+		blockedUntil = cannotRun ? Number.POSITIVE_INFINITY : Date.now() + timing.relaunchAfterMs;
+		if (!said.has(error.message)) {
+			said.add(error.message);
+			log(`the photo booth could not start a browser: ${error.message}`);
+		}
 		armRetry();
 	}
 

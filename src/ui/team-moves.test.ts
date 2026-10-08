@@ -35,7 +35,7 @@ const project = (change: Partial<TeamProjectOnMac> = {}): TeamProjectOnMac => ({
 });
 
 /** The daemon, as these sheets ask it: one answer for every call, and what was asked. */
-function daemon(answer: (url: string) => Response) {
+function daemon(answer: (url: string) => Response | Promise<Response>) {
 	const asked: string[] = [];
 	vi.stubGlobal(
 		"fetch",
@@ -137,6 +137,63 @@ it("names what stays on this Mac and in git before it moves", async () => {
 	expect(host.querySelector("[data-move-stays]")?.textContent).toContain("design/README.md");
 });
 
+it("names the branches still changing design/ before it moves, and nothing when there are none", async () => {
+	const sheet = async (branches: string[]) => {
+		daemon((url) =>
+			url.includes("/move/branches") ? Response.json({ branches, checkedOnly: null }) : Response.json({ stays: [] }),
+		);
+		const host = mount(
+			createElement(MoveToTeamDialog, {
+				project: { root: "/Users/ana/site", name: "site" },
+				teams: [DEVOSURF],
+				onMoved: vi.fn(),
+				onClose: vi.fn(),
+			}),
+		);
+		await settle();
+		return host.querySelector("[data-move-branches]");
+	};
+	const two = await sheet(["redesign", "origin/theirs"]);
+	expect(two?.textContent).toContain(
+		"These 2 branches still change design/. Merge them first, or they'll conflict after the move:",
+	);
+	expect(Array.from(two?.querySelectorAll("li") ?? []).map((item) => item.textContent)).toEqual([
+		"redesign",
+		"origin/theirs",
+	]);
+	expect((await sheet(["redesign"]))?.textContent).toContain(
+		"This branch still changes design/. Merge it first, or it'll conflict after the move:",
+	);
+	expect(await sheet([])).toBeNull();
+});
+
+it("says when it only checked the most recent branches", async () => {
+	const sheet = async (answer: { branches: string[]; checkedOnly: number | null }) => {
+		daemon((url) => (url.includes("/move/branches") ? Response.json(answer) : Response.json({ stays: [] })));
+		const host = mount(
+			createElement(MoveToTeamDialog, {
+				project: { root: "/Users/ana/site", name: "site" },
+				teams: [DEVOSURF],
+				onMoved: vi.fn(),
+				onClose: vi.fn(),
+			}),
+		);
+		await settle();
+		return host.querySelector("[data-move-branches]");
+	};
+	const capped = await sheet({ branches: ["redesign"], checkedOnly: 50 });
+	expect(capped?.textContent).toContain("This branch still changes design/.");
+	expect(capped?.textContent).toContain("Only the 50 most recent branches were checked.");
+	// nothing found among the ones checked still says not all were
+	expect((await sheet({ branches: [], checkedOnly: 12 }))?.textContent).toBe(
+		"Only the 12 most recent branches were checked.",
+	);
+	expect((await sheet({ branches: [], checkedOnly: 0 }))?.textContent).toBe(
+		"spool ran out of time before it could check the branches.",
+	);
+	expect((await sheet({ branches: ["redesign"], checkedOnly: null }))?.textContent).not.toContain("Only");
+});
+
 it("says on Home when a move's commit wasn't made, and nothing when it was", () => {
 	const moved = { root: "/Users/ana/site", name: "site" };
 	expect(moveCommitNote({ ...moved, commit: "committed" }, DEVOSURF)).toBeUndefined();
@@ -153,7 +210,9 @@ it("moves a project to the chosen team, saying history before the move stays in 
 	const asked = daemon((url) =>
 		url.includes("/move/stays")
 			? Response.json({ stays: [] })
-			: Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }),
+			: url.includes("/move/branches")
+				? Response.json({ branches: [], checkedOnly: null })
+				: Response.json({ root: "/Users/ana/site", name: "site", commit: "committed" }),
 	);
 	const onMoved = vi.fn();
 	const host = mount(
@@ -173,7 +232,9 @@ it("moves a project to the chosen team, saying history before the move stays in 
 	await act(async () => button(host, "Move to Tidemark").click());
 	await settle();
 	expect(asked).toEqual([
+		"GET /api/cloud/move/branches?path=%2FUsers%2Fana%2Fsite",
 		"GET /api/cloud/move/stays?path=%2FUsers%2Fana%2Fsite",
+		"GET /api/cloud/move/progress?path=%2FUsers%2Fana%2Fsite",
 		'POST /api/cloud/teams/tidemark/move {"path":"/Users/ana/site"}',
 	]);
 	expect(onMoved).toHaveBeenCalledWith({ root: "/Users/ana/site", name: "site", commit: "committed" }, TIDEMARK);
@@ -211,4 +272,140 @@ it("offers Move to team on a project's cover, never on a team project's", async 
 	await act(async () => (host.querySelector('[aria-label="Manage site"]') as HTMLButtonElement).click());
 	await act(async () => button(host, "Move to team…").click());
 	expect(onMoveToTeam).toHaveBeenCalledWith(expect.objectContaining({ root: "/Users/ana/site", name: "site" }));
+});
+
+const CHAMFER = { root: "/Users/ana/chamfer", name: "chamfer" };
+const PAUSED = (until: number) => ({
+	up: 240,
+	total: 1922,
+	paused: { why: "this project took 120 saves in the last minute", until },
+});
+const NOTHING = { progress: null, team: null, ended: null };
+
+/** Fake intervals and clock: a poll a second, and a countdown that moves with them. */
+function fakeClock() {
+	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: new Date("2026-05-20T12:00:00Z") });
+	onTestFinished(() => void vi.useRealTimers());
+	return async (ms: number) => {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(ms);
+		});
+		await settle();
+	};
+}
+
+it("shows how many files are up while it moves, and counts the pause down each second", async () => {
+	const pass = fakeClock();
+	let posted = false;
+	let polls = 0;
+	const asked = daemon((url) => {
+		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/branches")) return Response.json({ branches: [], checkedOnly: null });
+		if (url.includes("/move/progress")) {
+			if (!posted) return Response.json(NOTHING);
+			// the first poll answers; every later one hangs, so the countdown moves only by the sheet's own clock
+			if (polls++ > 0) return new Promise<Response>(() => {});
+			return Response.json({ progress: PAUSED(Date.now() + 48_000), team: "devosurf", ended: null });
+		}
+		posted = true;
+		return new Promise<Response>(() => {});
+	});
+	const host = mount(
+		createElement(MoveToTeamDialog, { project: CHAMFER, teams: [DEVOSURF], onMoved: vi.fn(), onClose: vi.fn() }),
+	);
+	await settle();
+	expect(host.querySelector("[data-move-progress]")).toBeNull();
+	await act(async () => button(host, "Move to Devosurf").click());
+	await pass(1_000);
+	const progress = () => host.querySelector("[data-move-progress]")?.textContent;
+	expect(progress()).toContain("240 of 1,922 files up");
+	expect(progress()).toContain("Paused: this project took 120 saves in the last minute. Carrying on in 48 seconds.");
+	await pass(3_000);
+	expect(progress()).toContain("Carrying on in 45 seconds.");
+	// a poll still out is never asked again over, so an older answer can't land after a newer one
+	expect(asked.filter((line) => line.startsWith("GET /api/cloud/move/progress"))).toHaveLength(3);
+});
+
+it("picks up a move already under way when it opens, and hands its outcome to Home when it ends", async () => {
+	const pass = fakeClock();
+	let done = false;
+	const asked = daemon((url) => {
+		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/branches")) return Response.json({ branches: [], checkedOnly: null });
+		if (done)
+			return Response.json({
+				progress: null,
+				team: "devosurf",
+				ended: { outcome: { root: CHAMFER.root, name: "chamfer", commit: "waiting" } },
+			});
+		return Response.json({ progress: PAUSED(Date.now() + 10_000), team: "devosurf", ended: null });
+	});
+	const onMoved = vi.fn();
+	const onClose = vi.fn();
+	const host = mount(
+		createElement(MoveToTeamDialog, { project: CHAMFER, teams: [TIDEMARK, DEVOSURF], onMoved, onClose }),
+	);
+	await settle();
+	expect(host.querySelector("[data-move-progress]")?.textContent).toContain("Moving to Devosurf.");
+	expect(host.querySelector("[data-move-progress]")?.textContent).toContain("240 of 1,922 files up");
+	expect(button(host, "Move to Tidemark").disabled).toBe(true);
+	done = true;
+	await pass(1_000);
+	expect(onMoved).toHaveBeenCalledWith({ root: CHAMFER.root, name: "chamfer", commit: "waiting" }, DEVOSURF);
+	expect(onClose).toHaveBeenCalled();
+	expect(asked.some((line) => line.startsWith("POST"))).toBe(false);
+});
+
+it("says what stopped a move it picked up", async () => {
+	const pass = fakeClock();
+	let done = false;
+	daemon((url) => {
+		if (url.includes("/move/stays")) return Response.json({ stays: [] });
+		if (url.includes("/move/branches")) return Response.json({ branches: [], checkedOnly: null });
+		if (done)
+			return Response.json({
+				progress: null,
+				team: "devosurf",
+				ended: {
+					error: "chamfer didn't move: the connection to spool.page dropped. Nothing changed here; try again.",
+				},
+			});
+		return Response.json({ progress: PAUSED(Date.now() + 10_000), team: "devosurf", ended: null });
+	});
+	const host = mount(
+		createElement(MoveToTeamDialog, { project: CHAMFER, teams: [DEVOSURF], onMoved: vi.fn(), onClose: vi.fn() }),
+	);
+	await settle();
+	done = true;
+	await pass(1_000);
+	expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+		"chamfer didn't move: the connection to spool.page dropped. Nothing changed here; try again.",
+	);
+	expect(host.querySelector("[data-move-progress]")).toBeNull();
+	expect(button(host, "Move to Devosurf").disabled).toBe(false);
+});
+
+it("says what stopped a move", async () => {
+	daemon((url) =>
+		url.includes("/move/stays")
+			? Response.json({ stays: [] })
+			: Response.json(
+					{ error: "chamfer didn't move: the team's design/ is at its 1 GB limit. Nothing changed here." },
+					{ status: 409 },
+				),
+	);
+	const host = mount(
+		createElement(MoveToTeamDialog, {
+			project: { root: "/Users/ana/chamfer", name: "chamfer" },
+			teams: [DEVOSURF],
+			onMoved: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	await act(async () => button(host, "Move to Devosurf").click());
+	await settle();
+	expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+		"chamfer didn't move: the team's design/ is at its 1 GB limit. Nothing changed here.",
+	);
+	expect(host.querySelector("[data-move-progress]")).toBeNull();
 });

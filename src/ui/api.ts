@@ -19,14 +19,16 @@ import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { RungRead } from "../daemon/hand-lane";
 import type { EditedNode, Place as MovePlace, PatchRefusal, StampShift } from "../daemon/hand-write";
+import type { BranchesTouchingDesign } from "../daemon/history";
 import type { LocatedRange } from "../daemon/locate";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
-import type { MoveOutcome, TeamProjectOnMac } from "../daemon/team-projects";
+import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
+import type { MoveProgress } from "../move-in";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
@@ -1682,7 +1684,7 @@ export const teamActions = {
 	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 };
 
-export type { MoveOutcome, SyncState, TeamProjectOnMac };
+export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
 
 /** Who is inside a team project right now, as its cover says it. */
 export type HerePerson = TeamProjectHere["people"][number];
@@ -1742,6 +1744,18 @@ export function moveProjectToTeam(address: string, path: string): Promise<MoveOu
 	return teamProjectAction(`${team(address)}/move`, { path });
 }
 
+/** A project's move under way and its team, or how one ended that no sheet heard; undefined when the daemon can't say. */
+export async function fetchMoveProgress(path: string): Promise<MoveReading | undefined> {
+	try {
+		const response = await controlFetch(`/api/cloud/move/progress?${new URLSearchParams({ path })}`);
+		const body = (response.ok ? await response.json() : null) as Partial<MoveReading> | null;
+		if (body === null) return undefined;
+		return { progress: body.progress ?? null, team: body.team ?? null, ended: body.ended ?? null };
+	} catch {
+		return undefined;
+	}
+}
+
 /** What in a project's design/ would stay on this Mac, and in git, if it moved into a team. */
 export async function fetchMoveStays(path: string): Promise<{ path: string; why: string }[]> {
 	try {
@@ -1750,6 +1764,25 @@ export async function fetchMoveStays(path: string): Promise<{ path: string; why:
 		return Array.isArray(body?.stays) ? (body.stays as { path: string; why: string }[]) : [];
 	} catch {
 		return [];
+	}
+}
+
+/**
+ * The branches whose design/ changes aren't merged yet, which would conflict once a move takes design/ out of git,
+ * and how many were checked when not all were. Nothing, when the daemon can't say.
+ */
+export async function fetchMoveBranches(path: string, signal?: AbortSignal): Promise<BranchesTouchingDesign> {
+	try {
+		const response = await controlFetch(`/api/cloud/move/branches?${new URLSearchParams({ path })}`, {
+			...(signal === undefined ? {} : { signal }),
+		});
+		const body = (response.ok ? await response.json() : null) as Partial<BranchesTouchingDesign> | null;
+		return {
+			branches: Array.isArray(body?.branches) ? body.branches : [],
+			checkedOnly: typeof body?.checkedOnly === "number" ? body.checkedOnly : null,
+		};
+	} catch {
+		return { branches: [], checkedOnly: null };
 	}
 }
 

@@ -38,6 +38,30 @@ export class MissingHeadlessShellError extends Error {
 	}
 }
 
+/**
+ * The shell is on disk but cannot run here: the machine lacks the system
+ * libraries it links against, as a bare Linux server does. Nothing the daemon
+ * retries changes that; an install does, so the message names it.
+ */
+export class HeadlessShellCannotRunError extends Error {
+	constructor(readonly library: string) {
+		super(
+			`this machine is missing ${library} and other libraries Chromium needs; install them with \`npx playwright-core@${playwrightVersion()} install-deps chromium-headless-shell\` (it asks for sudo) and restart spool`,
+		);
+		this.name = "HeadlessShellCannotRunError";
+	}
+}
+
+/** The shared library a launch's log says the shell could not load, if that is why it died. */
+export function missingLibrary(launchLog: string): string | undefined {
+	return /error while loading shared libraries: ([^:\s]+)/u.exec(launchLog)?.[1];
+}
+
+function playwrightVersion(): string {
+	const require = createRequire(import.meta.url);
+	return (require("playwright-core/package.json") as { version: string }).version;
+}
+
 /** One running shell: the browser to drive, and two ways to end its process. */
 export interface HeadlessShell {
 	browser: Browser;
@@ -67,6 +91,10 @@ export async function launchHeadlessShell(): Promise<HeadlessShell> {
 		if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
 			throw new MissingHeadlessShellError();
 		}
+		// playwright's launch log carries the loader's own line, under a first
+		// line that only says the browser closed (`Protocol error (Browser.getVersion)`)
+		const library = error instanceof Error ? missingLibrary(error.message) : undefined;
+		if (library !== undefined) throw new HeadlessShellCannotRunError(library);
 		throw error;
 	}
 	try {
