@@ -75,18 +75,24 @@ it("starts one lazy real host, stops on host failure and reopens the exact saved
 	expect(calls[2]).toContain("selection three");
 });
 
-it("finishes the bundled state writer before daemon shutdown releases its directory", { timeout: 20_000 }, async () => {
+it("finishes the bundled state writer before daemon shutdown releases its directory", { timeout: 90_000 }, async () => {
 	const directory = makeTempDir();
 	const children: ChildProcess[] = [];
-	const client = new BundledHostClient(join(directory, "bundled"), (state) => {
-		const child = fork(fileURLToPath(new URL("./fixtures/bundled-provider-host.ts", import.meta.url)), [], {
-			env: bundledEnvironment(state),
-			execArgv: ["--import", import.meta.resolve("tsx")],
-			stdio: ["ignore", "ignore", "ignore", "ipc"],
-		});
-		children.push(child);
-		return child;
-	});
+	// the exit code below is the proof close waited on the writer, so the kill
+	// fallback must not land first while tsx is still booting the host
+	const client = new BundledHostClient(
+		join(directory, "bundled"),
+		(state) => {
+			const child = fork(fileURLToPath(new URL("./fixtures/bundled-provider-host.ts", import.meta.url)), [], {
+				env: bundledEnvironment(state),
+				execArgv: ["--import", import.meta.resolve("tsx")],
+				stdio: ["ignore", "ignore", "ignore", "ipc"],
+			});
+			children.push(child);
+			return child;
+		},
+		60_000,
+	);
 	onTestFinished(async () => {
 		for (const child of children) {
 			if (child.exitCode !== null || child.signalCode !== null) continue;
