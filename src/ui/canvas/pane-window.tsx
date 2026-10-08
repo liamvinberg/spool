@@ -1114,6 +1114,8 @@ export function PaneWindow({
 							context={context}
 							held={heldPane === def.id}
 							onPress={(event) => press(def.id, "head", event)}
+							// a portal's events climb the React tree rather than the side it stands in
+							onTouch={() => side !== null && apply({ type: "touch", side }, { flip: false })}
 						/>,
 						nodeOf(def.id),
 						def.id,
@@ -1131,15 +1133,22 @@ function PaneSection({
 	context,
 	held,
 	onPress,
+	onTouch,
 }: {
 	def: PaneDef;
 	context: PaneContext;
 	held: boolean;
 	onPress: (event: ReactPointerEvent<HTMLElement>) => void;
+	onTouch: () => void;
 }) {
 	const [slot, setSlot] = useState<HTMLElement | null>(null);
 	return (
-		<section data-pane={def.id} aria-label={def.title} className="flex h-full min-h-0 flex-col overflow-hidden bg-bg">
+		<section
+			data-pane={def.id}
+			aria-label={def.title}
+			onPointerDownCapture={onTouch}
+			className="flex h-full min-h-0 flex-col overflow-hidden bg-bg"
+		>
 			<header
 				data-pane-head={def.id}
 				onPointerDown={onPress}
