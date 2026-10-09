@@ -179,6 +179,63 @@ describe("the turn's frames", () => {
 	});
 });
 
+/**
+ * The agent on the canvas and its asks (#366): the bead arrives, travels and leaves, its
+ * corners fly out and fold back, the waiting ring breathes and an ask turns out of its
+ * anchor, on the numbers the companion's legend settled. The layer drives travel itself,
+ * so the numbers it runs on are the same ones the stylesheet keyframes.
+ */
+describe("the agent on the canvas", () => {
+	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
+	const TOKENS = canvas ? readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8") : "";
+	const MOVING = ["arrive", "corners-out", "flash", "ring", "breathe", "turn"];
+	const LEAVING = ["depart", "corners-in", "gather"];
+	const SNAP = "cubic-bezier(0.32, 0.72, 0, 1)";
+	const IN_OUT = "cubic-bezier(0.65, 0, 0.35, 1)";
+
+	it("moves on the legend's numbers and curves", async () => {
+		const { EASE, MOTION } = await import("./canvas/agent-motion");
+		expect(CSS).toContain(`--animate-agent-arrive: agent-arrive ${MOTION.arrive}ms ${SNAP} both`);
+		expect(CSS).toContain(`--animate-agent-depart: agent-depart ${MOTION.leave}ms ${IN_OUT} forwards`);
+		expect(CSS).toContain(`--animate-agent-corners-out: agent-corners-out ${MOTION.cornersOut}ms ${SNAP}`);
+		expect(CSS).toContain(`--animate-agent-corners-in: agent-corners-in ${MOTION.cornersIn}ms ${IN_OUT}`);
+		expect(CSS).toContain(`--animate-agent-flash: agent-flash ${MOTION.flashUp + MOTION.flashDown}ms`);
+		expect(CSS).toContain(`--animate-agent-breathe: agent-breathe ${MOTION.breathe}ms ${IN_OUT} infinite alternate`);
+		expect(CSS).toContain(`--animate-agent-turn: agent-turn ${MOTION.turn}ms ${SNAP}`);
+		expect(CSS).toContain(`--animate-agent-draw-in: agent-draw-in ${MOTION.drawIn}ms`);
+		expect(MOTION).toMatchObject({ travel: 420, idleAfter: 2000, idle: 400, lineIn: 180, landed: 300 });
+		expect(SNAP).toBe(`cubic-bezier(${EASE.snap.join(", ")})`);
+		expect(IN_OUT).toBe(`cubic-bezier(${EASE.inOut.join(", ")})`);
+		expect(EASE.out).toEqual([0.22, 0.61, 0.36, 1]);
+	});
+
+	it("arrives from 40% and leaves at 60%, where it stood", () => {
+		const arrive = CSS.slice(CSS.indexOf("@keyframes agent-arrive {"));
+		expect(arrive.slice(0, arrive.indexOf("\n\t}"))).toContain("scale(0.4)");
+		const depart = CSS.slice(CSS.indexOf("@keyframes agent-depart {"));
+		expect(depart.slice(0, depart.indexOf("\n\t}"))).toContain("scale(0.6)");
+	});
+
+	it("stands the moving ones still and takes the leaving ones out when stillness is asked for", () => {
+		const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+		const still = CSS.slice(at, CSS.indexOf("\n}", at));
+		for (const name of MOVING) expect(still).toContain(`.animate-agent-${name}`);
+		const gone = still.slice(still.indexOf(".animate-agent-depart"));
+		for (const name of LEAVING) expect(gone.slice(0, gone.indexOf("}"))).toContain(`.animate-agent-${name}`);
+		expect(gone.slice(0, gone.indexOf("}"))).toContain("display: none");
+	});
+
+	it.runIf(canvas)("is mirrored by the design canvas", () => {
+		for (const name of [...MOVING, ...LEAVING]) {
+			const line = CSS.split("\n").find((one) => one.includes(`--animate-agent-${name}:`));
+			expect(line).toBeDefined();
+			expect(TOKENS).toContain(line ?? "");
+			const at = CSS.indexOf(`@keyframes agent-${name} {`);
+			expect(TOKENS).toContain(CSS.slice(at, CSS.indexOf("\n\t}", at)));
+		}
+	});
+});
+
 describe("thread stylesheet", () => {
 	/**
 	 * The close lands on the first line's end, so on hover that corner of the ask fades out

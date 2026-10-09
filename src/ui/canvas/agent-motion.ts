@@ -46,3 +46,62 @@ export function useHeld<T>(value: T | null | undefined): T | null {
 	if (value !== null && value !== undefined) held.current = value;
 	return held.current;
 }
+
+/**
+ * The agent on the canvas, in motion (#366): the numbers `design/frames/explore/agent-rail/marks/legend`
+ * settled, for the parts the layer drives itself. The keyframed parts read the same numbers off
+ * `ui.css`, whose `--animate-agent-arrive` and the rest carry them.
+ */
+export const MOTION = {
+	/** grows from 40% where the agent first acts */
+	arrive: 260,
+	/** between places, on a low arc */
+	travel: 420,
+	/** from the name row to the changed block's corner */
+	hop: 250,
+	/** the picture wipes down, the bead riding its edge */
+	drawIn: 720,
+	/** four corners fly out of the docked bead, and fold back in */
+	cornersOut: 220,
+	cornersIn: 150,
+	/** one soft lift on the picture: up, then drained */
+	flashUp: 80,
+	flashDown: 450,
+	/** dims to 45% this long after its last call, over `idle` */
+	idleAfter: 2000,
+	idle: 400,
+	/** shrinks to 60% and fades where it stopped */
+	leave: 400,
+	/** each streamed line grows from its indent */
+	lineIn: 180,
+	/** name brightens, unseen dot in */
+	landed: 300,
+	/** the bead opens into the waiting ring, the ask unfolds under it */
+	turn: 320,
+	/** the ring, while it waits on you */
+	breathe: 2400,
+} as const;
+
+/** the house curves, as cubic-bezier control points */
+export const EASE = {
+	out: [0.22, 0.61, 0.36, 1],
+	snap: [0.32, 0.72, 0, 1],
+	inOut: [0.65, 0, 0.35, 1],
+} as const;
+
+/** a cubic-bezier easing as a function of progress, solved for x by bisection */
+export function curve([x1, y1, x2, y2]: readonly [number, number, number, number]): (t: number) => number {
+	const at = (a: number, b: number, s: number) => 3 * a * s * (1 - s) ** 2 + 3 * b * s ** 2 * (1 - s) + s ** 3;
+	return (t) => {
+		if (t <= 0) return 0;
+		if (t >= 1) return 1;
+		let lo = 0;
+		let hi = 1;
+		for (let i = 0; i < 24; i++) {
+			const mid = (lo + hi) / 2;
+			if (at(x1, x2, mid) < t) lo = mid;
+			else hi = mid;
+		}
+		return at(y1, y2, (lo + hi) / 2);
+	};
+}

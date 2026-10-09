@@ -122,6 +122,21 @@
 	--animate-agent-fade-in: agent-fade-in 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-fade-out: agent-fade-out 160ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 	--shadow-agent-float: 0 8px 24px -6px rgb(0 0 0 / 0.36), 0 2px 6px -2px rgb(0 0 0 / 0.24);
+	/* the agent on the canvas and its asks (#366). One ink square per working agent:
+	 * it arrives from 40% where the agent first acts, travels on a 420ms in-out between
+	 * places, and leaves shrinking to 60% where it stopped. Its corners fly out of it while
+	 * a picture is taken and fold back into it; the waiting ring breathes slowly enough to
+	 * read as waiting rather than an alarm; an ask turns out of the bead or the line that
+	 * anchors it. The numbers are `design/frames/explore/agent-rail/marks/legend`'s. */
+	--animate-agent-arrive: agent-arrive 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
+	--animate-agent-depart: agent-depart 400ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+	--animate-agent-corners-out: agent-corners-out 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+	--animate-agent-corners-in: agent-corners-in 150ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+	--animate-agent-flash: agent-flash 530ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+	--animate-agent-ring: agent-ring 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
+	--animate-agent-gather: agent-gather 480ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+	--animate-agent-breathe: agent-breathe 2400ms cubic-bezier(0.65, 0, 0.35, 1) infinite alternate;
+	--animate-agent-turn: agent-turn 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
 
 	/* the agent's hand on a frame (#214). Nothing here fades in: every one of these is
 	 * drawn on from where it means something, and the timings are the canonical frame's
@@ -290,6 +305,89 @@
 		}
 		to {
 			opacity: 0.35;
+		}
+	}
+
+	/* the agent's bead arriving where it first acts, from 40% of its size */
+	@keyframes agent-arrive {
+		from {
+			opacity: 0;
+			transform: scale(0.4);
+		}
+	}
+
+	/* and leaving where it stopped, shrinking to 60% */
+	@keyframes agent-depart {
+		to {
+			opacity: 0;
+			transform: scale(0.6);
+		}
+	}
+
+	/* a corner flying out of the docked bead, from wherever `--agent-dx` and `--agent-dy` put it */
+	@keyframes agent-corners-out {
+		from {
+			opacity: 0;
+			transform: translate(var(--agent-dx, 0), var(--agent-dy, 0)) scale(0.2);
+		}
+	}
+
+	@keyframes agent-corners-in {
+		to {
+			opacity: 0;
+			transform: translate(var(--agent-dx, 0), var(--agent-dy, 0)) scale(0.2);
+		}
+	}
+
+	/* one soft lift on the picture: up over 80ms, drained over 450 */
+	@keyframes agent-flash {
+		0% {
+			opacity: 0;
+		}
+		15% {
+			opacity: 0.4;
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+
+	/* the ring drawn out of the bead to the changed block's size */
+	@keyframes agent-ring {
+		from {
+			opacity: 0;
+			transform: scale(0.96);
+		}
+	}
+
+	/* a deleted frame greying and drawing toward the bead */
+	@keyframes agent-gather {
+		from {
+			opacity: 0.9;
+			filter: none;
+			transform: none;
+		}
+		to {
+			opacity: 0;
+			filter: grayscale(1);
+			transform: scale(0.94);
+		}
+	}
+
+	@keyframes agent-breathe {
+		from {
+			stroke-opacity: 0.35;
+		}
+		to {
+			stroke-opacity: 0.85;
+		}
+	}
+
+	/* an ask unfolding out of the line or the bead that anchors it */
+	@keyframes agent-turn {
+		from {
+			opacity: 0;
+			transform: translateY(-4px) scale(0.98);
 		}
 	}
 
@@ -578,6 +676,12 @@
 	.animate-agent-wind,
 	.animate-agent-draw-in,
 	.animate-agent-newest,
+	.animate-agent-arrive,
+	.animate-agent-corners-out,
+	.animate-agent-flash,
+	.animate-agent-ring,
+	.animate-agent-breathe,
+	.animate-agent-turn,
 	.animate-agent-shimmer {
 		animation: none;
 	}
@@ -617,6 +721,13 @@
 	.animate-agent-float-out,
 	.animate-agent-drop-out,
 	.animate-agent-fade-out {
+		display: none;
+	}
+
+	/* a bead or a ghost on its way out is out, for the same reason */
+	.animate-agent-depart,
+	.animate-agent-corners-in,
+	.animate-agent-gather {
 		display: none;
 	}
 
