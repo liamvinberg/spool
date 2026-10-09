@@ -87,6 +87,13 @@ describe("a codex turn, replayed", () => {
 		).toEqual(["ready"]);
 		expect(events.find((event) => event.kind === "ended")).toMatchObject({ ending: "done" });
 		expect(kinds.at(-1)).toBe("closed");
+		// the ring reads the last request's whole prompt and answer over the model's window
+		expect(events.filter((event) => event.kind === "context").at(-1)).toEqual({
+			kind: "context",
+			used: 15747,
+			window: 258400,
+			parent: null,
+		});
 	});
 
 	it("asks for the model and effort the thread chose, under the mode's policy and sandbox", async () => {

@@ -41,6 +41,26 @@ describe("codex's wire, read", () => {
 		});
 	});
 
+	it("says how full the window is from the main thread's last request, never a sub-agent's", () => {
+		const adapter = createCodexAdapter();
+		adapter.main = "main";
+		const usage = (threadId: string, last: number, window: unknown = 258400) => ({
+			threadId,
+			turnId: "t",
+			tokenUsage: {
+				total: { totalTokens: 90000 },
+				last: { totalTokens: last, inputTokens: last - 5, outputTokens: 5 },
+				modelContextWindow: window,
+			},
+		});
+		expect(adapter.read("thread/tokenUsage/updated", usage("main", 15747))).toEqual([
+			{ kind: "context", used: 15747, window: 258400, parent: null },
+		]);
+		expect(adapter.read("thread/tokenUsage/updated", usage("child", 4000))).toEqual([]);
+		// a window Codex does not know says nothing
+		expect(adapter.read("thread/tokenUsage/updated", usage("main", 15747, null))).toEqual([]);
+	});
+
 	it("keeps a sub-agent's work under the call that spawned it, and ends only on the main thread", () => {
 		const adapter = createCodexAdapter();
 		adapter.main = "main";

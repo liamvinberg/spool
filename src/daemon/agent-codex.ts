@@ -269,6 +269,16 @@ export function createCodexAdapter(): CodexAdapter {
 				}
 				case "thread/compacted":
 					return [{ kind: "compacted", trigger: null, ...base }];
+				case "thread/tokenUsage/updated": {
+					// the ring is the main thread's: the last request's prompt and answer over the
+					// model's window, as Codex's own status line reads it
+					if (base.parent !== null) return [];
+					const usage = record(wire.tokenUsage);
+					const used = record(usage.last).totalTokens;
+					const window = usage.modelContextWindow;
+					if (typeof used !== "number" || typeof window !== "number" || used <= 0 || window <= 0) return [];
+					return [{ kind: "context", used, window, ...base }];
+				}
 				default:
 					return [{ kind: "other", type: method, ...base, vendor: params }];
 			}
