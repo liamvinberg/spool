@@ -29,7 +29,7 @@ import { useStillness } from "./stillness";
  */
 
 /** the square's side, its halo against the canvas, and how far off the left wall it rides */
-const BEAD = 10;
+const SIDE = 10;
 const HALO = 2;
 const WALL = 12;
 /** the frame's name row: its centre stands this far above the frame's top edge */
@@ -39,10 +39,6 @@ const FULL = 320;
 /** the corners, struck just outside the frame and never closed */
 const OUT = 5;
 const ARM = 10;
-/** how long a changed block stays ringed before the square lets go of it */
-const HOLD_EDIT_MS = 1200;
-/** the read's slide down the wall */
-const READ_MS = 700;
 
 const OUT_EASE = curve(EASE.out);
 const IN_OUT = curve(EASE.inOut);
@@ -65,7 +61,7 @@ interface Step {
 	readonly start?: () => void;
 }
 
-const DOCK: Anchor = { ox: 1, oy: 0, dx: -BEAD / 2, dy: -NAME_ROW };
+const DOCK: Anchor = { ox: 1, oy: 0, dx: -SIDE / 2, dy: -NAME_ROW };
 const WALL_TOP: Anchor = { ox: 0, oy: 0, dx: -WALL, dy: 0 };
 const WALL_FOOT: Anchor = { ox: 0, oy: 1, dx: -WALL, dy: 0 };
 /** under the frame, where an ask standing on the canvas hangs from it */
@@ -97,7 +93,7 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	for (const frame of frames) stood.current.set(frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h });
 
 	const placed = companions.filter((one) => placeOf(one, byName, stood.current) !== null);
-	const shown = useLeaving(placed);
+	const shown = useDeparting(placed);
 	// names only once two agents share the page: one agent is the agent, two are a team
 	const named = placed.length >= 2;
 
@@ -143,7 +139,7 @@ function latestMark(marks: readonly LocatedMark[], frame: string): LocatedMark |
 }
 
 /** every companion still drawn: the ones working, and the ones leaving where they stopped */
-function useLeaving(now: readonly AgentCompanion[]): { companion: AgentCompanion; leaving: boolean }[] {
+function useDeparting(now: readonly AgentCompanion[]): { companion: AgentCompanion; leaving: boolean }[] {
 	const still = useStillness();
 	const keys = now.map((one) => `[${one.key}]`).join("");
 	const [was, setWas] = useState({ keys, now });
@@ -198,7 +194,7 @@ function Companion({
 	leaving: boolean;
 }) {
 	const still = useStillness();
-	const bead = useRef<HTMLDivElement | null>(null);
+	const square = useRef<HTMLDivElement | null>(null);
 	const trail = useRef<HTMLSpanElement | null>(null);
 	const cover = useRef<HTMLSpanElement | null>(null);
 	const ring = useRef<HTMLSpanElement | null>(null);
@@ -226,7 +222,7 @@ function Companion({
 	const draw = (now: number): boolean => {
 		const { place: box, camera: store, located: mark } = latest.current;
 		const view = store.get();
-		const element = bead.current;
+		const element = square.current;
 		if (view === null || element === null) return false;
 		const rect = toScreen(box, view);
 		const m = motion.current;
@@ -257,7 +253,7 @@ function Companion({
 			} else busy = true;
 		} else point = at(m.rest, rect);
 		drawn.current = screenToWorld(point, view);
-		element.style.transform = `translate(${point.x - BEAD / 2}px, ${point.y - BEAD / 2}px)`;
+		element.style.transform = `translate(${point.x - SIDE / 2}px, ${point.y - SIDE / 2}px)`;
 
 		if (trail.current !== null) {
 			trail.current.style.left = `${rect.x - WALL - 0.5}px`;
@@ -394,7 +390,7 @@ function Companion({
 				go(
 					[
 						travel(WALL_TOP),
-						{ to: WALL_FOOT, ms: READ_MS, ease: IN_OUT, arc: false, start: () => setReading("down") },
+						{ to: WALL_FOOT, ms: MOTION.read, ease: IN_OUT, arc: false, start: () => setReading("down") },
 					],
 					WALL_FOOT,
 				);
@@ -442,7 +438,7 @@ function Companion({
 		const timer = setTimeout(() => {
 			setRinged(null);
 			go([{ to: DOCK, ms: MOTION.travel, ease: IN_OUT, arc: true }], DOCK);
-		}, HOLD_EDIT_MS);
+		}, MOTION.holdEdit);
 		return () => clearTimeout(timer);
 	}, [act, companion.beat, located?.key]);
 
@@ -528,9 +524,9 @@ function Companion({
 					))
 				: null}
 			<div
-				ref={bead}
+				ref={square}
 				className="absolute top-0 left-0"
-				style={{ width: BEAD, height: BEAD, willChange: "transform" }}
+				style={{ width: SIDE, height: SIDE, willChange: "transform" }}
 			>
 				<span className={`relative block size-full ${leaving ? "animate-agent-depart" : "animate-agent-arrive"}`}>
 					{named ? (
@@ -549,7 +545,7 @@ function Companion({
 							aria-hidden="true"
 							data-companion-waiting=""
 							className="-top-[2px] -left-[2px] absolute block animate-agent-arrive rounded-full bg-canvas text-text"
-							style={{ width: BEAD + 4, height: BEAD + 4 }}
+							style={{ width: SIDE + 4, height: SIDE + 4 }}
 						>
 							<circle
 								className="animate-agent-breathe"
@@ -563,10 +559,10 @@ function Companion({
 						</svg>
 					) : (
 						<span
-							data-companion-bead=""
+							data-companion-square=""
 							className="block size-full bg-text transition-opacity duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)]"
 							style={{
-								borderRadius: BEAD * 0.3,
+								borderRadius: SIDE * 0.3,
 								boxShadow: `0 0 0 ${HALO}px var(--color-canvas)`,
 								opacity: dim ? 0.45 : 1,
 							}}

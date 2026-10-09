@@ -59,14 +59,18 @@ export const MOTION = {
 	travel: 420,
 	/** from the name row to the changed block's corner */
 	hop: 250,
-	/** the picture wipes down, the bead riding its edge */
+	/** the picture wipes down, the companion riding its edge */
 	drawIn: 720,
-	/** four corners fly out of the docked bead, and fold back in */
+	/** four corners fly out of the docked companion, and fold back in */
 	cornersOut: 220,
 	cornersIn: 150,
 	/** one soft lift on the picture: up, then drained */
 	flashUp: 80,
 	flashDown: 450,
+	/** its slide down the frame's left wall while it reads */
+	read: 700,
+	/** how long a changed block stays ringed before the companion lets go of it */
+	holdEdit: 1200,
 	/** dims to 45% this long after its last call, over `idle` */
 	idleAfter: 2000,
 	idle: 400,
@@ -76,8 +80,8 @@ export const MOTION = {
 	lineIn: 180,
 	/** name brightens, unseen dot in */
 	landed: 300,
-	/** the bead opens into the waiting ring, the ask unfolds under it */
-	turn: 320,
+	/** the companion opens into the waiting ring, the ask unfolds under it */
+	ringOpen: 320,
 	/** the ring, while it waits on you */
 	breathe: 2400,
 } as const;

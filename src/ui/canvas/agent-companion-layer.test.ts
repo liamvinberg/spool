@@ -86,8 +86,8 @@ const layer = (over: Partial<CompanionLayerProps> = {}) =>
 
 /** where a square's centre stands on screen, off its transform */
 function centre(host: HTMLElement, key = "main"): { x: number; y: number } {
-	const bead = host.querySelector<HTMLElement>(`[data-agent-companion="${key}"] > div:last-child`);
-	const [x, y] = (bead?.style.transform ?? "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+	const square = host.querySelector<HTMLElement>(`[data-agent-companion="${key}"] > div:last-child`);
+	const [x, y] = (square?.style.transform ?? "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
 	return { x: (x ?? Number.NaN) + 5, y: (y ?? Number.NaN) + 5 };
 }
 
@@ -167,7 +167,7 @@ describe("the agent's companions on the canvas", () => {
 	it("opens into the waiting ring when the agent asks, and hangs under the frame when the rail is shut", () => {
 		const docked = layer({ companions: [companion({ act: "ask" })] }).host;
 		expect(docked.querySelector("[data-companion-waiting]")).not.toBeNull();
-		expect(docked.querySelector("[data-companion-bead]")).toBeNull();
+		expect(docked.querySelector("[data-companion-square]")).toBeNull();
 		expect(centre(docked)).toEqual({ x: 495, y: 82 });
 
 		const footed = layer({ companions: [companion({ act: "ask" })], footed: true }).host;

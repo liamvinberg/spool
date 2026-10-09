@@ -156,7 +156,7 @@ export function Thread({ children, tight = false }: { children: ReactNode; tight
 	return (
 		<div
 			className={cn(
-				"ml-[6.25px] flex animate-agent-turn flex-col border-border-raised border-l-[1.5px] py-1",
+				"ml-[6.25px] flex animate-agent-ring-open flex-col border-border-raised border-l-[1.5px] py-1",
 				tight ? "gap-2 pl-[6.75px]" : "gap-3 pl-[12.75px]",
 			)}
 		>
@@ -492,8 +492,8 @@ export function AskCard({
 			className={cn(
 				"relative flex flex-col gap-3 rounded-lg p-4",
 				float
-					? "animate-agent-turn border border-border bg-surface shadow-agent-float"
-					: "animate-agent-turn border border-border",
+					? "animate-agent-ring-open border border-border bg-surface shadow-agent-float"
+					: "animate-agent-ring-open border border-border",
 			)}
 		>
 			{notch === undefined ? null : (

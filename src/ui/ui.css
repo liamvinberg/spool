@@ -126,7 +126,7 @@
 	 * it arrives from 40% where the agent first acts, travels on a 420ms in-out between
 	 * places, and leaves shrinking to 60% where it stopped. Its corners fly out of it while
 	 * a picture is taken and fold back into it; the waiting ring breathes slowly enough to
-	 * read as waiting rather than an alarm; an ask turns out of the bead or the line that
+	 * read as waiting rather than an alarm; an ask turns out of the companion or the line that
 	 * anchors it. The numbers are `design/frames/explore/agent-rail/marks/legend`'s. */
 	--animate-agent-arrive: agent-arrive 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
 	--animate-agent-depart: agent-depart 400ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
@@ -136,7 +136,7 @@
 	--animate-agent-ring: agent-ring 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
 	--animate-agent-gather: agent-gather 480ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
 	--animate-agent-breathe: agent-breathe 2400ms cubic-bezier(0.65, 0, 0.35, 1) infinite alternate;
-	--animate-agent-turn: agent-turn 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+	--animate-agent-ring-open: agent-ring-open 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
 
 	/* a teammate arriving on a team canvas (presence): their pointer and face come up out
 	 * of nothing, at the pace the prototype's take settled on; leaving is the reverse,
@@ -219,7 +219,7 @@
 		}
 	}
 
-	/* the agent's bead arriving where it first acts, from 40% of its size */
+	/* the agent's companion arriving where it first acts, from 40% of its size */
 	@keyframes agent-arrive {
 		from {
 			opacity: 0;
@@ -235,7 +235,7 @@
 		}
 	}
 
-	/* a corner flying out of the docked bead, from wherever `--agent-dx` and `--agent-dy` put it */
+	/* a corner flying out of the docked companion, from wherever `--agent-dx` and `--agent-dy` put it */
 	@keyframes agent-corners-out {
 		from {
 			opacity: 0;
@@ -263,7 +263,7 @@
 		}
 	}
 
-	/* the ring drawn out of the bead to the changed block's size */
+	/* the ring drawn out of the companion to the changed block's size */
 	@keyframes agent-ring {
 		from {
 			opacity: 0;
@@ -271,7 +271,7 @@
 		}
 	}
 
-	/* a deleted frame greying and drawing toward the bead */
+	/* a deleted frame greying and drawing toward the companion */
 	@keyframes agent-gather {
 		from {
 			opacity: 0.9;
@@ -294,8 +294,8 @@
 		}
 	}
 
-	/* an ask unfolding out of the line or the bead that anchors it */
-	@keyframes agent-turn {
+	/* an ask unfolding out of the line or the companion that anchors it */
+	@keyframes agent-ring-open {
 		from {
 			opacity: 0;
 			transform: translateY(-4px) scale(0.98);
@@ -592,7 +592,7 @@
 	.animate-agent-flash,
 	.animate-agent-ring,
 	.animate-agent-breathe,
-	.animate-agent-turn,
+	.animate-agent-ring-open,
 	.animate-agent-shimmer {
 		animation: none;
 	}
@@ -635,7 +635,7 @@
 		display: none;
 	}
 
-	/* a bead or a ghost on its way out is out, for the same reason */
+	/* a companion or a ghost on its way out is out, for the same reason */
 	.animate-agent-depart,
 	.animate-agent-corners-in,
 	.animate-agent-gather {

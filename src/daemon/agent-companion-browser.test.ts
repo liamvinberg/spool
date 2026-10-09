@@ -170,8 +170,8 @@ it("brings the square to the block a write changed, on the frame showing it", { 
 
 	// the square is fixed to its frame: the camera moving moves both by the same amount,
 	// on the same frame it moves, once whatever it was doing has settled
-	const bead = square.locator(":scope > div").last();
-	const at = () => bead.evaluate((element) => (element as HTMLElement).style.transform);
+	const body = square.locator(":scope > div").last();
+	const at = () => body.evaluate((element) => (element as HTMLElement).style.transform);
 	const iframe = () => page.locator('iframe[title="home"]').boundingBox();
 	await page.waitForTimeout(2000);
 	const was = await at();
