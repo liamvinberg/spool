@@ -239,7 +239,6 @@ export function createPiEngine(spoolDir: string, executor: AgentExecutor, look?:
 	return {
 		id: "pi",
 		// pi signs in from inside its own session, with `/login`
-		authentication: { kind: "external", command: "pi" },
 		installed: () => agentInstalled(process.env, look, PI_COMMAND),
 		account: async (root, signal) => {
 			const offer = await askPiOffer(executor, root, {}, { levels: false, ...(signal ? { signal } : {}) });

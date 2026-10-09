@@ -16,7 +16,6 @@ const json = (body: unknown) => ({ headers: { "content-type": "application/json"
 function standIn(id: AgentEngineId, installed = true): AgentEngine {
 	return {
 		id,
-		authentication: { kind: "external", command: id },
 		installed: () => installed,
 		account: async () => ({ signedIn: true, account: id }),
 		offer: async () => {

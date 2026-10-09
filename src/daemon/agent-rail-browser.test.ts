@@ -183,7 +183,6 @@ function otherAgent(count: number): AgentEngine {
 	});
 	return {
 		id: "pi",
-		authentication: { kind: "external", command: "pi" },
 		installed: () => true,
 		account: async () => ({ signedIn: true, account: null }),
 		offer: async ({ ask, choose }) => {

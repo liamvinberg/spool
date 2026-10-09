@@ -36,7 +36,6 @@ function fakeEngine(id: AgentEngineId) {
 	};
 	const engine: AgentEngine = {
 		id,
-		authentication: { kind: "external", command: "fixture login" },
 		installed: () => available,
 		account: async () => ({ signedIn: true, account: `${id}@example.test` }),
 		offer: async (options) => {

@@ -73,8 +73,6 @@ export interface EngineTurnOptions {
  */
 export interface AgentEngine {
 	readonly id: AgentEngineId;
-	readonly authentication: AgentAuthentication;
-	close?(): void | Promise<void>;
 	installed(): boolean;
 	account(root: string, signal?: AbortSignal): Promise<AgentLogin>;
 	offer(options: EngineOfferOptions): Promise<AgentOffer>;
@@ -82,10 +80,4 @@ export interface AgentEngine {
 	choice(offer: AgentOffer, wanted: AgentAsk, held: AgentAsk): AgentAsk;
 	start(options: EngineTurnOptions): AgentTurn;
 	continuable(root: string, session: AgentSessionRef): boolean | Promise<boolean>;
-}
-
-/** Sign-in stays in the agent's own terminal flow: the rail names the command and never runs it. */
-export interface AgentAuthentication {
-	readonly kind: "external";
-	readonly command: string;
 }

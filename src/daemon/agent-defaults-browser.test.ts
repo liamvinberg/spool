@@ -11,7 +11,6 @@ import { permissionClaude } from "./fixtures/claude-permissions";
  */
 const piStandIn: AgentEngine = {
 	id: "pi",
-	authentication: { kind: "external", command: "pi" },
 	installed: () => true,
 	account: async () => ({ signedIn: true, account: null }),
 	offer: async () => ({ models: [], current: { value: null, resolved: null, name: null, effort: null, pin: null } }),

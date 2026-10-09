@@ -15,7 +15,6 @@ import { startAgentTurn } from "./agent-turn";
 export function createClaudeEngine(executor: AgentExecutor, look?: Look, spoolDir?: string): AgentEngine {
 	return {
 		id: "claude",
-		authentication: { kind: "external", command: "claude auth login" },
 		installed: () => agentInstalled(process.env, look),
 		account: (root, signal) =>
 			askAgentLogin({ executor, root, env: process.env, ...(signal === undefined ? {} : { signal }) }),

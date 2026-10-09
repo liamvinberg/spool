@@ -256,7 +256,6 @@ export function createCodexEngine({
 	};
 	return {
 		id: "codex",
-		authentication: { kind: "external", command: "codex login" },
 		installed: () => {
 			if (!agentInstalled(process.env, look, CODEX_COMMAND)) return false;
 			const installed = codexVersion();

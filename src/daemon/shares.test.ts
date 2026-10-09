@@ -133,7 +133,6 @@ function fakeCloud() {
 function endingEngine(work: () => void): AgentEngine {
 	return {
 		id: "pi",
-		authentication: { kind: "external", command: "fixture login" },
 		installed: () => true,
 		account: async () => ({ signedIn: true, account: "agent@example.test" }),
 		offer: async () => ({

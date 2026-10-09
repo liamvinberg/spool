@@ -4127,14 +4127,13 @@ export function createDaemonApp({
 			movedIn.close();
 			moving.abort();
 			liveTurns.close();
-			const stoppedEngines = [...engines.values()].map(async (engine) => engine.close?.());
 			for (const stop of boothWatches.values()) stop();
 			boothWatches.clear();
 			iconWatch.close();
 			thumbnailWatch.close();
 			hub.close();
 			updateChecker.stop();
-			const closed = await Promise.allSettled([compiled, ...stoppedEngines, booth.close(), goReader.close()]);
+			const closed = await Promise.allSettled([compiled, booth.close(), goReader.close()]);
 			const errors: unknown[] = [];
 			for (const result of closed) if (result.status === "rejected") errors.push(result.reason);
 			if (errors.length > 0) throw new AggregateError(errors, "Daemon resources could not close");
