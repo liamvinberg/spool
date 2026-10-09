@@ -339,6 +339,28 @@ interface TrashBody {
  * (#228): a path that resolves out of design/, and a canvas.json spool will not
  * overwrite because it cannot read what overwriting it would lose.
  */
+/**
+ * A model or effort pick as the agent menu sends it, for the machine's choice and a
+ * thread's alike (#118, #199). A leading dash is refused here rather than reasoned about
+ * downstream: an offered model never starts with one, and a value that does is a value
+ * handed to argv where a flag would go. An effort is one lowercase word, the shape a level
+ * has to have to be an argument at all; which levels exist is the model's own claim, and
+ * the offer's round trip is what refuses one the engine will not take.
+ */
+function modelChoice(value: unknown, c: Context): Response | AgentAsk {
+	const body = (typeof value === "object" && value !== null ? value : {}) as { value?: unknown; effort?: unknown };
+	if (body.value !== undefined && !isModelShaped(body.value))
+		return c.text('"value" is one of the choices the engine offered', 400);
+	if (body.effort !== undefined && !isEffortShaped(body.effort))
+		return c.text('"effort" is one of the levels the model said it supports', 400);
+	if (body.value === undefined && body.effort === undefined)
+		return c.text('a choice is { "value": "…" } or { "effort": "…" }', 400);
+	return {
+		...(body.value === undefined ? {} : { value: body.value as string }),
+		...(body.effort === undefined ? {} : { effort: body.effort }),
+	};
+}
+
 function answeringDiskRefusals<T>(c: Context, work: () => T): { value: T } | { response: Response } {
 	try {
 		return { value: work() };
@@ -1138,6 +1160,11 @@ export function createDaemonApp({
 	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)
 	const agentDefaults = createAgentDefaults(spoolDir, () => engines.values());
 	const projectRenames = new Set<string>();
+
+	/** the engine this daemon runs under an id, or none for an id it doesn't know or doesn't run */
+	function engineById(id: unknown): AgentEngine | undefined {
+		return isAgentEngineId(id) ? engines.get(id) : undefined;
+	}
 
 	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
 		if (thread !== undefined && !isThreadId(thread))
@@ -2769,7 +2796,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const threads = await Promise.all(
 				serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }).map(async (thread) => {
-					const engine = isAgentEngineId(thread.engine) ? engines.get(thread.engine) : undefined;
+					const engine = engineById(thread.engine);
 					let continuable = false;
 					try {
 						continuable =
@@ -2847,7 +2874,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const id = c.req.param("engine");
-			const engine = isAgentEngineId(id) ? engines.get(id) : undefined;
+			const engine = engineById(id);
 			if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
 			return c.json(
 				await engine.offer({
@@ -2858,42 +2885,22 @@ export function createDaemonApp({
 				}),
 			);
 		})
-		.post(
-			"/api/p/:project/agent/engines/:engine/model",
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					value?: unknown;
-					effort?: unknown;
-				};
-				if (body.value !== undefined && !isModelShaped(body.value))
-					return c.text('"value" is one of the choices the engine offered', 400);
-				if (body.effort !== undefined && !isEffortShaped(body.effort))
-					return c.text('"effort" is one of the levels the model said it supports', 400);
-				if (body.value === undefined && body.effort === undefined)
-					return c.text('a choice is { "value": "…" } or { "effort": "…" }', 400);
-				return {
-					...(body.value === undefined ? {} : { value: body.value as string }),
-					...(body.effort === undefined ? {} : { effort: body.effort }),
-				} satisfies AgentAsk;
-			}),
-			async (c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const id = c.req.param("engine");
-				const engine = isAgentEngineId(id) ? engines.get(id) : undefined;
-				if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
-				const held = agentDefaults.model(engine.id);
-				const offer = await engine.offer({
-					root: project.root,
-					session: { id: "" },
-					ask: held,
-					choose: c.req.valid("json"),
-				});
-				if (offer.current.value !== null)
-					agentDefaults.setModel(engine.id, acceptedModelChoice(engine, offer, held));
-				return c.json(offer);
-			},
-		)
+		.post("/api/p/:project/agent/engines/:engine/model", validator("json", modelChoice), async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const id = c.req.param("engine");
+			const engine = engineById(id);
+			if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
+			const held = agentDefaults.model(engine.id);
+			const offer = await engine.offer({
+				root: project.root,
+				session: { id: "" },
+				ask: held,
+				choose: c.req.valid("json"),
+			});
+			if (offer.current.value !== null) agentDefaults.setModel(engine.id, acceptedModelChoice(engine, offer, held));
+			return c.json(offer);
+		})
 		.get(
 			"/api/p/:project/agent/threads/:thread/models",
 			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
@@ -2932,31 +2939,7 @@ export function createDaemonApp({
 		.post(
 			"/api/p/:project/agent/threads/:thread/model",
 			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					value?: unknown;
-					effort?: unknown;
-				};
-				// a leading dash is refused here rather than reasoned about downstream: an
-				// offered alias never starts with one, and a value that does is a value being
-				// handed to argv where a flag would go
-				if (body.value !== undefined && !isModelShaped(body.value)) {
-					return c.text('"value" is one of the choices `list_models` named', 400);
-				}
-				// one lowercase word, which is the shape a level has to have to be an argument
-				// at all. Which levels exist is the model's own claim and not a list spool
-				// carries: the round trip below is what refuses one the binary will not take
-				if (body.effort !== undefined && !isEffortShaped(body.effort)) {
-					return c.text('"effort" is one of the levels the model said it supports', 400);
-				}
-				if (body.value === undefined && body.effort === undefined) {
-					return c.text('a choice is { "value": "…" } or { "effort": "…" }', 400);
-				}
-				return {
-					...(body.value === undefined ? {} : { value: body.value as string }),
-					...(body.effort === undefined ? {} : { effort: body.effort }),
-				} satisfies AgentAsk;
-			}),
+			validator("json", modelChoice),
 			async (c) => {
 				/*
 				 * Choosing one, which is sending the message (#118, #199).
