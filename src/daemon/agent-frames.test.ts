@@ -77,6 +77,7 @@ describe("a reserved spot", () => {
 	it("is named from the delegation's own words", () => {
 		expect(spotName("Design hello-calm frame")).toBe("hello-calm");
 		expect(spotName("Design cart--empty restrained")).toBe("cart-empty-restrained");
+		expect(spotName("Make an onboarding direction")).toBe("onboarding");
 		expect(spotName(null)).toBe("designer");
 	});
 

@@ -177,7 +177,7 @@ export function spotName(description: string | null): string {
 		.replace(/[^a-z0-9\s-]+/g, " ")
 		.split(/\s+/)
 		.filter((word) => word !== "");
-	while (words.length > 1 && ["design", "draw", "make", "create", "build", "the", "a"].includes(words[0] ?? ""))
+	while (words.length > 1 && ["design", "draw", "make", "create", "build", "the", "a", "an"].includes(words[0] ?? ""))
 		words.shift();
 	while (words.length > 1 && ["frame", "take", "variant", "direction"].includes(words[words.length - 1] ?? ""))
 		words.pop();
