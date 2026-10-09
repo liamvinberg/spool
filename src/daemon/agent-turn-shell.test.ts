@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeAgentProc } from "../test-helpers";
 import type { AgentEvent } from "./agent-events";
-import { createEventQueue, createTurnShell, EXIT_GRACE_MS } from "./agent-turn-shell";
+import { createEventFeed, createTurnShell, EXIT_GRACE_MS } from "./agent-turn-shell";
 
 const SPAWN = { command: "agent", args: [], cwd: "/work", env: {} };
 
@@ -11,25 +11,25 @@ async function drain<T>(events: AsyncIterable<T>): Promise<T[]> {
 	return seen;
 }
 
-describe("an event queue", () => {
+describe("an event feed", () => {
 	it("hands events back in the order they were pushed, and ends at finish", async () => {
-		const queue = createEventQueue<number>();
-		const reading = drain(queue.events());
-		queue.push(1);
-		queue.push(2);
+		const feed = createEventFeed<number>();
+		const reading = drain(feed.events());
+		feed.push(1);
+		feed.push(2);
 		await Promise.resolve();
-		queue.push(3);
-		queue.finish();
-		queue.push(4);
+		feed.push(3);
+		feed.finish();
+		feed.push(4);
 		expect(await reading).toEqual([1, 2, 3]);
-		expect(queue.finished).toBe(true);
+		expect(feed.finished).toBe(true);
 	});
 
 	it("gives a reader that comes after finish what was pushed before it", async () => {
-		const queue = createEventQueue<string>();
-		queue.push("a");
-		queue.finish();
-		expect(await drain(queue.events())).toEqual(["a"]);
+		const feed = createEventFeed<string>();
+		feed.push("a");
+		feed.finish();
+		expect(await drain(feed.events())).toEqual(["a"]);
 	});
 });
 

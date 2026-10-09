@@ -4,7 +4,7 @@ import type { Rect } from "../page-box";
 import { isFramePath, pageParent, ROOT_PAGE } from "../page-path";
 import type { AgentEvent, AgentFrame, AgentSpot } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
-import { createEventQueue } from "./agent-turn-shell";
+import { createEventFeed } from "./agent-turn-shell";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
@@ -246,8 +246,8 @@ export function witnessFrames(
 	turn: AgentTurn,
 	{ root, hub, spots, now = Date.now }: FrameWitnessOptions,
 ): WitnessedTurn {
-	const queue = createEventQueue<AgentEvent>();
-	const { push } = queue;
+	const feed = createEventFeed<AgentEvent>();
+	const { push } = feed;
 	/** every frame as the turn has last seen it */
 	const known = new Map<string, Kept>();
 	/** the deleted ones, kept for Put back */
@@ -522,7 +522,7 @@ export function witnessFrames(
 	}
 
 	const unsubscribe = hub.subscribe(root, (change) => {
-		if (queue.finished) return;
+		if (feed.finished) return;
 		if (change.kind === "frame") rescan(new Set([change.frame]));
 	});
 
@@ -548,12 +548,12 @@ export function witnessFrames(
 			rescan();
 			unsubscribe();
 			for (const task of reserved.keys()) release(task);
-			queue.finish();
+			feed.finish();
 		}
 	})();
 
 	return {
-		events: { [Symbol.asyncIterator]: () => queue.events() },
+		events: { [Symbol.asyncIterator]: () => feed.events() },
 		answer: (request, reply) => turn.answer(request, reply),
 		interrupt: () => turn.interrupt(),
 		abandon: () => turn.abandon(),

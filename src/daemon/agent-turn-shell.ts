@@ -21,21 +21,21 @@ export const EXIT_GRACE_MS = 10_000;
  *
  * A push after `finish` is dropped: once a turn is over, nothing more is said in it.
  */
-export interface EventQueue<T> {
+export interface EventFeed<T> {
 	push(event: T): void;
 	finish(): void;
 	readonly finished: boolean;
 	events(): AsyncGenerator<T>;
 }
 
-export function createEventQueue<T>(): EventQueue<T> {
-	const queue: T[] = [];
+export function createEventFeed<T>(): EventFeed<T> {
+	const pending: T[] = [];
 	let waiting: (() => void) | undefined;
 	let finished = false;
 	return {
 		push(event) {
 			if (finished) return;
-			queue.push(event);
+			pending.push(event);
 			waiting?.();
 			waiting = undefined;
 		},
@@ -50,7 +50,7 @@ export function createEventQueue<T>(): EventQueue<T> {
 		},
 		async *events() {
 			for (;;) {
-				while (queue.length > 0) yield queue.shift() as T;
+				while (pending.length > 0) yield pending.shift() as T;
 				if (finished) return;
 				await new Promise<void>((resolve) => {
 					waiting = resolve;
@@ -61,7 +61,7 @@ export function createEventQueue<T>(): EventQueue<T> {
 }
 
 /**
- * What every engine's turn runner shares around its own wire: the event queue, the
+ * What every engine's turn runner shares around its own wire: the event feed, the
  * process once it is up, the grace an ended turn's process gets to exit, and giving the
  * turn up. Each runner keeps only what its binary says and how it is answered.
  */
@@ -94,16 +94,16 @@ export interface TurnShell {
 }
 
 export function createTurnShell(): TurnShell {
-	const queue = createEventQueue<AgentEvent>();
+	const feed = createEventFeed<AgentEvent>();
 	let proc: AgentProcess | undefined;
 	let stopped = false;
 	let left = false;
 	let leaving: ReturnType<typeof setTimeout> | undefined;
 	return {
-		events: { [Symbol.asyncIterator]: () => queue.events() },
-		push: queue.push,
+		events: { [Symbol.asyncIterator]: () => feed.events() },
+		push: feed.push,
 		get finished() {
-			return queue.finished;
+			return feed.finished;
 		},
 		get proc() {
 			return proc;
@@ -116,13 +116,13 @@ export function createTurnShell(): TurnShell {
 			try {
 				started = await start();
 			} catch (error) {
-				queue.push({
+				feed.push({
 					kind: "closed",
 					code: null,
 					message: error instanceof Error ? error.message : String(error),
 					parent: null,
 				});
-				queue.finish();
+				feed.finish();
 				return;
 			}
 			proc = started;
@@ -140,14 +140,14 @@ export function createTurnShell(): TurnShell {
 		},
 		close(event) {
 			if (leaving !== undefined) clearTimeout(leaving);
-			queue.push(event);
-			queue.finish();
+			feed.push(event);
+			feed.finish();
 		},
 		abandon() {
 			stopped = true;
 			if (leaving !== undefined) clearTimeout(leaving);
 			proc?.kill();
-			queue.finish();
+			feed.finish();
 		},
 	};
 }
