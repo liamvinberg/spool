@@ -732,7 +732,12 @@ export function witnessFrames(
 			if (event.agent === "designer") reserve(event.task, event.call, event.description, event.prompt, event.parent);
 			return;
 		}
-		if (event.kind === "task-done") release(event.task);
+		if (event.kind === "task-done") {
+			// the disk first, as at the turn's end: a frame written just before the designer
+			// reported back fills its placeholder though the watcher has not said so yet
+			rescan();
+			release(event.task);
+		}
 	}
 
 	const unsubscribe = hub.subscribe(root, (change) => {

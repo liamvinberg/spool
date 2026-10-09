@@ -661,6 +661,28 @@ describe("a placeholder frame (#369)", () => {
 		await turn.end();
 	});
 
+	it("is filled by a frame its designer wrote before reporting back, though the watcher has not said so yet", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => turn.log.some((event) => event.kind === "spot"));
+		const held = turn.log.find((event) => event.kind === "spot");
+		if (held?.kind !== "spot") throw new Error("no placeholder");
+		// on disk, and no ring for it: the designer reports back first
+		writeFrame(root, "ideas/home--split", "export default () => null;\n");
+		turn.say(done("t1"));
+		await until(() => turn.log.some((event) => event.kind === "task-done"));
+
+		expect(turn.log.find((event) => event.kind === "frame")).toMatchObject({
+			frame: "ideas/home--split",
+			change: "created",
+			spot: "ideas/home--split",
+		});
+		expect(turn.log.some((event) => event.kind === "spot" && event.state === "released")).toBe(false);
+		expect(sidecarOf(root, "ideas/home--split")).toEqual({ x: held.x, y: held.y, w: held.w, h: held.h });
+		await turn.end();
+	});
+
 	it("goes when its designer's first frame lands elsewhere, and the turn's spot follows that frame", async () => {
 		const { root } = project();
 		const turn = witnessed(root);
