@@ -111,7 +111,10 @@ export function TurnFoot({
 	const designer = asks.find(
 		(ask) => ask.delegation !== undefined && ask.delegation !== "" && makers.has(ask.delegation),
 	);
-	const mine = asks.find((ask) => ask !== designer);
+	// the turn's own ask opens out of its line when it is an approval (story 58) and turns
+	// the grid into the choice when its options name the turn's frames; a question about
+	// no frame is a quiet card at the end of the chat (story 67)
+	const mine = asks.find((ask) => ask !== designer && onTheLine(ask, foot.tiles));
 	// each anchor holds one ask; any more wait their turn as cards under the foot, so an
 	// ask is never anywhere but on screen
 	const hung = mine === undefined ? designer : undefined;
@@ -149,9 +152,6 @@ export function TurnFoot({
 					permissions={permissions}
 				/>
 			)}
-			{queued.map((entry) => (
-				<DesignerAsk key={entry.key} entry={entry} onAnswer={answer} permissions={permissions} />
-			))}
 			<div
 				data-agent-steps={open && mine === undefined ? "open" : "shut"}
 				hidden={!open || mine !== undefined}
@@ -159,8 +159,17 @@ export function TurnFoot({
 			>
 				{steps}
 			</div>
+			{queued.map((entry) => (
+				<DesignerAsk key={entry.key} entry={entry} onAnswer={answer} permissions={permissions} />
+			))}
 		</div>
 	);
+}
+
+/** an approval, or a question whose options name the turn's frames: the asks the line opens into */
+function onTheLine(entry: AskEntry, tiles: readonly AgentTile[]): boolean {
+	if (!entry.question) return true;
+	return entry.questions.some((question) => !question.multi && optionFrames(question, tiles) !== null);
 }
 
 /**

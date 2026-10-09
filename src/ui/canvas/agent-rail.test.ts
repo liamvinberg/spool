@@ -3032,7 +3032,7 @@ describe("an ask, anchored", () => {
 		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe("You picked Timeline");
 	});
 
-	it("ticks a question that takes several and sends what is ticked", async () => {
+	it("asks a question about no frame as a card at the end of the chat, ticks several and sends them", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "new header");
@@ -3067,7 +3067,12 @@ describe("an ask, anchored", () => {
 			}),
 		);
 		await until(() => options(canvas.host).length === 3);
-		expect(look(canvas.host)).toBe("line");
+		// a question about no frame is a quiet card at the end of the chat (story 67), the
+		// turn's line left as it was
+		expect(look(canvas.host)).toBe("card");
+		const turn = canvas.host.querySelector("[data-agent-turn]");
+		expect(turn?.lastElementChild?.getAttribute("data-agent-ask-look")).toBe("card");
+		expect(turn?.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
 
 		const sendButton = () =>
 			[...canvas.host.querySelectorAll<HTMLButtonElement>("[data-agent-ask] button")].find((one) =>

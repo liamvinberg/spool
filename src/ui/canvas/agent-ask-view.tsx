@@ -9,12 +9,12 @@ import type { AgentEntry, AgentTile } from "./agent-transcript";
  * An ask, where the turn already has an anchor for it (#366).
  *
  * The ask is not a new block in the chat: it hangs off the thing it concerns. A turn has
- * two anchors, its line and its grid of frames, so an approval and a question about no
- * frame open out of the line — the ring held, "Waiting on you" or the question itself,
- * and the ask under it on the line's own thread — and a question whose options name the
- * turn's frames turns the grid into the choice. A designer's ask hangs off its own tile.
- * An ask with nothing to hang from, in a turn with no line yet, stands as a card. Once
- * answered, every one of them folds to one quiet line where it was asked.
+ * two anchors, its line and its grid of frames, so an approval opens out of the line — the
+ * ring held, "Waiting on you", and the ask under it on the line's own thread — and a
+ * question whose options name the turn's frames turns the grid into the choice. A
+ * designer's ask hangs off its own tile. A question about no frame has nothing to hang
+ * from, and stands as a quiet card at the end of the chat. Once answered, every one of
+ * them folds to one quiet line where it was asked.
  *
  * Every word in it is the agent's own — its one-line reason, its question, its options and
  * their descriptions — and spool adds only its controls and the name of what an approval
