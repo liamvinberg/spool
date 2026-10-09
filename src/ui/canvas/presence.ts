@@ -167,3 +167,100 @@ export function springStep(
 	const c = value.v + w * x;
 	return { p: goal + (x + c * dt) * e, v: (value.v - w * c * dt) * e };
 }
+
+/** How long a click's squash and burst take; `presence-burst` in `ui.css` runs the same. */
+export const CLICK_MS = 460;
+/** How long after the last scroll their pointer stays a scrolling mouse. */
+export const SCROLL_MS = 450;
+/** How long a drag's line lingers behind the pointer. */
+export const TRAIL_MS = 650;
+/** How far a press moves, in world units, before it's a drag rather than a click. */
+export const DRAG_SLOP = 4;
+
+export type ScrollWay = "up" | "down" | "left" | "right";
+
+/**
+ * What a teammate's pointer is doing inside the live frame they're in, as this canvas has followed it: their
+ * clicks, a drag and the line it leaves, a scroll and which way. Nothing in the frame itself is shared, so
+ * this is all anyone sees of what they do there. Derived from their presence render by render, and kept
+ * only on this side.
+ */
+export interface PointerGesture {
+	/** Their click count as last heard, which a new click passes. */
+	clicks: number;
+	/** The latest click: `n` counts them, so each one gets its own animation. */
+	click: { n: number; at: number } | null;
+	pressed: boolean;
+	/** Where the press began, in world units. */
+	origin: { x: number; y: number } | null;
+	dragging: boolean;
+	/** Where the drawn pointer has been lately while dragging, in world units. */
+	trail: { x: number; y: number; at: number }[];
+	scrolled: { x: number; y: number } | null;
+	scroll: { way: ScrollWay; at: number } | null;
+}
+
+/**
+ * The gesture one more render of their presence makes. `drawn` is where their pointer is drawn now, which
+ * the line behind a drag follows, so it's as smooth as the pointer; null until it's been drawn.
+ */
+export function followGesture(
+	was: PointerGesture | undefined,
+	state: PresenceState,
+	drawn: { x: number; y: number } | null,
+	now: number,
+): PointerGesture {
+	const clicks = state.clicks ?? 0;
+	const scrolled = state.inside === null ? null : (state.scrolled ?? null);
+	const pressed = state.pressed && state.inside !== null;
+	// first seen, or out on the canvas: what they've done so far is where counting starts, not something to show
+	if (was === undefined || state.inside === null)
+		return {
+			clicks,
+			click: null,
+			pressed,
+			origin: pressed ? state.pointer : null,
+			dragging: false,
+			trail: [],
+			scrolled,
+			scroll: null,
+		};
+	const pointer = state.pointer;
+	const click = clicks > was.clicks ? { n: (was.click?.n ?? 0) + 1, at: now } : was.click;
+	const origin = pressed && !was.pressed ? pointer : pressed ? was.origin : null;
+	const dragging =
+		pressed &&
+		(was.dragging ||
+			(origin !== null && pointer !== null && Math.hypot(pointer.x - origin.x, pointer.y - origin.y) > DRAG_SLOP));
+	const trail = was.trail.filter((point) => now - point.at < TRAIL_MS);
+	const last = trail.at(-1);
+	if (dragging && drawn !== null && (last === undefined || Math.hypot(last.x - drawn.x, last.y - drawn.y) > 0.5))
+		trail.push({ ...drawn, at: now });
+	let scroll = was.scroll;
+	if (scrolled !== null && was.scrolled !== null) {
+		const dx = scrolled.x - was.scrolled.x;
+		const dy = scrolled.y - was.scrolled.y;
+		if (dx !== 0 || dy !== 0)
+			scroll = {
+				way: Math.abs(dy) >= Math.abs(dx) ? (dy > 0 ? "down" : "up") : dx > 0 ? "right" : "left",
+				at: now,
+			};
+	}
+	return { clicks, click, pressed, origin, dragging, trail, scrolled, scroll };
+}
+
+/** Whether something about a gesture is still moving by the clock alone, so it wants another frame drawn. */
+export function gestureMoving(gesture: PointerGesture, now: number): boolean {
+	return (
+		gesture.trail.length > 0 ||
+		(gesture.click !== null && now - gesture.click.at < CLICK_MS) ||
+		(gesture.scroll !== null && now - gesture.scroll.at < SCROLL_MS)
+	);
+}
+
+/** The shape their pointer takes: a hand while it drags, a mouse while it scrolls, a pressed arrow while held. */
+export function pointerShape(gesture: PointerGesture, now: number): "arrow" | "pressed" | "hand" | "scroll" {
+	if (gesture.dragging) return "hand";
+	if (gesture.scroll !== null && now - gesture.scroll.at < SCROLL_MS) return "scroll";
+	return gesture.pressed ? "pressed" : "arrow";
+}
