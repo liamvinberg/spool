@@ -36,6 +36,12 @@ import { useStillness } from "./stillness";
 
 /** the square's side, its halo against the canvas, and how far off the left wall it rides */
 const SIDE = 10;
+/**
+ * Docked on the name row it is a lighter square: smaller, in the muted ink, with no halo, so
+ * it reads as a mark beside the name rather than a block on the frame. It is the full ink
+ * square again the moment it goes to work.
+ */
+const DOCKED_SCALE = 0.7;
 const HALO = 2;
 const WALL = 12;
 /** the frame's name row: its centre stands this far above the frame's top edge */
@@ -290,6 +296,8 @@ function Companion({
 	const [reading, setReading] = useState<"down" | "off" | null>(null);
 	const [gathering, setGathering] = useState(false);
 	const [drawing, setDrawing] = useState(false);
+	const [docked, setDocked] = useState(false);
+	const dockedNow = useRef(false);
 
 	/** one drawn frame: where the square is now, and everything that rides with it */
 	const draw = (now: number): boolean => {
@@ -326,6 +334,11 @@ function Companion({
 			} else busy = true;
 		} else point = beside(at(m.rest, rect), aside);
 		drawn.current = toWorld(point, view);
+		const home = m.step === null && m.queue.length === 0 && m.rest === DOCK;
+		if (home !== dockedNow.current) {
+			dockedNow.current = home;
+			setDocked(home);
+		}
 		element.style.transform = `translate(${point.x - SIDE / 2}px, ${point.y - SIDE / 2}px)`;
 
 		if (trail.current !== null) {
@@ -634,11 +647,12 @@ function Companion({
 						</svg>
 					) : (
 						<span
-							data-companion-square=""
-							className="block size-full bg-text transition-opacity duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)]"
+							data-companion-square={docked ? "docked" : ""}
+							className={`block size-full transition-[opacity,transform,background-color] duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] ${docked ? "bg-muted" : "bg-text"}`}
 							style={{
 								borderRadius: SIDE * 0.3,
-								boxShadow: `0 0 0 ${HALO}px var(--color-canvas)`,
+								boxShadow: docked ? "none" : `0 0 0 ${HALO}px var(--color-canvas)`,
+								transform: docked ? `scale(${DOCKED_SCALE})` : undefined,
 								opacity: dim ? 0.45 : 1,
 							}}
 						/>

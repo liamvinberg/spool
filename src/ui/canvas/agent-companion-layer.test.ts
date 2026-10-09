@@ -210,6 +210,19 @@ describe("the agent's companions on the canvas", () => {
 		]);
 	});
 
+	it("sits on the name row as a lighter square, and is the full ink square again at work", () => {
+		const square = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-companion-square]");
+		const { host, again } = layer({ companions: [companion({ act: "idle" })] });
+		expect(square(host)?.getAttribute("data-companion-square")).toBe("docked");
+		expect(square(host)?.className).toContain("bg-muted");
+		expect(square(host)?.style.boxShadow).toBe("none");
+		expect(square(host)?.style.transform).toMatch(/scale\(0\.7\)/);
+		again({ companions: [companion({ act: "read", beat: 2 })] });
+		expect(square(host)?.getAttribute("data-companion-square")).toBe("");
+		expect(square(host)?.className).toContain("bg-text");
+		expect(square(host)?.style.boxShadow).not.toBe("none");
+	});
+
 	it("dims about two seconds after a frame lands, as after any call, and lights again when it acts", () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		onTestFinished(() => {
