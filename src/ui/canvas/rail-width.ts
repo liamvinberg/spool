@@ -13,9 +13,9 @@ import { useRef, useState } from "react";
  * The two positions a settled rail can be in are the strip and the panel. There is nothing
  * between `STRIP_WIDTH` and `MIN_WIDTH`, and that gap is the point: a rail is either a
  * column you read or an edge you press, and the drag picks whichever the hand was nearer.
- * A side has no strip any more (`pane-window.tsx`): its toggles are in the window bar, so
- * the far end of the range is the side collapsing rather than a width — which is what
- * `onSettle` is for.
+ * A side's strip is its rail now (`pane-window.tsx`): 40px of its panes' icons, so the
+ * far end of the range is the side closing to that rail rather than a width — which is
+ * what `onSettle` is for.
  */
 
 /** shut: what a settle under the snap point reports, which a side reads as collapsing */
