@@ -23,6 +23,14 @@
  */
 export const DELEGATION_TOOL = "Agent";
 
+/**
+ * A task is an agent's when the engine's word for its kind says so (`local_agent`, not
+ * `local_bash`). Unnamed is an agent, as the engines without the word only run agents.
+ */
+export function agentTask(type: string | null | undefined): boolean {
+	return type === undefined || type === null || /agent/i.test(type);
+}
+
 /** What a turn ended as. The wire's own reason rides beside it. */
 export type AgentEnding = "done" | "stopped" | "failed";
 

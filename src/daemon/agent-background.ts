@@ -1,4 +1,4 @@
-import type { AgentEnded, AgentEvent } from "./agent-events";
+import { type AgentEnded, type AgentEvent, agentTask } from "./agent-events";
 
 /**
  * When a turn is over, which is later than when the agent answers (#365).
@@ -42,13 +42,6 @@ export interface BackgroundHoldOptions {
 	readonly wakes: boolean;
 }
 
-const AGENT_TYPES = /agent/i;
-
-/** a task holds the turn when it is an agent's: unnamed is an agent, as the engines without the word only run agents */
-function holds(type: string | null | undefined): boolean {
-	return type === undefined || type === null || AGENT_TYPES.test(type);
-}
-
 export function createBackgroundHold({ wakes }: BackgroundHoldOptions): BackgroundHold {
 	const tasks = new Set<string>();
 	let held: AgentEnded | undefined;
@@ -65,7 +58,7 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 	return {
 		read(event) {
 			if (event.kind === "task-started") {
-				if (!holds(event.type)) return { events: [event], over: false };
+				if (!agentTask(event.type)) return { events: [event], over: false };
 				tasks.add(event.task);
 				return { events: [event], over: false };
 			}
@@ -78,7 +71,7 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 				const before = tasks.size;
 				tasks.clear();
 				for (const one of event.tasks) {
-					if (one.task !== "" && holds(one.type)) tasks.add(one.task);
+					if (one.task !== "" && agentTask(one.type)) tasks.add(one.task);
 				}
 				const after = before > 0 && tasks.size === 0 ? drained() : { events: [], over: false };
 				return { events: [event, ...after.events], over: after.over };

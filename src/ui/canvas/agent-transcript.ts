@@ -1,5 +1,5 @@
 import { type Attachment, restoredAttachments } from "../../attachment";
-import { type AgentEvent, type AgentLimit, DELEGATION_TOOL } from "../../daemon/agent-events";
+import { type AgentEvent, type AgentLimit, agentTask, DELEGATION_TOOL } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, detailOf, questionsOf } from "./agent-ask";
 import { type AgentCompanion, companionFold } from "./agent-companion";
@@ -901,7 +901,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	/** every frame the turn touched, in the order it first touched them (#365) */
 	const tiles = new Map<string, Tile>();
 	/** every delegation the turn started, by its task */
-	const tasks = new Map<string, { description: string | null; agent: string | null; at: number; done: boolean }>();
+	const tasks = new Map<
+		string,
+		{ description: string | null; agent: string | null; delegate: boolean; at: number; done: boolean }
+	>();
 	/** the turn's ending, as the wire said it */
 	let ending: AgentTurnFoot["ending"] = null;
 
@@ -1563,7 +1566,13 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// and a stream that opened mid-delegation never saw the start
 				if (event.kind !== "task-done" && event.call !== null) taskCalls.set(event.task, event.call);
 				if (event.kind === "task-started") {
-					tasks.set(event.task, { description: event.description, agent: event.agent, at, done: false });
+					tasks.set(event.task, {
+						description: event.description,
+						agent: event.agent,
+						delegate: agentTask(event.type),
+						at,
+						done: false,
+					});
 					// a tile opened for this task before the task was said takes its words now
 					for (const tile of tiles.values())
 						if (tile.task === event.task && tile.by === null) tile.by = event.description;
@@ -1790,7 +1799,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * · 278 lines` — which is never a bare "thinking".
 	 */
 	const statusOf = (): string | null => {
-		const all = [...tasks.values()];
+		// a background shell is a task but not an agent (#374)
+		const all = [...tasks.values()].filter((task) => task.delegate);
 		const working = all.filter((task) => !task.done).length;
 		if (working > 0) {
 			const designers = all.every((task) => task.agent === "designer");
