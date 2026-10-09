@@ -81,6 +81,14 @@ describe("a reserved spot", () => {
 		expect(spotName(null)).toBe("designer");
 	});
 
+	it("takes the one frame a brief says to write, over its description", () => {
+		const brief = "You are the loud direction designer. Create design/frames/hello-loud/frame.tsx as a bold frame.";
+		expect(spotName("You are the loud direction designer.", brief)).toBe("hello-loud");
+		expect(
+			spotName("Design hello-calm frame", "Write frames/hello-calm/frame.tsx and frames/hello-x/frame.tsx"),
+		).toBe("hello-calm");
+	});
+
 	it("takes the frame born into it, and keeps every other new frame off it", () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root } = makeProject(spoolDir);

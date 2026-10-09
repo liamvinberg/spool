@@ -170,8 +170,19 @@ export function changedRange(before: string, after: string): { from: number; to:
 	return { from, to: Math.min(to, Math.max(1, now.length)) };
 }
 
-/** a frame name read from a task's own description: `Design hello-calm frame` → `hello-calm` */
-export function spotName(description: string | null): string {
+/**
+ * A frame name for a designer's spot. Where the brief names exactly one frame to write
+ * (`create design/frames/hello-loud/frame.tsx`), that frame, so the spot is the place its
+ * file lands in; otherwise read from the task's own description: `Design hello-calm frame`
+ * → `hello-calm`.
+ */
+export function spotName(description: string | null, prompt?: string | null): string {
+	const named = new Set(
+		[...(prompt ?? "").matchAll(/frames\/(?:[a-z0-9-]+\/)*([a-z0-9][a-z0-9-]*)\/frame\.tsx/gi)].map((match) =>
+			(match[1] as string).toLowerCase(),
+		),
+	);
+	if (named.size === 1) return [...named][0] as string;
 	const words = (description ?? "")
 		.toLowerCase()
 		.replace(/[^a-z0-9\s-]+/g, " ")
@@ -416,7 +427,13 @@ export function witnessFrames(
 	}
 
 	/** a designer started: reserve its spot on the root page, named from its task */
-	function reserve(task: string, call: string | null, description: string | null, parent: string | null): void {
+	function reserve(
+		task: string,
+		call: string | null,
+		description: string | null,
+		prompt: string | null,
+		parent: string | null,
+	): void {
 		if (designDir === undefined || reserved.has(task)) return;
 		const read = rootField();
 		if (read === undefined) return;
@@ -428,7 +445,7 @@ export function witnessFrames(
 			...projection.frames.map((frame) => frame.name),
 			...spots.of(root).map((spot) => spot.name),
 		]);
-		const base = spotName(description);
+		const base = spotName(description, prompt);
 		let name = base;
 		for (let n = 2; taken.has(name); n += 1) name = `${base}-${n}`;
 		const spot: AgentSpot = { kind: "spot", state: "held", name, task, call, ...besideField(field), ...size, parent };
@@ -515,7 +532,7 @@ export function witnessFrames(
 		}
 		if (event.kind === "task-started") {
 			if (event.call !== null) tasks.set(event.call, event.task);
-			if (event.agent === "designer") reserve(event.task, event.call, event.description, event.parent);
+			if (event.agent === "designer") reserve(event.task, event.call, event.description, event.prompt, event.parent);
 			return;
 		}
 		if (event.kind === "task-done") release(event.task);
