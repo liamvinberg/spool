@@ -139,7 +139,7 @@ async function listModels(rpc: CodexRpc): Promise<CodexModel[]> {
 const text = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
 
 /** Codex's models as the menu's rows: each with the efforts that model reports. */
-export function codexModelsOf(listed: readonly CodexModel[]): AgentModel[] {
+function codexModelsOf(listed: readonly CodexModel[]): AgentModel[] {
 	const models: AgentModel[] = [];
 	for (const one of listed) {
 		const value = text(one.model) ?? text(one.id);

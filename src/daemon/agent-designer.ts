@@ -49,7 +49,7 @@ export function designerDir(spoolDir: string): string {
 /** a TOML basic string: JSON's escapes are a subset TOML reads the same way */
 const toml = (value: string): string => JSON.stringify(value);
 
-export function claudeDesignerFile(): string {
+function claudeDesignerFile(): string {
 	return `${JSON.stringify(
 		{ [DESIGNER_NAME]: { description: DESIGNER_DESCRIPTION, prompt: DESIGNER_PROMPT } },
 		null,
@@ -57,7 +57,7 @@ export function claudeDesignerFile(): string {
 	)}\n`;
 }
 
-export function codexDesignerFile(): string {
+function codexDesignerFile(): string {
 	return `developer_instructions = ${toml(DESIGNER_PROMPT)}\n`;
 }
 
@@ -73,7 +73,7 @@ export function codexDesignerFile(): string {
  * result (`details.step`, the tool and its path or command), and the child's last words
  * are the result.
  */
-export function piDesignerFile(): string {
+function piDesignerFile(): string {
 	return `// spool's designer for pi (#367). Written by spool into its own state and loaded with -e.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";

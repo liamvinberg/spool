@@ -38,7 +38,7 @@ const PROBE_TIMEOUT_MS = 20_000;
  * A turn loads spool's designer extension (#367) from spool's state with `-e`, which pi
  * loads beside the person's own extensions without installing it anywhere.
  */
-export function planPiSpawn(
+function planPiSpawn(
 	root: string,
 	env: Readonly<Record<string, string | undefined>>,
 	session: { readonly id: string; readonly file?: string } | null,
@@ -147,7 +147,7 @@ const NOTHING: AgentOffer = {
  * model is set in this throwaway session and asked, which persists nothing because the
  * process opened no session and RPC never saves a default.
  */
-export async function askPiOffer(
+async function askPiOffer(
 	executor: AgentExecutor,
 	root: string,
 	ask: AgentAsk,

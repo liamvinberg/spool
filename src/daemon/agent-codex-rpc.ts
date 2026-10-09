@@ -11,7 +11,7 @@ import type { AgentProcess } from "./agent-exec";
  * This is transport only: what a method means is the turn runner's and the adapter's.
  */
 
-export class CodexRpcError extends Error {
+class CodexRpcError extends Error {
 	constructor(
 		readonly code: number | null,
 		message: string,

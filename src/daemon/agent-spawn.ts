@@ -119,7 +119,7 @@ const AGENT_PERMISSION_MODE = "default";
  * sandbox decide nothing. The choice never rides the repo: it is read off the
  * project's registry entry on this machine at every spawn.
  */
-export const PERMISSION_MODES: Record<AgentPermissions, string> = {
+const PERMISSION_MODES: Record<AgentPermissions, string> = {
 	ask: AGENT_PERMISSION_MODE,
 	edits: "acceptEdits",
 	bypass: "bypassPermissions",

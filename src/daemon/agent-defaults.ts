@@ -183,7 +183,7 @@ function parseStored(raw: string): Stored | undefined {
  * file has its own mtime. A saved bundled engine is not carried over: it is never a
  * fallback and its engine is on the way out.
  */
-export function migrateAgentDefaults(spoolDir: string): Stored {
+function migrateAgentDefaults(spoolDir: string): Stored {
 	let projects: readonly { root: string; openedAt: string; settings?: Record<string, unknown> }[] = [];
 	try {
 		projects = readMachineRegistry(spoolDir).projects;
