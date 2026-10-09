@@ -29,7 +29,6 @@ import {
 } from "./agent-transcript";
 import { TurnFoot } from "./agent-turn-foot";
 import { DeadComposer, InstallWall, LoginStrip, RecoveryView } from "./agent-wall";
-import { PaneTitle } from "./pane-window";
 import { ChevronIcon } from "./sidebar";
 import { useStillness } from "./stillness";
 
@@ -365,9 +364,6 @@ export function AgentRail({
 					 * conversation you cannot continue on a machine with no agent on it.
 					 */
 					<div className="flex h-full min-w-[200px] flex-col">
-						<PaneTitle>
-							<span className="px-1.5 font-semibold text-text type-control">Agent</span>
-						</PaneTitle>
 						<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 							<InstallWall install={install} />
 						</div>

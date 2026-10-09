@@ -2,13 +2,14 @@ import { useEffect, useRef } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
-import { Chevron, Float } from "./agent-float";
+import { Float } from "./agent-float";
 import { Spinner } from "./agent-marks";
 import { engineName } from "./agent-menu";
 import { useHeld } from "./agent-motion";
 import { type Life, type Thread, UNSAID } from "./agent-threads";
 import { ageOf } from "./frame-find";
-import { PaneActions, PaneTitle } from "./pane-window";
+import { PANE_VERB } from "./pane-tabs";
+import { PaneActions } from "./pane-window";
 
 /**
  * The conversations this project has, and what the pane may do about them (#136, #205).
@@ -37,20 +38,21 @@ export interface Threads {
 }
 
 /* ---------- the threads, off the title over the log (#136, #161, #200, #205, #364) ----------
- * One panel, and every other conversation reached from its title. The header holds the
- * chat's title, which opens the switcher, and the + that starts a new chat, and nothing
- * else: what is moving in another thread is the pane toggle's one small dot, and who answers
+ * One panel, and every other conversation reached from its title. The plate under the tab
+ * holds the chat's title, which opens the switcher, and the tab row the + that starts a new
+ * chat, and nothing else: what is moving in another thread is the Agent tab's one small dot,
+ * or its rail icon's, and who answers
  * is the composer's. The list drops from the title over the log, one step up on a
  * hairline and a soft shadow, and leaves the way it came.
  *
- * No collapse caret: the pane toggle that lit the pane is the thing that shuts it.
+ * No collapse caret: the side's own close is the thing that shuts it.
  *
  * Nothing is coloured and nothing re-sorts. State in this rail is motion, and the order is
  * recency fixed once, so a row never moves out from under a cursor already reaching for it.
  */
 
 /**
- * The header: which chat this is, as the switcher's trigger, and the +.
+ * The plate: which chat this is, as the switcher's trigger; and the + in the tab row.
  *
  * `listing` is the clock read when the list was opened, or null while it is shut: the
  * moment the list opened is the moment the ages in it are about.
@@ -70,8 +72,11 @@ export function ThreadTitle({
 	const title = useRef<HTMLButtonElement>(null);
 	return (
 		<>
-			{/* the header the pane already has: the title in place of the pane's name, and the + */}
-			<PaneTitle>
+			{/* the plate under the pane's tab: the tab already says Agent, so this names the chat */}
+			<div
+				data-agent-plate=""
+				className="relative z-20 flex h-11 shrink-0 items-center border-border border-b bg-bg px-2"
+			>
 				<button
 					ref={title}
 					type="button"
@@ -80,14 +85,31 @@ export function ThreadTitle({
 					aria-expanded={listed}
 					title="Switch chat"
 					onClick={() => onList(listed ? null : Date.now())}
-					className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-text transition-colors duration-150 hover:bg-surface aria-expanded:bg-surface"
+					className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface aria-expanded:bg-surface"
 				>
-					<span className="min-w-0 truncate font-semibold type-control">
+					<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
 						{name === UNSAID ? "New chat" : name}
 					</span>
-					<Chevron open={listed} className="text-muted" />
+					{/* a caret that turns down while the list hangs from it */}
+					<svg
+						viewBox="0 0 12 12"
+						className={cn(
+							"h-2.5 w-2.5 shrink-0 origin-center text-muted/45 transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+							listed && "rotate-90",
+						)}
+						fill="none"
+						aria-hidden="true"
+					>
+						<path
+							d="m4 2.5 3.5 3.5L4 9.5"
+							stroke="currentColor"
+							strokeWidth="1.25"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</svg>
 				</button>
-			</PaneTitle>
+			</div>
 			<PaneActions>
 				<button
 					type="button"
@@ -97,7 +119,7 @@ export function ThreadTitle({
 						onNew();
 						title.current?.closest("[data-pane]")?.querySelector("textarea")?.focus({ preventScroll: true });
 					}}
-					className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+					className={PANE_VERB}
 				>
 					<PlusIcon />
 				</button>

@@ -75,7 +75,6 @@ import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
-import { BarEnd } from "./bar-end";
 import { BootCurtain } from "./boot-screen";
 import { frameScheme, framesOnScreen } from "./booth-view";
 import {
@@ -234,6 +233,8 @@ export interface CanvasChrome {
 	camera: CameraStore;
 	/** Who else is on a team project's canvas, for the faces at the top right; absent on a project of one's own. */
 	presence?: CanvasPresence | undefined;
+	/** hands the project to an agent of one's own, for the bar's help; absent where there is no project folder */
+	useAgent?: (() => void) | undefined;
 }
 
 /** A team canvas's people, as the window's top right shows them and follows one. */
@@ -367,7 +368,6 @@ export function ProjectCanvas({
 	project,
 	root,
 	onChrome,
-	onSettings,
 	onRename,
 	onFolder,
 	focusName,
@@ -380,8 +380,6 @@ export function ProjectCanvas({
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
-	/** the cog at the right rail's foot (#282): the sheet is the shell's, so the door only asks */
-	onSettings?: (() => void) | undefined;
 }) {
 	/**
 	 * The camera (#81): one value outside React, drawn once per animation frame
@@ -5444,9 +5442,10 @@ export function ProjectCanvas({
 		onChrome({
 			camera,
 			presence: team ? { room: presenceRoom, page: activePage, following, follow: setFollowing } : undefined,
+			useAgent: root === undefined ? undefined : () => setAgentHandoff(true),
 		});
 		return () => onChrome(null);
-	}, [onChrome, camera, team, presenceRoom, activePage, following]);
+	}, [onChrome, camera, team, presenceRoom, activePage, following, root]);
 
 	// --- presence (DEV-196) ---------------------------------------------------------
 
@@ -5648,7 +5647,6 @@ export function ProjectCanvas({
 			working: turn.phase === "playing",
 			// a turn of any chat stopped on a question only a person can answer (#366)
 			waiting: turn.phase === "asking" || deck.threads.some((thread) => thread.life === "waiting"),
-			titled: true,
 			// another chat is running, waiting on a person, or landed unread (#364)
 			elsewhere: deck.threads.some((thread) => thread.id !== deck.open && thread.life !== "read"),
 			focus: (body) => body.querySelector("textarea")?.focus({ preventScroll: true }),
@@ -5689,12 +5687,6 @@ export function ProjectCanvas({
 				panes={panes}
 				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
 				onShown={(panes) => setRailShown(panes.includes("agent"))}
-				barEnd={
-					<BarEnd
-						onSettings={onSettings}
-						onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
-					/>
-				}
 			>
 				<div
 					ref={viewportRef}

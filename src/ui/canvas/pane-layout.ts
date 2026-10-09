@@ -12,49 +12,51 @@ import {
  * Where the canvas window's panes stand, as data (#359).
  *
  * The canvas is the fixed centre and never in here: it is whatever the two
- * sides leave. A side is the panes assigned to it, in order, each with a toggle in
- * the window bar, and a stack of the ones it has lit, in that order. Everything is pure so
- * the window can ask what a drop would do before it lets it land.
+ * sides leave. A side is a stack of groups, and a group is panes as tabs with
+ * one of them showing. A side is open, its first group's tabs its header, or
+ * closed to a rail of its panes' icons at the window's edge. Everything is pure
+ * so the window can ask what a drop would do before it lets it land.
  */
 
 export type SideId = "left" | "right";
 export const SIDES: readonly SideId[] = ["left", "right"];
 export const other = (side: SideId): SideId => (side === "left" ? "right" : "left");
 
+export interface Group {
+	/** pane ids, in tab order */
+	readonly tabs: readonly string[];
+	/** the tab showing */
+	readonly active: string;
+	/** its share of the side's height */
+	readonly weight: number;
+}
+
 export interface Side {
-	/** pane ids, in order: their toggles in the bar, and the stack's lit ones */
-	readonly panes: readonly string[];
-	/** what is lit, which a collapsed side remembers for when it opens again */
-	readonly lit: readonly string[];
-	readonly width: number;
-	/** false: collapsed, its toggles all unlit */
+	readonly groups: readonly Group[];
+	/** false: closed to its rail */
 	readonly open: boolean;
-	/** the clock when somebody last did something to it; the oldest folds first in a narrow window */
+	/** what a hand dragged it to; null is the width for what it holds */
+	readonly width: number | null;
+	/** the clock when somebody last did something to it; the oldest closes first in a narrow window */
 	readonly touched: number;
 }
 
-/** where a removed pane stood, so it comes back there */
-export interface Place {
-	readonly side: SideId;
-	readonly index: number;
-}
-
 export interface Layout {
-	readonly v: 2;
+	readonly v: 3;
 	readonly clock: number;
 	readonly left: Side;
 	readonly right: Side;
-	/** each lit pane's share of its stack's height */
-	readonly weights: Readonly<Record<string, number>>;
-	readonly removed: Readonly<Record<string, Place>>;
 }
 
+/** a closed side's rail of icons */
+export const RAIL_WIDTH = 40;
+
 export const LIMITS = {
-	/** lit panes on one side */
-	shown: 3,
-	paneMin: 160,
+	/** groups on one side */
+	groups: 3,
+	groupMin: 160,
 	sideMin: MIN_WIDTH,
-	/** the widest any side may be, which only a side showing the agent reaches */
+	/** the widest any side may be, which only a side holding the agent reaches */
 	sideMax: AGENT_MAX_WIDTH,
 	snap: SNAP_BELOW,
 	canvasMin: 480,
@@ -66,68 +68,77 @@ export interface Env {
 	readonly height: number;
 }
 
-export type Target =
-	/** a slot among a side's toggles in the bar: before the one at `index`, or after the last */
-	| { readonly kind: "bar"; readonly side: SideId; readonly index: number }
-	/** the top or bottom half of a pane showing in a stack: the pane shows there */
-	| { readonly kind: "stack"; readonly side: SideId; readonly anchor: string; readonly edge: "above" | "below" };
+/** where a carried tab lands */
+export type Drop =
+	/** a group's tab row, before the tab at `index` or after the last; a group past the last starts one (an empty side's edge) */
+	| { readonly kind: "row"; readonly side: SideId; readonly group: number; readonly index: number }
+	/** the top or bottom half of a group's pane: a new group there */
+	| { readonly kind: "split"; readonly side: SideId; readonly group: number; readonly where: "above" | "below" };
 
 export type Action =
-	| { type: "click"; pane: string; only?: boolean | undefined }
+	/** its tab lit and its side open */
 	| { type: "show"; pane: string }
-	| { type: "hide"; pane: string }
-	| { type: "move"; pane: string; to: Target }
-	| { type: "remove"; pane: string }
+	| { type: "move"; pane: string; to: Drop }
 	| { type: "open"; side: SideId; open: boolean }
 	| { type: "width"; side: SideId; width: number }
-	| { type: "weights"; weights: Readonly<Record<string, number>> }
+	| { type: "weights"; side: SideId; weights: readonly number[] }
 	| { type: "touch"; side: SideId }
 	| { type: "reset" };
 
-/** whether a drop may land: `cap` is a fourth pane on a side, `height` a pane under its minimum, `floor` the canvas under its */
+/** whether a drop may land: `cap` a fourth group on a side, `height` a group under its minimum, `floor` the canvas under its */
 export type Verdict = "ok" | "noop" | "cap" | "height" | "floor";
 
-/** Pages lit on the left; Properties then Agent on the right, only Properties lit. */
+/** Pages on the left; Properties and Agent as tabs of one group on the right, Properties showing. */
 export function defaultLayout(): Layout {
 	return {
-		v: 2,
+		v: 3,
 		clock: 2,
-		left: { panes: ["pages"], lit: ["pages"], width: PAGES_WIDTH, open: true, touched: 1 },
-		right: { panes: ["properties", "agent"], lit: ["properties"], width: PROPERTIES_WIDTH, open: true, touched: 2 },
-		weights: { pages: 1, properties: 1, agent: 1 },
-		removed: {},
+		left: { groups: [{ tabs: ["pages"], active: "pages", weight: 1 }], open: true, width: null, touched: 1 },
+		right: {
+			groups: [{ tabs: ["properties", "agent"], active: "properties", weight: 1 }],
+			open: true,
+			width: null,
+			touched: 2,
+		},
 	};
 }
 
 /* ── reading ─────────────────────────────────────────────────────────── */
 
-export function sideOf(layout: Layout, pane: string): SideId | null {
-	for (const id of SIDES) if (layout[id].panes.includes(pane)) return id;
+export function whereIs(layout: Layout, pane: string): { side: SideId; group: number } | null {
+	for (const side of SIDES) {
+		const group = layout[side].groups.findIndex((candidate) => candidate.tabs.includes(pane));
+		if (group !== -1) return { side, group };
+	}
 	return null;
 }
 
-/** what a side's stack holds, in its order, whether or not it shows now */
-export function stackOf(layout: Layout, id: SideId): string[] {
-	const side = layout[id];
-	return side.panes.filter((pane) => side.lit.includes(pane));
-}
+/** every pane on a side, in group order: what its rail shows */
+export const panesOf = (side: Side): string[] => side.groups.flatMap((group) => [...group.tabs]);
 
-const showsAgent = (side: Side) => side.lit.includes("agent") && side.panes.includes("agent");
-/** the narrowest a side may be: the agent rail's own floor while it shows there (#364) */
-const minOf = (side: Side) => (showsAgent(side) ? AGENT_MIN_WIDTH : LIMITS.sideMin);
-/** the widest a side may be: the agent rail's own ceiling while it shows there (#364) */
-const maxOf = (side: Side) => (showsAgent(side) ? AGENT_MAX_WIDTH : MAX_WIDTH);
+const holds = (side: Side, pane: string) => side.groups.some((group) => group.tabs.includes(pane));
+/** the agent's composer needs its own range (#364), whichever tab of its side shows */
+const minOf = (side: Side) => (holds(side, "agent") ? AGENT_MIN_WIDTH : LIMITS.sideMin);
+const maxOf = (side: Side) => (holds(side, "agent") ? AGENT_MAX_WIDTH : MAX_WIDTH);
+/** what a side opens at untouched: its widest pane's own width, so switching tabs never moves the canvas */
+const naturalOf = (side: Side) =>
+	holds(side, "agent") ? AGENT_MIN_WIDTH : holds(side, "properties") ? PROPERTIES_WIDTH : PAGES_WIDTH;
+const clampTo = (side: Side, width: number) => Math.min(maxOf(side), Math.max(minOf(side), Math.round(width)));
+
 /** the narrowest side `id` may be drawn at as the layout stands */
 export const sideMin = (layout: Layout, id: SideId): number => minOf(layout[id]);
-const clampWidth = (width: number, side: Side) => Math.min(maxOf(side), Math.max(minOf(side), Math.round(width)));
-const wantsOpen = (side: Side) => side.open && side.lit.some((pane) => side.panes.includes(pane));
-const outerOf = (side: Side, open: boolean) => (open ? clampWidth(side.width, side) : 0);
+/** the width side `id` opens at */
+export const widthOf = (side: Side): number => clampTo(side, side.width ?? naturalOf(side));
+
+const hasPanes = (side: Side) => side.groups.length > 0;
+const wantsOpen = (side: Side) => side.open && hasPanes(side);
+const outerOf = (side: Side, open: boolean) => (open ? widthOf(side) : hasPanes(side) ? RAIL_WIDTH : 0);
 
 export interface SideFit {
 	readonly open: boolean;
-	/** the stack's width, open or not: contents are laid out at it and clipped */
+	/** the width it opens at, open or not: contents are laid out at it and clipped */
 	readonly width: number;
-	/** what the side takes from the window: its width, or nothing collapsed */
+	/** what it takes from the window: its width, its rail, or nothing when it holds nothing */
 	readonly outer: number;
 	/** the panes a person can see on it now, top to bottom */
 	readonly shown: readonly string[];
@@ -141,8 +152,8 @@ export interface Fit {
 
 /**
  * What shows in a window this size. While the canvas would be under its floor
- * the side touched least recently folds, then the other. Nothing
- * is written back, so a folded side opens by itself once there is room.
+ * the side touched least recently closes to its rail, then the other. Nothing
+ * is written back, so a side closed this way opens by itself once there is room.
  */
 export function fitWindow(layout: Layout, env: Env): Fit {
 	const open: Record<SideId, boolean> = { left: wantsOpen(layout.left), right: wantsOpen(layout.right) };
@@ -154,9 +165,9 @@ export function fitWindow(layout: Layout, env: Env): Fit {
 	}
 	const one = (id: SideId): SideFit => ({
 		open: open[id],
-		width: clampWidth(layout[id].width, layout[id]),
+		width: widthOf(layout[id]),
 		outer: outerOf(layout[id], open[id]),
-		shown: open[id] ? stackOf(layout, id) : [],
+		shown: open[id] ? layout[id].groups.map((group) => group.active) : [],
 	});
 	return { left: one("left"), right: one("right"), canvas: canvas() };
 }
@@ -168,11 +179,11 @@ export function maxWidth(layout: Layout, id: SideId, env: Env): number {
 }
 
 /**
- * Each pane's height: its share of `total`, none under the minimum. A pane
+ * Each group's height: its share of `total`, none under the minimum. A group
  * pushed under it is held there and the others pay, largest first. Whole
- * pixels, the last pane taking the remainder.
+ * pixels, the last group taking the remainder.
  */
-export function stackHeights(weights: readonly number[], total: number, min: number = LIMITS.paneMin): number[] {
+export function stackHeights(weights: readonly number[], total: number, min: number = LIMITS.groupMin): number[] {
 	const n = weights.length;
 	if (n === 0) return [];
 	const even = Math.floor(total / n);
@@ -193,8 +204,13 @@ export function stackHeights(weights: readonly number[], total: number, min: num
 	return whole;
 }
 
-/** a divider between pane `i` and `i + 1` dragged by `dy`, both kept at or over the minimum */
-export function resizeSplit(heights: readonly number[], i: number, dy: number, min: number = LIMITS.paneMin): number[] {
+/** a divider between group `i` and `i + 1` dragged by `dy`, both kept at or over the minimum */
+export function resizeSplit(
+	heights: readonly number[],
+	i: number,
+	dy: number,
+	min: number = LIMITS.groupMin,
+): number[] {
 	const a = heights[i];
 	const b = heights[i + 1];
 	if (a === undefined || b === undefined) return [...heights];
@@ -207,254 +223,137 @@ export function resizeSplit(heights: readonly number[], i: number, dy: number, m
 
 /* ── the reducer ─────────────────────────────────────────────────────── */
 
+interface DraftGroup {
+	tabs: string[];
+	active: string;
+	weight: number;
+}
+
+interface DraftSide {
+	groups: DraftGroup[];
+	open: boolean;
+	width: number | null;
+	touched: number;
+}
+
 interface Draft {
-	v: 2;
+	v: 3;
 	clock: number;
-	left: { panes: string[]; lit: string[]; width: number; open: boolean; touched: number };
-	right: { panes: string[]; lit: string[]; width: number; open: boolean; touched: number };
-	weights: Record<string, number>;
-	removed: Record<string, Place>;
+	left: DraftSide;
+	right: DraftSide;
 }
 
 function draft(layout: Layout): Draft {
-	const copy = (side: Side) => ({ ...side, panes: [...side.panes], lit: [...side.lit] });
-	return {
-		...layout,
-		left: copy(layout.left),
-		right: copy(layout.right),
-		weights: { ...layout.weights },
-		removed: { ...layout.removed },
-	};
+	const copy = (side: Side): DraftSide => ({
+		...side,
+		groups: side.groups.map((group) => ({ ...group, tabs: [...group.tabs] })),
+	});
+	return { ...layout, left: copy(layout.left), right: copy(layout.right) };
 }
 
-function tick(next: Draft): number {
+function touch(next: Draft, id: SideId): void {
 	next.clock += 1;
-	return next.clock;
+	next[id].touched = next.clock;
 }
 
-/** the most a stack may hold in a window this tall */
-const capOf = (env: Env | undefined) =>
-	Math.min(LIMITS.shown, env === undefined ? LIMITS.shown : Math.max(1, Math.floor(env.height / LIMITS.paneMin)));
+/** where the tabs stand: a drop that leaves them where they were changes nothing, the lit one included */
+const shapeOf = (layout: Layout) => JSON.stringify(SIDES.map((id) => layout[id].groups.map((group) => group.tabs)));
 
-/** a newcomer to a stack takes the average share of what is there */
-function shareFor(next: Draft, id: SideId): number {
-	const here = stackOf(next, id).map((pane) => next.weights[pane] ?? 1);
-	return here.length === 0 ? 1 : here.reduce((a, b) => a + b, 0) / here.length;
-}
+function move(layout: Layout, pane: string, to: Drop): Layout {
+	const from = whereIs(layout, pane);
+	if (from === null) return layout;
+	const lone = layout[from.side].groups[from.group]?.tabs.length === 1;
+	const sameGroup = from.side === to.side && from.group === to.group;
+	// a lone tab dropped back in its own row, or split against its own pane, goes nowhere
+	if (lone && sameGroup) return layout;
 
-/**
- * Opens a side and makes it the one touched last, so in a narrow window the
- * other side folds first. A drop squeezes instead: a side opened by it takes
- * the room there is, never under its minimum (`check` refuses a drop that
- * would need that), so what was dropped and what was there both stay in sight.
- */
-function openSide(next: Draft, id: SideId, before?: Layout, env?: Env): void {
-	const side = next[id];
-	if (before !== undefined && env !== undefined && !fitWindow(before, env)[id].open) {
-		const o = other(id);
-		const otherOpen = fitWindow(before, env)[o].open && wantsOpen(next[o]);
-		const room = env.width - outerOf(next[o], otherOpen) - LIMITS.canvasMin;
-		side.width = clampWidth(Math.min(side.width, room), side);
-	}
-	side.open = true;
-	side.touched = tick(next);
-}
-
-function light(next: Draft, id: SideId, pane: string, env: Env | undefined): boolean {
-	const side = next[id];
-	if (side.lit.includes(pane)) return true;
-	if (side.lit.length >= capOf(env)) return false;
-	next.weights[pane] = shareFor(next, id);
-	side.lit.push(pane);
-	return true;
-}
-
-function collapse(next: Draft, id: SideId): void {
-	next[id].open = false;
-	next[id].touched = tick(next);
-}
-
-/** a pane leaving a stack hands its height to the one above it, or below when it was on top */
-function bequeath(next: Draft, id: SideId, pane: string): void {
-	const stack = stackOf(next, id);
-	const at = stack.indexOf(pane);
-	const heir = stack[at - 1] ?? stack[at + 1];
-	if (at === -1 || heir === undefined) return;
-	next.weights[heir] = (next.weights[heir] ?? 1) + (next.weights[pane] ?? 1);
-}
-
-/** the last pane off collapses the side, and stays lit as what it remembers */
-function unlight(next: Draft, id: SideId, pane: string): void {
-	const side = next[id];
-	if (side.lit.length === 1 && side.lit[0] === pane) {
-		collapse(next, id);
-		return;
-	}
-	bequeath(next, id, pane);
-	side.lit = side.lit.filter((p) => p !== pane);
-	side.touched = tick(next);
-}
-
-/** lifts a pane off its side and out of its stack; a side left showing nothing collapses */
-function detach(next: Draft, pane: string): { side: SideId; index: number; lit: boolean } | null {
-	const id = sideOf(next, pane);
-	if (id === null) return null;
-	const side = next[id];
-	const index = side.panes.indexOf(pane);
-	const lit = side.lit.includes(pane);
-	if (lit) bequeath(next, id, pane);
-	side.panes.splice(index, 1);
-	side.lit = side.lit.filter((p) => p !== pane);
-	if (lit && side.lit.length === 0) side.open = false;
-	return { side: id, index, lit };
-}
-
-/** whether the side shows its stack now */
-const showing = (layout: Layout, id: SideId, env: Env | undefined) =>
-	env === undefined ? wantsOpen(layout[id]) : fitWindow(layout, env)[id].open;
-
-const seen = (layout: Layout, pane: string, env: Env | undefined) => {
-	const id = sideOf(layout, pane);
-	return id !== null && showing(layout, id, env) && layout[id].lit.includes(pane);
-};
-
-function click(layout: Layout, pane: string, only: boolean, env: Env | undefined): Layout {
-	const id = sideOf(layout, pane);
-	if (id === null) return layout;
 	const next = draft(layout);
-	if (only) {
-		next.weights[pane] ??= 1;
-		next[id].lit = [pane];
-		openSide(next, id);
-		return next;
-	}
-	if (seen(layout, pane, env)) {
-		unlight(next, id, pane);
-		return next;
-	}
-	if (!light(next, id, pane, env)) return layout;
-	openSide(next, id);
-	return next;
-}
+	const sources = next[from.side].groups;
+	const targets = next[to.side].groups;
+	const source = sources[from.group] as DraftGroup;
+	const target = targets[to.group];
+	const at = source.tabs.indexOf(pane);
 
-function show(layout: Layout, pane: string, env: Env | undefined): Layout {
-	let current = layout;
-	if (sideOf(layout, pane) === null) {
-		const place = layout.removed[pane];
-		if (place === undefined) return layout;
-		const next = draft(layout);
-		delete next.removed[pane];
-		const there = next[place.side].panes;
-		there.splice(Math.min(place.index, there.length), 0, pane);
-		current = next;
-	}
-	if (seen(current, pane, env)) {
-		const id = sideOf(current, pane) as SideId;
-		const next = draft(current);
-		next[id].touched = tick(next);
-		return next;
-	}
-	return click(current, pane, false, env);
-}
+	// out of where it was; the neighbour before it takes the light
+	source.tabs.splice(at, 1);
+	if (source.active === pane && source.tabs.length > 0) source.active = source.tabs[Math.max(0, at - 1)] as string;
 
-/** the sides' panes and stacks, which is all a drop can change */
-const shapeOf = (layout: Layout) =>
-	JSON.stringify(SIDES.map((id) => [layout[id].panes, stackOf(layout, id), wantsOpen(layout[id])]));
-
-function move(layout: Layout, pane: string, to: Target, env: Env | undefined): Layout {
-	const next = draft(layout);
-	const was = detach(next, pane);
-	if (was === null) return layout;
-	const side = next[to.side];
-	if (to.kind === "bar") {
-		// a slot counted with the pane still among the toggles, before it lifted
-		const index = was.side === to.side && was.index < to.index ? to.index - 1 : to.index;
-		side.panes.splice(Math.max(0, Math.min(index, side.panes.length)), 0, pane);
-		if (was.lit) {
-			if (was.side === to.side) {
-				side.lit.push(pane);
-				if (layout[was.side].open) side.open = true;
-			} else if (!showing(layout, to.side, env)) {
-				// a showing pane carried to a side that shows nothing opens it, alone
-				side.lit = [pane];
-				openSide(next, to.side, layout, env);
-			} else {
-				if (!light(next, to.side, pane, env)) side.lit.push(pane);
-				openSide(next, to.side, layout, env);
-			}
+	if (to.kind === "row") {
+		if (target === undefined) targets.push({ tabs: [pane], active: pane, weight: 1 });
+		else {
+			// a slot counted with the tab still in the row, before it lifted
+			const index = Math.min(target.tabs.length, sameGroup && at < to.index ? to.index - 1 : to.index);
+			target.tabs.splice(Math.max(0, index), 0, pane);
+			target.active = pane;
 		}
 	} else {
-		const at = side.panes.indexOf(to.anchor);
-		if (at === -1) return layout;
-		side.panes.splice(to.edge === "above" ? at : at + 1, 0, pane);
-		if (!(was.side === to.side && was.lit)) {
-			// a fresh split halves the pane it splits
-			const half = (next.weights[to.anchor] ?? 1) / 2;
-			next.weights[to.anchor] = half;
-			next.weights[pane] = half;
-		}
-		if (!side.lit.includes(pane)) side.lit.push(pane);
-		openSide(next, to.side, layout, env);
+		if (target === undefined) return layout;
+		// a fresh split halves the group it splits
+		target.weight /= 2;
+		targets.splice(targets.indexOf(target) + (to.where === "below" ? 1 : 0), 0, {
+			tabs: [pane],
+			active: pane,
+			weight: target.weight,
+		});
 	}
-	return shapeOf(layout) === shapeOf(next) ? layout : next;
+
+	// a group left empty goes, its height to the group above it, or below when it was on top
+	if (source.tabs.length === 0) {
+		const index = sources.indexOf(source);
+		const heir = sources[index - 1] ?? sources[index + 1];
+		if (heir !== undefined) heir.weight += source.weight;
+		sources.splice(index, 1);
+	}
+	if (shapeOf(layout) === shapeOf(next)) return layout;
+	if (next[from.side].groups.length === 0) next[from.side].open = false;
+	next[to.side].open = true;
+	touch(next, to.side);
+	return next;
 }
 
 export function reduce(layout: Layout, action: Action, env?: Env): Layout {
 	switch (action.type) {
-		case "click":
-			return click(layout, action.pane, action.only === true, env);
-		case "show":
-			return show(layout, action.pane, env);
-		case "hide": {
-			const id = sideOf(layout, action.pane);
-			if (id === null || !layout[id].lit.includes(action.pane)) return layout;
+		case "show": {
+			const at = whereIs(layout, action.pane);
+			if (at === null) return layout;
 			const next = draft(layout);
-			unlight(next, id, action.pane);
+			const side = next[at.side];
+			(side.groups[at.group] as DraftGroup).active = action.pane;
+			side.open = true;
+			touch(next, at.side);
 			return next;
 		}
 		case "move":
-			return move(layout, action.pane, action.to, env);
-		case "remove": {
-			const next = draft(layout);
-			const was = detach(next, action.pane);
-			if (was === null) return layout;
-			next.removed[action.pane] = { side: was.side, index: was.index };
-			return next;
-		}
+			return move(layout, action.pane, action.to);
 		case "open": {
-			const side = layout[action.side];
-			if (action.open && side.panes.length === 0) return layout;
+			if (action.open && !hasPanes(layout[action.side])) return layout;
 			const next = draft(layout);
-			if (!action.open) {
-				collapse(next, action.side);
-				return next;
-			}
-			// nothing remembered: the side's first pane
-			const first = side.panes[0];
-			if (stackOf(next, action.side).length === 0 && first !== undefined) next[action.side].lit = [first];
-			openSide(next, action.side);
+			next[action.side].open = action.open;
+			touch(next, action.side);
 			return next;
 		}
 		case "width": {
+			const side = layout[action.side];
+			if (!hasPanes(side)) return layout;
+			const limit = env === undefined ? maxOf(side) : maxWidth(layout, action.side, env);
 			const next = draft(layout);
-			const limit = env === undefined ? LIMITS.sideMax : maxWidth(layout, action.side, env);
-			const side = next[action.side];
-			side.width = clampWidth(Math.min(action.width, Math.max(minOf(side), limit)), side);
-			const first = side.panes[0];
-			if (stackOf(next, action.side).length === 0 && first !== undefined) side.lit = [first];
-			side.open = true;
-			if (side.touched !== next.clock) side.touched = tick(next);
+			next[action.side].width = clampTo(side, Math.min(action.width, Math.max(minOf(side), limit)));
+			next[action.side].open = true;
+			if (side.touched !== layout.clock) touch(next, action.side);
 			return next;
 		}
 		case "weights": {
 			const next = draft(layout);
-			Object.assign(next.weights, action.weights);
+			next[action.side].groups.forEach((group, index) => {
+				const weight = action.weights[index];
+				if (weight !== undefined && Number.isFinite(weight) && weight > 0) group.weight = weight;
+			});
 			return next;
 		}
 		case "touch": {
 			if (layout[action.side].touched === layout.clock) return layout;
 			const next = draft(layout);
-			next[action.side].touched = tick(next);
+			touch(next, action.side);
 			return next;
 		}
 		case "reset":
@@ -463,18 +362,16 @@ export function reduce(layout: Layout, action: Action, env?: Env): Layout {
 }
 
 /** what a drop would do, judged before it lands */
-export function check(layout: Layout, pane: string, to: Target, env: Env): Verdict {
-	const next = move(layout, pane, to, env);
+export function check(layout: Layout, pane: string, to: Drop, env: Env): Verdict {
+	const next = move(layout, pane, to);
 	if (next === layout) return "noop";
-	const id = to.side;
-	const count = stackOf(next, id).length;
-	if (count > LIMITS.shown) return "cap";
-	if (wantsOpen(next[id]) && count * LIMITS.paneMin > env.height) return "height";
-	const before = fitWindow(layout, env);
-	if (wantsOpen(next[id]) && !before[id].open) {
-		const o = other(id);
-		const otherOpen = before[o].open && wantsOpen(next[o]);
-		if (env.width - outerOf(next[o], otherOpen) - LIMITS.canvasMin < LIMITS.sideMin) return "floor";
+	const side = next[to.side];
+	if (side.groups.length > LIMITS.groups) return "cap";
+	if (side.groups.length * LIMITS.groupMin > env.height) return "height";
+	if (!fitWindow(layout, env)[to.side].open) {
+		// the other side closes to its rail for it if it must, and the canvas keeps its floor even so
+		const room = env.width - outerOf(next[other(to.side)], false) - widthOf(side);
+		if (room < LIMITS.canvasMin) return "floor";
 	}
 	return "ok";
 }
@@ -483,43 +380,35 @@ export function check(layout: Layout, pane: string, to: Target, env: Env): Verdi
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
-const isStrings = (value: unknown): value is string[] =>
-	Array.isArray(value) && value.every((item) => typeof item === "string");
-const isSideId = (value: unknown): value is SideId => value === "left" || value === "right";
+const isWeight = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 
 /**
  * The guard `remembered.ts` reads a stored layout through: exactly these panes,
- * each once, on a side or removed, with nothing lit off its side and nothing a
- * side is never left at. Anything else is discarded, never migrated.
+ * each once in one group, every group's lit tab its own, no side past three
+ * groups, and no width a side is never left at. Anything else is discarded,
+ * never migrated.
  */
 export function isLayout(panes: readonly string[]) {
 	return (value: unknown): value is Layout => {
-		if (!isObject(value) || value.v !== 2 || !isCount(value.clock)) return false;
-		if (!isObject(value.weights) || !isObject(value.removed)) return false;
+		if (!isObject(value) || value.v !== 3 || !isCount(value.clock)) return false;
 		const known = new Set(panes);
 		const placed = new Set<string>();
 		for (const id of SIDES) {
 			const side = value[id];
-			if (!isObject(side) || !isStrings(side.panes) || !isStrings(side.lit)) return false;
+			if (!isObject(side) || !Array.isArray(side.groups) || side.groups.length > LIMITS.groups) return false;
 			if (typeof side.open !== "boolean" || !isCount(side.touched)) return false;
-			if (typeof side.width !== "number" || side.width < LIMITS.sideMin || side.width > LIMITS.sideMax) return false;
-			const panes = side.panes;
-			if (side.lit.length > LIMITS.shown || new Set(side.lit).size !== side.lit.length) return false;
-			if (!side.lit.every((pane) => panes.includes(pane))) return false;
-			for (const pane of panes) {
-				if (!known.has(pane) || placed.has(pane)) return false;
-				placed.add(pane);
+			const width = side.width;
+			if (width !== null && !(typeof width === "number" && width >= LIMITS.sideMin && width <= LIMITS.sideMax))
+				return false;
+			for (const group of side.groups as unknown[]) {
+				if (!isObject(group) || !Array.isArray(group.tabs) || group.tabs.length === 0) return false;
+				if (!isWeight(group.weight) || !group.tabs.includes(group.active)) return false;
+				for (const pane of group.tabs as unknown[]) {
+					if (typeof pane !== "string" || !known.has(pane) || placed.has(pane)) return false;
+					placed.add(pane);
+				}
 			}
 		}
-		for (const [pane, place] of Object.entries(value.removed)) {
-			if (!known.has(pane) || placed.has(pane)) return false;
-			if (!isObject(place) || !isSideId(place.side) || !isCount(place.index)) return false;
-			placed.add(pane);
-		}
-		if (placed.size !== known.size) return false;
-		return panes.every((pane) => {
-			const weight = (value.weights as Record<string, unknown>)[pane];
-			return typeof weight === "number" && Number.isFinite(weight) && weight > 0;
-		});
+		return placed.size === known.size;
 	};
 }

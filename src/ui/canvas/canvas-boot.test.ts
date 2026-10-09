@@ -113,18 +113,18 @@ describe("canvas boot", () => {
 		expect(capture).not.toHaveBeenCalled();
 	});
 
-	it("gives every pane a toggle, and stands the agent only once it is pressed", async () => {
+	it("gives every pane a tab, and stands the agent only once its tab is pressed", async () => {
 		stubEmptyProject();
 		const host = mountCanvas();
 		await flush();
 
-		// Pages on the left and Properties on the right stand by default (#359);
-		// the agent is a toggle at the right end of the bar, mounted and out of sight
-		expect(
-			host.querySelector('[data-pane-toggles="left"] [data-pane-toggle="pages"]')?.getAttribute("aria-pressed"),
-		).toBe("true");
-		const icon = host.querySelector<HTMLElement>('[data-pane-toggles="right"] [data-pane-toggle="agent"]');
-		expect(icon?.getAttribute("aria-pressed")).toBe("false");
+		// Pages on the left, and Properties lit on the right with Agent a tab beside it
+		// (#359): the agent is mounted and out of sight
+		expect(host.querySelector('aside[data-side="left"] [data-pane-tab="pages"]')?.getAttribute("aria-selected")).toBe(
+			"true",
+		);
+		const tab = host.querySelector<HTMLElement>('aside[data-side="right"] [data-pane-tab="agent"]');
+		expect(tab?.getAttribute("aria-selected")).toBe("false");
 		const agent = host.querySelector("[data-agent-rail]");
 		const slot = agent?.closest("[data-pane-slot]");
 		expect(slot?.hasAttribute("inert")).toBe(true);
@@ -133,7 +133,7 @@ describe("canvas boot", () => {
 			false,
 		);
 
-		await act(async () => icon?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+		await act(async () => tab?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 		expect(host.querySelector("[data-agent-rail]")).toBe(agent);
 		expect(slot?.hasAttribute("inert")).toBe(false);
 	});

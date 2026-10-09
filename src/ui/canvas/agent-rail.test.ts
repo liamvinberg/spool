@@ -151,11 +151,11 @@ describe("the rail", () => {
 		// pulled far past the ceiling
 		await drag(200);
 		expect(stack(canvas.host)?.style.width).toBe("560px");
-		// pushed under the snap point: the side collapses rather than standing at an
-		// unreadable width, and its toggle is what opens it again
+		// pushed under the snap point: the side closes to its rail rather than standing at an
+		// unreadable width, and its rail icon is what opens it again
 		await drag(1500);
 		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
-		expect(canvas.host.querySelector('[data-pane-toggle="agent"]')?.getAttribute("aria-pressed")).toBe("false");
+		expect(canvas.host.querySelector('[data-side-rail="right"] [data-rail-icon="agent"]')).not.toBeNull();
 	});
 });
 
@@ -2350,7 +2350,7 @@ describe("an ask, anchored", () => {
 			}),
 		);
 		await until(() => options(canvas.host).length > 0);
-		await press(canvas.host.querySelector('[data-pane-toggle="agent"]'));
+		await press(canvas.host.querySelector('[data-side-close="right"]'));
 
 		await until(() => canvas.host.querySelector("[data-agent-canvas-ask]") !== null);
 		const card = () => canvas.host.querySelector("[data-agent-canvas-ask]");

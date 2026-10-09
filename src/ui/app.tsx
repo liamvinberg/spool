@@ -723,7 +723,6 @@ export function App() {
 								project={focusedTab.name}
 								root={focusedTab.root}
 								onChrome={setChrome}
-								onSettings={openSettings}
 								onFolder={() => setPicking("folder")}
 								onRename={(name) => requestRename(focusedTab, name)}
 							/>

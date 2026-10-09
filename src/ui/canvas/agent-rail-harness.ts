@@ -516,16 +516,15 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 				);
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
-			// properties are what the right side shows by default (#359), so a file
-			// about the agent shows the agent alone: ⌥ on its toggle, which is
-			// what every test here starts from
+			// properties are the right side's lit tab by default (#359), so a file
+			// about the agent lights the Agent tab, which is what every test here starts from
 			await act(async () => {
 				await draftsFor("test").ready;
 			});
-			const icon = host.querySelector<HTMLElement>('[data-pane-toggle="agent"]');
-			if (icon !== null && icon.getAttribute("aria-pressed") !== "true") {
+			const tab = host.querySelector<HTMLElement>('[data-pane-tab="agent"]');
+			if (tab !== null && tab.getAttribute("aria-selected") !== "true") {
 				await act(async () => {
-					icon.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
+					tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 				});
 			}
 		},
@@ -534,8 +533,8 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 
 export const rail = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-rail]");
 
-/** the right side's stack, whose width is what the agent is laid out at */
-export const stack = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-side-stack="right"]');
+/** the right side's tabs and panes, whose width is what the agent is laid out at */
+export const stack = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-side-tabs="right"]');
 
 export const field = (host: HTMLElement) => host.querySelector<HTMLTextAreaElement>("textarea");
 
@@ -605,12 +604,15 @@ export const closed: AgentEvent = { kind: "closed", code: 0, parent: null };
 /* ---------- the threads, and what survives a restart (#120, #136, #200, #205) ---------- */
 
 /**
- * The pane's own header, which the chat's title is drawn into in place of the pane's name,
- * beside the + (#364): the title is the switcher.
+ * The plate under the Agent tab, which holds the chat's title (#364, #359): the title is the
+ * switcher, and the tab above already says Agent.
  */
-export const header = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-pane-head="agent"]');
+export const header = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-plate]");
 
-/** the chat's title in the header, which is the press that drops the list */
+/** the agent's verbs in its tab row: the + */
+export const verbs = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-pane-verbs="agent"]');
+
+/** the chat's title on the plate, which is the press that drops the list */
 export const titleButton = (host: HTMLElement) =>
 	header(host)?.querySelector<HTMLElement>("[data-agent-thread-title]") ?? null;
 
@@ -649,9 +651,9 @@ export async function cell(host: HTMLElement, name: string) {
 /** a press on a row, which opens that thread and shuts the list */
 export const openCell = async (host: HTMLElement, name: string) => press(await cell(host, name));
 
-/** the + in the pane's header */
+/** the + in the Agent tab's row */
 export const newThread = async (host: HTMLElement) => {
-	await press(header(host)?.querySelector('button[aria-label="New chat"]'));
+	await press(verbs(host)?.querySelector('button[aria-label="New chat"]'));
 };
 
 /**
@@ -968,12 +970,11 @@ export async function running(canvas: ReturnType<typeof mount>, prompt = "start 
 	await settle();
 }
 
-/** the dot on the agent's toggle, which says another thread has news (#364) */
+/** the dot on the Agent tab, which says another thread has news (#364) */
 export const elsewhere = (host: HTMLElement) =>
 	// a dot on its way out is already gone, fading where it stood
-	host.querySelector(
-		'[data-pane-toggle="agent"] [data-toggle-mark="elsewhere"]:not([data-toggle-mark-state="leaving"])',
-	) !== null;
+	host.querySelector('[data-pane-tab="agent"] [data-pane-mark="elsewhere"]:not([data-pane-mark-state="leaving"])') !==
+	null;
 
 export const lifeOfCell = async (host: HTMLElement, name: string) =>
 	(await cell(host, name))?.getAttribute("data-agent-thread-life");
