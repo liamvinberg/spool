@@ -33,10 +33,10 @@ function project(capture: string): AgentEvent[] {
  * shape spool has no member for costs a blank row.
  */
 const UNMODELLED: Readonly<Record<string, readonly string[]>> = {
-	"claude-turn": ["system/background_tasks_changed"],
-	"claude-plan": ["system/background_tasks_changed"],
+	"claude-turn": [],
+	"claude-plan": [],
 	"claude-edits": [],
-	"claude-fanout": ["system/background_tasks_changed"],
+	"claude-fanout": [],
 	"claude-mcp": ["control_response", "system/hook_response", "system/hook_started"],
 	"claude-interrupt": ["control_response", "system/hook_response", "system/hook_started"],
 	"claude-compact": ["system/hook_response", "system/hook_started", "system/status"],
@@ -192,6 +192,18 @@ describe("what the union carries", () => {
 		expect(delegated.length).toBeGreaterThan(0);
 		expect(delegated.every((event) => event.kind !== "say")).toBe(true);
 		expect(new Set(delegated.map((event) => event.parent)).size).toBe(3);
+	});
+
+	it("carries the whole background set on every change, and its emptying (#365)", () => {
+		const sets = project("claude-background").filter((event) => event.kind === "background");
+
+		expect(sets.map((event) => event.kind === "background" && event.tasks.length)).toEqual([1, 2, 1, 0]);
+		expect(sets[0]?.kind === "background" && sets[0].tasks[0]).toEqual({
+			task: "a333817c7dc56d393",
+			description: "Design hello-calm frame",
+			agent: "designer",
+			type: "local_agent",
+		});
 	});
 
 	it("tells an interrupted turn from a clean one by its terminal reason", () => {

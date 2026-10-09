@@ -1,5 +1,6 @@
 import { isAbsolute, join, relative } from "node:path";
 import type { AgentPermissions } from "../settings/registry";
+import { createBackgroundHold } from "./agent-background";
 import { type CodexAdapter, type CodexItem, callsOf, createCodexAdapter } from "./agent-codex";
 import { type CodexRequestId, type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
 import {
@@ -33,6 +34,13 @@ import type { AgentTurn } from "./agent-turn";
 
 /** the grace an ended turn's process gets to exit on its own, as in `agent-turn.ts` */
 const EXIT_GRACE_MS = 10_000;
+
+/**
+ * How long a turn whose sub-agents have all landed waits before it ends (#365). Codex does
+ * not wake the main thread for a child that finished in the background, so this is only
+ * long enough for a reply already on its way.
+ */
+const SETTLE_MS = 3_000;
 
 export interface CodexTurnOptions {
 	readonly executor: AgentExecutor;
@@ -133,6 +141,20 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	let leaving: ReturnType<typeof setTimeout> | undefined;
 	/** what is waiting on the person, by the id an answer names */
 	const asking = new Map<string, { id: CodexRequestId; event: AgentAsking }>();
+	/** each sub-agent thread's running turn, which a Stop interrupts too (#365) */
+	const children = new Map<string, string>();
+	/**
+	 * The turn lasts until the sub-agents it spawned have finished, not until the main
+	 * thread's turn completes (#365): Codex completes the parent's turn while a child it
+	 * did not wait for runs on.
+	 */
+	const background = createBackgroundHold({
+		settleMs: SETTLE_MS,
+		onSettled: (ending) => {
+			push(ending);
+			if (proc !== undefined) end(proc);
+		},
+	});
 
 	function push(event: AgentEvent): void {
 		if (finished) return;
@@ -155,6 +177,18 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 			sent += 1;
 			rpc.request("turn/interrupt", { threadId: adapter.main, turnId: turn }).catch(() => {});
 		}
+		if (interrupts > 0) {
+			// a stop ends the sub-agents the turn started as well
+			for (const task of background.running()) {
+				const child = children.get(task);
+				if (child !== undefined) rpc.request("turn/interrupt", { threadId: task, turnId: child }).catch(() => {});
+			}
+			const held = background.stop();
+			if (held !== undefined && proc !== undefined) {
+				push(held);
+				end(proc);
+			}
+		}
 	}
 
 	/** the turn is over: no more input, and the process is left to go */
@@ -162,6 +196,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		if (ended) return;
 		ended = true;
 		asking.clear();
+		background.close();
 		target.end();
 		leaving ??= setTimeout(() => target.kill(), EXIT_GRACE_MS);
 		leaving.unref?.();
@@ -337,9 +372,17 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 				turn ??= wire.turn.id;
 				interruptSent();
 			}
+			if (
+				method === "turn/started" &&
+				typeof wire.threadId === "string" &&
+				wire.threadId !== adapter.main &&
+				typeof wire.turn?.id === "string"
+			)
+				children.set(wire.threadId, wire.turn.id);
 			for (const event of adapter.read(method, params)) {
-				push(event);
-				if (event.kind === "ended" && event.parent === null) end(started);
+				const read = background.read(event);
+				for (const one of read.events) push(one);
+				if (read.over) end(started);
 			}
 		});
 		started.onLine((line) => target.read(line));
@@ -389,6 +432,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		},
 		abandon: () => {
 			stopped = true;
+			background.close();
 			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
 			rpc?.close("The turn was given up.");

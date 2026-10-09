@@ -140,6 +140,8 @@ interface WireLine {
 	readonly last_tool_name?: string;
 	readonly usage?: { readonly total_tokens?: number; readonly tool_uses?: number; readonly duration_ms?: number };
 	readonly patch?: { readonly status?: string };
+	readonly tasks?: readonly WireLine[];
+	readonly task_type?: string;
 	readonly summary?: string;
 	readonly is_error?: boolean;
 	readonly terminal_reason?: string;
@@ -292,6 +294,20 @@ export function createClaudeAdapter() {
 						task: string(wire.task_id) ?? "",
 						status: string(wire.patch?.status) ?? null,
 						summary: null,
+						...base,
+					},
+				];
+			// the whole set of what still runs in the background, said on every change (#365)
+			case "background_tasks_changed":
+				return [
+					{
+						kind: "background",
+						tasks: (wire.tasks ?? []).map((one) => ({
+							task: string(one?.task_id) ?? "",
+							description: string(one?.description) ?? null,
+							agent: string(one?.subagent_type) ?? null,
+							type: string(one?.task_type) ?? null,
+						})),
 						...base,
 					},
 				];

@@ -404,7 +404,8 @@ describe("one turn over the wire", () => {
 	it("closes stdin when the result lands rather than killing the process", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
-		const agent = replayAgentExecutor("claude-fanout");
+		// the last result, after the background designers have landed (#365)
+		const agent = replayAgentExecutor("claude-background");
 		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
 
 		await drainTurn(await startTurn(name, app));
@@ -424,12 +425,12 @@ describe("one turn over the wire", () => {
 	it("takes a binary still up long after its own ending, and lets the thread go", async () => {
 		vi.useFakeTimers();
 		// the whole capture, ending and all, from a process that then never exits
-		const agent = fixtureAgentExecutor((proc) => proc.replay(readCapture("claude-fanout")));
+		const agent = fixtureAgentExecutor((proc) => proc.replay(readCapture("claude-background")));
 		const turn = startAgentTurn({
 			executor: agent.executor,
 			root: "/tmp/product",
 			content: [],
-			session: { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false },
+			session: { id: "6b5c1d2e-1111-4222-8333-444455556665", resume: false },
 		});
 		const seen: AgentEvent[] = [];
 		const reading = (async () => {
