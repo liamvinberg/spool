@@ -16,10 +16,10 @@ import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
 import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
-import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
+import { type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
 import { SeedParagraphs, SeedSurface } from "./agent-seed";
 import { Lightbox, Shot } from "./agent-shot";
-import type { TurnPhase } from "./agent-stream";
+import type { AgentTurn, TurnPhase } from "./agent-stream";
 import { type Life, type Thread, UNSAID } from "./agent-threads";
 import {
 	type AgentEntry,
@@ -213,41 +213,26 @@ export function AgentRail({
 	legacy = false,
 	width,
 	permissions,
-	entries,
-	plan,
-	phase,
-	elapsed,
+	turn,
 	jump,
 	pointing,
 	threads,
 	install,
 	login,
-	queued,
-	handback,
 	request,
-	draft,
-	onDraft,
-	attached,
-	onAttach,
-	running,
 	model,
-	limit,
-	context = null,
 	preferred,
-	onSend,
-	onQueue,
-	onUnqueue,
-	onStop,
-	onAnswer,
 }: {
 	/** the pane's settled width (`pane-window.tsx`), which the composer measures its chip strip against */
 	width: number;
 	permissions?: PermissionDeck | undefined;
-	entries: readonly AgentEntry[];
-	/** the plan, off the log and onto the shelf; absent until the turn writes one */
-	plan: AgentPlan | null;
-	phase: TurnPhase;
-	elapsed: number;
+	/**
+	 * The open thread's turn, whole (#117, #170, #234): its log, its plan and phase, the
+	 * queue and the box's draft, the usage window and context, and the doors that send,
+	 * queue, stop and answer. It arrives as one object from `useAgentStream` and is read
+	 * here as one, rather than copied over prop by prop.
+	 */
+	turn: AgentTurn;
 	jump: FrameJump;
 	pointing: Pointing;
 	/** every conversation this project has, newest first (#136, #200) */
@@ -256,49 +241,37 @@ export function AgentRail({
 	install: InstallDeck;
 	/** the agent would not start because nobody is signed in, and the way out (#201) */
 	login: LoginDeck;
-	/** what spool is holding until this turn ends, in the order it will fire (#170) */
-	queued: readonly AgentQueued[];
-	/** whatever left the queue un-fired, for the box below to take back (#170) */
-	handback: AgentHandback;
 	request?: AgentRequest | undefined;
 	active?: boolean;
 	/** the machine's agent choice has loaded: until then no engine, model or mode is drawn (#361) */
 	agentReady?: boolean;
 	/** the open thread was the removed bundled engine's, which nothing continues (#363) */
 	legacy?: boolean;
-	/** what this thread was left holding and nobody sent, off its own picture (#234) */
-	draft: string;
-	attached: readonly Attachment[];
-	onAttach: (images: readonly Attachment[], thread?: string) => Promise<void>;
-	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
-	onDraft: (text: string, thread?: string) => void;
-	/**
-	 * Whether a turn is in flight right now, asked rather than rendered (#234).
-	 *
-	 * Enter means one of three things and the turn is what decides between two of them, so
-	 * the press asks the turn at the instant of the press: the window between a stream
-	 * closing and the rail drawing that is exactly where a message was taken for a turn
-	 * that had already ended.
-	 */
-	running: () => boolean;
 	/** which machine is answering, and the list the binary offered instead (#118, #199) */
 	model: AgentModelDeck;
-	/** the usage window, absent until the binary warns, which is most of a session (#122) */
-	limit: AgentLimit | null;
-	/** how full the open thread's window was after its last request, as a share (#364) */
-	context?: number | null;
 	/** the machine's usual agent: what a chat's row and the model trigger leave unsaid (#364) */
 	preferred?: AgentEngineId | null | undefined;
-	/** it says whether the words were taken, and the box only empties on a yes (#234) */
-	onSend: (text: string, sent: AgentSent) => boolean;
-	/** Enter against a running turn: the words are taken and held rather than sent */
-	onQueue: (text: string, sent: AgentSent) => boolean;
-	onUnqueue: (id: string) => void;
-	/** the Stop button in the footer */
-	onStop: () => void;
-	/** what the person said to a waiting request, on its own way back up (#145) */
-	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
+	const {
+		entries,
+		plan,
+		phase,
+		elapsed,
+		queued,
+		handback,
+		draft,
+		onDraft,
+		attached,
+		onAttach,
+		running,
+		limit,
+		context,
+		send: onSend,
+		queue: onQueue,
+		unqueue: onUnqueue,
+		stop: onStop,
+		answer: onAnswer,
+	} = turn;
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
 	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | null>(null);
