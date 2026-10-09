@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef } from "react";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
-import { idle, nextChange, type PresenceRoom, speaking, springStep, type Teammate } from "./presence";
+import { agentSays, idle, nextChange, type PresenceRoom, speaking, springStep, type Teammate } from "./presence";
 
 /**
  * Teammates on this page of a team canvas (DEV-196): each one's pointer in their colour with their name in a
@@ -246,6 +246,7 @@ function Cursor({
 				? hand
 				: { x: hand.x + (home.x - hand.x) * dock, y: hand.y + (home.y - hand.y) * dock - lift };
 	const grabbing = state.pressed && state.dragging.length > 0;
+	const says = agentSays(mate);
 	// out on the canvas the pill speaks and goes quiet; docked it stays, and dims when idle
 	const said = slot !== undefined ? (resting ? 0.45 : 1) : !resting && speaking(mate, now) ? 1 : 0;
 	const ink = gone ? 0 : resting ? IDLE_INK : 1;
@@ -282,6 +283,12 @@ function Cursor({
 					}}
 				>
 					{person.name}
+					{/* out on the canvas, what their agent is doing rides beside their name (#378) */}
+					{slot === undefined && says !== null ? (
+						<span data-presence-agent="" className="opacity-70">
+							&nbsp;· {says}
+						</span>
+					) : null}
 				</span>
 			)}
 		</div>

@@ -211,7 +211,7 @@ import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } fr
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
-import { TeammatePlaceholder, teammateOf } from "./teammate-agents";
+import { TeammateCompanions, TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
@@ -5992,6 +5992,8 @@ export function ProjectCanvas({
 								marks={locatedMarks}
 								footed={askFooted}
 							/>
+							{/* teammates' agents at these frames, each in their colour (#378) */}
+							{team && <TeammateCompanions room={presenceRoom} camera={camera} frames={visibleFrames} />}
 							{(() => {
 								// under its frame, or under its placeholder while the frame is not there yet,
 								// and only on the page showing it (#376)

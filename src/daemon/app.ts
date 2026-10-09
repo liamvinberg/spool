@@ -38,6 +38,7 @@ import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { Look } from "./agent-preflight";
+import { createAgentPresence } from "./agent-presence";
 import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { CanvasFileError } from "./canvas-file";
@@ -954,6 +955,8 @@ export function createDaemonApp({
 		onSyncChanged: (root) => emitAppEvent({ kind: "sync", root, paused: teamSync.state(root).paused }),
 	});
 	teamSync.keeping(registeredRoots());
+	// what this machine's agent is doing on a team project, said to the team with its person's presence (#378)
+	const agentPresence = createAgentPresence({ publish: (root, agent) => teamSync.copy(root)?.agent(agent) });
 	// DEV-190: a project a teammate moved into the team arrives here with the move commit's pull, and is refilled
 	const movedIn = watchForMoves({
 		refill: async (root) => {
@@ -2610,6 +2613,7 @@ export function createDaemonApp({
 					mode,
 					...(named === undefined ? {} : { id: named }),
 				});
+				if (team) agentPresence.follow(held);
 				return attachTurn(c, held, 0);
 			},
 		)

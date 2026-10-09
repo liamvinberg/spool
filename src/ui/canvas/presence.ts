@@ -92,10 +92,12 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 				was.state.pressed !== state.pressed ||
 				was.state.pointer?.x !== state.pointer?.x ||
 				was.state.pointer?.y !== state.pointer?.y;
+			// their agent at work is not them at work: only their own moves keep them from going idle (#378)
+			const agentOnly = !gone && agentAlone(was.state, state);
 			people.set(person.accountId, {
 				person,
 				state,
-				active: at,
+				active: agentOnly ? was.active : at,
 				moved: moved ? at : was.moved,
 				entered: !gone && was.state.inside === state.inside ? was.entered : at,
 				left: null,
@@ -114,6 +116,13 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 			return () => listeners.delete(listener);
 		},
 	};
+}
+
+/** the one thing that changed between two states is what their agent is doing */
+function agentAlone(was: PresenceState, now: PresenceState): boolean {
+	const { agent: before, ...one } = was;
+	const { agent: after, ...other } = now;
+	return JSON.stringify(before) !== JSON.stringify(after) && JSON.stringify(one) === JSON.stringify(other);
 }
 
 /** Their name is said: they're moving or pressing, or stopped less than `PILL_HOLD_MS` ago. */
@@ -137,6 +146,14 @@ export function nextChange(mates: readonly Teammate[], now: number): number | un
 		consider(mate.active + IDLE_MS);
 	}
 	return next;
+}
+
+/** What their agent is doing, in a few words, while a turn of theirs runs on this project (#378); null otherwise. */
+export function agentSays(mate: Teammate): string | null {
+	const agent = mate.state.agent;
+	if (agent === undefined) return null;
+	if (!agent.running) return "agent waiting";
+	return agent.status ?? "agent working";
 }
 
 /** "idle · 4m": how long someone has been idle, said the way the who's-here list says it. */
