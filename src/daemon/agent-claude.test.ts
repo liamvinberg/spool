@@ -194,6 +194,26 @@ describe("what the union carries", () => {
 		expect(new Set(delegated.map((event) => event.parent)).size).toBe(3);
 	});
 
+	it("names what kind of task each one is, so a background shell is told from a designer (#365)", () => {
+		const started = project("claude-background").filter((event) => event.kind === "task-started");
+		expect(started.map((event) => event.kind === "task-started" && event.type)).toEqual([
+			"local_agent",
+			"local_agent",
+		]);
+		const shell = createClaudeAdapter().read(
+			JSON.stringify({
+				type: "system",
+				subtype: "task_started",
+				task_id: "bxyz",
+				task_type: "local_bash",
+				tool_use_id: "toolu_shell",
+				description: "pnpm dev",
+				session_id: "s",
+			}),
+		);
+		expect(shell).toMatchObject([{ kind: "task-started", task: "bxyz", type: "local_bash" }]);
+	});
+
 	it("carries the whole background set on every change, and its emptying (#365)", () => {
 		const sets = project("claude-background").filter((event) => event.kind === "background");
 

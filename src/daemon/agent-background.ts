@@ -42,6 +42,11 @@ export interface BackgroundHoldOptions {
 
 const AGENT_TYPES = /agent/i;
 
+/** a task holds the turn when it is an agent's: unnamed is an agent, as the engines without the word only run agents */
+function holds(type: string | null | undefined): boolean {
+	return type === undefined || type === null || AGENT_TYPES.test(type);
+}
+
 export function createBackgroundHold({ settleMs, onSettled }: BackgroundHoldOptions): BackgroundHold {
 	const tasks = new Set<string>();
 	let held: AgentEnded | undefined;
@@ -75,6 +80,7 @@ export function createBackgroundHold({ settleMs, onSettled }: BackgroundHoldOpti
 	return {
 		read(event) {
 			if (event.kind === "task-started") {
+				if (!holds(event.type)) return { events: [event], over: false };
 				tasks.add(event.task);
 				quiet();
 				return { events: [event], over: false };
@@ -88,7 +94,7 @@ export function createBackgroundHold({ settleMs, onSettled }: BackgroundHoldOpti
 				const before = tasks.size;
 				tasks.clear();
 				for (const one of event.tasks) {
-					if (one.task !== "" && (one.type === null || AGENT_TYPES.test(one.type))) tasks.add(one.task);
+					if (one.task !== "" && holds(one.type)) tasks.add(one.task);
 				}
 				const after = before > 0 && tasks.size === 0 ? drained() : { events: [], over: false };
 				return { events: [event, ...after.events], over: after.over };

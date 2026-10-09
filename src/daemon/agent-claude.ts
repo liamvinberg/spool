@@ -270,6 +270,7 @@ export function createClaudeAdapter() {
 						description: string(wire.description) ?? null,
 						agent: string(wire.subagent_type) ?? null,
 						prompt: string(wire.prompt) ?? null,
+						...some("type", string(wire.task_type)),
 						...base,
 					},
 				];

@@ -200,6 +200,78 @@ describe("a turn with designers in the background", () => {
 	});
 });
 
+describe("a turn with a shell in the background", () => {
+	it("ends on the agent's answer while the shell runs on", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		const res = await startTurn(name, app);
+		await until(() => agent.spawned.length === 1);
+		const proc = agent.spawned[0] as FakeAgentProc;
+		const seen: AgentEvent[] = [];
+		const reading = (async () => {
+			const events = agentReader(res);
+			for (;;) {
+				const next = await events.next(15_000);
+				seen.push(next.data as AgentEvent);
+				if ((next.data as AgentEvent).kind === "closed") return;
+			}
+		})();
+		// claude-background.json's shape, for a `run_in_background` Bash rather than a designer:
+		// the set changes, then the task starts, then the agent answers
+		const shell = { task_id: "b7k2q9", task_type: "local_bash", description: "pnpm dev" };
+		for (const line of [
+			{ type: "system", subtype: "init", session_id: THREAD, cwd: root },
+			{
+				type: "assistant",
+				parent_tool_use_id: null,
+				session_id: THREAD,
+				message: {
+					id: "m1",
+					role: "assistant",
+					content: [
+						{
+							type: "tool_use",
+							id: "toolu_shell",
+							name: "Bash",
+							input: { command: "pnpm dev", run_in_background: true },
+						},
+					],
+				},
+			},
+			{ type: "system", subtype: "background_tasks_changed", tasks: [shell], session_id: THREAD },
+			{ type: "system", subtype: "task_started", ...shell, tool_use_id: "toolu_shell", session_id: THREAD },
+			{
+				type: "user",
+				parent_tool_use_id: null,
+				session_id: THREAD,
+				message: {
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "toolu_shell",
+							content: "Command running in background with ID: b7k2q9",
+						},
+					],
+				},
+			},
+			{ type: "result", subtype: "success", is_error: false, result: "The dev server is up.", session_id: THREAD },
+		])
+			proc.emit(JSON.stringify(line));
+
+		await until(() => seen.some((event) => event.kind === "ended"));
+		expect(seen.some((event) => event.kind === "holding")).toBe(false);
+		expect(seen.find((event) => event.kind === "ended")).toMatchObject({ ending: "done" });
+		// stdin closed on the answer: the shell is the agent's to leave running
+		expect(proc.ended).toBe(true);
+		proc.exit(0);
+		await reading;
+	});
+});
+
 describe("the hold", () => {
 	const ended = { kind: "ended", ending: "done", parent: null } as unknown as AgentEvent;
 
@@ -212,6 +284,22 @@ describe("the hold", () => {
 				parent: null,
 			}).over,
 		).toBe(false);
+		expect(hold.read(ended).over).toBe(true);
+	});
+
+	it("never counts a background shell that starts after the set names it", () => {
+		const hold = createBackgroundHold({ settleMs: 0, onSettled: () => {} });
+		hold.read({
+			kind: "task-started",
+			task: "b1",
+			call: "x",
+			description: "pnpm dev",
+			agent: null,
+			prompt: null,
+			type: "local_bash",
+			parent: null,
+		});
+		expect(hold.running()).toEqual([]);
 		expect(hold.read(ended).over).toBe(true);
 	});
 

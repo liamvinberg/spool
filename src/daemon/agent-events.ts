@@ -271,6 +271,11 @@ export interface AgentTaskStarted extends AgentEventBase {
 	readonly description: string | null;
 	readonly agent: string | null;
 	readonly prompt: string | null;
+	/**
+	 * The engine's own word for what kind of task it is: `local_agent`, `local_bash`.
+	 * Absent where the engine names none, which is an engine whose only tasks are agents.
+	 */
+	readonly type?: string;
 }
 
 /** A live one-line step: a snapshot, never a log entry, so it replaces rather than appends. */
