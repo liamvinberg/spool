@@ -497,11 +497,14 @@ export function witnessFrames(
 	}
 
 	/**
-	 * A designer wrote a sidecar stating a size and no place into its placeholder. Before
-	 * its source, the placeholder keeps its place and its record at the size the designer
-	 * gave. After, the frame that landed there keeps the place it landed at, and stands
-	 * beside the field only when the new size would cover a neighbour, as at landing:
-	 * never moved off as a new frame would be.
+	 * A designer wrote its placeholder's sidecar, a size alone or a whole place: the size is
+	 * the designer's and the place stays the daemon's. Before its source, the placeholder
+	 * keeps its place and its record (title, brief, since, whose) at the designer's size,
+	 * whatever shape the designer wrote, so a teammate reading the file still reads a
+	 * placeholder (#378). After, a size alone moves nothing: the frame that landed there
+	 * keeps the place it landed at. Either way it stands beside the field only when the new
+	 * size would cover a neighbour, as at landing, never moved off as a new frame would be.
+	 * Its own write heard back finds the bytes it wanted and writes nothing.
 	 */
 	function keep(frame: string): void {
 		if (designDir === undefined) return;
@@ -515,19 +518,27 @@ export function witnessFrames(
 			const file = resolveDesignPath(designDir, join(dir, "frame.json"));
 			const landed = existsSync(join(dir, "frame.tsx"));
 			if (landed !== (spot.state === "filled")) return;
-			const sidecar = parseSidecar(JSON.parse(readFileSync(file, "utf8")));
-			if (sidecar.kind !== "sized") return;
-			let at: Rect = { x: spot.x, y: spot.y, ...sidecar.footprint };
-			if (!landed) {
-				writeFileSync(file, placeholderBytes(at, note));
-				return;
-			}
+			const was = readFileSync(file, "utf8");
+			const sidecar = parseSidecar(JSON.parse(was));
+			// a frame that landed owns its place; a placeholder never gives its up
+			const size =
+				sidecar.kind === "sized"
+					? sidecar.footprint
+					: !landed && sidecar.kind === "placed"
+						? sidecar.geometry
+						: null;
+			if (size === null) return;
+			let at: Rect = { x: spot.x, y: spot.y, w: size.w, h: size.h };
 			if (at.w > spot.w || at.h > spot.h) {
 				const inSpot = at;
-				const field = pageField(listProjectFrames(root), pageParent(frame), frame);
+				const field = pageField(listProjectFrames(root), pageParent(frame), frame, spot.name);
 				if (field.some((other) => overlaps(inSpot, other))) at = { ...besideField(field), w: at.w, h: at.h };
 			}
-			writeGeometry(file, at, designDir);
+			if (landed) writeGeometry(file, at, designDir);
+			else {
+				const bytes = placeholderBytes(at, note);
+				if (bytes !== was) writeFileSync(file, bytes);
+			}
 			reserved.set(spot.task, { ...spot, ...at });
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
