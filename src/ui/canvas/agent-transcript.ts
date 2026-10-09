@@ -242,6 +242,8 @@ export interface AgentTile {
 	readonly range: { readonly from: number; readonly to: number } | null;
 	/** how long the designer that made it took, once it has landed */
 	readonly took: number | null;
+	/** the delegating call of the designer that made it, which is who its asks come from (#366) */
+	readonly agent?: string;
 	readonly source?: string;
 	readonly sidecar?: string;
 }
@@ -380,6 +382,8 @@ export type AgentEntry =
 			/** what an approval would let through: the tool, and its path or command */
 			readonly tool?: string | null;
 			readonly detail?: string | null;
+			/** the answer was the person's own words rather than a pick */
+			readonly said?: boolean;
 			/** the agent's own sentence: its written description, or its question so far */
 			readonly asked: string | null;
 			/** its questions and their options, once the whole call has landed */
@@ -571,6 +575,7 @@ interface Ask {
 	agent: string;
 	tool: string | null;
 	detail: string | null;
+	said: boolean;
 	asked: string | null;
 	questions: readonly AskQuestion[];
 	always: boolean;
@@ -1022,6 +1027,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			agent: "",
 			tool: null,
 			detail: null,
+			said: false,
 			asked: null,
 			questions: [],
 			always: false,
@@ -1312,6 +1318,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 								? "denied"
 								: "answered";
 				ask.words = event.words;
+				ask.said = event.answer === "said";
 				break;
 			}
 			case "result": {
@@ -1725,7 +1732,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const foot: AgentTurnFoot = {
 		key: "turn",
 		kind: "turn",
-		tiles: [...tiles.values()].map(({ call: _call, task: _task, ...tile }) => tile),
+		tiles: [...tiles.values()].map(({ call: _call, task, ...tile }) => {
+			const agent = task === null ? undefined : taskCalls.get(task);
+			return agent === undefined ? tile : { ...tile, agent };
+		}),
 		status: over ? null : statusOf(),
 		thinking: !over && outstanding !== null,
 		ms: over ? last : null,

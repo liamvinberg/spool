@@ -62,6 +62,8 @@ import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
+import { type AskEntry, waitingAsk } from "./agent-ask-view";
+import { CanvasAsk } from "./agent-canvas-ask";
 import { AgentCompanionLayer } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
@@ -1331,6 +1333,16 @@ export function ProjectCanvas({
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	const askFooted = !railShown && turn.phase === "asking";
+	/** the ask that stands on the canvas, and the frame it hangs from: none where it is about no frame */
+	const footedAsk = useMemo(() => {
+		if (!askFooted) return null;
+		const entry = turn.entries.find(
+			(one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null,
+		);
+		if (entry === undefined) return null;
+		const by = companions.find((one) => one.key === (entry.agent ?? "") && one.frame !== null);
+		return by?.frame == null ? null : { entry, frame: by.frame };
+	}, [askFooted, turn.entries, companions]);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -5890,6 +5902,19 @@ export function ProjectCanvas({
 								marks={handMarks}
 								footed={askFooted}
 							/>
+							{(() => {
+								const at =
+									footedAsk === null ? undefined : visibleFrames.find((one) => one.name === footedAsk.frame);
+								return footedAsk === null || at === undefined ? null : (
+									<CanvasAsk
+										key={footedAsk.entry.key}
+										camera={camera}
+										frame={at}
+										entry={footedAsk.entry}
+										onAnswer={turn.answer}
+									/>
+								);
+							})()}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
 								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />

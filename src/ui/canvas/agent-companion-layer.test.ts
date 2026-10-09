@@ -33,15 +33,20 @@ const companion = (over: Partial<AgentCompanion> = {}): AgentCompanion => ({
 	...over,
 });
 
-/** a clock that runs every queued frame as far ahead as it is told, so a motion lands */
-function cameraAt(camera: Camera): CameraStore {
-	let now = 0;
-	vi.spyOn(performance, "now").mockImplementation(() => now);
-	vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+/** display frames, run by hand: each a long way after the last, so every motion lands */
+let frames: FrameRequestCallback[] = [];
+let now = 0;
+function flush() {
+	for (let round = 0; round < 50 && frames.length > 0; round += 1) {
 		now += 5000;
-		callback(now);
-		return 1;
-	});
+		for (const callback of frames.splice(0)) callback(now);
+	}
+}
+
+function cameraAt(camera: Camera): CameraStore {
+	frames = [];
+	vi.spyOn(performance, "now").mockImplementation(() => now);
+	vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
 	vi.stubGlobal("cancelAnimationFrame", () => {});
 	onTestFinished(() => {
 		vi.unstubAllGlobals();
@@ -49,6 +54,7 @@ function cameraAt(camera: Camera): CameraStore {
 	});
 	const store = createCameraStore();
 	store.set(camera);
+	flush();
 	return store;
 }
 
@@ -60,10 +66,18 @@ function draw(props: CompanionLayerProps): { host: HTMLElement; again: (over: Pa
 		act(() => root.unmount());
 		host.remove();
 	});
-	act(() => root.render(createElement(AgentCompanionLayer, props)));
+	act(() => {
+		root.render(createElement(AgentCompanionLayer, props));
+	});
+	act(flush);
 	return {
 		host,
-		again: (over) => act(() => root.render(createElement(AgentCompanionLayer, { ...props, ...over }))),
+		again: (over) => {
+			act(() => {
+				root.render(createElement(AgentCompanionLayer, { ...props, ...over }));
+			});
+			act(flush);
+		},
 	};
 }
 
@@ -183,6 +197,7 @@ describe("the agent's companions on the canvas", () => {
 		const camera = cameraAt(CAMERA);
 		const { host } = draw({ camera, frames: FRAMES, companions: [companion()], marks: [], footed: false });
 		act(() => camera.set({ x: -40, y: 30, k: 2 }));
+		act(flush);
 		expect(centre(host)).toEqual({ x: 955, y: 212 });
 	});
 

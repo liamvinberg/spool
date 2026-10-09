@@ -105,6 +105,34 @@ describe("the agent's companions", () => {
 		expect(companionsOf(at([...events, answered]))[0]?.act).toBe("idle");
 	});
 
+	it("stays the waiting ring when a write catches up behind the ask, until the asked call is over", () => {
+		const events: AgentEvent[] = [
+			ready,
+			{ kind: "frame", change: "created", frame: "home", lines: 40, call: "c1", task: null, parent: null },
+			{
+				kind: "asking",
+				request: "r",
+				call: "b1",
+				tool: "Bash",
+				display: null,
+				input: { command: "npm install dayjs" },
+				description: null,
+				interaction: false,
+				suggestions: [],
+				parent: null,
+			},
+			// the watcher's word on an earlier write, landing after the ask
+			{ kind: "frame", change: "changed", frame: "home", lines: 41, call: null, task: null, parent: null },
+		];
+		expect(companionsOf(at(events))[0]?.act).toBe("ask");
+		// and an agent that asked before any frame of its own had landed waits at the one that does
+		const first = companionsOf(at([ready, ...events.slice(2)]))[0];
+		expect(first?.act).toBe("ask");
+		expect(first?.frame).toBe("home");
+		const over: AgentEvent = { kind: "result", id: "b1", failed: true, text: "", images: [], parent: null };
+		expect(companionsOf(at([...events, over]))[0]?.act).toBe("idle");
+	});
+
 	it("gives each designer its own square, named by its take, and lets it go when it reports back", () => {
 		const started = (task: string, call: string, description: string): AgentEvent => ({
 			kind: "task-started",

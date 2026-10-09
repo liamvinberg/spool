@@ -12,7 +12,7 @@ import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api
 import { draftsFor } from "./agent-drafts";
 import { chunksOf, drawnText } from "./agent-markdown";
 import { engineModes } from "./agent-model";
-import { type FrameJump, followTo, sameEntry, windStrength } from "./agent-rail";
+import { type FrameJump, followTo, sameEntry, turnLayout, windStrength } from "./agent-rail";
 import type { AgentEntry } from "./agent-transcript";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
@@ -2796,7 +2796,7 @@ describe("a question in the log", () => {
 
 		// the field is the path the tool prefers: it tests a typed sentence before the
 		// picked ones and tells the agent to follow what the person actually said
-		expect(field(canvas.host)?.placeholder).toBe("Or say it in your own words");
+		expect(field(canvas.host)?.placeholder).toBe("Or type your own answer");
 		await send(canvas.host, "neither, leave my install alone");
 
 		expect(canvas.turn.answers.at(-1)).toEqual({
@@ -2817,7 +2817,7 @@ describe("a question in the log", () => {
 
 		const dismiss = canvas.host.querySelector<HTMLButtonElement>("[data-agent-dismiss]");
 		// one word, and nothing else in it: it means one thing
-		expect(dismiss?.textContent).toBe("dismiss");
+		expect(dismiss?.textContent).toBe("Dismiss");
 		await act(async () => dismiss?.click());
 
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-q", reply: { kind: "deny" } });
@@ -2873,6 +2873,312 @@ describe("a question in the log", () => {
 	});
 });
 
+/**
+ * An ask opens out of what it concerns (#366): an approval and a question about no frame
+ * out of the turn's line, a question whose options name the turn's frames out of its grid,
+ * a designer's ask out of its own tile, and every one folds to one quiet line once answered.
+ */
+describe("an ask, anchored", () => {
+	const asking = (over: Partial<Extract<AgentEvent, { kind: "asking" }>>): AgentEvent => ({
+		kind: "asking",
+		request: "req-1",
+		call: "c1",
+		tool: "Edit",
+		display: "Edit",
+		input: { file_path: "/p/src/theme.ts" },
+		description: "Moving the new roast colours into the app's theme so the real app matches.",
+		interaction: false,
+		suggestions: [
+			{ type: "addRules", rules: [{ toolName: "Edit" }], behavior: "allow", destination: "localSettings" },
+		],
+		parent: null,
+		...over,
+	});
+	const ready: AgentEvent = {
+		kind: "ready",
+		session: "s",
+		model: null,
+		cwd: "/p",
+		version: null,
+		permissionMode: null,
+		apiKeySource: null,
+		capabilities: [],
+		parent: null,
+	};
+	const landed = (frame: string, task: string | null = null, parent: string | null = null): AgentEvent => ({
+		kind: "frame",
+		change: "created",
+		frame,
+		lines: 40,
+		call: null,
+		task,
+		parent,
+	});
+	const options = (host: HTMLElement) =>
+		[...host.querySelectorAll("[data-agent-option]")].map((option) => option.getAttribute("data-agent-option"));
+	const look = (host: HTMLElement) => host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask-look");
+
+	it("opens an approval out of the turn's line, its reason first and what it lets through behind a disclosure", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "carry the colours into the app");
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "called",
+			id: "c1",
+			tool: "Edit",
+			input: { file_path: "/p/src/theme.ts" },
+			parent: null,
+		});
+		canvas.turn.push(asking({}));
+		await until(() => options(canvas.host).length > 0);
+
+		expect(look(canvas.host)).toBe("line");
+		const status = canvas.host.querySelector('[data-agent-status="waiting"]');
+		expect(status?.textContent).toContain("Waiting on you");
+		const block = canvas.host.querySelector<HTMLElement>("[data-agent-ask]");
+		expect(block?.textContent).toContain("Moving the new roast colours");
+		// the path is there, one press down, and not in the reader's way
+		const disclosure = canvas.host.querySelector<HTMLButtonElement>("[data-agent-ask-detail]");
+		expect(disclosure?.textContent).toContain("Edit a file outside design/");
+		expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
+		await act(async () => disclosure?.click());
+		expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+		expect(block?.textContent).toContain("src/theme.ts");
+		// three answers of one weight, and Enter answers none of them
+		expect(options(canvas.host)).toEqual(["Allow", "Allow for this chat", "Deny"]);
+
+		const allow = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="Allow"]');
+		await act(async () => allow?.click());
+		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-1", reply: { kind: "allow" } });
+		canvas.turn.push({ kind: "answered", request: "req-1", answer: "allow", words: null, parent: null });
+		await until(() => look(canvas.host) === "folded");
+
+		// folded to one quiet line, and the line is the turn's own again
+		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe("Allowed: edit src/theme.ts");
+		expect(canvas.host.querySelector('[data-agent-status="waiting"]')).toBeNull();
+	});
+
+	it("folds a deny and an always the same quiet way", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "carry the colours into the app");
+		canvas.turn.push(ready);
+		canvas.turn.push(asking({ tool: "Bash", input: { command: "npm install @fontsource/fraunces" } }));
+		await until(() => options(canvas.host).length > 0);
+		canvas.turn.push({ kind: "answered", request: "req-1", answer: "always", words: null, parent: null });
+		await until(() => look(canvas.host) === "folded");
+		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe(
+			"Allowed for this chat: run npm install @fontsource/fraunces",
+		);
+	});
+
+	it("turns the grid into the choice when the options name the turn's frames", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "make five directions");
+		canvas.turn.push(ready);
+		for (const frame of ["home", "home--calm", "home--dense", "home--timeline"]) canvas.turn.push(landed(frame));
+		const question = {
+			question: "Which direction should I take further?",
+			header: "Direction",
+			multiSelect: false,
+			options: [
+				{ label: "Calm", description: "No boxes, Fraunces headings, hairline rules." },
+				{ label: "Dense", description: "Three aligned tables with every lot." },
+				{ label: "Timeline", description: "The day as two roaster lanes." },
+			],
+		};
+		canvas.turn.push({
+			kind: "called",
+			id: "q1",
+			tool: "AskUserQuestion",
+			input: { questions: [question] },
+			parent: null,
+		});
+		canvas.turn.push(
+			asking({
+				request: "req-q",
+				call: "q1",
+				tool: "AskUserQuestion",
+				display: "AskUserQuestion",
+				input: { questions: [question] },
+				description: null,
+				interaction: true,
+				suggestions: [],
+			}),
+		);
+		await until(() => options(canvas.host).length === 3);
+
+		expect(look(canvas.host)).toBe("grid");
+		// every named picture carries its option, and the frame no option names steps back
+		const picture = canvas.host.querySelector('[data-agent-option="Timeline"]');
+		expect(picture?.getAttribute("data-agent-tile")).toBe("home--timeline");
+		expect(picture?.textContent).toContain("3");
+		expect(picture?.textContent).toContain("The day as two roaster lanes.");
+		expect(canvas.host.querySelector('[data-agent-tile="home"]')?.hasAttribute("data-agent-tile-aside")).toBe(true);
+		expect(canvas.host.querySelector('[data-agent-status="waiting"]')?.textContent).toContain(
+			"Which direction should I take further?",
+		);
+
+		await act(async () => (picture as HTMLButtonElement | null)?.click());
+		expect(canvas.turn.answers.at(-1)).toEqual({
+			request: "req-q",
+			reply: { kind: "picked", picks: { "Which direction should I take further?": "Timeline" } },
+		});
+		canvas.turn.push({ kind: "answered", request: "req-q", answer: "picked", words: "Timeline", parent: null });
+		await until(() => look(canvas.host) === "folded");
+		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe("You picked Timeline");
+	});
+
+	it("ticks a question that takes several and sends what is ticked", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "new header");
+		canvas.turn.push(ready);
+		const question = {
+			question: "Which screens should get the new header?",
+			header: "Screens",
+			multiSelect: true,
+			options: [
+				{ label: "Orders", description: "The wholesale list." },
+				{ label: "Schedule", description: "The roaster lanes on their own." },
+				{ label: "Stock", description: "Green coffee by lot." },
+			],
+		};
+		canvas.turn.push({
+			kind: "called",
+			id: "q1",
+			tool: "AskUserQuestion",
+			input: { questions: [question] },
+			parent: null,
+		});
+		canvas.turn.push(
+			asking({
+				request: "req-m",
+				call: "q1",
+				tool: "AskUserQuestion",
+				display: "AskUserQuestion",
+				input: { questions: [question] },
+				description: null,
+				interaction: true,
+				suggestions: [],
+			}),
+		);
+		await until(() => options(canvas.host).length === 3);
+		expect(look(canvas.host)).toBe("line");
+
+		const sendButton = () =>
+			[...canvas.host.querySelectorAll<HTMLButtonElement>("[data-agent-ask] button")].find((one) =>
+				one.textContent?.startsWith("Send"),
+			);
+		expect(sendButton()?.disabled).toBe(true);
+		for (const label of ["Orders", "Schedule"]) {
+			const row = canvas.host.querySelector<HTMLButtonElement>(`[data-agent-option="${label}"]`);
+			await act(async () => row?.click());
+		}
+		// ticking is not answering
+		expect(canvas.turn.answers).toEqual([]);
+		expect(canvas.host.querySelectorAll('[data-agent-tick="on"]')).toHaveLength(2);
+		expect(sendButton()?.textContent).toBe("Send 2");
+		await act(async () => sendButton()?.click());
+		expect(canvas.turn.answers.at(-1)).toEqual({
+			request: "req-m",
+			reply: { kind: "picked", picks: { "Which screens should get the new header?": "Orders, Schedule" } },
+		});
+	});
+
+	it("hangs a designer's ask under its own tile, and rings the tile", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "make two directions");
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "called",
+			id: "a1",
+			tool: "Agent",
+			input: { description: "Design calm" },
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "called",
+			id: "a2",
+			tool: "Agent",
+			input: { description: "Design bold" },
+			parent: null,
+		});
+		for (const [task, call, frame] of [
+			["t1", "a1", "home--calm"],
+			["t2", "a2", "home--bold"],
+		] as const) {
+			canvas.turn.push({
+				kind: "task-started",
+				task,
+				call,
+				description: `Design ${frame}`,
+				agent: "designer",
+				prompt: null,
+				parent: null,
+			});
+			canvas.turn.push(landed(frame, task, call));
+		}
+		canvas.turn.push({
+			kind: "called",
+			id: "s1",
+			tool: "Bash",
+			input: { command: "spool shot home--bold" },
+			parent: "a2",
+		});
+		canvas.turn.push(
+			asking({
+				call: "s1",
+				tool: "Bash",
+				input: { command: "spool shot home--bold" },
+				description: "Taking a picture of home--bold to check the layout.",
+			}),
+		);
+		await until(() => options(canvas.host).length > 0);
+
+		expect(look(canvas.host)).toBe("card");
+		expect(canvas.host.querySelector("[data-agent-tile-waiting]")?.getAttribute("data-agent-tile")).toBe(
+			"home--bold",
+		);
+		// the turn's own line is still the turn's: one designer waits, the others work
+		expect(canvas.host.querySelector('[data-agent-status="waiting"]')).toBeNull();
+		expect(
+			canvas.host.querySelector("[data-agent-ask-under]") ?? canvas.host.querySelector("[data-agent-ask]"),
+		).not.toBeNull();
+	});
+
+	it("leaves a waiting ask in the log, as a card, where the turn has no line to open it out of", () => {
+		const ask = {
+			key: "ask:c1",
+			kind: "ask",
+			request: "r",
+			question: false,
+			asked: "Run it",
+			questions: [],
+			always: false,
+			state: "open",
+			words: null,
+		} as const;
+		const user = { key: "user", kind: "user", text: "go", context: null, attached: [] } as const;
+		const foot = {
+			key: "turn",
+			kind: "turn",
+			tiles: [],
+			status: null,
+			thinking: false,
+			ms: null,
+			ending: null,
+		} as const;
+		expect(turnLayout([user, ask]).map((one) => one.entry.kind)).toEqual(["user", "ask"]);
+		const anchored = turnLayout([user, ask, foot]);
+		expect(anchored.map((one) => one.entry.kind)).toEqual(["user", "turn"]);
+		expect(anchored[1]?.asks).toEqual([ask]);
+	});
+});
+
 describe("an approval in the log", () => {
 	const approval = (over: Partial<Extract<AgentEvent, { kind: "asking" }>> = {}): AgentEvent => ({
 		kind: "asking",
@@ -2916,10 +3222,10 @@ describe("an approval in the log", () => {
 		// the row above already says what the call is, so the block says why — and every
 		// one of the three is an answer, so all three are rows
 		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("which restarts the daemon");
-		expect(options(canvas.host)).toEqual(["allow once", "for this thread", "deny"]);
+		expect(options(canvas.host)).toEqual(["Allow", "Allow for this chat", "Deny"]);
 		expect(canvas.host.querySelector("[data-agent-dismiss]")).toBeNull();
 
-		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="for this thread"]');
+		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="Allow for this chat"]');
 		await act(async () => always?.click());
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-a", reply: { kind: "always" } });
 	});
@@ -2933,7 +3239,7 @@ describe("an approval in the log", () => {
 		await until(() => options(canvas.host).length > 0);
 
 		// absent rather than dead: spool never composes a rule of its own to fill it
-		expect(options(canvas.host)).toEqual(["allow once", "deny"]);
+		expect(options(canvas.host)).toEqual(["Allow", "Deny"]);
 	});
 
 	it("is never answered by typing, because no sentence answers may I run this", async () => {

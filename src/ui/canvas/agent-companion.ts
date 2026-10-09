@@ -96,11 +96,31 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 	const described = new Map<string, string>();
 	const taskCalls = new Map<string, string>();
 	let cwd = root;
+	/** asks from agents nowhere on the canvas yet, still waiting */
+	const waits = new Map<string, { call: string | null; request: string }>();
 
 	const agentOf = (task: string | null, parent: string | null): string =>
 		(task === null ? undefined : taskCalls.get(task)) ?? parent ?? "";
-	const put = (agent: string, next: Partial<Held> & { act: CompanionAct }, beat: number) => {
-		const was = by.get(agent);
+	const put = (agent: string, next: Partial<Held> & { act: CompanionAct; release?: boolean }, beat: number) => {
+		const pending = waits.get(agent);
+		const was =
+			by.get(agent) ??
+			// an agent that asked before it was anywhere on the canvas arrives already waiting
+			(pending === undefined
+				? undefined
+				: { frame: null, spot: null, act: "ask" as const, lines: 0, range: null, beat, ...pending });
+		waits.delete(agent);
+		// a square waiting on a person stays the waiting ring until somebody answers or the
+		// call it asked for is over: the frame a write landed in catching up behind the ask
+		// moves where it waits, not what it is doing
+		if (was !== undefined && was.act === "ask" && was.request !== null && next.act !== "ask" && !next.release) {
+			by.set(agent, {
+				...was,
+				frame: next.frame !== undefined ? next.frame : was.frame,
+				spot: next.spot !== undefined ? next.spot : was.spot,
+			});
+			return;
+		}
 		by.set(agent, {
 			frame: next.frame !== undefined ? next.frame : (was?.frame ?? null),
 			spot: next.spot !== undefined ? next.spot : (was?.spot ?? null),
@@ -136,9 +156,10 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 				return;
 			}
 			case "result": {
+				for (const [agent, wait] of waits) if (wait.call === event.id) waits.delete(agent);
 				for (const [agent, held] of by) {
 					if (held.call !== event.id) continue;
-					put(agent, { act: "idle", lines: held.lines }, index);
+					put(agent, { act: "idle", lines: held.lines, release: true }, index);
 				}
 				return;
 			}
@@ -187,13 +208,16 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 			case "asking": {
 				const agent = event.parent ?? (event.call === null ? undefined : threadOf.get(event.call)) ?? "";
 				const held = by.get(agent);
-				// an agent nowhere on the canvas asks in the rail alone
-				if (held === undefined) return;
-				put(agent, { act: "ask", request: event.request }, index);
+				// an agent nowhere on the canvas asks in the rail alone, unless a frame it
+				// wrote catches up with the ask
+				if (held === undefined) waits.set(agent, { call: event.call, request: event.request });
+				else put(agent, { act: "ask", request: event.request, call: event.call }, index);
 				return;
 			}
 			case "answered": {
-				for (const [agent, held] of by) if (held.request === event.request) put(agent, { act: "idle" }, index);
+				for (const [agent, wait] of waits) if (wait.request === event.request) waits.delete(agent);
+				for (const [agent, held] of by)
+					if (held.request === event.request) put(agent, { act: "idle", release: true }, index);
 				return;
 			}
 			default:

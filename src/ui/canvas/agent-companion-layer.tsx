@@ -312,11 +312,17 @@ function Companion({
 	const run = () => {
 		if (ticking.current) return;
 		ticking.current = true;
+		let asking = true;
 		const tick = (now: number) => {
 			ticking.current = false;
-			if (draw(now)) run();
+			if (!draw(now)) return;
+			// a frame that came back before it was even asked for is no display frame at
+			// all, and asking again from inside it would never let the clock move
+			if (asking) setTimeout(run, 16);
+			else run();
 		};
 		frame.current = requestAnimationFrame(tick);
+		asking = false;
 	};
 	useEffect(() => () => cancelAnimationFrame(frame.current), []);
 

@@ -62,4 +62,58 @@ describe("codex through the daemon", () => {
 		expect(seen.filter((event) => event.kind === "asking")).toHaveLength(1);
 		expect(seen.find((event) => event.kind === "ended")).toMatchObject({ ending: "done" });
 	});
+
+	/**
+	 * Each of the three answers the rail offers, as the decision Codex reads (#366): Allow
+	 * once, Allow for this chat as the session's own accept — Codex's session is spool's
+	 * thread, so it lasts the thread and nothing longer — and Deny as a decline. Words are
+	 * no answer to an approval, whichever engine asked.
+	 */
+	for (const [kind, decision] of [
+		["allow", "accept"],
+		["always", "acceptForSession"],
+		["deny", "decline"],
+	] as const)
+		it(`answers an approval's ${kind} with codex's ${decision}`, async () => {
+			const { app, name, spawned } = codexDaemon("codex-ask");
+			await app.request(`/api/p/${name}/agent/engines`, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ preferred: "codex" }),
+			});
+			await app.request(`/api/p/${name}/agent/threads/${THREAD}/permissions`, {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ mode: "ask" }),
+			});
+			const turn = app.request(`/api/p/${name}/agent/turn`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ thread: THREAD, said: [{ prompt: "go" }] }),
+			});
+			const events = agentReader(await turn);
+			const reply = (request: string, body: unknown) =>
+				app.request(`/api/p/${name}/agent/answer`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ request, reply: body }),
+				});
+			for (;;) {
+				const event = (await events.next(5000)).data as AgentEvent;
+				if (event.kind === "asking") {
+					// an approval takes no sentence, typed or otherwise
+					expect((await reply(event.request, { kind: "said", text: "sure" })).status).not.toBe(200);
+					// a session-long accept only where codex offered one: spool makes up no rule
+					const offered = event.suggestions.length > 0;
+					expect((await reply(event.request, { kind })).status).toBe(kind !== "always" || offered ? 204 : 404);
+					if (kind === "always" && !offered) return;
+				}
+				if (event.kind === "answered") {
+					expect(event.answer).toBe(kind);
+					break;
+				}
+			}
+			const sent = spawned[0]?.inputs.map((line) => JSON.parse(line)) ?? [];
+			expect(sent.some((line) => line.result?.decision === decision)).toBe(true);
+		});
 });

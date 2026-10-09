@@ -1,5 +1,19 @@
 import { type ReactNode, useState } from "react";
+import type { AgentReply } from "../../daemon/agent-control";
 import { cn } from "../cn";
+import {
+	ApprovalBody,
+	AskCard,
+	type AskEntry,
+	type AskState,
+	Dismiss,
+	OptionList,
+	optionFrames,
+	Settled,
+	Thread,
+	useAsk,
+	WaitingRow,
+} from "./agent-ask-view";
 import type { AgentTile, AgentTurnFoot } from "./agent-transcript";
 
 /**
@@ -71,6 +85,9 @@ export function TurnFoot({
 	elapsed,
 	reach,
 	steps,
+	asks = [],
+	onAnswer,
+	permissions,
 }: {
 	foot: AgentTurnFoot;
 	/** the turn's clock, for a foot still running */
@@ -78,16 +95,218 @@ export function TurnFoot({
 	reach: TileReach;
 	/** the turn's rows and waits, drawn behind the status line */
 	steps: ReactNode;
+	/** the turn's asks nobody has answered yet, which open out of its line or its grid (#366) */
+	asks?: readonly AskEntry[];
+	onAnswer?: (request: string, reply: AgentReply) => void;
+	permissions?: (() => void) | undefined;
 }) {
 	const [open, setOpen] = useState(false);
 	const over = foot.ms !== null;
+	const makers = new Set(foot.tiles.flatMap((tile) => (tile.agent === undefined ? [] : [tile.agent])));
+	// a designer's ask hangs off its own tile; anything else is the turn's own
+	const designer = asks.find((ask) => ask.agent !== undefined && ask.agent !== "" && makers.has(ask.agent));
+	const mine = asks.find((ask) => ask !== designer);
+	const answer = onAnswer ?? (() => {});
 	return (
 		<div data-agent-turn={over ? "over" : "running"} className="flex flex-col gap-3 pt-1">
-			{foot.tiles.length === 0 ? null : <TileGrid tiles={foot.tiles} settled={over} reach={reach} />}
-			<StatusLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
-			<div data-agent-steps={open ? "open" : "shut"} hidden={!open} className="flex flex-col">
+			{mine === undefined ? (
+				<>
+					{foot.tiles.length === 0 ? null : (
+						<TileGrid
+							tiles={foot.tiles}
+							settled={over}
+							reach={reach}
+							waiting={designer?.agent}
+							under={
+								designer === undefined
+									? undefined
+									: (notch) => (
+											<DesignerAsk
+												entry={designer}
+												onAnswer={answer}
+												permissions={permissions}
+												notch={notch}
+											/>
+										)
+							}
+						/>
+					)}
+					<StatusLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
+				</>
+			) : (
+				<LineAsk
+					key={mine.key}
+					entry={mine}
+					foot={foot}
+					reach={reach}
+					meta={Number.isFinite(elapsed) ? clockOf(elapsed) : undefined}
+					onAnswer={answer}
+					permissions={permissions}
+				/>
+			)}
+			<div
+				data-agent-steps={open && mine === undefined ? "open" : "shut"}
+				hidden={!open || mine !== undefined}
+				className="flex flex-col"
+			>
 				{steps}
 			</div>
+		</div>
+	);
+}
+
+/**
+ * The turn's own ask, out of its line: an approval or a question about no frame opens the
+ * line into it, and a question whose options name the turn's frames turns the grid into the
+ * choice — every named picture numbered, with its option's description, and the rest
+ * stepped back — so pressing a picture answers.
+ */
+function LineAsk({
+	entry,
+	foot,
+	reach,
+	meta,
+	onAnswer,
+	permissions,
+}: {
+	entry: AskEntry;
+	foot: AgentTurnFoot;
+	reach: TileReach;
+	meta: string | undefined;
+	onAnswer: (request: string, reply: AgentReply) => void;
+	permissions?: (() => void) | undefined;
+}) {
+	const ask = useAsk(entry, onAnswer);
+	const question = ask.question;
+	const named = question === null || question.multi ? null : optionFrames(question, foot.tiles);
+	const grid =
+		foot.tiles.length === 0 ? null : named === null || question === null ? (
+			<TileGrid tiles={foot.tiles} settled={foot.ms !== null} reach={reach} />
+		) : (
+			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} />
+		);
+	return (
+		<div
+			data-agent-ask={entry.state}
+			data-agent-ask-look={named === null ? "line" : "grid"}
+			className="flex flex-col gap-3"
+		>
+			{grid}
+			<div className="flex flex-col">
+				{!entry.question ? (
+					<>
+						<WaitingRow words="Waiting on you" meta={meta} />
+						<Thread>
+							<ApprovalBody entry={entry} ask={ask} permissions={permissions} />
+						</Thread>
+					</>
+				) : named !== null && question !== null ? (
+					<>
+						<Settled entry={entry} ask={ask} />
+						<WaitingRow words={question.question} meta={meta} />
+						<div className="flex items-center justify-between gap-2 pl-[22px]">
+							<span className="text-muted type-detail">Press a picture, or type your own answer.</span>
+							<Dismiss onPress={ask.dismiss} />
+						</div>
+					</>
+				) : (
+					<>
+						<Settled entry={entry} ask={ask} />
+						<WaitingRow
+							words={question?.question ?? entry.asked ?? "Waiting on you"}
+							meta={meta}
+							arriving={entry.state === "arriving"}
+						/>
+						{ask.open && question !== null ? (
+							<Thread tight>
+								<OptionList ask={ask} />
+							</Thread>
+						) : null}
+					</>
+				)}
+			</div>
+		</div>
+	);
+}
+
+/** a designer's ask, hanging under the grid with its notch pointing up at its own tile */
+function DesignerAsk({
+	entry,
+	onAnswer,
+	permissions,
+	notch,
+}: {
+	entry: AskEntry;
+	onAnswer: (request: string, reply: AgentReply) => void;
+	permissions?: (() => void) | undefined;
+	notch?: number;
+}) {
+	const ask = useAsk(entry, onAnswer);
+	return <AskCard entry={entry} ask={ask} permissions={permissions} notch={notch} />;
+}
+
+/** the turn's grid as a question's options: pressing a picture answers it */
+function PictureChoice({
+	tiles,
+	frames,
+	ask,
+	reach,
+}: {
+	tiles: readonly AgentTile[];
+	frames: readonly string[];
+	ask: AskState;
+	reach: TileReach;
+}) {
+	const question = ask.question;
+	if (question === null) return null;
+	return (
+		<div role="menu" aria-label={question.question} data-agent-tiles="" className="grid grid-cols-3 gap-x-3 gap-y-4">
+			{tiles.map((tile) => {
+				const at = frames.indexOf(tile.frame);
+				const option = question.options[at];
+				if (option === undefined) {
+					// a frame the question does not offer: there, quieter, not a target
+					return (
+						<div
+							key={tile.key}
+							data-agent-tile={tile.frame}
+							data-agent-tile-aside=""
+							className="flex min-w-0 flex-col gap-1.5 opacity-40"
+						>
+							<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
+							<span className="truncate text-muted type-detail">{tile.frame}</span>
+						</div>
+					);
+				}
+				return (
+					<button
+						key={tile.key}
+						type="button"
+						role="menuitemradio"
+						aria-checked={false}
+						data-agent-option={option.label}
+						data-agent-tile={tile.frame}
+						disabled={!ask.open}
+						onClick={() => ask.pick(option.label)}
+						onMouseEnter={() => reach.onPoint(tile.frame)}
+						onMouseLeave={() => reach.onPoint(null)}
+						className="group/pic flex min-w-0 flex-col items-start gap-1.5 rounded-xs text-left"
+					>
+						<span className="relative block w-full rounded-[3px] transition-shadow duration-150 group-hover/pic:shadow-[0_0_0_1.5px_var(--color-bg),0_0_0_2.5px_var(--color-border-raised)]">
+							<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
+							<span className="absolute top-1 left-1 flex h-4 w-4 items-center justify-center rounded-xs bg-bg/85 tabular-nums text-text type-detail">
+								{at + 1}
+							</span>
+						</span>
+						<span className="flex w-full min-w-0 flex-col">
+							<span className="text-text type-control">{option.label}</span>
+							{option.description === "" ? null : (
+								<span className="text-pretty text-muted type-detail">{option.description}</span>
+							)}
+						</span>
+					</button>
+				);
+			})}
 		</div>
 	);
 }
@@ -166,24 +385,50 @@ function StatusMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["en
 }
 
 /** two to a row while the turn runs, three once it settles and gives the chat back its height */
-function TileGrid({ tiles, settled, reach }: { tiles: readonly AgentTile[]; settled: boolean; reach: TileReach }) {
+function TileGrid({
+	tiles,
+	settled,
+	reach,
+	waiting,
+	under,
+}: {
+	tiles: readonly AgentTile[];
+	settled: boolean;
+	reach: TileReach;
+	/** the designer whose tile waits on an answer: it rings, and its ask hangs under the grid */
+	waiting?: string | undefined;
+	/** the ask hanging under the grid, given where its notch points as a share of the width */
+	under?: ((notch: number) => ReactNode) | undefined;
+}) {
+	const columns = settled ? 3 : 2;
+	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.agent === waiting);
 	return (
-		<div data-agent-tiles="" className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}>
-			{tiles.map((tile) => (
-				<Tile key={tile.key} tile={tile} reach={reach} />
-			))}
+		<div className="flex flex-col gap-3">
+			<div data-agent-tiles="" className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}>
+				{tiles.map((tile, index) => (
+					<Tile key={tile.key} tile={tile} reach={reach} waiting={index === at} />
+				))}
+			</div>
+			{under === undefined || at === -1 ? null : under(((at % columns) + 0.5) / columns)}
 		</div>
 	);
 }
 
-function Tile({ tile, reach }: { tile: AgentTile; reach: TileReach }) {
+function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileReach; waiting?: boolean }) {
 	const [putting, setPutting] = useState(false);
 	const goes = tile.state !== "deleted" && reach.have.has(tile.frame);
 	const live = tile.state !== "done" && tile.state !== "deleted";
 	const caption = captionOf(tile);
 	const body = (
 		<>
-			<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
+			<span
+				className={cn(
+					"block w-full rounded-[3px]",
+					waiting && "shadow-[0_0_0_1.5px_var(--color-bg),0_0_0_3px_var(--color-text)]",
+				)}
+			>
+				<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
+			</span>
 			<span className="flex w-full min-w-0 flex-col">
 				<span
 					className={cn(
@@ -198,7 +443,13 @@ function Tile({ tile, reach }: { tile: AgentTile; reach: TileReach }) {
 					{tile.frame}
 				</span>
 				<span className="truncate text-muted type-detail">
-					{live ? <span className="agent-shimmer animate-agent-shimmer">{caption}</span> : caption}
+					{waiting ? (
+						<span className="text-text">Waiting on you</span>
+					) : live ? (
+						<span className="agent-shimmer animate-agent-shimmer">{caption}</span>
+					) : (
+						caption
+					)}
 				</span>
 			</span>
 		</>
@@ -207,6 +458,7 @@ function Tile({ tile, reach }: { tile: AgentTile; reach: TileReach }) {
 		<div
 			data-agent-tile={tile.frame}
 			data-agent-tile-state={tile.state}
+			data-agent-tile-waiting={waiting ? "" : undefined}
 			className="flex min-w-0 flex-col items-start gap-1.5"
 		>
 			{goes ? (
@@ -306,12 +558,15 @@ function Writing({ lines }: { lines: number }) {
 	);
 }
 
-/** the agent hand, as the canvas draws it beside the frame it is changing */
+/** the agent's companion, as the canvas draws it at the block it is changing (#366) */
 function Hand() {
 	return (
 		<span className="pointer-events-none absolute inset-0">
-			<span className="-translate-y-1/2 absolute top-1/2 left-[-7px] h-[22px] w-[1.5px] rounded-full bg-text opacity-80" />
-			<span className="-translate-y-1/2 absolute top-1/2 left-[-9.5px] h-[5px] w-[5px] rounded-[2px] border border-muted bg-canvas" />
+			<span className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-white opacity-60 mix-blend-difference" />
+			<span
+				className="absolute top-[38%] left-[4%] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 bg-text"
+				style={{ borderRadius: 1.8, boxShadow: "0 0 0 1.5px var(--color-canvas)" }}
+			/>
 		</span>
 	);
 }

@@ -6,6 +6,7 @@ import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
+import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { Chevron, Float } from "./agent-float";
 import { AgentMenu, engineName, INSTALL_LINES } from "./agent-menu";
@@ -15,7 +16,6 @@ import { frameHolding } from "./agent-nouns";
 import { MODE_NAMES, type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
-import { Caret } from "./agent-said";
 import { SeedParagraphs, SeedSurface } from "./agent-seed";
 import { Lightbox, Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
@@ -1135,6 +1135,7 @@ function Transcript({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const view = useRef<HTMLDivElement>(null);
+	const permissions = useContext(PermissionAction);
 	const laidOut = useMemo(() => turnLayout(entries), [entries]);
 	const [follow, setFollow] = useState(true);
 	/**
@@ -1306,13 +1307,16 @@ function Transcript({
 				{/* `mt-auto` rather than `justify-end`: a flex container that end-justifies its
 				    overflow puts the top of it out of reach of the scrollbar */}
 				<div className="mt-auto shrink-0">
-					{laidOut.map(({ entry, steps }, index) => (
+					{laidOut.map(({ entry, steps, asks }, index) => (
 						<Arrive key={entry.key} gap={gapBefore(laidOut[index - 1]?.entry, entry)}>
 							{entry.kind === "turn" ? (
 								<TurnFoot
 									foot={entry}
 									elapsed={elapsed}
 									reach={jump}
+									asks={asks}
+									onAnswer={onAnswer}
+									permissions={permissions}
 									steps={steps.map((step, at) => (
 										<Arrive key={step.key} gap={gapBefore(steps[at - 1], step)}>
 											<Entry entry={step} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
@@ -1370,8 +1374,10 @@ const TIGHT: ReadonlySet<AgentEntry["kind"]> = new Set(["row", "wait"]);
  * in the log. A turn a picture kept from before there was a foot has none, so its rows stay
  * where they always were.
  */
-export function turnLayout(entries: readonly AgentEntry[]): { entry: AgentEntry; steps: AgentEntry[] }[] {
-	const out: { entry: AgentEntry; steps: AgentEntry[] }[] = [];
+export function turnLayout(
+	entries: readonly AgentEntry[],
+): { entry: AgentEntry; steps: AgentEntry[]; asks: AskEntry[] }[] {
+	const out: { entry: AgentEntry; steps: AgentEntry[]; asks: AskEntry[] }[] = [];
 	let start = 0;
 	for (let at = 0; at <= entries.length; at += 1) {
 		const entry = entries[at];
@@ -1379,12 +1385,15 @@ export function turnLayout(entries: readonly AgentEntry[]): { entry: AgentEntry;
 		// one turn: from its first words to the next turn's, or the end of the log
 		const turn = entries.slice(start, at);
 		const foot = turn.findIndex((one) => one.kind === "turn");
-		if (foot === -1) for (const one of turn) out.push({ entry: one, steps: [] });
+		if (foot === -1) for (const one of turn) out.push({ entry: one, steps: [], asks: [] });
 		else {
 			const steps = turn.filter((one) => one.kind === "row" || one.kind === "wait");
+			// an ask still waiting opens out of the turn's line or its grid, not out of the log (#366)
+			const asks = turn.filter((one): one is AskEntry => one.kind === "ask" && waitingAsk(one));
 			for (const one of turn) {
 				if (one.kind === "row" || one.kind === "wait") continue;
-				out.push({ entry: one, steps: one.kind === "turn" ? steps : [] });
+				if (one.kind === "ask" && waitingAsk(one)) continue;
+				out.push({ entry: one, steps: one.kind === "turn" ? steps : [], asks: one.kind === "turn" ? asks : [] });
 			}
 		}
 		start = at;
@@ -1844,6 +1853,11 @@ function Wait({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "wait" }>
  * is an answer. A question's dismiss is not: it refuses the whole question rather than
  * answering it, so it stays one quiet wordless word underneath. */
 
+/**
+ * An ask in the log (#366): folded to one quiet line once nobody is waiting on it, and a
+ * card while it waits where the turn has no line to open it out of yet. A waiting ask in a
+ * turn that has one is drawn by the turn's foot instead (`turnLayout`).
+ */
 function Ask({
 	entry,
 	onAnswer,
@@ -1851,179 +1865,27 @@ function Ask({
 	entry: Extract<AgentEntry, { kind: "ask" }>;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
-	const request = entry.request;
 	const permissions = useContext(PermissionAction);
-	const open = entry.state === "open" && request !== null;
-	const answer = (reply: AgentReply) => {
-		if (request !== null) onAnswer(request, reply);
-	};
-	// held against the request rather than reset by it: the block outlives no ask, but
-	// a key reused by a second thread's ask would otherwise arrive part-answered
-	const [given, setGiven] = useState<{ request: string | null; picks: Record<string, string> }>({
-		request,
-		picks: {},
-	});
-	const picks = given.request === request ? given.picks : {};
-	const live = entry.questions.findIndex((one) => picks[one.question] === undefined);
-	const pick = (question: string, label: string) => {
-		const next = { ...picks, [question]: label };
-		if (entry.questions.every((one) => next[one.question] !== undefined)) answer({ kind: "picked", picks: next });
-		else setGiven({ request, picks: next });
-	};
+	const ask = useAsk(entry, onAnswer);
+	if (waitingAsk(entry)) return <AskCard entry={entry} ask={ask} permissions={permissions} />;
 	return (
-		<div data-agent-ask={entry.state} className="flex flex-col gap-3">
-			{open && entry.access?.unavailable ? (
-				<p className="text-base text-text leading-base">
-					spool can’t restrict commands to design/ on this computer.
-				</p>
-			) : null}
-			{/* the sentences, drawn where the agent's sentences are drawn. A question still
-			    arriving shows a caret, because it is typing itself in the way every tool
-			    call's subject does */}
-			{entry.question ? (
-				entry.questions.map((question, index) => {
-					const chosen = picks[question.question];
-					// nothing below the one being asked: a question nobody has reached is a
-					// decision nobody is making, and drawing it is the block asking twice
-					if (open && chosen === undefined && index !== live) return null;
-					return (
-						<div key={question.question} className="flex flex-col gap-1.5">
-							<p className="text-text type-body">{question.question}</p>
-							{/* a settled pick keeps its sentence and lands in the person's own shape,
-							    which is where the whole answer lands once the last one is in */}
-							{open && chosen !== undefined ? <Answered words={chosen} /> : null}
-							{open && chosen === undefined ? (
-								<div className="flex flex-col gap-1.5">
-									{question.options.map((option) => (
-										<button
-											key={option.label}
-											type="button"
-											data-agent-option={option.label}
-											onClick={() => pick(question.question, option.label)}
-											className="flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
-										>
-											<span className="text-text type-body">{option.label}</span>
-											{option.description === "" ? null : (
-												<span className="text-muted type-caption">{option.description}</span>
-											)}
-										</button>
-									))}
-								</div>
-							) : null}
-						</div>
-					);
-				})
-			) : entry.asked === null || (entry.access !== undefined && !open) ? null : (
-				// nothing where the agent wrote nothing: the row above already named the call,
-				// and a block that repeated it would be the rail saying one thing twice
-				<p className="text-text type-body">
-					{entry.asked}
-					{entry.state === "arriving" ? <Caret /> : null}
-				</p>
-			)}
-			{open && entry.access?.command ? (
-				<code className="break-words font-mono text-xs text-muted leading-4">{entry.access.command}</code>
-			) : null}
-			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
-			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
-			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed once" /> : null}
-			{entry.state === "always" ? (
-				<AskOutcome
-					state="done"
-					text={
-						entry.access === undefined
-							? "allowed for this thread"
-							: entry.access.kind === "command"
-								? entry.access.scope === "commands"
-									? "commands allowed for this thread"
-									: `commands in ${entry.access.scope} allowed for this thread`
-								: `edits in ${entry.access.scope} allowed for this thread`
-					}
-				/>
-			) : null}
-			{/* a deny and a dismiss are one wire and two acts: for an approval the person
-			    answered no, and for a question they refused to answer at all */}
-			{entry.state === "denied" ? (
-				<AskOutcome state="stopped" text={entry.question ? "dismissed" : "denied"} />
-			) : null}
-			{open && entry.question ? (
-				// not a fourth option and it must not look like one, so the options keep their
-				// bordered rows and this is one quiet mono word underneath, in the register
-				// the composer uses for its own hints. It stays wordless so it means one thing
-				<button
-					type="button"
-					data-agent-dismiss=""
-					onClick={() => answer({ kind: "deny" })}
-					className="w-fit text-muted transition-colors duration-150 hover:text-muted type-detail"
-				>
-					dismiss
-				</button>
-			) : null}
-			{open && !entry.question ? (
-				<div className="flex flex-wrap gap-1.5">
-					<AskAction compact label="allow once" onPick={() => answer({ kind: "allow" })} />
-					{/* absent rather than dead where the request suggested no rule: spool never
-					    composes one of its own to fill the gap. Where it is offered it lasts the
-					    thread and is written to no file, because the complaint is repetition */}
-					{entry.always ? (
-						<AskAction compact label="for this thread" onPick={() => answer({ kind: "always" })} />
-					) : null}
-					<AskAction compact label="deny" onPick={() => answer({ kind: "deny" })} />
-				</div>
-			) : null}
-			{open && !entry.question && permissions !== undefined ? (
-				<button
-					type="button"
-					onClick={permissions}
-					className="w-fit py-1 font-mono text-2xs text-muted leading-4 transition-colors hover:text-text"
-				>
-					change permissions…
-				</button>
-			) : null}
+		<div data-agent-ask={entry.state} data-agent-ask-look="folded">
+			<FoldedAsk entry={entry} words={entry.said ? <Answered words={entry.words} /> : undefined} />
 		</div>
-	);
-}
-
-/** one of spool's own answers to an approval, in the same row an option gets */
-function AskAction({ label, onPick, compact = false }: { label: string; onPick: () => void; compact?: boolean }) {
-	return (
-		<button
-			type="button"
-			data-agent-option={label}
-			onClick={onPick}
-			className={cn(
-				"rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45",
-				!compact && "w-full",
-			)}
-		>
-			<span className="text-text type-value">{label}</span>
-		</button>
 	);
 }
 
 /**
  * The answer, in the shape the rail already draws the person's words in.
  *
- * Not a row, because the verb slot has nowhere to put it: `ask` is spent on every call
- * that left the building, and `ask Notion` one line above `asked Shot fix` is two words
- * the eye cannot separate at this size. The person's own accent rail is the answer that
- * needed no new word at all.
+ * A sentence the person typed rather than a pick: the person's own accent rail is the
+ * answer that needed no new word at all.
  */
 function Answered({ words }: { words: string | null }) {
 	return (
 		<div className="relative flex flex-col gap-1.5 pl-3.5">
 			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
 			<p className="whitespace-pre-wrap text-text type-body">{words}</p>
-		</div>
-	);
-}
-
-/** what became of a request nobody is waiting on any more, in one quiet line */
-function AskOutcome({ state, text }: { state: RowState; text: string }) {
-	return (
-		<div className="flex items-center gap-2.5">
-			<StateMark state={state} />
-			<span className="text-muted type-detail">{text}</span>
 		</div>
 	);
 }
@@ -2282,7 +2144,7 @@ function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
  * finished thread, because a parked turn is a live process and there is nothing to start.
  */
 function fieldSays(answering: string | null, finished: boolean, running: boolean): string {
-	if (answering !== null) return "Or say it in your own words";
+	if (answering !== null) return "Or type your own answer";
 	// Enter queues while a turn runs, so the field asks for what follows it (#364)
 	if (running) return "Say what comes next";
 	return finished ? "Say what to change · this starts a new chat" : "Say what to change";
