@@ -200,7 +200,7 @@ function LineAsk({
 		foot.tiles.length === 0 ? null : named === null || question === null ? (
 			<TileGrid tiles={foot.tiles} settled={foot.ms !== null} reach={reach} />
 		) : (
-			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} />
+			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} settled={foot.ms !== null} />
 		);
 	return (
 		<div
@@ -268,16 +268,24 @@ function PictureChoice({
 	frames,
 	ask,
 	reach,
+	settled,
 }: {
 	tiles: readonly AgentTile[];
 	frames: readonly string[];
 	ask: AskState;
 	reach: TileReach;
+	/** the turn is over: three across, as the grid it stands in for */
+	settled: boolean;
 }) {
 	const question = ask.question;
 	if (question === null) return null;
 	return (
-		<div role="menu" aria-label={question.question} data-agent-tiles="" className="grid grid-cols-3 gap-x-3 gap-y-4">
+		<div
+			role="menu"
+			aria-label={question.question}
+			data-agent-tiles=""
+			className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}
+		>
 			{tiles.map((tile) => {
 				const at = frames.indexOf(tile.frame);
 				const option = question.options[at];

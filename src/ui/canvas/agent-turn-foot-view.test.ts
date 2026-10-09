@@ -212,3 +212,51 @@ describe("the turn's grid, folded", () => {
 		expect(done?.tiles[0]?.replay).toBeUndefined();
 	});
 });
+
+describe("the turn's grid as a choice", () => {
+	const ask = (state: "open" = "open") =>
+		({
+			key: "ask:q1",
+			kind: "ask",
+			request: "req-q",
+			question: true,
+			asked: "Which direction?",
+			questions: [
+				{
+					header: "Direction",
+					question: "Which direction?",
+					multi: false,
+					options: [
+						{ label: "Calm", description: "Quiet." },
+						{ label: "Bold", description: "Loud." },
+					],
+				},
+			],
+			always: false,
+			state,
+			words: null,
+		}) as const;
+
+	it("stands two across while the turn runs and three once it is over, like the grid", async () => {
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		const tiles = [tile("home--calm", "done"), tile("home--bold", "done")];
+		const reach = { have: new Set(tiles.map((one) => one.frame)), onJump: () => {}, onPoint: () => {} };
+		const columns = (foot: AgentTurnFoot) => {
+			act(() =>
+				root.render(
+					createElement(TurnFoot, { foot, elapsed: 0, reach, steps: null, asks: [ask()], onAnswer: () => {} }),
+				),
+			);
+			const grid = host.querySelector('[role="menu"][data-agent-tiles]');
+			return grid?.classList.contains("grid-cols-2") ? 2 : grid?.classList.contains("grid-cols-3") ? 3 : null;
+		};
+		unmount = () => {
+			act(() => root.unmount());
+			host.remove();
+		};
+		expect(columns(footOf(tiles))).toBe(2);
+		expect(columns(footOf(tiles, 3000))).toBe(3);
+	});
+});
