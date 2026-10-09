@@ -4188,11 +4188,9 @@ export function ProjectCanvas({
 							: { x: Math.round(frame.x + message.x * scale), y: Math.round(frame.y + message.y * scale) },
 						message.pressed,
 					);
-					insideFrameRef.current.scroll({
-						x: Math.round(message.scroll.x),
-						y: Math.round(message.scroll.y),
-						width: Math.round(message.scroll.width),
-						height: Math.round(message.scroll.height),
+					insideFrameRef.current.scrolled({
+						x: Math.round(message.scrolled.x),
+						y: Math.round(message.scrolled.y),
 					});
 					return;
 				}

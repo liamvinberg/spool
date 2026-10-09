@@ -136,6 +136,9 @@ describe("presence on a team canvas", () => {
 		});
 		await anas.say(at(300, 90, { pressed: true, dragging: ["home"] }));
 		expect((await bens.heard()).state).toEqual(at(300, 90, { pressed: true, dragging: ["home"] }));
+		// inside a live frame, her clicks and her scrolling go along too
+		await anas.say(at(40, 60, { inside: "home", clicks: 3, scrolled: { x: 0, y: 240 } }));
+		expect((await bens.heard()).state).toEqual(at(40, 60, { inside: "home", clicks: 3, scrolled: { x: 0, y: 240 } }));
 		// her own canvas is never told about her
 		await anas.quiet();
 
@@ -226,5 +229,7 @@ describe("presence on a team canvas", () => {
 		const anas = await canvas(daemon(ana), "checkout");
 		const refused = await anas.say({ page: "", pointer: "here" } as never);
 		expect(refused.status).toBe(400);
+		expect((await anas.say(at(0, 0, { clicks: -1 }))).status).toBe(400);
+		expect((await anas.say(at(0, 0, { scrolled: { x: 0 } as never }))).status).toBe(400);
 	});
 });

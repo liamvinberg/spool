@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useRef } from "react";
-import { PRESENCE_DRAGGING, type PresenceScroll, type PresenceState } from "../../team-sync-protocol";
+import { PRESENCE_DRAGGING, type PresenceState } from "../../team-sync-protocol";
 import { toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { followCamera, type PresenceRoom } from "./presence";
@@ -13,13 +13,14 @@ const FOLLOW_RATE = 8;
 export interface InsideFrame {
 	/** The pointer in world coordinates, or null while the frame hasn't seen it yet, and whether it's pressed. */
 	pointer(at: { x: number; y: number } | null, pressed: boolean): void;
-	scroll(scroll: PresenceScroll): void;
+	/** Everything in it scrolled so far, added up. */
+	scrolled(scrolled: { x: number; y: number }): void;
 }
 
 /**
  * Say where this canvas's person is on a team canvas, as it changes (DEV-196): the page, the pointer in world
  * coordinates, a press, the frames a drag is moving, the frame they're inside live and the rectangle the
- * camera shows. Inside a live frame the frame tells the pointer, each press as a click, and its scroll, through
+ * camera shows. Inside a live frame the frame tells the pointer, each press as a click, and its scrolling, through
  * the returned `InsideFrame`. Sent no more often than `PRESENCE_SEND_MS`, and only when something changed: to
  * the daemon from the Mac's canvas, to spool.page from the read-only one.
  */
@@ -37,7 +38,7 @@ export function usePresenceSender(options: {
 	const latest = useRef(options);
 	latest.current = options;
 	const soon = useRef<() => void>(() => {});
-	const insideFrame = useRef<InsideFrame>({ pointer: () => {}, scroll: () => {} });
+	const insideFrame = useRef<InsideFrame>({ pointer: () => {}, scrolled: () => {} });
 	const leftFrame = useRef<() => void>(() => {});
 	const { send: say, team, camera, viewportRef } = options;
 
@@ -45,10 +46,10 @@ export function usePresenceSender(options: {
 		if (!team) return;
 		let pointer: { x: number; y: number } | null = null;
 		let pressed = false;
-		// told by the frame they're inside: its pointer already in world coordinates, the presses and the scroll
+		// told by the frame they're inside: its pointer already in world coordinates, the presses and the scrolling
 		let framePointer: { x: number; y: number } | null = null;
 		let clicks = 0;
-		let scroll: PresenceScroll | null = null;
+		let scrolled: { x: number; y: number } | null = null;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let sentAt = Number.NEGATIVE_INFINITY;
 		let told = "";
@@ -59,7 +60,7 @@ export function usePresenceSender(options: {
 			const world = framePointer ?? (pointer === null || cam === null ? null : toWorld(pointer, cam));
 			return {
 				clicks,
-				scroll: inside === null ? null : scroll,
+				scrolled: inside === null ? null : scrolled,
 				page,
 				pointer: world === null ? null : { x: round(world.x), y: round(world.y) },
 				pressed,
@@ -117,14 +118,14 @@ export function usePresenceSender(options: {
 				pressed = press;
 				later();
 			},
-			scroll(next) {
-				scroll = next;
+			scrolled(next) {
+				scrolled = next;
 				later();
 			},
 		};
 		leftFrame.current = () => {
 			framePointer = null;
-			scroll = null;
+			scrolled = null;
 		};
 		const release = () => {
 			if (!pressed) return;
@@ -147,7 +148,7 @@ export function usePresenceSender(options: {
 		later();
 		return () => {
 			soon.current = () => {};
-			insideFrame.current = { pointer: () => {}, scroll: () => {} };
+			insideFrame.current = { pointer: () => {}, scrolled: () => {} };
 			leftFrame.current = () => {};
 			if (timer !== undefined) clearTimeout(timer);
 			document.removeEventListener("pointermove", move, true);
@@ -162,13 +163,13 @@ export function usePresenceSender(options: {
 	// a page switch or a frame gone inside is news even with the pointer still
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the page and the frame inside are the triggers; the send reads them through the ref
 	useEffect(() => soon.current(), [options.page, options.inside]);
-	// a frame left takes its scroll with it; the next one entered tells its own
+	// a frame left takes its scrolling with it; the next one entered tells its own
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the frame inside is the trigger
 	useEffect(() => leftFrame.current(), [options.inside]);
 
 	return useRef<InsideFrame>({
 		pointer: (at, press) => insideFrame.current.pointer(at, press),
-		scroll: (scroll) => insideFrame.current.scroll(scroll),
+		scrolled: (scrolled) => insideFrame.current.scrolled(scrolled),
 	}).current;
 }
 

@@ -159,6 +159,19 @@ describe("frame scroll protocol", () => {
 	});
 });
 
+describe("frame presence protocol", () => {
+	it("accepts where the pointer is inside a frame and how far it's scrolled, and rejects malformed ones", () => {
+		const presence = { spool: "presence", frame: "host", x: 12, y: 40, pressed: true, scrolled: { x: 0, y: 120 } };
+
+		expect(parseFrameMessage(presence)).toEqual(presence);
+		expect(parseFrameMessage({ ...presence, x: null, y: null })).toEqual({ ...presence, x: null, y: null });
+		expect(parseFrameMessage({ ...presence, x: "12" })).toBeUndefined();
+		expect(parseFrameMessage({ ...presence, pressed: 1 })).toBeUndefined();
+		expect(parseFrameMessage({ ...presence, scrolled: { x: 0 } })).toBeUndefined();
+		expect(parseFrameMessage({ ...presence, scrolled: null })).toBeUndefined();
+	});
+});
+
 describe("frame modifier protocol", () => {
 	it("accepts either accel key's hold changes and rejects malformed modifier intents", () => {
 		const held = { spool: "modifier", frame: "host", modifier: "Meta", held: true };

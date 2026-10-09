@@ -143,8 +143,9 @@ export interface FramePanMessage {
 
 /**
  * Where the pointer is inside an entered frame, whether it's pressed, and how
- * far the frame's document is scrolled, all in the frame's own pixels: none of
- * it crosses the iframe boundary, and the canvas says it to the team.
+ * far everything in it has been scrolled, added up, all in the frame's own
+ * pixels: none of it crosses the iframe boundary, and the canvas says it to
+ * the team.
  */
 export interface FramePresenceMessage {
 	spool: "presence";
@@ -152,7 +153,7 @@ export interface FramePresenceMessage {
 	x: number | null;
 	y: number | null;
 	pressed: boolean;
-	scroll: { x: number; y: number; width: number; height: number };
+	scrolled: { x: number; y: number };
 }
 
 /** Frame-local boxes of the elements the canvas asked about, keyed by the
@@ -282,16 +283,14 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "presence": {
-			const s = m.scroll as Record<string, unknown> | null | undefined;
+			const s = m.scrolled as Record<string, unknown> | null | undefined;
 			return (m.x === null || finite(m.x)) &&
 				(m.y === null || finite(m.y)) &&
 				typeof m.pressed === "boolean" &&
 				typeof s === "object" &&
 				s !== null &&
 				finite(s.x) &&
-				finite(s.y) &&
-				finite(s.width) &&
-				finite(s.height)
+				finite(s.y)
 				? (m as unknown as FrameMessage)
 				: undefined;
 		}
