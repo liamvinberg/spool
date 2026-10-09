@@ -856,6 +856,43 @@ describe("another agent in the menu", () => {
 		expect(live(canvas.host, "[data-agent-signed-out]")).toEqual([]);
 	});
 
+	it("says an agent too old to run needs updating, with its update line, and looks again", async () => {
+		const canvas = mount();
+		canvas.engines.listed = [
+			{ id: "claude", installed: true },
+			{ id: "codex", installed: false, outdated: true },
+		];
+		await canvas.render();
+		await openModelMenu(canvas);
+		await until(() => live(canvas.host, '[data-agent-outdated="codex"]').length > 0);
+
+		expect(groups(canvas.host)).toEqual(["claude", "codex"]);
+		const group = live(canvas.host, '[data-agent-group="codex"]')[0];
+		expect(group?.textContent).toContain("needs updating");
+		const old = live(canvas.host, '[data-agent-outdated="codex"]')[0];
+		expect(old?.textContent).toContain(
+			"Codex needs updating. Update it from a terminal and its models show up here.",
+		);
+		expect(old?.querySelector('[data-agent-command="npm i -g @openai/codex@latest"]')).not.toBeNull();
+		expect(modelRow(canvas.host, "GPT-5.5")).toBeNull();
+		// it is not an agent to get: it is there already
+		await press(
+			live<HTMLButtonElement>(canvas.host, "[data-agent-model-menu] button").find(
+				(one) => one.textContent === "Get more agents",
+			),
+		);
+		expect(live(canvas.host, '[data-agent-install="pi"]')).toHaveLength(1);
+		expect(live(canvas.host, '[data-agent-install="codex"]')).toEqual([]);
+
+		canvas.engines.listed = [
+			{ id: "claude", installed: true },
+			{ id: "codex", installed: true },
+		];
+		await press([...(old?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "Check again"));
+		await until(() => modelRow(canvas.host, "GPT-5.5") !== null);
+		expect(live(canvas.host, "[data-agent-outdated]")).toEqual([]);
+	});
+
 	it("keeps an agent the machine lacks to one quiet line that opens to its install line", async () => {
 		const canvas = mount();
 		withCodex(canvas, false);

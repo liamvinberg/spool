@@ -230,6 +230,11 @@ export function createCodexEngine({
 			const installed = codexVersion();
 			return installed === null || versionAtLeast(installed, CODEX_MIN_VERSION);
 		},
+		outdated: () => {
+			if (!agentInstalled(process.env, CODEX_COMMAND, look)) return false;
+			const installed = codexVersion();
+			return installed !== null && !versionAtLeast(installed, CODEX_MIN_VERSION);
+		},
 		account: async (root, signal) => {
 			const read = await askCodex(
 				executor,

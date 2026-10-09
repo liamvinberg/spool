@@ -60,7 +60,7 @@ export function InstallWall({ install }: { install: InstallDeck }) {
 				</p>
 				<div className="flex flex-col gap-2.5 pt-1">
 					{AGENT_ENGINE_IDS.map((engine) => (
-						<InstallLine key={engine} engine={engine} />
+						<InstallLine key={engine} engine={engine} outdated={install.stale.includes(engine)} />
 					))}
 				</div>
 				<div className="flex items-center justify-between pt-1">
@@ -141,10 +141,14 @@ export function RecoveryView({
 		return (
 			<div data-recovery={engine} className="flex flex-col gap-3">
 				<p className="text-base text-text leading-base">
-					{install.missing ? `${name} isn’t installed.` : `Sign in to ${name} to continue.`}
+					{!install.missing
+						? `Sign in to ${name} to continue.`
+						: install.outdated
+							? `${name} needs updating.`
+							: `${name} isn’t installed.`}
 				</p>
 				{install.missing ? (
-					<InstallLine engine={engine} />
+					<InstallLine engine={engine} outdated={install.outdated} />
 				) : (
 					// each agent signs in in its own terminal flow: spool holds no login of its own
 					<p className="text-base text-muted leading-base">
@@ -173,7 +177,7 @@ export function RecoveryView({
 				</div>
 				{install.foundNothing ? (
 					<p data-agent-looked="" className="font-mono text-2xs text-muted">
-						{name} is still not installed.
+						{install.outdated ? `${name} still needs updating.` : `${name} is still not installed.`}
 					</p>
 				) : null}
 			</div>

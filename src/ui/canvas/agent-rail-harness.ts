@@ -216,7 +216,9 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 	const preflight = {
 		installed: null as boolean | null,
 		/** which engines the machine has, as the engines door names them (#363); null leaves it to `engines.listed` */
-		engines: null as { id: string; installed: boolean }[] | null,
+		engines: null as { id: string; installed: boolean; outdated?: boolean }[] | null,
+		/** this thread's engine is there but too old to run (#362) */
+		outdated: false,
 		login: { signedIn: false, account: null } as { signedIn: boolean; account: string | null },
 		looks: 0,
 		asked: 0,
@@ -239,7 +241,7 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 	 * the switch's two writes went out in, which is what says the choice was saved first.
 	 */
 	const engines = {
-		listed: [{ id: "claude", installed: true }] as { id: string; installed: boolean }[],
+		listed: [{ id: "claude", installed: true }] as { id: string; installed: boolean; outdated?: boolean }[],
 		// null is a models door that fails
 		codex: {
 			offer: CODEX_OFFERED as AgentOffer | null,
@@ -304,7 +306,11 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 			// and again on every press behind the wall (#201)
 			if (url.pathname.endsWith("/agent/installed")) {
 				preflight.looks += 1;
-				return Response.json(preflight.installed === null ? {} : { installed: preflight.installed });
+				return Response.json(
+					preflight.installed === null
+						? {}
+						: { installed: preflight.installed, ...(preflight.outdated ? { outdated: true } : {}) },
+				);
 			}
 			// whose login it is, asked of the binary and only ever by a press (#201)
 			if (url.pathname.endsWith("/agent/login")) {

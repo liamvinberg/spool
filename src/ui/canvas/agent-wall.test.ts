@@ -43,6 +43,19 @@ describe("no agent on this machine", () => {
 		expect(canvas.preflight.asked).toBe(0);
 	});
 
+	it("says the chat's agent needs updating when the one there is too old to run", async () => {
+		const canvas = mount();
+		canvas.preflight.installed = false;
+		canvas.preflight.outdated = true;
+		await canvas.render();
+		await settle(50);
+
+		expect(wall(canvas.host)?.textContent).toContain("Claude Code needs updating.");
+		expect(wall(canvas.host)?.textContent).not.toContain("isn’t installed");
+		await checkAgain(wall(canvas.host));
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("Claude Code still needs updating.");
+	});
+
 	/**
 	 * The composer stays and it is dead: take it away and the rail is a sentence with no
 	 * evidence of what the rail is for, leave it live and it collects a prompt for nobody.
@@ -152,6 +165,27 @@ describe("no supported agent at all (#363)", () => {
 		await press(canvas.host.querySelector('[aria-label="Copy the pi install line"]'));
 		expect(copied).toHaveBeenCalledWith("npm i -g @earendil-works/pi-coding-agent");
 		expect(canvas.host.querySelector('[data-agent-install="pi"] [aria-label="Copied"]')).not.toBeNull();
+	});
+
+	it("says an agent there but too old to run needs updating, with its update line", async () => {
+		const canvas = mount();
+		canvas.preflight.engines = [
+			{ id: "claude", installed: false },
+			{ id: "codex", installed: false, outdated: true },
+			{ id: "pi", installed: false },
+		];
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+		const codex = theWall(canvas.host)?.querySelector('[data-agent-install="codex"]');
+		expect(codex?.hasAttribute("data-agent-outdated")).toBe(true);
+		expect(codex?.textContent).toContain("Codex needs updating");
+		expect(codex?.querySelector("code")?.textContent).toBe("npm i -g @openai/codex@latest");
+		expect(codex?.querySelector('[aria-label="Copy the Codex update line"]')).not.toBeNull();
+		expect(
+			theWall(canvas.host)?.querySelector('[data-agent-install="pi"]')?.hasAttribute("data-agent-outdated"),
+		).toBe(false);
+		expect(theWall(canvas.host)?.querySelector("[data-agent-check]")).not.toBeNull();
 	});
 
 	it("comes down on Check again once one is installed", async () => {

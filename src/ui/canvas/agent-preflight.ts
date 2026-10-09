@@ -73,6 +73,10 @@ export interface LoginDeck {
 export interface InstallDeck {
 	/** spool looked and this thread's engine has nothing to spawn */
 	readonly missing: boolean;
+	/** what is there of this thread's engine is older than spool runs: it needs updating */
+	readonly outdated: boolean;
+	/** every engine on this machine that is too old to run, which the wall says need updating */
+	readonly stale: readonly AgentEngineId[];
 	/** spool looked and no engine it runs has anything to spawn: the wall (#363) */
 	readonly none: boolean;
 	readonly checking: boolean;
@@ -86,13 +90,23 @@ async function lookFor(
 	project: string,
 	engine: AgentEngineId | undefined,
 	thread: string | undefined,
-): Promise<{ there: boolean | null; any: boolean | null }> {
-	const [there, reading] = await Promise.all([
+): Promise<{
+	there: boolean | null;
+	old: boolean | null;
+	any: boolean | null;
+	stale: readonly AgentEngineId[] | null;
+}> {
+	const [found, reading] = await Promise.all([
 		fetchAgentInstalled(project, engine, thread),
 		fetchAgentEngines(project),
 	]);
 	const listed = reading?.engines;
-	return { there, any: listed === undefined ? null : listed.some((one) => one.installed) };
+	return {
+		there: found?.installed ?? null,
+		old: found?.outdated ?? null,
+		any: listed === undefined ? null : listed.some((one) => one.installed),
+		stale: listed === undefined ? null : listed.filter((one) => one.outdated).map((one) => one.id),
+	};
 }
 
 /**
@@ -113,6 +127,8 @@ async function lookFor(
  */
 export function useAgentInstall(project: string, engine?: AgentEngineId, thread?: string): InstallDeck {
 	const [missing, setMissing] = useState(false);
+	const [outdated, setOutdated] = useState(false);
+	const [stale, setStale] = useState<readonly AgentEngineId[]>([]);
 	const [none, setNone] = useState(false);
 	const [checking, setChecking] = useState(false);
 	const [foundNothing, setFoundNothing] = useState(false);
@@ -120,9 +136,11 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 	useEffect(() => {
 		let gone = false;
 		const quiet = () => {
-			void lookFor(project, engine, thread).then(({ there, any }) => {
+			void lookFor(project, engine, thread).then(({ there, old, any, stale: found }) => {
 				if (gone) return;
 				if (there !== null) setMissing(!there);
+				if (old !== null) setOutdated(old);
+				if (found !== null) setStale(found);
 				if (any !== null) setNone(!any);
 				if (there === true || any === true) setFoundNothing(false);
 			});
@@ -139,9 +157,11 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 		if (checking) return;
 		setChecking(true);
 		setFoundNothing(false);
-		void lookFor(project, engine, thread).then(({ there, any }) => {
+		void lookFor(project, engine, thread).then(({ there, old, any, stale: found }) => {
 			setChecking(false);
 			if (there !== null) setMissing(!there);
+			if (old !== null) setOutdated(old);
+			if (found !== null) setStale(found);
 			if (any !== null) setNone(!any);
 			// the press left a mark whenever it did not turn one up, which includes a door
 			// that could not answer: what it says is that there is still nothing to talk to
@@ -149,5 +169,5 @@ export function useAgentInstall(project: string, engine?: AgentEngineId, thread?
 		});
 	}, [project, checking, engine, thread]);
 
-	return { missing, none, checking, foundNothing, look };
+	return { missing, outdated, stale, none, checking, foundNothing, look };
 }

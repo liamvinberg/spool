@@ -1463,15 +1463,15 @@ export async function fetchAgentInstalled(
 	project: string,
 	engine?: AgentEngineId,
 	thread?: string,
-): Promise<boolean | null> {
+): Promise<{ installed: boolean; outdated: boolean } | null> {
 	try {
 		const res = await client.api.p[":project"].agent.installed.$get({
 			param: { project },
 			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
 		});
 		if (!res.ok) return null;
-		const { installed } = (await res.json()) as { installed?: unknown };
-		return typeof installed === "boolean" ? installed : null;
+		const { installed, outdated } = (await res.json()) as { installed?: unknown; outdated?: unknown };
+		return typeof installed === "boolean" ? { installed, outdated: outdated === true } : null;
 	} catch {
 		return null;
 	}
@@ -1575,8 +1575,17 @@ export async function chooseEngineModel(project: string, engine: AgentEngineId, 
  */
 export interface AgentEnginesReading {
 	readonly defaults: { preferred: AgentEngineId | null; mode: AgentPermissions } | undefined;
-	/** every engine the daemon runs, and whether its binary is on this machine */
-	readonly engines: readonly { id: AgentEngineId; installed: boolean }[] | undefined;
+	/**
+	 * every engine the daemon runs, whether its binary is on this machine, and whether the
+	 * one there is too old to run (#362), which is not installed either
+	 */
+	readonly engines: readonly AgentEngineReading[] | undefined;
+}
+
+export interface AgentEngineReading {
+	readonly id: AgentEngineId;
+	readonly installed: boolean;
+	readonly outdated: boolean;
 }
 
 export async function fetchAgentEngines(project: string): Promise<AgentEnginesReading | undefined> {
@@ -1589,11 +1598,14 @@ export async function fetchAgentEngines(project: string): Promise<AgentEnginesRe
 			defaults: agentDefaultsOf(body),
 			engines: Array.isArray(listed)
 				? listed.flatMap((entry: unknown) => {
-						const { id, installed } = (typeof entry === "object" && entry !== null ? entry : {}) as {
+						const { id, installed, outdated } = (typeof entry === "object" && entry !== null ? entry : {}) as {
 							id?: unknown;
 							installed?: unknown;
+							outdated?: unknown;
 						};
-						return isAgentEngineId(id) ? [{ id, installed: installed === true }] : [];
+						return isAgentEngineId(id)
+							? [{ id, installed: installed === true, outdated: installed !== true && outdated === true }]
+							: [];
 					})
 				: undefined,
 		};

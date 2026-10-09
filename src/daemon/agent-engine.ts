@@ -102,6 +102,12 @@ export interface EngineDeps {
 export interface AgentEngine {
 	readonly id: AgentEngineId;
 	installed(): boolean;
+	/**
+	 * On this machine but older than the oldest release spool runs, so not installed as far
+	 * as a turn or the fallback go: the rail says it needs updating rather than installing.
+	 * Absent on an engine with no oldest release.
+	 */
+	outdated?(): boolean;
 	account(root: string, signal?: AbortSignal): Promise<AgentLogin>;
 	offer(options: EngineOfferOptions): Promise<AgentOffer>;
 	/** Keep only the choice the engine confirmed, including any engine-specific pins. */

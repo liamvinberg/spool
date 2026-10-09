@@ -2372,7 +2372,11 @@ export function createDaemonApp({
 			return c.json({
 				preferred: choice.engine ?? null,
 				mode: choice.mode,
-				engines: [...engines.values()].map((engine) => ({ id: engine.id, installed: engine.installed() })),
+				engines: [...engines.values()].map((engine) => ({
+					id: engine.id,
+					installed: engine.installed(),
+					...(engine.outdated?.() === true ? { outdated: true } : {}),
+				})),
 			});
 		})
 		.put(
@@ -2416,7 +2420,11 @@ export function createDaemonApp({
 				if ("response" in project) return project.response;
 				const selected = engineFor(c, project.root, c.req.query("thread"));
 				if ("response" in selected) return selected.response;
-				return c.json({ installed: selected.engine.installed() });
+				const { engine } = selected;
+				return c.json({
+					installed: engine.installed(),
+					...(engine.outdated?.() === true ? { outdated: true } : {}),
+				});
 			},
 		)
 		.get(

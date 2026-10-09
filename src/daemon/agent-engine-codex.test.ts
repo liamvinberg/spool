@@ -445,6 +445,21 @@ describe("the codex engine's probes", () => {
 		expect(read).toEqual(["0.161.0", "0.151.0", "null", "0.150.0"]);
 	});
 
+	it("is outdated only when it is on the path and says a version older than spool runs", () => {
+		const of = (found: boolean, codexVersion: string | null) =>
+			createCodexEngine({
+				executor: scriptedAgentExecutor("codex-turn").executor,
+				spoolDir: makeTempDir(),
+				version: "0.33.1",
+				look: () => found,
+				codexVersion: () => codexVersion,
+			});
+		expect(of(true, "0.150.0").outdated?.()).toBe(true);
+		expect(of(true, "0.151.0").outdated?.()).toBe(false);
+		expect(of(true, null).outdated?.()).toBe(false);
+		expect(of(false, "0.150.0").outdated?.()).toBe(false);
+	});
+
 	it("is passed over for the fallback when it is older than spool runs", () => {
 		const codex = createCodexEngine({
 			executor: scriptedAgentExecutor("codex-turn").executor,
@@ -548,6 +563,25 @@ describe("codex through the daemon", () => {
 			engines: { id: string; installed: boolean }[];
 		};
 		expect(body.engines.map((engine) => engine.id)).toContain("codex");
+	});
+
+	it("says an old codex needs updating, where the engines and the install check are read", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const old = createCodexEngine({
+			executor: scriptedAgentExecutor("codex-turn").executor,
+			spoolDir,
+			version: "0.33.1",
+			look: () => true,
+			codexVersion: () => "0.140.0",
+		});
+		const app = makeApp(spoolDir, { agentEngines: [old] });
+		const body = (await (await app.request(`/api/p/${name}/agent/engines`)).json()) as {
+			engines: { id: string; installed: boolean; outdated?: boolean }[];
+		};
+		expect(body.engines).toEqual([{ id: "codex", installed: false, outdated: true }]);
+		const look = await app.request(`/api/p/${name}/agent/installed?engine=codex`);
+		expect(await look.json()).toEqual({ installed: false, outdated: true });
 	});
 
 	it("runs a thread's turn on codex once it is the chosen agent, and answers its approvals", async () => {

@@ -2,7 +2,13 @@ import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { AGENT_ENGINE_IDS, type AgentEngineId, isAgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { AgentAsk, AgentModel, AgentOffer } from "../../daemon/agent-offer";
-import { chooseEngineModel, engineModelOffer, fetchAgentEngines, fetchAgentLogin } from "../api";
+import {
+	type AgentEngineReading,
+	chooseEngineModel,
+	engineModelOffer,
+	fetchAgentEngines,
+	fetchAgentLogin,
+} from "../api";
 import { cn } from "../cn";
 import { CheckIcon, PlusIcon, SearchIcon } from "../icons";
 import { Chevron, CommandLine, Fade, RailMenu, Reveal, Versioned } from "./agent-float";
@@ -18,14 +24,23 @@ import type { LoginDeck } from "./agent-preflight";
  * are about what you can install; the order is the fallback's, Claude Code, Codex, pi.
  */
 export const ENGINES: Readonly<
-	Record<AgentEngineId, { name: string; install: string; login: { command: string; inside?: string } }>
+	Record<
+		AgentEngineId,
+		{ name: string; install: string; update?: string; login: { command: string; inside?: string } }
+	>
 > = {
 	claude: {
 		name: "Claude Code",
 		install: "npm i -g @anthropic-ai/claude-code",
 		login: { command: "claude auth login" },
 	},
-	codex: { name: "Codex", install: "npm i -g @openai/codex", login: { command: "codex login" } },
+	codex: {
+		name: "Codex",
+		install: "npm i -g @openai/codex",
+		// spool runs no Codex older than 0.151.0, and the one there says it is
+		update: "npm i -g @openai/codex@latest",
+		login: { command: "codex login" },
+	},
 	pi: { name: "pi", install: "npm i -g @earendil-works/pi-coding-agent", login: { command: "pi", inside: "/login" } },
 };
 
@@ -33,13 +48,26 @@ export const ENGINES: Readonly<
 export const engineName = (engine: string | undefined): string =>
 	engine === undefined ? "" : isAgentEngineId(engine) ? ENGINES[engine].name : engine;
 
-/** an agent's install line under its name, to copy into a terminal */
-export function InstallLine({ engine }: { engine: AgentEngineId }) {
+/** the line that updates an agent too old to run, or its install line where it has none */
+export const updateLine = (engine: AgentEngineId): string => ENGINES[engine].update ?? ENGINES[engine].install;
+
+/**
+ * An agent's install line under its name, to copy into a terminal; for one that is there
+ * but too old to run, the line that updates it, under a name that says so.
+ */
+export function InstallLine({ engine, outdated = false }: { engine: AgentEngineId; outdated?: boolean }) {
 	const { name, install } = ENGINES[engine];
 	return (
-		<div data-agent-install={engine} className="flex flex-col gap-1.5">
-			<span className="text-muted type-label">{name}</span>
-			<CommandLine command={install} label={`Copy the ${name} install line`} />
+		<div
+			data-agent-install={engine}
+			data-agent-outdated={outdated ? "" : undefined}
+			className="flex flex-col gap-1.5"
+		>
+			<span className="text-muted type-label">{outdated ? `${name} needs updating` : name}</span>
+			<CommandLine
+				command={outdated ? updateLine(engine) : install}
+				label={outdated ? `Copy the ${name} update line` : `Copy the ${name} install line`}
+			/>
 		</div>
 	);
 }
@@ -122,7 +150,7 @@ export function AgentMenu({
 	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 }) {
 	const { offer, levels } = model;
-	const [engines, setEngines] = useState<readonly { id: AgentEngineId; installed: boolean }[] | null>(null);
+	const [engines, setEngines] = useState<readonly AgentEngineReading[] | null>(null);
 	const [others, setOthers] = useState<Readonly<Record<string, Other>>>({});
 	const [effortOpen, setEffortOpen] = useState(false);
 	const [pending, setPending] = useState<{ engine: AgentEngineId; value: string } | null>(null);
@@ -169,14 +197,20 @@ export function AgentMenu({
 		}
 	};
 
-	const installed = (engines ?? [{ id: own, installed: true }]).filter((one) => one.installed || one.id === own);
+	// an agent too old to run is a group of its own that says so, as a signed-out one does
+	const outdated = new Set((engines ?? []).filter((one) => one.outdated).map((one) => one.id));
+	const installed = (engines ?? [{ id: own, installed: true, outdated: false }]).filter(
+		(one) => one.installed || one.outdated || one.id === own,
+	);
 	const groups = [own, ...installed.map((one) => one.id).filter((id) => id !== own)];
 	// every agent spool can be pointed at that is not here, the wall's list (#363), as soon
 	// as the machine has said what is: one the daemon does not run yet is still installable
 	const lacking =
 		engines === null
 			? []
-			: AGENT_ENGINE_IDS.filter((id) => id !== own && !engines.some((has) => has.id === id && has.installed));
+			: AGENT_ENGINE_IDS.filter(
+					(id) => id !== own && !outdated.has(id) && !engines.some((has) => has.id === id && has.installed),
+				);
 	const modelsOf = (engine: string) => (engine === own ? offer.models : (others[engine]?.offer?.models ?? []));
 	const total = groups.reduce((sum, engine) => sum + modelsOf(engine).length, 0);
 	const findable = total > FIND_AT;
@@ -235,13 +269,14 @@ export function AgentMenu({
 		const mine = engine === own;
 		// an agent that answered with nothing to list, or whose list could not be read, is
 		// still an agent to pick, on whatever it answers with by default
-		const bare = !mine && others[engine] !== undefined && (others[engine]?.offer?.models.length ?? 0) === 0;
+		const old = outdated.has(engine);
+		const bare = !old && !mine && others[engine] !== undefined && (others[engine]?.offer?.models.length ?? 0) === 0;
 		const { login: signIn } = ENGINES[engine];
-		const signedOut = mine ? login?.out === true : others[engine]?.signedIn === false;
-		const models = modelsOf(engine).filter((entry) => matches(engine, entry, query));
+		const signedOut = !old && (mine ? login?.out === true : others[engine]?.signedIn === false);
+		const models = old ? [] : modelsOf(engine).filter((entry) => matches(engine, entry, query));
 		// a group the search empties folds away rather than vanishing, and one the machine has
 		// just said is there unfolds into place
-		const found = models.length > 0 || signedOut || query.trim() === "";
+		const found = models.length > 0 || signedOut || old || query.trim() === "";
 		return (
 			<Fade key={engine} fold open={found}>
 				<div data-agent-group={engine} className={cn("flex flex-col", index > 0 && "pt-1")}>
@@ -253,7 +288,9 @@ export function AgentMenu({
 						)}
 					>
 						<span className="text-muted type-label">{engineName(engine)}</span>
-						{signedOut ? (
+						{old ? (
+							<Quiet>needs updating</Quiet>
+						) : signedOut ? (
 							<Quiet>signed out</Quiet>
 						) : started && !mine ? (
 							<Quiet>new chat</Quiet>
@@ -266,7 +303,23 @@ export function AgentMenu({
 							{usage}
 						</p>
 					) : null}
-					{signedOut ? (
+					{old ? (
+						<div data-agent-outdated={engine} className="flex flex-col gap-2 pt-0.5 pr-2 pb-2 pl-7">
+							<p className="text-muted type-label">
+								{engineName(engine)} needs updating. Update it from a terminal and its models show up here.
+							</p>
+							<CommandLine command={updateLine(engine)} label={`Copy the ${engineName(engine)} update line`} />
+							<span>
+								<button
+									type="button"
+									onClick={() => setLooks((count) => count + 1)}
+									className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+								>
+									Check again
+								</button>
+							</span>
+						</div>
+					) : signedOut ? (
 						<div data-agent-signed-out={engine} className="flex flex-col gap-2 pt-0.5 pr-2 pb-2 pl-7">
 							<p className="text-muted type-label">
 								{engineName(engine)} is signed out. Sign in from a terminal and its models show up here.
@@ -419,7 +472,7 @@ export function AgentMenu({
 							<NewThreadNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
 						</Reveal>
 					) : null}
-					{mine && !signedOut && models.length === 0 && query.trim() === "" ? (
+					{mine && !old && !signedOut && models.length === 0 && query.trim() === "" ? (
 						<p className="px-7 py-2 text-muted type-label">
 							{model.loading ? "Loading models…" : "No models offered."}
 						</p>

@@ -332,7 +332,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		if (handshake.version !== null && !versionAtLeast(handshake.version, CODEX_MIN_VERSION)) {
 			failed(
 				started,
-				`Codex ${handshake.version} is older than ${CODEX_MIN_VERSION}, the oldest spool runs. Update it with npm i -g @openai/codex.`,
+				`Codex ${handshake.version} is older than ${CODEX_MIN_VERSION}, the oldest spool runs. Update it with npm i -g @openai/codex@latest.`,
 			);
 			return;
 		}

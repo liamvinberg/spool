@@ -68,8 +68,9 @@ everything else Codex asks about reaches the rail. Whether Codex trusts the
 project is your own Codex setting: Spool sets none and does not write Codex's
 `config.toml`. A Codex older than 0.151.0, the first release
 that resumes a thread without loading its whole history, counts as not
-installed; a turn on one that could not say its version stops before it starts
-and says to update it.
+installed: the agent menu and the wall say "Codex needs updating", with
+`npm i -g @openai/codex@latest` to copy and Check again. A turn on one that
+could not say its version stops before it starts and says to update it.
 
 pi never asks before it acts, so a pi chat shows no permission menu. Spool asks
 pi to say what it is about to change outside `design/` before it does it.
