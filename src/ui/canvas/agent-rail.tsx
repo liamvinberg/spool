@@ -37,13 +37,12 @@ import { ChevronIcon } from "./sidebar";
 import { useStillness } from "./stillness";
 
 /**
- * The agent rail (#144, #192, #193, #194): the right rail, whole, drawn as one
- * conversation.
+ * The agent pane (#144, #192, #193, #194, #359): one thread, drawn whole.
  *
- * There is no tab row. The agent owns this column — `elements` died with the
- * inspector and `connections` left for the ambient walk layer — so the rail is the
+ * There is no tab row. The agent owns this pane — `elements` died with the
+ * inspector and `connections` left for the ambient walk layer — so the pane is the
  * transcript and the composer and nothing between them. What that buys is the width:
- * at 420 a tab row is a whole line of a narrow column spent saying which of two
+ * at 420 a tab row is a whole line of a narrow side spent saying which of two
  * things you are looking at, and there is only one thing to look at.
  *
  * Four things render and nothing else: the plan, the human's words, the agent's
@@ -121,11 +120,11 @@ export interface Pointing {
 }
 
 /**
- * The conversations this project has, and what the column may do about them (#136, #205).
+ * The conversations this project has, and what the pane may do about them (#136, #205).
  *
  * One bundle rather than six props for the reason `Pointing` and `FrameJump` are: they
  * arrive together, they change together, and the deck upstream already holds them as one
- * object. The column and the nameplate both take the whole of it, because which thread is
+ * object. The list and the title both take the whole of it, because which thread is
  * open is a fact about the deck rather than a string either of them could be handed.
  */
 export interface Threads {
@@ -140,9 +139,9 @@ export interface Threads {
 	readonly finished: boolean;
 	/** a press on a cell, which reads the thread and moves nothing else */
 	readonly onOpen: (id: string) => void;
-	/** the ✕ in the flyout: it leaves the column, and neither the session nor the picture goes */
+	/** the ✕ in the list: it leaves the list, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
-	/** the plus that leads the column */
+	/** the + beside the title */
 	readonly onNew: (engine?: AgentEngineId) => void;
 }
 
@@ -458,14 +457,14 @@ export function AgentRail({
 					</div>
 				) : (
 					/*
-					 * The rail is one panel, and the plate over it is where the other conversations
-					 * live (#205). The panel is everything one conversation is; the list the plate
-					 * drops is every conversation there is, and a press on it changes only the panel.
+					 * The pane is one panel, and its title is where the other threads are reached
+					 * (#205). The panel is everything one thread is; the list the title drops is
+					 * every thread there is, and a press on it changes only the panel.
 					 */
 					<div className="flex h-full min-w-[200px] flex-col">
-						{/* the plate leads the shelf, because it says which thread everything under it
+						{/* the title leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-						<ThreadPlate
+						<ThreadTitle
 							threads={threads}
 							listing={listing}
 							onList={(at) => {
@@ -473,7 +472,7 @@ export function AgentRail({
 								setListing(at);
 							}}
 						/>
-						{/* the list drops over the shelf and the log together, so it hangs off the plate
+						{/* the list drops over the shelf and the log together, so it hangs off the title
 					    whatever the shelf is carrying */}
 						<div className="relative flex min-h-0 flex-1 flex-col">
 							{/* the standing half of being signed out, on the shelf the plan would take —
@@ -572,7 +571,7 @@ export function AgentRail({
 							}}
 							login={login}
 							preferred={preferred}
-							onNewChat={() => {
+							onNewThread={() => {
 								threads.onNew();
 								setListing(null);
 							}}
@@ -601,10 +600,10 @@ export function AgentRail({
 	);
 }
 
-/* ---------- the threads, on the plate over the log (#136, #161, #200, #205, #364) ----------
+/* ---------- the threads, off the title over the log (#136, #161, #200, #205, #364) ----------
  * One panel, and every other conversation reached from its title. The header holds the
  * chat's title, which opens the switcher, and the + that starts a new chat, and nothing
- * else: what is moving in another chat is the dock glyph's one small dot, and who answers
+ * else: what is moving in another thread is the rail icon's one small dot, and who answers
  * is the composer's. The list drops from the title over the log, one step up on a
  * hairline and a soft shadow, and leaves the way it came.
  *
@@ -620,7 +619,7 @@ export function AgentRail({
  * `listing` is the clock read when the list was opened, or null while it is shut: the
  * moment the list opened is the moment the ages in it are about.
  */
-function ThreadPlate({
+function ThreadTitle({
 	threads,
 	listing,
 	onList,
@@ -632,15 +631,15 @@ function ThreadPlate({
 	const { list, open, onNew } = threads;
 	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
 	const listed = listing !== null;
-	const plate = useRef<HTMLButtonElement>(null);
+	const title = useRef<HTMLButtonElement>(null);
 	return (
 		<>
 			{/* the header the pane already has: the title in place of the pane's name, and the + */}
 			<PaneTitle>
 				<button
-					ref={plate}
+					ref={title}
 					type="button"
-					data-agent-plate-ask=""
+					data-agent-thread-title=""
 					aria-haspopup="dialog"
 					aria-expanded={listed}
 					title="Switch chat"
@@ -660,7 +659,7 @@ function ThreadPlate({
 					onClick={() => {
 						onList(null);
 						onNew();
-						plate.current?.closest("[data-pane]")?.querySelector("textarea")?.focus({ preventScroll: true });
+						title.current?.closest("[data-pane]")?.querySelector("textarea")?.focus({ preventScroll: true });
 					}}
 					className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
 				>
@@ -802,7 +801,7 @@ function ThreadRow({
  * What a thread is doing, in the smallest thing that can say it (#161).
  *
  * The box is always 14px whatever is inside it, so every row in the list draws its mark
- * in the same place and the plate's marks stand in one line.
+ * in the same place and the marks stand in one line.
  *
  * Four drawings of five lives. Streaming and running turn the same ring, colourless,
  * because state in this rail is motion and the one accent belongs to the selection.
@@ -865,7 +864,7 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
  * It says what it is doing rather than what it is for while a check is out, because that
  * is the only thing on screen saying the press landed.
  */
-function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+function CheckAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 	return (
 		<button
 			type="button"
@@ -912,7 +911,7 @@ function InstallWall({ install }: { install: InstallDeck }) {
 					) : (
 						<span />
 					)}
-					<Quiet busy={install.checking} onClick={install.look} />
+					<CheckAgain busy={install.checking} onClick={install.look} />
 				</div>
 			</div>
 		</div>
@@ -953,7 +952,7 @@ function LoginStrip({ login }: { login: LoginDeck }) {
 	return (
 		<div data-agent-login="" className="flex h-[34px] shrink-0 items-center border-border border-b px-3.5">
 			<span className="min-w-0 flex-1 truncate text-muted type-value">signed out</span>
-			<Quiet busy={login.checking} onClick={login.check} />
+			<CheckAgain busy={login.checking} onClick={login.check} />
 		</div>
 	);
 }
@@ -2109,7 +2108,7 @@ function Composer({
 	onStop,
 	onAnswer,
 	onSwitch,
-	onNewChat,
+	onNewThread,
 	login,
 	preferred,
 }: {
@@ -2165,7 +2164,7 @@ function Composer({
 	onAnswer: (request: string, reply: AgentReply) => void;
 	/** another agent was picked in the menu: in this chat while it is empty, or a new one; resolves once saved */
 	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
-	onNewChat: () => void;
+	onNewThread: () => void;
 	/** whether this chat's agent is signed in, for the menu's group of it */
 	login: LoginDeck;
 	/** the machine's usual agent, which the model trigger names only another of (#364) */
@@ -2407,7 +2406,7 @@ function Composer({
 						</div>
 						<div className="flex shrink-0 items-center gap-1.5">
 							{showRing && context !== null ? (
-								<ContextRing used={context} open={ringOpen} onOpen={setRingOpen} onNewChat={onNewChat} />
+								<ContextRing used={context} open={ringOpen} onOpen={setRingOpen} onNewThread={onNewThread} />
 							) : null}
 							{cutting ? (
 								<StopButton onStop={onStop} />
@@ -2443,12 +2442,12 @@ function ContextRing({
 	used,
 	open,
 	onOpen,
-	onNewChat,
+	onNewThread,
 }: {
 	used: number;
 	open: boolean;
 	onOpen: (open: boolean) => void;
-	onNewChat: () => void;
+	onNewThread: () => void;
 }) {
 	const share = Math.min(1, Math.max(0, used));
 	const said = `${Math.round(share * 100)}% of context used.`;
@@ -2494,7 +2493,7 @@ function ContextRing({
 						type="button"
 						onClick={() => {
 							onOpen(false);
-							onNewChat();
+							onNewThread();
 						}}
 						className="h-7 shrink-0 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
 					>

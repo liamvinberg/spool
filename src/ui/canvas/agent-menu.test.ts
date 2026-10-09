@@ -21,7 +21,6 @@ import {
 	modelRows,
 	modelTrigger,
 	mount,
-	nameplate,
 	newThread,
 	OFFERED,
 	ONE,
@@ -36,6 +35,7 @@ import {
 	shot,
 	storedThread,
 	TWO,
+	threadTitle,
 	type,
 	until,
 	usageLine,
@@ -692,7 +692,7 @@ describe("another agent in the menu", () => {
 
 		// nothing asked first: the model is chosen for codex, and then codex is saved as the
 		// machine's agent, which is what the blank chat follows
-		expect(live(canvas.host, "[data-agent-new-chat]")).toEqual([]);
+		expect(live(canvas.host, "[data-agent-new-thread]")).toEqual([]);
 		expect(canvas.engines.codex.chose).toEqual([{ value: "gpt-5.5-mini" }]);
 		expect(canvas.engines.calls).toEqual(["POST codex model", "PUT engines codex"]);
 		expect(canvas.machine.preferred).toBe("codex");
@@ -790,7 +790,7 @@ describe("another agent in the menu", () => {
 		await canvas.render();
 		await settle();
 		await openWithOthers(canvas);
-		const asking = () => live(canvas.host, '[data-agent-new-chat="codex"]')[0] ?? null;
+		const asking = () => live(canvas.host, '[data-agent-new-thread="codex"]')[0] ?? null;
 
 		expect(live(canvas.host, '[data-agent-group="codex"]')[0]?.textContent).toContain("new chat");
 		expect(asking()).toBeNull();
@@ -814,7 +814,7 @@ describe("another agent in the menu", () => {
 		expect(canvas.machine.preferred).toBe("codex");
 		// a new chat, on codex, and the one that was open is still in the list, named by its
 		// agent now that its agent is not the usual one
-		expect(nameplate(canvas.host)).toBe("New chat");
+		expect(threadTitle(canvas.host)).toBe("New chat");
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("GPT-5.5") === true);
 		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
 		expect(

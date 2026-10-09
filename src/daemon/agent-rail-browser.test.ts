@@ -228,7 +228,7 @@ function parts(page: Page) {
 		rail,
 		head,
 		field,
-		title: head.locator("[data-agent-plate-ask]"),
+		title: head.locator("[data-agent-thread-title]"),
 		newChat: head.locator('button[aria-label="New chat"]'),
 		chats: page.getByRole("dialog", { name: "Chats", exact: true }),
 		sendButton: rail.getByRole("button", { name: "Send", exact: true }),
@@ -245,7 +245,7 @@ function parts(page: Page) {
 }
 
 describe("the agent rail in a browser", () => {
-	it("switches chats from the title, dots the dock for another chat's news, and queues, takes back and stops", {
+	it("switches chats from the title, dots the rail icon for another thread's news, and queues, takes back and stops", {
 		timeout: 120_000,
 	}, async () => {
 		const { claude, page, rail, title, newChat, chats, field, send, sendButton, stop, dot } = await opened();
@@ -429,7 +429,7 @@ describe("the agent rail in a browser", () => {
 		await trigger.click();
 		await expect.poll(() => menu.locator('[data-agent-group="pi"]').textContent()).toContain("new chat");
 		await row("Atlas").click();
-		const asking = menu.locator('[data-agent-new-chat="pi"]:not([inert] *)');
+		const asking = menu.locator('[data-agent-new-thread="pi"]:not([inert] *)');
 		await expect.poll(() => asking.textContent()).toContain("Starts a new chat on pi. This one stays in your chats.");
 		await expect.poll(engine).toBe("claude");
 		await asking.getByRole("button", { name: "New chat", exact: true }).click();

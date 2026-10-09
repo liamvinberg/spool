@@ -378,7 +378,10 @@ export function AgentMenu({
 								) : null}
 								{started && !mine ? (
 									<Reveal open={waiting}>
-										<NewChatNote engine={engine} onAccept={() => void switchTo(engine, entry.value, true)} />
+										<NewThreadNote
+											engine={engine}
+											onAccept={() => void switchTo(engine, entry.value, true)}
+										/>
 									</Reveal>
 								) : null}
 							</Fragment>
@@ -410,7 +413,7 @@ export function AgentMenu({
 				) : null}
 				{bare && started ? (
 					<Reveal open={pending?.engine === engine && pending.value === ""}>
-						<NewChatNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
+						<NewThreadNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
 					</Reveal>
 				) : null}
 				{mine && !signedOut && models.length === 0 && query.trim() === "" ? (
@@ -535,9 +538,9 @@ function usageOf(limit: AgentLimit | null, login: LoginDeck | undefined): string
 }
 
 /** a model on another agent, picked in a started chat: what happens, and the one act */
-function NewChatNote({ engine, onAccept }: { engine: string; onAccept: () => void }) {
+function NewThreadNote({ engine, onAccept }: { engine: string; onAccept: () => void }) {
 	return (
-		<div data-agent-new-chat={engine} className="flex items-center gap-3 pt-1 pr-1 pb-2 pl-7">
+		<div data-agent-new-thread={engine} className="flex items-center gap-3 pt-1 pr-1 pb-2 pl-7">
 			<p className="min-w-0 flex-1 text-muted type-label">
 				Starts a new chat on {engineName(engine)}. This one stays in your chats.
 			</p>

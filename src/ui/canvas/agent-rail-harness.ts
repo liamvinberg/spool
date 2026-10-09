@@ -600,16 +600,16 @@ export const closed: AgentEvent = { kind: "closed", code: 0, parent: null };
 
 /**
  * The pane's own header, which the chat's title is drawn into in place of the pane's name,
- * beside the + (#364): the title is the switcher, and there is no plate under it any more.
+ * beside the + (#364): the title is the switcher.
  */
 export const header = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-pane-head="agent"]');
 
 /** the chat's title in the header, which is the press that drops the list */
-export const plateAsk = (host: HTMLElement) =>
-	header(host)?.querySelector<HTMLElement>("[data-agent-plate-ask]") ?? null;
+export const titleButton = (host: HTMLElement) =>
+	header(host)?.querySelector<HTMLElement>("[data-agent-thread-title]") ?? null;
 
 /** the thread you are in, which is the one place its name is written outside the list */
-export const nameplate = (host: HTMLElement) => plateAsk(host)?.querySelector(":scope > span")?.textContent ?? "";
+export const threadTitle = (host: HTMLElement) => titleButton(host)?.querySelector(":scope > span")?.textContent ?? "";
 
 /** the list dropped from the title over the log, or null while it is shut or on its way out */
 export const threadList = (host: HTMLElement) => live(host, "[data-agent-threads]")[0] ?? null;
@@ -623,7 +623,7 @@ export async function press(element: Element | null | undefined) {
 
 /** the list, dropped if it is not already: a row exists only while the list is up */
 export async function listed(host: HTMLElement) {
-	if (threadList(host) === null) await press(plateAsk(host));
+	if (threadList(host) === null) await press(titleButton(host));
 	return threadList(host);
 }
 

@@ -25,12 +25,10 @@ import {
 	modelRow,
 	modelTrigger,
 	mount,
-	nameplate,
 	newThread,
 	ONE,
 	openCell,
 	openModelMenu,
-	plateAsk,
 	press,
 	rail,
 	resizeRail,
@@ -42,6 +40,8 @@ import {
 	storedThread,
 	TWO,
 	threadList,
+	threadTitle,
+	titleButton,
 	type,
 	until,
 } from "./agent-rail-harness";
@@ -3175,7 +3175,7 @@ describe("the queue", () => {
 	});
 });
 
-/** the dot on the agent's dock icon, which says another chat has news (#364) */
+/** the dot on the agent's rail icon, which says another thread has news (#364) */
 const elsewhere = (host: HTMLElement) =>
 	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]') !== null;
 
@@ -3220,23 +3220,20 @@ const written = (count: number): ServedThread[] =>
 		storedThread({ id: `thread-${at}`, ask: `ask ${at}`, frame: `frame-${at}`, at }),
 	);
 
-describe("the thread plate", () => {
+describe("the thread title", () => {
 	it("opens on one thread, its title in the pane's header and no list until asked", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(nameplate(canvas.host)).toBe("New chat");
+		expect(threadTitle(canvas.host)).toBe("New chat");
 		expect(threadList(canvas.host)).toBeNull();
-		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
-		expect(plateAsk(canvas.host)?.getAttribute("aria-haspopup")).toBe("dialog");
+		expect(titleButton(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
+		expect(titleButton(canvas.host)?.getAttribute("aria-haspopup")).toBe("dialog");
 		// the title stands where the pane's name was: the header says which chat, not "Agent"
 		expect(header(canvas.host)?.querySelector("h2")).toBeNull();
 		// the plus is the pane's own verb, in the header beside the title (#359)
 		expect(header(canvas.host)?.querySelector('button[aria-label="New chat"]')).not.toBeNull();
-		// and there is no plate under the header, and no marks of other chats in it: those are
-		// the dock icon's one dot (#364)
-		expect(canvas.host.querySelector("[data-agent-plate]")).toBeNull();
-		expect(canvas.host.querySelector("[data-agent-elsewhere]")).toBeNull();
+		// and no marks of other threads in the header: those are the rail icon's one dot (#364)
 		expect(elsewhere(canvas.host)).toBe(false);
 	});
 
@@ -3253,7 +3250,7 @@ describe("the thread plate", () => {
 		for (const row of threadList(canvas.host)?.querySelectorAll(".agent-thread-ask") ?? []) {
 			expect(row.className).toContain("truncate");
 		}
-		expect(plateAsk(canvas.host)?.querySelector(":scope > span")?.className).toContain("truncate");
+		expect(titleButton(canvas.host)?.querySelector(":scope > span")?.className).toContain("truncate");
 		expect(stack(canvas.host)?.style.width).toBe("380px");
 	});
 
@@ -3269,9 +3266,9 @@ describe("the thread plate", () => {
 		await canvas.render();
 		await settle();
 
-		expect(nameplate(canvas.host)).toBe("tighten the header");
+		expect(threadTitle(canvas.host)).toBe("tighten the header");
 		// sentence type rather than the machine register: the ask is something somebody said
-		expect(plateAsk(canvas.host)?.querySelector(":scope > span")?.className).not.toContain("font-mono");
+		expect(titleButton(canvas.host)?.querySelector(":scope > span")?.className).not.toContain("font-mono");
 
 		const row = await cell(canvas.host, "tighten the header");
 		expect(row?.textContent).toBe("tighten the header5m");
@@ -3289,11 +3286,11 @@ describe("the thread plate", () => {
 
 	/**
 	 * The column's one glanceable answer, kept: something is moving in a chat you are not
-	 * looking at. It is one dot on the dock's agent icon now (#364), lit or not, and nothing
+	 * looking at. It is one dot on the agent's rail icon now (#364), lit or not, and nothing
 	 * for the chat you are in or for one that is read, because the log beside it is already
 	 * the first.
 	 */
-	it("dots the dock icon for another chat's news, and never for the one you are in", async () => {
+	it("dots the rail icon for another thread's news, and never for the one you are in", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the empty cart");
@@ -3319,7 +3316,7 @@ describe("the thread plate", () => {
 	});
 
 	/** the open chat's own marks on a hidden pane say more than news elsewhere, so they win */
-	it("gives way on the dock to the open chat's own working mark while the pane is hidden", async () => {
+	it("gives way on the rail icon to the open thread's own working mark while the pane is hidden", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the empty cart");
@@ -3342,13 +3339,13 @@ describe("the thread plate", () => {
 		const canvas = mount();
 		await canvas.render();
 
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		expect(threadList(canvas.host)).not.toBeNull();
 		expect(threadList(canvas.host)?.getAttribute("role")).toBe("dialog");
 		expect(threadList(canvas.host)?.getAttribute("aria-label")).toBe("Chats");
-		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("true");
+		expect(titleButton(canvas.host)?.getAttribute("aria-expanded")).toBe("true");
 
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		expect(threadList(canvas.host)).toBeNull();
 		// it leaves the way it came: still drawn for its exit, inert so nothing in it can be
 		// pressed, and then gone (#364)
@@ -3364,9 +3361,9 @@ describe("the thread plate", () => {
 		const canvas = mount({ still: true });
 		await canvas.render();
 
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		expect(threadList(canvas.host)).not.toBeNull();
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		expect(canvas.host.querySelector("[data-agent-threads]")).toBeNull();
 	});
 
@@ -3374,13 +3371,13 @@ describe("the thread plate", () => {
 		const canvas = mount();
 		await canvas.render();
 
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
 		});
 		expect(threadList(canvas.host)).toBeNull();
 
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		await press(canvas.host.querySelector('[aria-label="close the threads"]'));
 		expect(threadList(canvas.host)).toBeNull();
 	});
@@ -3410,11 +3407,11 @@ describe("the thread plate", () => {
 		expect(threadList(canvas.host)).toBeNull();
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		expect(log(canvas.host)).not.toContain("The copy deck landed.");
-		expect(nameplate(canvas.host)).toBe("tighten the header");
+		expect(threadTitle(canvas.host)).toBe("tighten the header");
 	});
 
 	/**
-	 * The rail icon that lit the pane is the thing that hides it (#256, #359), so the plate
+	 * The rail icon that lit the pane is the thing that hides it (#256, #359), so the title
 	 * carries no caret of its own: a second control for the same act was the doubling in
 	 * miniature.
 	 */
@@ -3431,19 +3428,19 @@ describe("the thread plate", () => {
 		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 
-	/** the plus is a button on the plate, so the keyboard reaches it the way it reaches any */
+	/** the plus is a button in the header, so the keyboard reaches it the way it reaches any */
 	it("starts a new thread from the plus, list or no list", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "tighten the header");
 		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
 
-		await press(plateAsk(canvas.host));
+		await press(titleButton(canvas.host));
 		await newThread(canvas.host);
 
 		// the list goes with the press, because the thread it was about has changed
 		expect(threadList(canvas.host)).toBeNull();
-		expect(nameplate(canvas.host)).toBe("New chat");
+		expect(threadTitle(canvas.host)).toBe("New chat");
 		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
 	});
 
@@ -3955,7 +3952,7 @@ describe("what the composer keeps", () => {
 		await act(async () => type(field(canvas.host) as HTMLTextAreaElement, ""));
 		await canvas.leave();
 		await canvas.render();
-		await until(() => plateAsk(canvas.host)?.textContent?.includes("existing conversation") === true);
+		await until(() => titleButton(canvas.host)?.textContent?.includes("existing conversation") === true);
 		expect(field(canvas.host)?.value).toBe("");
 	});
 
@@ -4142,7 +4139,7 @@ describe("the context ring", () => {
 		);
 		// a new chat, and the note goes with the press
 		expect(note(canvas.host)).toBeNull();
-		expect(nameplate(canvas.host)).toBe("New chat");
+		expect(threadTitle(canvas.host)).toBe("New chat");
 		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
 		// and a new chat has a window with nothing in it
 		expect(ring(canvas.host)).toBeNull();
