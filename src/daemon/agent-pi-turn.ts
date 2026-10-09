@@ -1,5 +1,5 @@
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
-import { createPiAdapter, PI_PROMPT, PI_STATE, piCommandLine, piDeclineLine } from "./agent-pi";
+import { createPiAdapter, createPiRpc, PI_PROMPT, PI_STATE, piCommandLine, piDeclineLine } from "./agent-pi";
 import { providerRecovery } from "./agent-recovery";
 import type { AgentSpawn } from "./agent-spawn";
 import type { AgentTurn } from "./agent-turn";
@@ -48,37 +48,12 @@ export function startPiTurn({ executor, spawn, prompt, model, onSession }: PiTur
 		}
 	}
 
-	/** the answer to `get_state`, or false where the line is something else */
-	function answeredState(line: string): boolean {
-		if (!line.includes(PI_STATE)) return false;
-		try {
-			const wire = JSON.parse(line) as {
-				id?: unknown;
-				type?: unknown;
-				data?: { sessionId?: unknown; sessionFile?: unknown };
-			};
-			if (wire.id !== PI_STATE || wire.type !== "response") return false;
-			const { sessionId, sessionFile } = wire.data ?? {};
-			if (typeof sessionId === "string" && typeof sessionFile === "string")
-				onSession?.({ id: sessionId, file: sessionFile });
-			return true;
-		} catch {
-			/* the adapter reports a line that is not JSON */
-			return false;
-		}
-	}
-
 	void shell.spawn(
 		() => executor(spawn),
 		(started) => {
+			const rpc = createPiRpc(started);
 			started.onLine((line) => {
-				// one command at a time: the prompt goes once pi has said which session this is,
-				// so the reference is known before anything in the turn can need it
-				if (!prompted && answeredState(line)) {
-					prompted = true;
-					started.write(piCommandLine({ id: PI_PROMPT, type: "prompt", ...prompt }));
-					interruptFrom(started);
-				}
+				rpc.read(line);
 				for (const event of adapter.read(line)) {
 					if (event.kind === "elicit") {
 						started.write(piDeclineLine(event.request));
@@ -102,6 +77,7 @@ export function startPiTurn({ executor, spawn, prompt, model, onSession }: PiTur
 				}
 			});
 			started.onExit((code, message) => {
+				rpc.close(message ?? "pi exited.");
 				const recovery = code === 0 || code === null ? undefined : providerRecovery(message ?? "", "pi", model);
 				shell.close({
 					kind: "closed",
@@ -111,7 +87,21 @@ export function startPiTurn({ executor, spawn, prompt, model, onSession }: PiTur
 					parent: null,
 				});
 			});
-			started.write(piCommandLine({ id: PI_STATE, type: "get_state" }));
+			// one command at a time: the prompt goes once pi has said which session this is,
+			// so the reference is known before anything in the turn can need it
+			rpc.request<{ sessionId?: unknown; sessionFile?: unknown }>({ id: PI_STATE, type: "get_state" }).then(
+				(state) => {
+					if (shell.finished) return;
+					const { sessionId, sessionFile } = state.data ?? {};
+					if (typeof sessionId === "string" && typeof sessionFile === "string")
+						onSession?.({ id: sessionId, file: sessionFile });
+					prompted = true;
+					started.write(piCommandLine({ id: PI_PROMPT, type: "prompt", ...prompt }));
+					interruptFrom(started);
+				},
+				// gone before it answered: the exit has already closed the turn
+				() => {},
+			);
 		},
 	);
 
