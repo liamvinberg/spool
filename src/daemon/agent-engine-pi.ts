@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { agentEnv } from "./agent-cli";
 import { DESIGNER_FRAMING, mountDesigner } from "./agent-designer";
 import { type AgentEngine, type AgentMessage, type EngineDeps, saidText } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
@@ -227,7 +228,7 @@ export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentE
 				executor,
 				spawn: planPiSpawn(
 					root,
-					process.env,
+					agentEnv(spoolDir),
 					file !== undefined && existsSync(file) ? { id: session.id, file } : { id: session.id },
 					ask,
 					mountDesigner(spoolDir, "pi"),

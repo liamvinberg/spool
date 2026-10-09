@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { agentEnv } from "./agent-cli";
 import { type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
 import {
 	CODEX_COMMAND,
@@ -270,7 +271,7 @@ export function createCodexEngine({
 			startCodexTurn({
 				executor,
 				root,
-				env: process.env,
+				env: agentEnv(spoolDir),
 				said,
 				ask,
 				permissions,
