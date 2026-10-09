@@ -458,6 +458,13 @@ it("tells the team where this canvas's person is inside a live frame, each click
 	await page.mouse.click(there.x, there.y);
 	await page.mouse.click(there.x, there.y);
 	await expect.poll(() => heard.at(-1)?.clicks).toBe(before + 2);
+	// a press that moves before it's let go is a drag, not a click
+	await page.mouse.down();
+	await expect.poll(() => heard.at(-1)?.pressed).toBe(true);
+	await page.mouse.move(there.x + 60, there.y + 20, { steps: 5 });
+	await page.mouse.up();
+	await expect.poll(() => heard.at(-1)?.pressed).toBe(false);
+	expect(heard.at(-1)?.clicks).toBe(before + 2);
 
 	// the list inside it scrolls, and that is said; the frame's scroll position never leaves it as such
 	await page.mouse.wheel(0, 200);

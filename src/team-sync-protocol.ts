@@ -311,7 +311,7 @@ export interface PresenceState {
 	inside: string | null;
 	/** The world rectangle their canvas shows: what following them shows. */
 	view: { x: number; y: number; w: number; h: number } | null;
-	/** How many presses they've made inside live frames: each new one is a click the others see land. */
+	/** How many clicks they've made inside live frames, a click being a press let go about where it began. */
 	clicks?: number;
 	/**
 	 * How far they've scrolled inside the frame they're in, every scroller in it added up, in the frame's own

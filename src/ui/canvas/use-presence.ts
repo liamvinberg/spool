@@ -2,7 +2,7 @@ import { type RefObject, useEffect, useRef } from "react";
 import { PRESENCE_DRAGGING, type PresenceState } from "../../team-sync-protocol";
 import { toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
-import { followCamera, type PresenceRoom } from "./presence";
+import { DRAG_SLOP, followCamera, type PresenceRoom } from "./presence";
 
 /** At most one presence in this many milliseconds is sent; the receiving canvas smooths between them. */
 export const PRESENCE_SEND_MS = 50;
@@ -49,6 +49,7 @@ export function usePresenceSender(options: {
 		// told by the frame they're inside: its pointer already in world coordinates, the presses and the scrolling
 		let framePointer: { x: number; y: number } | null = null;
 		let clicks = 0;
+		let pressedAt: { x: number; y: number } | null = null;
 		let scrolled: { x: number; y: number } | null = null;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let sentAt = Number.NEGATIVE_INFINITY;
@@ -113,8 +114,11 @@ export function usePresenceSender(options: {
 		insideFrame.current = {
 			pointer(at, press) {
 				if (at !== null) framePointer = at;
-				// a press and its release can both land between two sends, so each press is counted, not just held
-				if (press && !pressed) clicks++;
+				// a click is a press let go about where it began, and a drag isn't; it is counted rather than held,
+				// since a press and its release can both land between two sends
+				if (press && !pressed) pressedAt = framePointer;
+				if (!press && pressed && pressedAt !== null && framePointer !== null)
+					if (Math.hypot(framePointer.x - pressedAt.x, framePointer.y - pressedAt.y) <= DRAG_SLOP) clicks++;
 				pressed = press;
 				later();
 			},
