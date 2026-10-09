@@ -483,7 +483,7 @@ function Companion({
 				<span
 					ref={flash}
 					data-companion-flash=""
-					className="absolute block animate-agent-flash bg-[#fff]"
+					className="absolute block animate-agent-flash bg-raised"
 					style={{ animationDelay: `${MOTION.cornersOut}ms` }}
 				/>
 			) : null}
@@ -507,7 +507,7 @@ function Companion({
 				<span
 					ref={ring}
 					data-companion-ring=""
-					className="absolute block animate-agent-ring rounded-[3px] border-[1.5px] border-[#fff] mix-blend-difference"
+					className="absolute block animate-agent-ring rounded-[3px] border-[1.5px] border-text"
 					style={{ opacity: 0.6 }}
 				/>
 			) : null}

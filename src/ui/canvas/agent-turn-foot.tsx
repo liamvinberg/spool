@@ -638,11 +638,14 @@ function Writing({ lines, shape, replay = false }: { lines: number; shape?: read
 	);
 }
 
-/** the agent's companion, as the canvas draws it at the block it is changing (#366) */
+/** the agent's companion, as the canvas draws it at the block it is changing (#366): ink, never a blend */
 function CompanionMark() {
 	return (
-		<span className="pointer-events-none absolute inset-0">
-			<span className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-[#fff] opacity-60 mix-blend-difference" />
+		<span data-agent-companion-mark="" className="pointer-events-none absolute inset-0">
+			<span
+				data-agent-mark-ring=""
+				className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-text opacity-60"
+			/>
 			<span
 				className="absolute top-[38%] left-[4%] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 bg-text"
 				style={{ borderRadius: 1.8, boxShadow: "0 0 0 1.5px var(--color-canvas)" }}

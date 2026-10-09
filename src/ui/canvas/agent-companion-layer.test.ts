@@ -153,6 +153,26 @@ describe("the agent's companions on the canvas", () => {
 		expect(host.querySelector("[data-companion-flash]")).not.toBeNull();
 	});
 
+	/** a mark on someone's design is the canvas's own ink and greys, never a blend that takes its colours (story 72) */
+	it("draws every mark in ink and greys, with no blend", () => {
+		const mark = { key: "home:c1", frame: "home", box: { x: 20, y: 300, w: 350, h: 120 } };
+		const marks = [
+			layer({ companions: [companion({ act: "edit", range: { from: 40, to: 52 }, lines: 200 })], marks: [mark] }),
+			layer({ companions: [companion({ act: "shot" })] }),
+			layer({ companions: [companion({ act: "read" })] }),
+		];
+		const classes = marks
+			.flatMap(({ host }) => [...host.querySelectorAll("[data-agent-companion] *")])
+			.map((one) => one.getAttribute("class") ?? "")
+			.join(" ");
+		expect(classes).not.toMatch(/mix-blend|#fff|white|accent|\[#/);
+		const colours =
+			classes.match(/(?<=^|\s)(?:bg|border)-(?!\[|\d|t\b|b\b|l\b|r\b|dashed|solid)[a-z-]+(?:\/\d+)?/g) ?? [];
+		expect(colours.length).toBeGreaterThan(0);
+		for (const colour of colours)
+			expect(colour).toMatch(/^(?:bg|border)-(?:text|muted|canvas|raised|surface|bg)(?:\/\d+)?$/);
+	});
+
 	it("gathers a deleted frame into the square where it last stood", () => {
 		const { host, again } = layer({ companions: [companion()] });
 		again({

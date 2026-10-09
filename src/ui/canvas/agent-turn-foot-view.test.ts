@@ -11,7 +11,7 @@ import { TurnFoot } from "./agent-turn-foot";
 /*
  * The turn's grid as the rail draws it (#365): finished tiles step back while others work,
  * a picture being taken wears corner marks, and a reserved spot replays its real source
- * when its file lands.
+ * when its file lands. The marks are ink, never a blend (#366, story 72).
  */
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -104,6 +104,18 @@ describe("the turn's grid, drawn", () => {
 		await wait(MOTION.replay + 60);
 		expect(host.querySelector("[data-agent-tile-replay]")).toBeNull();
 		expect(host.querySelector(".animate-agent-draw-in")).not.toBeNull();
+	});
+
+	it("marks the block being changed in ink and greys, never with a blend", async () => {
+		const { host } = await draw(footOf([tile("home", "editing")]));
+		const mark = host.querySelector("[data-agent-companion-mark]");
+		expect(mark).not.toBeNull();
+		const classes = [mark, ...(mark?.querySelectorAll("*") ?? [])].map((one) => one?.getAttribute("class") ?? "");
+		expect(classes.join(" ")).not.toMatch(/mix-blend|#fff|white|accent/);
+		for (const colour of classes.join(" ").match(/\b(?:bg|border|text)-[a-z-]+(?=\s|$)/g) ?? [])
+			expect(colour).toMatch(
+				/^(?:bg|border|text)-(?:text|bg|surface|muted|border(?:-raised)?|\[[\d.]+px\]|t|b|l|r|x|y)$/,
+			);
 	});
 });
 
