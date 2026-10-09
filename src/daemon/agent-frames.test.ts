@@ -448,7 +448,7 @@ describe("put back", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(body),
 			});
-		expect((await put({ thread: THREAD, frame: "../escape" })).status).toBe(404);
+		expect((await put({ thread: THREAD, frame: "../escape" })).status).toBe(400);
 		expect((await put({ thread: THREAD, frame: "../escape", source: "x" })).status).toBe(400);
 		expect((await put({ thread: THREAD, frame: "doomed" })).status).toBe(204);
 		expect(readFileSync(join(root, "design/frames/doomed/frame.tsx"), "utf8")).toBe(
@@ -465,6 +465,58 @@ describe("put back", () => {
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		expect(seen.filter((event) => event.kind === "frame" && event.change === "created")).toHaveLength(0);
 		await close();
+	});
+
+	it("refuses a thread that is not there, and a frame its turn never deleted", async () => {
+		const { root, name, app, proc, seen, close } = await turnOn((root) =>
+			writeFrame(root, "home", "export default () => null;\n"),
+		);
+		proc.emit(JSON.stringify({ type: "system", subtype: "init", session_id: THREAD, cwd: root }));
+		await until(() => seen.length > 0);
+		const put = (body: unknown) =>
+			app.request(`/api/p/${name}/agent/put-back`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		expect((await put({ thread: "not-a-thread", frame: "ghost", source: "x" })).status).toBe(400);
+		// a thread this project never had, whatever source the rail sends with it
+		const stranger = "00000000-1111-4222-8333-444444444444";
+		expect((await put({ thread: stranger, frame: "ghost", source: "x" })).status).toBe(404);
+		// the thread's turn deleted nothing called ghost: the rail's copy does not make it so
+		expect((await put({ thread: THREAD, frame: "ghost", source: "x" })).status).toBe(404);
+		expect(existsSync(join(root, "design/frames/ghost"))).toBe(false);
+		// and one it never deleted that stands is still a frame that stands
+		expect((await put({ thread: THREAD, frame: "home", source: "x" })).status).toBe(409);
+		await close();
+	});
+
+	it("still finds what the turn kept after the project is renamed", async () => {
+		const { root, name, app, proc, seen, close } = await turnOn((root) =>
+			writeFrame(root, "doomed", "export default () => <p>one</p>;\n"),
+		);
+		proc.emit(JSON.stringify({ type: "system", subtype: "init", session_id: THREAD, cwd: root }));
+		rmSync(join(root, "design/frames/doomed"), { recursive: true });
+		await until(() => seen.some((event) => event.kind === "frame" && event.change === "deleted"));
+		await close();
+
+		const renamed = await app.request("/api/projects/rename", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root, name: `${name}-two` }),
+		});
+		expect(renamed.status).toBe(200);
+		const moved = ((await renamed.json()) as { root: string }).root;
+		// no source from the rail: only the turn's own copy can answer this
+		const back = await app.request(`/api/p/${name}-two/agent/put-back`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ thread: THREAD, frame: "doomed" }),
+		});
+		expect(back.status).toBe(204);
+		expect(readFileSync(join(moved, "design/frames/doomed/frame.tsx"), "utf8")).toBe(
+			"export default () => <p>one</p>;\n",
+		);
 	});
 });
 

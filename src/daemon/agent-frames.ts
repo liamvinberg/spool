@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Rect } from "../page-box";
 import { isFramePath, pageParent, ROOT_PAGE } from "../page-path";
@@ -56,7 +56,7 @@ interface Call {
 	said: number;
 }
 
-interface Kept {
+export interface Kept {
 	readonly source: string;
 	readonly sidecar: string | null;
 }
@@ -235,13 +235,16 @@ export interface PutBack {
 	readonly sidecar: string | null;
 }
 
-/** The engine's turn, with the frames it touches added to its log. */
-export interface WitnessedTurn extends AgentTurn {
+/** What a turn's witness keeps for Put back, held with the turn for as long as it is. */
+export interface FrameWitness {
 	/** the deleted frame this turn kept, for Put back; undefined when it kept none */
 	kept(frame: string): Kept | undefined;
 	/** Put back wrote this frame: the witness takes it as known rather than as the agent's */
 	restored(frame: string, source: string): void;
 }
+
+/** The engine's turn, with the frames it touches added to its log. */
+export interface WitnessedTurn extends AgentTurn, FrameWitness {}
 
 export function witnessFrames(
 	turn: AgentTurn,
@@ -613,6 +616,17 @@ export function putFrameBack(root: string, back: PutBack): void {
 		} catch {
 			return undefined;
 		}
+	}
+}
+
+/** a frame's entry stands at this name; false for a name that is not a frame's */
+export function frameStands(root: string, frame: string): boolean {
+	if (!isFramePath(frame)) return false;
+	try {
+		const designDir = realDesignDir(root);
+		return existsSync(resolveDesignPath(designDir, join(designDir, "frames", ...frame.split("/"), "frame.tsx")));
+	} catch {
+		return false;
 	}
 }
 

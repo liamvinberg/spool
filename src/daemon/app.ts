@@ -32,7 +32,7 @@ import { createClaudeEngine } from "./agent-engine-claude";
 import { createCodexEngine } from "./agent-engine-codex";
 import { createPiEngine } from "./agent-engine-pi";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
-import { createReservedSpots, FrameStandsError, putFrameBack, type WitnessedTurn, witnessFrames } from "./agent-frames";
+import { createReservedSpots, FrameStandsError, frameStands, putFrameBack, witnessFrames } from "./agent-frames";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
@@ -1170,8 +1170,6 @@ export function createDaemonApp({
 	 * and names the turn instead (#165).
 	 */
 	const liveTurns = createAgentTurns();
-	/** each held turn's frame witness, which keeps what Put back restores (#365) */
-	const witnesses = new Map<string, WitnessedTurn>();
 	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
 	/** a running turn started on another mode than the machine's: the pick waits for its next turn */
 	function pendingMode(root: string, thread: string, mode: AgentPermissions): boolean {
@@ -2544,7 +2542,6 @@ export function createDaemonApp({
 				});
 				// the frames the turn makes, however it writes them, are read off design/ (#365)
 				const turn = witnessFrames(engineTurn, { root: project.root, hub, spots: reservedSpots });
-				witnesses.set(`${project.root} ${thread}`, turn);
 				const picture = readThread(spoolDir, project.root, thread);
 				const pictured = picture ? agentPictureEnding(spoolDir, project.root, picture) : undefined;
 				const held = liveTurns.hold({
@@ -2557,6 +2554,7 @@ export function createDaemonApp({
 					root: project.root,
 					thread,
 					turn,
+					witness: turn,
 					mode,
 					...(named === undefined ? {} : { id: named }),
 				});
@@ -2692,16 +2690,27 @@ export function createDaemonApp({
 				/*
 				 * Put back a frame a turn deleted (#365).
 				 *
-				 * The turn kept the deleted source, so this writes it back from there. A turn
-				 * this daemon no longer holds has only the log the rail kept, which carries the
-				 * same source, so the rail's copy is the fallback rather than a refusal.
+				 * Only into the thread it was deleted in. A turn this daemon still holds kept the
+				 * deleted source, and is the one word on what it deleted: a frame not in its log
+				 * is refused, whatever the rail sends. A turn already let go of has only the log
+				 * the rail kept, which carries the same source, so the rail's copy stands in for
+				 * a thread that is on disk.
 				 */
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { thread, frame, source, sidecar } = c.req.valid("json");
-				const witness = witnesses.get(`${project.root} ${thread}`);
-				const kept = witness?.kept(frame) ?? (source === undefined ? undefined : { source, sidecar });
-				if (kept === undefined) return c.text(`no deleted frame "${frame}" kept in thread "${thread}"`, 404);
+				if (!isThreadId(thread)) return c.text("a thread is named by the uuid its session runs under", 400);
+				if (!isFramePath(frame)) return c.text(`"${frame}" is not a frame name`, 400);
+				const held = liveTurns.get(project.root, thread);
+				if (held === undefined && readThread(spoolDir, project.root, thread) === undefined)
+					return c.text(`no thread "${thread}" in this project`, 404);
+				const witness = held?.witness;
+				const kept =
+					witness !== undefined ? witness.kept(frame) : source === undefined ? undefined : { source, sidecar };
+				if (kept === undefined) {
+					if (frameStands(project.root, frame)) return c.text(`a frame "${frame}" stands there`, 409);
+					return c.text(`no deleted frame "${frame}" kept in thread "${thread}"`, 404);
+				}
 				try {
 					putFrameBack(project.root, { frame, source: kept.source, sidecar: kept.sidecar });
 				} catch (error) {
