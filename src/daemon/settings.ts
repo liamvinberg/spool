@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import { getNested, mutateMachineState, setNested } from "../machine-state";
-import { readMachineRegistry } from "../machine-state-files";
+import { getNested, setNested } from "../machine-state";
 import {
 	isSettingKey,
 	parseSetting,
@@ -60,11 +59,6 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 		switch (SETTINGS[key].scope) {
 			case "project":
 				return root === undefined ? undefined : getNested(readCanvasFields(root), path);
-			case "local": {
-				if (root === undefined) return undefined;
-				const project = readMachineRegistry(spoolDir).projects.find((candidate) => candidate.root === root);
-				return getNested(project?.settings, path);
-			}
 			case "machine":
 				return getNested(readConfig(configFile).fields, path);
 		}
@@ -133,18 +127,6 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 					} catch (error) {
 						if (error instanceof CanvasFileError) return { status: 409, reason: error.message };
 						return { status: 404, reason: `no design/ to write at ${root}` };
-					}
-					break;
-				}
-				case "local": {
-					const result = mutateMachineState(spoolDir, {
-						kind: "set-project-setting",
-						root: root as string,
-						path: write.path,
-						value: write.value,
-					});
-					if (result.kind === "unregistered") {
-						return { status: 404, reason: `not a registered project root: ${result.root}` };
 					}
 					break;
 				}

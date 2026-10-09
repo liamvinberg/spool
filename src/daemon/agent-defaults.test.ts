@@ -1,8 +1,14 @@
 import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mutateMachineState } from "../machine-state";
-import { fixtureAgentExecutor, makeApp, makeProject, makeTempDir, until } from "../test-helpers";
+import {
+	fixtureAgentExecutor,
+	makeApp,
+	makeProject,
+	makeTempDir,
+	until,
+	writeOldProjectSetting,
+} from "../test-helpers";
 import { agentDefaultsFile, createAgentDefaults, ENGINE_ORDER, fallbackEngine } from "./agent-defaults";
 import type { AgentEngine, AgentEngineId } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
@@ -127,8 +133,7 @@ describe("the one-time migration", () => {
 		const spoolDir = makeTempDir();
 		const older = makeProject(spoolDir);
 		const newer = makeProject(spoolDir);
-		const set = (root: string, path: string[], value: unknown) =>
-			mutateMachineState(spoolDir, { kind: "set-project-setting", root, path, value });
+		const set = (root: string, path: string[], value: unknown) => writeOldProjectSetting(spoolDir, root, path, value);
 		set(older.root, ["agent", "engine"], "claude");
 		set(older.root, ["agent", "permissions"], "ask");
 		set(newer.root, ["agent", "engine"], "spool");

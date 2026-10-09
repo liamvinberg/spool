@@ -13,8 +13,8 @@ import { createDaemonApp } from "./daemon/app";
 import { renderOrigin } from "./daemon/lifecycle";
 import { CONTROL_HEADER, PROJECT_HEADER, RENDER_HOST } from "./daemon/security";
 import { serveDaemon } from "./daemon/server";
-import { createSettingsStore } from "./daemon/settings";
 import { initProject } from "./init";
+import { setNested } from "./machine-state";
 import { lookupProjectByName } from "./registry";
 import type { AgentPermissions } from "./settings/registry";
 import { canvasJson } from "./templates";
@@ -180,9 +180,6 @@ export async function serveProject(options?: Partial<Parameters<typeof serveDaem
 	// A Claude fixture, or the first engine a test hands over, is the one it intends to exercise.
 	if (options?.agentExecutor !== undefined) chooseAgent(spoolDir, { engine: "claude" });
 	else if (options?.agentEngines?.[0] !== undefined) chooseAgent(spoolDir, { engine: options.agentEngines[0].id });
-	// Agent fixtures exercise an established chat; the introduction has its own first-use tests.
-	if (options?.agentExecutor !== undefined || options?.agentEngines !== undefined)
-		createSettingsStore(spoolDir).write("agent.introductionSeen", true);
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	closeAfterTest(daemon);
 	return {
@@ -700,4 +697,16 @@ export async function storeRightWidth(page: Page, width: number): Promise<void> 
 			JSON.stringify({ ...stored, right: { ...stored.right, width: next } }),
 		);
 	}, width);
+}
+
+/** A per-project setting where registry.json held it before settings went machine-wide (#361). */
+export function writeOldProjectSetting(spoolDir: string, root: string, path: readonly string[], value: unknown): void {
+	const file = join(spoolDir, "registry.json");
+	const registry = JSON.parse(readFileSync(file, "utf8")) as {
+		projects: { root: string; settings?: Record<string, unknown> }[];
+	};
+	const project = registry.projects.find((candidate) => candidate.root === root);
+	if (project === undefined) throw new Error(`not a registered project root: ${root}`);
+	project.settings = setNested(project.settings ?? {}, path, value);
+	writeFileSync(file, JSON.stringify(registry, null, "\t"));
 }

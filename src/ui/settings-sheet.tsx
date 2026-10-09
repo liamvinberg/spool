@@ -143,7 +143,6 @@ function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) =>
 /** The bands, in the order a person reads them: nearest reach first. */
 const BANDS: readonly { scope: SettingScope; name: string; file: string; note?: string }[] = [
 	{ scope: "project", name: "This project", file: "design/canvas.json" },
-	{ scope: "local", name: "This project, on this machine", file: "~/.spool/registry.json" },
 	{ scope: "machine", name: "This machine", file: "~/.spool/config.json" },
 ];
 

@@ -16,8 +16,6 @@
 export type SettingScope =
 	/** design/canvas.json: a fact about the repo every clone shares */
 	| "project"
-	/** the project's entry in registry.json: this machine's stance on this project */
-	| "local"
 	/** config.json: this install */
 	| "machine";
 
@@ -151,14 +149,6 @@ const themeEntries = Object.fromEntries(
 ) as { readonly [Key in ThemeKey]: SettingEntry<string> };
 
 export const SETTINGS = {
-	"agent.introductionSeen": {
-		scope: "machine",
-		group: "agent",
-		shape: { kind: "boolean" },
-		fallback: false,
-		label: "Agent introduction seen",
-		says: "The first-open recommendation has been dismissed on this installation.",
-	},
 	"projects.location": {
 		scope: "machine",
 		group: "general",
