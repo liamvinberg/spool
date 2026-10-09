@@ -38,6 +38,12 @@ describe("the canvas read from a copy of design/", () => {
 		writePageFrame(root, "shop/checkout", "pay", TSX);
 		writePageFrame(root, "about", "team", TSX);
 		writeDesignFile(root, "frames/about/team/frame.json", "{ not json");
+		// a placeholder frame (#371): no page, and the bare frame stands clear of it
+		writeDesignFile(
+			root,
+			"frames/next/frame.json",
+			'{ "x": 460, "y": -20, "w": 390, "h": 844, "placeholder": {} }\n',
+		);
 		const copy = files(root);
 
 		const cloud = projectDesign("/copy/design", memoryDesignFiles(copy));

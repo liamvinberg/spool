@@ -84,6 +84,51 @@ describe("the turn's grid", () => {
 		expect(foot?.ms).toBeNull();
 	});
 
+	it("keys a designer's tile by its placeholder on a nested page, one tile from start to frame (#369)", () => {
+		const step = (task: string, description: string): AgentEvent => ({
+			kind: "task-step",
+			task,
+			call: null,
+			description,
+			lastTool: "Bash",
+			parent: null,
+		});
+		const working = [
+			started("t1", "a1", "Split home"),
+			held("t1", "ideas/home--split"),
+			started("t2", "a2", "Calm home"),
+			held("t2", "ideas/home--calm"),
+			step("t1", "Running Read the home frame and the brief"),
+			step("t2", "Running Write the calm frame, then spool check"),
+		];
+		const reading = transcriptOf([], stamp(working)).foot;
+		expect(reading?.tiles).toMatchObject([
+			{
+				frame: "ideas/home--split",
+				state: "reading",
+				step: "Running Read the home frame and the brief",
+				delegation: "a1",
+			},
+			{ frame: "ideas/home--calm", state: "reading", delegation: "a2" },
+		]);
+		expect(reading?.tiles.map((tile) => captionOf(tile))).toEqual(["Reading", "Drawing"]);
+
+		// one frame lands in its placeholder, the other on a page of its designer's own choosing
+		const landed = transcriptOf(
+			[],
+			stamp([
+				...working,
+				created("ideas/home--split", "t1", "a1", "ideas/home--split"),
+				created("app/calm", "t2", "a2", "ideas/home--calm"),
+			]),
+		).foot;
+		expect(landed?.tiles.map((tile) => [tile.frame, tile.state])).toEqual([
+			["ideas/home--split", "fresh"],
+			["app/calm", "fresh"],
+		]);
+		expect(landed?.tiles.every((tile) => tile.step === undefined)).toBe(true);
+	});
+
 	it("streams a frame the agent writes, then lands it, then rests it when its call returns", () => {
 		const source = (lines: number): AgentEvent => ({
 			kind: "frame-source",

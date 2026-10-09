@@ -223,7 +223,7 @@ export interface AgentPlan {
 /**
  * What is happening to one frame a turn touched, as the turn's grid draws it (#365).
  *
- * - `reading`: a designer is at work on it and nothing of it exists yet: the spot reserved for it.
+ * - `reading`: a designer is at work on it and nothing of it exists yet: its placeholder frame.
  * - `drawing`: its source is streaming in and it is not on disk yet; `lines` counts it.
  * - `fresh`: it just landed, and the call or designer that made it is still going.
  * - `editing`: a change just landed in it; `range` is the lines that moved.
@@ -238,9 +238,11 @@ export type SourceLine = readonly [indent: number, run: number];
 
 export interface AgentTile {
 	readonly key: string;
-	/** the frame's path, or the name of the spot reserved for it until it lands */
+	/** the frame's path, its placeholder's from the moment its designer starts (#369) */
 	readonly frame: string;
 	readonly state: TileState;
+	/** what its designer says it is doing, in the wire's words, while nothing of the frame has landed */
+	readonly step?: string;
 	readonly lines: number;
 	/** whose take it is, in the delegation's own words; null for the agent's own frame */
 	readonly by: string | null;
@@ -600,6 +602,7 @@ interface Tile {
 	source?: string;
 	sidecar?: string;
 	replay?: SourceLine[];
+	step?: string;
 	call: string | null;
 	task: string | null;
 	/** the `spool shot` call taking its picture, while it is out */
@@ -1568,12 +1571,18 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					for (const tile of tiles.values())
 						if (tile.task === event.task && tile.by === null) tile.by = event.description;
 				}
+				// a designer's step shows in its placeholder until the frame lands there (#369)
+				if (event.kind === "task-step" && event.description !== null)
+					for (const tile of tiles.values())
+						if (tile.task === event.task && (tile.state === "reading" || tile.state === "drawing"))
+							tile.step = event.description;
 				if (event.kind === "task-done") {
 					const task = tasks.get(event.task);
 					if (task !== undefined) task.done = true;
 					// a designer that reported back is done with its frames, and says how long it took
 					for (const tile of tiles.values()) {
 						if (tile.task !== event.task) continue;
+						delete tile.step;
 						tile.state = settledState(tile.state);
 						if (task !== undefined) tile.took = at - task.at;
 					}
@@ -1631,7 +1640,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				}
 				delete tile.source;
 				delete tile.sidecar;
-				// a designer's real source, the moment its file lands in the spot held for it
+				delete tile.step;
+				// a designer's real source, the moment its file lands in the placeholder held for it
 				if (event.change === "created" && event.spot !== undefined && event.source !== undefined)
 					tile.replay = sourceShape(event.source);
 				if (event.change === "restored") tile.state = "done";

@@ -2307,8 +2307,10 @@ describe("an ask, anchored", () => {
 	});
 
 	/** a designer that asks before its frame exists still has a place: the spot held for it */
-	it("stands a designer's ask under its reserved spot on the canvas while the rail is shut", async () => {
+	it("stands a designer's ask under its placeholder frame on the canvas while the rail is shut", async () => {
 		const canvas = mount();
+		// the frame spool made for the designer, on disk where its work will land (#369)
+		canvas.project.placeholders.push({ name: "home--calm", x: 2000, y: 0, w: 1440, h: 900 });
 		await canvas.render();
 		await send(canvas.host, "make a calm direction");
 		canvas.turn.push(ready);
