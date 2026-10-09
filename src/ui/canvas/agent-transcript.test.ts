@@ -1017,7 +1017,7 @@ describe("a waiting request", () => {
 			[{ text: "go" }],
 			stamp([ready, asking({ tool: "Edit", input: { file_path: `${ROOT}/src/theme.ts` } })]),
 		);
-		expect(one(entries)).toMatchObject({ agent: "", tool: "Edit", detail: "src/theme.ts" });
+		expect(one(entries)).toMatchObject({ delegation: "", tool: "Edit", detail: "src/theme.ts" });
 	});
 
 	/**
@@ -1029,14 +1029,14 @@ describe("a waiting request", () => {
 	it("draws a designer's ask, and says which designer asks", () => {
 		const delegate = called("d1", "Agent", { description: "Design calm", prompt: "x" });
 		const codex = transcriptOf([{ text: "go" }], stamp([ready, delegate, asking({ call: null, parent: "d1" })]));
-		expect(one(codex.entries)).toMatchObject({ agent: "d1", state: "open" });
+		expect(one(codex.entries)).toMatchObject({ delegation: "d1", state: "open" });
 		expect(codex.asking).toBe("req-1");
 
 		const claude = transcriptOf(
 			[{ text: "go" }],
 			stamp([ready, delegate, called("c1", "Bash", { command: "spool upgrade" }, "d1"), asking()]),
 		);
-		expect(one(claude.entries)).toMatchObject({ agent: "d1", state: "open" });
+		expect(one(claude.entries)).toMatchObject({ delegation: "d1", state: "open" });
 	});
 
 	it("offers no always where the request suggested no rule", () => {

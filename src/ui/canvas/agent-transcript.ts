@@ -222,7 +222,7 @@ export interface AgentPlan {
 /**
  * What is happening to one frame a turn touched, as the turn's grid draws it (#365).
  *
- * - `reading`: a designer is at work on it and nothing of it exists yet: the spot held for it.
+ * - `reading`: a designer is at work on it and nothing of it exists yet: the spot reserved for it.
  * - `drawing`: its source is streaming in and it is not on disk yet; `lines` counts it.
  * - `fresh`: it just landed, and the call or designer that made it is still going.
  * - `editing`: a change just landed in it; `range` is the lines that moved.
@@ -233,7 +233,7 @@ export type TileState = "reading" | "drawing" | "fresh" | "editing" | "done" | "
 
 export interface AgentTile {
 	readonly key: string;
-	/** the frame's path, or the name of the spot held for it until it lands */
+	/** the frame's path, or the name of the spot reserved for it until it lands */
 	readonly frame: string;
 	readonly state: TileState;
 	readonly lines: number;
@@ -243,7 +243,7 @@ export interface AgentTile {
 	/** how long the designer that made it took, once it has landed */
 	readonly took: number | null;
 	/** the delegating call of the designer that made it, which is who its asks come from (#366) */
-	readonly agent?: string;
+	readonly delegation?: string;
 	readonly source?: string;
 	readonly sidecar?: string;
 }
@@ -378,7 +378,7 @@ export type AgentEntry =
 			 * who asks: "" for the agent the person talks to, the delegating call for a designer
 			 * (#366). Absent off a picture stored before there was a second asker.
 			 */
-			readonly agent?: string;
+			readonly delegation?: string;
 			/** what an approval would let through: the tool, and its path or command */
 			readonly tool?: string | null;
 			readonly detail?: string | null;
@@ -572,7 +572,7 @@ interface Ask {
 	readonly key: string;
 	request: string | null;
 	question: boolean;
-	agent: string;
+	delegation: string;
 	tool: string | null;
 	detail: string | null;
 	said: boolean;
@@ -634,8 +634,8 @@ interface PlanTask {
 interface Block {
 	readonly id: string | null;
 	readonly tool: string;
-	/** the delegate this call belongs to, or "" on the human's own thread */
-	readonly thread: string;
+	/** the delegation this call was made on, or "" on the human's own thread */
+	readonly delegation: string;
 	fragments: string;
 	row: Row | null;
 	/** the last name spool had for it, which is what an empty search's row is built from */
@@ -764,7 +764,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const blocks = new Map<string, Block>();
 	/** every call by its own id, which is what a whole call and a result arrive with */
 	const calls = new Map<string, Block>();
-	/** the run still open on each thread */
+	/** the run still open on each delegation, "" for the human's own thread */
 	const runs = new Map<string, Run>();
 	/** which call a delegated task answers to, so the task's end settles the row */
 	const taskCalls = new Map<string, string>();
@@ -842,28 +842,28 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * delegates and the parent all draw into one transcript at once, and one rule
 	 * across all of them would end every run on the next delegate's row.
 	 */
-	const endRun = (thread: string) => {
-		const run = runs.get(thread);
+	const endRun = (delegation: string) => {
+		const run = runs.get(delegation);
 		if (run === undefined) return;
-		runs.delete(thread);
+		runs.delete(delegation);
 		if (run.settle !== null) run.row.state = run.settle;
 	};
 
 	/** the row this block gets, in the log's own order, ending whatever run it interrupts */
 	const draw = (block: Block, row: Omit<Row, "key" | "parent">): Row => {
-		endRun(block.thread);
+		endRun(block.delegation);
 		const made: Row = {
 			// the call's own id, and the slot it opened in for a runtime that sends none
-			key: block.id === null ? `row:${block.thread}:${block.tool}:${blocks.size}` : `row:${block.id}`,
+			key: block.id === null ? `row:${block.delegation}:${block.tool}:${blocks.size}` : `row:${block.id}`,
 			...row,
-			parent: block.thread === "" ? null : block.thread,
+			parent: block.delegation === "" ? null : block.delegation,
 		};
 		block.row = made;
 		rows.set(made.key, made);
 		// a delegate's row goes inside the row that delegated it, unless spool never saw
 		// that call — a stream joined mid-delegation has a row and nowhere to file it, and
 		// the log is the honest place for a row whose parent spool cannot name
-		const above = block.thread === "" ? null : (calls.get(block.thread)?.row ?? null);
+		const above = block.delegation === "" ? null : (calls.get(block.delegation)?.row ?? null);
 		if (above === null) order.push({ kind: "row", key: made.key });
 		else delegated.set(above.key, [...(delegated.get(above.key) ?? []), made.key]);
 		return made;
@@ -878,7 +878,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * so that whichever result comes back settles it.
 	 */
 	const openPlan = (block: Block): { row: Row; tasks: PlanTask[] } => {
-		const known = plans.get(block.thread);
+		const known = plans.get(block.delegation);
 		if (known !== undefined) {
 			block.row = known.row;
 			return known;
@@ -897,7 +897,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			}),
 			tasks: [] as PlanTask[],
 		};
-		plans.set(block.thread, made);
+		plans.set(block.delegation, made);
 		return made;
 	};
 
@@ -911,9 +911,9 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	};
 
 	/** a task moving inside the list, which is the list changing rather than a row */
-	const moveTask = (thread: string, input: CallInput) => {
+	const moveTask = (delegation: string, input: CallInput) => {
 		const moved = taskMoved(input);
-		const task = moved === null ? undefined : plans.get(thread)?.tasks[moved.at - 1];
+		const task = moved === null ? undefined : plans.get(delegation)?.tasks[moved.at - 1];
 		if (moved === null || task === undefined) return;
 		task.state = moved.state;
 	};
@@ -941,7 +941,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		// a run's next call adds a count and nothing else: the calls are the same verb on
 		// the same frame, and the count is the entire difference between them
 		if (block.joined) return;
-		const run = runs.get(block.thread);
+		const run = runs.get(block.delegation);
 		const name = named.frame ?? named.detail ?? named.subject;
 		if (block.row === null) {
 			/*
@@ -978,7 +978,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				shot: null,
 				foreign,
 			});
-			if (named.writes && name !== null) runs.set(block.thread, { row, name, settle: null });
+			if (named.writes && name !== null) runs.set(block.delegation, { row, name, settle: null });
 			return;
 		}
 		// the row learns: the verb sharpens where the argument settles it, and the
@@ -994,8 +994,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		if (named.detail !== null) block.row.detail = named.detail;
 		if (foreign !== null) block.row.foreign = foreign;
 		// the path landed on a write that opened before it, so this is where its run starts
-		if (named.writes && name !== null && runs.get(block.thread)?.row !== block.row)
-			runs.set(block.thread, { row: block.row, name, settle: null });
+		if (named.writes && name !== null && runs.get(block.delegation)?.row !== block.row)
+			runs.set(block.delegation, { row: block.row, name, settle: null });
 	};
 
 	/**
@@ -1024,7 +1024,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			// a call named `AskUserQuestion` is a question before its request says so, and
 			// an approval's block is only ever opened by a request that has
 			question: opening === "question",
-			agent: "",
+			delegation: "",
 			tool: null,
 			detail: null,
 			said: false,
@@ -1048,11 +1048,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	};
 
 	/** a block the wire is opening, or one it never streamed and is handing over whole */
-	const blockOf = (thread: string, slot: string, id: string | null, tool: string): Block => {
+	const blockOf = (delegation: string, slot: string, id: string | null, tool: string): Block => {
 		const block: Block = {
 			id,
 			tool,
-			thread,
+			delegation,
 			fragments: "",
 			row: null,
 			named: null,
@@ -1119,7 +1119,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			outstanding = null;
 		}
 		for (const block of prose.values()) block.settled = true;
-		for (const thread of [...runs.keys()]) endRun(thread);
+		for (const delegation of [...runs.keys()]) endRun(delegation);
 		for (const block of blocks.values()) {
 			if (block.row === null && !block.joined) nameRow(block, block.fragments, false, null);
 		}
@@ -1183,7 +1183,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	};
 
 	for (const { at, event } of seen) {
-		const thread = event.parent ?? "";
+		const delegation = event.parent ?? "";
 		last = at;
 		// the work of every thread reaches the log; the words of only one do
 		if (event.parent !== null && !DELEGATED.has(event.kind)) continue;
@@ -1196,14 +1196,14 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			case "call": {
 				// the block opens with a name and an empty input, and the subject types
 				// itself in behind it
-				const block = blockOf(thread, `${thread}:${event.block}`, event.id, event.tool);
+				const block = blockOf(delegation, `${delegation}:${event.block}`, event.id, event.tool);
 				// the plan's row opens on the first of its creates, before any of them has
 				// said what its task is, so the count types itself in the way a path does
 				if (event.tool === "TaskCreate") openPlan(block);
 				// the turn stopping to ask, which is not a call the log is a receipt for:
 				// the question is the object the way the plan is. Only on the thread the
 				// person is talking to, because a question is words
-				else if (event.tool === ASK_TOOL && thread === "") {
+				else if (event.tool === ASK_TOOL && delegation === "") {
 					const key = event.id ?? `block:${event.block}`;
 					openAsk(key, "question");
 					if (event.id !== null) askOf.set(event.id, key);
@@ -1215,7 +1215,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// parses them and a value is read only once it is whole. A fragment with no
 				// block of its own is a capture that opened mid-call, and there is no tool
 				// name to draw a verb from.
-				const block = blocks.get(`${thread}:${event.block}`);
+				const block = blocks.get(`${delegation}:${event.block}`);
 				if (block === undefined) break;
 				block.fragments += event.fragment;
 				// the question types itself in, because a half-arrived sentence is the same
@@ -1231,7 +1231,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			}
 			case "called": {
 				const known = calls.get(event.id);
-				const block = known ?? blockOf(thread, `${thread}:${event.id}`, event.id, event.tool);
+				const block = known ?? blockOf(delegation, `${delegation}:${event.id}`, event.id, event.tool);
 				// the two calls that move the plan rather than the log: one lengthens the list,
 				// the other moves a task inside it, and neither is a row
 				if (event.tool === "TaskCreate") {
@@ -1239,12 +1239,12 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					break;
 				}
 				if (event.tool === "TaskUpdate") {
-					moveTask(thread, event.input);
+					moveTask(delegation, event.input);
 					break;
 				}
 				// the whole call is the authority on the options, the same way a settled
 				// message outranks its own deltas
-				const asking = event.tool === ASK_TOOL && thread === "" ? asks.get(event.id) : undefined;
+				const asking = event.tool === ASK_TOOL && delegation === "" ? asks.get(event.id) : undefined;
 				if (asking !== undefined) {
 					asking.questions = questionsOf(event.input);
 					asking.asked = asking.questions[0]?.question ?? asking.asked;
@@ -1275,7 +1275,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				const ask = openAsk(key, event.interaction ? "question" : "approval", above?.key ?? null);
 				// a designer's ask names it by its delegation: the wire says so (Codex), or the
 				// call it is about was made on the designer's own thread (Claude)
-				ask.agent = event.parent ?? (call !== undefined && call.thread !== "" ? call.thread : "");
+				ask.delegation = event.parent ?? (call !== undefined && call.delegation !== "" ? call.delegation : "");
 				ask.tool = event.tool;
 				ask.detail = detailOf(event.input, root);
 				// the flag is the discriminator, so a question whose payload spool could not read
@@ -1370,7 +1370,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// task that outlives it by minutes — so the row settles on the task instead
 				if (block.tool === "Agent") break;
 				const state = settledBy(event);
-				const run = runs.get(block.thread);
+				const run = runs.get(block.delegation);
 				if (run !== undefined && run.row === block.row) run.settle = state;
 				else block.row.state = state;
 				/*
@@ -1733,8 +1733,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		key: "turn",
 		kind: "turn",
 		tiles: [...tiles.values()].map(({ call: _call, task, ...tile }) => {
-			const agent = task === null ? undefined : taskCalls.get(task);
-			return agent === undefined ? tile : { ...tile, agent };
+			const delegation = task === null ? undefined : taskCalls.get(task);
+			return delegation === undefined ? tile : { ...tile, delegation };
 		}),
 		status: over ? null : statusOf(),
 		thinking: !over && outstanding !== null,

@@ -20,7 +20,7 @@ import { nameCall } from "./agent-nouns";
  */
 export type CompanionAct = "new" | "landed" | "read" | "edit" | "shot" | "delete" | "ask" | "idle";
 
-/** a place held on the canvas for a designer before its frame exists, in canvas units */
+/** a place reserved on the canvas for a designer before its frame exists, in canvas units */
 export interface CompanionSpot {
 	readonly name: string;
 	readonly x: number;
@@ -52,7 +52,7 @@ export interface AgentCompanion {
 /** the calls that read a frame: the square slides down its edge while one is out */
 const READS: ReadonlySet<string> = new Set(["read", "look", "logs", "check", "url"]);
 
-interface Held {
+interface Standing {
 	frame: string | null;
 	spot: CompanionSpot | null;
 	act: CompanionAct;
@@ -84,14 +84,14 @@ function firstWord(description: string): string | null {
 /**
  * Every working agent and where it is, as of the last event.
  *
- * Only agents that are somewhere: a frame or a held spot. An agent that has touched nothing
+ * Only agents that are somewhere: a frame or a reserved spot. An agent that has touched nothing
  * on the canvas has no square, and a designer that reported back has gone. Once the turn is
  * over there is nobody; the layer lets them go.
  */
 export function companionsOf(seen: readonly { readonly event: AgentEvent }[], root = ""): AgentCompanion[] {
-	const by = new Map<string, Held>();
-	/** the agent each call was made on */
-	const threadOf = new Map<string, string>();
+	const by = new Map<string, Standing>();
+	/** the delegation each call was made on, "" for the agent the person talks to */
+	const delegationOf = new Map<string, string>();
 	/** each delegation's own words for its task */
 	const described = new Map<string, string>();
 	const taskCalls = new Map<string, string>();
@@ -101,7 +101,7 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 
 	const agentOf = (task: string | null, parent: string | null): string =>
 		(task === null ? undefined : taskCalls.get(task)) ?? parent ?? "";
-	const put = (agent: string, next: Partial<Held> & { act: CompanionAct; release?: boolean }, beat: number) => {
+	const put = (agent: string, next: Partial<Standing> & { act: CompanionAct; release?: boolean }, beat: number) => {
 		const pending = waits.get(agent);
 		const was =
 			by.get(agent) ??
@@ -139,10 +139,10 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 				if (event.cwd !== null) cwd = event.cwd;
 				return;
 			case "call":
-				if (event.id !== null) threadOf.set(event.id, event.parent ?? "");
+				if (event.id !== null) delegationOf.set(event.id, event.parent ?? "");
 				return;
 			case "called": {
-				threadOf.set(event.id, event.parent ?? "");
+				delegationOf.set(event.id, event.parent ?? "");
 				if (event.tool === "Agent") {
 					const words = (event.input as { description?: unknown } | null)?.description;
 					if (typeof words === "string") described.set(event.id, words);
@@ -157,9 +157,9 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 			}
 			case "result": {
 				for (const [agent, wait] of waits) if (wait.call === event.id) waits.delete(agent);
-				for (const [agent, held] of by) {
-					if (held.call !== event.id) continue;
-					put(agent, { act: "idle", lines: held.lines, release: true }, index);
+				for (const [agent, standing] of by) {
+					if (standing.call !== event.id) continue;
+					put(agent, { act: "idle", lines: standing.lines, release: true }, index);
 				}
 				return;
 			}
@@ -200,24 +200,25 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 					const spot = { name: event.name, x: event.x, y: event.y, w: event.w, h: event.h };
 					put(agent, { frame: null, spot, act: "idle" }, index);
 				} else if (event.state === "released") {
-					const held = by.get(agent);
-					if (held !== undefined && held.frame === null && held.spot?.name === event.name) by.delete(agent);
+					const standing = by.get(agent);
+					if (standing !== undefined && standing.frame === null && standing.spot?.name === event.name)
+						by.delete(agent);
 				}
 				return;
 			}
 			case "asking": {
-				const agent = event.parent ?? (event.call === null ? undefined : threadOf.get(event.call)) ?? "";
-				const held = by.get(agent);
+				const agent = event.parent ?? (event.call === null ? undefined : delegationOf.get(event.call)) ?? "";
+				const standing = by.get(agent);
 				// an agent nowhere on the canvas asks in the rail alone, unless a frame it
 				// wrote catches up with the ask
-				if (held === undefined) waits.set(agent, { call: event.call, request: event.request });
+				if (standing === undefined) waits.set(agent, { call: event.call, request: event.request });
 				else put(agent, { act: "ask", request: event.request, call: event.call }, index);
 				return;
 			}
 			case "answered": {
 				for (const [agent, wait] of waits) if (wait.request === event.request) waits.delete(agent);
-				for (const [agent, held] of by)
-					if (held.request === event.request) put(agent, { act: "idle", release: true }, index);
+				for (const [agent, standing] of by)
+					if (standing.request === event.request) put(agent, { act: "idle", release: true }, index);
 				return;
 			}
 			default:
@@ -225,27 +226,27 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 		}
 	});
 
-	return [...by].map(([key, held]) => {
+	return [...by].map(([key, standing]) => {
 		const words = key === "" ? null : (described.get(key) ?? null);
 		const name =
 			key === ""
 				? null
-				: held.frame !== null
-					? takeOf(held.frame)
-					: held.spot !== null
-						? (takeOf(held.spot.name).split("-")[0] ?? held.spot.name)
+				: standing.frame !== null
+					? takeOf(standing.frame)
+					: standing.spot !== null
+						? (takeOf(standing.spot.name).split("-")[0] ?? standing.spot.name)
 						: words === null
 							? null
 							: firstWord(words);
 		return {
 			key,
 			name,
-			frame: held.frame,
-			spot: held.frame === null ? held.spot : null,
-			act: held.act,
-			lines: held.lines,
-			range: held.range,
-			beat: held.beat,
+			frame: standing.frame,
+			spot: standing.frame === null ? standing.spot : null,
+			act: standing.act,
+			lines: standing.lines,
+			range: standing.range,
+			beat: standing.beat,
 		};
 	});
 }

@@ -102,9 +102,11 @@ export function TurnFoot({
 }) {
 	const [open, setOpen] = useState(false);
 	const over = foot.ms !== null;
-	const makers = new Set(foot.tiles.flatMap((tile) => (tile.agent === undefined ? [] : [tile.agent])));
+	const makers = new Set(foot.tiles.flatMap((tile) => (tile.delegation === undefined ? [] : [tile.delegation])));
 	// a designer's ask hangs off its own tile; anything else is the turn's own
-	const designer = asks.find((ask) => ask.agent !== undefined && ask.agent !== "" && makers.has(ask.agent));
+	const designer = asks.find(
+		(ask) => ask.delegation !== undefined && ask.delegation !== "" && makers.has(ask.delegation),
+	);
 	const mine = asks.find((ask) => ask !== designer);
 	// each anchor holds one ask; any more wait their turn as cards under the foot, so an
 	// ask is never anywhere but on screen
@@ -120,7 +122,7 @@ export function TurnFoot({
 							tiles={foot.tiles}
 							settled={over}
 							reach={reach}
-							waiting={hung?.agent}
+							waiting={hung?.delegation}
 							under={
 								hung === undefined
 									? undefined
@@ -403,7 +405,7 @@ function TileGrid({
 	under?: ((notch: number) => ReactNode) | undefined;
 }) {
 	const columns = settled ? 3 : 2;
-	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.agent === waiting);
+	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.delegation === waiting);
 	return (
 		<div className="flex flex-col gap-3">
 			<div data-agent-tiles="" className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}>

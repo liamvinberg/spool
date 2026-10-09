@@ -120,7 +120,7 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	);
 }
 
-/** where a companion stands: its frame, else the frame it just deleted, else its held spot */
+/** where a companion stands: its frame, else the frame it just deleted, else its reserved spot */
 function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood: Map<string, Box>): Box | null {
 	if (one.frame !== null) {
 		const frame = frames.get(one.frame);

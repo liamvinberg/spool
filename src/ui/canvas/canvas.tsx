@@ -1341,7 +1341,7 @@ export function ProjectCanvas({
 			(one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null,
 		);
 		if (entry === undefined) return null;
-		const by = companions.find((one) => one.key === (entry.agent ?? "") && one.frame !== null);
+		const by = companions.find((one) => one.key === (entry.delegation ?? "") && one.frame !== null);
 		return by?.frame == null ? null : { entry, frame: by.frame };
 	}, [askFooted, turn.entries, companions]);
 
