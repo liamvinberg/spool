@@ -729,6 +729,26 @@ describe("a placeholder frame (#369)", () => {
 		expect(listProjectFrames(root)).toMatchObject({ pages: ["app"], placeholders: [] });
 	});
 
+	it("is taken away with what its designer left in it when nothing there is a frame", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		turn.say(designer("t2", "d2", "Calm home", brief("ideas/home--calm")));
+		await until(() => turn.log.filter((event) => event.kind === "spot").length === 2);
+		// one designer left only a part behind; the other a frame of its own beneath its placeholder
+		writeDesignFile(root, "frames/ideas/home--split/parts.tsx", "export const Part = () => null;\n");
+		writeFrame(root, "ideas/home--calm/inner", "export default () => null;\n");
+		turn.say(done("t1"));
+		turn.say(done("t2"));
+		await until(() => turn.log.filter((event) => event.kind === "spot" && event.state !== "held").length === 2);
+		await turn.end();
+
+		expect(existsSync(join(root, "design/frames/ideas/home--split"))).toBe(false);
+		expect(existsSync(join(root, "design/frames/ideas/home--calm/inner/frame.tsx"))).toBe(true);
+		expect(existsSync(join(root, "design/frames/ideas/home--calm/frame.json"))).toBe(false);
+		expect(listProjectFrames(root)).toMatchObject({ pages: ["app", "ideas", "ideas/home--calm"], placeholders: [] });
+	});
+
 	it("is not made for a designer whose brief names only frames that stand: that is an edit", async () => {
 		const { root } = project();
 		const turn = witnessed(root);
