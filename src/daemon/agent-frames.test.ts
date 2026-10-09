@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { Rect } from "../page-box";
 import {
 	agentReader,
 	type FakeAgentProc,
@@ -225,6 +226,90 @@ describe("a turn's frames, off claude-background.json", () => {
 		proc.exit(0);
 		await reading;
 		expect(seen.filter((event) => event.kind === "spot" && event.state === "released")).toHaveLength(2);
+	});
+});
+
+/** two rects share some area */
+function overlaps(a: Rect, b: Rect): boolean {
+	return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/** a designer delegation starting, as Claude Code says it */
+function designerStarts(proc: FakeAgentProc, task: string, description: string): void {
+	proc.emit(
+		JSON.stringify({
+			type: "system",
+			subtype: "task_started",
+			task_id: task,
+			task_type: "local_agent",
+			subagent_type: "designer",
+			description,
+			tool_use_id: `toolu_${task}`,
+			session_id: THREAD,
+		}),
+	);
+}
+
+describe("a frame landing in its reserved spot", () => {
+	it("stands clear of every frame there, even when it is bigger than the spot", async () => {
+		const { root, name, app, proc, seen, close } = await turnOn((root) => {
+			writeFrame(root, "home", "export default () => null;\n");
+			writeDesignFile(root, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		});
+		proc.emit(JSON.stringify({ type: "system", subtype: "init", session_id: THREAD, cwd: root }));
+		designerStarts(proc, "calm", "Design calm frame");
+		await until(() => seen.some((event) => event.kind === "spot" && event.state === "held"));
+		const spot = seen.find((event) => event.kind === "spot" && event.state === "held");
+		if (spot?.kind !== "spot") throw new Error("no spot");
+		expect({ w: spot.w, h: spot.h }).toEqual({ w: 390, h: 844 });
+
+		// a frame born while the designer works stands beside the field, the spot included
+		writeFrame(root, "late", "export default () => null;\n");
+		await until(() => seen.some((event) => event.kind === "frame" && event.frame === "late"));
+		expect((await app.request(`/api/p/${name}/frames`)).status).toBe(200);
+		const late = listProjectFrames(root).frames.find((frame) => frame.name === "late");
+		expect(late !== undefined && !overlaps(late, spot)).toBe(true);
+
+		// the designer's frame says it is a desktop frame, far wider than the spot it was given
+		writeDesignFile(root, "frames/calm/frame.json", '{ "w": 1440, "h": 900 }\n');
+		writeFrame(root, "calm", "export default () => null;\n");
+		await until(() => seen.some((event) => event.kind === "spot" && event.state === "filled"));
+
+		const frames = listProjectFrames(root).frames;
+		const calm = frames.find((frame) => frame.name === "calm");
+		if (calm === undefined) throw new Error("calm never landed");
+		expect({ w: calm.w, h: calm.h }).toEqual({ w: 1440, h: 900 });
+		for (const other of frames.filter((frame) => frame.name !== "calm")) expect(overlaps(calm, other)).toBe(false);
+		// and the spot says where it went, so the canvas follows it there
+		const filled = seen.find((event) => event.kind === "spot" && event.state === "filled");
+		expect(filled?.kind === "spot" && { x: filled.x, y: filled.y, w: filled.w, h: filled.h }).toEqual({
+			x: calm.x,
+			y: calm.y,
+			w: calm.w,
+			h: calm.h,
+		});
+		await close();
+	});
+
+	it("stands exactly in the spot when it fits there", async () => {
+		const { root, proc, seen, close } = await turnOn((root) => {
+			writeFrame(root, "home", "export default () => null;\n");
+			writeDesignFile(root, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		});
+		proc.emit(JSON.stringify({ type: "system", subtype: "init", session_id: THREAD, cwd: root }));
+		designerStarts(proc, "calm", "Design calm frame");
+		await until(() => seen.some((event) => event.kind === "spot" && event.state === "held"));
+		const spot = seen.find((event) => event.kind === "spot" && event.state === "held");
+		if (spot?.kind !== "spot") throw new Error("no spot");
+		writeFrame(root, "calm", "export default () => null;\n");
+		await until(() => seen.some((event) => event.kind === "spot" && event.state === "filled"));
+
+		const frames = listProjectFrames(root).frames;
+		const calm = frames.find((frame) => frame.name === "calm");
+		expect(calm).toMatchObject({ x: spot.x, y: spot.y, w: spot.w, h: spot.h });
+		for (const other of frames.filter((frame) => frame.name !== "calm"))
+			expect(calm !== undefined && overlaps(calm, other)).toBe(false);
+		await close();
 	});
 });
 

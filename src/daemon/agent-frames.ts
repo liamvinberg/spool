@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Rect } from "../page-box";
 import { isFramePath, pageParent, ROOT_PAGE } from "../page-path";
 import type { AgentEvent, AgentFrame, AgentSpot } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
@@ -7,7 +8,7 @@ import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, pageObjectsOn } from "./placement";
-import { discoverFrames, listProjectFrames, type ReservedSpot } from "./projection";
+import { discoverFrames, listProjectFrames, type Projection, type ReservedSpot } from "./projection";
 
 /**
  * A turn's frames, read off `design/` rather than off its tool calls (#365).
@@ -168,6 +169,11 @@ export function changedRange(before: string, after: string): { from: number; to:
 	return { from, to: Math.min(to, Math.max(1, now.length)) };
 }
 
+/** two rects share some area; touching edges do not */
+function overlaps(a: Rect, b: Rect): boolean {
+	return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
 /** a frame name read from a task's own description: `Design hello-calm frame` → `hello-calm` */
 export function spotName(description: string | null): string {
 	const words = (description ?? "")
@@ -305,7 +311,31 @@ export function witnessFrames(
 		return { call: chosen.id, parent, task: parent === null ? null : (tasks.get(parent) ?? null) };
 	}
 
-	/** a frame just born on the root page fills the spot reserved for its delegation */
+	/**
+	 * What stands on the root page apart from `frame`, as rects: its frames, the pages on
+	 * it and the spots still empty but `spot`. Nothing when the page cannot be read.
+	 */
+	function rootField(frame?: string, spot?: string): { field: Rect[]; projection: Projection } | undefined {
+		let projection: Projection;
+		try {
+			projection = listProjectFrames(root, { reserved: spots.of(root) });
+		} catch {
+			return undefined;
+		}
+		const field: Rect[] = projection.frames
+			.filter((one) => one.page === undefined && one.name !== frame)
+			.map(({ x, y, w, h }) => ({ x, y, w, h }));
+		for (const { at, box } of pageObjectsOn(ROOT_PAGE, projection.pages, projection.frames, projection.places))
+			field.push({ ...at, ...box });
+		for (const one of spots.of(root)) if (one.frame === undefined && one.name !== spot) field.push(one);
+		return { field, projection };
+	}
+
+	/**
+	 * A frame just born on the root page fills the spot reserved for its delegation, at its
+	 * own size. A frame bigger than the spot that would then cover a neighbour stands beside
+	 * the field instead, as any new frame would, and the spot moves with it (story 57).
+	 */
 	function fill(frame: string, dir: string, task: string | null): string | undefined {
 		if (pageParent(frame) !== ROOT_PAGE || designDir === undefined) return undefined;
 		const open = [...reserved.values()].filter((spot) => spot.state === "held");
@@ -313,13 +343,18 @@ export function witnessFrames(
 		if (spot === undefined) return undefined;
 		const sidecar = readSidecar(join(dir, "frame.json"), designDir);
 		const size = sidecar.kind === "sized" ? sidecar.footprint : sidecar.kind === "placed" ? sidecar.geometry : spot;
+		let at = { x: spot.x, y: spot.y, w: size.w, h: size.h };
+		if (size.w > spot.w || size.h > spot.h) {
+			const field = rootField(frame, spot.name)?.field ?? [];
+			if (field.some((other) => overlaps(at, other))) at = { ...besideField(field), w: size.w, h: size.h };
+		}
 		try {
-			writeGeometry(join(dir, "frame.json"), { x: spot.x, y: spot.y, w: size.w, h: size.h }, designDir);
+			writeGeometry(join(dir, "frame.json"), at, designDir);
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 			return undefined;
 		}
-		const filled: AgentSpot = { ...spot, state: "filled", frame };
+		const filled: AgentSpot = { ...spot, ...at, state: "filled", frame };
 		reserved.set(spot.task, filled);
 		spots.fill(root, `${spot.task}`, frame);
 		hub.publish(root, { kind: "geometry", frame });
@@ -392,17 +427,10 @@ export function witnessFrames(
 	/** a designer started: reserve its spot on the root page, named from its task */
 	function reserve(task: string, call: string | null, description: string | null, parent: string | null): void {
 		if (designDir === undefined || reserved.has(task)) return;
-		let projection: ReturnType<typeof listProjectFrames>;
-		try {
-			projection = listProjectFrames(root, { reserved: spots.of(root) });
-		} catch {
-			return;
-		}
+		const read = rootField();
+		if (read === undefined) return;
+		const { field, projection } = read;
 		const onRoot = projection.frames.filter((frame) => frame.page === undefined);
-		const field = onRoot.map(({ x, y, w, h }) => ({ x, y, w, h }));
-		for (const { at, box } of pageObjectsOn(ROOT_PAGE, projection.pages, projection.frames, projection.places))
-			field.push({ ...at, ...box });
-		for (const spot of spots.of(root)) if (spot.frame === undefined) field.push(spot);
 		const rightmost = [...onRoot].sort((a, b) => b.x + b.w - (a.x + a.w))[0];
 		const size = rightmost === undefined ? DEFAULT_FOOTPRINT : { w: rightmost.w, h: rightmost.h };
 		const taken = new Set([
