@@ -4,6 +4,7 @@ import type { Rect } from "../page-box";
 import { isFramePath, pageParent, ROOT_PAGE } from "../page-path";
 import type { AgentEvent, AgentFrame, AgentSpot } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
+import { createEventQueue } from "./agent-turn-shell";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
@@ -250,9 +251,8 @@ export function witnessFrames(
 	turn: AgentTurn,
 	{ root, hub, spots, now = Date.now }: FrameWitnessOptions,
 ): WitnessedTurn {
-	const queue: AgentEvent[] = [];
-	let waiting: (() => void) | undefined;
-	let finished = false;
+	const queue = createEventQueue<AgentEvent>();
+	const { push } = queue;
 	/** every frame as the turn has last seen it */
 	const known = new Map<string, Kept>();
 	/** the deleted ones, kept for Put back */
@@ -289,13 +289,6 @@ export function witnessFrames(
 	for (const frame of discoverFrames(root) ?? []) {
 		const text = source(frame.dir);
 		if (text !== undefined) known.set(frame.name, { source: text, sidecar: sidecarText(frame.dir) });
-	}
-
-	function push(event: AgentEvent): void {
-		if (finished) return;
-		queue.push(event);
-		waiting?.();
-		waiting = undefined;
 	}
 
 	/** the call a frame landing now is most likely the work of */
@@ -534,7 +527,7 @@ export function witnessFrames(
 	}
 
 	const unsubscribe = hub.subscribe(root, (change) => {
-		if (finished) return;
+		if (queue.finished) return;
 		if (change.kind === "frame") rescan(new Set([change.frame]));
 	});
 
@@ -560,24 +553,12 @@ export function witnessFrames(
 			rescan();
 			unsubscribe();
 			for (const task of reserved.keys()) release(task);
-			finished = true;
-			waiting?.();
-			waiting = undefined;
+			queue.finish();
 		}
 	})();
 
-	async function* events(): AsyncGenerator<AgentEvent> {
-		for (;;) {
-			while (queue.length > 0) yield queue.shift() as AgentEvent;
-			if (finished) return;
-			await new Promise<void>((resolve) => {
-				waiting = resolve;
-			});
-		}
-	}
-
 	return {
-		events: { [Symbol.asyncIterator]: () => events() },
+		events: { [Symbol.asyncIterator]: () => queue.events() },
 		answer: (request, reply) => turn.answer(request, reply),
 		interrupt: () => turn.interrupt(),
 		abandon: () => turn.abandon(),

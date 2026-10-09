@@ -15,6 +15,7 @@ import type { AgentAsking, AgentEnded, AgentEvent, AgentLimit, AgentRecovery } f
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import { providerRecovery } from "./agent-recovery";
 import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { createTurnShell } from "./agent-turn-shell";
 
 /**
  * One turn: spawn the developer's agent, send what the human said, and hand back
@@ -32,23 +33,9 @@ import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } fro
  * request — so the turn holds what is waiting and writes the answer back up stdin.
  * Nothing here runs a clock on the work in either direction: a request waits until
  * somebody answers it, for as long as that takes, and spool never answers one itself.
- * The one clock is below, and it starts only once the turn is already over.
+ * The one clock is the shell's exit grace (`agent-turn-shell.ts`), and it starts only once
+ * the turn is already over.
  */
-
-/**
- * How long a binary that has already said everything gets to exit on its own.
- *
- * Nothing here runs a clock on the *turn*: a turn is as long as the work is, and one
- * parked on a question waits for as long as the person does. This clock starts after the
- * turn is over, on the ending the binary itself reported, and it is about one thing only
- * — a process that has nothing left to do and has not gone. Ten seconds is longer than
- * any tidy-up and shorter than a person's patience.
- *
- * It is not tidiness. The thread's next message is refused while a turn is running in it,
- * and running is what the process being up means, so a binary that never exits takes the
- * conversation with it until the daemon is restarted.
- */
-const EXIT_GRACE_MS = 10_000;
 
 export interface AgentTurnOptions {
 	readonly executor: AgentExecutor;
@@ -115,11 +102,8 @@ export function startAgentTurn({
 	designer,
 }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
-	const queue: AgentEvent[] = [];
-	let waiting: (() => void) | undefined;
-	let finished = false;
-	let stopped = false;
-	let proc: AgentProcess | undefined;
+	const shell = createTurnShell();
+	const { push } = shell;
 	let completed = continuing === true;
 	let limit: AgentLimit | undefined;
 	/**
@@ -148,8 +132,6 @@ export function startAgentTurn({
 	 */
 	let interrupts = 0;
 	let asked = 0;
-	/** the grace an ended turn's binary is inside, cancelled by the exit it is waiting for */
-	let leaving: ReturnType<typeof setTimeout> | undefined;
 	/**
 	 * The turn lasts until its background designers land, not until the agent answers
 	 * (#365): an ending the agent reports while they run is held, and the turn reads
@@ -164,13 +146,7 @@ export function startAgentTurn({
 		// a request the turn ended under is a request nobody can answer now, and a
 		// stale one would take an answer meant for the next turn
 		asking.clear();
-		target.end();
-		// left to go, and not left forever: a binary still up long after its own
-		// ending is holding the thread against its next message, so the grace runs
-		// out and the process is taken. The timer is nothing to keep a daemon alive
-		// for, which is what a turn already over means
-		leaving ??= setTimeout(() => target.kill(), EXIT_GRACE_MS);
-		leaving.unref?.();
+		shell.leave(target);
 	}
 
 	/** a stop ends the background designers too, each by the binary's own `stop_task` */
@@ -195,20 +171,6 @@ export function startAgentTurn({
 				over(target);
 			}
 		}
-	}
-
-	function push(event: AgentEvent): void {
-		if (finished) return;
-		queue.push(event);
-		waiting?.();
-		waiting = undefined;
-	}
-
-	function finish(): void {
-		if (finished) return;
-		finished = true;
-		waiting?.();
-		waiting = undefined;
 	}
 
 	function recoveryFor(words: string): AgentRecovery | undefined {
@@ -239,102 +201,74 @@ export function startAgentTurn({
 		};
 	}
 
-	void (async () => {
-		let started: AgentProcess;
-		try {
-			started = await executor(planAgentSpawn(root, process.env, session, ask, permissions, designer));
-		} catch (error) {
-			push({
-				kind: "closed",
-				code: null,
-				message: error instanceof Error ? error.message : String(error),
-				parent: null,
-			});
-			finish();
-			return;
-		}
-		proc = started;
-		if (stopped) {
-			started.kill();
-			return;
-		}
-		started.onLine((line) => {
-			for (const event of adapter.read(line)) {
-				// a connector's own question never reaches anybody: it is declined where it
-				// arrives, on the protocol's own word for it, and the log says nothing
-				// because nothing was asked of the person
-				if (event.kind === "elicit") {
-					started.write(controlResponseLine(event.request, DECLINED));
-					continue;
+	void shell.spawn(
+		() => executor(planAgentSpawn(root, process.env, session, ask, permissions, designer)),
+		(started) => {
+			started.onLine((line) => {
+				for (const event of adapter.read(line)) {
+					// a connector's own question never reaches anybody: it is declined where it
+					// arrives, on the protocol's own word for it, and the log says nothing
+					// because nothing was asked of the person
+					if (event.kind === "elicit") {
+						started.write(controlResponseLine(event.request, DECLINED));
+						continue;
+					}
+					// the turn is parked from here until somebody answers. Nothing is scheduled
+					// and nothing expires: the binary's own away-from-keyboard timeout would
+					// submit whatever was already picked, and spool submits nothing at all
+					if (event.kind === "asking") asking.set(event.request, event);
+					if (event.kind === "result" && !event.nonExecution) completed = true;
+					if (event.kind === "limit") limit = event.limit;
+					const recovery =
+						event.kind === "ended" && event.ending === "failed" ? recoveryFor(event.reason ?? "") : undefined;
+					const read: AgentEvent =
+						recovery && event.kind === "ended"
+							? ({
+									...event,
+									recovery,
+									reason:
+										recovery.kind === "login"
+											? "Sign in to Claude Code to continue."
+											: "Claude Code rate limit reached.",
+									stopReason: null,
+								} satisfies AgentEnded)
+							: event;
+					const { events, over: done } = background.read(read);
+					for (const one of events) push(one);
+					// the turn is over: no more input is coming, so stdin closes and the
+					// binary is left to exit on its own rather than being killed
+					if (done) over(started);
 				}
-				// the turn is parked from here until somebody answers. Nothing is scheduled
-				// and nothing expires: the binary's own away-from-keyboard timeout would
-				// submit whatever was already picked, and spool submits nothing at all
-				if (event.kind === "asking") asking.set(event.request, event);
-				if (event.kind === "result" && !event.nonExecution) completed = true;
-				if (event.kind === "limit") limit = event.limit;
-				const recovery =
-					event.kind === "ended" && event.ending === "failed" ? recoveryFor(event.reason ?? "") : undefined;
-				const read: AgentEvent =
-					recovery && event.kind === "ended"
-						? ({
-								...event,
+			});
+			started.onExit((code, message) => {
+				asking.clear();
+				const recovery = code === 0 ? undefined : recoveryFor(message ?? "");
+				shell.close({
+					kind: "closed",
+					code,
+					...(message === undefined ? {} : { message }),
+					parent: null,
+					...(recovery
+						? {
 								recovery,
-								reason:
+								message:
 									recovery.kind === "login"
 										? "Sign in to Claude Code to continue."
 										: "Claude Code rate limit reached.",
-								stopReason: null,
-							} satisfies AgentEnded)
-						: event;
-				const { events, over: done } = background.read(read);
-				for (const one of events) push(one);
-				// the turn is over: no more input is coming, so stdin closes and the
-				// binary is left to exit on its own rather than being killed
-				if (done) over(started);
-			}
-		});
-		started.onExit((code, message) => {
-			if (leaving !== undefined) clearTimeout(leaving);
-			asking.clear();
-			const recovery = code === 0 ? undefined : recoveryFor(message ?? "");
-			push({
-				kind: "closed",
-				code,
-				...(message === undefined ? {} : { message }),
-				parent: null,
-				...(recovery
-					? {
-							recovery,
-							message:
-								recovery.kind === "login"
-									? "Sign in to Claude Code to continue."
-									: "Claude Code rate limit reached.",
-						}
-					: {}),
+							}
+						: {}),
+				});
 			});
-			finish();
-		});
-		started.write(agentPromptLine(content));
-		// a press that landed while this was spawning is spent here, in the order the
-		// hands made it and behind the prompt it is stopping
-		interruptFrom(started);
-	})();
-
-	async function* events(): AsyncGenerator<AgentEvent> {
-		for (;;) {
-			while (queue.length > 0) {
-				yield queue.shift() as AgentEvent;
-			}
-			if (finished) return;
-			await new Promise<void>((resolve) => {
-				waiting = resolve;
-			});
-		}
-	}
+			started.write(agentPromptLine(content));
+			// a press that landed while this was spawning is spent here, in the order the
+			// hands made it and behind the prompt it is stopping
+			interruptFrom(started);
+		},
+	);
 
 	function answer(request: string, reply: AgentReply): boolean {
 		const held = asking.get(request);
+		const proc = shell.proc;
 		// an answer in the wrong vocabulary is refused rather than translated: the
 		// channel is shared and the two things riding it take different answers
 		if (held === undefined || proc === undefined || !answerFits(held, reply)) return false;
@@ -347,15 +281,15 @@ export function startAgentTurn({
 	}
 
 	return {
-		events: { [Symbol.asyncIterator]: () => events() },
+		events: shell.events,
 		answer,
 		interrupt: () => {
 			// a turn that is over is nothing to stop, and a turn given up is over — `abandon`
 			// finishes it. One still spawning is not, so the press is taken now and spent
 			// when there is somewhere to spend it
-			if (finished) return false;
+			if (shell.finished) return false;
 			interrupts += 1;
-			if (proc !== undefined) interruptFrom(proc);
+			if (shell.proc !== undefined) interruptFrom(shell.proc);
 			// nothing is pushed and nothing is cleared: the binary answers the request, ends
 			// the turn on its own terms and exits, and the stream says all three. A request
 			// still parked when the press lands is one the binary's own abort resolves —
@@ -363,11 +297,8 @@ export function startAgentTurn({
 			return true;
 		},
 		abandon: () => {
-			stopped = true;
-			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
-			proc?.kill();
-			finish();
+			shell.abandon();
 		},
 	};
 }

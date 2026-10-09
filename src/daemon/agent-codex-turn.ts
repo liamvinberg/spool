@@ -14,10 +14,11 @@ import {
 } from "./agent-codex-spawn";
 import type { AgentReply } from "./agent-control";
 import type { AgentMessage } from "./agent-engine";
-import type { AgentAsking, AgentEvent, AgentRecovery } from "./agent-events";
+import type { AgentAsking, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import type { AgentAsk } from "./agent-spawn";
 import type { AgentTurn } from "./agent-turn";
+import { createTurnShell } from "./agent-turn-shell";
 
 /**
  * One Codex turn, over `codex app-server` (#362).
@@ -32,9 +33,6 @@ import type { AgentTurn } from "./agent-turn";
  * and the next turn resumes it by id, with that turn's mode, so a mode picked mid-turn
  * takes effect at the next turn boundary without anything being changed live.
  */
-
-/** the grace an ended turn's process gets to exit on its own, as in `agent-turn.ts` */
-const EXIT_GRACE_MS = 10_000;
 
 export interface CodexTurnOptions {
 	readonly executor: AgentExecutor;
@@ -152,18 +150,13 @@ const DECISIONS = { allow: "accept", always: "acceptForSession", deny: "decline"
 export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	const { executor, root, env, said, ask, permissions } = options;
 	const adapter: CodexAdapter = createCodexAdapter();
-	const queue: AgentEvent[] = [];
-	let waiting: (() => void) | undefined;
-	let finished = false;
-	let stopped = false;
-	let ended = false;
-	let proc: AgentProcess | undefined;
+	const shell = createTurnShell();
+	const { push } = shell;
 	let rpc: CodexRpc | undefined;
 	/** the turn Codex is running, which is what a Stop names */
 	let turn: string | undefined;
 	let interrupts = 0;
 	let sent = 0;
-	let leaving: ReturnType<typeof setTimeout> | undefined;
 	/** what is waiting on the person, by the id an answer names */
 	const asking = new Map<string, { id: CodexRequestId; event: AgentAsking; scopes: readonly string[] }>();
 	const allowed = options.allowed ?? new Set<string>();
@@ -175,20 +168,6 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	 * did not wait for runs on.
 	 */
 	const background = createBackgroundHold({ wakes: false });
-
-	function push(event: AgentEvent): void {
-		if (finished) return;
-		queue.push(event);
-		waiting?.();
-		waiting = undefined;
-	}
-
-	function finish(): void {
-		if (finished) return;
-		finished = true;
-		waiting?.();
-		waiting = undefined;
-	}
 
 	/** every press not yet sent, once there is a turn to name */
 	function interruptSent(): void {
@@ -204,21 +183,18 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 				if (child !== undefined) rpc.request("turn/interrupt", { threadId: task, turnId: child }).catch(() => {});
 			}
 			const held = background.stop();
-			if (held !== undefined && proc !== undefined) {
+			if (held !== undefined && shell.proc !== undefined) {
 				push(held);
-				end(proc);
+				end(shell.proc);
 			}
 		}
 	}
 
 	/** the turn is over: no more input, and the process is left to go */
 	function end(target: AgentProcess): void {
-		if (ended) return;
-		ended = true;
+		if (shell.left) return;
 		asking.clear();
-		target.end();
-		leaving ??= setTimeout(() => target.kill(), EXIT_GRACE_MS);
-		leaving.unref?.();
+		shell.leave(target);
 	}
 
 	function failed(target: AgentProcess, reason: string, recovery?: AgentRecovery): void {
@@ -369,78 +345,49 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		interruptSent();
 	}
 
-	void (async () => {
-		let started: AgentProcess;
-		try {
-			started = await executor(
-				planCodexSpawn(root, env, options.designer === undefined ? {} : { designer: options.designer }),
-			);
-		} catch (error) {
-			push({
-				kind: "closed",
-				code: null,
-				message: error instanceof Error ? error.message : String(error),
-				parent: null,
+	void shell.spawn(
+		() => executor(planCodexSpawn(root, env, options.designer === undefined ? {} : { designer: options.designer })),
+		async (started) => {
+			const target = createCodexRpc(started);
+			rpc = target;
+			target.onRequest((id, method, params) => request(target, id, method, params));
+			target.onNotification((method, params) => {
+				// a turn that is over says nothing more, whatever a sub-agent still streams
+				if (shell.left) return;
+				const wire = (typeof params === "object" && params !== null ? params : {}) as {
+					threadId?: unknown;
+					turn?: { id?: unknown };
+				};
+				if (method === "turn/started" && wire.threadId === adapter.main && typeof wire.turn?.id === "string") {
+					turn ??= wire.turn.id;
+					interruptSent();
+				}
+				if (
+					method === "turn/started" &&
+					typeof wire.threadId === "string" &&
+					wire.threadId !== adapter.main &&
+					typeof wire.turn?.id === "string"
+				)
+					children.set(wire.threadId, wire.turn.id);
+				for (const event of adapter.read(method, params)) {
+					const read = background.read(event);
+					for (const one of read.events) push(one);
+					if (read.over) end(started);
+				}
 			});
-			finish();
-			return;
-		}
-		proc = started;
-		if (stopped) {
-			started.kill();
-			return;
-		}
-		const target = createCodexRpc(started);
-		rpc = target;
-		target.onRequest((id, method, params) => request(target, id, method, params));
-		target.onNotification((method, params) => {
-			// a turn that is over says nothing more, whatever a sub-agent still streams
-			if (ended) return;
-			const wire = (typeof params === "object" && params !== null ? params : {}) as {
-				threadId?: unknown;
-				turn?: { id?: unknown };
-			};
-			if (method === "turn/started" && wire.threadId === adapter.main && typeof wire.turn?.id === "string") {
-				turn ??= wire.turn.id;
-				interruptSent();
-			}
-			if (
-				method === "turn/started" &&
-				typeof wire.threadId === "string" &&
-				wire.threadId !== adapter.main &&
-				typeof wire.turn?.id === "string"
-			)
-				children.set(wire.threadId, wire.turn.id);
-			for (const event of adapter.read(method, params)) {
-				const read = background.read(event);
-				for (const one of read.events) push(one);
-				if (read.over) end(started);
-			}
-		});
-		started.onLine((line) => target.read(line));
-		started.onExit((code, message) => {
-			if (leaving !== undefined) clearTimeout(leaving);
-			asking.clear();
-			target.close(message ?? "Codex exited.");
-			push({ kind: "closed", code, ...(message === undefined ? {} : { message }), parent: null });
-			finish();
-		});
-		try {
-			await run(started, target);
-		} catch (error) {
-			if (!ended && !finished) failed(started, error instanceof Error ? error.message : String(error));
-		}
-	})();
-
-	async function* events(): AsyncGenerator<AgentEvent> {
-		for (;;) {
-			while (queue.length > 0) yield queue.shift() as AgentEvent;
-			if (finished) return;
-			await new Promise<void>((resolve) => {
-				waiting = resolve;
+			started.onLine((line) => target.read(line));
+			started.onExit((code, message) => {
+				asking.clear();
+				target.close(message ?? "Codex exited.");
+				shell.close({ kind: "closed", code, ...(message === undefined ? {} : { message }), parent: null });
 			});
-		}
-	}
+			try {
+				await run(started, target);
+			} catch (error) {
+				if (!shell.left && !shell.finished) failed(started, error instanceof Error ? error.message : String(error));
+			}
+		},
+	);
 
 	function answer(request: string, reply: AgentReply): boolean {
 		const held = asking.get(request);
@@ -455,21 +402,18 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	}
 
 	return {
-		events: { [Symbol.asyncIterator]: () => events() },
+		events: shell.events,
 		answer,
 		interrupt: () => {
-			if (finished || ended) return false;
+			if (shell.finished || shell.left) return false;
 			interrupts += 1;
 			interruptSent();
 			return true;
 		},
 		abandon: () => {
-			stopped = true;
-			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
 			rpc?.close("The turn was given up.");
-			proc?.kill();
-			finish();
+			shell.abandon();
 		},
 	};
 }
