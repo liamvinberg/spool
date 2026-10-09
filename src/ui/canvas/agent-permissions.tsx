@@ -1,5 +1,5 @@
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import type { AgentPermissions } from "../../settings/registry";
+import { AGENT_PERMISSIONS, type AgentPermissions } from "../../settings/registry";
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
@@ -166,7 +166,7 @@ export function PermissionMenu({
 				items[next]?.focus();
 			}}
 		>
-			{(["ask", "edits", "bypass"] as const).map((choice) => (
+			{AGENT_PERMISSIONS.map((choice) => (
 				<button
 					key={choice}
 					type="button"

@@ -31,12 +31,13 @@ import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
-import type {
-	AgentPermissions,
-	SettingKey,
-	SettingPrimitive,
-	SettingReading,
-	SettingsSnapshot,
+import {
+	AGENT_PERMISSIONS,
+	type AgentPermissions,
+	type SettingKey,
+	type SettingPrimitive,
+	type SettingReading,
+	type SettingsSnapshot,
 } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
@@ -1630,7 +1631,7 @@ function agentDefaultsOf(body: unknown): { preferred: AgentEngineId | null; mode
 }
 
 function isPermissionMode(value: unknown): value is AgentPermissions {
-	return value === "ask" || value === "edits" || value === "bypass";
+	return (AGENT_PERMISSIONS as readonly unknown[]).includes(value);
 }
 
 /**
