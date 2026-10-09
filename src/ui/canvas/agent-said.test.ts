@@ -153,6 +153,14 @@ describe("a settled message", () => {
 		expect(live.host.querySelector("[data-agent-table] > p:last-child [data-agent-caret]")).not.toBeNull();
 	});
 
+	it("joins a table cell that ends a sentence to the next with a space, not a comma", () => {
+		const text =
+			'| Frame | The idea | Open question |\n|---|---|---|\n| `grid` | A grid ("Burned."). | Approve it? |';
+		const { host } = draw(createElement(Said, { text }));
+
+		expect(host.querySelector("[data-agent-table] > p")?.textContent).toBe('•grid – A grid ("Burned."). Approve it?');
+	});
+
 	it("carries no caret, because nothing is coming", () => {
 		const { host } = draw(createElement(Said, { text: LONGEST }));
 

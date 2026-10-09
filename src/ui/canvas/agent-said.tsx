@@ -40,6 +40,8 @@ const INDENT = 14;
 
 /** the words of a run of spans, without their markers */
 const textOf = (spans: readonly Span[]) => spans.map((span) => span.text).join("");
+/** what follows a table cell in its row's prose: a space after a whole sentence, else a comma */
+const joinAfter = (cell: readonly Span[]) => (/[.!?…]["”’')\]]*$/u.test(textOf(cell).trim()) ? " " : ", ");
 
 /**
  * Rendered on its props and nothing else, which is why it is held.
@@ -185,7 +187,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 													<Fragment key={`${column}-${cell[0]?.text.slice(0, 12) ?? ""}`}>
 														{index === 0 && !led ? null : (
 															<span data-marker="" className="text-muted">
-																{index === 0 ? " – " : ", "}
+																{index === 0 ? " – " : joinAfter(rest[index - 1]?.cell ?? [])}
 															</span>
 														)}
 														{label === null || textOf(label).trim() === "" ? null : (
