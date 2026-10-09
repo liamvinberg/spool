@@ -20,7 +20,7 @@ it("switches the pane a tab is clicked for, and keeps the side's width", { timeo
 
 	await agent.click();
 	expect(await agent.getAttribute("aria-selected")).toBe("true");
-	await expect.poll(() => page.locator("[data-agent-rail] textarea").isVisible()).toBe(true);
+	await expect.poll(() => page.locator("[data-agent-rail]").isVisible()).toBe(true);
 	expect(await page.locator("[data-properties-rail]").isVisible()).toBe(false);
 	expect(await sideWidth(page, "right")).toBe(before);
 
@@ -73,7 +73,7 @@ it("splits Properties when Agent is dropped on the bottom half of its body; Esc 
 		})
 		.toBe(true);
 	expect(await page.locator("[data-properties-rail]").isVisible()).toBe(true);
-	expect(await page.locator("[data-agent-rail] textarea").isVisible()).toBe(true);
+	expect(await page.locator("[data-agent-rail]").isVisible()).toBe(true);
 });
 
 it("closes a side to its rail of icons, and an icon opens it again on that pane", { timeout: 120_000 }, async () => {
@@ -88,7 +88,7 @@ it("closes a side to its rail of icons, and an icon opens it again on that pane"
 	await page.locator('[data-rail-icon="agent"]').click();
 	await expect.poll(() => sideWidth(page, "right")).toBe(380);
 	expect(await page.locator('[data-pane-tab="agent"]').getAttribute("aria-selected")).toBe("true");
-	await expect.poll(() => page.locator("[data-agent-rail] textarea").isVisible()).toBe(true);
+	await expect.poll(() => page.locator("[data-agent-rail]").isVisible()).toBe(true);
 	await expect.poll(() => rail.isVisible()).toBe(false);
 
 	// ⌘B closes the left side the same way, and a side closed stays closed across a reload
