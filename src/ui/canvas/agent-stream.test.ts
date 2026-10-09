@@ -330,10 +330,10 @@ describe("what an open turn costs", () => {
 
 	/**
 	 * The long middle of a turn: the stream is open, the agent is off running something,
-	 * and the last message has been on screen whole for half a second. Nothing is arriving
-	 * and nothing is paced, so there is nothing to draw.
+	 * and the last message has been on screen whole for a while. Nothing is arriving and
+	 * nothing is paced, so the only thing owed is the clock's next second (#370).
 	 */
-	it("draws nothing on a tick where nothing moved", async () => {
+	it("draws nothing but the clock's seconds while nothing moves", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await act(async () => {
@@ -345,11 +345,64 @@ describe("what an open turn costs", () => {
 		await settle(400);
 
 		const quiet = canvas.renders();
-		await settle(500);
+		await settle(2000);
 
-		expect(canvas.renders()).toBe(quiet);
+		expect(canvas.renders() - quiet).toBeLessThanOrEqual(3);
 		// and the turn is still a turn, which is what makes the silence worth something
 		expect(canvas.latest().phase).toBe("playing");
+	});
+
+	/**
+	 * Designers at work send nothing to the main thread, so a clock that waited for an
+	 * event held its number and then jumped by ten (#370).
+	 */
+	it("ticks the clock every second while no events arrive", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		canvas.push(speaking);
+		canvas.push({ kind: "say", block: 0, text: "designers are on it.", parent: null });
+		await settle(400);
+
+		const before = Math.floor(canvas.latest().elapsed / 1000);
+		await settle(2200);
+
+		expect(Math.floor(canvas.latest().elapsed / 1000) - before).toBeGreaterThanOrEqual(2);
+	});
+
+	/** an ask stops the clock, so a parked turn has no second to draw */
+	it("holds the clock while the turn is parked on an ask", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		canvas.push({ kind: "called", id: "c1", tool: "Bash", input: { command: "spool upgrade" }, parent: null });
+		canvas.push({
+			kind: "asking",
+			request: "req-1",
+			call: "c1",
+			tool: "Bash",
+			display: "Bash",
+			input: { command: "spool upgrade" },
+			description: "Upgrade the spool CLI",
+			interaction: false,
+			suggestions: [],
+			parent: null,
+		});
+		await settle(400);
+
+		const held = Math.floor(canvas.latest().elapsed / 1000);
+		const quiet = canvas.renders();
+		await settle(1500);
+
+		expect(Math.floor(canvas.latest().elapsed / 1000)).toBe(held);
+		// the request's own receipt counts nothing while the clock is stopped
+		expect(canvas.renders()).toBe(quiet);
 	});
 });
 
