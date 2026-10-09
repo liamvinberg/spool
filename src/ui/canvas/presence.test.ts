@@ -2,14 +2,20 @@ import { describe, expect, it } from "vitest";
 import type { Presence, PresenceState } from "../../team-sync-protocol";
 import {
 	agentSays,
+	CLICK_MS,
 	createPresenceRoom,
 	followCamera,
+	followGesture,
+	gestureMoving,
 	IDLE_MS,
 	idle,
 	idleFor,
 	LEAVE_MS,
 	nextChange,
 	PILL_HOLD_MS,
+	type PointerGesture,
+	pointerShape,
+	SCROLL_MS,
 	speaking,
 	springStep,
 } from "./presence";
@@ -147,5 +153,68 @@ describe("a teammate's agent in their presence (#378)", () => {
 		room.reset();
 		expect(room.person("ben")).toEqual(ben);
 		expect(room.person("nobody")).toBeUndefined();
+	});
+});
+
+describe("what their pointer does inside a live frame", () => {
+	const inside = (x: number, y: number, more: Partial<PresenceState> = {}) => at(x, y, { inside: "home", ...more });
+	/** Each state heard in turn, one render each, 10ms apart, the pointer drawn where it was heard. */
+	const follow = (...states: PresenceState[]) => {
+		let gesture: PointerGesture | undefined;
+		states.forEach((state, i) => {
+			gesture = followGesture(gesture, state, state.pointer, i * 10);
+		});
+		return gesture as PointerGesture;
+	};
+
+	it("plays each new click once, and none they made before they were seen", () => {
+		const seen = follow(inside(10, 10, { clicks: 4 }));
+		expect(seen.click).toBeNull();
+		const clicked = follow(inside(10, 10, { clicks: 4 }), inside(10, 10, { clicks: 5 }));
+		expect(clicked.click).toEqual({ n: 1, at: 10 });
+		expect(gestureMoving(clicked, 10 + CLICK_MS - 1)).toBe(true);
+		expect(gestureMoving(clicked, 10 + CLICK_MS)).toBe(false);
+		// a press and its release that land between two hearings still click
+		const twice = follow(inside(10, 10, { clicks: 5 }), inside(10, 10, { clicks: 6 }), inside(10, 10, { clicks: 7 }));
+		expect(twice.click?.n).toBe(2);
+	});
+
+	it("drags once a press moves past the slop, with a line behind it, and lets go on release", () => {
+		const held = follow(inside(10, 10), inside(10, 10, { pressed: true }), inside(12, 11, { pressed: true }));
+		expect(pointerShape(held, 20)).toBe("pressed");
+		expect(held.dragging).toBe(false);
+		const dragged = follow(
+			inside(10, 10),
+			inside(10, 10, { pressed: true }),
+			inside(30, 10, { pressed: true }),
+			inside(60, 10, { pressed: true }),
+		);
+		expect(pointerShape(dragged, 30)).toBe("hand");
+		expect(dragged.trail.map((point) => point.x)).toEqual([30, 60]);
+		const dropped = followGesture(dragged, inside(60, 10), { x: 60, y: 10 }, 40);
+		expect(pointerShape(dropped, 40)).toBe("arrow");
+		// the line lingers after the drop, then goes
+		expect(gestureMoving(dropped, 40)).toBe(true);
+		expect(followGesture(dropped, inside(60, 10), { x: 60, y: 10 }, 10_000).trail).toEqual([]);
+	});
+
+	it("scrolls the way the frame's scrollers moved, and goes back to an arrow once they rest", () => {
+		const down = follow(inside(10, 10, { scrolled: { x: 0, y: 0 } }), inside(10, 10, { scrolled: { x: 0, y: 80 } }));
+		expect(down.scroll).toEqual({ way: "down", at: 10 });
+		expect(pointerShape(down, 10)).toBe("scroll");
+		expect(pointerShape(down, 10 + SCROLL_MS)).toBe("arrow");
+		const up = follow(inside(10, 10, { scrolled: { x: 0, y: 80 } }), inside(10, 10, { scrolled: { x: 4, y: 20 } }));
+		expect(up.scroll?.way).toBe("up");
+		const left = follow(inside(10, 10, { scrolled: { x: 90, y: 0 } }), inside(10, 10, { scrolled: { x: 30, y: 2 } }));
+		expect(left.scroll?.way).toBe("left");
+		// how far it's scrolled when they're first seen is no scroll at all
+		expect(follow(inside(10, 10, { scrolled: { x: 0, y: 500 } })).scroll).toBeNull();
+	});
+
+	it("does none of it out on the canvas, where a press is a canvas gesture", () => {
+		const canvas = follow(at(10, 10), at(10, 10, { pressed: true, clicks: 1 }), at(80, 10, { pressed: true }));
+		expect(canvas.click).toBeNull();
+		expect(canvas.dragging).toBe(false);
+		expect(pointerShape(canvas, 20)).toBe("arrow");
 	});
 });

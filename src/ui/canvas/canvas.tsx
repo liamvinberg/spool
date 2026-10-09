@@ -4207,6 +4207,26 @@ export function ProjectCanvas({
 					else panBy(-dx, -dy);
 					return;
 				}
+				case "presence": {
+					// the pointer, a press and the scroll inside the entered frame, which never cross into here:
+					// told in the frame's own pixels, said to the team in world ones
+					if (enteredRef.current !== message.frame) return;
+					const frame = framesRef.current.find((entry) => entry.name === message.frame);
+					const iframe = iframes.current.get(message.frame);
+					if (frame === undefined || iframe === undefined) return;
+					const scale = iframe.clientWidth > 0 ? frame.w / iframe.clientWidth : 1;
+					insideFrameRef.current.pointer(
+						message.x === null || message.y === null
+							? null
+							: { x: Math.round(frame.x + message.x * scale), y: Math.round(frame.y + message.y * scale) },
+						message.pressed,
+					);
+					insideFrameRef.current.scrolled({
+						x: Math.round(message.scrolled.x),
+						y: Math.round(message.scrolled.y),
+					});
+					return;
+				}
 				case "go":
 				case "back": {
 					const source = event.source as WindowProxy;
@@ -5503,7 +5523,7 @@ export function ProjectCanvas({
 	// --- presence (DEV-196) ---------------------------------------------------------
 
 	const sendPresence = useCallback((state: PresenceState) => putPresence(project, state), [project]);
-	usePresenceSender({
+	const insideFrame = usePresenceSender({
 		send: sendPresence,
 		team,
 		camera,
@@ -5530,6 +5550,9 @@ export function ProjectCanvas({
 		goToPage: followPage,
 	});
 	const followed = following === null ? undefined : presenceRoom.get(following);
+	// read from the frame protocol's handler, which is bound before the sender is
+	const insideFrameRef = useRef(insideFrame);
+	insideFrameRef.current = insideFrame;
 
 	// --- render -------------------------------------------------------------------
 

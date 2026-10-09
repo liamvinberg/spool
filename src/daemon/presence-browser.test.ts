@@ -14,7 +14,8 @@ import { syncUrl } from "./team-sync";
 /**
  * What one person sees of their teammates on a team canvas (DEV-196), drawn by the real canvas from presence
  * the team sends: a named pointer whose name holds and fades, idle and gone, the pill docked on a frame's
- * name, the grabbing hand and the outline, the faces and their crowd, and following a view. Ana's canvas is
+ * name, the grabbing hand and the outline, what their pointer does inside a live frame, the faces and their
+ * crowd, and following a view. Ana's canvas is
  * the one looked at; the teammates are fixtures the fake team says, and Ben's connection hears Ana.
  */
 
@@ -51,7 +52,12 @@ async function teamCanvas() {
 		["home", HOME],
 		["menu", MENU],
 	] as const) {
-		writeFrame(root, name, `export default function Frame() { return <main><h1>${name}</h1></main>; }\n`);
+		// a list that scrolls inside the frame, the way a phone screen's does
+		writeFrame(
+			root,
+			name,
+			`export default function Frame() { return <main style={{ height: "100vh", overflow: "auto" }}><h1>${name}</h1><div style={{ height: 2000 }} /></main>; }\n`,
+		);
 		writeDesignFile(root, `frames/${name}/frame.json`, `${JSON.stringify(box)}\n`);
 	}
 	writeDesignFile(root, ".spool/state.json", `${JSON.stringify({ camera: { x: 100, y: 200, k: 0.75 } })}\n`);
@@ -291,6 +297,46 @@ it("closes a dragging teammate's pointer into a hand, and outlines what they mov
 	await expect.poll(() => outline.count()).toBe(0);
 });
 
+it("shows a teammate's clicks, drags and scrolls inside a live frame on their pointer", {
+	timeout: 120_000,
+}, async () => {
+	const { page, say } = await teamCanvas();
+	const ben = page.locator('[data-presence-cursor="ben"]');
+	say(BEN, at(300, 200, { inside: "home", clicks: 2, scrolled: { x: 0, y: 0 } }));
+	await ben.waitFor({ state: "attached" });
+	// what they did before they were seen plays nothing
+	await page.waitForTimeout(300);
+	expect(await ben.locator("[data-presence-click]").count()).toBe(0);
+
+	// the pointer goes on moving inside the frame, and a click bursts from it and is gone
+	say(BEN, at(340, 220, { inside: "home", clicks: 3, scrolled: { x: 0, y: 0 } }));
+	await expect.poll(() => ben.locator("[data-presence-click]").count()).toBe(1);
+	const goal = await pagePointOf(page, { x: 340, y: 220 });
+	await expect
+		.poll(async () => Math.hypot((await tip(page, "ben")).x - goal.x, (await tip(page, "ben")).y - goal.y))
+		.toBeLessThan(1);
+	await expect.poll(() => ben.locator("[data-presence-click]").count(), { timeout: 3_000 }).toBe(0);
+
+	// a press that moves is a drag: a hand, with a line behind it that fades once they let go
+	say(BEN, at(340, 220, { inside: "home", pressed: true, clicks: 4, scrolled: { x: 0, y: 0 } }));
+	for (let x = 350; x <= 420; x += 10) {
+		say(BEN, at(x, 220, { inside: "home", pressed: true, clicks: 4, scrolled: { x: 0, y: 0 } }));
+		await page.waitForTimeout(30);
+	}
+	await expect.poll(() => ben.locator("[data-presence-hand]").count()).toBe(1);
+	await expect.poll(() => page.locator('[data-presence-trail="ben"] line').count()).toBeGreaterThan(1);
+	say(BEN, at(420, 220, { inside: "home", clicks: 4, scrolled: { x: 0, y: 0 } }));
+	await expect.poll(() => ben.locator("[data-presence-hand]").count()).toBe(0);
+	await expect.poll(() => page.locator('[data-presence-trail="ben"]').count(), { timeout: 3_000 }).toBe(0);
+
+	// scrolling turns the pointer into a mouse that says which way, and it turns back once they rest
+	say(BEN, at(420, 220, { inside: "home", clicks: 4, scrolled: { x: 0, y: 120 } }));
+	await expect.poll(() => ben.locator("[data-presence-scroll]").getAttribute("data-presence-scroll")).toBe("down");
+	say(BEN, at(420, 220, { inside: "home", clicks: 4, scrolled: { x: 0, y: 60 } }));
+	await expect.poll(() => ben.locator("[data-presence-scroll]").getAttribute("data-presence-scroll")).toBe("up");
+	await expect.poll(() => ben.locator("[data-presence-scroll]").count(), { timeout: 3_000 }).toBe(0);
+});
+
 it("shows the faces of who's here, collapses a crowd into a count, and follows a face's view", {
 	timeout: 120_000,
 }, async () => {
@@ -380,4 +426,54 @@ it("tells the team where this canvas's person is, and what they drag", { timeout
 	for (let step = 0; step < 20; step += 1) await page.mouse.move(point.x + step, point.y + 60);
 	await page.waitForTimeout(300);
 	expect(heard.length - count).toBeLessThan(15);
+});
+
+it("tells the team where this canvas's person is inside a live frame, each click, and their scrolling", {
+	timeout: 120_000,
+}, async () => {
+	const { page, heard } = await teamCanvas();
+	const inside = await pagePointOf(page, { x: 200, y: 150 });
+	await page.mouse.dblclick(inside.x, inside.y);
+	await expect.poll(() => heard.at(-1)?.inside, { timeout: 10_000 }).toBe("home");
+
+	// the frame's own pointer, which the canvas never sees, is said in world units, once the camera has
+	// finished bringing the frame in
+	let there = await pagePointOf(page, { x: 260, y: 190 });
+	await expect
+		.poll(async () => {
+			const was = there;
+			await page.waitForTimeout(150);
+			there = await pagePointOf(page, { x: 260, y: 190 });
+			return Math.hypot(there.x - was.x, there.y - was.y);
+		})
+		.toBeLessThan(0.5);
+	await page.mouse.move(there.x, there.y, { steps: 4 });
+	await expect
+		.poll(() => {
+			const pointer = heard.at(-1)?.pointer;
+			return pointer == null ? Number.POSITIVE_INFINITY : Math.hypot(pointer.x - 260, pointer.y - 190);
+		})
+		.toBeLessThan(2);
+	const before = heard.at(-1)?.clicks ?? 0;
+	await page.mouse.click(there.x, there.y);
+	await page.mouse.click(there.x, there.y);
+	await expect.poll(() => heard.at(-1)?.clicks).toBe(before + 2);
+	// a press that moves before it's let go is a drag, not a click
+	await page.mouse.down();
+	await expect.poll(() => heard.at(-1)?.pressed).toBe(true);
+	await page.mouse.move(there.x + 60, there.y + 20, { steps: 5 });
+	await page.mouse.up();
+	await expect.poll(() => heard.at(-1)?.pressed).toBe(false);
+	expect(heard.at(-1)?.clicks).toBe(before + 2);
+
+	// the list inside it scrolls, and that is said; the frame's scroll position never leaves it as such
+	await page.mouse.wheel(0, 200);
+	await expect.poll(() => heard.at(-1)?.scrolled?.y ?? 0).toBeGreaterThan(0);
+	const down = heard.at(-1)?.scrolled?.y ?? 0;
+	await page.mouse.wheel(0, -120);
+	await expect.poll(() => heard.at(-1)?.scrolled?.y ?? 0).toBeLessThan(down);
+
+	await page.keyboard.press("Escape");
+	await expect.poll(() => heard.at(-1)?.inside).toBeNull();
+	expect(heard.at(-1)?.scrolled).toBeNull();
 });

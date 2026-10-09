@@ -141,6 +141,21 @@ export interface FramePanMessage {
 	y: number;
 }
 
+/**
+ * Where the pointer is inside an entered frame, whether it's pressed, and how
+ * far everything in it has been scrolled, added up, all in the frame's own
+ * pixels: none of it crosses the iframe boundary, and the canvas says it to
+ * the team.
+ */
+export interface FramePresenceMessage {
+	spool: "presence";
+	frame: string;
+	x: number | null;
+	y: number | null;
+	pressed: boolean;
+	scrolled: { x: number; y: number };
+}
+
 /** Frame-local boxes of the elements the canvas asked about, keyed by the
  * anchor each side derives — `path:line:col` for a point and `path:from-to`
  * for a range; null when no element renders for it. */
@@ -198,6 +213,7 @@ export type FrameMessage =
 	| FramePanMessage
 	| FrameZoomMessage
 	| FrameScrollMessage
+	| FramePresenceMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "generation"; frame: string; id: number; chain: PickedHit[]; hits: PickedHit[] }
 	| { spool: "element-tree"; frame: string; id: number; nodes: ElementNode[] }
@@ -266,6 +282,18 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				typeof m.shiftKey === "boolean"
 				? (m as unknown as FrameMessage)
 				: undefined;
+		case "presence": {
+			const s = m.scrolled as Record<string, unknown> | null | undefined;
+			return (m.x === null || finite(m.x)) &&
+				(m.y === null || finite(m.y)) &&
+				typeof m.pressed === "boolean" &&
+				typeof s === "object" &&
+				s !== null &&
+				finite(s.x) &&
+				finite(s.y)
+				? (m as unknown as FrameMessage)
+				: undefined;
+		}
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
 		case "generation":
