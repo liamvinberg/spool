@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "./agent-events";
-import { createPiAdapter, PI_PROMPT, PI_STATE, piDeclineLine, piModelValue } from "./agent-pi";
+import { createPiAdapter, createPiRpc, PI_PROMPT, PI_STATE, piDeclineLine, piModelValue } from "./agent-pi";
 
 /** the lines pi printed in a recorded rpc session, with spool's own ids on its answers */
 function printed(capture: string): string[] {
@@ -90,5 +90,36 @@ describe("the pi adapter", () => {
 	it("names a model the way pi's own command line does", () => {
 		expect(piModelValue({ id: "qwen3-coder:30b", provider: "ollama" })).toBe("ollama/qwen3-coder:30b");
 		expect(piModelValue(undefined)).toBeNull();
+	});
+});
+
+describe("pi's rpc", () => {
+	it("pairs each response to its command by id, in whatever order pi answers", async () => {
+		const written: string[] = [];
+		const rpc = createPiRpc({ write: (line) => written.push(line) });
+		const models = rpc.request({ type: "get_available_models" });
+		const state = rpc.request({ id: PI_STATE, type: "get_state" });
+		const sent = written.map((line) => JSON.parse(line) as { id: string; type: string });
+		expect(sent).toEqual([
+			{ id: "spool-1", type: "get_available_models" },
+			{ id: PI_STATE, type: "get_state" },
+		]);
+		// the event stream and a response nobody asked for pass by untouched
+		rpc.read(JSON.stringify({ type: "agent_settled" }));
+		rpc.read(JSON.stringify({ type: "response", command: "parse", success: false, error: "bad json" }));
+		rpc.read("not json");
+		rpc.read(JSON.stringify({ id: PI_STATE, type: "response", command: "get_state", success: true, data: { a: 1 } }));
+		rpc.read(JSON.stringify({ id: "spool-1", type: "response", success: false, error: "no auth" }));
+		await expect(state).resolves.toMatchObject({ id: PI_STATE, success: true, data: { a: 1 } });
+		// a refusal is pi's answer, not a failure of the conversation
+		await expect(models).resolves.toMatchObject({ success: false, error: "no auth" });
+	});
+
+	it("rejects what is still out once the process is gone, and everything after", async () => {
+		const rpc = createPiRpc({ write: () => {} });
+		const waiting = rpc.request({ type: "get_state" });
+		rpc.close("pi exited.");
+		await expect(waiting).rejects.toThrow("pi exited.");
+		await expect(rpc.request({ type: "get_state" })).rejects.toThrow("pi exited.");
 	});
 });

@@ -5,7 +5,7 @@ import { mountDesigner } from "./agent-designer";
 import type { AgentEngine, AgentMessage } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
 import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agent-offer";
-import { piCommandLine, piModelValue } from "./agent-pi";
+import { createPiRpc, piModelValue } from "./agent-pi";
 import { startPiTurn } from "./agent-pi-turn";
 import { agentInstalled, type Look } from "./agent-preflight";
 import { type AgentSpawn, piFraming } from "./agent-spawn";
@@ -116,16 +116,11 @@ interface PiModel {
 	readonly baseUrl?: unknown;
 }
 
-interface PiReply {
-	readonly id?: string;
-	readonly type?: string;
-	readonly success?: boolean;
-	readonly data?: {
-		readonly models?: readonly PiModel[];
-		readonly levels?: readonly unknown[];
-		readonly model?: PiModel;
-		readonly thinkingLevel?: unknown;
-	};
+interface PiReplyData {
+	readonly models?: readonly PiModel[];
+	readonly levels?: readonly unknown[];
+	readonly model?: PiModel;
+	readonly thinkingLevel?: unknown;
 }
 
 /** one model as the menu offers it, with the thinking levels pi reports for it */
@@ -169,32 +164,16 @@ export async function askPiOffer(
 	} catch {
 		return NOTHING;
 	}
-	let state: PiReply["data"] | undefined;
+	let state: PiReplyData | undefined;
 	let listed: readonly PiModel[] = [];
 	const models: AgentModel[] = [];
 	await probeAgent(
 		proc,
 		PROBE_TIMEOUT_MS,
 		(done) => {
-			let asked = 0;
-			const replies = new Map<string, (reply: PiReply) => void>();
-			const send = (command: Record<string, unknown>) =>
-				new Promise<PiReply>((resolve) => {
-					const id = `spool-${++asked}`;
-					replies.set(id, resolve);
-					proc.write(piCommandLine({ id, ...command }));
-				});
-			proc.onLine((line) => {
-				let wire: PiReply;
-				try {
-					wire = JSON.parse(line) as PiReply;
-				} catch {
-					return;
-				}
-				if (wire.type !== "response" || wire.id === undefined) return;
-				replies.get(wire.id)?.(wire);
-				replies.delete(wire.id);
-			});
+			const rpc = createPiRpc(proc);
+			const send = (command: Record<string, unknown>) => rpc.request<PiReplyData>(command);
+			proc.onLine((line) => rpc.read(line));
 			void (async () => {
 				state = (await send({ type: "get_state" })).data;
 				listed = (await send({ type: "get_available_models" })).data?.models ?? [];

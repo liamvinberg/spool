@@ -1,5 +1,6 @@
 import { DESIGNER_NAME } from "./agent-designer";
 import type { AgentEvent, AgentEventBase, AgentImage } from "./agent-events";
+import type { AgentProcess } from "./agent-exec";
 
 /**
  * The pi adapter: `pi --mode rpc` in, the internal event union out (#363).
@@ -27,6 +28,70 @@ export const PI_PROMPT = "spool-prompt";
 /** one command line, as pi reads it off stdin */
 export function piCommandLine(command: Readonly<Record<string, unknown>>): string {
 	return `${JSON.stringify(command)}\n`;
+}
+
+/** pi's answer to one command, quoting the command's id */
+export interface PiResponse<Data = unknown> {
+	readonly id?: string;
+	readonly type: "response";
+	readonly command?: string;
+	readonly success?: boolean;
+	readonly error?: string;
+	readonly data?: Data;
+}
+
+export interface PiRpc {
+	/**
+	 * Send a command and wait for pi's response to it. The command's own id is used where
+	 * it names one, so a response the adapter also reads keeps the id it knows; otherwise
+	 * spool numbers it. A refusal is a response too (`success: false`), not a rejection:
+	 * the promise rejects only once the process is gone.
+	 */
+	request<Data = unknown>(command: Readonly<Record<string, unknown>>): Promise<PiResponse<Data>>;
+	/** one line off stdout */
+	read(line: string): void;
+	/** the process is gone: every command still out is rejected with this */
+	close(message: string): void;
+}
+
+/**
+ * Commands and their responses over `pi --mode rpc` (#363): an id on each command, and
+ * the `response` that quotes it, in whatever order pi answers. Transport only, as
+ * `createCodexRpc` is for Codex: the event stream around the responses is the adapter's.
+ */
+export function createPiRpc(proc: Pick<AgentProcess, "write">): PiRpc {
+	let next = 0;
+	const pending = new Map<string, { resolve(response: PiResponse): void; reject(error: Error): void }>();
+	let closed: string | undefined;
+	return {
+		request<Data>(command: Readonly<Record<string, unknown>>) {
+			if (closed !== undefined) return Promise.reject(new Error(closed));
+			const id = typeof command.id === "string" ? command.id : `spool-${++next}`;
+			return new Promise<PiResponse<Data>>((resolve, reject) => {
+				pending.set(id, { resolve: resolve as (response: PiResponse) => void, reject });
+				proc.write(piCommandLine({ id, ...command }));
+			});
+		},
+		read(line) {
+			let wire: { id?: unknown; type?: unknown };
+			try {
+				wire = JSON.parse(line);
+			} catch {
+				return;
+			}
+			if (typeof wire !== "object" || wire === null || wire.type !== "response") return;
+			if (typeof wire.id !== "string") return;
+			const waiting = pending.get(wire.id);
+			if (waiting === undefined) return;
+			pending.delete(wire.id);
+			waiting.resolve(wire as PiResponse);
+		},
+		close(message) {
+			closed = message;
+			for (const waiting of pending.values()) waiting.reject(new Error(message));
+			pending.clear();
+		},
+	};
 }
 
 /**
