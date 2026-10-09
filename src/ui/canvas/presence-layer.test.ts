@@ -16,6 +16,7 @@ const ada = { id: "ada", name: "ada lovelace" };
 const companion = (over: Partial<AgentCompanion> = {}): AgentCompanion => ({
 	key: "",
 	name: null,
+	own: false,
 	frame: "home",
 	spot: null,
 	act: "idle",
@@ -51,6 +52,15 @@ describe("pills on a frame's name", () => {
 
 	it("ignore an agent at a spot rather than a frame", () => {
 		expect(dockRoom([companion({ frame: null })]).size).toBe(0);
+	});
+
+	it("ignore a designer at its own work, which draws no square", () => {
+		expect(dockRoom([companion({ own: true })]).size).toBe(0);
+	});
+
+	it("clear every square of a fan and its one label", () => {
+		const taken = dockRoom([companion({ key: "a" }), companion({ key: "b" }), companion({ key: "c" })]);
+		expect(taken.get("home")).toBe(2 * 14 + 10 + 6 + Math.round("3 designers".length * 7.2));
 	});
 
 	it("stand in screen pixels at any zoom", () => {

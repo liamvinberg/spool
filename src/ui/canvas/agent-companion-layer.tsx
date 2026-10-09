@@ -85,11 +85,15 @@ const nameWidth = (name: string) => Math.round(name.length * 7.2);
  * pills step aside left of it (#373).
  */
 export function dockRoom(companions: readonly AgentCompanion[]): Map<string, number> {
-	const named = companions.length >= 2;
+	const placed = companions.filter((one) => !one.own && one.frame !== null);
+	const named = placed.length >= 2;
+	const fans = fansOf(placed);
 	const room = new Map<string, number>();
-	for (const one of companions) {
+	for (const one of placed) {
 		if (one.frame === null) continue;
-		const width = SIDE + (named && one.name !== null ? NAME_GAP + nameWidth(one.name) : 0);
+		const fan = fans.get(one.key);
+		const label = fan === undefined ? one.name : fan.label;
+		const width = (fan?.slot ?? 0) * FAN + SIDE + (named && label !== null ? NAME_GAP + nameWidth(label) : 0);
 		room.set(one.frame, Math.max(room.get(one.frame) ?? 0, width));
 	}
 	return room;
