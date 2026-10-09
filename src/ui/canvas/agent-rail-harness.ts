@@ -781,3 +781,260 @@ export const warned: Extract<AgentEvent, { kind: "limit" }> = {
 	},
 	parent: null,
 };
+
+export const frameEntry = (frame: string): SelectionEntry => ({
+	kind: "frame",
+	frame,
+	path: `design/frames/${frame}/frame.tsx`,
+	size: { w: 390, h: 844 },
+});
+
+export const elementEntry = (name: string, selector: string, lines: [number, number]): SelectionEntry => ({
+	kind: "element",
+	frame: "home",
+	name,
+	path: "design/frames/home/frame.tsx",
+	lines,
+	selector,
+	excerpt: `<${name} className="row" />`,
+});
+
+/** the chips the composer is drawing, in the order the strip lays them out */
+export const chips = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-chip]")].map((chip) => chip.getAttribute("data-agent-chip"));
+
+/** the rows behind an opened count chip */
+export const chipRows = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-chip-row]")].map((row) => row.getAttribute("data-agent-chip-row"));
+
+export const chipDrop = (host: HTMLElement, label: string) =>
+	host.querySelector<HTMLButtonElement>(`[data-agent-chip="${label}"] button[aria-label="drop ${label}"]`);
+
+/** the way inside a frame: the double-click, presses and all */
+export async function enterHome(host: HTMLElement, x = 40, y = 40) {
+	const field = host.querySelector<HTMLElement>('[role="application"]');
+	if (field === null) throw new Error("no canvas");
+	await act(async () => {
+		for (const pointerId of [91, 92]) {
+			field.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+			);
+			field.dispatchEvent(
+				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+			);
+		}
+		// the label, not the body: a double-click on the body descends a rung (#254)
+		host
+			.querySelector<HTMLElement>('[data-frame-label="home"]')
+			?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+	});
+}
+
+/** one click on the frame, which is how a frame is taken */
+export async function clickHome(host: HTMLElement, x = 40, y = 40) {
+	const field = host.querySelector<HTMLElement>('[role="application"]');
+	if (field === null) throw new Error("no canvas");
+	await act(async () => {
+		field.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 7 }),
+		);
+		field.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 7 }),
+		);
+	});
+}
+
+/** a pasted screenshot, which is one of the two ways one gets into the composer */
+export async function paste(host: HTMLElement, ...files: File[]) {
+	const count = host.querySelectorAll("[data-agent-attached]").length + files.length;
+	const box = field(host);
+	if (box === null) throw new Error("no composer");
+	await act(async () => {
+		const event = new Event("paste", { bubbles: true });
+		Object.defineProperty(event, "clipboardData", { value: { files } });
+		box.dispatchEvent(event);
+	});
+	await until(() => host.querySelectorAll("[data-agent-attached]").length === count);
+}
+
+/**
+ * A drag over the composer, carrying what a dragging browser really carries.
+ *
+ * `files` is empty until the drop — the drag data store is in protected mode, and
+ * only each item's kind and type can be read — so a dragover accepted off `files`
+ * is a dragover that never happens.
+ */
+export async function dragOver(host: HTMLElement, items: { kind: string; type: string }[]): Promise<boolean> {
+	const box = field(host);
+	if (box === null) throw new Error("no composer");
+	const event = new Event("dragover", { bubbles: true, cancelable: true });
+	Object.defineProperty(event, "dataTransfer", { value: { items, files: [] } });
+	await act(async () => {
+		box.dispatchEvent(event);
+	});
+	return event.defaultPrevented;
+}
+
+export const waiting: AgentEvent = { kind: "waiting", parent: null };
+
+export const speaking: AgentEvent = { kind: "speaking", message: "m", model: "claude-opus-5", parent: null };
+
+export const say = (text: string): AgentEvent => ({ kind: "say", block: 0, text, parent: null });
+
+/** one whole call, as the wire hands one over once its arguments have finished arriving */
+export const called = (id: string, tool: string, input: unknown, parent: string | null = null): AgentEvent => ({
+	kind: "called",
+	id,
+	tool,
+	input,
+	parent,
+});
+
+export const settled = (id: string, over: Partial<Extract<AgentEvent, { kind: "result" }>> = {}): AgentEvent => ({
+	kind: "result",
+	id,
+	failed: false,
+	text: "",
+	images: [],
+	parent: null,
+	...over,
+});
+
+/** what every row in the log says out loud, in order */
+export const rows = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-row]")].map((row) => row.getAttribute("data-agent-row"));
+
+/**
+ * Stopping a turn, and saying the next thing without stopping it (#165, #170, #176).
+ *
+ * One invariant spans them and is what makes them one thing to test: words that leave
+ * the queue un-fired land back in the box. A stop cancels the queue and hands the
+ * words back, and taking one back by hand is the same act with the same outcome.
+ */
+
+/**
+ * The press in the composer's foot, which is the exit that works from wherever the eyes
+ * are: Send, turned to Stop for as long as the turn is a process (#364).
+ */
+export const stopPress = (host: HTMLElement) =>
+	rail(host)?.querySelector<HTMLButtonElement>('[data-agent-stop][aria-label="Stop"]') ?? null;
+
+/** the send it stands in for, which is there whenever the stop is not */
+export const sendPress = (host: HTMLElement) =>
+	rail(host)?.querySelector<HTMLButtonElement>('[data-agent-send][aria-label="Send"]') ?? null;
+
+/** every message waiting at the end of the log, in the order it will fire (#364) */
+export const queuedRows = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-log] [data-agent-queue] [data-agent-queued] p")].map(
+		(row) => row.textContent,
+	);
+
+/**
+ * The stroke every row's mark actually draws, in the log's own order.
+ *
+ * A settled mark holds both strokes so the dash offset has something mounted to run
+ * on, and the one it means is the one it lets be seen — so the marks are read off
+ * opacity rather than off the path list, which would count a cross's spare stroke
+ * against every row that is not one.
+ */
+export const drawnStrokes = (host: HTMLElement) =>
+	[...host.querySelectorAll<SVGPathElement>("[data-agent-row] path")]
+		.filter((stroke) => stroke.style.opacity === "1")
+		.map((stroke) => stroke.getAttribute("d"));
+
+export async function pressEscape(host: HTMLElement, where: "composer" | "canvas") {
+	// the target is the whole of the difference: the hotkey dispatch returns on any
+	// keydown born in a text field, so a press in the composer never reaches the ladder
+	const target = where === "composer" ? field(host) : host.querySelector<HTMLElement>('[role="application"]');
+	if (target === null) throw new Error("nowhere to press");
+	await act(async () => {
+		target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+	});
+}
+
+/** a turn in flight, which is when the Stop button is offered */
+export async function running(canvas: ReturnType<typeof mount>, prompt = "start a habit tracker") {
+	await canvas.render();
+	await send(canvas.host, prompt);
+	canvas.turn.push(waiting);
+	canvas.turn.push(speaking);
+	await settle();
+}
+
+/** the dot on the agent's rail icon, which says another thread has news (#364) */
+export const elsewhere = (host: HTMLElement) =>
+	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]') !== null;
+
+export const lifeOfCell = async (host: HTMLElement, name: string) =>
+	(await cell(host, name))?.getAttribute("data-agent-thread-life");
+
+/** the ring, the disc and the dot, counted inside the mark's own 14px box */
+export const marks = async (host: HTMLElement, name: string) => {
+	const mark = (await cell(host, name))?.querySelector("[data-agent-mark]");
+	return {
+		marked: mark !== null && mark !== undefined,
+		turning: mark?.querySelectorAll(".animate-agent-spin").length ?? 0,
+		drawn: mark?.children.length ?? 0,
+	};
+};
+
+/** the ✕ on a row, which appears on hover and is off the ask so a miss opens rather than closes */
+export const closeThread = async (host: HTMLElement, name: string) => {
+	await cell(host, name);
+	await press(threadList(host)?.querySelector(`[data-agent-thread-close="${name}"]`));
+};
+
+/** the words in the log, which is how a test says whose transcript is on screen */
+export const log = (host: HTMLElement) => host.querySelector("[data-agent-log]")?.textContent ?? "";
+
+export const camera = (host: HTMLElement) =>
+	host.querySelector<HTMLElement>("[data-canvas-camera]")?.style.transform ?? "";
+
+/** one whole turn, answered and settled, in the stream that is open */
+export async function answerTurn(stream: { push: (event: AgentEvent) => void; close: () => void }, text: string) {
+	stream.push(waiting);
+	stream.push(speaking);
+	stream.push({ kind: "said", text, parent: null });
+	stream.push(ended);
+	stream.push(closed);
+	stream.close();
+	await settle();
+}
+
+/** a project with as many restored threads in it as asked for, each with its own ask and frame */
+export const written = (count: number): ServedThread[] =>
+	Array.from({ length: count }, (_, at) =>
+		storedThread({ id: `thread-${at}`, ask: `ask ${at}`, frame: `frame-${at}`, at }),
+	);
+
+/* ---------- the two ways there is no agent to talk to (#127, #201) ----------
+ * Both are ordinary states of the rail rather than error paths, because spool spawns the
+ * developer's own binary and reuses whatever login is already there. They are drawn as
+ * different shapes because they are not knowable in the same way: whether a command is on
+ * PATH is a fact about this machine, so it is known before anybody types and it is a wall;
+ * whether it is signed in is a fact inside another product, so it is found out by spawning
+ * and it is a strip over a log that still works. */
+
+/** the wall, in the transcript's place */
+export const wall = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-recovery="claude"]');
+
+/** the standing half of being signed out, on the shelf */
+export const outStrip = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-recovery="claude"]');
+
+/** the one control either of these states offers, pressed and given time to answer */
+export async function checkAgain(within: HTMLElement | null) {
+	await press(within?.querySelector("[data-agent-check]"));
+	await settle(100);
+}
+
+/** how many times the log holds one sentence, which for a held prompt has to be once */
+export const said = (host: HTMLElement, text: string) =>
+	(host.querySelector("[data-agent-log]")?.textContent?.split(text).length ?? 1) - 1;
+
+/** the binary's own refusal, as the runner hands it back off a non-zero exit */
+export const refused: AgentEvent = {
+	kind: "closed",
+	code: 1,
+	message: "Not logged in · Please run /login",
+	parent: null,
+};

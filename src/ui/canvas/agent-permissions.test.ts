@@ -1,21 +1,8 @@
 // @vitest-environment happy-dom
 
 import { act } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { field, freshBrowser, live, modelTrigger, mount, OFFERED, press, settle, until } from "./agent-rail-harness";
-
-/**
- * Codex as an agent the client will name (#364).
- *
- * This branch's engine union stops at claude and spool, so the client drops any other id
- * the daemon reports, and the menu's paths for another agent — a second group, a sign-in
- * line, asking before a started chat changes agent — are only reachable with a third.
- * Only the tests that put codex on the machine ever report it.
- */
-vi.mock("../../daemon/agent-engine", async (actual) => ({
-	...(await actual<typeof import("../../daemon/agent-engine")>()),
-	isAgentEngineId: (value: unknown) => value === "claude" || value === "pi" || value === "codex",
-}));
 
 beforeEach(freshBrowser);
 
