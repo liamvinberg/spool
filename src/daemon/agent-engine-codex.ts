@@ -1,7 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { writeAtomic } from "../atomic-write";
 import { type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
 import {
 	CODEX_COMMAND,
@@ -17,6 +14,7 @@ import type { AgentEngine, EngineDeps } from "./agent-engine";
 import { type AgentExecutor, probeAgent } from "./agent-exec";
 import type { AgentAsk, AgentModel, AgentOffer } from "./agent-offer";
 import { type AgentLogin, agentInstalled } from "./agent-preflight";
+import { engineSessions } from "./agent-sessions";
 
 /**
  * Codex, the person's own, through `codex app-server` (#362).
@@ -76,32 +74,6 @@ function codexVersionReader(): () => string | null {
 const PROBE_TIMEOUT_MS = 20_000;
 
 const NOBODY: AgentLogin = { signedIn: false, account: null };
-
-/**
- * Codex's model session for each spool thread, one small file per thread under spool's state.
- *
- * Codex mints the session's id (its `thread` on the wire) on `thread/start`, so it cannot be
- * the rail's id the way Claude's session is: spool holds the exact reference and hands it to
- * `thread/resume`. The folder keeps the wire's name, `codex/threads/`, so what earlier
- * versions stored is still read.
- */
-export function codexSessions(spoolDir: string) {
-	const dir = join(spoolDir, "codex", "threads");
-	const file = (session: string) => join(dir, `${session.replace(/[^\w-]/g, "")}.json`);
-	return {
-		read(session: string): string | undefined {
-			try {
-				const stored = JSON.parse(readFileSync(file(session), "utf8")) as { thread?: unknown };
-				return typeof stored.thread === "string" ? stored.thread : undefined;
-			} catch {
-				return undefined;
-			}
-		},
-		write(session: string, thread: string): void {
-			writeAtomic(file(session), `${JSON.stringify({ thread })}\n`);
-		},
-	};
-}
 
 /** One probe connection: spawn, handshake, one question, gone. */
 async function askCodex<T>(
@@ -243,7 +215,7 @@ export function createCodexEngine({
 	look,
 	codexVersion = look === undefined ? codexVersionReader() : () => null,
 }: CodexEngineOptions): AgentEngine {
-	const sessions = codexSessions(spoolDir);
+	const sessions = engineSessions(spoolDir, "codex");
 	/** each spool thread's "Allow for this chat" answers, kept in memory and written nowhere */
 	const allowed = new Map<string, Set<string>>();
 	const allowedIn = (thread: string) => {

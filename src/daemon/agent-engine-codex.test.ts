@@ -12,8 +12,9 @@ import {
 	scriptedAgentExecutor,
 } from "../test-helpers";
 import { fallbackEngine } from "./agent-defaults";
-import { codexChoice, codexOffer, codexSessions, createCodexEngine } from "./agent-engine-codex";
+import { codexChoice, codexOffer, createCodexEngine } from "./agent-engine-codex";
 import type { AgentEvent } from "./agent-events";
+import { engineSessions } from "./agent-sessions";
 import type { AgentTurn } from "./agent-turn";
 
 const SESSION = { id: "6f1c1e4e-7d2a-4c1b-9a51-1a2b3c4d5e6f" };
@@ -73,7 +74,7 @@ describe("a codex turn, replayed", () => {
 		expect(spawned[0]?.mismatches).toEqual([]);
 		expect(spawned[0]?.remaining).toEqual([]);
 		const thread = threadIn("codex-turn", "thread/started");
-		expect(codexSessions(spoolDir).read(SESSION.id)).toBe(thread);
+		expect(engineSessions(spoolDir, "codex").read(SESSION.id)).toBe(thread);
 		expect(engine.continuable("", SESSION)).toBe(true);
 		const kinds = events.map((event) => event.kind).filter((kind) => kind !== "other");
 		expect(kinds[0]).toBe("ready");
@@ -125,7 +126,7 @@ describe("a codex turn, replayed", () => {
 	it("resumes the thread spool kept, without asking Codex for its whole history", async () => {
 		const { engine, spoolDir, spawned } = engineOn("codex-resume");
 		const thread = threadIn("codex-resume", "thread/status/changed");
-		codexSessions(spoolDir).write(SESSION.id, thread);
+		engineSessions(spoolDir, "codex").write(SESSION.id, thread);
 		const events = await drain(
 			engine.start({
 				root: makeTempDir(),

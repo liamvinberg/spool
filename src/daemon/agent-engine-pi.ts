@@ -1,6 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { writeAtomic } from "../atomic-write";
+import { existsSync } from "node:fs";
 import { DESIGNER_FRAMING, mountDesigner } from "./agent-designer";
 import { type AgentEngine, type AgentMessage, type EngineDeps, saidText } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
@@ -9,6 +7,7 @@ import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agen
 import { createPiRpc, piModelValue } from "./agent-pi";
 import { startPiTurn } from "./agent-pi-turn";
 import { agentInstalled } from "./agent-preflight";
+import { engineSessions } from "./agent-sessions";
 import type { AgentSpawn } from "./agent-spawn";
 
 /**
@@ -27,23 +26,6 @@ export const PI_COMMAND = "pi";
 
 /** a cold pi answers its first command in about three seconds; this is the backstop */
 const PROBE_TIMEOUT_MS = 20_000;
-
-/** where spool keeps each pi session's file, by the session id spool chose */
-export function piSessionsFile(spoolDir: string): string {
-	return join(spoolDir, "pi-sessions.json");
-}
-
-function readSessions(spoolDir: string): Record<string, string> {
-	try {
-		const data: unknown = JSON.parse(readFileSync(piSessionsFile(spoolDir), "utf8"));
-		if (typeof data !== "object" || data === null || Array.isArray(data)) return {};
-		return Object.fromEntries(
-			Object.entries(data).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-		);
-	} catch {
-		return {};
-	}
-}
 
 /**
  * The spawn for one pi process, in the project root.
@@ -223,11 +205,7 @@ export async function askPiOffer(
 }
 
 export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentEngine {
-	function remember(id: string, file: string): void {
-		const sessions = readSessions(spoolDir);
-		if (sessions[id] === file) return;
-		writeAtomic(piSessionsFile(spoolDir), `${JSON.stringify({ ...sessions, [id]: file }, null, "\t")}\n`);
-	}
+	const sessions = engineSessions(spoolDir, "pi");
 	return {
 		id: "pi",
 		// pi signs in from inside its own session, with `/login`
@@ -240,11 +218,11 @@ export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentE
 			askPiOffer(executor, root, { ...ask, ...choose }, { levels: true, ...(signal ? { signal } : {}) }),
 		choice: askFrom,
 		continuable: (_root, session) => {
-			const file = readSessions(spoolDir)[session.id];
+			const file = sessions.read(session.id);
 			return file !== undefined && existsSync(file);
 		},
 		start: ({ root, session, said, ask }) => {
-			const file = readSessions(spoolDir)[session.id];
+			const file = sessions.read(session.id);
 			return startPiTurn({
 				executor,
 				spawn: planPiSpawn(
@@ -258,7 +236,7 @@ export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentE
 				...(ask.value === undefined ? {} : { model: ask.value }),
 				onSession: ({ id, file: written }) => {
 					// pi names the session it opened; spool keeps where, under the id it chose
-					if (id === session.id) remember(id, written);
+					if (id === session.id) sessions.write(id, written);
 				},
 			});
 		},

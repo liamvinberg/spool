@@ -1,9 +1,10 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentReader, makeApp, makeProject, makeTempDir, scriptedAgentExecutor, until } from "../test-helpers";
-import { createPiEngine, isLocalEndpoint, piPrompt, piSessionsFile } from "./agent-engine-pi";
+import { createPiEngine, isLocalEndpoint, piPrompt } from "./agent-engine-pi";
 import type { AgentOffer } from "./agent-offer";
+import { engineSessions } from "./agent-sessions";
 import type { ServedThread } from "./agent-threads";
 
 /** the session ids the recordings were made under, which spool chose and pi took */
@@ -118,7 +119,7 @@ describe("the pi engine", () => {
 		expect(pi.spawned[0]?.remaining).toEqual([]);
 
 		// spool keeps the exact file pi said, and the thread continues only while pi has it
-		const file = JSON.parse(readFileSync(piSessionsFile(spoolDir), "utf8"))[TURN] as string;
+		const file = engineSessions(spoolDir, "pi").read(TURN) as string;
 		expect(file).toBe(`${root}/sessions/2026-10-08T20-07-45-128Z_${TURN}.jsonl`);
 		await until(() => pi.spawned[0]?.ended === true);
 		await expect.poll(async () => (await threads()).length).toBe(1);
