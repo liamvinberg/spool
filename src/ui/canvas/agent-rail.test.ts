@@ -7,8 +7,9 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { longestStreamed } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread } from "../api";
+import { windStrength } from "./agent-composer";
 import { chunksOf, drawnText } from "./agent-markdown";
-import { type FrameJump, followTo, sameEntry, turnLayout, windStrength } from "./agent-rail";
+import { type FrameJump, followTo, sameEntry, turnLayout } from "./agent-rail";
 import {
 	cell,
 	cells,
