@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../../daemon/agent-events";
+import type { AgentEvent, AgentSpot } from "../../daemon/agent-events";
 import { nameCall } from "./agent-nouns";
 
 /**
@@ -20,14 +20,8 @@ import { nameCall } from "./agent-nouns";
  */
 export type CompanionAct = "new" | "landed" | "read" | "edit" | "shot" | "delete" | "ask" | "idle";
 
-/** a place reserved on the canvas for a designer before its frame exists, in canvas units */
-export interface CompanionSpot {
-	readonly name: string;
-	readonly x: number;
-	readonly y: number;
-	readonly w: number;
-	readonly h: number;
-}
+/** a place reserved on the canvas for a designer before its frame exists: the spot event's own shape */
+export type CompanionSpot = Pick<AgentSpot, "name" | "x" | "y" | "w" | "h">;
 
 export interface AgentCompanion {
 	/** "" for the agent the person talks to, the delegating call for a designer */
@@ -72,35 +66,43 @@ function takeOf(name: string): string {
 	return at >= 0 ? leaf.slice(at + 2) : leaf;
 }
 
-function firstWord(description: string): string | null {
-	const word = description
-		.toLowerCase()
-		.replace(/[^a-z0-9\s-]+/g, " ")
-		.split(/\s+/)
-		.find((one) => one !== "" && !["design", "draw", "make", "create", "build", "the", "a", "an"].includes(one));
-	return word ?? null;
+/**
+ * What the companions read off the transcript's own fold rather than keeping a second copy
+ * of: it already knows which delegation each call was made on, which delegating call each
+ * task answers to, and where the agent stands.
+ */
+export interface CompanionIndexes {
+	/** the delegation a call was made on, "" for the agent the person talks to */
+	readonly delegationOf: (call: string) => string | undefined;
+	/** the delegating call a delegated task answers to */
+	readonly callOfTask: (task: string) => string | undefined;
+	/** the project the agent stands in, so a path names a frame */
+	readonly root: () => string;
+}
+
+export interface CompanionFold {
+	/** one event of the turn, at its place in it, which is its beat */
+	see(event: AgentEvent, beat: number): void;
+	/**
+	 * Every working agent and where it is, as of the last event.
+	 *
+	 * Only agents that are somewhere: a frame or a reserved spot. An agent that has touched
+	 * nothing on the canvas has no square, and a designer that reported back has gone.
+	 */
+	companions(): AgentCompanion[];
 }
 
 /**
- * Every working agent and where it is, as of the last event.
- *
- * Only agents that are somewhere: a frame or a reserved spot. An agent that has touched nothing
- * on the canvas has no square, and a designer that reported back has gone. Once the turn is
- * over there is nobody; the layer lets them go.
+ * Where each agent is on the canvas, folded event by event alongside the transcript
+ * (`transcriptOf` feeds it), so the two read one set of indexes.
  */
-export function companionsOf(seen: readonly { readonly event: AgentEvent }[], root = ""): AgentCompanion[] {
+export function companionFold(indexes: CompanionIndexes): CompanionFold {
 	const by = new Map<string, Standing>();
-	/** the delegation each call was made on, "" for the agent the person talks to */
-	const delegationOf = new Map<string, string>();
-	/** each delegation's own words for its task */
-	const described = new Map<string, string>();
-	const taskCalls = new Map<string, string>();
-	let cwd = root;
 	/** asks from agents nowhere on the canvas yet, still waiting */
 	const waits = new Map<string, { call: string | null; request: string }>();
 
 	const agentOf = (task: string | null, parent: string | null): string =>
-		(task === null ? undefined : taskCalls.get(task)) ?? parent ?? "";
+		(task === null ? undefined : indexes.callOfTask(task)) ?? parent ?? "";
 	const put = (agent: string, next: Partial<Standing> & { act: CompanionAct; release?: boolean }, beat: number) => {
 		const pending = waits.get(agent);
 		const was =
@@ -133,22 +135,11 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 		});
 	};
 
-	seen.forEach(({ event }, index) => {
+	const see = (event: AgentEvent, index: number) => {
 		switch (event.kind) {
-			case "ready":
-				if (event.cwd !== null) cwd = event.cwd;
-				return;
-			case "call":
-				if (event.id !== null) delegationOf.set(event.id, event.parent ?? "");
-				return;
 			case "called": {
-				delegationOf.set(event.id, event.parent ?? "");
-				if (event.tool === "Agent") {
-					const words = (event.input as { description?: unknown } | null)?.description;
-					if (typeof words === "string") described.set(event.id, words);
-					return;
-				}
-				const named = nameCall({ tool: event.tool, input: event.input, root: cwd, whole: true });
+				if (event.tool === "Agent") return;
+				const named = nameCall({ tool: event.tool, input: event.input, root: indexes.root(), whole: true });
 				if (named?.frame == null || named.writes) return;
 				const agent = event.parent ?? "";
 				const act: CompanionAct = named.verb === "shot" ? "shot" : READS.has(named.verb) ? "read" : "idle";
@@ -163,19 +154,9 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 				}
 				return;
 			}
-			case "task-started":
-				if (event.call !== null) {
-					taskCalls.set(event.task, event.call);
-					if (event.description !== null && !described.has(event.call))
-						described.set(event.call, event.description);
-				}
-				return;
-			case "task-step":
-				if (event.call !== null) taskCalls.set(event.task, event.call);
-				return;
 			case "task-done": {
 				// a designer that reported back is done here: its square goes
-				const call = taskCalls.get(event.task);
+				const call = indexes.callOfTask(event.task);
 				if (call !== undefined) by.delete(call);
 				return;
 			}
@@ -197,8 +178,8 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 			case "spot": {
 				const agent = event.call ?? agentOf(event.task, event.parent);
 				if (event.state === "held") {
-					const spot = { name: event.name, x: event.x, y: event.y, w: event.w, h: event.h };
-					put(agent, { frame: null, spot, act: "idle" }, index);
+					const { name, x, y, w, h } = event;
+					put(agent, { frame: null, spot: { name, x, y, w, h }, act: "idle" }, index);
 				} else if (event.state === "released") {
 					const standing = by.get(agent);
 					if (standing !== undefined && standing.frame === null && standing.spot?.name === event.name)
@@ -207,7 +188,7 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 				return;
 			}
 			case "asking": {
-				const agent = event.parent ?? (event.call === null ? undefined : delegationOf.get(event.call)) ?? "";
+				const agent = event.parent ?? (event.call === null ? undefined : indexes.delegationOf(event.call)) ?? "";
 				const standing = by.get(agent);
 				// an agent nowhere on the canvas asks in the rail alone, unless a frame it
 				// wrote catches up with the ask
@@ -224,29 +205,26 @@ export function companionsOf(seen: readonly { readonly event: AgentEvent }[], ro
 			default:
 				return;
 		}
-	});
+	};
 
-	return [...by].map(([key, standing]) => {
-		const words = key === "" ? null : (described.get(key) ?? null);
-		const name =
-			key === ""
-				? null
-				: standing.frame !== null
-					? takeOf(standing.frame)
-					: standing.spot !== null
-						? (takeOf(standing.spot.name).split("-")[0] ?? standing.spot.name)
-						: words === null
-							? null
-							: firstWord(words);
-		return {
+	const companions = (): AgentCompanion[] =>
+		[...by].map(([key, standing]) => ({
 			key,
-			name,
+			name:
+				key === ""
+					? null
+					: standing.frame !== null
+						? takeOf(standing.frame)
+						: standing.spot !== null
+							? (takeOf(standing.spot.name).split("-")[0] ?? standing.spot.name)
+							: null,
 			frame: standing.frame,
 			spot: standing.frame === null ? standing.spot : null,
 			act: standing.act,
 			lines: standing.lines,
 			range: standing.range,
 			beat: standing.beat,
-		};
-	});
+		}));
+
+	return { see, companions };
 }

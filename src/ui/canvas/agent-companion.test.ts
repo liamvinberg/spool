@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../daemon/agent-events";
-import { companionsOf } from "./agent-companion";
+import { type Stamped, transcriptOf } from "./agent-transcript";
 
+/** the companions as the turn's own fold reads them, which is the only way they are read */
+const companionsOf = (seen: readonly Stamped[]) => transcriptOf([], seen).companions;
 const at = (events: readonly AgentEvent[]) => events.map((event, index) => ({ at: index, event }));
 const ROOT = "/p";
 const ready: AgentEvent = {

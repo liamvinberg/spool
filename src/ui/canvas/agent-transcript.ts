@@ -2,7 +2,7 @@ import { type Attachment, restoredAttachments } from "../../attachment";
 import type { AgentEvent, AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, detailOf, questionsOf } from "./agent-ask";
-import { type AgentCompanion, companionsOf } from "./agent-companion";
+import { type AgentCompanion, companionFold } from "./agent-companion";
 import { limitNote } from "./agent-limit";
 import {
 	type AgentWrite,
@@ -1199,9 +1199,17 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		outstanding = null;
 	};
 
-	for (const { at, event } of seen) {
+	/** where each agent is on the canvas, read off this fold's own indexes (#366) */
+	const presence = companionFold({
+		delegationOf: (call) => calls.get(call)?.delegation,
+		callOfTask: (task) => taskCalls.get(task),
+		root: () => root,
+	});
+
+	for (const [beat, { at, event }] of seen.entries()) {
 		const delegation = event.parent ?? "";
 		last = at;
+		presence.see(event, beat);
 		// the work of every thread reaches the log; the words of only one do
 		if (event.parent !== null && !DELEGATED.has(event.kind)) continue;
 		if (event.parent === null && ANSWERS.has(event.kind)) {
@@ -1766,6 +1774,6 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		asking: parked,
 		limit,
 		writes,
-		companions: over ? [] : companionsOf(seen),
+		companions: over ? [] : presence.companions(),
 	};
 }
