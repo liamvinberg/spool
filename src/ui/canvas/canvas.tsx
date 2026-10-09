@@ -65,7 +65,7 @@ import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
-import { AgentCompanionLayer } from "./agent-companion-layer";
+import { AgentCompanionLayer, dockRoom } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
 import { type ArmedWrite, rangeKeyOf, useLocatedMarks } from "./agent-hand";
 import { useAgentModel } from "./agent-model";
@@ -1352,6 +1352,8 @@ export function ProjectCanvas({
 			),
 		[turn.companions, reach],
 	);
+	/** the name rows companions dock on, which teammates' pills step aside from (#373) */
+	const companionRoom = useMemo(() => dockRoom(companions), [companions]);
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	const askFooted = !railShown && turn.phase === "asking";
@@ -5986,7 +5988,13 @@ export function ProjectCanvas({
 							})()}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
-								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
+								<PresenceLayer
+									room={presenceRoom}
+									camera={camera}
+									frames={visibleFrames}
+									page={activePage}
+									taken={companionRoom}
+								/>
 							)}
 						</>
 					)}
