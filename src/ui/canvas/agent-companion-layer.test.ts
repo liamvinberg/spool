@@ -6,7 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
 import type { AgentCompanion } from "./agent-companion";
 import { AgentCompanionLayer, type CompanionLayerProps } from "./agent-companion-layer";
-import { FADE_OUT_MS } from "./agent-motion";
+import { FADE_OUT_MS, MOTION } from "./agent-motion";
 import { type CameraStore, createCameraStore } from "./camera-store";
 
 /**
@@ -207,6 +207,27 @@ describe("the agent's companions on the canvas", () => {
 			"calm",
 			"dense",
 		]);
+	});
+
+	it("dims about two seconds after a frame lands, as after any call, and lights again when it acts", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const opacity = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-companion-square]")?.style.opacity;
+		for (const resting of ["idle", "landed", "edit"] as const) {
+			const { host } = layer({ companions: [companion({ act: resting })] });
+			expect(opacity(host)).toBe("1");
+			act(() => vi.advanceTimersByTime(MOTION.idleAfter + 10));
+			expect(opacity(host)).toBe("0.45");
+		}
+		const { host, again } = layer({ companions: [companion({ act: "read", beat: 1 })] });
+		act(() => vi.advanceTimersByTime(MOTION.idleAfter + 10));
+		// a read still out is the agent working, not left alone
+		expect(opacity(host)).toBe("1");
+		again({ companions: [companion({ act: "idle", beat: 2 })] });
+		act(() => vi.advanceTimersByTime(MOTION.idleAfter + 10));
+		expect(opacity(host)).toBe("0.45");
 	});
 
 	it("fades the names out when the second agent goes, rather than cutting them", () => {

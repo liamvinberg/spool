@@ -446,11 +446,13 @@ function Companion({
 		return () => clearTimeout(timer);
 	}, [act, companion.beat, located?.key]);
 
-	// two seconds after its last call the square dims, and lights again the moment it moves
+	// two seconds after its last call the square dims, and lights again the moment it moves.
+	// Whatever nothing holds open is left alone: a frame that landed or changed, which the
+	// witness reports after the call that wrote it has returned, as much as an idle one
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a beat is a new call, which lights it again
 	useEffect(() => {
 		setDim(false);
-		if (act !== "idle") return;
+		if (!RESTING.has(act)) return;
 		const timer = setTimeout(() => setDim(true), MOTION.idleAfter);
 		return () => clearTimeout(timer);
 	}, [act, companion.beat]);
@@ -579,6 +581,9 @@ function Companion({
 }
 
 /** one corner's two arms, drawn as the two borders that meet in it */
+/** the acts nothing holds open: a square standing in one is left alone, and dims */
+const RESTING: ReadonlySet<CompanionAct> = new Set(["idle", "landed", "edit", "delete"]);
+
 function cornerStyle(corner: "nw" | "ne" | "se" | "sw"): CSSProperties {
 	const top = corner === "nw" || corner === "ne";
 	const left = corner === "nw" || corner === "sw";
