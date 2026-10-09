@@ -548,6 +548,8 @@ export function witnessFrames(
 		restored: (frame, text) => {
 			deleted.delete(frame);
 			known.set(frame, { source: text, sidecar: null });
+			// a turn still running says so in its own log, so every reader of it draws the frame back
+			push({ kind: "frame", change: "restored", frame, lines: linesOf(text), call: null, task: null, parent: null });
 		},
 	};
 }

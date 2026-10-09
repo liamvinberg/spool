@@ -201,7 +201,7 @@ describe("a turn with designers in the background", () => {
 });
 
 describe("the hold", () => {
-	const ended = { kind: "ended", ending: "completed", parent: null } as unknown as AgentEvent;
+	const ended = { kind: "ended", ending: "done", parent: null } as unknown as AgentEvent;
 
 	it("ends at once when nothing runs, and never counts a background shell", () => {
 		const hold = createBackgroundHold({ settleMs: 0, onSettled: () => {} });
