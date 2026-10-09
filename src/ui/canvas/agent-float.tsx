@@ -110,9 +110,9 @@ export function RailMenu({
 		if (open && !before) {
 			const box = body.current;
 			const target =
-				box?.querySelector<HTMLInputElement>("input") ??
-				box?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
-				box?.querySelector<HTMLButtonElement>("button");
+				box?.querySelector<HTMLInputElement>("input:not([inert] *)") ??
+				box?.querySelector<HTMLButtonElement>('[aria-checked="true"]:not([inert] *)') ??
+				box?.querySelector<HTMLButtonElement>("button:not([inert] *)");
 			target?.focus({ preventScroll: true });
 		}
 		if (!open && before) {
@@ -181,29 +181,51 @@ export function RailMenu({
 	);
 }
 
-/** A thing in the rail's own flow that fades in and out rather than appearing (#364). */
+/**
+ * A thing in the rail's own flow that fades in and out rather than appearing (#364).
+ *
+ * It stays mounted through its exit, inert and hidden from a screen reader, and only then
+ * goes; where stillness was asked for, both ends are a cut. `fold` also opens and closes
+ * its height, for a block in a column, so what is under it slides rather than jumps;
+ * `inline` draws it as a span, for a control in a row of them.
+ */
 export function Fade({
 	open,
+	fold = false,
+	inline = false,
 	className,
 	children,
 	...data
 }: {
 	open: boolean;
+	fold?: boolean;
+	inline?: boolean;
 	className?: string | undefined;
 	children: ReactNode;
 } & Record<`data-${string}`, string | undefined>) {
 	const shown = useLeaving(open, FADE_OUT_MS);
 	if (shown === null) return null;
 	const leaving = shown === "leaving";
+	const Box = inline ? "span" : "div";
+	const marks = {
+		...data,
+		inert: leaving,
+		"aria-hidden": leaving || undefined,
+		"data-leaving": leaving ? "" : undefined,
+	};
+	if (fold)
+		return (
+			<Box {...marks} className={cn("grid", leaving ? "animate-agent-step-out" : "animate-agent-step")}>
+				<Box className={cn("min-h-0 overflow-hidden", className)}>{children}</Box>
+			</Box>
+		);
 	return (
-		<div
-			{...data}
-			inert={leaving}
-			aria-hidden={leaving || undefined}
-			className={cn(leaving ? "animate-agent-fade-out" : "animate-agent-fade-in", className)}
+		<Box
+			{...marks}
+			className={cn(leaving ? "pointer-events-none animate-agent-fade-out" : "animate-agent-fade-in", className)}
 		>
 			{children}
-		</div>
+		</Box>
 	);
 }
 

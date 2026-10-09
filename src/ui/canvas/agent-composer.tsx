@@ -7,9 +7,10 @@ import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon } from "../icons";
 import { type Chip as ChipWords, contextOf, type Strip, WHOLE_SELECTION } from "./agent-chips";
-import { RailMenu } from "./agent-float";
+import { Fade, RailMenu } from "./agent-float";
 import { AgentMenu } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
+import { useHeld } from "./agent-motion";
 import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { LoginDeck } from "./agent-preflight";
 import { Lightbox } from "./agent-shot";
@@ -380,6 +381,10 @@ export function Composer({
 	const says = fieldSays(answering, finished, cutting);
 	const file = useRef<HTMLInputElement>(null);
 	const showRing = context !== null && context >= CONTEXT_SHOWN_AT;
+	// what each control in the footer last drew, so one on its way out still draws it
+	const ringAt = useHeld(showRing ? context : null);
+	const engine = useHeld(ready ? model.engine : null);
+	const modes = useHeld(permissions);
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: a drop target is not a control, and its keyboard path is the paste the field already takes
@@ -468,7 +473,7 @@ export function Composer({
 					{/* the foot: small grey controls, who answers and what it may do on the left,
 					    how full the window is and the send on the right (#364) */}
 					<div className="-mx-1 flex h-7 min-w-0 items-center justify-between gap-2">
-						<div className="flex min-w-0 flex-1 items-center gap-0.5">
+						<div data-agent-foot="start" className="flex min-w-0 flex-1 items-center gap-0.5">
 							<button
 								type="button"
 								aria-label="Attach an image"
@@ -492,46 +497,61 @@ export function Composer({
 									if (files.length > 0) attachFiles(files);
 								}}
 							/>
-							{ready && model.engine !== undefined ? (
-								<AgentMenu
-									project={model.project ?? ""}
-									engine={model.engine}
-									model={model}
-									preferred={preferred}
-									started={model.started === true}
-									limit={limit}
-									login={login}
-									open={menu === "models"}
-									onOpen={(next) => onMenu(next ? "models" : null)}
-									onSwitch={onSwitch}
-								/>
-							) : null}
-							{permissions === undefined ? null : (
-								<PermissionMenu
-									permissions={permissions}
-									open={menu === "permissions"}
-									onOpen={(next) => onMenu(next ? "permissions" : null)}
-								/>
+							{engine === null ? null : (
+								<Fade inline open={ready && model.engine !== undefined} className="flex min-w-0">
+									<AgentMenu
+										project={model.project ?? ""}
+										engine={engine}
+										model={model}
+										preferred={preferred}
+										started={model.started === true}
+										limit={limit}
+										login={login}
+										open={menu === "models"}
+										onOpen={(next) => onMenu(next ? "models" : null)}
+										onSwitch={onSwitch}
+									/>
+								</Fade>
+							)}
+							{modes === null ? null : (
+								<Fade inline open={permissions !== undefined} className="flex shrink-0">
+									<PermissionMenu
+										permissions={modes}
+										open={menu === "permissions"}
+										onOpen={(next) => onMenu(next ? "permissions" : null)}
+									/>
+								</Fade>
 							)}
 						</div>
-						<div className="flex shrink-0 items-center gap-1.5">
-							{showRing && context !== null ? (
-								<ContextRing used={context} open={ringOpen} onOpen={setRingOpen} onNewThread={onNewThread} />
-							) : null}
-							{cutting ? (
-								<StopButton onStop={onStop} />
-							) : (
-								<button
-									type="button"
-									aria-label="Send"
-									data-agent-send=""
-									disabled={draft.trim() === ""}
-									onClick={() => submit(field.current)}
-									className="flex h-7 w-7 shrink-0 animate-agent-fade-in items-center justify-center rounded-full bg-text text-bg transition-opacity duration-150 hover:opacity-90 disabled:bg-raised disabled:text-muted"
-								>
-									<SendIcon />
-								</button>
+						<div data-agent-foot="end" className="flex shrink-0 items-center gap-1.5">
+							{ringAt === null ? null : (
+								<Fade inline open={showRing} className="flex">
+									<ContextRing
+										used={ringAt}
+										open={ringOpen && showRing}
+										onOpen={setRingOpen}
+										onNewThread={onNewThread}
+									/>
+								</Fade>
 							)}
+							{/* Send and Stop trade places in one cell, the one going out over the one coming in */}
+							<span className="relative flex h-7 w-7 shrink-0">
+								<Fade inline open={cutting} className="absolute inset-0 flex">
+									<StopButton onStop={onStop} />
+								</Fade>
+								<Fade inline open={!cutting} className="absolute inset-0 flex">
+									<button
+										type="button"
+										aria-label="Send"
+										data-agent-send=""
+										disabled={draft.trim() === ""}
+										onClick={() => submit(field.current)}
+										className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity duration-150 hover:opacity-90 disabled:bg-raised disabled:text-muted"
+									>
+										<SendIcon />
+									</button>
+								</Fade>
+							</span>
 						</div>
 					</div>
 				</div>
@@ -585,7 +605,7 @@ function ContextRing({
 						aria-label={said}
 						title={said}
 						data-agent-context-ring={Math.round(share * 100)}
-						className="relative z-30 flex h-7 w-7 animate-agent-fade-in items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
+						className="relative z-30 flex h-7 w-7 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
 					>
 						<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
 							<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
@@ -657,7 +677,7 @@ function StopButton({ onStop }: { onStop: () => void }) {
 			aria-label="Stop"
 			data-agent-stop=""
 			onClick={onStop}
-			className="flex h-7 w-7 shrink-0 animate-agent-fade-in items-center justify-center rounded-full bg-text transition-opacity duration-150 hover:opacity-90"
+			className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text transition-opacity duration-150 hover:opacity-90"
 		>
 			<span className="h-2 w-2 rounded-[1.5px] bg-bg" />
 		</button>

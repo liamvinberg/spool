@@ -7,6 +7,7 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "../api";
 import { windStrength } from "./agent-composer";
+import { FADE_OUT_MS } from "./agent-motion";
 import {
 	answerTurn,
 	called,
@@ -312,6 +313,28 @@ describe("an attached image", () => {
 });
 
 describe("stopping a turn", () => {
+	/** Send and Stop trade one cell, and neither cuts: the one going out fades over the other */
+	it("fades the stop out over the send coming back, mounted until its exit is over", async () => {
+		const canvas = mount();
+		await running(canvas);
+		const cell = () => canvas.host.querySelector("[data-agent-stop]")?.parentElement ?? null;
+		expect(cell()?.className).toContain("animate-agent-fade-in");
+
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle(0);
+		// the stop is still drawn, on its way out and out of reach, and the send is in
+		expect(cell()?.hasAttribute("data-leaving")).toBe(true);
+		expect(cell()?.hasAttribute("inert")).toBe(true);
+		expect(cell()?.className).toContain("animate-agent-fade-out");
+		expect(stopPress(canvas.host)).toBeNull();
+		expect(sendPress(canvas.host)?.parentElement?.className).toContain("animate-agent-fade-in");
+
+		await settle(FADE_OUT_MS + 10);
+		expect(canvas.host.querySelector("[data-agent-stop]")).toBeNull();
+	});
+
 	it("stops it on a press in the composer footer", async () => {
 		const canvas = mount();
 		await running(canvas);
@@ -572,7 +595,7 @@ describe("the footer the model hangs off", () => {
 		const footer = footerRow(canvas.host);
 		if (footer === null) throw new Error("no footer");
 
-		const controls = [...footer.querySelectorAll<HTMLButtonElement>(":scope > button, :scope > span > button")];
+		const controls = [...footer.querySelectorAll<HTMLButtonElement>("button")];
 		expect(controls.map((button) => button.getAttribute("aria-label"))).toEqual([
 			"Attach an image",
 			"Choose model",
@@ -584,7 +607,9 @@ describe("the footer the model hangs off", () => {
 		expect(footer.textContent).not.toContain("enter to");
 		// and the stop is the other end, outside the left group
 		expect(footer.contains(stopPress(canvas.host))).toBe(false);
-		expect(footer.parentElement?.lastElementChild?.contains(stopPress(canvas.host))).toBe(true);
+		expect(footer.parentElement?.querySelector('[data-agent-foot="end"]')?.contains(stopPress(canvas.host))).toBe(
+			true,
+		);
 	});
 
 	/** a picture is pasted or dropped, and a pointer can also go and get one */
@@ -675,7 +700,7 @@ describe("the context ring", () => {
 		expect(ring(canvas.host)?.getAttribute("aria-label")).toBe("72% of context used.");
 		expect(ring(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
 		// it stands with the send, on the right of the foot
-		expect(ring(canvas.host)?.parentElement?.parentElement?.contains(sendPress(canvas.host))).toBe(true);
+		expect(ring(canvas.host)?.closest('[data-agent-foot="end"]')?.contains(sendPress(canvas.host))).toBe(true);
 		expect(note(canvas.host)).toBeNull();
 
 		await press(ring(canvas.host));
@@ -690,8 +715,13 @@ describe("the context ring", () => {
 		expect(note(canvas.host)).toBeNull();
 		expect(threadTitle(canvas.host)).toBe("New chat");
 		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
-		// and a new chat has a window with nothing in it
+		// and a new chat has a window with nothing in it: the ring fades out rather than
+		// vanishing, out of reach while it goes
 		expect(ring(canvas.host)).toBeNull();
+		const leaving = canvas.host.querySelector("[data-agent-context-ring]")?.closest("[data-leaving]");
+		expect(leaving?.className).toContain("animate-agent-fade-out");
+		await settle(FADE_OUT_MS + 10);
+		expect(canvas.host.querySelector("[data-agent-context-ring]")).toBeNull();
 	});
 });
 

@@ -766,7 +766,8 @@ export async function resizeRail(host: HTMLElement, width: number) {
 }
 
 /** the left of the composer's foot, where attach, the model and the mode sit (#364) */
-export const footerRow = (host: HTMLElement) => modelTrigger(host)?.parentElement?.parentElement ?? null;
+export const footerRow = (host: HTMLElement) =>
+	rail(host)?.querySelector<HTMLElement>('[data-agent-foot="start"]') ?? null;
 
 /** the usage window as the two captures carry it: `seven_day` at 92%, resetting Wednesday */
 export const warned: Extract<AgentEvent, { kind: "limit" }> = {
@@ -917,11 +918,11 @@ export const rows = (host: HTMLElement) =>
  * are: Send, turned to Stop for as long as the turn is a process (#364).
  */
 export const stopPress = (host: HTMLElement) =>
-	rail(host)?.querySelector<HTMLButtonElement>('[data-agent-stop][aria-label="Stop"]') ?? null;
+	live<HTMLButtonElement>(rail(host) ?? host, '[data-agent-stop][aria-label="Stop"]')[0] ?? null;
 
 /** the send it stands in for, which is there whenever the stop is not */
 export const sendPress = (host: HTMLElement) =>
-	rail(host)?.querySelector<HTMLButtonElement>('[data-agent-send][aria-label="Send"]') ?? null;
+	live<HTMLButtonElement>(rail(host) ?? host, '[data-agent-send][aria-label="Send"]')[0] ?? null;
 
 /** every message waiting at the end of the log, in the order it will fire (#364) */
 export const queuedRows = (host: HTMLElement) =>

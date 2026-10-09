@@ -5,7 +5,7 @@ import type { AgentAsk, AgentModel, AgentOffer } from "../../daemon/agent-offer"
 import { chooseEngineModel, engineModelOffer, fetchAgentEngines, fetchAgentLogin } from "../api";
 import { cn } from "../cn";
 import { CheckIcon, PlusIcon, SearchIcon } from "../icons";
-import { Chevron, CommandLine, RailMenu, Reveal, Versioned } from "./agent-float";
+import { Chevron, CommandLine, Fade, RailMenu, Reveal, Versioned } from "./agent-float";
 import { limitReadout, resetsIn } from "./agent-limit";
 import { type AgentModelDeck, offerOf } from "./agent-model";
 import type { LoginDeck } from "./agent-preflight";
@@ -239,193 +239,203 @@ export function AgentMenu({
 		const { login: signIn } = ENGINES[engine];
 		const signedOut = mine ? login?.out === true : others[engine]?.signedIn === false;
 		const models = modelsOf(engine).filter((entry) => matches(engine, entry, query));
-		if (models.length === 0 && !signedOut && query.trim() !== "") return null;
+		// a group the search empties folds away rather than vanishing, and one the machine has
+		// just said is there unfolds into place
+		const found = models.length > 0 || signedOut || query.trim() === "";
 		return (
-			<div key={engine} data-agent-group={engine} className={cn("flex flex-col", index > 0 && "pt-1")}>
-				<div
-					role="presentation"
-					className={cn(
-						"flex h-8 shrink-0 items-center justify-between gap-2 pr-2 pl-7",
-						findable && "sticky top-0 z-[1] bg-surface",
-					)}
-				>
-					<span className="text-muted type-label">{engineName(engine)}</span>
-					{signedOut ? (
-						<Quiet>signed out</Quiet>
-					) : started && !mine ? (
-						<Quiet>new chat</Quiet>
-					) : findable && modelsOf(engine).length > 6 ? (
-						<Quiet>{modelsOf(engine).length} models</Quiet>
-					) : null}
-				</div>
-				{mine && usage !== null ? (
-					<p data-agent-usage="" className="truncate pr-2 pb-1.5 pl-7 text-muted type-detail">
-						{usage}
-					</p>
-				) : null}
-				{signedOut ? (
-					<div data-agent-signed-out={engine} className="flex flex-col gap-2 pt-0.5 pr-2 pb-2 pl-7">
-						<p className="text-muted type-label">
-							{engineName(engine)} is signed out. Sign in from a terminal and its models show up here.
-						</p>
-						<CommandLine command={signIn.command} />
-						{signIn.inside === undefined ? null : (
-							<p className="text-muted type-label">
-								then <span className="type-detail">{signIn.inside}</span>
-							</p>
-						)}
-						<span>
-							<button
-								type="button"
-								onClick={() => (mine ? login?.check() : setLooks((count) => count + 1))}
-								className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
-							>
-								Check again
-							</button>
-						</span>
-					</div>
-				) : (
-					models.map((entry) => {
-						const chosen = mine && entry.value === offer.current.value;
-						const waiting = pending?.engine === engine && pending.value === entry.value;
-						return (
-							<Fragment key={entry.value}>
-								<div
-									data-active={waiting || undefined}
-									className={cn(
-										"group flex h-8 shrink-0 items-center rounded-sm transition-colors duration-150 hover:bg-raised",
-										waiting && "bg-raised",
-									)}
-								>
-									<button
-										type="button"
-										role="menuitemradio"
-										aria-checked={chosen}
-										aria-current={chosen}
-										data-agent-model-row={entry.displayName}
-										data-agent-model-engine={engine}
-										title={entry.description || undefined}
-										onClick={() => pick(engine, entry)}
-										className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm pl-2 text-left outline-none focus-visible:bg-raised"
-									>
-										<span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-											{chosen ? <CheckIcon className="h-3.5 w-3.5 text-text" /> : null}
-										</span>
-										<ModelName name={entry.displayName} hit={query} />
-										{/* a model that runs on this machine says so, quietly, after its name (#363) */}
-										{entry.local ? (
-											<span data-agent-model-local="" className="shrink-0 text-muted type-caption">
-												local
-											</span>
-										) : null}
-									</button>
-									{chosen && effort !== null ? (
-										<button
-											type="button"
-											aria-label={`Effort, ${effort}`}
-											aria-expanded={effortOpen}
-											data-agent-effort-toggle=""
-											onClick={() => setEffortOpen((was) => !was)}
-											className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:text-text type-value"
-										>
-											{effort}
-											<Chevron open={effortOpen} />
-										</button>
-									) : null}
-								</div>
-								{chosen && levels.length > 0 ? (
-									<Reveal open={effortOpen}>
-										<div className="flex flex-col gap-1 pt-0.5 pr-2 pb-2 pl-6">
-											<div
-												role="radiogroup"
-												aria-label="Effort levels"
-												className="flex flex-wrap items-center gap-0.5"
-											>
-												{levels.map((level) => (
-													<button
-														key={level}
-														type="button"
-														aria-pressed={offer.current.effort === level}
-														data-agent-effort={level}
-														title={EFFORT_SAYS[level]}
-														disabled={pin !== null && pin !== level}
-														onClick={() => model.choose({ effort: level })}
-														className={cn(
-															"flex h-6 items-center rounded-sm px-2 transition-colors duration-150 type-value disabled:opacity-40",
-															offer.current.effort === level
-																? "bg-raised text-text"
-																: "text-muted hover:text-text",
-														)}
-													>
-														{level}
-													</button>
-												))}
-											</div>
-											{pin !== null ? (
-												<p role="status" className="pl-2 text-muted type-caption">
-													{`CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment.`}
-												</p>
-											) : offer.current.effort !== null && EFFORT_SAYS[offer.current.effort] ? (
-												<p
-													key={offer.current.effort}
-													className="animate-agent-fade-in pl-2 text-muted type-label"
-												>
-													{EFFORT_SAYS[offer.current.effort]}
-												</p>
-											) : null}
-										</div>
-									</Reveal>
-								) : null}
-								{started && !mine ? (
-									<Reveal open={waiting}>
-										<NewThreadNote
-											engine={engine}
-											onAccept={() => void switchTo(engine, entry.value, true)}
-										/>
-									</Reveal>
-								) : null}
-							</Fragment>
-						);
-					})
-				)}
-				{bare && !signedOut && query.trim() === "" ? (
-					/* an agent with nothing to list is still an agent to pick: the row names it, and
-					   it answers on its own default */
-					<button
-						type="button"
-						role="menuitemradio"
-						aria-checked={false}
-						data-agent-model-row={engineName(engine)}
-						data-agent-model-engine={engine}
-						onClick={() =>
-							started
-								? setPending((was) => (was?.engine === engine ? null : { engine, value: "" }))
-								: void switchTo(engine, null, false)
-						}
+			<Fade key={engine} fold open={found}>
+				<div data-agent-group={engine} className={cn("flex flex-col", index > 0 && "pt-1")}>
+					<div
+						role="presentation"
 						className={cn(
-							"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-text outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised type-control",
-							pending?.engine === engine && "bg-raised",
+							"flex h-8 shrink-0 items-center justify-between gap-2 pr-2 pl-7",
+							findable && "sticky top-0 z-[1] bg-surface",
 						)}
 					>
-						<span className="h-3.5 w-3.5 shrink-0" />
-						{engineName(engine)}
-					</button>
-				) : null}
-				{bare && started ? (
-					<Reveal open={pending?.engine === engine && pending.value === ""}>
-						<NewThreadNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
-					</Reveal>
-				) : null}
-				{mine && !signedOut && models.length === 0 && query.trim() === "" ? (
-					<p className="px-7 py-2 text-muted type-label">
-						{model.loading ? "Loading models…" : "No models offered."}
-					</p>
-				) : null}
-			</div>
+						<span className="text-muted type-label">{engineName(engine)}</span>
+						{signedOut ? (
+							<Quiet>signed out</Quiet>
+						) : started && !mine ? (
+							<Quiet>new chat</Quiet>
+						) : findable && modelsOf(engine).length > 6 ? (
+							<Quiet>{modelsOf(engine).length} models</Quiet>
+						) : null}
+					</div>
+					{mine && usage !== null ? (
+						<p data-agent-usage="" className="truncate pr-2 pb-1.5 pl-7 text-muted type-detail">
+							{usage}
+						</p>
+					) : null}
+					{signedOut ? (
+						<div data-agent-signed-out={engine} className="flex flex-col gap-2 pt-0.5 pr-2 pb-2 pl-7">
+							<p className="text-muted type-label">
+								{engineName(engine)} is signed out. Sign in from a terminal and its models show up here.
+							</p>
+							<CommandLine command={signIn.command} />
+							{signIn.inside === undefined ? null : (
+								<p className="text-muted type-label">
+									then <span className="type-detail">{signIn.inside}</span>
+								</p>
+							)}
+							<span>
+								<button
+									type="button"
+									onClick={() => (mine ? login?.check() : setLooks((count) => count + 1))}
+									className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+								>
+									Check again
+								</button>
+							</span>
+						</div>
+					) : (
+						models.map((entry) => {
+							const chosen = mine && entry.value === offer.current.value;
+							const waiting = pending?.engine === engine && pending.value === entry.value;
+							return (
+								<Fragment key={entry.value}>
+									<div
+										data-active={waiting || undefined}
+										className={cn(
+											"group flex h-8 shrink-0 items-center rounded-sm transition-colors duration-150 hover:bg-raised",
+											waiting && "bg-raised",
+										)}
+									>
+										<button
+											type="button"
+											role="menuitemradio"
+											aria-checked={chosen}
+											aria-current={chosen}
+											data-agent-model-row={entry.displayName}
+											data-agent-model-engine={engine}
+											title={entry.description || undefined}
+											onClick={() => pick(engine, entry)}
+											className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm pl-2 text-left outline-none focus-visible:bg-raised"
+										>
+											<span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+												{chosen ? <CheckIcon className="h-3.5 w-3.5 text-text" /> : null}
+											</span>
+											<ModelName name={entry.displayName} hit={query} />
+											{/* a model that runs on this machine says so, quietly, after its name (#363) */}
+											{entry.local ? (
+												<span data-agent-model-local="" className="shrink-0 text-muted type-caption">
+													local
+												</span>
+											) : null}
+										</button>
+										{chosen && effort !== null ? (
+											<button
+												type="button"
+												aria-label={`Effort, ${effort}`}
+												aria-expanded={effortOpen}
+												data-agent-effort-toggle=""
+												onClick={() => setEffortOpen((was) => !was)}
+												className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:text-text type-value"
+											>
+												{effort}
+												<Chevron open={effortOpen} />
+											</button>
+										) : null}
+									</div>
+									{chosen && levels.length > 0 ? (
+										<Reveal open={effortOpen}>
+											<div className="flex flex-col gap-1 pt-0.5 pr-2 pb-2 pl-6">
+												<div
+													role="radiogroup"
+													aria-label="Effort levels"
+													className="flex flex-wrap items-center gap-0.5"
+												>
+													{levels.map((level) => (
+														<button
+															key={level}
+															type="button"
+															aria-pressed={offer.current.effort === level}
+															data-agent-effort={level}
+															title={EFFORT_SAYS[level]}
+															disabled={pin !== null && pin !== level}
+															onClick={() => model.choose({ effort: level })}
+															className={cn(
+																"flex h-6 items-center rounded-sm px-2 transition-colors duration-150 type-value disabled:opacity-40",
+																offer.current.effort === level
+																	? "bg-raised text-text"
+																	: "text-muted hover:text-text",
+															)}
+														>
+															{level}
+														</button>
+													))}
+												</div>
+												{pin !== null ? (
+													<p role="status" className="pl-2 text-muted type-caption">
+														{`CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment.`}
+													</p>
+												) : offer.current.effort !== null && EFFORT_SAYS[offer.current.effort] ? (
+													<p
+														key={offer.current.effort}
+														className="animate-agent-fade-in pl-2 text-muted type-label"
+													>
+														{EFFORT_SAYS[offer.current.effort]}
+													</p>
+												) : null}
+											</div>
+										</Reveal>
+									) : null}
+									{started && !mine ? (
+										<Reveal open={waiting}>
+											<NewThreadNote
+												engine={engine}
+												onAccept={() => void switchTo(engine, entry.value, true)}
+											/>
+										</Reveal>
+									) : null}
+								</Fragment>
+							);
+						})
+					)}
+					{bare && !signedOut && query.trim() === "" ? (
+						/* an agent with nothing to list is still an agent to pick: the row names it, and
+					   it answers on its own default */
+						<button
+							type="button"
+							role="menuitemradio"
+							aria-checked={false}
+							data-agent-model-row={engineName(engine)}
+							data-agent-model-engine={engine}
+							onClick={() =>
+								started
+									? setPending((was) => (was?.engine === engine ? null : { engine, value: "" }))
+									: void switchTo(engine, null, false)
+							}
+							className={cn(
+								"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-text outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised type-control",
+								pending?.engine === engine && "bg-raised",
+							)}
+						>
+							<span className="h-3.5 w-3.5 shrink-0" />
+							{engineName(engine)}
+						</button>
+					) : null}
+					{bare && started ? (
+						<Reveal open={pending?.engine === engine && pending.value === ""}>
+							<NewThreadNote engine={engine} onAccept={() => void switchTo(engine, null, true)} />
+						</Reveal>
+					) : null}
+					{mine && !signedOut && models.length === 0 && query.trim() === "" ? (
+						<p className="px-7 py-2 text-muted type-label">
+							{model.loading ? "Loading models…" : "No models offered."}
+						</p>
+					) : null}
+				</div>
+			</Fade>
 		);
 	};
 
 	const shown = groups.map(group);
+	const nothingFound =
+		query.trim() !== "" &&
+		groups.every((engine) => {
+			const signedOut = engine === own ? login?.out === true : others[engine]?.signedIn === false;
+			return !signedOut && !modelsOf(engine).some((entry) => matches(engine, entry, query));
+		});
 	return (
 		<span data-agent-model={model.readout} className="flex min-w-0">
 			<RailMenu
@@ -463,7 +473,7 @@ export function AgentMenu({
 					</button>
 				)}
 			>
-				{findable ? (
+				<Fade fold open={findable}>
 					<label className="flex h-10 shrink-0 items-center gap-2 border-border border-b px-3">
 						<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
 						<input
@@ -477,14 +487,12 @@ export function AgentMenu({
 							className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted type-control [&::-webkit-search-cancel-button]:hidden"
 						/>
 					</label>
-				) : null}
+				</Fade>
 				<div
 					className={cn("pages-scrollbar overflow-y-auto p-1", findable ? "max-h-[360px] pt-0" : "max-h-[420px]")}
 				>
 					{shown}
-					{shown.every((one) => one === null) ? (
-						<p className="px-7 py-3 text-muted type-label">No models match “{query}”.</p>
-					) : null}
+					{nothingFound ? <p className="px-7 py-3 text-muted type-label">No models match “{query}”.</p> : null}
 					{switching?.failed ? (
 						<p role="status" data-agent-switch-failed="" className="px-7 py-2 text-muted type-label">
 							Spool could not save {engineName(switching.engine)} as your agent. Try again.

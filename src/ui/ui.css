@@ -78,6 +78,8 @@
 	 * halves of one gesture and they have to be the same length or the line flickers; the
 	 * box closing early or late against the words is the same fault one axis over. */
 	--animate-agent-step: agent-step 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the step backwards, for a block folding away: as long as `FADE_OUT_MS` in agent-motion.ts */
+	--animate-agent-step-out: agent-step-out 160ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 	--animate-agent-leave: agent-leave 170ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 	/* a turn's frames (#365). A frame that lands draws in from the top over 720ms, the
 	 * newest line of one still streaming breathes, slow enough to read as work,
@@ -188,6 +190,13 @@
 	 * close its transition draws, run the other way, so nothing below it jumps */
 	@keyframes agent-step {
 		from {
+			grid-template-rows: 0fr;
+			opacity: 0;
+		}
+	}
+
+	@keyframes agent-step-out {
+		to {
 			grid-template-rows: 0fr;
 			opacity: 0;
 		}

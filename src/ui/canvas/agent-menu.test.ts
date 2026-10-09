@@ -2,6 +2,7 @@
 
 import { act } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
+import { FADE_OUT_MS } from "./agent-motion";
 import {
 	CODEX_OFFERED,
 	cell,
@@ -661,6 +662,18 @@ describe("another agent in the menu", () => {
 		});
 		expect(groups(canvas.host)).toEqual(["codex"]);
 		expect(modelRows(canvas.host)).toHaveLength(8);
+		// the group the search emptied folds away rather than vanishing, out of reach as it goes
+		const claude = () => modelMenu(canvas.host)?.querySelector('[data-agent-group="claude"]') ?? null;
+		expect(claude()?.closest("[data-leaving]")?.className).toContain("animate-agent-step-out");
+		await settle(FADE_OUT_MS + 10);
+		expect(claude()).toBeNull();
+		// and unfolds again once the search lets it back
+		await act(async () => {
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(find, "");
+			find?.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		expect(claude()?.parentElement?.parentElement?.className).toContain("animate-agent-step");
+		expect(groups(canvas.host)).toEqual(["claude", "codex"]);
 	});
 
 	it("changes an empty chat's agent in place, keeping its draft, image and thread", async () => {
