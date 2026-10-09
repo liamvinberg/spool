@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	agentReader,
@@ -9,6 +9,7 @@ import {
 	replayAgentExecutor,
 	scriptedAgentExecutor,
 } from "../test-helpers";
+import { shimDir } from "./agent-cli";
 import { CODEX_DESIGNER_DESCRIPTION, CODEX_DESIGNER_FRAMING, codexFraming } from "./agent-codex-spawn";
 import { DESIGNER_FRAMING, DESIGNER_PROMPT, designerDir, mountDesigner } from "./agent-designer";
 import { piFraming } from "./agent-engine-pi";
@@ -149,6 +150,8 @@ describe("claude's designer", () => {
 		expect(flagValue(args, "--agents")?.startsWith(spoolDir)).toBe(true);
 		expect(existsSync(flagValue(args, "--agents") as string)).toBe(true);
 		expect(flagValue(args, "--agents")?.startsWith(root)).toBe(false);
+		// the designers it delegates to share its shell, so this daemon's spool leads their PATH
+		expect(agent.spawned[0]?.spawn.env.PATH?.split(delimiter)[0]).toBe(shimDir(spoolDir));
 		expect(added()).toEqual([]);
 
 		const { delegations, started, done, nested } = fanOut(events);
@@ -182,6 +185,7 @@ describe("codex's designer", () => {
 		expect(existsSync(file)).toBe(true);
 		// a role rides as flags: Codex's own home is never pointed elsewhere
 		expect(codex.spawned[0]?.spawn.env.CODEX_HOME).toBe(process.env.CODEX_HOME);
+		expect(codex.spawned[0]?.spawn.env.PATH?.split(delimiter)[0]).toBe(shimDir(spoolDir));
 		expect(added()).toEqual([]);
 		expect(codex.spawned[0]?.mismatches).toEqual([]);
 	});
@@ -264,6 +268,7 @@ describe("pi's designer", () => {
 		expect(flagValue(args, "-e")).toBe(mountDesigner(spoolDir, "pi"));
 		expect(flagValue(args, "-e")?.startsWith(root)).toBe(false);
 		expect(existsSync(flagValue(args, "-e") as string)).toBe(true);
+		expect(pi.spawned[0]?.spawn.env.PATH?.split(delimiter)[0]).toBe(shimDir(spoolDir));
 		expect(added()).toEqual([]);
 		expect(pi.spawned[0]?.mismatches).toEqual([]);
 

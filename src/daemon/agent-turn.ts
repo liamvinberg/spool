@@ -53,6 +53,8 @@ export interface AgentTurnOptions {
 	readonly continuing?: boolean;
 	/** spool's designer, as the `--agents` file in spool's state (#367) */
 	readonly designer?: string;
+	/** the environment the binary runs in; the daemon's own when absent */
+	readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface AgentTurn {
@@ -100,6 +102,7 @@ export function startAgentTurn({
 	permissions,
 	continuing,
 	designer,
+	env = process.env,
 }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
 	const shell = createTurnShell();
@@ -202,7 +205,7 @@ export function startAgentTurn({
 	}
 
 	void shell.spawn(
-		() => executor(planAgentSpawn(root, process.env, session, ask, permissions, designer)),
+		() => executor(planAgentSpawn(root, env, session, ask, permissions, designer)),
 		(started) => {
 			started.onLine((line) => {
 				for (const event of adapter.read(line)) {
