@@ -2295,6 +2295,82 @@ const canvasShimJs = `(() => {
 	addEventListener("pointerup", endPan, true);
 	addEventListener("pointercancel", endPan, true);
 
+	// Presence inside a live frame: the pointer, a press and the scroll in here
+	// never reach the canvas, so they are told to it in this document's own
+	// pixels, and the canvas says them to the team. A pointer only reaches a
+	// frame that is entered, so only an entered frame ever tells.
+	var presencePoint = null;
+	var presencePressed = false;
+	var tellPresence = () => {
+		if (window.parent === window) return;
+		var scroller = document.scrollingElement || document.documentElement;
+		window.parent.postMessage({
+			spool: "presence",
+			frame: (window.__SPOOL__ || {}).frame,
+			x: presencePoint === null ? null : presencePoint.x,
+			y: presencePoint === null ? null : presencePoint.y,
+			pressed: presencePressed,
+			scroll: { x: scrollX, y: scrollY, width: scroller.scrollWidth, height: scroller.scrollHeight },
+		}, "*");
+	};
+	addEventListener("pointermove", (event) => {
+		presencePoint = { x: event.clientX, y: event.clientY };
+		tellPresence();
+	}, true);
+	addEventListener("pointerdown", (event) => {
+		if (event.button !== 0) return;
+		presencePoint = { x: event.clientX, y: event.clientY };
+		presencePressed = true;
+		tellPresence();
+	}, true);
+	var endPresencePress = () => {
+		if (!presencePressed) return;
+		presencePressed = false;
+		tellPresence();
+	};
+	addEventListener("pointerup", endPresencePress, true);
+	addEventListener("pointercancel", endPresencePress, true);
+	addEventListener("scroll", (event) => {
+		if (event.target === document && !followingScroll) tellPresence();
+	}, true);
+
+	// Someone else scrolling this frame, while this canvas only watches it: the
+	// document eases to where theirs is, so their pointer is over what it is
+	// over for them. Asked only of a frame this canvas hasn't entered.
+	var scrollGoal = null;
+	var scrollTick = 0;
+	var scrollLast = 0;
+	var followingScroll = false;
+	var easeScroll = (time) => {
+		var dt = Math.min(0.05, Math.max(0, (time - scrollLast) / 1000));
+		scrollLast = time;
+		var scroller = document.scrollingElement || document.documentElement;
+		var goalX = Math.max(0, Math.min(scrollGoal.x, scroller.scrollWidth - scroller.clientWidth));
+		var goalY = Math.max(0, Math.min(scrollGoal.y, scroller.scrollHeight - scroller.clientHeight));
+		var u = 1 - Math.exp(-14 * dt);
+		var x = scrollX + (goalX - scrollX) * u;
+		var y = scrollY + (goalY - scrollY) * u;
+		var near = Math.abs(goalX - x) + Math.abs(goalY - y) < 0.75;
+		followingScroll = true;
+		window.scrollTo({ left: near ? goalX : x, top: near ? goalY : y, behavior: "instant" });
+		if (near) {
+			scrollTick = 0;
+			setTimeout(() => { if (scrollTick === 0) followingScroll = false; }, 50);
+			return;
+		}
+		scrollTick = requestAnimationFrame(easeScroll);
+	};
+	addEventListener("message", (event) => {
+		var config = window.__SPOOL__ || {};
+		var message = event.data;
+		if (event.source !== parent || event.origin !== config.controlOrigin || message?.spool !== "presence-scroll-to") return;
+		if (!Number.isFinite(message.x) || !Number.isFinite(message.y)) return;
+		scrollGoal = { x: message.x, y: message.y };
+		if (scrollTick !== 0) return;
+		scrollLast = performance.now();
+		scrollTick = requestAnimationFrame(easeScroll);
+	});
+
 	addEventListener("keyup", (event) => {
 		if (window.parent === window) return;
 		if (event.key !== "Meta" && event.key !== "Control") return;

@@ -4174,6 +4174,28 @@ export function ProjectCanvas({
 					else panBy(-dx, -dy);
 					return;
 				}
+				case "presence": {
+					// the pointer, a press and the scroll inside the entered frame, which never cross into here:
+					// told in the frame's own pixels, said to the team in world ones
+					if (enteredRef.current !== message.frame) return;
+					const frame = framesRef.current.find((entry) => entry.name === message.frame);
+					const iframe = iframes.current.get(message.frame);
+					if (frame === undefined || iframe === undefined) return;
+					const scale = iframe.clientWidth > 0 ? frame.w / iframe.clientWidth : 1;
+					insideFrameRef.current.pointer(
+						message.x === null || message.y === null
+							? null
+							: { x: Math.round(frame.x + message.x * scale), y: Math.round(frame.y + message.y * scale) },
+						message.pressed,
+					);
+					insideFrameRef.current.scroll({
+						x: Math.round(message.scroll.x),
+						y: Math.round(message.scroll.y),
+						width: Math.round(message.scroll.width),
+						height: Math.round(message.scroll.height),
+					});
+					return;
+				}
 				case "go":
 				case "back": {
 					const source = event.source as WindowProxy;
@@ -5450,7 +5472,7 @@ export function ProjectCanvas({
 	// --- presence (DEV-196) ---------------------------------------------------------
 
 	const sendPresence = useCallback((state: PresenceState) => putPresence(project, state), [project]);
-	usePresenceSender({
+	const insideFrame = usePresenceSender({
 		send: sendPresence,
 		team,
 		camera,
@@ -5477,6 +5499,37 @@ export function ProjectCanvas({
 		goToPage: followPage,
 	});
 	const followed = following === null ? undefined : presenceRoom.get(following);
+	// read from the frame protocol's handler, which is bound before the sender is
+	const insideFrameRef = useRef(insideFrame);
+	insideFrameRef.current = insideFrame;
+
+	// A teammate scrolling a frame this canvas only watches scrolls it here too, so their pointer is over what
+	// it's over for them. The frame entered here is this person's own to scroll. With several inside one frame,
+	// the one who changed last leads.
+	useEffect(() => {
+		if (!team) return;
+		const told = new Map<string, string>();
+		const mirror = () => {
+			const leads = new Map<string, { x: number; y: number; active: number }>();
+			for (const mate of presenceRoom.teammates()) {
+				const { inside, scroll, page } = mate.state;
+				if (mate.left !== null || page !== activePage || inside == null || scroll == null) continue;
+				if (inside === enteredRef.current) continue;
+				const lead = leads.get(inside);
+				if (lead === undefined || mate.active >= lead.active) leads.set(inside, { ...scroll, active: mate.active });
+			}
+			for (const [frame, { x, y }] of leads) {
+				const key = `${x},${y}`;
+				if (told.get(frame) === key) continue;
+				const target = iframes.current.get(frame)?.contentWindow;
+				if (target == null) continue;
+				told.set(frame, key);
+				target.postMessage({ spool: "presence-scroll-to", x, y }, "*");
+			}
+		};
+		mirror();
+		return presenceRoom.subscribe(mirror);
+	}, [team, presenceRoom, activePage]);
 
 	// --- render -------------------------------------------------------------------
 

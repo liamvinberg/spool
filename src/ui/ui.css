@@ -150,6 +150,34 @@
 		}
 	}
 
+	/* a teammate's click inside a live frame: a ring in their colour spreads from where it landed
+	 * (`RIPPLE_MS` in `canvas/presence-layer.tsx`) */
+	--animate-presence-click: presence-click 650ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+
+	@keyframes presence-click {
+		from {
+			opacity: 1;
+			transform: scale(0.25);
+		}
+		to {
+			opacity: 0;
+			transform: scale(1.5);
+		}
+	}
+
+	/* a teammate scrolling a frame: their thumb shows while it moves, and fades once it rests */
+	--animate-presence-thumb: presence-thumb 1200ms linear forwards;
+
+	@keyframes presence-thumb {
+		0%,
+		60% {
+			opacity: 0.9;
+		}
+		to {
+			opacity: 0;
+		}
+	}
+
 	/* the dwell a spring-loaded folder asks for, drawn as it fills. The fallback is
 	 * `SPRING_MS` in `canvas/sidebar.tsx`, which sets `--spring-ms` on the arc */
 	--animate-spring-load: spring-load var(--spring-ms, 450ms) linear forwards;

@@ -39,6 +39,18 @@ interface Motion {
 	slot: { x: number; y: number } | null;
 }
 
+/** How long a click's ring takes to spread and fade; the animation in `ui.css` runs the same. */
+const RIPPLE_MS = 650;
+
+interface Ripple {
+	key: string;
+	color: string;
+	/** Where the click landed, in world units. */
+	x: number;
+	y: number;
+	at: number;
+}
+
 export function PresenceLayer({
 	room,
 	camera,
@@ -55,6 +67,11 @@ export function PresenceLayer({
 	const motions = useRef(new Map<string, Motion>());
 	const docked = useRef(new Map<string, string | null>());
 	const kicked = useRef(() => {});
+	// each person's clicks inside a live frame as last counted, and the rings still spreading from them
+	const clicked = useRef(new Map<string, number>());
+	const ripples = useRef<Ripple[]>([]);
+	// where each person's frame was last scrolled to, and since when: a thumb shows only once they scroll
+	const scrolled = useRef(new Map<string, { y: number; at: number | null }>());
 
 	// every change heard, every camera drawn, and every moment the clock alone changes something, is a redraw;
 	// while a pointer or a pill is still easing, so is every animation frame
@@ -148,6 +165,21 @@ export function PresenceLayer({
 				slot: slot ?? null,
 			});
 		else if (motion !== undefined && slot !== undefined) motion.slot = slot;
+		// a click counted since last time is a ring where it landed; the first time anyone is seen, it's only noted
+		const clicks = mate.state.clicks ?? 0;
+		const before = clicked.current.get(id);
+		clicked.current.set(id, clicks);
+		if (before !== undefined && clicks > before && at !== null && mate.left === null)
+			ripples.current.push({ key: `${id}:${clicks}`, color: mate.person.color, x: at.x, y: at.y, at: now });
+	}
+	ripples.current = ripples.current.filter((ripple) => now - ripple.at < RIPPLE_MS);
+	for (const mate of here) {
+		const id = mate.person.accountId;
+		const y = mate.state.scroll?.y;
+		const was = scrolled.current.get(id);
+		if (y === undefined) scrolled.current.delete(id);
+		else if (was === undefined) scrolled.current.set(id, { y, at: null });
+		else if (was.y !== y) scrolled.current.set(id, { y, at: now });
 	}
 
 	return (
@@ -173,6 +205,45 @@ export function PresenceLayer({
 					];
 				}),
 			)}
+			{here.flatMap((mate) => {
+				// where they are in the frame they're scrolling: a thumb in their colour on its right edge, like the
+				// overlay scrollbar the frame shows them
+				const scroll = mate.state.scroll;
+				const frame = mate.state.inside == null ? undefined : byName.get(mate.state.inside);
+				if (scroll == null || frame === undefined || mate.left !== null || scroll.height <= frame.h + 1) return [];
+				if (scrolled.current.get(mate.person.accountId)?.at == null) return [];
+				const top = toScreen(frame.x + frame.w, frame.y + (scroll.y / scroll.height) * frame.h);
+				const length = (frame.h / scroll.height) * frame.h * cam.k;
+				return [
+					<span
+						key={`${mate.person.accountId}:thumb:${scroll.y}`}
+						data-presence-scroll={mate.person.accountId}
+						className="absolute w-[5px] animate-presence-thumb rounded-full"
+						style={{
+							left: top.x - 8,
+							top: top.y + 2,
+							height: Math.max(16, length - 4),
+							background: mate.person.color,
+						}}
+					/>,
+				];
+			})}
+			{ripples.current.map((ripple) => {
+				const at = toScreen(ripple.x, ripple.y);
+				return (
+					<span
+						key={ripple.key}
+						data-presence-click=""
+						className="absolute top-0 left-0 size-[44px] animate-presence-click rounded-full border-[2.5px]"
+						style={{
+							left: at.x - 22,
+							top: at.y - 22,
+							borderColor: ripple.color,
+							background: `${ripple.color}40`,
+						}}
+					/>
+				);
+			})}
 			{here.map((mate) => (
 				<Cursor
 					key={mate.person.accountId}
@@ -237,7 +308,7 @@ function Cursor({
 					className="absolute top-0 left-0 transition-opacity duration-[400ms]"
 					style={{ transform: `translate(${at.x - 1}px, ${at.y - 1}px)`, opacity: ink }}
 				>
-					<Arrow color={person.color} shown={!grabbing} />
+					<Arrow color={person.color} shown={!grabbing} pressed={state.pressed && state.inside !== null} />
 					<GrabbingHand color={person.color} shown={grabbing} />
 				</div>
 			)}
@@ -264,14 +335,14 @@ function Cursor({
 }
 
 /** The pointer a person already owns, in their colour; its tip is the point they're at. */
-function Arrow({ color, shown }: { color: string; shown: boolean }) {
+function Arrow({ color, shown, pressed }: { color: string; shown: boolean; pressed: boolean }) {
 	return (
 		<svg
 			viewBox="0 0 16 20"
 			width="16"
 			height="20"
 			className="absolute top-0 left-0 origin-[1px_1px] overflow-visible transition-[opacity,transform] duration-150"
-			style={{ opacity: shown ? 1 : 0, transform: `scale(${shown ? 1 : 0.75})` }}
+			style={{ opacity: shown ? 1 : 0, transform: `scale(${shown ? (pressed ? 0.82 : 1) : 0.75})` }}
 			aria-hidden="true"
 		>
 			<path
