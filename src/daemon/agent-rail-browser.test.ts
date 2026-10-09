@@ -5,7 +5,6 @@ import {
 	builtUi,
 	type FakeAgentProc,
 	fixtureAgentExecutor,
-	saveAgentChoice,
 	seedAgentWidth,
 	serveProject,
 	writeFrame,
@@ -21,9 +20,8 @@ import type { AgentModel, AgentOffer } from "./agent-offer";
  * field and other agents, the log following its live edge, and the side's width.
  *
  * Nothing real answers. Claude Code is a scripted binary that speaks its wire, and the
- * other agent is spool's engine as a stand-in that lists models and is never started:
- * this branch knows two engines, and the menu's second group is whichever else is
- * installed.
+ * other agent is pi as a stand-in that lists models and is never started: the menu's
+ * second group is whichever else is installed.
  */
 
 const WINDOW = 200_000;
@@ -140,7 +138,11 @@ function scriptedClaude() {
 			say(proc, `Done: ${text}`);
 			result(proc, `Done: ${text}`);
 		},
-		(proc) => proc.exit(0),
+		(proc) => {
+			// asked `claude auth status --json`, as the agent menu asks of an agent it is not on (#364)
+			if (proc.spawn.args[0] === "auth") proc.emit(JSON.stringify({ loggedIn: true }));
+			proc.exit(0);
+		},
 	);
 	return {
 		...fixture,
@@ -161,22 +163,27 @@ function say(proc: FakeAgentProc, text: string) {
 	);
 }
 
-/** spool's engine as the menu's other agent: it lists `count` models and is never started */
+/**
+ * pi as the menu's other agent: it lists `count` models, the last of them on this machine,
+ * offers no modes, as pi never asks (#363), and is never started
+ */
 function otherAgent(count: number): AgentEngine {
 	const models: AgentModel[] = Array.from({ length: count }, (_, at) => ({
 		value: `other-${at}`,
 		resolvedModel: `other-${at}`,
 		displayName: at === 0 ? "Atlas" : `Model ${String.fromCharCode(65 + at)}`,
 		description: "",
+		...(at === count - 1 ? { local: true } : {}),
 	}));
 	let chosen: string | null = null;
 	const offer = (value: string | null): AgentOffer => ({
 		models,
 		current: { value, resolved: value, name: null, effort: null, pin: null },
+		modes: false,
 	});
 	return {
-		id: "spool",
-		authentication: { kind: "external", command: "spool" },
+		id: "pi",
+		authentication: { kind: "external", command: "pi" },
 		installed: () => true,
 		account: async () => ({ signedIn: true, account: null }),
 		offer: async ({ ask, choose }) => {
@@ -354,7 +361,7 @@ describe("the agent rail in a browser", () => {
 	it("sets effort in place, finds past twelve models, and changes agent in place or in a new chat", {
 		timeout: 150_000,
 	}, async () => {
-		const { claude, project, page, rail, title, chats, send, stop, trigger, menu, engine } = await opened(13);
+		const { claude, page, rail, title, chats, send, stop, trigger, menu, engine } = await opened(13);
 		const row = (name: string) => menu.locator(`[data-agent-model-row="${name}"]`);
 		await expect.poll(engine).toBe("claude");
 		await expect.poll(() => trigger.textContent()).toContain("Default (recommended)");
@@ -375,31 +382,42 @@ describe("the agent rail in a browser", () => {
 			menu
 				.locator("[data-agent-group]")
 				.evaluateAll((all) => all.map((one) => one.getAttribute("data-agent-group")));
-		await expect.poll(groups).toEqual(["claude", "spool"]);
+		await expect.poll(groups).toEqual(["claude", "pi"]);
 		await expect.poll(() => menu.locator("[data-agent-model-row]").count()).toBe(15);
 		const find = menu.getByRole("searchbox", { name: "Find a model", exact: true });
 		await find.fill("atlas");
 		await expect.poll(() => menu.locator("[data-agent-model-row]").count()).toBe(1);
-		await expect.poll(groups).toEqual(["spool"]);
+		await expect.poll(groups).toEqual(["pi"]);
 		await find.fill("zzz");
 		await expect.poll(() => menu.textContent()).toContain("No models match “zzz”.");
 		await find.fill("");
+		// a model on this machine says so, and only that one (#363)
+		await expect.poll(() => menu.locator("[data-agent-model-local]").count()).toBe(1);
+		expect(
+			await menu
+				.locator(`[data-agent-model-row="Model ${String.fromCharCode(65 + 12)}"] [data-agent-model-local]`)
+				.count(),
+		).toBe(1);
 
 		// an empty chat changes agent in place: the same chat, now on the other agent
 		const draft = "keep this draft";
 		await rail.locator("textarea").fill(draft);
 		await row("Atlas").click();
-		await expect.poll(engine).toBe("spool");
+		await expect.poll(engine).toBe("pi");
 		await expect.poll(() => title.textContent()).toBe("New chat");
 		expect(await rail.locator("textarea").inputValue()).toBe(draft);
 		await title.click();
 		await expect.poll(() => chats.locator("[data-agent-thread]").count()).toBe(1);
 		await page.keyboard.press("Escape");
 
-		// back to Claude Code, the way any door saves the choice: spool's own picker offers
-		// no other agent until that engine goes (#363)
-		await saveAgentChoice(project, "claude");
+		// pi never asks, so its chat has no mode menu (#363)
+		await expect.poll(() => rail.locator("[data-permission-trigger]").count()).toBe(0);
+
+		// back to Claude Code from its group in pi's menu, in place again: the chat is still empty
+		await trigger.click();
+		await menu.locator('[data-agent-group="claude"] [data-agent-model-row]').first().click();
 		await expect.poll(engine).toBe("claude");
+		await expect.poll(() => rail.locator("[data-permission-trigger]").count()).toBe(1);
 		await rail.locator("textarea").fill("");
 		await send("start this chat");
 		await expect.poll(() => rail.textContent()).toContain("Done: start this chat");
@@ -409,19 +427,17 @@ describe("the agent rail in a browser", () => {
 
 		// a started chat asks before it changes agent
 		await trigger.click();
-		await expect.poll(() => menu.locator('[data-agent-group="spool"]').textContent()).toContain("new chat");
+		await expect.poll(() => menu.locator('[data-agent-group="pi"]').textContent()).toContain("new chat");
 		await row("Atlas").click();
-		const asking = menu.locator('[data-agent-new-chat="spool"]:not([inert] *)');
-		await expect
-			.poll(() => asking.textContent())
-			.toContain("Starts a new chat on spool. This one stays in your chats.");
+		const asking = menu.locator('[data-agent-new-chat="pi"]:not([inert] *)');
+		await expect.poll(() => asking.textContent()).toContain("Starts a new chat on pi. This one stays in your chats.");
 		await expect.poll(engine).toBe("claude");
 		await asking.getByRole("button", { name: "New chat", exact: true }).click();
-		await expect.poll(engine).toBe("spool");
+		await expect.poll(engine).toBe("pi");
 		await expect.poll(() => title.textContent()).toBe("New chat");
 
 		// the Claude chat is still there, and on the way back to it the trigger says whose
-		// it is, because spool is the usual agent now
+		// it is, because pi is the usual agent now
 		await title.click();
 		const older = chats.locator('[data-agent-thread="start this chat"]');
 		expect(await older.locator('[data-agent-thread-engine="claude"]').textContent()).toBe("Claude Code");
@@ -525,6 +541,13 @@ describe("the agent rail in a browser", () => {
 		const stored = () =>
 			page.evaluate(() => JSON.parse(localStorage.getItem("spool.panes.layout") ?? "null")?.right?.width);
 		expect(await width()).toBe(420);
+		// the side slides open, and a drag that starts while it still moves lands short: it has
+		// arrived once its edge stands where the rail begins
+		const settled = async () => {
+			const [edge, body] = await Promise.all([handle.boundingBox(), rail.boundingBox()]);
+			return edge !== null && body !== null && Math.abs(edge.x - body.x) < 1;
+		};
+		await expect.poll(settled).toBe(true);
 
 		// the right side grows to the left
 		await resize(480, 480);
@@ -532,6 +555,7 @@ describe("the agent rail in a browser", () => {
 		await page.reload();
 		await show(page);
 		await expect.poll(width).toBe(480);
+		await expect.poll(settled).toBe(true);
 
 		await resize(700, 560);
 		await resize(330, 380);

@@ -151,7 +151,11 @@ export function permissionClaude() {
 				);
 			}
 		},
-		(proc) => proc.exit(0),
+		(proc) => {
+			// asked `claude auth status --json`, as the agent menu asks of an agent it is not on (#364)
+			if (proc.spawn.args[0] === "auth") proc.emit(JSON.stringify({ loggedIn: true }));
+			proc.exit(0);
+		},
 	);
 	return {
 		...fixture,
