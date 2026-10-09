@@ -284,6 +284,35 @@ describe("the turn's line", () => {
 		expect(laid[2]?.steps.map((step) => step.kind)).toEqual(["wait"]);
 	});
 
+	it("draws a run of thinking between two steps as one line, its time the run's", () => {
+		const user: AgentEntry = { key: "a:user", kind: "user", text: "hi", context: null, attached: [] };
+		const wait = (n: number, at: number, ms: number | null, state: "done" | "running" = "done"): AgentEntry => ({
+			key: `a:wait:${n}`,
+			kind: "wait",
+			state,
+			at,
+			ms,
+		});
+		const row = { key: "a:row", kind: "row" } as unknown as AgentEntry;
+		const foot = { key: "turn", kind: "turn", tiles: [], status: null, thinking: false, ms: null, ending: null };
+		const laid = turnLayout([
+			user,
+			wait(0, 0, 900),
+			wait(1, 2_000, 1_100),
+			row,
+			wait(2, 9_000, 500),
+			foot as AgentEntry,
+		]);
+		const steps = laid.find(({ entry }) => entry.kind === "turn")?.steps ?? [];
+		expect(steps.map((step) => step.key)).toEqual(["a:wait:0", "a:row", "a:wait:2"]);
+		expect(steps[0]).toMatchObject({ kind: "wait", state: "done", ms: 2_000 });
+		// a run still counting counts on from what the run already took
+		const live = turnLayout([user, wait(0, 0, 900), wait(1, 5_000, null, "running"), foot as AgentEntry]);
+		const counting = live.find(({ entry }) => entry.kind === "turn")?.steps ?? [];
+		expect(counting).toHaveLength(1);
+		expect(counting[0]).toMatchObject({ key: "a:wait:0", state: "running", ms: null, at: 4_100 });
+	});
+
 	it("leaves a turn kept from before the foot as it was drawn", () => {
 		const old: AgentEntry[] = [
 			{ key: "a:user", kind: "user", text: "hi", context: null, attached: [] },
