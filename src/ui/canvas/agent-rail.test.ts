@@ -1149,7 +1149,7 @@ describe("a turn's foot", () => {
 			parent: null,
 		});
 		await settle();
-		const status = () => canvas.host.querySelector<HTMLButtonElement>("[data-agent-status]");
+		const status = () => canvas.host.querySelector<HTMLButtonElement>("[data-agent-turn-line]");
 		expect(canvas.host.querySelector('[data-agent-tile="hello-calm"]')?.getAttribute("data-agent-tile-state")).toBe(
 			"reading",
 		);
@@ -1173,7 +1173,7 @@ describe("a turn's foot", () => {
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
-		await until(() => status()?.getAttribute("data-agent-status") === "done");
+		await until(() => status()?.getAttribute("data-agent-turn-line") === "done");
 
 		expect(status()?.textContent).toMatch(/^Done in \d+s/);
 		expect(canvas.host.querySelector('[data-agent-tile="hello-calm"]')?.getAttribute("data-agent-tile-state")).toBe(
@@ -2934,7 +2934,7 @@ describe("an ask, anchored", () => {
 		await until(() => options(canvas.host).length > 0);
 
 		expect(look(canvas.host)).toBe("line");
-		const status = canvas.host.querySelector('[data-agent-status="waiting"]');
+		const status = canvas.host.querySelector('[data-agent-turn-line="waiting"]');
 		expect(status?.textContent).toContain("Waiting on you");
 		const block = canvas.host.querySelector<HTMLElement>("[data-agent-ask]");
 		expect(block?.textContent).toContain("Moving the new roast colours");
@@ -2956,7 +2956,7 @@ describe("an ask, anchored", () => {
 
 		// folded to one quiet line, and the line is the turn's own again
 		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe("Allowed: edit src/theme.ts");
-		expect(canvas.host.querySelector('[data-agent-status="waiting"]')).toBeNull();
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
 	});
 
 	it("folds a deny and an always the same quiet way", async () => {
@@ -3017,7 +3017,7 @@ describe("an ask, anchored", () => {
 		expect(picture?.textContent).toContain("3");
 		expect(picture?.textContent).toContain("The day as two roaster lanes.");
 		expect(canvas.host.querySelector('[data-agent-tile="home"]')?.hasAttribute("data-agent-tile-aside")).toBe(true);
-		expect(canvas.host.querySelector('[data-agent-status="waiting"]')?.textContent).toContain(
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')?.textContent).toContain(
 			"Which direction should I take further?",
 		);
 
@@ -3144,7 +3144,7 @@ describe("an ask, anchored", () => {
 			"home--bold",
 		);
 		// the turn's own line is still the turn's: one designer waits, the others work
-		expect(canvas.host.querySelector('[data-agent-status="waiting"]')).toBeNull();
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
 		expect(
 			canvas.host.querySelector("[data-agent-ask-under]") ?? canvas.host.querySelector("[data-agent-ask]"),
 		).not.toBeNull();

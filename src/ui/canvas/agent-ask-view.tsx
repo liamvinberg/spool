@@ -137,7 +137,7 @@ export function WaitingRow({
 	arriving?: boolean;
 }) {
 	return (
-		<div data-agent-status="waiting" className="-mx-1.5 flex min-h-[26px] items-center gap-2 px-1.5">
+		<div data-agent-turn-line="waiting" className="-mx-1.5 flex min-h-[26px] items-center gap-2 px-1.5">
 			<WaitingMark />
 			<span className="min-w-0 flex-1 text-text type-control">
 				{words}
@@ -151,8 +151,8 @@ export function WaitingRow({
 	);
 }
 
-/** what the line opens into, on a thread from its ring */
-export function Thread({ children, tight = false }: { children: ReactNode; tight?: boolean }) {
+/** what the line opens into, on a hairline from its ring */
+export function Hairline({ children, tight = false }: { children: ReactNode; tight?: boolean }) {
 	return (
 		<div
 			className={cn(

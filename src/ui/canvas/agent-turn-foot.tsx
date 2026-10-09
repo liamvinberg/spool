@@ -7,10 +7,10 @@ import {
 	type AskEntry,
 	type AskState,
 	Dismiss,
+	Hairline,
 	OptionList,
 	optionFrames,
 	Settled,
-	Thread,
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
@@ -130,7 +130,7 @@ export function TurnFoot({
 							}
 						/>
 					)}
-					<StatusLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
+					<TurnLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
 				</>
 			) : (
 				<LineAsk
@@ -198,9 +198,9 @@ function LineAsk({
 				{!entry.question ? (
 					<>
 						<WaitingRow words="Waiting on you" meta={meta} />
-						<Thread>
+						<Hairline>
 							<ApprovalBody entry={entry} ask={ask} permissions={permissions} />
-						</Thread>
+						</Hairline>
 					</>
 				) : named !== null && question !== null ? (
 					<>
@@ -220,9 +220,9 @@ function LineAsk({
 							arriving={entry.state === "arriving"}
 						/>
 						{ask.open && question !== null ? (
-							<Thread tight>
+							<Hairline tight>
 								<OptionList ask={ask} />
-							</Thread>
+							</Hairline>
 						) : null}
 					</>
 				)}
@@ -313,7 +313,7 @@ function PictureChoice({
 	);
 }
 
-function StatusLine({
+function TurnLine({
 	foot,
 	elapsed,
 	open,
@@ -330,7 +330,7 @@ function StatusLine({
 		<button
 			type="button"
 			aria-expanded={open}
-			data-agent-status={over ? (foot.ending ?? "done") : "running"}
+			data-agent-turn-line={over ? (foot.ending ?? "done") : "running"}
 			onClick={onToggle}
 			className={cn(
 				"-mx-1.5 flex h-[26px] items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150",
@@ -338,7 +338,7 @@ function StatusLine({
 				open && "bg-control",
 			)}
 		>
-			<StatusMark over={over} ending={foot.ending} />
+			<TurnMark over={over} ending={foot.ending} />
 			<span className="min-w-0 flex-1 truncate text-muted type-control">
 				{over ? (
 					words
@@ -367,7 +367,7 @@ function StatusLine({
 }
 
 /** a check once done, a square once stopped, a cross once failed, and a turning ring while live */
-function StatusMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
+function TurnMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
 	return (
 		<svg viewBox="0 0 14 14" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted" fill="none">
 			{!over ? (
@@ -520,7 +520,7 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 			{tile.state === "deleted" ? (
 				<span className="absolute inset-0 rounded-[3px] border border-muted border-dashed" />
 			) : null}
-			{tile.state === "editing" ? <Hand /> : null}
+			{tile.state === "editing" ? <CompanionMark /> : null}
 		</span>
 	);
 }
@@ -561,7 +561,7 @@ function Writing({ lines }: { lines: number }) {
 }
 
 /** the agent's companion, as the canvas draws it at the block it is changing (#366) */
-function Hand() {
+function CompanionMark() {
 	return (
 		<span className="pointer-events-none absolute inset-0">
 			<span className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-[#fff] opacity-60 mix-blend-difference" />
