@@ -62,9 +62,9 @@ import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
+import { AgentCompanionLayer } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
-import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
 import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
@@ -1318,13 +1318,19 @@ export function ProjectCanvas({
 
 	// the agent's hand (#214): where it is, and what it has just changed. The arms are a
 	// ref here because `requestSiteBoxes` reads them from inside a message handler
-	const { hand: handRead, marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
-	// a call on a file in a frame's own subfolder names that subfolder (#336): the hand is
-	// on the frame holding it
-	const hand = useMemo(
-		() => (handRead === null ? null : { ...handRead, frame: frameHolding(handRead.frame, reach.have) }),
-		[handRead, reach],
+	const { marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
+	// where each working agent is on the canvas (#366). A call on a file in a frame's own
+	// subfolder names that subfolder (#336): the agent is at the frame holding it
+	const companions = useMemo(
+		() =>
+			turn.companions.map((one) =>
+				one.frame === null ? one : { ...one, frame: frameHolding(one.frame, reach.have) },
+			),
+		[turn.companions, reach],
 	);
+	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
+	const [railShown, setRailShown] = useState(true);
+	const askFooted = !railShown && turn.phase === "asking";
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -5590,6 +5596,8 @@ export function ProjectCanvas({
 			icon: <AgentIcon />,
 			hotkey: "panes.agent",
 			working: turn.phase === "playing",
+			// a turn of any chat stopped on a question only a person can answer (#366)
+			waiting: turn.phase === "asking" || deck.threads.some((thread) => thread.life === "waiting"),
 			titled: true,
 			// another chat is running, waiting on a person, or landed unread (#364)
 			elsewhere: deck.threads.some((thread) => thread.id !== deck.open && thread.life !== "read"),
@@ -5647,6 +5655,7 @@ export function ProjectCanvas({
 			<PaneWindow
 				panes={panes}
 				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
+				onShown={(panes) => setRailShown(panes.includes("agent"))}
 				foot={
 					<RailFoot
 						onSettings={onSettings}
@@ -5874,7 +5883,13 @@ export function ProjectCanvas({
 							{/* the agent's hand (#214), in the same screen space as the furniture
 						    beside it: presence on any visible frame at any zoom, and a located
 						    mark wherever a document was live enough to be measured */}
-							<AgentHandLayer camera={camera} frames={visibleFrames} hand={hand} marks={handMarks} />
+							<AgentCompanionLayer
+								camera={camera}
+								frames={visibleFrames}
+								companions={companions}
+								marks={handMarks}
+								footed={askFooted}
+							/>
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
 								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />

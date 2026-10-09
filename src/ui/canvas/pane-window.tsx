@@ -65,6 +65,12 @@ export interface PaneDef {
 	 * person or landed unread (#364). One small dot on the icon, lit or not.
 	 */
 	readonly elsewhere?: boolean | undefined;
+	/**
+	 * Something in the pane stopped and only a person can move it: for the agent, a turn
+	 * waiting on an answer (#366). Its icon wears the waiting mark, out of sight or not,
+	 * because an ask standing on the canvas is answered there and the mark says whose it is.
+	 */
+	readonly waiting?: boolean | undefined;
 	/** the pane draws its own title into its header (`PaneTitle`), and the window's name and icon step aside */
 	readonly titled?: boolean | undefined;
 }
@@ -184,6 +190,7 @@ export function PaneWindow({
 	foot,
 	reveal,
 	children,
+	onShown,
 }: {
 	panes: readonly PaneDef[];
 	/** what stands at the foot of the right rail */
@@ -192,6 +199,8 @@ export function PaneWindow({
 	reveal?: { readonly pane: string; readonly key: string } | undefined;
 	/** the canvas */
 	children?: ReactNode;
+	/** which panes are on screen, said whenever that changes */
+	onShown?: ((panes: readonly string[]) => void) | undefined;
 }) {
 	// the registry is rebuilt on every render of its owner; what it is made of changes far less often
 	const shape = panes.map((pane) => `${pane.id}:${pane.hotkey}:${pane.title}`).join("|");
@@ -216,6 +225,12 @@ export function PaneWindow({
 	const height = env?.height ?? 0;
 	const visible = [...fits.left.shown, ...fits.right.shown];
 	const visibleKey = visible.join("|");
+
+	const shown = useRef(onShown);
+	shown.current = onShown;
+	useEffect(() => {
+		shown.current?.(visibleKey === "" ? [] : visibleKey.split("|"));
+	}, [visibleKey]);
 
 	const [held, setHeld] = useState<Held | null>(null);
 	const [menu, setMenu] = useState<{ pane: string; x: number; y: number } | null>(null);
@@ -979,6 +994,7 @@ export function PaneWindow({
 								lit={lit}
 								held={heldPane === pane}
 								working={!lit && def.working === true}
+								waiting={def.waiting === true}
 								unread={!lit && unread.has(pane)}
 								onPress={(event) => press(pane, "rail", event)}
 								onClick={(event) => picked(() => apply({ type: "click", pane, only: event.altKey }))}
@@ -1219,6 +1235,7 @@ function RailIcon({
 	lit,
 	held,
 	working,
+	waiting,
 	unread,
 	onPress,
 	onClick,
@@ -1228,6 +1245,7 @@ function RailIcon({
 	lit: boolean;
 	held: boolean;
 	working: boolean;
+	waiting: boolean;
 	unread: boolean;
 	onPress: (event: ReactPointerEvent<HTMLElement>) => void;
 	onClick: (event: ReactMouseEvent<HTMLElement>) => void;
@@ -1237,7 +1255,13 @@ function RailIcon({
 		<button
 			type="button"
 			data-rail-icon={def.id}
-			aria-label={def.elsewhere === true && !working && !unread ? `${def.title}, another chat has news` : def.title}
+			aria-label={
+				waiting
+					? `${def.title}, waiting on you`
+					: def.elsewhere === true && !working && !unread
+						? `${def.title}, another chat has news`
+						: def.title
+			}
 			aria-pressed={lit}
 			title={`${def.title} ${hotkeyKey(def.hotkey)}`}
 			onPointerDown={onPress}
@@ -1250,7 +1274,25 @@ function RailIcon({
 			)}
 		>
 			{def.icon}
-			{working ? (
+			{waiting ? (
+				<svg
+					viewBox="0 0 12 12"
+					aria-hidden="true"
+					data-rail-mark="waiting"
+					fill="none"
+					className="-right-1 absolute top-0 h-3 w-3 animate-agent-arrive rounded-full bg-bg text-text"
+				>
+					<circle
+						className="animate-agent-breathe"
+						cx="6"
+						cy="6"
+						r="4.6"
+						stroke="currentColor"
+						strokeWidth="1.4"
+					/>
+					<circle cx="6" cy="6" r="2.1" fill="currentColor" />
+				</svg>
+			) : working ? (
 				<svg
 					viewBox="0 0 14 14"
 					aria-hidden="true"
