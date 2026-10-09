@@ -68,6 +68,7 @@ import { AgentCompanionLayer } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
 import { type ArmedWrite, rangeKeyOf, useLocatedMarks } from "./agent-hand";
 import { useAgentModel } from "./agent-model";
+import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
@@ -1351,6 +1352,10 @@ export function ProjectCanvas({
 		if (by === undefined) return null;
 		return { entry, frame: by.frame, spot: by.spot };
 	}, [askFooted, turn.entries, companions]);
+	// answered, or the rail opened, the card fades where it stood rather than vanishing
+	const footedShown = useLeaving(footedAsk !== null, FADE_OUT_MS);
+	const footedLast = useHeld(footedAsk);
+	const standingAsk = footedShown === null ? null : (footedAsk ?? footedLast);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -5913,19 +5918,20 @@ export function ProjectCanvas({
 							{(() => {
 								// under its frame, or under the spot held for it while the frame is not there yet
 								const at =
-									footedAsk === null
+									standingAsk === null
 										? undefined
-										: (visibleFrames.find((one) => one.name === footedAsk.frame) ??
-											(footedAsk.frame === null || !reach.have.has(footedAsk.frame)
-												? (footedAsk.spot ?? undefined)
+										: (visibleFrames.find((one) => one.name === standingAsk.frame) ??
+											(standingAsk.frame === null || !reach.have.has(standingAsk.frame)
+												? (standingAsk.spot ?? undefined)
 												: undefined));
-								return footedAsk === null || at === undefined ? null : (
+								return standingAsk === null || at === undefined ? null : (
 									<CanvasAsk
-										key={footedAsk.entry.key}
+										key={standingAsk.entry.key}
 										camera={camera}
 										frame={at}
-										entry={footedAsk.entry}
+										entry={standingAsk.entry}
 										onAnswer={turn.answer}
+										leaving={footedShown === "leaving"}
 									/>
 								);
 							})()}

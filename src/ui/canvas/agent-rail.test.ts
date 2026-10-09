@@ -3210,6 +3210,12 @@ describe("an ask, anchored", () => {
 		const card = () => canvas.host.querySelector("[data-agent-canvas-ask]");
 		expect(card()?.textContent).toContain("Adding a date library");
 
+		// answered there, it fades where it stood and then goes
+		await act(async () => card()?.querySelector<HTMLButtonElement>('[data-agent-option="Allow"]')?.click());
+		expect(canvas.turn.answers.at(-1)?.request).toBe("req-1");
+		canvas.turn.push({ kind: "answered", request: "req-1", answer: "allow", words: null, parent: null });
+		await until(() => card()?.getAttribute("data-agent-canvas-ask") === "leaving");
+		await until(() => card() === null);
 	});
 
 	it("keeps a second waiting ask on screen as a card under the first", async () => {

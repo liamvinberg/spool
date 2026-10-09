@@ -33,12 +33,15 @@ export function CanvasAsk({
 	frame,
 	entry,
 	onAnswer,
+	leaving = false,
 }: {
 	camera: CameraStore;
 	/** the frame the ask is about, in canvas units */
 	frame: Box;
 	entry: AskEntry;
 	onAnswer: (request: string, reply: AgentReply) => void;
+	/** answered or taken back into the rail: it fades where it stands, and takes no more presses */
+	leaving?: boolean;
 }) {
 	const ask = useAsk(entry, onAnswer);
 	const card = useRef<HTMLDivElement | null>(null);
@@ -72,8 +75,12 @@ export function CanvasAsk({
 	return (
 		<div
 			ref={card}
-			data-agent-canvas-ask=""
-			className="pointer-events-auto absolute top-0 left-0"
+			data-agent-canvas-ask={leaving ? "leaving" : ""}
+			className={
+				leaving
+					? "pointer-events-none absolute top-0 left-0 animate-agent-fade-out"
+					: "pointer-events-auto absolute top-0 left-0"
+			}
 			style={{ width: WIDTH }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
