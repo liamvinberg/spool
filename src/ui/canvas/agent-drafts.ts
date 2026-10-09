@@ -1,10 +1,8 @@
 import { type Attachment, parseAttachments } from "../../attachment";
-import { type AgentEngineId, isAgentEngineId } from "../../daemon/agent-engine";
 import { beforeUpdate } from "../update-lifecycle";
 
 export interface ComposerDraft {
 	readonly id: string;
-	readonly engine: AgentEngineId;
 	readonly at: number;
 	readonly text: string;
 	readonly attached: readonly Attachment[];
@@ -61,13 +59,12 @@ export class AgentDrafts {
 				else if (isWords(value) && value.id === id && "images" in value && typeof value.images === "boolean") {
 					const words = {
 						id: value.id,
-						engine: value.engine,
 						at: value.at,
 						text: value.text,
 						images: value.images,
 					};
 					this.recovered.set(id, words);
-					this.entries.set(id, { id, engine: words.engine, at: words.at, text: words.text, attached: [] });
+					this.entries.set(id, { id, at: words.at, text: words.text, attached: [] });
 				}
 			}
 		} catch {
@@ -81,9 +78,7 @@ export class AgentDrafts {
 			this.storage.setItem(`${this.prefix}open`, this.open);
 			for (const id of this.dirty) {
 				const draft = this.entries.get(id);
-				const record = draft
-					? { id, engine: draft.engine, at: draft.at, text: draft.text, images: draft.attached.length > 0 }
-					: null;
+				const record = draft ? { id, at: draft.at, text: draft.text, images: draft.attached.length > 0 } : null;
 				this.storage.setItem(this.prefix + id, JSON.stringify(record));
 			}
 		} catch {
@@ -130,7 +125,6 @@ export class AgentDrafts {
 						const words = recovered ?? value;
 						this.entries.set(value.id, {
 							id: value.id,
-							engine: words.engine,
 							at: words.at,
 							text: words.text,
 							attached,
@@ -221,8 +215,6 @@ function isWords(value: unknown): value is DraftWords {
 	return (
 		"id" in value &&
 		typeof value.id === "string" &&
-		"engine" in value &&
-		isAgentEngineId(value.engine) &&
 		"at" in value &&
 		typeof value.at === "number" &&
 		Number.isFinite(value.at) &&

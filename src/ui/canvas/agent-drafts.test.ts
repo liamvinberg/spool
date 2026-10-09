@@ -4,7 +4,6 @@ import { AgentDrafts, type ComposerDraft } from "./agent-drafts";
 
 const first: ComposerDraft = {
 	id: "one",
-	engine: "claude",
 	at: 10,
 	text: "half a sentence",
 	attached: [

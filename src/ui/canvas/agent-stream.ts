@@ -251,7 +251,7 @@ export interface AgentDeck {
 	readonly onOpen: (id: string) => void;
 	/** the ✕ on a row: it leaves the list, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
-	/** the plus on the plate */
+	/** the + beside the thread title */
 	readonly onNew: (engine?: AgentEngineId) => void;
 }
 
@@ -645,13 +645,12 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 		(thread: Live) => {
 			drafts.put({
 				id: thread.id,
-				engine: engineOf(thread) ?? preference.current ?? "claude",
 				at: thread.at,
 				text: thread.draft,
 				attached: thread.attached,
 			});
 		},
-		[drafts, engineOf],
+		[drafts],
 	);
 
 	useEffect(() => {
