@@ -58,9 +58,10 @@ Under ask and edits, Spool turns on network access inside Codex's sandbox so
 Writes inside `design/` and read-only `spool` verbs are approved without asking;
 everything else Codex asks about reaches the rail. Whether Codex trusts the
 project is your own Codex setting: Spool sets none and does not write Codex's
-`config.toml`. A turn on a Codex older than 0.151.0, the
-first release that resumes a thread without loading its whole history, stops
-before it starts and says to update it.
+`config.toml`. A Codex older than 0.151.0, the first release
+that resumes a thread without loading its whole history, counts as not
+installed; a turn on one that could not say its version stops before it starts
+and says to update it.
 
 pi never asks before it acts, so a pi chat shows no permission menu. Spool asks
 pi to say what it is about to change outside `design/` before it does it.

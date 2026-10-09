@@ -1,19 +1,29 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
-import { CODEX_COMMAND, codexHandshake, planCodexSpawn } from "./agent-codex-spawn";
+import {
+	CODEX_COMMAND,
+	CODEX_MIN_VERSION,
+	codexHandshake,
+	planCodexSpawn,
+	versionAtLeast,
+	versionIn,
+} from "./agent-codex-spawn";
 import { startCodexTurn } from "./agent-codex-turn";
 import { mountDesigner } from "./agent-designer";
 import type { AgentEngine } from "./agent-engine";
 import { type AgentExecutor, probeAgent } from "./agent-exec";
 import type { AgentAsk, AgentModel, AgentOffer } from "./agent-offer";
-import { type AgentLogin, agentPath, type Look } from "./agent-preflight";
+import { type AgentLogin, agentInstalled, type Look } from "./agent-preflight";
 
 /**
  * Codex, the person's own, through `codex app-server` (#362).
  *
- * Installed means on `PATH` and at least `CODEX_MIN_VERSION`. Sign-in is Codex's own
+ * Installed means on `PATH` and at least `CODEX_MIN_VERSION`, so an older Codex is neither
+ * listed nor picked as the fallback; one whose version cannot be read is left to the
+ * handshake, which checks again. Sign-in is Codex's own
  * (`codex login` in a terminal); spool asks `account/read` and never manages a login. The
  * offer is `model/list`, live, with each model's own reasoning efforts. A thread is Codex's
  * own thread, resumed by the id spool keeps for it in its state directory.
@@ -25,6 +35,44 @@ export interface CodexEngineOptions {
 	/** spool's own version, which Codex is told in the handshake */
 	readonly version: string;
 	readonly look?: Look;
+	/**
+	 * The installed Codex's version, or null when it cannot say. By default the real one,
+	 * `codex --version`; where a test's `look` made the binary up, nothing is run and the
+	 * version is unknown.
+	 */
+	readonly codexVersion?: () => string | null;
+}
+
+/** how long a version too old to run is believed before Codex is asked again, after an update */
+const STALE_VERSION_MS = 10_000;
+
+/**
+ * `codex --version`, asked once and kept: a version spool runs stays good for the daemon's
+ * life, and an old or unreadable one is asked again after a while, so updating Codex and
+ * pressing Check again is enough. It runs off `PATH` the way a spawn does.
+ */
+function codexVersionReader(): () => string | null {
+	let known: { version: string | null; at: number } | undefined;
+	const good = (version: string | null) => version !== null && versionAtLeast(version, CODEX_MIN_VERSION);
+	return () => {
+		if (known !== undefined && (good(known.version) || Date.now() - known.at < STALE_VERSION_MS))
+			return known.version;
+		let version: string | null;
+		try {
+			version = versionIn(
+				execFileSync(CODEX_COMMAND, ["--version"], {
+					encoding: "utf8",
+					timeout: 5_000,
+					stdio: ["ignore", "pipe", "ignore"],
+					windowsHide: true,
+				}),
+			);
+		} catch {
+			version = null;
+		}
+		known = { version, at: Date.now() };
+		return version;
+	};
 }
 
 /** a probe is a local process answering about itself; a cold start is a few seconds */
@@ -191,12 +239,22 @@ export function codexChoice(offer: AgentOffer, wanted: AgentAsk, held: AgentAsk)
 	};
 }
 
-export function createCodexEngine({ executor, spoolDir, version, look }: CodexEngineOptions): AgentEngine {
+export function createCodexEngine({
+	executor,
+	spoolDir,
+	version,
+	look,
+	codexVersion = look === undefined ? codexVersionReader() : () => null,
+}: CodexEngineOptions): AgentEngine {
 	const sessions = codexSessions(spoolDir);
 	return {
 		id: "codex",
 		authentication: { kind: "external", command: "codex login" },
-		installed: () => agentPath(process.env, look, CODEX_COMMAND) !== undefined,
+		installed: () => {
+			if (!agentInstalled(process.env, look, CODEX_COMMAND)) return false;
+			const installed = codexVersion();
+			return installed === null || versionAtLeast(installed, CODEX_MIN_VERSION);
+		},
 		account: async (root, signal) => {
 			const read = await askCodex(
 				executor,

@@ -10,6 +10,7 @@ import {
 	type ScriptedStep,
 	scriptedAgentExecutor,
 } from "../test-helpers";
+import { fallbackEngine } from "./agent-defaults";
 import { codexChoice, codexOffer, codexSessions, createCodexEngine } from "./agent-engine-codex";
 import type { AgentEvent } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
@@ -250,16 +251,39 @@ describe("the codex engine's probes", () => {
 		);
 	});
 
-	it("is installed when a codex is on the path, without running it", () => {
-		const of = (found: boolean) =>
+	it("is installed when a codex at least the oldest spool runs is on the path", () => {
+		const read: string[] = [];
+		const of = (found: boolean, codexVersion: string | null) =>
 			createCodexEngine({
 				executor: scriptedAgentExecutor("codex-turn").executor,
 				spoolDir: makeTempDir(),
 				version: "0.33.1",
 				look: () => found,
+				codexVersion: () => {
+					read.push(String(codexVersion));
+					return codexVersion;
+				},
 			});
-		expect(of(true).installed()).toBe(true);
-		expect(of(false).installed()).toBe(false);
+		expect(of(true, "0.161.0").installed()).toBe(true);
+		expect(of(true, "0.151.0").installed()).toBe(true);
+		// one that cannot say its version is left to the handshake
+		expect(of(true, null).installed()).toBe(true);
+		expect(of(true, "0.150.0").installed()).toBe(false);
+		// nothing on the path is never asked its version
+		expect(of(false, "0.161.0").installed()).toBe(false);
+		expect(read).toEqual(["0.161.0", "0.151.0", "null", "0.150.0"]);
+	});
+
+	it("is passed over for the fallback when it is older than spool runs", () => {
+		const codex = createCodexEngine({
+			executor: scriptedAgentExecutor("codex-turn").executor,
+			spoolDir: makeTempDir(),
+			version: "0.33.1",
+			look: () => true,
+			codexVersion: () => "0.140.0",
+		});
+		const pi = { id: "pi" as const, installed: () => true };
+		expect(fallbackEngine([codex, pi])).toBe("pi");
 	});
 
 	it("ends a turn on a codex older than the protocol spool speaks, before starting a thread", async () => {

@@ -16,10 +16,10 @@ import type { AgentSpawn } from "./agent-spawn";
 export const CODEX_COMMAND = "codex";
 
 /**
- * The oldest Codex spool drives. Codex says its version in the handshake (`userAgent`), and
- * a turn on anything older ends there, saying so. It is not part of "installed": that is a
- * look along `PATH`, as Claude's is, because finding out a version means running a binary
- * spool has not been asked to run.
+ * The oldest Codex spool drives. Below it Codex counts as not installed: the engine asks
+ * `codex --version` once (`createCodexEngine`). Codex also says its version in the
+ * handshake (`userAgent`), and a turn on anything older ends there, saying so, for a Codex
+ * that could not say it before.
  *
  * 0.151.0 is the first release whose `thread/resume` takes `excludeTurns` without the
  * experimental API; 0.150.0 refuses it ("requires experimentalApi capability"), and a
