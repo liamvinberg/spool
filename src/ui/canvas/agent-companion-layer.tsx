@@ -26,11 +26,22 @@ import { useStillness } from "./stillness";
  * here frame by frame rather than by a transition, because a CSS transition between two
  * screen points is wrong the moment the camera moves under it.
  *
+ * A designer at its own work, its placeholder or the frame that landed there, has no square:
+ * the placeholder shows that work (#369). Squares are for frames that stand, and never drawn
+ * on a page other than their frame's (#376). Several on one frame stand side by side on its
+ * name row under one name, `3 designers`, rather than piling theirs up (#372).
+ *
  * The vocabulary and every number are `design/frames/explore/agent-rail/marks`'s.
  */
 
 /** the square's side, its halo against the canvas, and how far off the left wall it rides */
 const SIDE = 10;
+/**
+ * Docked on the name row it is a lighter square: smaller, in the muted ink, with no halo, so
+ * it reads as a mark beside the name rather than a block on the frame. It is the full ink
+ * square again the moment it goes to work.
+ */
+const DOCKED_SCALE = 0.7;
 const HALO = 2;
 const WALL = 12;
 /** the frame's name row: its centre stands this far above the frame's top edge */
@@ -40,6 +51,8 @@ const FULL = 320;
 /** the corners, struck just outside the frame and never closed */
 const OUT = 5;
 const ARM = 10;
+/** how far apart squares sharing a frame stand */
+const FAN = SIDE + 4;
 
 const OUT_EASE = curve(EASE.out);
 const IN_OUT = curve(EASE.inOut);
@@ -68,12 +81,46 @@ const WALL_FOOT: Anchor = { ox: 0, oy: 1, dx: -WALL, dy: 0 };
 /** under the frame, on the notch of the ask standing on the canvas there */
 const FOOT: Anchor = { ox: 0, oy: 1, dx: HANG.notch, dy: HANG.tip };
 
+/** the gap between the docked square and its name, and the name's width at 12px mono, near enough */
+const NAME_GAP = 6;
+const nameWidth = (name: string) => Math.round(name.length * 7.2);
+
+/**
+ * How much of each frame's name row, from its right edge leftward, the companions docked there
+ * take, in screen pixels: the square, and its name when two agents share the page. Teammates'
+ * pills step aside left of it (#373). Only the companions on `frames`, the page the canvas
+ * shows, as the layer draws and names only those (#376).
+ */
+export function dockRoom(
+	companions: readonly AgentCompanion[],
+	frames: readonly { readonly name: string }[],
+): Map<string, number> {
+	const here = new Set(frames.map((frame) => frame.name));
+	const placed = companions.filter((one) => !one.own && one.frame !== null && here.has(one.frame));
+	const named = placed.length >= 2;
+	const fans = fansOf(placed);
+	const room = new Map<string, number>();
+	for (const one of placed) {
+		if (one.frame === null) continue;
+		const fan = fans.get(one.key);
+		const label = fan === undefined ? one.name : fan.label;
+		const width = (fan?.slot ?? 0) * FAN + SIDE + (named && label !== null ? NAME_GAP + nameWidth(label) : 0);
+		room.set(one.frame, Math.max(room.get(one.frame) ?? 0, width));
+	}
+	return room;
+}
+
 function caretOf(lines: number): Anchor {
 	return { ox: 0.045, oy: 0.04 + 0.92 * Math.min(1, Math.max(lines, 1) / FULL), dx: -11, dy: 0 };
 }
 
 function at(anchor: Anchor, rect: Box): { x: number; y: number } {
 	return { x: rect.x + anchor.ox * rect.w + anchor.dx, y: rect.y + anchor.oy * rect.h + anchor.dy };
+}
+
+/** a point moved left along its row, where a square sharing its frame stands */
+function beside(point: { x: number; y: number }, shift: number): { x: number; y: number } {
+	return shift === 0 ? point : { x: point.x - shift, y: point.y };
 }
 
 export interface CompanionLayerProps {
@@ -97,6 +144,7 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	const shown = useDeparting(placed);
 	// names only once two agents share the page: one agent is the agent, two are a team
 	const named = placed.length >= 2;
+	const fans = fansOf(placed);
 
 	return (
 		<div className="pointer-events-none absolute inset-0" aria-hidden="true" data-agent-companions="">
@@ -104,14 +152,17 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 				const place = placeOf(companion, byName, stood.current);
 				if (place === null) return null;
 				const located = companion.frame === null ? null : latestMark(marks, companion.frame);
+				const fan = fans.get(companion.key);
+				const label = fan === undefined ? companion.name : fan.label;
 				return (
 					<Companion
 						key={companion.key === "" ? "main" : companion.key}
 						camera={camera}
-						companion={companion}
+						companion={label === companion.name ? companion : { ...companion, name: label }}
 						place={place}
 						located={located}
-						named={named && companion.name !== null}
+						shift={(fan?.slot ?? 0) * FAN}
+						named={named && label !== null}
 						footed={footed}
 						leaving={leaving}
 					/>
@@ -121,14 +172,40 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	);
 }
 
-/** where a companion stands: its frame, else the frame it just deleted, else its reserved spot */
+/**
+ * Where a companion stands: its frame on this page, else the frame it just deleted. Nowhere
+ * for a designer at its own work, which its placeholder shows, and nowhere for a frame on
+ * another page.
+ */
 function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood: Map<string, Box>): Box | null {
-	if (one.frame !== null) {
-		const frame = frames.get(one.frame);
-		if (frame !== undefined) return frame;
-		if (one.act === "delete") return stood.get(one.frame) ?? null;
+	if (one.own || one.frame === null) return null;
+	const frame = frames.get(one.frame);
+	if (frame !== undefined) return frame;
+	if (one.act === "delete") return stood.get(one.frame) ?? null;
+	return null;
+}
+
+/**
+ * The companions sharing a frame, each with its place along the frame's name row and the
+ * one name the row says: the last of them, furthest left, carries `3 designers`, and the
+ * rest carry none. A companion alone on its frame has no entry.
+ */
+export function fansOf(placed: readonly AgentCompanion[]): Map<string, { slot: number; label: string | null }> {
+	const byFrame = new Map<string, AgentCompanion[]>();
+	for (const one of placed) {
+		if (one.frame === null) continue;
+		byFrame.set(one.frame, [...(byFrame.get(one.frame) ?? []), one]);
 	}
-	return one.spot;
+	const fans = new Map<string, { slot: number; label: string | null }>();
+	for (const group of byFrame.values()) {
+		if (group.length < 2) continue;
+		const designers = group.filter((one) => one.key !== "").length;
+		const label = designers === group.length ? `${designers} designers` : `${group.length} agents`;
+		group.forEach((one, slot) => {
+			fans.set(one.key, { slot, label: slot === group.length - 1 ? label : null });
+		});
+	}
+	return fans;
 }
 
 function latestMark(marks: readonly LocatedMark[], frame: string): LocatedMark | null {
@@ -182,6 +259,7 @@ function Companion({
 	companion,
 	place,
 	located,
+	shift = 0,
 	named,
 	footed,
 	leaving,
@@ -190,6 +268,8 @@ function Companion({
 	companion: AgentCompanion;
 	place: Box;
 	located: LocatedMark | null;
+	/** screen pixels left of where it would stand alone, for a square sharing its frame */
+	shift?: number;
 	named: boolean;
 	footed: boolean;
 	leaving: boolean;
@@ -206,8 +286,8 @@ function Companion({
 	const flash = useRef<HTMLSpanElement | null>(null);
 	const corners = useRef<(HTMLSpanElement | null)[]>([]);
 
-	const latest = useRef({ place, located, camera });
-	latest.current = { place, located, camera };
+	const latest = useRef({ place, located, camera, shift });
+	latest.current = { place, located, camera, shift };
 	const motion = useRef<Motion>({ from: null, step: null, began: 0, queue: [], rest: DOCK });
 	const drawn = useRef<{ x: number; y: number } | null>(null);
 	/** what the read's trail reaches down to, and whether the wipe is uncovering the frame */
@@ -221,10 +301,12 @@ function Companion({
 	const [reading, setReading] = useState<"down" | "off" | null>(null);
 	const [gathering, setGathering] = useState(false);
 	const [drawing, setDrawing] = useState(false);
+	const [docked, setDocked] = useState(false);
+	const dockedNow = useRef(false);
 
 	/** one drawn frame: where the square is now, and everything that rides with it */
 	const draw = (now: number): boolean => {
-		const { place: box, camera: store, located: mark } = latest.current;
+		const { place: box, camera: store, located: mark, shift: aside } = latest.current;
 		const view = store.get();
 		const element = square.current;
 		if (view === null || element === null) return false;
@@ -239,7 +321,7 @@ function Companion({
 		}
 		if (m.step !== null) {
 			const step = m.step;
-			const target = at(step.to, rect);
+			const target = beside(at(step.to, rect), aside);
 			const from = m.from === null ? target : toScreen({ ...m.from, w: 0, h: 0 }, view);
 			const t = step.ms <= 0 ? 1 : Math.min(1, (now - m.began) / step.ms);
 			const e = step.ease(t);
@@ -255,8 +337,13 @@ function Companion({
 				m.step = null;
 				busy = m.queue.length > 0;
 			} else busy = true;
-		} else point = at(m.rest, rect);
+		} else point = beside(at(m.rest, rect), aside);
 		drawn.current = toWorld(point, view);
+		const home = m.step === null && m.queue.length === 0 && m.rest === DOCK;
+		if (home !== dockedNow.current) {
+			dockedNow.current = home;
+			setDocked(home);
+		}
 		element.style.transform = `translate(${point.x - SIDE / 2}px, ${point.y - SIDE / 2}px)`;
 
 		if (trail.current !== null) {
@@ -468,7 +555,7 @@ function Companion({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: what moved is the trigger
 	useLayoutEffect(() => {
 		if (!ticking.current) draw(performance.now());
-	}, [place.x, place.y, place.w, place.h, located, shooting, ringed, reading, gathering, drawing]);
+	}, [place.x, place.y, place.w, place.h, shift, located, shooting, ringed, reading, gathering, drawing]);
 
 	const waiting = act === "ask";
 	const id = companion.key === "" ? "main" : companion.key;
@@ -565,11 +652,12 @@ function Companion({
 						</svg>
 					) : (
 						<span
-							data-companion-square=""
-							className="block size-full bg-text transition-opacity duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)]"
+							data-companion-square={docked ? "docked" : ""}
+							className={`block size-full transition-[opacity,transform,background-color] duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] ${docked ? "bg-muted" : "bg-text"}`}
 							style={{
 								borderRadius: SIDE * 0.3,
-								boxShadow: `0 0 0 ${HALO}px var(--color-canvas)`,
+								boxShadow: docked ? "none" : `0 0 0 ${HALO}px var(--color-canvas)`,
+								transform: docked ? `scale(${DOCKED_SCALE})` : undefined,
 								opacity: dim ? 0.45 : 1,
 							}}
 						/>

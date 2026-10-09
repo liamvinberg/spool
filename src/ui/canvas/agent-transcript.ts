@@ -1,5 +1,5 @@
 import { type Attachment, restoredAttachments } from "../../attachment";
-import { type AgentEvent, type AgentLimit, DELEGATION_TOOL } from "../../daemon/agent-events";
+import { type AgentEvent, type AgentLimit, agentTask, DELEGATION_TOOL } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, detailOf, questionsOf } from "./agent-ask";
 import { type AgentCompanion, companionFold } from "./agent-companion";
@@ -223,7 +223,7 @@ export interface AgentPlan {
 /**
  * What is happening to one frame a turn touched, as the turn's grid draws it (#365).
  *
- * - `reading`: a designer is at work on it and nothing of it exists yet: the spot reserved for it.
+ * - `reading`: a designer is at work on it and nothing of it exists yet: its placeholder frame.
  * - `drawing`: its source is streaming in and it is not on disk yet; `lines` counts it.
  * - `fresh`: it just landed, and the call or designer that made it is still going.
  * - `editing`: a change just landed in it; `range` is the lines that moved.
@@ -238,9 +238,11 @@ export type SourceLine = readonly [indent: number, run: number];
 
 export interface AgentTile {
 	readonly key: string;
-	/** the frame's path, or the name of the spot reserved for it until it lands */
+	/** the frame's path, its placeholder's from the moment its designer starts (#369) */
 	readonly frame: string;
 	readonly state: TileState;
+	/** what its designer says it is doing, in the wire's words, while nothing of the frame has landed */
+	readonly step?: string;
 	readonly lines: number;
 	/** whose take it is, in the delegation's own words; null for the agent's own frame */
 	readonly by: string | null;
@@ -600,6 +602,7 @@ interface Tile {
 	source?: string;
 	sidecar?: string;
 	replay?: SourceLine[];
+	step?: string;
 	call: string | null;
 	task: string | null;
 	/** the `spool shot` call taking its picture, while it is out */
@@ -901,7 +904,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	/** every frame the turn touched, in the order it first touched them (#365) */
 	const tiles = new Map<string, Tile>();
 	/** every delegation the turn started, by its task */
-	const tasks = new Map<string, { description: string | null; agent: string | null; at: number; done: boolean }>();
+	const tasks = new Map<
+		string,
+		{ description: string | null; agent: string | null; delegate: boolean; at: number; done: boolean }
+	>();
 	/** the turn's ending, as the wire said it */
 	let ending: AgentTurnFoot["ending"] = null;
 
@@ -1563,17 +1569,29 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// and a stream that opened mid-delegation never saw the start
 				if (event.kind !== "task-done" && event.call !== null) taskCalls.set(event.task, event.call);
 				if (event.kind === "task-started") {
-					tasks.set(event.task, { description: event.description, agent: event.agent, at, done: false });
+					tasks.set(event.task, {
+						description: event.description,
+						agent: event.agent,
+						delegate: agentTask(event.type),
+						at,
+						done: false,
+					});
 					// a tile opened for this task before the task was said takes its words now
 					for (const tile of tiles.values())
 						if (tile.task === event.task && tile.by === null) tile.by = event.description;
 				}
+				// a designer's step shows in its placeholder until the frame lands there (#369)
+				if (event.kind === "task-step" && event.description !== null)
+					for (const tile of tiles.values())
+						if (tile.task === event.task && (tile.state === "reading" || tile.state === "drawing"))
+							tile.step = event.description;
 				if (event.kind === "task-done") {
 					const task = tasks.get(event.task);
 					if (task !== undefined) task.done = true;
 					// a designer that reported back is done with its frames, and says how long it took
 					for (const tile of tiles.values()) {
 						if (tile.task !== event.task) continue;
+						delete tile.step;
 						tile.state = settledState(tile.state);
 						if (task !== undefined) tile.took = at - task.at;
 					}
@@ -1631,7 +1649,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				}
 				delete tile.source;
 				delete tile.sidecar;
-				// a designer's real source, the moment its file lands in the spot held for it
+				delete tile.step;
+				// a designer's real source, the moment its file lands in the placeholder held for it
 				if (event.change === "created" && event.spot !== undefined && event.source !== undefined)
 					tile.replay = sourceShape(event.source);
 				if (event.change === "restored") tile.state = "done";
@@ -1790,7 +1809,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * · 278 lines` — which is never a bare "thinking".
 	 */
 	const statusOf = (): string | null => {
-		const all = [...tasks.values()];
+		// a background shell is a task but not an agent (#374)
+		const all = [...tasks.values()].filter((task) => task.delegate);
 		const working = all.filter((task) => !task.done).length;
 		if (working > 0) {
 			const designers = all.every((task) => task.agent === "designer");

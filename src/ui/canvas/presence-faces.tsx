@@ -2,7 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ROOT_PAGE } from "../../page-path";
 import { cn } from "../cn";
-import { idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
+import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
 
 /**
  * Who's here, at the top right of a team canvas (DEV-196): a face for each teammate on the project, a count
@@ -104,7 +104,7 @@ export function PresenceFaces({
 						data-presence-face={mate.person.accountId}
 						aria-label={`${following === mate.person.accountId ? "Stop following" : "Follow"} ${mate.person.name}`}
 						aria-pressed={following === mate.person.accountId}
-						title={mate.person.name}
+						title={agentSays(mate) === null ? mate.person.name : `${mate.person.name} · ${agentSays(mate)}`}
 						className="relative h-[30px] shrink-0 animate-presence-in"
 						style={{ width: i === shown.length - 1 && more === 0 ? SIZE : STEP, zIndex: shown.length - i }}
 						onClick={() => follow(mate)}
@@ -172,8 +172,8 @@ export function PresenceFaces({
 								>
 									{mate.person.name}
 								</span>
-								<span className="text-muted type-detail">
-									{idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page)}
+								<span className="max-w-[140px] truncate text-muted type-detail" data-presence-row-says="">
+									{agentSays(mate) ?? (idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page))}
 								</span>
 							</button>
 						))}

@@ -98,6 +98,25 @@ describe("the visible list", () => {
 		expect(row?.kind === "page" && row.count).toBe(3);
 	});
 
+	it("counts the frames on their way under a page, so a page of placeholders never reads 0", () => {
+		const waiting = railRows(
+			new Map<string, readonly string[]>([
+				[ROOT_PAGE, ["ideas"]],
+				["ideas", ["ideas/home"]],
+			]),
+			new Map<string, readonly RailFrame[]>(),
+			new Set(),
+			null,
+			null,
+			new Map([
+				["ideas", 2],
+				["ideas/home", 1],
+			]),
+		);
+		const row = waiting.find((each) => each.kind === "page" && each.page === "ideas");
+		expect(row?.kind === "page" && row.count).toBe(3);
+	});
+
 	it("marks the last frame of a page, which is where the spine stops", () => {
 		const last = rows.find((row) => row.kind === "frame" && row.name === "shell");
 		expect(last?.kind === "frame" && last.last).toBe(true);

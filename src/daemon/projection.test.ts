@@ -4,7 +4,14 @@ import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
 import { realDesignDir } from "./design-path";
 import { writePlacement } from "./geometry";
-import { listProjectFrames, lookupFrame, readFrameGeometry } from "./projection";
+import {
+	isPageFolder,
+	listProjectFrames,
+	lookupFrame,
+	pagePaths,
+	readFrameGeometry,
+	summarizeProject,
+} from "./projection";
 
 describe("frame birth", () => {
 	it("carries the folder's birth time so the finder can sort newest first", () => {
@@ -19,31 +26,69 @@ describe("frame birth", () => {
 	});
 });
 
-describe("a reserved spot", () => {
+describe("a frame on its way (#371)", () => {
 	const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
 		a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-	it("takes its own frame at the spot, and one too big for it clear of its neighbours", () => {
+	it("is a placeholder where its sidecar places it, never a page, and new frames stand clear of it", () => {
 		const root = makeTempDir();
-		writeDesignFile(root, join("frames", "neighbour", "frame.tsx"), "export default () => null;\n");
-		writeDesignFile(root, join("frames", "neighbour", "frame.json"), '{ "x": 500, "y": 1000, "w": 390, "h": 844 }\n');
-		writeDesignFile(root, join("frames", "fits", "frame.tsx"), "export default () => null;\n");
-		writeDesignFile(root, join("frames", "fits", "frame.json"), '{ "w": 390, "h": 844 }\n');
-		writeDesignFile(root, join("frames", "wide", "frame.tsx"), "export default () => null;\n");
-		writeDesignFile(root, join("frames", "wide", "frame.json"), '{ "w": 1440, "h": 900 }\n');
-		const reserved = [
-			{ name: "fits", x: 0, y: 0, w: 390, h: 844 },
-			{ name: "wide", x: 0, y: 1000, w: 390, h: 844 },
-		];
+		writeDesignFile(root, join("frames", "home", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "home", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		writeDesignFile(
+			root,
+			join("frames", "ideas", "home--split", "frame.json"),
+			'{ "x": 0, "y": 0, "w": 390, "h": 844, "placeholder": { "title": "Split home", "brief": "Two panes." } }\n',
+		);
+		writeDesignFile(root, join("frames", "ideas", "home--calm", "frame.tsx"), "export default () => null;\n");
 
-		const { frames } = listProjectFrames(root, { reserved });
+		const projection = listProjectFrames(root);
+		expect(projection.pages).toEqual(["ideas"]);
+		expect(projection.frames.map((frame) => frame.name)).toEqual(["home", "ideas/home--calm"]);
+		expect(projection.placeholders).toEqual([
+			{
+				name: "ideas/home--split",
+				page: "ideas",
+				x: 0,
+				y: 0,
+				w: 390,
+				h: 844,
+				title: "Split home",
+				brief: "Two panes.",
+			},
+		]);
+		const calm = projection.frames.find((frame) => frame.name === "ideas/home--calm");
+		expect(calm !== undefined && overlaps(calm, { x: 0, y: 0, w: 390, h: 844 })).toBe(false);
+		expect(isPageFolder(join(realDesignDir(root), "frames", "ideas", "home--split"))).toBe(false);
+		expect(lookupFrame(root, "ideas/home--split")).toEqual({ kind: "missing" });
+	});
 
-		const of = (name: string) => frames.find((frame) => frame.name === name) as (typeof frames)[number];
-		expect(of("fits")).toMatchObject({ x: 0, y: 0, w: 390, h: 844 });
-		expect(of("wide")).toMatchObject({ w: 1440, h: 900 });
-		for (const one of frames)
-			for (const other of frames)
-				if (one !== other) expect(overlaps(one, other), `${one.name} on ${other.name}`).toBe(false);
+	it("is neither a page nor drawn while its sidecar has no place yet", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "sized", "frame.json"), '{ "w": 1440, "h": 900 }\n');
+		writeDesignFile(root, join("frames", "torn", "frame.json"), '{ "x": 1');
+
+		const projection = listProjectFrames(root);
+		expect(projection).toMatchObject({ pages: [], frames: [], placeholders: [] });
+	});
+
+	it("is only a folder with no folders of its own: a page with a stray sidecar keeps its frames", async () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "shop", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		writeDesignFile(root, join("frames", "shop", "cart", "frame.tsx"), "export default () => null;\n");
+
+		const projection = listProjectFrames(root);
+		expect(projection.pages).toEqual(["shop"]);
+		expect(projection.frames.map((frame) => frame.name)).toEqual(["shop/cart"]);
+		expect(projection.placeholders).toEqual([]);
+		expect(isPageFolder(join(realDesignDir(root), "frames", "shop"))).toBe(true);
+		expect(await summarizeProject(root)).toMatchObject({ frameCount: 1 });
+	});
+
+	it("is never a page on the home card's walk either", async () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "only", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		expect(await summarizeProject(root)).toEqual({ frameCount: 0, covers: [] });
+		expect(pagePaths(root)).toEqual(new Set());
 	});
 });
 
@@ -179,11 +224,12 @@ describe("a sidecar that states size without position", () => {
 		const root = makeTempDir();
 		sized(root, "pricing", '{ "w": 1440, "h": 900 }\n');
 
-		const { frames, pages } = listProjectFrames(root);
+		const { frames, pages, placeholders } = listProjectFrames(root);
 
 		expect(frames).toEqual([]);
-		// a folder with no frame entry is a page, and pages own no geometry
-		expect(pages).toEqual(["pricing"]);
+		// a sidecar with no entry is a frame on its way, not a page (#371), and one with no place draws nothing
+		expect(pages).toEqual([]);
+		expect(placeholders).toEqual([]);
 		expect(readFileSync(join(root, "design", "frames", "pricing", "frame.json"), "utf8")).toBe(
 			'{ "w": 1440, "h": 900 }\n',
 		);

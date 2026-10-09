@@ -20,17 +20,26 @@ import { nameCall } from "./agent-nouns";
  */
 export type CompanionAct = "new" | "landed" | "read" | "edit" | "shot" | "delete" | "ask" | "idle";
 
-/** a place reserved on the canvas for a designer before its frame exists: the spot event's own shape */
+/** a designer's placeholder frame before its frame lands there: the spot event's own shape */
 export type CompanionSpot = Pick<AgentSpot, "name" | "x" | "y" | "w" | "h">;
 
 export interface AgentCompanion {
 	/** "" for the agent the person talks to, the delegating call for a designer */
 	readonly key: string;
-	/** a designer's short name, which the canvas shows once two agents share a page */
+	/**
+	 * a designer's short name, which the canvas shows once two agents share a page: its take,
+	 * from its own frame's name or its delegation's words, and never the name of the frame it
+	 * stands at (#372)
+	 */
 	readonly name: string | null;
-	/** the frame it is at, as a path under frames/; null while it holds only a spot */
+	/** the frame it is at, as a path under frames/; null while it holds only its placeholder */
 	readonly frame: string | null;
 	readonly spot: CompanionSpot | null;
+	/**
+	 * a designer at its own work: its placeholder, or the frame that landed there. The
+	 * placeholder shows that work, so the canvas draws no companion for it (#369)
+	 */
+	readonly own: boolean;
 	readonly act: CompanionAct;
 	/** new: lines streamed so far; edit and landed: lines in the file */
 	readonly lines: number;
@@ -64,6 +73,30 @@ function takeOf(name: string): string {
 	const leaf = name.split("/").pop() ?? name;
 	const at = leaf.lastIndexOf("--");
 	return at >= 0 ? leaf.slice(at + 2) : leaf;
+}
+
+/** a delegation's take, from its own words: `Design a calmer home direction` → `calmer home` */
+function takeOfWords(description: string): string {
+	const words = description
+		.toLowerCase()
+		.replace(/[^a-z0-9\s-]+/g, " ")
+		.split(/\s+/)
+		.filter((word) => word !== "");
+	while (words.length > 1 && ["design", "draw", "make", "create", "build", "the", "a", "an"].includes(words[0] ?? ""))
+		words.shift();
+	while (words.length > 1 && ["frame", "take", "variant", "direction"].includes(words[words.length - 1] ?? ""))
+		words.pop();
+	return words.join(" ");
+}
+
+/** a short name whose every word the frame's own name already holds */
+function echoes(frame: string, name: string): boolean {
+	const words = new Set((frame.split("/").pop() ?? frame).toLowerCase().split(/[-\s]+/));
+	return name
+		.toLowerCase()
+		.split(/\s+/)
+		.filter((word) => !/^\d+$/.test(word))
+		.every((word) => words.has(word));
 }
 
 /**
@@ -118,7 +151,7 @@ export interface CompanionFold {
 	/**
 	 * Every working agent and where it is, as of the last event.
 	 *
-	 * Only agents that are somewhere: a frame or a reserved spot. An agent that has touched
+	 * Only agents that are somewhere: a frame or a placeholder. An agent that has touched
 	 * nothing on the canvas has no square, and a designer that reported back has gone.
 	 */
 	companions(): AgentCompanion[];
@@ -130,6 +163,10 @@ export interface CompanionFold {
  */
 export function companionFold(indexes: CompanionIndexes): CompanionFold {
 	const by = new Map<string, Standing>();
+	/** each designer's own frame, its placeholder's name, and the frame that landed there */
+	const own = new Map<string, Set<string>>();
+	/** each designer's delegation, in its own words */
+	const said = new Map<string, string>();
 	/** asks from agents nowhere on the canvas yet, still waiting */
 	const waits = new Map<string, { call: string | null; request: string }>();
 
@@ -186,6 +223,10 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 				}
 				return;
 			}
+			case "task-started": {
+				if (event.call !== null && event.description !== null) said.set(event.call, event.description);
+				return;
+			}
 			case "task-done": {
 				// a designer that reported back is done here: its square goes
 				const call = indexes.callOfTask(event.task);
@@ -202,6 +243,12 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 			}
 			case "frame": {
 				const agent = agentOf(event.task, event.parent);
+				// a frame a designer made is its own work, which its tile and its placeholder show
+				if (agent !== "" && event.change === "created")
+					own.set(
+						agent,
+						new Set([...(own.get(agent) ?? []), ...(event.spot === undefined ? [] : [event.spot]), event.frame]),
+					);
 				const act: CompanionAct =
 					event.change === "changed" ? "edit" : event.change === "deleted" ? "delete" : "landed";
 				put(agent, { frame: event.frame, spot: null, act, lines: event.lines, range: event.range ?? null }, index);
@@ -209,6 +256,10 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 			}
 			case "spot": {
 				const agent = event.call ?? agentOf(event.task, event.parent);
+				const mine = own.get(agent) ?? new Set<string>();
+				mine.add(event.name);
+				if (event.frame !== undefined) mine.add(event.frame);
+				own.set(agent, mine);
 				if (event.state === "held") {
 					const { name, x, y, w, h } = event;
 					put(agent, { frame: null, spot: { name, x, y, w, h }, act: "idle" }, index);
@@ -241,27 +292,32 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 
 	const companions = (): AgentCompanion[] => {
 		const standing = [...by];
+		// a designer goes by its take: its own frame's, else its delegation's words (#372)
 		const names = shortNames(
-			standing.map(([key, one]) =>
-				key === ""
-					? null
-					: one.frame !== null
-						? takeOf(one.frame)
-						: one.spot !== null
-							? takeOf(one.spot.name)
-							: null,
-			),
+			standing.map(([key]) => {
+				if (key === "") return null;
+				const frame = [...(own.get(key) ?? [])][0];
+				const words = said.get(key);
+				return frame !== undefined ? takeOf(frame) : words === undefined ? null : takeOfWords(words);
+			}),
 		);
-		return standing.map(([key, standing], index) => ({
-			key,
-			name: names[index] ?? null,
-			frame: standing.frame,
-			spot: standing.frame === null ? standing.spot : null,
-			act: standing.act,
-			lines: standing.lines,
-			range: standing.range,
-			beat: standing.beat,
-		}));
+		return standing.map(([key, standing], index) => {
+			const name = names[index] ?? null;
+			return {
+				key,
+				// a name the frame it stands at already says is no name at all
+				name: name !== null && standing.frame !== null && echoes(standing.frame, name) ? null : name,
+				frame: standing.frame,
+				spot: standing.frame === null ? standing.spot : null,
+				own:
+					key !== "" &&
+					(standing.frame === null ? standing.spot !== null : (own.get(key)?.has(standing.frame) ?? false)),
+				act: standing.act,
+				lines: standing.lines,
+				range: standing.range,
+				beat: standing.beat,
+			};
+		});
 	};
 
 	return { see, companions };

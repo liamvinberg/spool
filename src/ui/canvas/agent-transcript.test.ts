@@ -1674,6 +1674,44 @@ describe("how a row settles", () => {
 		});
 		expect(rows(transcriptOf([{ text: "go" }], events).entries)[0]).toMatchObject({ state: "done" });
 	});
+
+	/**
+	 * Claude Code's background shells are tasks too (`local_bash`), and a turn runs dozens of
+	 * them: counted as agents they made "1 agent working" before any designer existed and
+	 * "1 agent working, 31 done" out of four designers (#374).
+	 */
+	it("counts designers working and never a background shell", () => {
+		const started = (task: string, type: string, agent: string | null) =>
+			({
+				kind: "task-started",
+				task,
+				call: null,
+				description: null,
+				agent,
+				prompt: null,
+				type,
+				parent: null,
+			}) as const;
+		const done = (task: string) =>
+			({ kind: "task-done", task, status: "completed", summary: null, parent: null }) as const;
+		const status = (events: Parameters<typeof stamp>[0]) =>
+			transcriptOf([{ text: "go" }], stamp(events)).foot?.status;
+
+		const shells = [started("b1", "local_bash", null), done("b1"), started("b2", "local_bash", null)];
+		expect(status([ready, ...shells])).toBeNull();
+
+		const fanout = [
+			ready,
+			...shells,
+			started("a1", "local_agent", "designer"),
+			started("a2", "local_agent", "designer"),
+			started("b3", "local_bash", null),
+			done("b3"),
+			done("a1"),
+		];
+		expect(status(fanout)).toBe("1 designer working, 1 done");
+		expect(status([...fanout, started("a3", "local_agent", "designer")])).toBe("2 designers working, 1 done");
+	});
 });
 
 describe("what a delegate does", () => {

@@ -1,3 +1,4 @@
+import type { ProjectedPlaceholder } from "../../daemon/projection";
 import { composePage, fitComposition, medianFrameArea, type PageComposition, pageBox, type Rect } from "../../page-box";
 import { pageHolds, pageName, pageParent, pageSlot } from "../../page-path";
 import type { Place, ProjectedFrame } from "../api";
@@ -17,6 +18,8 @@ export interface PageObjectFrame extends Rect {
 	readonly name: string;
 	/** The frame's cover hash, absent while it has no picture yet. */
 	readonly hash?: string;
+	/** A frame on its way, a designer's placeholder: drawn dashed, with nothing in it */
+	readonly waiting?: true;
 }
 
 export interface PageObject {
@@ -24,7 +27,10 @@ export interface PageObject {
 	readonly page: string;
 	/** What it is called — the last segment, which is what the label says. */
 	readonly name: string;
-	/** Every frame under it, its own pages' included: the number the rail carries. */
+	/**
+	 * Every frame under it, its own pages' included, and every one on its way there: the
+	 * number the rail carries. A page of placeholders is not empty (#371).
+	 */
 	readonly count: number;
 	readonly x: number;
 	readonly y: number;
@@ -52,6 +58,8 @@ export function pageObjectsOn(
 	pages: readonly string[],
 	frames: readonly ProjectedFrame[],
 	places: Readonly<Record<string, Place>>,
+	/** the frames on their way: designers' placeholders, which a page's picture draws too */
+	waiting: readonly ProjectedPlaceholder[] = [],
 ): PageObject[] {
 	const beside = frames.filter((frame) => pageSlot(frame) === activePage);
 	const median = medianFrameArea(beside);
@@ -62,8 +70,9 @@ export function pageObjectsOn(
 			const at = places[page];
 			if (at === undefined) return [];
 			const under = framesUnder(page, frames);
-			const composition = composePage(
-				under.map((frame) => ({
+			const coming = waiting.filter((one) => pageHolds(page, pageSlot(one)));
+			const composition = composePage<PageObjectFrame>([
+				...under.map((frame) => ({
 					name: frame.name,
 					x: frame.x,
 					y: frame.y,
@@ -71,13 +80,15 @@ export function pageObjectsOn(
 					h: frame.h,
 					...(frame.cover === undefined ? {} : { hash: frame.cover.hash }),
 				})),
-			);
-			const box = pageBox(composition, median, under.length);
+				...coming.map(({ name, x, y, w, h }) => ({ name, x, y, w, h, waiting: true as const })),
+			]);
+			const count = under.length + coming.length;
+			const box = pageBox(composition, median, count);
 			return [
 				{
 					page,
 					name: pageName(page),
-					count: under.length,
+					count,
 					x: at.x,
 					y: at.y,
 					...box,
@@ -118,7 +129,14 @@ export function pageObjectAt(objects: readonly PageObject[], point: { x: number;
  * written into, which holds nothing anywhere and gets the words the empty
  * project gets, scoped to itself.
  */
-export function pageIsBare(activePage: string, pages: readonly string[], frames: readonly ProjectedFrame[]): boolean {
+export function pageIsBare(
+	activePage: string,
+	pages: readonly string[],
+	frames: readonly ProjectedFrame[],
+	waiting: readonly ProjectedPlaceholder[] = [],
+): boolean {
 	if (frames.some((frame) => pageSlot(frame) === activePage)) return false;
+	// a designer's placeholder is drawn on the page, so the page is not bare
+	if (waiting.some((one) => pageSlot(one) === activePage)) return false;
 	return !pages.some((page) => pageParent(page) === activePage);
 }

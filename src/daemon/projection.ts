@@ -1,4 +1,4 @@
-import { type Dirent, lstatSync, readdirSync } from "node:fs";
+import { type Dirent, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
@@ -9,11 +9,12 @@ import { type CanvasOrder, readOrder } from "./canvas-order";
 import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { type Footprint, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
-import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, overlaps, pageObjectsOn, placePages } from "./placement";
+import { type Footprint, parseGeometry, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
+import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { type Unseen, unseenNow } from "./seen";
+import { type PlaceholderNote, parsePlaceholder } from "./sidecar";
 import { readCoverAwaited, scanCovers } from "./thumbs";
 
 export { frameFolder } from "../page-path";
@@ -34,6 +35,11 @@ export { pageObjectBox, placePages } from "./placement";
  * What makes a folder a frame is its entry filename, frame.tsx, because that
  * must stay knowable by every layer even while source is broken mid-edit; a
  * filename survives a syntax error.
+ *
+ * A folder holding a frame.json and no frame.tsx yet is a frame on its way: a
+ * placeholder frame spool made for a designer, or a sidecar written before its
+ * source. It is never a page. Where its sidecar places it, the canvas draws it
+ * as a placeholder; it is no frame to anything that compiles, plays or shoots.
  */
 
 export interface ProjectedFrame {
@@ -64,6 +70,18 @@ export interface ProjectedFrame {
 	unseen?: Unseen;
 }
 
+/** A frame on its way (a folder with frame.json and no frame.tsx yet), where its sidecar places it. */
+export interface ProjectedPlaceholder extends PlaceholderNote {
+	/** The path its frame will have. */
+	name: string;
+	/** The path of the page holding its folder; absent on the root page. */
+	page?: string;
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
 export interface Projection {
 	root: string;
 	/** Every named page's path, sorted, empty ones included; the root page is implied. */
@@ -79,6 +97,8 @@ export interface Projection {
 	 */
 	places: Record<string, Place>;
 	frames: ProjectedFrame[];
+	/** The frames on their way that have a place, by name: what the canvas draws as placeholders. */
+	placeholders: ProjectedPlaceholder[];
 }
 
 /** Where a frame name lands on disk, or that it lands nowhere. */
@@ -114,10 +134,34 @@ function hasEntry(directory: string): boolean {
 }
 
 /**
+ * A frame.json in a folder with no entry and no folders of its own: a frame on its way
+ * rather than a page. A page folder a stray sidecar landed in stays a page, its frames
+ * and all.
+ */
+function hasSidecar(directory: string): boolean {
+	try {
+		lstatSync(join(directory, "frame.json"));
+		return !readdirSync(directory, { withFileTypes: true }).some((entry) => entry.isDirectory());
+	} catch {
+		return false;
+	}
+}
+
+/** The same, read without blocking. */
+async function hasSidecarAwaited(directory: string): Promise<boolean> {
+	if (!(await hasEntryAwaited(directory, "frame.json"))) return false;
+	try {
+		return !(await readdir(directory, { withFileTypes: true })).some((entry) => entry.isDirectory());
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Discovery's own page test, asked of one folder: it is there, it is a folder,
- * and it holds no frame entry. A path a delete has already taken answers no,
- * which is what keeps a reader naming the frame that vanished rather than
- * walking on into what used to be inside it.
+ * and it holds neither a frame entry nor a sidecar. A path a delete has already
+ * taken answers no, which is what keeps a reader naming the frame that vanished
+ * rather than walking on into what used to be inside it.
  */
 export function isPageFolder(directory: string): boolean {
 	try {
@@ -125,7 +169,7 @@ export function isPageFolder(directory: string): boolean {
 	} catch {
 		return false;
 	}
-	return !hasEntry(directory);
+	return !hasEntry(directory) && !hasSidecar(directory);
 }
 
 /** Whether root + name resolves to one frame folder. */
@@ -144,6 +188,8 @@ interface Discovery {
 	/** Every frame, sorted by name. */
 	frames: DiscoveredFrame[];
 	pages: string[];
+	/** Every frame on its way: a folder with a sidecar and no entry yet, sorted by name. */
+	pending: DiscoveredFrame[];
 }
 
 /** Where a project's frames live, or nothing when design/ cannot be read. */
@@ -159,10 +205,16 @@ function framesDirOf(root: string): { designDir: string; framesDir: string } | u
 
 /** What a walk collected, sorted: both walks below share this, so the two can
  * never disagree about what a project holds. */
-function assemble(designDir: string, frames: DiscoveredFrame[], pages: string[]): Discovery {
+function assemble(
+	designDir: string,
+	frames: DiscoveredFrame[],
+	pages: string[],
+	pending: DiscoveredFrame[],
+): Discovery {
 	frames.sort((a, b) => a.name.localeCompare(b.name));
 	pages.sort((a, b) => a.localeCompare(b));
-	return { designDir, frames, pages };
+	pending.sort((a, b) => a.name.localeCompare(b.name));
+	return { designDir, frames, pages, pending };
 }
 
 /** A frame folder found on a page, named by its path. */
@@ -172,8 +224,8 @@ function discovered(page: string, folder: string, dir: string): DiscoveredFrame 
 
 /**
  * One walk of design/frames: a safe-named folder holding a frame entry is a
- * frame, and one without a frame entry is a page, whose own folders this asks
- * the same question of. A page is a page at any depth (#231) — nothing here
+ * frame, one holding only a sidecar is a frame on its way, and one with neither
+ * is a page, whose own folders this asks the same question of. A page is a page at any depth (#231) — nothing here
  * counts levels — and the page a frame carries is the path of the folder chain
  * above it, the root page's frames carrying none.
  */
@@ -182,6 +234,7 @@ function discover(root: string): Discovery | undefined {
 	if (dirs === undefined) return undefined;
 	const frames: DiscoveredFrame[] = [];
 	const pages: string[] = [];
+	const pending: DiscoveredFrame[] = [];
 	// framesDir is resolved, and a directory entry is never a symlink, so every
 	// path built from here down is inside design/ without asking again
 	const walk = (dir: string, page: string): void => {
@@ -198,13 +251,17 @@ function discover(root: string): Discovery | undefined {
 				frames.push(discovered(page, entry.name, child));
 				continue;
 			}
+			if (hasSidecar(child)) {
+				pending.push(discovered(page, entry.name, child));
+				continue;
+			}
 			const inner = pageUnder(page, entry.name);
 			pages.push(inner);
 			walk(child, inner);
 		}
 	};
 	walk(dirs.framesDir, ROOT_PAGE);
-	return assemble(dirs.designDir, frames, pages);
+	return assemble(dirs.designDir, frames, pages, pending);
 }
 
 /**
@@ -216,34 +273,41 @@ function discover(root: string): Discovery | undefined {
 async function discoverAwaited(root: string): Promise<Discovery | undefined> {
 	const dirs = framesDirOf(root);
 	if (dirs === undefined) return undefined;
-	const walk = async (dir: string, page: string): Promise<{ pages: string[]; frames: DiscoveredFrame[] }> => {
+	type Walked = { pages: string[]; frames: DiscoveredFrame[]; pending: DiscoveredFrame[] };
+	const walk = async (dir: string, page: string): Promise<Walked> => {
 		let entries: Dirent[];
 		try {
 			entries = await readdir(dir, { withFileTypes: true });
 		} catch {
-			return { pages: [], frames: [] };
+			return { pages: [], frames: [], pending: [] };
 		}
 		const walked = await Promise.all(
 			entries
 				.filter((entry) => entry.isDirectory() && isSafeName(entry.name))
-				.map(async (entry): Promise<{ pages: string[]; frames: DiscoveredFrame[] }> => {
+				.map(async (entry): Promise<Walked> => {
 					const child = join(dir, entry.name);
-					if (await hasEntryAwaited(child)) return { pages: [], frames: [discovered(page, entry.name, child)] };
+					const here = discovered(page, entry.name, child);
+					if (await hasEntryAwaited(child)) return { pages: [], frames: [here], pending: [] };
+					if (await hasSidecarAwaited(child)) return { pages: [], frames: [], pending: [here] };
 					const inner = pageUnder(page, entry.name);
 					const below = await walk(child, inner);
-					return { pages: [inner, ...below.pages], frames: below.frames };
+					return { pages: [inner, ...below.pages], frames: below.frames, pending: below.pending };
 				}),
 		);
-		return { pages: walked.flatMap((each) => each.pages), frames: walked.flatMap((each) => each.frames) };
+		return {
+			pages: walked.flatMap((each) => each.pages),
+			frames: walked.flatMap((each) => each.frames),
+			pending: walked.flatMap((each) => each.pending),
+		};
 	};
 	const walked = await walk(dirs.framesDir, ROOT_PAGE);
-	return assemble(dirs.designDir, walked.frames, walked.pages);
+	return assemble(dirs.designDir, walked.frames, walked.pages, walked.pending);
 }
 
 /** `hasEntry` without the blocking stat; the same lexical marker either way. */
-async function hasEntryAwaited(directory: string): Promise<boolean> {
+async function hasEntryAwaited(directory: string, file = "frame.tsx"): Promise<boolean> {
 	try {
-		await lstat(join(directory, "frame.tsx"));
+		await lstat(join(directory, file));
 		return true;
 	} catch {
 		return false;
@@ -300,29 +364,42 @@ export function discoverFrames(root: string): { name: string; page?: string; dir
 	);
 }
 
-/**
- * A spot on the root page reserved for a delegation that has not landed its frame yet (#365).
- * `frame` is the frame that filled it, once one has.
- */
-export interface ReservedSpot extends Rect {
-	readonly name: string;
-	readonly frame?: string;
+/** The frames on their way whose sidecars place them, with what their placeholder records say. */
+function placeholdersOf(discovery: Discovery): ProjectedPlaceholder[] {
+	const found: ProjectedPlaceholder[] = [];
+	for (const frame of discovery.pending) {
+		let value: unknown;
+		try {
+			value = JSON.parse(
+				readFileSync(resolveDesignPath(discovery.designDir, join(frame.dir, "frame.json")), "utf8"),
+			);
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+			continue;
+		}
+		// a sidecar with no place yet is a write caught halfway: nothing to draw until it has one
+		const geometry = parseGeometry(value);
+		if (geometry === undefined) continue;
+		found.push({
+			name: frame.name,
+			...(frame.page === undefined ? {} : { page: frame.page }),
+			...geometry,
+			...parsePlaceholder(value),
+		});
+	}
+	return found;
 }
 
 /**
  * Every frame, placed. `seen` decorates each one with whether it has been
  * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
  *
- * `reserved` is the spots running turns reserve for their delegations (#365). A frame born
- * into one stands in it, and every other new frame on the root page stands clear of
- * the ones still empty.
+ * The placeholders stand on their pages' fields like frames: a new frame stands
+ * clear of them, and the frame that lands in one already has its place.
  */
-export function listProjectFrames(
-	root: string,
-	options: { seen?: boolean; reserved?: readonly ReservedSpot[] } = {},
-): Projection {
+export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
 	const discovery = discover(root);
-	if (discovery === undefined) return { root, pages: [], places: {}, frames: [] };
+	if (discovery === undefined) return { root, pages: [], places: {}, frames: [], placeholders: [] };
 
 	// one sweep of the cover store answers every frame from immutable image names,
 	// so this costs a readdir per frame folder and opens no image
@@ -331,17 +408,16 @@ export function listProjectFrames(
 	const placed: ProjectedFrame[] = [];
 	// a frame awaiting a position carries the size it will get it at: the one its
 	// sidecar states, else the default (#113)
-	const unplaced: { frame: DiscoveredFrame; footprint: Footprint; sized: boolean }[] = [];
+	const unplaced: { frame: DiscoveredFrame; footprint: Footprint }[] = [];
 	for (const frame of discovery.frames) {
 		const sidecar = readSidecar(join(frame.dir, "frame.json"), discovery.designDir);
 		if (sidecar.kind === "placed") placed.push(projected(frame, sidecar.geometry, covers.get(frame.name)));
 		else {
 			const footprint = sidecar.kind === "sized" ? sidecar.footprint : DEFAULT_FOOTPRINT;
-			unplaced.push({ frame, footprint, sized: sidecar.kind === "sized" });
+			unplaced.push({ frame, footprint });
 		}
 	}
-	const reserved = options.reserved ?? [];
-	const open = reserved.filter((spot) => spot.frame === undefined);
+	const placeholders = placeholdersOf(discovery);
 
 	const stored = readStoredPlaces(root);
 
@@ -349,26 +425,16 @@ export function listProjectFrames(
 	// top of it — and never beside another page's (#39). The pages standing on
 	// that field are part of it (#265): a page is a thing on the canvas, so a
 	// frame may no more be born on top of one than on top of another frame
-	for (const { frame, footprint, sized } of unplaced) {
+	for (const { frame, footprint } of unplaced) {
 		const slot = frame.page ?? ROOT_PAGE;
-		const field: Rect[] = placed.filter((candidate) => candidate.page === frame.page);
+		const field: Rect[] = [
+			...placed.filter((candidate) => candidate.page === frame.page),
+			...placeholders.filter((one) => one.page === frame.page),
+		];
 		for (const { at, box } of pageObjectsOn(slot, discovery.pages, placed, stored)) {
 			field.push({ ...at, ...box });
 		}
-		// a reserved spot is the root page's: its own frame stands in it, and nothing else does
-		const spot =
-			frame.page === undefined
-				? (reserved.find((one) => one.frame === frame.name) ?? open.find((one) => one.name === frame.name))
-				: undefined;
-		if (frame.page === undefined) field.push(...open.filter((one) => one !== spot));
-		// a frame with a size of its own bigger than its spot stands clear of its neighbours
-		// instead, as any new frame does (story 57), and the turn's spot follows it there
-		const inSpot =
-			spot === undefined ? undefined : { x: spot.x, y: spot.y, ...(sized ? footprint : { w: spot.w, h: spot.h }) };
-		const geometry =
-			inSpot === undefined || field.some((other) => overlaps(inSpot, other))
-				? { ...besideField(field), ...footprint }
-				: inSpot;
+		const geometry = { ...besideField(field), ...footprint };
 		try {
 			const persisted = writePlacement(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {
@@ -402,7 +468,7 @@ export function listProjectFrames(
 			// placement stays deterministic within this daemon run either way
 		}
 	}
-	return { root, pages: discovery.pages, places, frames: placed };
+	return { root, pages: discovery.pages, places, frames: placed, placeholders };
 }
 
 function readStoredPlaces(root: string): CanvasPlaces {

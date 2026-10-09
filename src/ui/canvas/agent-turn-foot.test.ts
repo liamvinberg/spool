@@ -84,6 +84,51 @@ describe("the turn's grid", () => {
 		expect(foot?.ms).toBeNull();
 	});
 
+	it("keys a designer's tile by its placeholder on a nested page, one tile from start to frame (#369)", () => {
+		const step = (task: string, description: string): AgentEvent => ({
+			kind: "task-step",
+			task,
+			call: null,
+			description,
+			lastTool: "Bash",
+			parent: null,
+		});
+		const working = [
+			started("t1", "a1", "Split home"),
+			held("t1", "ideas/home--split"),
+			started("t2", "a2", "Calm home"),
+			held("t2", "ideas/home--calm"),
+			step("t1", "Running Read the home frame and the brief"),
+			step("t2", "Running Write the calm frame, then spool check"),
+		];
+		const reading = transcriptOf([], stamp(working)).foot;
+		expect(reading?.tiles).toMatchObject([
+			{
+				frame: "ideas/home--split",
+				state: "reading",
+				step: "Running Read the home frame and the brief",
+				delegation: "a1",
+			},
+			{ frame: "ideas/home--calm", state: "reading", delegation: "a2" },
+		]);
+		expect(reading?.tiles.map((tile) => captionOf(tile))).toEqual(["Reading", "Drawing"]);
+
+		// one frame lands in its placeholder, the other on a page of its designer's own choosing
+		const landed = transcriptOf(
+			[],
+			stamp([
+				...working,
+				created("ideas/home--split", "t1", "a1", "ideas/home--split"),
+				created("app/calm", "t2", "a2", "ideas/home--calm"),
+			]),
+		).foot;
+		expect(landed?.tiles.map((tile) => [tile.frame, tile.state])).toEqual([
+			["ideas/home--split", "fresh"],
+			["app/calm", "fresh"],
+		]);
+		expect(landed?.tiles.every((tile) => tile.step === undefined)).toBe(true);
+	});
+
 	it("streams a frame the agent writes, then lands it, then rests it when its call returns", () => {
 		const source = (lines: number): AgentEvent => ({
 			kind: "frame-source",
@@ -237,6 +282,35 @@ describe("the turn's line", () => {
 		const laid = turnLayout(entries);
 		expect(laid.map(({ entry }) => entry.kind)).toEqual(["user", "prose", "turn", "note"]);
 		expect(laid[2]?.steps.map((step) => step.kind)).toEqual(["wait"]);
+	});
+
+	it("draws a run of thinking between two steps as one line, its time the run's", () => {
+		const user: AgentEntry = { key: "a:user", kind: "user", text: "hi", context: null, attached: [] };
+		const wait = (n: number, at: number, ms: number | null, state: "done" | "running" = "done"): AgentEntry => ({
+			key: `a:wait:${n}`,
+			kind: "wait",
+			state,
+			at,
+			ms,
+		});
+		const row = { key: "a:row", kind: "row" } as unknown as AgentEntry;
+		const foot = { key: "turn", kind: "turn", tiles: [], status: null, thinking: false, ms: null, ending: null };
+		const laid = turnLayout([
+			user,
+			wait(0, 0, 900),
+			wait(1, 2_000, 1_100),
+			row,
+			wait(2, 9_000, 500),
+			foot as AgentEntry,
+		]);
+		const steps = laid.find(({ entry }) => entry.kind === "turn")?.steps ?? [];
+		expect(steps.map((step) => step.key)).toEqual(["a:wait:0", "a:row", "a:wait:2"]);
+		expect(steps[0]).toMatchObject({ kind: "wait", state: "done", ms: 2_000 });
+		// a run still counting counts on from what the run already took
+		const live = turnLayout([user, wait(0, 0, 900), wait(1, 5_000, null, "running"), foot as AgentEntry]);
+		const counting = live.find(({ entry }) => entry.kind === "turn")?.steps ?? [];
+		expect(counting).toHaveLength(1);
+		expect(counting[0]).toMatchObject({ key: "a:wait:0", state: "running", ms: null, at: 4_100 });
 	});
 
 	it("leaves a turn kept from before the foot as it was drawn", () => {

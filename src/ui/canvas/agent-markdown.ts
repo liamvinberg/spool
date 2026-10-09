@@ -20,10 +20,10 @@
  * **A table is read, and it is decided what it becomes.** A grid cannot be laid out
  * in a 200–480px column: three columns of prose at 300px are three ribbons of two
  * words each, and a grid that scrolls sideways hides the cell the reader is after.
- * So a table is a stack of its rows, each row a block whose first cell is the lead
- * and whose other cells are label–value lines, labelled by the header. That is the
- * only shape that survives the whole width range, and a comparison down a column
- * was never available at this width anyway.
+ * So a table is a plain list, one bullet per row: the first cell leads and the
+ * others follow it as prose, the header dropped (#377). That is the only shape
+ * that survives the whole width range, and a comparison down a column was never
+ * available at this width anyway.
  *
  * **A heading is deliberately still out.** It has no size in a rail whose prose is
  * all one size, so its `#` stays visible on purpose: a wrong drawing is worse than
@@ -67,7 +67,7 @@ export type Chunk =
 	| { readonly kind: "rule" }
 	| {
 			readonly kind: "table";
-			/** the header row, which the renderer draws as labels rather than as a row of its own */
+			/** the header row, which the renderer never draws as a row of its own */
 			readonly head: readonly (readonly Span[])[];
 			/** the body rows, each cut to the header's width; a short row is short */
 			readonly rows: readonly (readonly Span[])[][];
@@ -155,7 +155,7 @@ const QUOTE = /^\s*>\s?(.*)$/;
  * This row is what makes the lines a table at all, which is why the header before
  * it is read as a paragraph until it lands and why `closedText` holds the header
  * until then. The colons are read and dropped: alignment is a property of a column,
- * and the stack the renderer draws has none.
+ * and the list the renderer draws has none.
  */
 const DELIMITER = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
@@ -392,8 +392,8 @@ export function drawnText(chunks: readonly Chunk[]): string {
 		.map((chunk) => {
 			if (chunk.kind === "rule") return "";
 			if (chunk.kind === "fence") return chunk.text;
-			// the header is drawn as labels beside every row, which makes it the renderer's
-			// glyph rather than the agent's text, exactly as a list marker is
+			// the header is dropped, or drawn as a label beside a wordless cell, which makes it
+			// the renderer's glyph rather than the agent's text, exactly as a list marker is
 			if (chunk.kind === "table")
 				return chunk.rows.map((row) => row.map((cell) => cell.map((span) => span.text).join("")).join("")).join("");
 			return chunk.spans.map((span) => span.text).join("");

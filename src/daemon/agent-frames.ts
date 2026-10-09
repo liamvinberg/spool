@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeAtomic } from "../atomic-write";
 import type { Rect } from "../page-box";
-import { isFramePath, pageParent, ROOT_PAGE } from "../page-path";
+import { isFramePath, pageName, pageParent, pageUnder, ROOT_PAGE } from "../page-path";
 import type { AgentEvent, AgentFrame, AgentSpot } from "./agent-events";
 import type { AgentTurn } from "./agent-turn";
 import { createEventFeed } from "./agent-turn-shell";
@@ -9,7 +10,8 @@ import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, overlaps, pageObjectsOn } from "./placement";
-import { discoverFrames, listProjectFrames, type Projection, type ReservedSpot } from "./projection";
+import { discoverFrames, isPageFolder, listProjectFrames, type Projection } from "./projection";
+import { type PlaceholderAuthor, type PlaceholderNote, parseSidecar } from "./sidecar";
 
 /**
  * A turn's frames, read off `design/` rather than off its tool calls (#365).
@@ -28,9 +30,12 @@ import { discoverFrames, listProjectFrames, type Projection, type ReservedSpot }
  * - **Live source.** Where the engine streams a call's input (Claude Code's main agent
  *   does, a file tool or a heredoc alike), the frame's source arrives as `frame-source`
  *   before the file exists.
- * - **Reserved spots.** A designer delegation streams nothing while it works, so the moment
- *   it starts a spot is reserved for it on the root page, placed by the same beside-the-field
- *   rule a new frame gets and named from its task. The frame it writes lands there.
+ * - **Placeholder frames.** A designer delegation streams nothing while it works, so the
+ *   moment it starts spool makes its frame: a folder on the page its brief names, holding a
+ *   frame.json with its place and a `placeholder` record of the direction's name and brief,
+ *   and whose agent it is on a team project, and no frame.tsx yet. It is placed by the same beside-the-field rule a new frame gets,
+ *   syncs to teammates as any frame file does, and the canvas draws it dashed. The designer
+ *   writes frame.tsx into it; a designer that ends without doing so has it taken away.
  * - **Put back.** A frame this turn deleted is written back from the source kept here.
  */
 
@@ -171,18 +176,28 @@ export function changedRange(before: string, after: string): { from: number; to:
 }
 
 /**
- * A frame name for a designer's spot. Where the brief names exactly one frame to write
- * (`create design/frames/hello-loud/frame.tsx`), that frame, so the spot is the place its
- * file lands in; otherwise read from the task's own description: `Design hello-calm frame`
- * → `hello-calm`.
+ * A frame's entry as a brief names it: under `design/frames/`, or under `frames/` as one
+ * written from inside design/ says it, though never another folder that happens to be
+ * called frames (`src/frames/`, `my-frames/`).
  */
-export function spotName(description: string | null, prompt?: string | null): string {
-	const named = new Set(
-		[...(prompt ?? "").matchAll(/frames\/(?:[a-z0-9-]+\/)*([a-z0-9][a-z0-9-]*)\/frame\.tsx/gi)].map((match) =>
-			(match[1] as string).toLowerCase(),
-		),
-	);
-	if (named.size === 1) return [...named][0] as string;
+const BRIEF_PATH =
+	/(?:design\/|(?<![\w./-])(?:\.\/)?)frames\/((?:[^\s"'`\\/<>|;&]+\/)*?[^\s"'`\\/<>|;&]+)\/frame\.tsx/g;
+
+/** Every frame a brief names by its entry, page and all: `design/frames/home/split/frame.tsx` → `home/split`. */
+export function briefFrames(prompt: string | null | undefined): string[] {
+	const named = new Set<string>();
+	for (const match of (prompt ?? "").matchAll(BRIEF_PATH)) {
+		const name = match[1];
+		if (name !== undefined && isFramePath(name)) named.add(name);
+	}
+	return [...named];
+}
+
+/**
+ * A root-page frame name for a designer whose brief names no frame of its own, read from the
+ * task's own description: `Design hello-calm frame` → `hello-calm`.
+ */
+export function spotName(description: string | null): string {
 	const words = (description ?? "")
 		.toLowerCase()
 		.replace(/[^a-z0-9\s-]+/g, " ")
@@ -196,42 +211,126 @@ export function spotName(description: string | null, prompt?: string | null): st
 	return name === "" ? "designer" : name;
 }
 
-/**
- * The spots running turns reserve, per project (#365). One instance per daemon, read by the
- * projection so a frame born into a spot stands in it and no other frame stands on one.
- */
-export interface ReservedSpots {
-	of(root: string): ReservedSpot[];
-	reserve(root: string, key: string, spot: ReservedSpot): void;
-	fill(root: string, key: string, frame: string): void;
-	release(root: string, key: string): void;
+/** how much of a brief a placeholder keeps: enough to read on the canvas, little enough to sync */
+const BRIEF_CHARS = 1_000;
+
+/** one placeholder a turn holds: its frame, and the page folders made for it, deepest first */
+interface Held {
+	readonly root: string;
+	readonly frame: string;
+	readonly made: readonly string[];
 }
 
-export function createReservedSpots(): ReservedSpots {
-	const roots = new Map<string, Map<string, ReservedSpot>>();
+/**
+ * The placeholder frames this daemon's turns hold (#369), written down in its own state so
+ * the ones a crash or a restart left behind, with no turn left to fill them, are taken
+ * away when it starts again. Only its own: a teammate's placeholders reach this disk
+ * through sync and are theirs to take away.
+ */
+export interface PlaceholderLedger {
+	hold(root: string, frame: string, made: readonly string[]): void;
+	letGo(root: string, frame: string): void;
+	/** take away every placeholder an earlier run left */
+	sweep(): void;
+}
+
+export function createPlaceholderLedger(file?: string): PlaceholderLedger {
+	const held: Held[] = [];
+	const save = () => {
+		if (file === undefined) return;
+		try {
+			writeAtomic(file, `${JSON.stringify(held, null, "\t")}\n`);
+		} catch {}
+	};
 	return {
-		of: (root) => [...(roots.get(root)?.values() ?? [])],
-		reserve: (root, key, spot) => {
-			const reserved = roots.get(root) ?? new Map<string, ReservedSpot>();
-			reserved.set(key, spot);
-			roots.set(root, reserved);
+		hold: (root, frame, made) => {
+			held.push({ root, frame, made });
+			save();
 		},
-		fill: (root, key, frame) => {
-			const spot = roots.get(root)?.get(key);
-			if (spot !== undefined) roots.get(root)?.set(key, { ...spot, frame });
+		letGo: (root, frame) => {
+			const at = held.findIndex((one) => one.root === root && one.frame === frame);
+			if (at < 0) return;
+			held.splice(at, 1);
+			save();
 		},
-		release: (root, key) => {
-			const reserved = roots.get(root);
-			reserved?.delete(key);
-			if (reserved?.size === 0) roots.delete(root);
+		sweep: () => {
+			if (file === undefined) return;
+			let left: unknown;
+			try {
+				left = JSON.parse(readFileSync(file, "utf8"));
+			} catch {
+				return;
+			}
+			for (const one of Array.isArray(left) ? left : []) {
+				const { root, frame, made } = (one ?? {}) as Partial<Held>;
+				if (typeof root !== "string" || typeof frame !== "string") continue;
+				removePlaceholder(root, frame, Array.isArray(made) ? made.filter((page) => typeof page === "string") : []);
+			}
+			save();
 		},
 	};
+}
+
+/**
+ * Take a placeholder frame away: its sidecar, its folder, and the page folders made for it
+ * once empty. A frame that landed in it is a frame and stays. So does a frame its designer
+ * drew beneath it, which leaves the folder a page; with no frame anywhere in it, what the
+ * designer left there (a parts file, say) goes with it, or the folder would stand as a page
+ * of nothing. Only ever inside the placeholder's own folder, which spool made for this.
+ */
+export function removePlaceholder(root: string, frame: string, made: readonly string[] = []): void {
+	if (!isFramePath(frame)) return;
+	let designDir: string;
+	try {
+		designDir = realDesignDir(root);
+	} catch {
+		return;
+	}
+	const folderOf = (name: string) => join(designDir, "frames", ...name.split("/"));
+	try {
+		const dir = resolveDesignPath(designDir, folderOf(frame));
+		if (existsSync(join(dir, "frame.tsx"))) return;
+		if (holdsFrame(dir)) rmSync(join(dir, "frame.json"), { force: true });
+		else rmSync(dir, { recursive: true, force: true });
+	} catch {
+		return;
+	}
+	for (const folder of [frame, ...made]) {
+		try {
+			const dir = resolveDesignPath(designDir, folderOf(folder));
+			if (!existsSync(dir)) continue;
+			if (readdirSync(dir).length > 0) return;
+			rmdirSync(dir);
+		} catch {
+			return;
+		}
+	}
+}
+
+/** Whether a frame entry stands anywhere under a folder; links are not followed. */
+function holdsFrame(dir: string): boolean {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.isDirectory() && (existsSync(join(dir, entry.name, "frame.tsx")) || holdsFrame(join(dir, entry.name))))
+			return true;
+	}
+	return false;
+}
+
+/** The bytes of a placeholder's sidecar: its place, whole numbers, and what it holds. */
+function placeholderBytes({ x, y, w, h }: Rect, note: PlaceholderNote): string {
+	const place = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+	return `${JSON.stringify({ ...place, placeholder: note }, null, "\t")}\n`;
 }
 
 export interface FrameWitnessOptions {
 	readonly root: string;
 	readonly hub: FrameHub;
-	readonly spots: ReservedSpots;
+	readonly placeholders: PlaceholderLedger;
+	/**
+	 * whose agent this is, asked as each placeholder is made: on a team project, the account
+	 * this Mac is signed in as, so a teammate's canvas says whose designer it is (#378)
+	 */
+	readonly author?: () => PlaceholderAuthor | undefined;
 	readonly now?: () => number;
 }
 
@@ -255,7 +354,7 @@ export interface WitnessedTurn extends AgentTurn, FrameWitness {}
 
 export function witnessFrames(
 	turn: AgentTurn,
-	{ root, hub, spots, now = Date.now }: FrameWitnessOptions,
+	{ root, hub, placeholders, author, now = Date.now }: FrameWitnessOptions,
 ): WitnessedTurn {
 	const feed = createEventFeed<AgentEvent>();
 	const { push } = feed;
@@ -266,9 +365,12 @@ export function witnessFrames(
 	const calls = new Map<string, Call>();
 	/** an open block's call, by the thread and index its fragments name */
 	const blocks = new Map<string, string>();
-	/** the task each delegating call started, and the spot reserved for it */
+	/** the task each delegating call started, and the placeholder frame made for it */
 	const tasks = new Map<string, string>();
 	const reserved = new Map<string, AgentSpot>();
+	/** each placeholder's record and the page folders made for it, by task */
+	const notes = new Map<string, PlaceholderNote>();
+	const made = new Map<string, readonly string[]>();
 	let designDir: string | undefined;
 
 	function source(dir: string): string | undefined {
@@ -328,58 +430,119 @@ export function witnessFrames(
 	}
 
 	/**
-	 * What stands on the root page apart from `frame`, as rects: its frames, the pages on
-	 * it and the spots still empty but `spot`. Nothing when the page cannot be read.
+	 * What stands on a page apart from `frame` and the placeholder `held`, as rects: its
+	 * frames, its placeholders and the pages on it.
 	 */
-	function rootField(frame?: string, spot?: string): { field: Rect[]; projection: Projection } | undefined {
-		let projection: Projection;
-		try {
-			projection = listProjectFrames(root, { reserved: spots.of(root) });
-		} catch {
-			return undefined;
-		}
-		const field: Rect[] = projection.frames
-			.filter((one) => one.page === undefined && one.name !== frame)
-			.map(({ x, y, w, h }) => ({ x, y, w, h }));
-		for (const { at, box } of pageObjectsOn(ROOT_PAGE, projection.pages, projection.frames, projection.places))
+	function pageField(projection: Projection, page: string, frame?: string, held?: string): Rect[] {
+		const on = (one: { page?: string; name: string }) =>
+			(one.page ?? ROOT_PAGE) === page && one.name !== frame && one.name !== held;
+		const field: Rect[] = [...projection.frames.filter(on), ...projection.placeholders.filter(on)].map(
+			({ x, y, w, h }) => ({ x, y, w, h }),
+		);
+		for (const { at, box } of pageObjectsOn(page, projection.pages, projection.frames, projection.places))
 			field.push({ ...at, ...box });
-		for (const one of spots.of(root)) if (one.frame === undefined && one.name !== spot) field.push(one);
-		return { field, projection };
+		return field;
 	}
 
 	/**
-	 * A frame just born on the root page fills the spot reserved for it, at its own size: the
-	 * spot of its name, or else its designer's own, when a call of that designer's named the
-	 * frame, so a designer that wrote under another name still lands where it was held. Only
-	 * a still empty spot fills, so it is the designer's first new frame that does; a frame
-	 * only timing ties to a designer fills none, and the spot is let go when it reports back.
-	 * A frame bigger than the spot that would then cover a neighbour stands beside the field
-	 * instead, as any new frame would, and the spot moves with it (story 57).
+	 * A frame just born fills the placeholder made for it, at its own size: the placeholder
+	 * of its name, or else its designer's own, when a call of that designer's named the frame,
+	 * so a designer that wrote under another name still lands where it was held and its
+	 * placeholder goes. Only a placeholder still empty fills, so it is the designer's first new
+	 * frame that does; a frame only timing ties to a designer fills none, and the placeholder
+	 * is taken away when it reports back. A frame bigger than its placeholder that would then
+	 * cover a neighbour stands beside the field instead, as any new frame would, and the
+	 * turn's spot moves with it (story 57). One on another page stays where its page put it.
 	 */
 	function fill(frame: string, dir: string, task: string | null): string | undefined {
-		if (pageParent(frame) !== ROOT_PAGE || designDir === undefined) return undefined;
+		if (designDir === undefined) return undefined;
 		const open = [...reserved.values()].filter((spot) => spot.state === "held");
 		const spot = open.find((one) => one.name === frame) ?? open.find((one) => task !== null && one.task === task);
 		if (spot === undefined) return undefined;
+		if (spot.name !== frame) removePlaceholder(root, spot.name, made.get(spot.task));
+		const page = pageParent(frame);
 		const sidecar = readSidecar(join(dir, "frame.json"), designDir);
-		const size = sidecar.kind === "sized" ? sidecar.footprint : sidecar.kind === "placed" ? sidecar.geometry : spot;
-		let at = { x: spot.x, y: spot.y, w: size.w, h: size.h };
-		if (size.w > spot.w || size.h > spot.h) {
-			const field = rootField(frame, spot.name)?.field ?? [];
-			if (field.some((other) => overlaps(at, other))) at = { ...besideField(field), w: size.w, h: size.h };
+		let at: Rect | undefined;
+		if (page === pageParent(spot.name)) {
+			const size =
+				sidecar.kind === "sized" ? sidecar.footprint : sidecar.kind === "placed" ? sidecar.geometry : spot;
+			at = { x: spot.x, y: spot.y, w: size.w, h: size.h };
+			if (size.w > spot.w || size.h > spot.h) {
+				let field: Rect[] = [];
+				try {
+					field = pageField(listProjectFrames(root), page, frame, spot.name);
+				} catch {}
+				const inSpot = at;
+				if (field.some((other) => overlaps(inSpot, other))) at = { ...besideField(field), w: size.w, h: size.h };
+			}
+			try {
+				// the frame's own place, which also clears the placeholder record off its sidecar
+				writeGeometry(join(dir, "frame.json"), at, designDir);
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) throw error;
+				return undefined;
+			}
+		} else {
+			try {
+				at = listProjectFrames(root).frames.find((one) => one.name === frame);
+			} catch {}
 		}
-		try {
-			writeGeometry(join(dir, "frame.json"), at, designDir);
-		} catch (error) {
-			if (error instanceof DesignBoundaryError) throw error;
-			return undefined;
-		}
-		const filled: AgentSpot = { ...spot, ...at, state: "filled", frame };
+		const { x, y, w, h } = at ?? spot;
+		const filled: AgentSpot = { ...spot, x, y, w, h, state: "filled", frame };
 		reserved.set(spot.task, filled);
-		spots.fill(root, `${spot.task}`, frame);
+		placeholders.letGo(root, spot.name);
 		hub.publish(root, { kind: "geometry", frame });
 		push(filled);
 		return spot.name;
+	}
+
+	/**
+	 * A designer wrote its placeholder's sidecar, a size alone or a whole place: the size is
+	 * the designer's and the place stays the daemon's. Before its source, the placeholder
+	 * keeps its place and its record (title, brief, since, whose) at the designer's size,
+	 * whatever shape the designer wrote, so a teammate reading the file still reads a
+	 * placeholder (#378). After, a size alone moves nothing: the frame that landed there
+	 * keeps the place it landed at. Either way it stands beside the field only when the new
+	 * size would cover a neighbour, as at landing, never moved off as a new frame would be.
+	 * Its own write heard back finds the bytes it wanted and writes nothing.
+	 */
+	function keep(frame: string): void {
+		if (designDir === undefined) return;
+		const spot = [...reserved.values()].find(
+			(one) => (one.state === "held" && one.name === frame) || (one.state === "filled" && one.frame === frame),
+		);
+		const note = spot === undefined ? undefined : notes.get(spot.task);
+		if (spot === undefined || note === undefined) return;
+		const dir = join(designDir, "frames", ...frame.split("/"));
+		try {
+			const file = resolveDesignPath(designDir, join(dir, "frame.json"));
+			const landed = existsSync(join(dir, "frame.tsx"));
+			if (landed !== (spot.state === "filled")) return;
+			const was = readFileSync(file, "utf8");
+			const sidecar = parseSidecar(JSON.parse(was));
+			// a frame that landed owns its place; a placeholder never gives its up
+			const size =
+				sidecar.kind === "sized"
+					? sidecar.footprint
+					: !landed && sidecar.kind === "placed"
+						? sidecar.geometry
+						: null;
+			if (size === null) return;
+			let at: Rect = { x: spot.x, y: spot.y, w: size.w, h: size.h };
+			if (at.w > spot.w || at.h > spot.h) {
+				const inSpot = at;
+				const field = pageField(listProjectFrames(root), pageParent(frame), frame, spot.name);
+				if (field.some((other) => overlaps(inSpot, other))) at = { ...besideField(field), w: at.w, h: at.h };
+			}
+			if (landed) writeGeometry(file, at, designDir);
+			else {
+				const bytes = placeholderBytes(at, note);
+				if (bytes !== was) writeFileSync(file, bytes);
+			}
+			reserved.set(spot.task, { ...spot, ...at });
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+		}
 	}
 
 	/** read the disk for these frames, or every frame, and say what moved */
@@ -444,7 +607,12 @@ export function witnessFrames(
 		}
 	}
 
-	/** a designer started: reserve its spot on the root page, named from its task */
+	/**
+	 * A designer started: make its placeholder frame. Where its brief names one frame that
+	 * does not stand yet, that is its frame, on whatever page the path says; a brief naming
+	 * only frames that stand is an edit, which its companion shows, and gets none; and a brief
+	 * naming none gets a frame on the root page named from its task.
+	 */
 	function reserve(
 		task: string,
 		call: string | null,
@@ -453,30 +621,73 @@ export function witnessFrames(
 		parent: string | null,
 	): void {
 		if (designDir === undefined || reserved.has(task)) return;
-		const read = rootField();
-		if (read === undefined) return;
-		const { field, projection } = read;
-		const onRoot = projection.frames.filter((frame) => frame.page === undefined);
-		const rightmost = [...onRoot].sort((a, b) => b.x + b.w - (a.x + a.w))[0];
-		const size = rightmost === undefined ? DEFAULT_FOOTPRINT : { w: rightmost.w, h: rightmost.h };
-		const taken = new Set([
-			...projection.frames.map((frame) => frame.name),
-			...spots.of(root).map((spot) => spot.name),
-		]);
-		const base = spotName(description, prompt);
+		const design = designDir;
+		let projection: Projection;
+		try {
+			projection = listProjectFrames(root);
+		} catch {
+			return;
+		}
+		const standing = new Set(projection.frames.map((frame) => frame.name));
+		const named = briefFrames(prompt);
+		const fresh = named.filter((name) => !standing.has(name) && underPages(design, name));
+		if (fresh.length === 0 && named.some((name) => standing.has(name))) return;
+		const base = fresh.length === 1 ? (fresh[0] as string) : spotName(description);
+		const page = pageParent(base);
+		const folderOf = (name: string) => join(design, "frames", ...name.split("/"));
+		// a folder already there is somebody's, unless it is an empty one waiting for this frame
+		const taken = (name: string) => {
+			try {
+				return readdirSync(folderOf(name)).length > 0;
+			} catch {
+				return existsSync(folderOf(name));
+			}
+		};
 		let name = base;
-		for (let n = 2; taken.has(name); n += 1) name = `${base}-${n}`;
-		const spot: AgentSpot = { kind: "spot", state: "held", name, task, call, ...besideField(field), ...size, parent };
+		for (let n = 2; taken(name); n += 1) name = pageUnder(page, `${pageName(base)}-${n}`);
+		// sized like the frame its brief starts from, else like its page's last frame, else the root page's
+		const rightmost = (frames: readonly Rect[]) => [...frames].sort((a, b) => b.x + b.w - (a.x + a.w))[0];
+		const like =
+			projection.frames.find((frame) => named.includes(frame.name)) ??
+			rightmost(projection.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page)) ??
+			rightmost(projection.frames.filter((frame) => frame.page === undefined));
+		const size = like === undefined ? DEFAULT_FOOTPRINT : { w: like.w, h: like.h };
+		const at = { ...besideField(pageField(projection, page)), ...size };
+		const brief = (prompt ?? "").trim();
+		const by = author?.();
+		const note: PlaceholderNote = {
+			title: description?.trim() || pageName(name),
+			...(brief === "" ? {} : { brief: brief.length > BRIEF_CHARS ? `${brief.slice(0, BRIEF_CHARS - 1)}…` : brief }),
+			since: new Date(now()).toISOString(),
+			...(by === undefined ? {} : { by }),
+		};
+		// the page folders this makes, deepest first, so taking it away takes them too
+		const pages: string[] = [];
+		for (let up = page; up !== ROOT_PAGE && !existsSync(folderOf(up)); up = pageParent(up)) pages.push(up);
+		try {
+			const dir = resolveDesignPath(design, folderOf(name));
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "frame.json"), placeholderBytes(at, note), { flag: "wx" });
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+			return;
+		}
+		const spot: AgentSpot = { kind: "spot", state: "held", name, task, call, ...at, parent };
 		reserved.set(task, spot);
-		spots.reserve(root, task, { name, x: spot.x, y: spot.y, w: spot.w, h: spot.h });
+		notes.set(task, note);
+		made.set(task, pages);
+		placeholders.hold(root, name, pages);
+		hub.publish(root, { kind: "geometry", frame: name });
 		push(spot);
 	}
 
+	/** a designer is over: a placeholder it never drew into is taken away */
 	function release(task: string): void {
 		const spot = reserved.get(task);
-		if (spot === undefined) return;
-		spots.release(root, task);
-		if (spot.state !== "held") return;
+		if (spot === undefined || spot.state !== "held") return;
+		removePlaceholder(root, spot.name, made.get(task));
+		placeholders.letGo(root, spot.name);
+		hub.publish(root, { kind: "geometry", frame: spot.name });
 		const released: AgentSpot = { ...spot, state: "released" };
 		reserved.set(task, released);
 		push(released);
@@ -553,18 +764,24 @@ export function witnessFrames(
 			if (event.agent === "designer") reserve(event.task, event.call, event.description, event.prompt, event.parent);
 			return;
 		}
-		if (event.kind === "task-done") release(event.task);
+		if (event.kind === "task-done") {
+			// the disk first, as at the turn's end: a frame written just before the designer
+			// reported back fills its placeholder though the watcher has not said so yet
+			rescan();
+			release(event.task);
+		}
 	}
 
 	const unsubscribe = hub.subscribe(root, (change) => {
 		if (feed.finished) return;
 		if (change.kind === "frame") rescan(new Set([change.frame]));
+		if (change.kind === "geometry") keep(change.frame);
 	});
 
 	void (async () => {
 		try {
 			for await (const event of turn.events) {
-				// a delegation is said before the spot reserved for it, so the spot has a task to name
+				// a delegation is said before the placeholder made for it, so the spot has a task to name
 				if (event.kind === "task-started") {
 					push(event);
 					observe(event);
@@ -572,7 +789,7 @@ export function witnessFrames(
 				}
 				observe(event);
 				// the turn's last word waits for the disk: a write just before it is the turn's
-				// and a spot nothing filled is let go with it
+				// and a placeholder nothing filled is taken away with it
 				if (event.kind === "closed" || (event.kind === "ended" && event.parent === null)) {
 					rescan();
 					for (const task of reserved.keys()) release(task);
@@ -600,6 +817,15 @@ export function witnessFrames(
 			push({ kind: "frame", change: "restored", frame, lines: linesOf(text), call: null, task: null, parent: null });
 		},
 	};
+}
+
+/** every folder above a frame path is a page or not there yet, so a frame can be made at it */
+function underPages(designDir: string, frame: string): boolean {
+	for (let up = pageParent(frame); up !== ROOT_PAGE; up = pageParent(up)) {
+		const dir = join(designDir, "frames", ...up.split("/"));
+		if (existsSync(dir) && !isPageFolder(dir)) return false;
+	}
+	return true;
 }
 
 /**

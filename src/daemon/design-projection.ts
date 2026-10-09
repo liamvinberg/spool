@@ -23,7 +23,8 @@ export interface DesignProjection {
 
 /**
  * The canvas's reading of a design folder held anywhere (`projection.ts` is the
- * daemon's, on its disk): a folder holding frame.tsx is a frame, every other
+ * daemon's, on its disk): a folder holding frame.tsx is a frame, one holding
+ * frame.json and no folders is a frame on its way and no page, every other
  * safe-named folder under frames/ is a page, and each frame stands where its
  * sidecar says. A frame or page nobody placed is placed as the daemon places
  * it, and nothing is written: the daemon that finds it first writes the place,
@@ -32,12 +33,24 @@ export interface DesignProjection {
 export function projectDesign(designDir: string, files: DesignFiles): DesignProjection {
 	const found: { name: string; page: string | undefined; dir: string }[] = [];
 	const pages: string[] = [];
+	/** the frames on their way that have a place, which new frames stand clear of as the daemon's do */
+	const waiting: (Geometry & { page: string | undefined })[] = [];
 	const walk = (dir: string, page: string): void => {
 		for (const entry of files.list(dir) ?? []) {
 			if (entry.kind !== "directory" || !isSafeName(entry.name)) continue;
 			const child = join(dir, entry.name);
 			if (files.kind(join(child, "frame.tsx")) !== undefined) {
 				found.push({ name: pageUnder(page, entry.name), page: page === ROOT_PAGE ? undefined : page, dir: child });
+				continue;
+			}
+			// a sidecar and no entry yet is a frame on its way, never a page, unless it holds folders
+			if (
+				files.kind(join(child, "frame.json")) !== undefined &&
+				!(files.list(child) ?? []).some((inner) => inner.kind === "directory")
+			) {
+				const sidecar = parseSidecar(readJson(files, join(child, "frame.json")));
+				if (sidecar.kind === "placed")
+					waiting.push({ ...sidecar.geometry, page: page === ROOT_PAGE ? undefined : page });
 				continue;
 			}
 			const inner = pageUnder(page, entry.name);
@@ -62,7 +75,7 @@ export function projectDesign(designDir: string, files: DesignFiles): DesignProj
 		else unplaced.push({ frame, footprint: sidecar.kind === "sized" ? sidecar.footprint : DEFAULT_FOOTPRINT });
 	}
 	for (const { frame, footprint } of unplaced) {
-		const field = placed
+		const field = [...placed, ...waiting]
 			.filter((candidate) => candidate.page === frame.page)
 			.map(({ x, y, w, h }) => ({ x, y, w, h }));
 		for (const { at, box } of pageObjectsOn(frame.page ?? ROOT_PAGE, pages, placed, stored))

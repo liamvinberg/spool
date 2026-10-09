@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Presence, PresenceState } from "../../team-sync-protocol";
 import {
+	agentSays,
 	CLICK_MS,
 	createPresenceRoom,
 	followCamera,
@@ -114,6 +115,44 @@ describe("smoothing", () => {
 		expect(value.p).toBeCloseTo(100, 1);
 		// a long frame doesn't throw it past either
 		expect(springStep({ p: 0, v: 0 }, 100, 1, 15).p).toBeLessThanOrEqual(100);
+	});
+});
+
+describe("a teammate's agent in their presence (#378)", () => {
+	const agent = { running: true, status: "2 designers working", work: [] };
+
+	it("says what their agent is doing while a turn of theirs runs, and nothing once it is over", () => {
+		const room = createPresenceRoom(() => 0);
+		room.hear(heard(at(1, 1, { agent })), 0);
+		const mate = () => room.get("ben") ?? (undefined as never);
+		expect(agentSays(mate())).toBe("2 designers working");
+		room.hear(heard(at(1, 1, { agent: { ...agent, running: false } })), 10);
+		expect(agentSays(mate())).toBe("agent waiting");
+		room.hear(heard(at(1, 1, { agent: { ...agent, status: null } })), 20);
+		expect(agentSays(mate())).toBe("agent working");
+		room.hear(heard(at(1, 1)), 30);
+		expect(agentSays(mate())).toBeNull();
+	});
+
+	it("is not them at work: their agent alone never keeps them from going idle", () => {
+		const room = createPresenceRoom(() => 0);
+		room.hear(heard(at(1, 1)), 0);
+		room.hear(heard(at(1, 1, { agent })), IDLE_MS - 10);
+		room.hear(heard(at(1, 1, { agent: { ...agent, status: "1 designer working, 1 done" } })), IDLE_MS + 10);
+		const mate = room.get("ben");
+		expect(mate !== undefined && idle(mate, IDLE_MS + 10)).toBe(true);
+		room.hear(heard(at(5, 5, { agent })), IDLE_MS + 20);
+		const moved = room.get("ben");
+		expect(moved !== undefined && idle(moved, IDLE_MS + 20)).toBe(false);
+	});
+
+	it("remembers who someone is after they leave", () => {
+		const room = createPresenceRoom(() => 0);
+		room.hear(heard(at(1, 1)), 0);
+		room.hear(heard(null), 10);
+		room.reset();
+		expect(room.person("ben")).toEqual(ben);
+		expect(room.person("nobody")).toBeUndefined();
 	});
 });
 

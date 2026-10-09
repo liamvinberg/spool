@@ -32,15 +32,17 @@ Plan colour and type before you write any code: a small palette where each colou
 
 Spend boldness in one place, such as the headline, one strong colour, the layout or a single motion, and keep the rest quiet.
 
+Your brief names your frame as design/frames/<page>/<name>/frame.tsx. Spool has already put a placeholder there, a folder whose frame.json holds its place: draw into it by writing that frame.tsx, and keep its frame.json unless you need another size, which you state as w and h alone, before you write frame.tsx.
+
 Once the frame renders, look at it with \`spool shot\` and hold it against the brief. Revise whatever reads as generic. Then say in two or three sentences what you drew and where.`;
 
 /** when to use it, which is what each engine shows the main agent beside the name */
 export const DESIGNER_DESCRIPTION =
-	"Draws one design direction as frames on the spool canvas. Use one designer per direction when someone asks for options or several directions. The brief is all it sees, so give it the product, the page and frame names to write, and what sets this direction apart.";
+	"Draws one design direction as frames on the spool canvas. Use one designer per direction when someone asks for options or several directions. The brief is all it sees, so give it the product, its own frame to write as design/frames/<page>/<name>/frame.tsx, and what sets this direction apart.";
 
 /** the framing's one line about designers, the same in every engine */
 export const DESIGNER_FRAMING =
-	"When someone asks for options or several directions, give each direction to its own designer with a brief. Make single edits yourself.";
+	"When someone asks for options or several directions, give each direction to its own designer with a brief. Before it starts, choose each designer's own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. Make single edits yourself.";
 
 export function designerDir(spoolDir: string): string {
 	return join(spoolDir, "designer");

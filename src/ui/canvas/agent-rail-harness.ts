@@ -204,7 +204,11 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 	const watcher = sse();
 	const chrome: { latest: CanvasChrome | null } = { latest: null };
 	/** what the folder holds, so a test can take a frame out of it and say so */
-	const project = { frames: PROJECTION.frames as { name: string; page?: string }[] };
+	const project = {
+		frames: PROJECTION.frames as { name: string; page?: string }[],
+		/** the frames on their way: designers' placeholders, which a test puts here as the daemon would */
+		placeholders: [] as { name: string; page?: string; x: number; y: number; w: number; h: number }[],
+	};
 	const pointed: Pointed = { served: null, puts: [] };
 	/**
 	 * The two ways there is no agent to talk to, as the daemon answers them (#201).
@@ -418,7 +422,8 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 			}
 			if (url.pathname.endsWith("/events")) return watcher.response();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
-			if (url.pathname.endsWith("/frames")) return Response.json({ ...PROJECTION, frames: project.frames });
+			if (url.pathname.endsWith("/frames"))
+				return Response.json({ ...PROJECTION, frames: project.frames, placeholders: project.placeholders });
 			if (url.pathname.endsWith("/flows/resolve")) return Response.json({ skipped: 0, read: 0, unavailable: 0 });
 			if (url.pathname.endsWith("/flows")) return Response.json({ frames: [], edges: [], unreadable: [] });
 			return Response.json({});

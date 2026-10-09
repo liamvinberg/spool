@@ -5,7 +5,13 @@ import { account, type CloudAccount, CloudSignedOut, cloudOrigin, login, logout 
 export type CloudAccountState =
 	| { state: "signed-out" }
 	| { state: "signing-in" }
-	| { state: "signed-in"; email: string; accountUrl: string }
+	| {
+			state: "signed-in";
+			email: string;
+			accountUrl: string;
+			/** the account's id, which a team canvas tells its own placeholders from teammates' by (#378) */
+			accountId?: string | undefined;
+	  }
 	/** Signed in as far as this Mac knows, but spool.page did not answer just now. */
 	| { state: "unreachable" };
 
@@ -39,6 +45,7 @@ export function createCloudAccount(options: {
 		state: "signed-in",
 		email: current.email,
 		accountUrl: new URL("/account", services.origin()).toString(),
+		accountId: current.accountId,
 	});
 
 	async function read(): Promise<CloudAccountState> {

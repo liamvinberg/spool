@@ -1,4 +1,4 @@
-import type { AgentEnded, AgentEvent } from "./agent-events";
+import { type AgentEnded, type AgentEvent, agentTask } from "./agent-events";
 
 /**
  * When a turn is over, which is later than when the agent answers (#365).
@@ -29,7 +29,8 @@ export interface BackgroundHold {
 	running(): readonly string[];
 	/**
 	 * A hand pressed Stop: the next ending ends the turn whatever still runs. A turn already
-	 * holding is over at once, as the ending it held, now stopped.
+	 * holding is over at once, as the ending it held, now stopped, and the binary's own
+	 * answer to the stop is not a second ending.
 	 */
 	stop(): AgentEnded | undefined;
 }
@@ -42,30 +43,26 @@ export interface BackgroundHoldOptions {
 	readonly wakes: boolean;
 }
 
-const AGENT_TYPES = /agent/i;
-
-/** a task holds the turn when it is an agent's: unnamed is an agent, as the engines without the word only run agents */
-function holds(type: string | null | undefined): boolean {
-	return type === undefined || type === null || AGENT_TYPES.test(type);
-}
-
 export function createBackgroundHold({ wakes }: BackgroundHoldOptions): BackgroundHold {
 	const tasks = new Set<string>();
 	let held: AgentEnded | undefined;
 	let stopping = false;
+	/** the turn's one ending is out: whatever the binary answers after it ends nothing again */
+	let ended = false;
 
 	/** the last task landed while the agent was holding: an agent woken by it says the last word */
 	function drained(): { events: AgentEvent[]; over: boolean } {
 		const ending = held;
 		if (ending === undefined || tasks.size > 0 || wakes) return { events: [], over: false };
 		held = undefined;
+		ended = true;
 		return { events: [ending], over: true };
 	}
 
 	return {
 		read(event) {
 			if (event.kind === "task-started") {
-				if (!holds(event.type)) return { events: [event], over: false };
+				if (!agentTask(event.type)) return { events: [event], over: false };
 				tasks.add(event.task);
 				return { events: [event], over: false };
 			}
@@ -78,14 +75,16 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 				const before = tasks.size;
 				tasks.clear();
 				for (const one of event.tasks) {
-					if (one.task !== "" && holds(one.type)) tasks.add(one.task);
+					if (one.task !== "" && agentTask(one.type)) tasks.add(one.task);
 				}
 				const after = before > 0 && tasks.size === 0 ? drained() : { events: [], over: false };
 				return { events: [event, ...after.events], over: after.over };
 			}
 			if (event.kind === "ended" && event.parent === null) {
+				if (ended) return { events: [], over: true };
 				if (stopping || tasks.size === 0 || event.ending === "failed") {
 					held = undefined;
+					ended = true;
 					return { events: [event], over: true };
 				}
 				held = event;
@@ -98,7 +97,9 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 			stopping = true;
 			const ending = held;
 			held = undefined;
-			return ending === undefined ? undefined : { ...ending, ending: "stopped" };
+			if (ending === undefined) return undefined;
+			ended = true;
+			return { ...ending, ending: "stopped" };
 		},
 	};
 }

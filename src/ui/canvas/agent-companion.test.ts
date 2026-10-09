@@ -165,9 +165,11 @@ describe("the agent's companions", () => {
 			{ kind: "frame", change: "created", frame: "home--dense", lines: 3, call: null, task: "t2", parent: null },
 		];
 		const two = companionsOf(at(events));
+		// each at its own work, which its placeholder and its tile show rather than a square (#369);
+		// and a name is never the name of the frame it stands at (#372)
 		expect(two).toMatchObject([
-			{ key: "d1", name: "calm", frame: null, spot: { name: "home--calm" } },
-			{ key: "d2", name: "dense", frame: "home--dense", act: "landed" },
+			{ key: "d1", name: "calm", frame: null, spot: { name: "home--calm" }, own: true },
+			{ key: "d2", name: null, frame: "home--dense", act: "landed", own: true },
 		]);
 		const done: AgentEvent = { kind: "task-done", task: "t2", status: "completed", summary: null, parent: null };
 		expect(companionsOf(at([...events, done])).map((one) => one.key)).toEqual(["d1"]);
@@ -191,6 +193,78 @@ describe("the agent's companions", () => {
 		).map((one) => one.name);
 		expect(new Set(names).size).toBe(3);
 		expect(names).toEqual(["calm", "loud", "loud 2"]);
+	});
+});
+
+describe("designers at frames that stand (#372)", () => {
+	it("go by their own take, never by the frame they read, and are drawn there", () => {
+		const started = (task: string, call: string, description: string): AgentEvent => ({
+			kind: "task-started",
+			task,
+			call,
+			description,
+			agent: "designer",
+			prompt: null,
+			parent: null,
+		});
+		const spot = (name: string, task: string, call: string): AgentEvent => ({
+			kind: "spot",
+			state: "held",
+			name,
+			task,
+			call,
+			x: 0,
+			y: 0,
+			w: 10,
+			h: 10,
+			parent: null,
+		});
+		const read = (id: string, parent: string): AgentEvent => ({
+			kind: "called",
+			id,
+			tool: "Read",
+			input: { file_path: `${ROOT}/design/frames/app/home/frame.tsx` },
+			parent,
+		});
+		const companions = companionsOf(
+			at([
+				ready,
+				started("t1", "d1", "Split home"),
+				started("t2", "d2", "Calm home"),
+				started("t3", "d3", "Tighten the home spacing"),
+				spot("ideas/home--split", "t1", "d1"),
+				spot("ideas/home--calm", "t2", "d2"),
+				read("r1", "d1"),
+				read("r2", "d2"),
+				read("r3", "d3"),
+			]),
+		);
+		expect(companions).toMatchObject([
+			{ key: "d1", frame: "app/home", name: "split", own: false },
+			{ key: "d2", frame: "app/home", name: "calm", own: false },
+			{ key: "d3", frame: "app/home", name: "tighten", own: false },
+		]);
+	});
+
+	it("say nothing the frame's own name already says", () => {
+		const events: AgentEvent[] = [
+			ready,
+			{
+				kind: "task-started",
+				task: "t1",
+				call: "d1",
+				description: "Tighten home",
+				agent: "designer",
+				prompt: null,
+				parent: null,
+			},
+			{ kind: "frame", change: "changed", frame: "app/home", lines: 3, call: null, task: "t1", parent: null },
+		];
+		expect(companionsOf(at(events))).toMatchObject([{ key: "d1", frame: "app/home", name: "tighten", own: false }]);
+		const echoing = events.map((event) =>
+			event.kind === "task-started" ? { ...event, description: "Home" } : event,
+		) as AgentEvent[];
+		expect(companionsOf(at(echoing))).toMatchObject([{ key: "d1", name: null }]);
 	});
 });
 

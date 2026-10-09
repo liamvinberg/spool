@@ -240,11 +240,15 @@ export interface RailUnder {
 /** a project whose record says nothing: every row draws exactly as it did */
 const NOTHING_UNSEEN: ReadonlyMap<string, Unseen> = new Map();
 
+/** no frames on their way, one list for every render so the rows keep */
+const NONE_WAITING: readonly { readonly page?: string }[] = [];
+
 export function CanvasSidebar({
 	project,
 	pages,
 	activePage,
 	frames,
+	waiting = NONE_WAITING,
 	selected,
 	onSwitchPage,
 	onSelectFrame,
@@ -271,6 +275,8 @@ export function CanvasSidebar({
 	activePage: string;
 	/** Every projected frame; the canvas itself mounts only the active page. */
 	frames: readonly ProjectedFrame[];
+	/** the frames on their way: designers' placeholders, which have no rows but count in their page's number */
+	waiting?: readonly { readonly page?: string }[];
 	selected: readonly string[];
 	onSwitchPage: (page: string) => void;
 	/** `span` answers what a ⇧ range covers; only a click that could be one carries it. */
@@ -395,6 +401,11 @@ export function CanvasSidebar({
 		return byPage;
 	}, [orderedPages, frames, order.frames]);
 
+	const waitingByPage = useMemo(() => {
+		const byPage = new Map<string, number>();
+		for (const one of waiting) byPage.set(one.page ?? ROOT_PAGE, (byPage.get(one.page ?? ROOT_PAGE) ?? 0) + 1);
+		return byPage;
+	}, [waiting]);
 	const belowFrame = under?.open === true ? under.frame : null;
 	const belowHeight = under?.open === true ? under.height : 0;
 	/** the frame whose element is held stays lit, the way a selected frame is */
@@ -407,8 +418,9 @@ export function CanvasSidebar({
 				expanded,
 				born,
 				belowFrame === null ? null : { frame: belowFrame, height: belowHeight },
+				waitingByPage,
 			),
-		[pageTree, framesByPage, expanded, born, belowFrame, belowHeight],
+		[pageTree, framesByPage, expanded, born, belowFrame, belowHeight, waitingByPage],
 	);
 	/** the row the room under it belongs to, open or folding */
 	const underRow = under === null ? undefined : rows.find((row) => row.kind === "frame" && row.name === under.frame);

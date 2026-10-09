@@ -1,4 +1,5 @@
 import { sessionExists } from "./agent-claude-session";
+import { agentEnv } from "./agent-cli";
 import { mountDesigner } from "./agent-designer";
 import type { AgentEngine, EngineDeps } from "./agent-engine";
 import { askAgentOffer, askFrom } from "./agent-offer";
@@ -39,6 +40,7 @@ export function createClaudeEngine({ executor, spoolDir, look }: EngineDeps): Ag
 				ask,
 				permissions,
 				designer: mountDesigner(spoolDir, "claude"),
+				env: agentEnv(spoolDir),
 			}),
 	};
 }

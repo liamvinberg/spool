@@ -103,6 +103,13 @@ export function fakeTeam(team = "devosurf") {
 		const path = new URL(request.url).pathname;
 		if (person === undefined || person.revoked)
 			return Response.json({ error: "account_session_required" }, { status: 401 });
+		if (path === "/auth/account/session")
+			return Response.json({
+				accountId: person.accountId,
+				email: `${person.accountId}@devosurf.com`,
+				sessionId: `${person.accountId}-session`,
+				expiresAt: Date.now() + 86_400_000,
+			});
 		if (path === "/api/teams")
 			return Response.json({
 				teams:

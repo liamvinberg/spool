@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useReducer, useRef } from "react";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import {
+	agentSays,
 	CLICK_MS,
 	followGesture,
 	gestureMoving,
@@ -47,6 +48,31 @@ export function pillWidth(name: string): number {
 	return Math.round(name.length * 6.5 + 14);
 }
 
+/**
+ * Where each pill docked on a frame's name stands, in screen pixels: right-aligned on the frame's
+ * top-right corner, right to left in the order their people went inside, and stepped aside left of
+ * the room an agent's companion takes on that row (#373).
+ */
+export function pillSlots(
+	frames: readonly (Box & { name: string })[],
+	inside: (frame: string) => readonly { id: string; name: string }[],
+	toScreen: (x: number, y: number) => { x: number; y: number },
+	taken?: ReadonlyMap<string, number>,
+): Map<string, { x: number; y: number }> {
+	const slots = new Map<string, { x: number; y: number }>();
+	for (const frame of frames) {
+		const corner = toScreen(frame.x + frame.w, frame.y);
+		const room = taken?.get(frame.name) ?? 0;
+		let right = room > 0 ? corner.x - room - PILL_GAP : corner.x;
+		for (const mate of inside(frame.name)) {
+			const width = pillWidth(mate.name);
+			slots.set(mate.id, { x: right - width, y: corner.y - NAME_ROW });
+			right -= width + PILL_GAP;
+		}
+	}
+	return slots;
+}
+
 interface Motion {
 	/** Where the pointer is drawn, in world units; null until it has been somewhere on this page. */
 	x: { p: number; v: number } | null;
@@ -61,12 +87,15 @@ export function PresenceLayer({
 	camera,
 	frames,
 	page,
+	taken,
 }: {
 	room: PresenceRoom;
 	camera: CameraStore;
 	/** The frames on this page, in world units. */
 	frames: readonly (Box & { name: string })[];
 	page: string;
+	/** By frame name, the screen pixels an agent's companion takes at the right of its name row. */
+	taken?: ReadonlyMap<string, number>;
 }) {
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
 	const motions = useRef(new Map<string, Motion>());
@@ -138,20 +167,17 @@ export function PresenceLayer({
 	const toScreen = (x: number, y: number) => ({ x: x * cam.k + cam.x, y: y * cam.k + cam.y });
 
 	// the pills docked on each frame's name, right to left in the order their people went inside
-	const slots = new Map<string, { x: number; y: number }>();
 	const byName = new Map(frames.map((frame) => [frame.name, frame]));
-	for (const frame of frames) {
-		const inside = here
-			.filter((mate) => mate.left === null && mate.state.inside === frame.name)
-			.sort((a, b) => a.entered - b.entered);
-		const corner = toScreen(frame.x + frame.w, frame.y);
-		let right = corner.x;
-		for (const mate of inside) {
-			const width = pillWidth(mate.person.name);
-			slots.set(mate.person.accountId, { x: right - width, y: corner.y - NAME_ROW });
-			right -= width + PILL_GAP;
-		}
-	}
+	const slots = pillSlots(
+		frames,
+		(name) =>
+			here
+				.filter((mate) => mate.left === null && mate.state.inside === name)
+				.sort((a, b) => a.entered - b.entered)
+				.map((mate) => ({ id: mate.person.accountId, name: mate.person.name })),
+		toScreen,
+		taken,
+	);
 
 	for (const id of [...motions.current.keys()])
 		if (!here.some((mate) => mate.person.accountId === id)) motions.current.delete(id);
@@ -265,6 +291,7 @@ function Cursor({
 				? hand
 				: { x: hand.x + (home.x - hand.x) * dock, y: hand.y + (home.y - hand.y) * dock - lift };
 	const grabbing = state.pressed && state.dragging.length > 0;
+	const says = agentSays(mate);
 	const shape = grabbing ? "hand" : gesture === undefined ? "arrow" : pointerShape(gesture, now);
 	const click = gesture?.click != null && now - gesture.click.at < CLICK_MS ? gesture.click : null;
 	// out on the canvas the pill speaks and goes quiet; docked it stays, and dims when idle
@@ -315,6 +342,12 @@ function Cursor({
 					}}
 				>
 					{person.name}
+					{/* out on the canvas, what their agent is doing rides beside their name (#378) */}
+					{slot === undefined && says !== null ? (
+						<span data-presence-agent="" className="opacity-70">
+							&nbsp;· {says}
+						</span>
+					) : null}
 				</span>
 			)}
 		</div>
