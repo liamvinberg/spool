@@ -1012,6 +1012,33 @@ describe("a waiting request", () => {
 		expect(parked).toBe("req-1");
 	});
 
+	it("keeps what an approval would let through behind it, project-relative (#366)", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, asking({ tool: "Edit", input: { file_path: `${ROOT}/src/theme.ts` } })]),
+		);
+		expect(one(entries)).toMatchObject({ agent: "", tool: "Edit", detail: "src/theme.ts" });
+	});
+
+	/**
+	 * A designer's ask is the person's business, not the designer's: the delegation's own
+	 * work never draws in the log, but its asks must, or the turn parks on a question
+	 * nobody can see (#366). Codex says who asks on the wire; Claude's request carries no
+	 * parent, and the call it is about was made on the designer's own thread.
+	 */
+	it("draws a designer's ask, and says which designer asks", () => {
+		const delegate = called("d1", "Agent", { description: "Design calm", prompt: "x" });
+		const codex = transcriptOf([{ text: "go" }], stamp([ready, delegate, asking({ call: null, parent: "d1" })]));
+		expect(one(codex.entries)).toMatchObject({ agent: "d1", state: "open" });
+		expect(codex.asking).toBe("req-1");
+
+		const claude = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, delegate, called("c1", "Bash", { command: "spool upgrade" }, "d1"), asking()]),
+		);
+		expect(one(claude.entries)).toMatchObject({ agent: "d1", state: "open" });
+	});
+
 	it("offers no always where the request suggested no rule", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([ready, asking({ suggestions: [] })]));
 
@@ -1116,6 +1143,7 @@ describe("a waiting request", () => {
 			{
 				header: "Shot fix",
 				question: QUESTION,
+				multi: false,
 				options: [
 					{ label: "Run `spool upgrade`", description: "I run it, which installs the latest release." },
 					{ label: "Ship it unverified", description: "Leave the frame as authored." },

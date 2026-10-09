@@ -16,6 +16,7 @@ import {
 	putAgentThread,
 	putFrameBack,
 } from "../api";
+import type { AgentCompanion } from "./agent-companion";
 import { draftsFor } from "./agent-drafts";
 import type { AgentWrite } from "./agent-nouns";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
@@ -210,6 +211,8 @@ export interface AgentTurn {
 	 * what is on screen.
 	 */
 	readonly writes: readonly AgentWrite[];
+	/** every working agent and where it is on the canvas, for the companion squares (#366) */
+	readonly companions: readonly AgentCompanion[];
 }
 
 /**
@@ -1441,6 +1444,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 		turn: {
 			entries,
 			writes: seen.writes,
+			companions: seen.companions,
 			plan: planOf(here, seen),
 			phase,
 			elapsed: still || here.drained ? Number.POSITIVE_INFINITY : here.ms,

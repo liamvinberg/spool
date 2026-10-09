@@ -1,7 +1,8 @@
 import { type Attachment, restoredAttachments } from "../../attachment";
 import type { AgentEvent, AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
-import { ASK_TOOL, type AskQuestion, questionsOf } from "./agent-ask";
+import { ASK_TOOL, type AskQuestion, detailOf, questionsOf } from "./agent-ask";
+import { type AgentCompanion, companionsOf } from "./agent-companion";
 import { limitNote } from "./agent-limit";
 import {
 	type AgentWrite,
@@ -371,6 +372,14 @@ export type AgentEntry =
 			readonly request: string | null;
 			/** the agent's own question rather than an approval to run something */
 			readonly question: boolean;
+			/**
+			 * who asks: "" for the agent the person talks to, the delegating call for a designer
+			 * (#366). Absent off a picture stored before there was a second asker.
+			 */
+			readonly agent?: string;
+			/** what an approval would let through: the tool, and its path or command */
+			readonly tool?: string | null;
+			readonly detail?: string | null;
 			/** the agent's own sentence: its written description, or its question so far */
 			readonly asked: string | null;
 			/** its questions and their options, once the whole call has landed */
@@ -519,6 +528,11 @@ export interface Transcript {
 	 * the array's length: the same events give the same list every tick.
 	 */
 	readonly writes: readonly AgentWrite[];
+	/**
+	 * Every working agent and where it is on the canvas (#366): the companion squares. None
+	 * once the turn is over, because presence never lingers past the work.
+	 */
+	readonly companions: readonly AgentCompanion[];
 }
 
 /** a tile while the fold is still writing it, with what it was attributed to */
@@ -554,6 +568,9 @@ interface Ask {
 	readonly key: string;
 	request: string | null;
 	question: boolean;
+	agent: string;
+	tool: string | null;
+	detail: string | null;
 	asked: string | null;
 	questions: readonly AskQuestion[];
 	always: boolean;
@@ -674,6 +691,9 @@ const DELEGATED: ReadonlySet<AgentEvent["kind"]> = new Set([
 	"frame",
 	"frame-source",
 	"spot",
+	// a designer stopping to ask is the person's business, not the designer's (#366)
+	"asking",
+	"answered",
 ]);
 
 /**
@@ -999,6 +1019,9 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			// a call named `AskUserQuestion` is a question before its request says so, and
 			// an approval's block is only ever opened by a request that has
 			question: opening === "question",
+			agent: "",
+			tool: null,
+			detail: null,
 			asked: null,
 			questions: [],
 			always: false,
@@ -1241,8 +1264,14 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 * that row, carrying the agent's written description and nothing else.
 				 */
 				const key = event.call ?? event.request;
-				const above = event.call === null ? null : (calls.get(event.call)?.row ?? null);
+				const call = event.call === null ? undefined : calls.get(event.call);
+				const above = call?.row ?? null;
 				const ask = openAsk(key, event.interaction ? "question" : "approval", above?.key ?? null);
+				// a designer's ask names it by its delegation: the wire says so (Codex), or the
+				// call it is about was made on the designer's own thread (Claude)
+				ask.agent = event.parent ?? (call !== undefined && call.thread !== "" ? call.thread : "");
+				ask.tool = event.tool;
+				ask.detail = detailOf(event.input, root);
 				// the flag is the discriminator, so a question whose payload spool could not read
 				// still reads as one: its exits are a sentence and a dismiss rather than an allow
 				ask.question = event.interaction;
@@ -1711,5 +1740,6 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		asking: parked,
 		limit,
 		writes,
+		companions: over ? [] : companionsOf(seen),
 	};
 }
