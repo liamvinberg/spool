@@ -1334,15 +1334,22 @@ export function ProjectCanvas({
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	const askFooted = !railShown && turn.phase === "asking";
-	/** the ask that stands on the canvas, and the frame it hangs from: none where it is about no frame */
+	/**
+	 * The ask that stands on the canvas, and what it hangs from: the frame its agent is at,
+	 * or the spot reserved for a designer's frame before it has one. None where it is about
+	 * neither.
+	 */
 	const footedAsk = useMemo(() => {
 		if (!askFooted) return null;
 		const entry = turn.entries.find(
 			(one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null,
 		);
 		if (entry === undefined) return null;
-		const by = companions.find((one) => one.key === (entry.delegation ?? "") && one.frame !== null);
-		return by?.frame == null ? null : { entry, frame: by.frame };
+		const by = companions.find(
+			(one) => one.key === (entry.delegation ?? "") && (one.frame !== null || one.spot !== null),
+		);
+		if (by === undefined) return null;
+		return { entry, frame: by.frame, spot: by.spot };
 	}, [askFooted, turn.entries, companions]);
 
 	// a staged Trash resolves when the projection stops listing the folder
@@ -5904,8 +5911,14 @@ export function ProjectCanvas({
 								footed={askFooted}
 							/>
 							{(() => {
+								// under its frame, or under the spot held for it while the frame is not there yet
 								const at =
-									footedAsk === null ? undefined : visibleFrames.find((one) => one.name === footedAsk.frame);
+									footedAsk === null
+										? undefined
+										: (visibleFrames.find((one) => one.name === footedAsk.frame) ??
+											(footedAsk.frame === null || !reach.have.has(footedAsk.frame)
+												? (footedAsk.spot ?? undefined)
+												: undefined));
 								return footedAsk === null || at === undefined ? null : (
 									<CanvasAsk
 										key={footedAsk.entry.key}

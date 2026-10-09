@@ -3156,6 +3156,56 @@ describe("an ask, anchored", () => {
 		).not.toBeNull();
 	});
 
+	/** a designer that asks before its frame exists still has a place: the spot held for it */
+	it("stands a designer's ask under its reserved spot on the canvas while the rail is shut", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "make a calm direction");
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "called",
+			id: "a1",
+			tool: "Agent",
+			input: { description: "Design calm" },
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "task-started",
+			task: "t1",
+			call: "a1",
+			description: "Design home--calm",
+			agent: "designer",
+			prompt: null,
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "spot",
+			state: "held",
+			name: "home--calm",
+			task: "t1",
+			call: "a1",
+			x: 2000,
+			y: 0,
+			w: 1440,
+			h: 900,
+			parent: null,
+		});
+		canvas.turn.push(
+			asking({
+				call: "n1",
+				tool: "Bash",
+				input: { command: "npm install dayjs" },
+				description: "Adding a date library for the opening hours.",
+				parent: "a1",
+			}),
+		);
+		await until(() => options(canvas.host).length > 0);
+		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
+
+		await until(() => canvas.host.querySelector("[data-agent-canvas-ask]") !== null);
+		expect(canvas.host.querySelector("[data-agent-canvas-ask]")?.textContent).toContain("Adding a date library");
+	});
+
 	it("keeps a second waiting ask on screen as a card under the first", async () => {
 		const canvas = mount();
 		await canvas.render();
