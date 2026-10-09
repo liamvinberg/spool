@@ -651,6 +651,60 @@ describe("a placeholder frame (#369)", () => {
 		expect(turn.log.some((event) => event.kind === "spot" && event.state === "released")).toBe(false);
 	});
 
+	it("keeps its place and its record when its designer writes the whole sidecar before its source", async () => {
+		const { root } = project();
+		const ada = { accountId: "acct-ada", name: "ada" };
+		const turn = witnessed(root, () => ada);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		turn.say(designer("t2", "d2", "Calm home", brief("ideas/home--calm")));
+		await until(() => turn.log.filter((event) => event.kind === "spot").length === 2);
+		const [split, calm] = turn.log.filter((event) => event.kind === "spot");
+		if (split?.kind !== "spot" || calm?.kind !== "spot") throw new Error("no placeholders");
+		const record = sidecarOf(root, "ideas/home--split").placeholder;
+
+		// a place of its own choosing: the placeholder's place and record come back, at its size
+		writeDesignFile(root, "frames/ideas/home--split/frame.json", '{"x": 4920, "y": 0, "w": 360, "h": 780}');
+		turn.ring("ideas/home--split", "geometry");
+		expect(sidecarOf(root, "ideas/home--split")).toEqual({
+			x: split.x,
+			y: split.y,
+			w: 360,
+			h: 780,
+			placeholder: record,
+		});
+		// its own place said back, in the daemon's own format, with the record dropped
+		writeDesignFile(
+			root,
+			"frames/ideas/home--split/frame.json",
+			`${JSON.stringify({ x: split.x, y: split.y, w: 360, h: 780 }, null, "\t")}\n`,
+		);
+		turn.ring("ideas/home--split", "geometry");
+		expect(sidecarOf(root, "ideas/home--split")).toEqual({
+			x: split.x,
+			y: split.y,
+			w: 360,
+			h: 780,
+			placeholder: record,
+		});
+		expect(listProjectFrames(root).placeholders.find((one) => one.name === "ideas/home--split")).toMatchObject({
+			title: "Split home",
+			by: ada,
+		});
+
+		// a size that would cover its neighbour stands beside the field, as at landing, record and all
+		writeDesignFile(root, "frames/ideas/home--split/frame.json", '{"x": 0, "y": 0, "w": 4000, "h": 900}');
+		turn.ring("ideas/home--split", "geometry");
+		const grown = sidecarOf(root, "ideas/home--split");
+		expect(grown).toMatchObject({ w: 4000, h: 900, placeholder: record });
+		expect(overlaps(grown as { x: number; y: number; w: number; h: number }, calm)).toBe(false);
+
+		// its own write heard back changes nothing
+		const before = readFileSync(join(root, "design/frames/ideas/home--split/frame.json"), "utf8");
+		turn.ring("ideas/home--split", "geometry");
+		expect(readFileSync(join(root, "design/frames/ideas/home--split/frame.json"), "utf8")).toBe(before);
+		await turn.end();
+	});
+
 	it("keeps its frame where it landed when the designer states only a size after its source", async () => {
 		const { root } = project();
 		const turn = witnessed(root);
