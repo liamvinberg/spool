@@ -1,4 +1,10 @@
-import type { AgentEvent, AgentEventBase, AgentForeign, AgentLimit } from "./agent-events";
+import {
+	type AgentEvent,
+	type AgentEventBase,
+	type AgentForeign,
+	type AgentLimit,
+	DELEGATION_TOOL,
+} from "./agent-events";
 
 /**
  * Codex's app-server notifications, read into spool's event union (#362).
@@ -98,7 +104,7 @@ export function callsOf(item: CodexItem): readonly CodexCall[] {
 				return [
 					{
 						id,
-						tool: "Agent",
+						tool: DELEGATION_TOOL,
 						input: {
 							description: briefTitle(item.prompt),
 							...(typeof item.prompt === "string" ? { prompt: item.prompt } : {}),

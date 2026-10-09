@@ -1,5 +1,5 @@
 import { DESIGNER_NAME } from "./agent-designer";
-import type { AgentEvent, AgentEventBase, AgentImage } from "./agent-events";
+import { type AgentEvent, type AgentEventBase, type AgentImage, DELEGATION_TOOL } from "./agent-events";
 import type { AgentProcess } from "./agent-exec";
 
 /**
@@ -172,12 +172,9 @@ export function piModelValue(model: { readonly id?: unknown; readonly provider?:
 	return id === undefined ? null : provider === undefined ? id : `${provider}/${id}`;
 }
 
-/** what the rail calls a delegation, which the designer tool is */
-const DELEGATION = "Agent";
-
 /** a tool's name as the rail reads it: spool's designer is a delegation */
 function toolOf(name: string | undefined): string {
-	return name === DESIGNER_NAME ? DELEGATION : (name ?? "");
+	return name === DESIGNER_NAME ? DELEGATION_TOOL : (name ?? "");
 }
 
 function textOf(content: WireMessage["content"]): string {

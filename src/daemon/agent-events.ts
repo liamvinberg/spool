@@ -17,6 +17,12 @@
  *     `stream-json` has no published stability guarantee.
  */
 
+/**
+ * Claude Code's delegation tool, the name every adapter gives a sub-agent call so the rail
+ * draws it as a delegation.
+ */
+export const DELEGATION_TOOL = "Agent";
+
 /** What a turn ended as. The wire's own reason rides beside it. */
 export type AgentEnding = "done" | "stopped" | "failed";
 
