@@ -38,7 +38,9 @@ The canvas is design/. Its contract is below; \`spool skill <topic>\` gets you d
 on any part of it.
 
 What the human has selected arrives in their message inside a <selection> block.
-That is what "this" and "that" mean.`;
+That is what "this" and "that" mean.
+
+Sum up designers' work in a short list, not a table: the rail already shows a tile per frame.`;
 
 const MEMORY = `Read the project's own CLAUDE.md or AGENTS.md before your first change. Spool does
 not load it for you.`;
