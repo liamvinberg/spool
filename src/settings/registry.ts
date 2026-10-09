@@ -44,17 +44,6 @@ export interface SettingEntry<Value extends SettingPrimitive = SettingPrimitive>
 export type SettingPrimitive = boolean | string;
 
 /**
- * How a spawned agent is fenced (#121, #281). `ask` is the fence as built:
- * the allow rules make design/ quiet and everything else asks. `edits` accepts
- * file edits and still asks for the rest. `bypass` hands the harness its own
- * bypass mode, at which point the allow rules and the sandbox buy nothing. The
- * mode is this machine's, never the repo's, and lives with the rest of the
- * agent choice in `daemon/agent-defaults.ts` rather than in this registry (#361).
- */
-export const AGENT_PERMISSIONS = ["ask", "edits", "bypass"] as const;
-export type AgentPermissions = (typeof AGENT_PERMISSIONS)[number];
-
-/**
  * Which of the chrome's two looks is on. `system` follows the OS, live. The
  * look is one `color-scheme` on `:root`: every token in `ui.css` is declared
  * as `light-dark(light, dark)`, so the stylesheet picks the value and nothing

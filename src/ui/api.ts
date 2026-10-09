@@ -3,6 +3,7 @@ import type { Attachment } from "../attachment";
 import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamProjectHere, TeamRole } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
+import type { AgentPermissions } from "../daemon/agent-defaults";
 import { type AgentEngineId, isAgentEngineId } from "../daemon/agent-engine";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
@@ -31,13 +32,7 @@ import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import { createPlayerPublicationClient } from "../runtime/player-publication-client";
-import type {
-	AgentPermissions,
-	SettingKey,
-	SettingPrimitive,
-	SettingReading,
-	SettingsSnapshot,
-} from "../settings/registry";
+import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";

@@ -1,5 +1,4 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { AgentPermissions } from "../settings/registry";
 import { createBackgroundHold } from "./agent-background";
 import { type CodexAdapter, type CodexItem, callsOf, createCodexAdapter } from "./agent-codex";
 import { type CodexRequestId, type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
@@ -13,6 +12,7 @@ import {
 	versionAtLeast,
 } from "./agent-codex-spawn";
 import type { AgentReply } from "./agent-control";
+import type { AgentPermissions } from "./agent-defaults";
 import { type AgentMessage, saidText } from "./agent-engine";
 import type { AgentAsking, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";

@@ -1,5 +1,5 @@
-import type { AgentPermissions } from "../settings/registry";
 import type { AgentReply } from "./agent-control";
+import type { AgentPermissions } from "./agent-defaults";
 import type { AgentEvent } from "./agent-events";
 import type { FrameWitness } from "./agent-frames";
 import type { AgentTurn } from "./agent-turn";

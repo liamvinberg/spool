@@ -1,5 +1,5 @@
 import type { Attachment } from "../attachment";
-import type { AgentPermissions } from "../settings/registry";
+import type { AgentPermissions } from "./agent-defaults";
 import type { AgentExecutor } from "./agent-exec";
 import type { AgentAsk, AgentOffer } from "./agent-offer";
 import type { AgentLogin, Look } from "./agent-preflight";

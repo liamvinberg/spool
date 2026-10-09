@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Page } from "playwright-core";
 import { inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
+import type { AgentPermissions } from "./daemon/agent-defaults";
 import { createAgentDefaults } from "./daemon/agent-defaults";
 import type { AgentEngineId } from "./daemon/agent-engine";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
@@ -16,7 +17,6 @@ import { serveDaemon } from "./daemon/server";
 import { initProject } from "./init";
 import { setNested } from "./machine-state";
 import { lookupProjectByName } from "./registry";
-import type { AgentPermissions } from "./settings/registry";
 import { canvasJson } from "./templates";
 import { defaultLayout } from "./ui/canvas/pane-layout";
 

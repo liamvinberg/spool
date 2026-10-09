@@ -1,5 +1,5 @@
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import type { AgentPermissions } from "../../settings/registry";
+import type { AgentPermissions } from "../../daemon/agent-defaults";
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";

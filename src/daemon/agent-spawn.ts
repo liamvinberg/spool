@@ -1,4 +1,4 @@
-import type { AgentPermissions } from "../settings/registry";
+import type { AgentPermissions } from "./agent-defaults";
 import { DESIGNER_FRAMING } from "./agent-designer";
 import { type AgentMessage, saidText } from "./agent-engine";
 import { framing } from "./agent-framing";

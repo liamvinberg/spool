@@ -1,4 +1,3 @@
-import type { AgentPermissions } from "../settings/registry";
 import { createBackgroundHold } from "./agent-background";
 import { createClaudeAdapter } from "./agent-claude";
 import {
@@ -11,6 +10,7 @@ import {
 	stopTaskRequestLine,
 	wordsOf,
 } from "./agent-control";
+import type { AgentPermissions } from "./agent-defaults";
 import type { AgentAsking, AgentEnded, AgentEvent, AgentLimit, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import { providerRecovery } from "./agent-recovery";

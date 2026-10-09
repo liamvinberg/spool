@@ -3,8 +3,7 @@ import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { getNested } from "../machine-state";
 import { readMachineRegistry } from "../machine-state-files";
-import { AGENT_PERMISSIONS, type AgentPermissions } from "../settings/registry";
-import { type AgentEngineId, isAgentEngineId } from "./agent-engine";
+import { AGENT_ENGINE_IDS, type AgentEngineId, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { threadsDir } from "./agent-threads";
 
@@ -19,11 +18,20 @@ import { threadsDir } from "./agent-threads";
  */
 
 /**
- * Which engine a machine with nothing saved starts on: the first of these that is
- * registered and installed, else the first registered. Ids no build knows yet are skipped,
- * so a new engine joins the order by being registered. The bundled engine is never here.
+ * Which engine a machine with nothing saved starts on: the first engine spool drives, in
+ * their own order, that is registered and installed, else the first registered. The bundled
+ * engine is never here.
  */
-export const ENGINE_ORDER: readonly string[] = ["claude", "codex", "pi"];
+export const ENGINE_ORDER: readonly AgentEngineId[] = AGENT_ENGINE_IDS;
+
+/**
+ * How a spawned agent is fenced (#121, #281). `ask` is the fence as built: the allow rules
+ * make design/ quiet and everything else asks. `edits` accepts file edits and still asks for
+ * the rest. `bypass` hands the agent its own bypass mode. The mode is this machine's, never
+ * the repo's, and is part of the agent choice this module keeps (#361).
+ */
+export const AGENT_PERMISSIONS = ["ask", "edits", "bypass"] as const;
+export type AgentPermissions = (typeof AGENT_PERMISSIONS)[number];
 
 /** A machine with nothing saved asks before commands and edits without asking. */
 export const DEFAULT_MODE: AgentPermissions = "edits";
@@ -35,7 +43,7 @@ export interface EngineAvailability {
 
 /** The one fallback. Undefined only when no engine in the order is registered at all. */
 export function fallbackEngine(engines: Iterable<EngineAvailability>): AgentEngineId | undefined {
-	const registered = new Map([...engines].map((engine) => [engine.id as string, engine]));
+	const registered = new Map([...engines].map((engine) => [engine.id, engine]));
 	const ordered = ENGINE_ORDER.flatMap((id) => {
 		const engine = registered.get(id);
 		return engine === undefined ? [] : [engine];
@@ -202,7 +210,7 @@ export function migrateAgentDefaults(spoolDir: string): Stored {
 	const models: Record<string, AgentAsk> = {};
 	for (const one of files) {
 		for (const [id, ask] of Object.entries(one?.defaults as Record<string, unknown>)) {
-			if (id === "spool" || models[id] !== undefined) continue;
+			if (id === LEGACY_ENGINE || models[id] !== undefined) continue;
 			const clean = cleanAsk(ask);
 			if (clean.value !== undefined || clean.effort !== undefined) models[id] = clean;
 		}

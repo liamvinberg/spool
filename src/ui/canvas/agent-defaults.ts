@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
+import type { AgentPermissions } from "../../daemon/agent-defaults";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import type { AgentPermissions } from "../../settings/registry";
 import { fetchAgentDefaults, saveAgentEngine } from "../api";
 import { useSettings } from "../settings";
 

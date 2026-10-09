@@ -1,5 +1,5 @@
-import type { AgentPermissions } from "../settings/registry";
 import type { CodexRpc } from "./agent-codex-rpc";
+import type { AgentPermissions } from "./agent-defaults";
 import { DESIGNER_DESCRIPTION, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
 import { framing } from "./agent-framing";
 import type { AgentSpawn } from "./agent-spawn";
