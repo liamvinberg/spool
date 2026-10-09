@@ -612,11 +612,11 @@ export function ProjectCanvas({
 		...offeredModel,
 		started: turn.entries.length > 0,
 		// saved before the menu moves: the blank chat then follows the confirmed choice
-		onEngine: (engine: AgentEngineId) => {
-			void agentDefaults.choose(engine).then((confirmed) => {
+		onEngine: (engine: AgentEngineId) =>
+			agentDefaults.choose(engine).then((confirmed) => {
 				if (confirmed) deck.follow();
-			});
-		},
+				return confirmed;
+			}),
 	};
 	/**
 	 * What a row in the rail can do about the frame it names (#143, #194).

@@ -219,7 +219,14 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 		asked: 0,
 	};
 	/** the model door, and every choice that went through it (#199) */
-	const machine = { preferred: "claude", mode: "edits" };
+	const machine = {
+		preferred: "claude",
+		mode: "edits",
+		/** a save held open, so a test can look at the menu while it waits on one */
+		saving: null as Promise<void> | null,
+		/** a save the daemon refuses */
+		refuses: false,
+	};
 	/**
 	 * The agents the daemon reports, and a second one a test can install (#364).
 	 *
@@ -282,8 +289,11 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 			if (url.pathname.endsWith("/agent/engines")) {
 				if (method === "PUT") {
 					const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
-					machine.preferred = (JSON.parse(body) as { preferred: string }).preferred;
-					engines.calls.push(`PUT engines ${machine.preferred}`);
+					const preferred = (JSON.parse(body) as { preferred: string }).preferred;
+					engines.calls.push(`PUT engines ${preferred}`);
+					if (machine.saving !== null) await machine.saving;
+					if (machine.refuses) return new Response("could not save", { status: 500 });
+					machine.preferred = preferred;
 				}
 				return Response.json({ ...machine, engines: preflight.engines ?? engines.listed });
 			}

@@ -570,9 +570,9 @@ export function AgentRail({
 								model={model}
 								limit={limit}
 								context={context}
-								onSwitch={(engine, fresh) => {
+								onSwitch={async (engine, fresh) => {
 									if (fresh) threads.onNew();
-									model.onEngine?.(engine);
+									return (await model.onEngine?.(engine)) === true;
 								}}
 								onNewChat={() => {
 									threads.onNew();
@@ -2227,8 +2227,8 @@ function Composer({
 	onQueue: (text: string, sent: AgentSent) => boolean;
 	onStop: () => void;
 	onAnswer: (request: string, reply: AgentReply) => void;
-	/** another agent was picked in the menu: in this chat while it is empty, or a new one */
-	onSwitch: (engine: AgentEngineId, fresh: boolean) => void;
+	/** another agent was picked in the menu: in this chat while it is empty, or a new one; resolves once saved */
+	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 	onNewChat: () => void;
 }) {
 	const [ringOpen, setRingOpen] = useState(false);
@@ -2628,7 +2628,7 @@ function ModelMenu(props: {
 	open: boolean;
 	onOpen: (open: boolean) => void;
 	interrupted: boolean;
-	onSwitch: (engine: AgentEngineId, fresh: boolean) => void;
+	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 }) {
 	const recovery = useContext(RecoveryActions);
 	const { model, limit, open, onOpen, onSwitch } = props;

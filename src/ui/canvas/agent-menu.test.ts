@@ -652,6 +652,49 @@ describe("another agent in the menu", () => {
 		expect(canvas.turn.attachments[0]?.[0]?.media).toBe("image/png");
 	});
 
+	/** story 11: the next chat really uses the agent, because the menu waits for the save */
+	it("stays open until the agent is saved and confirmed, and closes only then", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		let release = () => {};
+		canvas.machine.saving = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await canvas.render();
+		await openWithOthers(canvas);
+
+		await act(async () => modelRow(canvas.host, "GPT-5.5 mini")?.click());
+		await settle(100);
+		// the save is out and not answered: the menu is still up, and says it is busy
+		expect(canvas.engines.calls).toEqual(["POST codex model", "PUT engines codex"]);
+		expect(modelMenu(canvas.host)).not.toBeNull();
+		expect(modelMenu(canvas.host)?.getAttribute("aria-busy")).toBe("true");
+		expect(canvas.machine.preferred).toBe("claude");
+
+		await act(async () => release());
+		await settle(200);
+		expect(canvas.machine.preferred).toBe("codex");
+		expect(modelMenu(canvas.host)).toBeNull();
+	});
+
+	it("keeps the menu open and says so when the daemon does not take the agent", async () => {
+		const canvas = mount();
+		withCodex(canvas);
+		canvas.machine.refuses = true;
+		await canvas.render();
+		await openWithOthers(canvas);
+
+		await act(async () => modelRow(canvas.host, "GPT-5.5 mini")?.click());
+		await settle(200);
+		expect(canvas.engines.calls).toEqual(["POST codex model", "PUT engines codex"]);
+		expect(modelMenu(canvas.host)).not.toBeNull();
+		expect(modelMenu(canvas.host)?.getAttribute("aria-busy")).toBeNull();
+		expect(live(canvas.host, "[data-agent-switch-failed]")[0]?.textContent).toBe(
+			"Spool could not save Codex as your agent. Try again.",
+		);
+		expect(canvas.machine.preferred).toBe("claude");
+	});
+
 	/** the agent is the choice; its models are only how it is chosen, so a list it cannot give is no bar */
 	it("still offers an agent whose models could not be read, as one row named after it", async () => {
 		const canvas = mount();

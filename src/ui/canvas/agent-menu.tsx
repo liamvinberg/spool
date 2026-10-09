@@ -103,8 +103,12 @@ export function AgentMenu({
 	login?: LoginDeck | undefined;
 	open: boolean;
 	onOpen: (open: boolean) => void;
-	/** another agent was picked: in this chat while it is empty, or in a new one */
-	onSwitch: (engine: AgentEngineId, fresh: boolean) => void;
+	/**
+	 * Another agent was picked: in this chat while it is empty, or in a new one. It resolves
+	 * once the choice is saved, with whether the daemon confirmed it, and the menu stays
+	 * open until then (#361).
+	 */
+	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 }) {
 	const own = model.engine ?? "claude";
 	const { offer, levels } = model;
@@ -115,6 +119,8 @@ export function AgentMenu({
 	const [more, setMore] = useState(false);
 	const [query, setQuery] = useState("");
 	const [looks, setLooks] = useState(0);
+	/** the agent being saved as the machine's, or one whose save the daemon did not confirm */
+	const [switching, setSwitching] = useState<{ engine: AgentEngineId; failed: boolean } | null>(null);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 
@@ -149,6 +155,7 @@ export function AgentMenu({
 			setQuery("");
 			setPending(null);
 			setMore(false);
+			setSwitching(null);
 			model.refresh();
 		} else trigger.current?.focus({ preventScroll: true });
 	};
@@ -205,14 +212,23 @@ export function AgentMenu({
 		void switchTo(engine, entry.value, false);
 	};
 
-	/** another agent, on one of its models, or on whatever it answers with where it offered none */
+	/**
+	 * Another agent, on one of its models, or on whatever it answers with where it offered
+	 * none. The menu closes only once the choice is saved and confirmed (#361), so the next
+	 * chat really starts on it; one the daemon did not take keeps the menu open, saying so.
+	 */
 	const switchTo = async (engine: AgentEngineId, value: string | null, fresh: boolean) => {
-		show(false);
+		if (switching !== null && !switching.failed) return;
+		setSwitching({ engine, failed: false });
 		if (value !== null) {
 			const ask: AgentAsk = { value };
 			await chooseEngineModel(project, engine, ask);
 		}
-		onSwitch(engine, fresh);
+		const saved = await onSwitch(engine, fresh);
+		if (saved) {
+			setSwitching(null);
+			show(false);
+		} else setSwitching({ engine, failed: true });
 	};
 
 	const group = (engine: AgentEngineId, index: number) => {
@@ -456,6 +472,7 @@ export function AgentMenu({
 					ref={panel}
 					role="menu"
 					aria-label="Agent and model"
+					aria-busy={(switching !== null && !switching.failed) || undefined}
 					data-agent-model-menu=""
 					onKeyDown={(event) => {
 						if (event.key === "Escape" || event.key === "Tab") {
@@ -502,6 +519,11 @@ export function AgentMenu({
 						{shown}
 						{shown.every((one) => one === null) ? (
 							<p className="px-7 py-3 text-muted type-label">No models match “{query}”.</p>
+						) : null}
+						{switching?.failed ? (
+							<p role="status" data-agent-switch-failed="" className="px-7 py-2 text-muted type-label">
+								Spool could not save {engineName(switching.engine)} as your agent. Try again.
+							</p>
 						) : null}
 					</div>
 					{lacking.length === 0 ? null : (

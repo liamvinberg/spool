@@ -140,7 +140,8 @@ export const engineModes = new Map<AgentEngineId, boolean>();
 export interface AgentModelDeck {
 	readonly engine?: AgentEngineId;
 	readonly project?: string;
-	readonly onEngine?: (engine: AgentEngineId) => void;
+	/** save another agent as the machine's; resolves with whether the daemon confirmed it */
+	readonly onEngine?: (engine: AgentEngineId) => Promise<boolean>;
 	readonly started?: boolean;
 	readonly offer: AgentOffer;
 	/** The current chat has not received its own model offer yet. */
