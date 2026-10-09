@@ -14,7 +14,7 @@ import {
 import type { AgentReply } from "./agent-control";
 import type { AgentPermissions } from "./agent-defaults";
 import { type AgentMessage, saidText } from "./agent-engine";
-import type { AgentAsking, AgentRecovery } from "./agent-events";
+import type { AgentAsking, AgentEvent, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import type { AgentAsk } from "./agent-spawn";
 import type { AgentTurn } from "./agent-turn";
@@ -147,6 +147,19 @@ export function approvalScopes(
 
 const DECISIONS = { allow: "accept", always: "acceptForSession", deny: "decline" } as const;
 
+/**
+ * How long a sub-agent's start waits on Codex to say its role before it is said without
+ * one. A loaded thread answers `thread/read` from memory, so this only bounds a Codex that
+ * never answers: everything after the start waits behind it, in order.
+ */
+export const ROLE_WAIT_MS = 2000;
+
+/** the role Codex gave a thread it spawned, off `thread/read`'s `agentRole`, or null */
+export function roleOf(read: unknown): string | null {
+	const thread = (read as { thread?: { agentRole?: unknown } } | null | undefined)?.thread;
+	return typeof thread?.agentRole === "string" && thread.agentRole !== "" ? thread.agentRole : null;
+}
+
 export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	const { executor, root, env, said, ask, permissions } = options;
 	const adapter: CodexAdapter = createCodexAdapter();
@@ -168,6 +181,13 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	 * did not wait for runs on.
 	 */
 	const background = createBackgroundHold({ wakes: false });
+	/**
+	 * The adapter's events in the order Codex said them, each pushed once nothing before it
+	 * waits. A spawn names its child but not the child's role (`agent_type` is not on the
+	 * wire), and a designer's spot is reserved on its task's start, so a child's start waits
+	 * here for `thread/read` to name the role, and what came after it waits behind it.
+	 */
+	const line: { event: AgentEvent; waits: boolean }[] = [];
 
 	/** every press not yet sent, once there is a turn to name */
 	function interruptSent(): void {
@@ -262,6 +282,49 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		}
 		// anything else spool does not take part in is refused, so nothing waits on it
 		target.refuse(id, `spool does not handle ${method}`);
+	}
+
+	/** say one event of the adapter's, through the background hold */
+	function deliver(started: AgentProcess, event: AgentEvent): void {
+		const read = background.read(event);
+		for (const one of read.events) push(one);
+		if (read.over) end(started);
+	}
+
+	/** push every event at the head of the line that waits on nothing */
+	function drain(started: AgentProcess): void {
+		while (line.length > 0 && !(line[0] as { waits: boolean }).waits)
+			deliver(started, (line.shift() as { event: AgentEvent }).event);
+	}
+
+	/** take one event of the adapter's, asking Codex the role of a child it just spawned */
+	function take(started: AgentProcess, target: CodexRpc, event: AgentEvent): void {
+		if (event.kind !== "task-started" || event.agent !== null) {
+			line.push({ event, waits: false });
+			drain(started);
+			return;
+		}
+		const entry = { event: event as AgentEvent, waits: true };
+		line.push(entry);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const late = new Promise<null>((resolve) => {
+			timer = setTimeout(() => resolve(null), ROLE_WAIT_MS);
+		});
+		const asked = target
+			.request("thread/read", { threadId: event.task, includeTurns: false })
+			.then(roleOf, () => null);
+		void Promise.race([asked, late]).then((agent) => {
+			clearTimeout(timer);
+			entry.event = { ...event, agent };
+			entry.waits = false;
+			drain(started);
+		});
+	}
+
+	/** the process is gone: what waited on a role is said without one */
+	function flush(started: AgentProcess): void {
+		for (const entry of line) entry.waits = false;
+		drain(started);
 	}
 
 	async function run(started: AgentProcess, target: CodexRpc): Promise<void> {
@@ -369,14 +432,11 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 					typeof wire.turn?.id === "string"
 				)
 					children.set(wire.threadId, wire.turn.id);
-				for (const event of adapter.read(method, params)) {
-					const read = background.read(event);
-					for (const one of read.events) push(one);
-					if (read.over) end(started);
-				}
+				for (const event of adapter.read(method, params)) take(started, target, event);
 			});
-			started.onLine((line) => target.read(line));
+			started.onLine((text) => target.read(text));
 			started.onExit((code, message) => {
+				flush(started);
 				asking.clear();
 				target.close(message ?? "Codex exited.");
 				shell.close({ kind: "closed", code, ...(message === undefined ? {} : { message }), parent: null });

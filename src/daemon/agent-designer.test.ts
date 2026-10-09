@@ -213,6 +213,33 @@ describe("codex's designer", () => {
 		expect(events.filter((event) => event.kind === "ended")).toHaveLength(1);
 	});
 
+	it("holds a spot for each designer, by the role Codex names when asked", async () => {
+		const codex = scriptedAgentExecutor("codex-designers");
+		const { choose, turn } = daemon({ agentExecutor: codex.executor });
+		await choose("codex", CODEX);
+
+		const events = await turn(CODEX, "two directions for the hello frame");
+
+		expect(codex.spawned[0]?.mismatches).toEqual([]);
+		// the spawn names no role: the turn asks each child's thread for it
+		const reads = (codex.spawned[0]?.inputs ?? [])
+			.map((line) => JSON.parse(line) as { method?: string; params?: { threadId?: string } })
+			.filter((line) => line.method === "thread/read");
+		const { started } = fanOut(events);
+		expect(reads.map((line) => line.params?.threadId)).toEqual(
+			started.map((event) => event.kind === "task-started" && event.task),
+		);
+		expect(started.map((event) => event.kind === "task-started" && event.agent)).toEqual(["designer", "designer"]);
+		// each spot is held the moment its designer starts, before anything it does, named from its brief
+		const held = events.filter((event) => event.kind === "spot" && event.state === "held");
+		expect(held.map((event) => event.kind === "spot" && event.name)).toEqual(["hello-loud", "hello-calm"]);
+		for (const spot of held) {
+			const call = spot.kind === "spot" ? spot.call : null;
+			const work = events.findIndex((event) => event.parent === call && event.kind !== "other");
+			expect(work).toBeGreaterThan(events.indexOf(spot));
+		}
+	});
+
 	it("leaves a probe without the designer", async () => {
 		const codex = scriptedAgentExecutor("codex-models");
 		const { app, name } = daemon({ agentExecutor: codex.executor });

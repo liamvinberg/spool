@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { fixtureAgentExecutor, makeTempDir } from "../test-helpers";
 import { codexFraming } from "./agent-codex-spawn";
-import { approvalScopes, codexInput, inDesign, isSpoolRead, quietApproval, startCodexTurn } from "./agent-codex-turn";
+import {
+	approvalScopes,
+	codexInput,
+	inDesign,
+	isSpoolRead,
+	quietApproval,
+	roleOf,
+	startCodexTurn,
+} from "./agent-codex-turn";
+import type { AgentEvent } from "./agent-events";
 
 /** a Codex that answers the handshake, the account, its config and a thread start, and nothing more */
 function codexWith(config: Record<string, unknown>) {
@@ -105,5 +114,94 @@ describe("what spool answers for the person", () => {
 			{ type: "image", url: "data:image/png;base64,aGk=" },
 			{ type: "text", text: "frame a\n\nlook", text_elements: [] },
 		]);
+	});
+});
+
+describe("a codex sub-agent's role", () => {
+	/** a Codex that spawns one child and lands it, answering `thread/read` as told */
+	function spawning(read: (thread: string) => unknown) {
+		return fixtureAgentExecutor(
+			(proc, line) => {
+				const message = JSON.parse(line) as { id?: number; method?: string; params?: { threadId?: string } };
+				const answer = (result: unknown) => proc.emit(JSON.stringify({ id: message.id, result }));
+				const say = (method: string, params: unknown) => proc.emit(JSON.stringify({ method, params }));
+				if (message.method === "initialize") answer({ userAgent: "spool/0.161.0 (Linux; x86_64) unknown" });
+				if (message.method === "account/read") answer({ account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+				if (message.method === "config/read") answer({ config: {}, origins: {} });
+				if (message.method === "thread/start") answer({ thread: { id: "main" }, model: "gpt-5.6-luna" });
+				if (message.method === "thread/read") {
+					const reply = read(message.params?.threadId ?? "");
+					proc.emit(
+						JSON.stringify({
+							id: message.id,
+							...(reply instanceof Error
+								? { error: { code: -32600, message: reply.message } }
+								: { result: reply }),
+						}),
+					);
+				}
+				if (message.method === "turn/start") {
+					answer({ turn: { id: "turn" } });
+					const spawn = {
+						type: "collabAgentToolCall",
+						id: "spawn",
+						tool: "spawnAgent",
+						senderThreadId: "main",
+						receiverThreadIds: ["child"],
+						prompt: "Create design/frames/hello-calm/frame.tsx",
+					};
+					say("item/completed", { threadId: "main", item: spawn });
+					say("item/started", { threadId: "child", item: { type: "agentMessage", id: "m" } });
+					say("item/completed", { threadId: "child", item: { type: "agentMessage", id: "m", text: "done" } });
+					say("turn/completed", { threadId: "child", turn: { id: "t2", status: "completed" } });
+					say("turn/completed", { threadId: "main", turn: { id: "turn", status: "completed" } });
+				}
+			},
+			(proc) => proc.exit(0),
+		);
+	}
+
+	async function started(read: (thread: string) => unknown) {
+		const { executor } = spawning(read);
+		const turn = startCodexTurn({
+			executor,
+			root: makeTempDir(),
+			env: {},
+			said: [{ prompt: "go", selection: "" }],
+			ask: {},
+			permissions: "edits",
+			session: null,
+			onSession: () => {},
+			version: "0.33.1",
+		});
+		const events: AgentEvent[] = [];
+		for await (const event of turn.events) events.push(event);
+		return events;
+	}
+
+	it("is read off the child's thread before anything the child said", async () => {
+		const events = await started(() => ({ thread: { id: "child", agentRole: "designer" } }));
+		const start = events.findIndex((event) => event.kind === "task-started");
+		expect(events[start]).toMatchObject({ agent: "designer" });
+		const child = events.filter((event) => event.parent === "spawn").map((event) => event.kind);
+		expect(child).toContain("said");
+		expect(events.findIndex((event) => event.parent === "spawn")).toBeGreaterThan(start);
+	});
+
+	it("is nobody's where Codex cannot say, and the child's work still follows its start", async () => {
+		const events = await started(() => new Error("no such thread"));
+		const start = events.findIndex((event) => event.kind === "task-started");
+		expect(events[start]).toMatchObject({ agent: null });
+		expect(events.findIndex((event) => event.parent === "spawn")).toBeGreaterThan(start);
+		expect(events.filter((event) => event.parent === "spawn").map((event) => event.kind)).toContain("said");
+		expect(events.at(-1)?.kind).toBe("closed");
+	});
+});
+
+describe("roleOf", () => {
+	it("is the thread's agentRole, or null", () => {
+		expect(roleOf({ thread: { agentRole: "designer" } })).toBe("designer");
+		expect(roleOf({ thread: { agentRole: null } })).toBeNull();
+		expect(roleOf(undefined)).toBeNull();
 	});
 });

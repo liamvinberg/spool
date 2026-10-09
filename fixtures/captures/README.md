@@ -140,6 +140,15 @@ one frame and a stand-in `spool` that only echoes its arguments.
 | `codex-designers.json` | `in`/`out` | `codex-cli` 0.161.0 on `gpt-5.6-luna` at `low`, under edits: two `spawnAgent` calls through code-mode `exec`, both child threads' turns, and two `wait` calls naming them. |
 | `pi-designers.json` | `in`/`out` | pi 1.0.3 on `openai-codex/gpt-5.6-luna` at `low`: two `designer` tool calls run in parallel, each child's tools as `tool_execution_update` steps, and each child's last words as the result. |
 
+Edited since: `codex-designers.json` has a `thread/read` and its reply spliced in
+after each `spawnAgent` completes, because spool now asks each child's thread for its
+`agentRole` (the spawn item does not carry the role) and reserves a designer's spot
+on it. The recording predates that request, so the replies are derived rather than
+recorded: the main thread's record as `thread/start` returned it, re-keyed to the
+child, with the child's own `parentThreadId`, `preview`, status, nickname and
+`agentRole: "designer"`, and a `subAgent.thread_spawn` source, as the 0.161 schema
+(`v2/Thread.ts`, `SubAgentSource.ts`) and app-server's loaded-thread summary give them.
+
 Scrubbed as the captures above: the project is `$ROOT`, home is `/home/user`,
 spool's state is `/home/user/.spool`, the ChatGPT account id is zeroed, and
 the init's tool, connector, command, skill and plugin listings and pi's system

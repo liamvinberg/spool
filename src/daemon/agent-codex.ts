@@ -374,7 +374,8 @@ export function createCodexAdapter(): CodexAdapter {
 	/**
 	 * The sub-agents a spawn just named, each a task under the spawning call. Only a spawn
 	 * makes a child: `wait` and the other collab calls name threads that already exist, and
-	 * a child keeps the call that spawned it as its parent.
+	 * a child keeps the call that spawned it as its parent. The spawn names no role, so the
+	 * task says none: the turn runner asks Codex for it (`thread/read`) before saying it.
 	 */
 	function spawned(item: CodexItem): AgentEvent[] {
 		if (item.type !== "collabAgentToolCall" || item.tool !== "spawnAgent" || item.id === undefined) return [];
