@@ -1,25 +1,31 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cn } from "../cn";
-import { attachHotkeyLayer } from "../hotkey-dispatch";
-import { hotkeyKey } from "../hotkeys";
-import { CogIcon } from "../icons";
-import { MenuItem } from "./context-menu";
+import { MenuItem } from "./canvas/context-menu";
+import { cn } from "./cn";
+import { attachHotkeyLayer } from "./hotkey-dispatch";
+import { hotkeyKey } from "./hotkeys";
+import { CogIcon } from "./icons";
 
 const BUTTON =
 	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface active:scale-90 motion-reduce:transition-none";
 
-/** What stands in the window bar just inside the right side's toggles: doors out of the canvas rather than panes (#282). */
+/**
+ * What stands at the window bar's right end, on Home and on every canvas alike: help and
+ * the settings cog, doors out of whatever is open rather than parts of it (#282, #359).
+ */
 export function BarEnd({
 	onSettings,
+	onShortcuts,
 	onUseAgent,
 }: {
 	onSettings?: (() => void) | undefined;
+	onShortcuts: () => void;
+	/** on a canvas with a project folder: hand the project to an agent of one's own */
 	onUseAgent?: (() => void) | undefined;
 }) {
 	return (
 		<>
-			{onUseAgent && <BarHelp onUseAgent={onUseAgent} />}
+			<BarHelp onShortcuts={onShortcuts} onUseAgent={onUseAgent} />
 			<button
 				type="button"
 				data-bar-end="settings"
@@ -34,7 +40,7 @@ export function BarEnd({
 	);
 }
 
-function BarHelp({ onUseAgent }: { onUseAgent: () => void }) {
+function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAgent?: (() => void) | undefined }) {
 	const [open, setOpen] = useState(false);
 	const [at, setAt] = useState<{ right: number; top: number } | null>(null);
 	const id = useId();
@@ -113,12 +119,22 @@ function BarHelp({ onUseAgent }: { onUseAgent: () => void }) {
 						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit [&>button:focus-visible]:bg-surface"
 						style={{ right: at.right, top: at.top }}
 					>
+						{onUseAgent === undefined ? null : (
+							<MenuItem
+								label="Open in your agent"
+								keys="↗"
+								onClick={() => {
+									close();
+									onUseAgent();
+								}}
+							/>
+						)}
 						<MenuItem
-							label="Open in your agent"
-							keys="↗"
+							label="Keyboard shortcuts"
+							keys={hotkeyKey("app.help")}
 							onClick={() => {
 								close();
-								onUseAgent();
+								onShortcuts();
 							}}
 						/>
 					</div>,
