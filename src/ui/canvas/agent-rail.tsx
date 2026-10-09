@@ -432,171 +432,171 @@ export function AgentRail({
 	);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<RecoveryActions value={{ login, preferred }}>
-			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
-				<div
-					data-agent-rail=""
-					data-agent-rail-engine={model.engine}
-					className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg"
-				>
-					{install.none ? (
-						/*
-						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
-						 *
-						 * The wall takes the transcript's place and the composer stays, dead. The rest of
-						 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
-						 * conversation you cannot continue on a machine with no agent on it.
-						 */
-						<div className="flex h-full min-w-[200px] flex-col">
-							<PaneTitle>
-								<span className="px-1.5 font-semibold text-text type-control">Agent</span>
-							</PaneTitle>
-							<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-								<InstallWall install={install} />
-							</div>
-							<DeadComposer />
+		<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
+			<div
+				data-agent-rail=""
+				data-agent-rail-engine={model.engine}
+				className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg"
+			>
+				{install.none ? (
+					/*
+					 * There is nothing to spawn, and spool knew it before anybody typed (#201).
+					 *
+					 * The wall takes the transcript's place and the composer stays, dead. The rest of
+					 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
+					 * conversation you cannot continue on a machine with no agent on it.
+					 */
+					<div className="flex h-full min-w-[200px] flex-col">
+						<PaneTitle>
+							<span className="px-1.5 font-semibold text-text type-control">Agent</span>
+						</PaneTitle>
+						<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+							<InstallWall install={install} />
 						</div>
-					) : (
-						/*
-						 * The rail is one panel, and the plate over it is where the other conversations
-						 * live (#205). The panel is everything one conversation is; the list the plate
-						 * drops is every conversation there is, and a press on it changes only the panel.
-						 */
-						<div className="flex h-full min-w-[200px] flex-col">
-							{/* the plate leads the shelf, because it says which thread everything under it
+						<DeadComposer />
+					</div>
+				) : (
+					/*
+					 * The rail is one panel, and the plate over it is where the other conversations
+					 * live (#205). The panel is everything one conversation is; the list the plate
+					 * drops is every conversation there is, and a press on it changes only the panel.
+					 */
+					<div className="flex h-full min-w-[200px] flex-col">
+						{/* the plate leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-							<ThreadPlate
-								threads={threads}
-								listing={listing}
-								onList={(at) => {
-									setFooterMenu(null);
-									setListing(at);
-								}}
-							/>
-							{/* the list drops over the shelf and the log together, so it hangs off the plate
+						<ThreadPlate
+							threads={threads}
+							listing={listing}
+							onList={(at) => {
+								setFooterMenu(null);
+								setListing(at);
+							}}
+						/>
+						{/* the list drops over the shelf and the log together, so it hangs off the plate
 					    whatever the shelf is carrying */}
-							<div className="relative flex min-h-0 flex-1 flex-col">
-								{/* the standing half of being signed out, on the shelf the plan would take —
+						<div className="relative flex min-h-0 flex-1 flex-col">
+							{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
-								{model.engine === undefined && login.out ? <LoginStrip login={login} /> : null}
-								{plan === null ? null : <PlanStrip plan={plan} />}
-								<Transcript
-									entries={entries}
-									afterLog={
-										legacy ? (
-											<p data-agent-legacy="" className="text-muted type-detail">
-												This chat ran on spool’s built-in agent, which is gone. It can’t be continued; what
-												you send starts a new chat.
-											</p>
-										) : model.engine === undefined ||
-											!(install.missing || login.out || login.recovery) ? null : (
-											<RecoveryView
-												onNew={threads.onNew}
-												install={install}
-												login={login}
-												model={model}
-												onModels={() => setFooterMenu("models")}
-											/>
-										)
-									}
-									queued={queued}
-									onUnqueue={onUnqueue}
-									live={phase === "playing"}
-									spoke={spoke}
-									elapsed={elapsed}
-									jump={jump}
-									onAnswer={onAnswer}
-								/>
-								<ThreadDrop
-									threads={threads}
-									preferred={preferred}
-									now={listing}
-									onDone={() => setListing(null)}
-								/>
-							</div>
-							{/* the strip is measured against the composer's own inner width: the same three
-					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
-					    rather than one width */}
-							<Composer
-								thread={open}
-								// a legacy chat is read-only: nothing answers it, so there is no one to pick (#363)
-								ready={agentReady && !legacy}
-								permissions={permissions}
-								menu={footerMenu}
-								onMenu={setFooterMenu}
-								phase={phase}
-								waited={waited}
-								finished={threads.finished}
-								answering={asking?.kind === "ask" ? asking.request : null}
-								request={active && request?.thread === open ? request.id : undefined}
-								strip={stripOf(
-									Object.values(holding.prepared ?? {}).length
-										? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)
-										: pointing.entries,
-									composerWidth(width),
-									pointing.inside,
-								)}
-								pointing={
-									Object.values(holding.prepared ?? {}).length
-										? {
-												...pointing,
-												entries: Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection),
-												onDrop: () => write((was) => ({ ...was, prepared: {} })),
-											}
-										: pointing
+							{model.engine === undefined && login.out ? <LoginStrip login={login} /> : null}
+							{plan === null ? null : <PlanStrip plan={plan} />}
+							<Transcript
+								entries={entries}
+								afterLog={
+									legacy ? (
+										<p data-agent-legacy="" className="text-muted type-detail">
+											This chat ran on spool’s built-in agent, which is gone. It can’t be continued; what you
+											send starts a new chat.
+										</p>
+									) : model.engine === undefined ||
+										!(install.missing || login.out || login.recovery) ? null : (
+										<RecoveryView
+											onNew={threads.onNew}
+											install={install}
+											login={login}
+											model={model}
+											onModels={() => setFooterMenu("models")}
+										/>
+									)
 								}
-								draft={holding.draft}
-								onDraft={writeDraft}
-								attached={holding.attached}
-								onAttach={async (update) => {
-									const target = open || initialThread.current;
-									const was = heldRef.current[target] ?? (open ? seed : latestSeed.current);
-									const next = update(was.attached);
-									const adding = next.some((image) => !was.attached.includes(image));
-									// A visible new thumbnail is already stored. Removing one is immediate;
-									// its text recovery record prevents an old image returning after refresh.
-									// The thread holds the image before its store lands, so the composer
-									// keeps drawing its own copy rather than the thread's until then.
-									if (adding) write(() => was);
-									if (adding) await onAttach(next, target);
-									write((current) => ({ ...current, attached: next }));
-									if (!adding) await onAttach(next, target);
-								}}
-								model={model}
-								limit={limit}
-								context={context}
-								onSwitch={async (engine, fresh) => {
-									if (fresh) threads.onNew();
-									return (await model.onEngine?.(engine)) === true;
-								}}
-								onNewChat={() => {
-									threads.onNew();
-									setListing(null);
-								}}
-								onSend={(text, sent) => {
-									if (!agentReady || install.missing || login.recovery) return false;
-									const took = onSend(text, sent);
-									// the log follows the live edge again because something was said, so a press
-									// that said nothing must not move it
-									if (took) setSpoke((count) => count + 1);
-									return took;
-								}}
-								running={running}
-								onQueue={(text, sent) => {
-									const took = onQueue(text, sent);
-									// the words wait at the end of the log, so the log follows to show them
-									if (took) setSpoke((count) => count + 1);
-									return took;
-								}}
-								onStop={onStop}
+								queued={queued}
+								onUnqueue={onUnqueue}
+								live={phase === "playing"}
+								spoke={spoke}
+								elapsed={elapsed}
+								jump={jump}
 								onAnswer={onAnswer}
 							/>
+							<ThreadDrop
+								threads={threads}
+								preferred={preferred}
+								now={listing}
+								onDone={() => setListing(null)}
+							/>
 						</div>
-					)}
-				</div>
-			</PermissionAction>
-		</RecoveryActions>
+						{/* the strip is measured against the composer's own inner width: the same three
+					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
+					    rather than one width */}
+						<Composer
+							thread={open}
+							// a legacy chat is read-only: nothing answers it, so there is no one to pick (#363)
+							ready={agentReady && !legacy}
+							permissions={permissions}
+							menu={footerMenu}
+							onMenu={setFooterMenu}
+							phase={phase}
+							waited={waited}
+							finished={threads.finished}
+							answering={asking?.kind === "ask" ? asking.request : null}
+							request={active && request?.thread === open ? request.id : undefined}
+							strip={stripOf(
+								Object.values(holding.prepared ?? {}).length
+									? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)
+									: pointing.entries,
+								composerWidth(width),
+								pointing.inside,
+							)}
+							pointing={
+								Object.values(holding.prepared ?? {}).length
+									? {
+											...pointing,
+											entries: Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection),
+											onDrop: () => write((was) => ({ ...was, prepared: {} })),
+										}
+									: pointing
+							}
+							draft={holding.draft}
+							onDraft={writeDraft}
+							attached={holding.attached}
+							onAttach={async (update) => {
+								const target = open || initialThread.current;
+								const was = heldRef.current[target] ?? (open ? seed : latestSeed.current);
+								const next = update(was.attached);
+								const adding = next.some((image) => !was.attached.includes(image));
+								// A visible new thumbnail is already stored. Removing one is immediate;
+								// its text recovery record prevents an old image returning after refresh.
+								// The thread holds the image before its store lands, so the composer
+								// keeps drawing its own copy rather than the thread's until then.
+								if (adding) write(() => was);
+								if (adding) await onAttach(next, target);
+								write((current) => ({ ...current, attached: next }));
+								if (!adding) await onAttach(next, target);
+							}}
+							model={model}
+							limit={limit}
+							context={context}
+							onSwitch={async (engine, fresh) => {
+								if (fresh) threads.onNew();
+								return (await model.onEngine?.(engine)) === true;
+							}}
+							login={login}
+							preferred={preferred}
+							onNewChat={() => {
+								threads.onNew();
+								setListing(null);
+							}}
+							onSend={(text, sent) => {
+								if (!agentReady || install.missing || login.recovery) return false;
+								const took = onSend(text, sent);
+								// the log follows the live edge again because something was said, so a press
+								// that said nothing must not move it
+								if (took) setSpoke((count) => count + 1);
+								return took;
+							}}
+							running={running}
+							onQueue={(text, sent) => {
+								const took = onQueue(text, sent);
+								// the words wait at the end of the log, so the log follows to show them
+								if (took) setSpoke((count) => count + 1);
+								return took;
+							}}
+							onStop={onStop}
+							onAnswer={onAnswer}
+						/>
+					</div>
+				)}
+			</div>
+		</PermissionAction>
 	);
 }
 
@@ -2141,6 +2141,8 @@ function Composer({
 	onAnswer,
 	onSwitch,
 	onNewChat,
+	login,
+	preferred,
 }: {
 	thread: string;
 	ready: boolean;
@@ -2195,6 +2197,10 @@ function Composer({
 	/** another agent was picked in the menu: in this chat while it is empty, or a new one; resolves once saved */
 	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 	onNewChat: () => void;
+	/** whether this chat's agent is signed in, for the menu's group of it */
+	login: LoginDeck;
+	/** the machine's usual agent, which the model trigger names only another of (#364) */
+	preferred: AgentEngineId | null | undefined;
 }) {
 	const [ringOpen, setRingOpen] = useState(false);
 	const currentThread = useRef(thread);
@@ -2409,10 +2415,14 @@ function Composer({
 								}}
 							/>
 							{ready && model.engine !== undefined ? (
-								<ModelMenu
+								<AgentMenu
+									project={model.project ?? ""}
 									engine={model.engine}
 									model={model}
+									preferred={preferred}
+									started={model.started === true}
 									limit={limit}
+									login={login}
 									open={menu === "models"}
 									onOpen={(next) => onMenu(next ? "models" : null)}
 									onSwitch={onSwitch}
@@ -2524,32 +2534,6 @@ function ContextRing({
 				</div>
 			</RailMenu>
 		</span>
-	);
-}
-
-function ModelMenu(props: {
-	engine: AgentEngineId;
-	model: AgentModelDeck;
-	limit: AgentLimit | null;
-	open: boolean;
-	onOpen: (open: boolean) => void;
-	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
-}) {
-	const recovery = useContext(RecoveryActions);
-	const { engine, model, limit, open, onOpen, onSwitch } = props;
-	return (
-		<AgentMenu
-			project={model.project ?? ""}
-			engine={engine}
-			model={model}
-			preferred={recovery?.preferred}
-			started={model.started === true}
-			limit={limit}
-			login={recovery?.login}
-			open={open}
-			onOpen={onOpen}
-			onSwitch={onSwitch}
-		/>
 	);
 }
 
@@ -2952,12 +2936,6 @@ function Chip({
 		</span>
 	);
 }
-
-const RecoveryActions = createContext<{
-	login: LoginDeck;
-	/** the machine's usual agent, which the model trigger names only another of (#364) */
-	preferred?: AgentEngineId | null | undefined;
-} | null>(null);
 
 function RecoveryView({
 	install,
