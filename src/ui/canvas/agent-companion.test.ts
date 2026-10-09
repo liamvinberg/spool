@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../daemon/agent-events";
+import { shortNames } from "./agent-companion";
 import { type Stamped, transcriptOf } from "./agent-transcript";
 
 /** the companions as the turn's own fold reads them, which is the only way they are read */
@@ -170,5 +171,38 @@ describe("the agent's companions", () => {
 		]);
 		const done: AgentEvent = { kind: "task-done", task: "t2", status: "completed", summary: null, parent: null };
 		expect(companionsOf(at([...events, done])).map((one) => one.key)).toEqual(["d1"]);
+	});
+
+	it("never gives two designers on a page the same name", () => {
+		const spot = (name: string, task: string, call: string): AgentEvent => ({
+			kind: "spot",
+			state: "held",
+			name,
+			task,
+			call,
+			x: 0,
+			y: 0,
+			w: 10,
+			h: 10,
+			parent: null,
+		});
+		const names = companionsOf(
+			at([ready, spot("hello-calm", "t1", "d1"), spot("hello-loud", "t2", "d2"), spot("hello-loud-2", "t3", "d3")]),
+		).map((one) => one.name);
+		expect(new Set(names).size).toBe(3);
+		expect(names).toEqual(["calm", "loud", "loud 2"]);
+	});
+});
+
+describe("short names", () => {
+	it("drop the words every take starts with", () => {
+		expect(shortNames(["hello-calm", "hello-loud"])).toEqual(["calm", "loud"]);
+		expect(shortNames(["calm", "dense", null])).toEqual(["calm", "dense", null]);
+	});
+
+	it("take a second word where the first is shared, and a number where there is none", () => {
+		expect(shortNames(["calm-dark", "calm-light", "bold"])).toEqual(["calm dark", "calm light", "bold"]);
+		expect(shortNames(["calm", "calm"])).toEqual(["calm", "calm 2"]);
+		expect(shortNames(["home-calm", "home-calm"])).toEqual(["calm", "calm 2"]);
 	});
 });

@@ -67,6 +67,38 @@ function takeOf(name: string): string {
 }
 
 /**
+ * Each designer's short name, unique on the page (story 70): the first word that tells its
+ * take from the others'. The words every take starts with are dropped (`hello-calm` and
+ * `hello-loud` are `calm` and `loud`), a name two takes still share takes its next word
+ * (`calm dark`, `calm light`), and one that runs out of words takes a number (`calm 2`).
+ */
+export function shortNames(takes: readonly (string | null)[]): (string | null)[] {
+	const split = (take: string) => {
+		const parts = take.split(/[-\s]+/).filter((word) => word !== "");
+		return parts.length > 0 ? parts : [take];
+	};
+	const words = takes.map((take) => (take === null ? null : split(take)));
+	const named = words.filter((one): one is string[] => one !== null);
+	let common = 0;
+	if (named.length >= 2)
+		while (named.every((one) => one.length > common + 1 && one[common] === named[0]?.[common])) common += 1;
+	const rest = words.map((one) => (one === null ? null : one.slice(common)));
+	const firsts = rest.map((one) => (one === null ? null : (one[0] as string)));
+	const shared = (at: number) =>
+		firsts[at] !== null && firsts.some((other, index) => index !== at && other === firsts[at]);
+	const names = rest.map((one, at) =>
+		one === null ? null : shared(at) && one[1] !== undefined ? `${one[0]} ${one[1]}` : (one[0] as string),
+	);
+	const seen = new Map<string, number>();
+	return names.map((name) => {
+		if (name === null) return null;
+		const count = (seen.get(name) ?? 0) + 1;
+		seen.set(name, count);
+		return count === 1 ? name : `${name} ${count}`;
+	});
+}
+
+/**
  * What the companions read off the transcript's own fold rather than keeping a second copy
  * of: it already knows which delegation each call was made on, which delegating call each
  * task answers to, and where the agent stands.
@@ -207,17 +239,22 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 		}
 	};
 
-	const companions = (): AgentCompanion[] =>
-		[...by].map(([key, standing]) => ({
-			key,
-			name:
+	const companions = (): AgentCompanion[] => {
+		const standing = [...by];
+		const names = shortNames(
+			standing.map(([key, one]) =>
 				key === ""
 					? null
-					: standing.frame !== null
-						? takeOf(standing.frame)
-						: standing.spot !== null
-							? (takeOf(standing.spot.name).split("-")[0] ?? standing.spot.name)
+					: one.frame !== null
+						? takeOf(one.frame)
+						: one.spot !== null
+							? takeOf(one.spot.name)
 							: null,
+			),
+		);
+		return standing.map(([key, standing], index) => ({
+			key,
+			name: names[index] ?? null,
 			frame: standing.frame,
 			spot: standing.frame === null ? standing.spot : null,
 			act: standing.act,
@@ -225,6 +262,7 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 			range: standing.range,
 			beat: standing.beat,
 		}));
+	};
 
 	return { see, companions };
 }
