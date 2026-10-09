@@ -106,6 +106,10 @@ export function TurnFoot({
 	// a designer's ask hangs off its own tile; anything else is the turn's own
 	const designer = asks.find((ask) => ask.agent !== undefined && ask.agent !== "" && makers.has(ask.agent));
 	const mine = asks.find((ask) => ask !== designer);
+	// each anchor holds one ask; any more wait their turn as cards under the foot, so an
+	// ask is never anywhere but on screen
+	const hung = mine === undefined ? designer : undefined;
+	const queued = asks.filter((ask) => ask !== mine && ask !== hung);
 	const answer = onAnswer ?? (() => {});
 	return (
 		<div data-agent-turn={over ? "over" : "running"} className="flex flex-col gap-3 pt-1">
@@ -116,17 +120,12 @@ export function TurnFoot({
 							tiles={foot.tiles}
 							settled={over}
 							reach={reach}
-							waiting={designer?.agent}
+							waiting={hung?.agent}
 							under={
-								designer === undefined
+								hung === undefined
 									? undefined
 									: (notch) => (
-											<DesignerAsk
-												entry={designer}
-												onAnswer={answer}
-												permissions={permissions}
-												notch={notch}
-											/>
+											<DesignerAsk entry={hung} onAnswer={answer} permissions={permissions} notch={notch} />
 										)
 							}
 						/>
@@ -144,6 +143,9 @@ export function TurnFoot({
 					permissions={permissions}
 				/>
 			)}
+			{queued.map((entry) => (
+				<DesignerAsk key={entry.key} entry={entry} onAnswer={answer} permissions={permissions} />
+			))}
 			<div
 				data-agent-steps={open && mine === undefined ? "open" : "shut"}
 				hidden={!open || mine !== undefined}
@@ -229,7 +231,7 @@ function LineAsk({
 	);
 }
 
-/** a designer's ask, hanging under the grid with its notch pointing up at its own tile */
+/** an ask as its own card: a designer's under the grid, its notch pointing up at its tile, or one waiting its turn */
 function DesignerAsk({
 	entry,
 	onAnswer,

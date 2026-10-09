@@ -3150,6 +3150,20 @@ describe("an ask, anchored", () => {
 		).not.toBeNull();
 	});
 
+	it("keeps a second waiting ask on screen as a card under the first", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "carry the colours into the app");
+		canvas.turn.push(ready);
+		canvas.turn.push(asking({}));
+		canvas.turn.push(asking({ request: "req-2", call: "c2", tool: "Bash", input: { command: "npm test" } }));
+		await until(() => canvas.host.querySelectorAll('[data-agent-ask="open"]').length === 2);
+		const looks = [...canvas.host.querySelectorAll('[data-agent-ask="open"]')].map((one) =>
+			one.getAttribute("data-agent-ask-look"),
+		);
+		expect(looks).toEqual(["line", "card"]);
+	});
+
 	it("leaves a waiting ask in the log, as a card, where the turn has no line to open it out of", () => {
 		const ask = {
 			key: "ask:c1",
