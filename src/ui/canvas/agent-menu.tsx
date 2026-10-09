@@ -1,11 +1,11 @@
-import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { AGENT_ENGINE_IDS, type AgentEngineId, isAgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { AgentAsk, AgentModel, AgentOffer } from "../../daemon/agent-offer";
 import { chooseEngineModel, engineModelOffer, fetchAgentEngines, fetchAgentLogin } from "../api";
 import { cn } from "../cn";
 import { CheckIcon, PlusIcon, SearchIcon } from "../icons";
-import { Chevron, CommandLine, Float, Reveal, Versioned } from "./agent-float";
+import { Chevron, CommandLine, RailMenu, Reveal, Versioned } from "./agent-float";
 import { limitReadout, resetsIn } from "./agent-limit";
 import { type AgentModelDeck, offerOf } from "./agent-model";
 import type { LoginDeck } from "./agent-preflight";
@@ -131,8 +131,6 @@ export function AgentMenu({
 	const [looks, setLooks] = useState(0);
 	/** the agent being saved as the machine's, or one whose save the daemon did not confirm */
 	const [switching, setSwitching] = useState<{ engine: AgentEngineId; failed: boolean } | null>(null);
-	const trigger = useRef<HTMLButtonElement>(null);
-	const panel = useRef<HTMLDivElement>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `looks` is the cue to read again, not a value read here
 	useEffect(() => {
@@ -168,17 +166,8 @@ export function AgentMenu({
 			setMore(false);
 			setSwitching(null);
 			model.refresh();
-		} else trigger.current?.focus({ preventScroll: true });
+		}
 	};
-
-	useEffect(() => {
-		if (!open) return;
-		const target =
-			panel.current?.querySelector<HTMLInputElement>("input") ??
-			panel.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
-			panel.current?.querySelector<HTMLButtonElement>("button");
-		target?.focus({ preventScroll: true });
-	}, [open]);
 
 	const installed = (engines ?? [{ id: own, installed: true }]).filter((one) => one.installed || one.id === own);
 	const groups = [own, ...installed.map((one) => one.id).filter((id) => id !== own)];
@@ -436,145 +425,101 @@ export function AgentMenu({
 	const shown = groups.map(group);
 	return (
 		<span data-agent-model={model.readout} className="flex min-w-0">
-			{open ? (
-				<button
-					type="button"
-					tabIndex={-1}
-					aria-label="close the model menu"
-					className="fixed inset-0 z-10 cursor-default"
-					onClick={() => show(false)}
-				/>
-			) : null}
-			<button
-				type="button"
-				ref={trigger}
-				aria-label="Choose model"
-				aria-haspopup="menu"
-				aria-expanded={open}
-				title={[engineName(own), name, effort].filter(Boolean).join(" · ")}
-				onClick={() => show(!open)}
-				onKeyDown={(event) => {
-					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-						event.preventDefault();
-						show(true);
-					}
-				}}
-				className="relative z-30 flex h-7 min-w-0 max-w-[200px] items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
-			>
-				{usage !== null ? (
-					<span
-						data-agent-limit-dot=""
-						aria-hidden="true"
-						className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted"
-					/>
-				) : null}
-				<span className="min-w-0 truncate">
-					{unusual ? (
-						<>
-							<span data-agent-trigger-engine="">{engineName(own)}</span>
-							<span className="px-1 text-muted/60">·</span>
-						</>
-					) : null}
-					{machineWord(name) ? <span className="type-value">{name}</span> : <Versioned name={name} />}
-				</span>
-				<Chevron open={open} />
-			</button>
-			<Float
+			<RailMenu
 				open={open}
-				from="up"
+				onOpen={show}
+				label="Agent and model"
 				className="absolute bottom-full left-0 z-30 mb-2 w-[384px] max-w-full overflow-hidden"
-			>
-				<div
-					ref={panel}
-					role="menu"
-					aria-label="Agent and model"
-					aria-busy={(switching !== null && !switching.failed) || undefined}
-					data-agent-model-menu=""
-					onKeyDown={(event) => {
-						if (event.key === "Escape" || event.key === "Tab") {
-							event.preventDefault();
-							event.stopPropagation();
-							show(false);
-							return;
-						}
-						if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-						event.preventDefault();
-						const controls = [
-							...(panel.current?.querySelectorAll<HTMLElement>(
-								"button:not(:disabled):not([inert] *), input:not([inert] *)",
-							) ?? []),
-						];
-						const at =
-							document.activeElement instanceof HTMLElement ? controls.indexOf(document.activeElement) : -1;
-						const step = event.key === "ArrowDown" ? 1 : -1;
-						controls[(at + step + controls.length) % controls.length]?.focus();
-					}}
-					className="flex flex-col"
-				>
-					{findable ? (
-						<label className="flex h-10 shrink-0 items-center gap-2 border-border border-b px-3">
-							<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
-							<input
-								type="search"
-								value={query}
-								onChange={(event) => setQuery(event.target.value)}
-								placeholder="Find a model"
-								aria-label="Find a model"
-								spellCheck={false}
-								autoComplete="off"
-								className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted type-control [&::-webkit-search-cancel-button]:hidden"
-							/>
-						</label>
-					) : null}
-					<div
-						className={cn(
-							"pages-scrollbar overflow-y-auto p-1",
-							findable ? "max-h-[360px] pt-0" : "max-h-[420px]",
-						)}
+				panel={{ "data-agent-model-menu": "" }}
+				busy={switching !== null && !switching.failed}
+				trigger={(props) => (
+					<button
+						type="button"
+						{...props}
+						aria-label="Choose model"
+						title={[engineName(own), name, effort].filter(Boolean).join(" · ")}
+						className="relative z-30 flex h-7 min-w-0 max-w-[200px] items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
 					>
-						{shown}
-						{shown.every((one) => one === null) ? (
-							<p className="px-7 py-3 text-muted type-label">No models match “{query}”.</p>
+						{usage !== null ? (
+							<span
+								data-agent-limit-dot=""
+								aria-hidden="true"
+								className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted"
+							/>
 						) : null}
-						{switching?.failed ? (
-							<p role="status" data-agent-switch-failed="" className="px-7 py-2 text-muted type-label">
-								Spool could not save {engineName(switching.engine)} as your agent. Try again.
-							</p>
-						) : null}
-					</div>
-					{lacking.length === 0 ? null : (
-						<div className="flex flex-col border-border border-t p-1">
-							<button
-								type="button"
-								aria-expanded={more}
-								onClick={() => setMore((was) => !was)}
-								className="group flex h-8 items-center gap-2 rounded-sm px-2 text-left text-muted transition-colors duration-150 hover:bg-raised hover:text-text"
-							>
-								<span className="flex h-3.5 w-3.5 items-center justify-center transition-transform duration-[160ms] group-aria-expanded:rotate-45 motion-reduce:transition-none">
-									<PlusIcon />
-								</span>
-								<span className="type-label">Get more agents</span>
-							</button>
-							<Reveal open={more}>
-								<div className="flex flex-col gap-3 pt-1 pr-2 pb-2 pl-7">
-									{lacking.map((id) => (
-										<InstallLine key={id} engine={id} />
-									))}
-									<span>
-										<button
-											type="button"
-											onClick={() => setLooks((count) => count + 1)}
-											className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
-										>
-											Check again
-										</button>
-									</span>
-								</div>
-							</Reveal>
-						</div>
-					)}
+						<span className="min-w-0 truncate">
+							{unusual ? (
+								<>
+									<span data-agent-trigger-engine="">{engineName(own)}</span>
+									<span className="px-1 text-muted/60">·</span>
+								</>
+							) : null}
+							{machineWord(name) ? <span className="type-value">{name}</span> : <Versioned name={name} />}
+						</span>
+						<Chevron open={open} />
+					</button>
+				)}
+			>
+				{findable ? (
+					<label className="flex h-10 shrink-0 items-center gap-2 border-border border-b px-3">
+						<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+						<input
+							type="search"
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							placeholder="Find a model"
+							aria-label="Find a model"
+							spellCheck={false}
+							autoComplete="off"
+							className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted type-control [&::-webkit-search-cancel-button]:hidden"
+						/>
+					</label>
+				) : null}
+				<div
+					className={cn("pages-scrollbar overflow-y-auto p-1", findable ? "max-h-[360px] pt-0" : "max-h-[420px]")}
+				>
+					{shown}
+					{shown.every((one) => one === null) ? (
+						<p className="px-7 py-3 text-muted type-label">No models match “{query}”.</p>
+					) : null}
+					{switching?.failed ? (
+						<p role="status" data-agent-switch-failed="" className="px-7 py-2 text-muted type-label">
+							Spool could not save {engineName(switching.engine)} as your agent. Try again.
+						</p>
+					) : null}
 				</div>
-			</Float>
+				{lacking.length === 0 ? null : (
+					<div className="flex flex-col border-border border-t p-1">
+						<button
+							type="button"
+							aria-expanded={more}
+							onClick={() => setMore((was) => !was)}
+							className="group flex h-8 items-center gap-2 rounded-sm px-2 text-left text-muted transition-colors duration-150 hover:bg-raised hover:text-text"
+						>
+							<span className="flex h-3.5 w-3.5 items-center justify-center transition-transform duration-[160ms] group-aria-expanded:rotate-45 motion-reduce:transition-none">
+								<PlusIcon />
+							</span>
+							<span className="type-label">Get more agents</span>
+						</button>
+						<Reveal open={more}>
+							<div className="flex flex-col gap-3 pt-1 pr-2 pb-2 pl-7">
+								{lacking.map((id) => (
+									<InstallLine key={id} engine={id} />
+								))}
+								<span>
+									<button
+										type="button"
+										onClick={() => setLooks((count) => count + 1)}
+										className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+									>
+										Check again
+									</button>
+								</span>
+							</div>
+						</Reveal>
+					</div>
+				)}
+			</RailMenu>
 		</span>
 	);
 }

@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type KeyboardEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
 import { FADE_OUT_MS, useLeaving } from "./agent-motion";
@@ -49,6 +49,135 @@ export function Float({
 		>
 			{children}
 		</div>
+	);
+}
+
+/** what a rail menu's trigger takes onto itself; the look and the words are the caller's */
+export interface RailMenuTrigger {
+	readonly ref: RefObject<HTMLButtonElement | null>;
+	readonly "aria-haspopup": "menu" | "dialog";
+	readonly "aria-expanded": boolean;
+	readonly onClick: () => void;
+	readonly onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+}
+
+/** what a keyboard can reach in an open menu: never a control on its way out */
+const REACHABLE = "button:not(:disabled):not([inert] *), input:not([inert] *)";
+
+/**
+ * A popover off a control in the rail (#364): the trigger, a backdrop that closes it on a
+ * press anywhere else, and the float itself, rising off the composer or dropping from the
+ * header.
+ *
+ * Opening puts the keys in it: a field first, then the checked item, then the first. A menu
+ * walks its controls on the arrows, Home and End, and goes on Escape or Tab; a dialog goes
+ * on Escape. Closing hands focus back to the trigger, but only from inside or from nowhere,
+ * so whatever was pressed meanwhile keeps the focus it took.
+ */
+export function RailMenu({
+	open,
+	onOpen,
+	from = "up",
+	role = "menu",
+	label,
+	trigger,
+	className,
+	panel,
+	busy,
+	children,
+}: {
+	open: boolean;
+	onOpen: (open: boolean) => void;
+	from?: "up" | "down";
+	role?: "menu" | "dialog";
+	/** what the float is called, to a screen reader and on its backdrop */
+	label: string;
+	trigger: (props: RailMenuTrigger) => ReactNode;
+	/** where the float stands, against the nearest positioned box */
+	className?: string | undefined;
+	/** the panel's own data marks */
+	panel?: Readonly<Record<`data-${string}`, string | undefined>> | undefined;
+	/** something it started is still out */
+	busy?: boolean | undefined;
+	children: ReactNode;
+}) {
+	const ref = useRef<HTMLButtonElement>(null);
+	const body = useRef<HTMLDivElement>(null);
+	const was = useRef(open);
+	useEffect(() => {
+		const before = was.current;
+		was.current = open;
+		if (open && !before) {
+			const box = body.current;
+			const target =
+				box?.querySelector<HTMLInputElement>("input") ??
+				box?.querySelector<HTMLButtonElement>('[aria-checked="true"]') ??
+				box?.querySelector<HTMLButtonElement>("button");
+			target?.focus({ preventScroll: true });
+		}
+		if (!open && before) {
+			const at = document.activeElement;
+			if (at === null || at === document.body || body.current?.contains(at))
+				ref.current?.focus({ preventScroll: true });
+		}
+	}, [open]);
+	return (
+		<>
+			{open ? (
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-label={`close the ${label.toLowerCase()}`}
+					className="fixed inset-0 z-10 cursor-default"
+					onClick={() => onOpen(false)}
+				/>
+			) : null}
+			{trigger({
+				ref,
+				"aria-haspopup": role,
+				"aria-expanded": open,
+				onClick: () => onOpen(!open),
+				onKeyDown: (event) => {
+					if (role !== "menu" || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+					event.preventDefault();
+					onOpen(true);
+				},
+			})}
+			<Float open={open} from={from} className={className}>
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: its role is the caller's, a menu or a dialog */}
+				{/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: a menu and a dialog both take a label */}
+				<div
+					{...panel}
+					ref={body}
+					role={role}
+					aria-busy={busy || undefined}
+					aria-label={label}
+					onKeyDown={(event) => {
+						if (event.key === "Escape" || (role === "menu" && event.key === "Tab")) {
+							event.preventDefault();
+							event.stopPropagation();
+							onOpen(false);
+							return;
+						}
+						if (role !== "menu" || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+						event.preventDefault();
+						const controls = [...(body.current?.querySelectorAll<HTMLElement>(REACHABLE) ?? [])];
+						const at =
+							document.activeElement instanceof HTMLElement ? controls.indexOf(document.activeElement) : -1;
+						const next =
+							event.key === "Home"
+								? 0
+								: event.key === "End"
+									? controls.length - 1
+									: (at + (event.key === "ArrowDown" ? 1 : -1) + controls.length) % controls.length;
+						controls[next]?.focus();
+					}}
+					className="flex flex-col"
+				>
+					{children}
+				</div>
+			</Float>
+		</>
 	);
 }
 

@@ -1,10 +1,11 @@
-import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { AGENT_PERMISSIONS, type AgentPermissions } from "../../settings/registry";
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
 import { useSettings } from "../settings";
 import { AGENT_DEFAULTS_RETRY_MS, learnAgentMode } from "./agent-defaults";
+import { Chevron, RailMenu } from "./agent-float";
 
 export interface PermissionDeck {
 	/** the machine's mode, or the pick on its way to being saved */
@@ -109,83 +110,72 @@ const MODE_SAYS: Readonly<Record<AgentPermissions, ReactNode>> = {
 };
 
 /**
- * The machine's one mode for every chat and every agent (#361, #364): each mode its name
- * and what it means, the chosen one checked, and a quiet footnote that it is global.
- * Each engine enforces the mode its own way; the words are the promise all of them keep.
+ * The machine's one mode for every chat and every agent (#361, #364): a trigger naming the
+ * mode, and a menu rising off it with each mode's name and what it means, the chosen one
+ * checked, and a quiet footnote that it is global. Each engine enforces the mode its own
+ * way; the words are the promise all of them keep.
  */
 export function PermissionMenu({
-	mode,
-	pending,
-	trigger,
-	onChange,
-	onClose,
+	permissions,
+	open,
+	onOpen,
 }: {
-	mode: AgentPermissions;
-	pending: boolean;
-	trigger: RefObject<HTMLButtonElement | null>;
-	onChange: (mode: AgentPermissions) => void;
-	onClose: () => void;
+	permissions: PermissionDeck;
+	open: boolean;
+	onOpen: (open: boolean) => void;
 }) {
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		const menu = ref.current;
-		menu?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
-		// the menu goes a beat after it is closed (#364), and by then focus may have moved on
-		// to whatever was pressed meanwhile: it comes back to the trigger only from the menu
-		// itself, or from nowhere
-		return () => {
-			const at = document.activeElement;
-			if (at === null || at === document.body || menu?.contains(at)) trigger.current?.focus();
-		};
-	}, [trigger]);
+	const { mode, pending, saving } = permissions;
 	return (
-		<div
-			ref={ref}
-			role="menu"
-			aria-label="Agent permissions"
-			data-permission-menu=""
-			className="flex flex-col p-1"
-			onKeyDown={(event) => {
-				if (event.key === "Escape" || event.key === "Tab") {
-					event.preventDefault();
-					event.stopPropagation();
-					onClose();
-					return;
-				}
-				if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-				event.preventDefault();
-				const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-				const index =
-					document.activeElement instanceof HTMLButtonElement ? items.indexOf(document.activeElement) : -1;
-				const next =
-					event.key === "Home"
-						? 0
-						: event.key === "End"
-							? items.length - 1
-							: (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-				items[next]?.focus();
-			}}
-		>
-			{AGENT_PERMISSIONS.map((choice) => (
+		<RailMenu
+			open={open}
+			onOpen={onOpen}
+			label="Agent permissions"
+			className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full"
+			panel={{ "data-permission-menu": "" }}
+			trigger={(props) => (
 				<button
-					key={choice}
 					type="button"
-					role="menuitemradio"
-					aria-checked={choice === mode}
-					data-permission-mode={choice}
-					onClick={() => onChange(choice)}
-					className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised"
+					{...props}
+					data-permission-trigger=""
+					aria-label={`Agent permissions: ${MODE_NAMES[mode]}`}
+					title={
+						pending
+							? `${MODE_NAMES[mode]}, from the next turn. Applies to every chat.`
+							: `${MODE_NAMES[mode]}. Applies to every chat.`
+					}
+					aria-busy={saving}
+					className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
 				>
-					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-						<span className="text-text type-control">{MODE_NAMES[choice]}</span>
-						<span className="text-muted type-label [text-wrap:pretty]">{MODE_SAYS[choice]}</span>
-					</span>
-					<CheckIcon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-text", choice !== mode && "invisible")} />
+					{MODE_NAMES[mode]}
+					<Chevron open={open} />
 				</button>
-			))}
-			<p className="mx-3 mt-1 border-border border-t pt-2 pb-1.5 text-muted type-caption">
-				{pending ? "Applies when this turn ends. " : null}Applies to every chat.
-			</p>
-		</div>
+			)}
+		>
+			<div className="flex flex-col p-1">
+				{AGENT_PERMISSIONS.map((choice) => (
+					<button
+						key={choice}
+						type="button"
+						role="menuitemradio"
+						aria-checked={choice === mode}
+						data-permission-mode={choice}
+						onClick={() => {
+							onOpen(false);
+							permissions.choose(choice);
+						}}
+						className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised"
+					>
+						<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+							<span className="text-text type-control">{MODE_NAMES[choice]}</span>
+							<span className="text-muted type-label [text-wrap:pretty]">{MODE_SAYS[choice]}</span>
+						</span>
+						<CheckIcon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-text", choice !== mode && "invisible")} />
+					</button>
+				))}
+				<p className="mx-3 mt-1 border-border border-t pt-2 pb-1.5 text-muted type-caption">
+					{pending ? "Applies when this turn ends. " : null}Applies to every chat.
+				</p>
+			</div>
+		</RailMenu>
 	);
 }

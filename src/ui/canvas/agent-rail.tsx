@@ -8,12 +8,12 @@ import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
 import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { Chevron, Float } from "./agent-float";
+import { Chevron, Float, RailMenu } from "./agent-float";
 import { AgentMenu, ENGINES, engineName, InstallLine } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
-import { MODE_NAMES, type PermissionDeck, PermissionMenu } from "./agent-permissions";
+import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
 import { SeedParagraphs, SeedSurface } from "./agent-seed";
@@ -2211,7 +2211,6 @@ function Composer({
 			cancelAnimationFrame(second);
 		};
 	}, [request]);
-	const permissionTrigger = useRef<HTMLButtonElement>(null);
 	const reading = useRef(0);
 	const reads = useRef(Promise.resolve());
 	const attachFiles = (files: readonly File[]) => {
@@ -2420,58 +2419,11 @@ function Composer({
 								/>
 							) : null}
 							{permissions === undefined ? null : (
-								<>
-									<button
-										ref={permissionTrigger}
-										type="button"
-										data-permission-trigger=""
-										aria-label={`Agent permissions: ${MODE_NAMES[permissions.mode]}`}
-										aria-haspopup="menu"
-										aria-expanded={menu === "permissions"}
-										title={
-											permissions.pending
-												? `${MODE_NAMES[permissions.mode]}, from the next turn. Applies to every chat.`
-												: `${MODE_NAMES[permissions.mode]}. Applies to every chat.`
-										}
-										aria-busy={permissions.saving}
-										onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
-										onKeyDown={(event) => {
-											if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-												event.preventDefault();
-												onMenu("permissions");
-											}
-										}}
-										className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
-									>
-										{MODE_NAMES[permissions.mode]}
-										<Chevron open={menu === "permissions"} />
-									</button>
-									{menu === "permissions" ? (
-										<button
-											type="button"
-											tabIndex={-1}
-											aria-label="close the permission menu"
-											className="fixed inset-0 z-10 cursor-default"
-											onClick={() => onMenu(null)}
-										/>
-									) : null}
-									<Float
-										open={menu === "permissions"}
-										from="up"
-										className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full"
-									>
-										<PermissionMenu
-											mode={permissions.mode}
-											pending={permissions.pending}
-											trigger={permissionTrigger}
-											onChange={(next) => {
-												onMenu(null);
-												permissions.choose(next);
-											}}
-											onClose={() => onMenu(null)}
-										/>
-									</Float>
-								</>
+								<PermissionMenu
+									permissions={permissions}
+									open={menu === "permissions"}
+									onOpen={(next) => onMenu(next ? "permissions" : null)}
+								/>
 							)}
 						</div>
 						<div className="flex shrink-0 items-center gap-1.5">
@@ -2531,42 +2483,30 @@ function ContextRing({
 			: `M7 7V${7 - r}A${r} ${r} 0 ${share > 0.5 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)}Z`;
 	return (
 		<span className="flex">
-			<button
-				type="button"
-				aria-label={said}
-				aria-expanded={open}
-				title={said}
-				data-agent-context-ring={Math.round(share * 100)}
-				onClick={() => onOpen(!open)}
-				className="relative z-30 flex h-7 w-7 animate-agent-fade-in items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
+			<RailMenu
+				open={open}
+				onOpen={onOpen}
+				role="dialog"
+				label="Context"
+				className="absolute right-0 bottom-full z-30 mb-2 w-[288px] max-w-full"
+				panel={{ "data-agent-context-note": "" }}
+				trigger={(props) => (
+					<button
+						type="button"
+						{...props}
+						aria-label={said}
+						title={said}
+						data-agent-context-ring={Math.round(share * 100)}
+						className="relative z-30 flex h-7 w-7 animate-agent-fade-in items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
+					>
+						<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
+							<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
+							<path d={wedge} fill="currentColor" />
+						</svg>
+					</button>
+				)}
 			>
-				<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
-					<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
-					<path d={wedge} fill="currentColor" />
-				</svg>
-			</button>
-			{open ? (
-				<button
-					type="button"
-					tabIndex={-1}
-					aria-label="close the context note"
-					className="fixed inset-0 z-10 cursor-default"
-					onClick={() => onOpen(false)}
-				/>
-			) : null}
-			<Float open={open} from="up" className="absolute right-0 bottom-full z-30 mb-2 w-[288px] max-w-full">
-				<div
-					role="dialog"
-					aria-label="Context"
-					data-agent-context-note=""
-					onKeyDown={(event) => {
-						if (event.key !== "Escape") return;
-						event.preventDefault();
-						event.stopPropagation();
-						onOpen(false);
-					}}
-					className="flex items-center gap-4 py-3 pr-3 pl-4"
-				>
+				<div className="flex flex-row items-center gap-4 py-3 pr-3 pl-4">
 					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 						<span className="text-text type-control tabular-nums">{said}</span>
 						<span className="text-muted type-label">A new chat starts fresh.</span>
@@ -2582,7 +2522,7 @@ function ContextRing({
 						New chat
 					</button>
 				</div>
-			</Float>
+			</RailMenu>
 		</span>
 	);
 }
