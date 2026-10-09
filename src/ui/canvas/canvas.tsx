@@ -1367,7 +1367,7 @@ export function ProjectCanvas({
 		[turn.companions, reach],
 	);
 	/** the name rows companions dock on, which teammates' pills step aside from (#373) */
-	const companionRoom = useMemo(() => dockRoom(companions), [companions]);
+	const companionRoom = useMemo(() => dockRoom(companions, visibleFrames), [companions, visibleFrames]);
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	const askFooted = !railShown && turn.phase === "asking";
