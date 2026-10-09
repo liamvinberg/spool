@@ -10,7 +10,7 @@ export const AGENT_SECONDARY =
 	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm border border-border-raised px-4 text-text type-control hover:bg-raised";
 export const AGENT_QUIET = "rounded-sm text-muted type-control hover:text-text";
 
-/** The recommendation and handoff share one modal, including native focus containment. */
+/** The agent handoff's modal, with native focus containment. */
 export function AgentDialog({
 	title,
 	wide = false,

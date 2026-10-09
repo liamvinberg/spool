@@ -35,10 +35,6 @@ export function learnAgentMode(next: AgentPermissions): void {
 	notify();
 }
 
-export function knownAgentMode(): AgentPermissions | undefined {
-	return mode;
-}
-
 function learn(next: { preferred: AgentEngineId | null; mode: AgentPermissions }): void {
 	if (engine === next.preferred && mode === next.mode) return;
 	engine = next.preferred;

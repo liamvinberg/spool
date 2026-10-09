@@ -430,10 +430,9 @@ export function AgentRail({
 		(entry): entry is Extract<AgentEntry, { kind: "wait" }> =>
 			entry.kind === "wait" && entry.state === "running" && entry.ms === null,
 	);
-	const [modelRequest, requestModel] = useState(0);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<RecoveryActions value={{ login, modelRequest, preferred }}>
+		<RecoveryActions value={{ login, preferred }}>
 			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
 				<div
 					data-agent-rail=""
@@ -497,10 +496,7 @@ export function AgentRail({
 												install={install}
 												login={login}
 												model={model}
-												onModels={() => {
-													setFooterMenu("models");
-													requestModel((value) => value + 1);
-												}}
+												onModels={() => setFooterMenu("models")}
 											/>
 										)
 									}
@@ -2450,12 +2446,11 @@ function Composer({
 									model={model}
 									limit={limit}
 									open={menu === "models"}
-									interrupted={menu !== null && menu !== "models"}
 									onOpen={(next) => onMenu(next ? "models" : null)}
 									onSwitch={onSwitch}
 								/>
 							) : null}
-							{permissions === undefined || model.offer.modes === false ? null : (
+							{permissions === undefined ? null : (
 								<>
 									<button
 										ref={permissionTrigger}
@@ -2629,7 +2624,6 @@ function ModelMenu(props: {
 	limit: AgentLimit | null;
 	open: boolean;
 	onOpen: (open: boolean) => void;
-	interrupted: boolean;
 	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 }) {
 	const recovery = useContext(RecoveryActions);
@@ -2784,10 +2778,8 @@ function QueuedAsk({
  * to the project this way, and adding an asset is already a deliberate import into
  * `design/shared/assets/`.
  *
- * It arrives by paste or by drop and by nothing else. The footer holds the model and
- * the stop and nothing else (#184), and the chip line is the selection's, so a
- * button would need a slot the composer deliberately does not have — where a
- * pasted screenshot is the gesture people already have in their hands. */
+ * It arrives by paste, by drop, or by the attach button at the head of the foot (#364),
+ * which opens the file picker on the same image types. */
 
 /** how wide the tile is: enough to recognise a screenshot, not enough to read it */
 const ATTACHED_W = 44;
@@ -3054,7 +3046,6 @@ function Chip({
 
 const RecoveryActions = createContext<{
 	login: LoginDeck;
-	modelRequest: number;
 	/** the machine's usual agent, which the model trigger names only another of (#364) */
 	preferred?: AgentEngineId | null | undefined;
 } | null>(null);
