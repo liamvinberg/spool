@@ -14,6 +14,7 @@ import {
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
+import { EndMark, Spinner } from "./agent-marks";
 import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
 import { useStillness } from "./stillness";
@@ -390,22 +391,7 @@ function TurnLine({
 
 /** a check once done, a square once stopped, a cross once failed, and a turning ring while live */
 function TurnMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
-	return (
-		<svg viewBox="0 0 14 14" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted" fill="none">
-			{!over ? (
-				<g className="origin-center animate-agent-spin">
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				</g>
-			) : ending === "stopped" ? (
-				<rect x="4" y="4" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
-			) : ending === "failed" ? (
-				<path d="M4.5 4.5l5 5M9.5 4.5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-			) : (
-				<path d="M3.5 7.4 5.9 9.8 10.5 4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-			)}
-		</svg>
-	);
+	return over ? <EndMark ending={ending ?? "done"} /> : <Spinner className="h-3.5 w-3.5 text-muted" />;
 }
 
 /** two to a row while the turn runs, three once it settles and gives the chat back its height */

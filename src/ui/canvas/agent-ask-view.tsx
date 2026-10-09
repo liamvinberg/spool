@@ -2,6 +2,7 @@ import { type ReactNode, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
 import { cn } from "../cn";
 import { type AskQuestion, approvalWhat, foldedApproval } from "./agent-ask";
+import { EndMark, WaitingMark } from "./agent-marks";
 import { Caret } from "./agent-said";
 import type { AgentEntry, AgentTile } from "./agent-transcript";
 
@@ -109,22 +110,6 @@ export function useAsk(entry: AskEntry, onAnswer: (request: string, reply: Agent
 }
 
 export type AskState = ReturnType<typeof useAsk>;
-
-/** the ring held inside the waiting ring: only a person can move this */
-export function WaitingMark({ className }: { className?: string | undefined }) {
-	return (
-		<svg
-			viewBox="0 0 12 12"
-			fill="none"
-			aria-hidden="true"
-			data-agent-waiting-mark=""
-			className={cn("h-3.5 w-3.5 shrink-0 text-text", className)}
-		>
-			<circle className="animate-agent-breathe" cx="6" cy="6" r="4.6" stroke="currentColor" strokeWidth="1.4" />
-			<circle cx="6" cy="6" r="2.1" fill="currentColor" />
-		</svg>
-	);
-}
 
 /** the turn's line, opened into what it waits on */
 export function WaitingRow({
@@ -417,15 +402,7 @@ export function OptionList({ ask }: { ask: AskState }) {
 export function Folded({ children, mark = "done" }: { children: ReactNode; mark?: "done" | "stopped" | "failed" }) {
 	return (
 		<div data-agent-folded={mark} className="flex min-h-[26px] items-center gap-2">
-			<svg viewBox="0 0 14 14" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted" fill="none">
-				{mark === "done" ? (
-					<path d="M3.5 7.4 5.9 9.8 10.5 4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				) : mark === "stopped" ? (
-					<rect x="4" y="4" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
-				) : (
-					<path d="M4.5 4.5l5 5M9.5 4.5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				)}
-			</svg>
+			<EndMark ending={mark} />
 			<span className="min-w-0 flex-1 text-muted type-control">{children}</span>
 		</div>
 	);
