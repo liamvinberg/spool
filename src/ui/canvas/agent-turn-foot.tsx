@@ -562,7 +562,7 @@ function Writing({ lines }: { lines: number }) {
 function Hand() {
 	return (
 		<span className="pointer-events-none absolute inset-0">
-			<span className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-white opacity-60 mix-blend-difference" />
+			<span className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-[#fff] opacity-60 mix-blend-difference" />
 			<span
 				className="absolute top-[38%] left-[4%] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 bg-text"
 				style={{ borderRadius: 1.8, boxShadow: "0 0 0 1.5px var(--color-canvas)" }}
