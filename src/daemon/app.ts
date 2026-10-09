@@ -32,6 +32,7 @@ import { createClaudeEngine } from "./agent-engine-claude";
 import { createCodexEngine } from "./agent-engine-codex";
 import { createPiEngine } from "./agent-engine-pi";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
+import { createHeldSpots, FrameStandsError, putFrameBack, type WitnessedTurn, witnessFrames } from "./agent-frames";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
@@ -549,7 +550,7 @@ export function createDaemonApp({
 		frame: string | undefined,
 		projectName: string,
 	): { start: string; projection: ReturnType<typeof listProjectFrames> } | { message: string } {
-		const projection = listProjectFrames(root);
+		const projection = listProjectFrames(root, { held: heldSpots.of(root) });
 		const names = projection.frames.map((entry) => entry.name);
 		const first = names[0];
 		if (first === undefined) {
@@ -588,7 +589,7 @@ export function createDaemonApp({
 				return;
 			}
 			waitingSince = undefined;
-			void playerCompiler.getBundle(root, listProjectFrames(root).frames);
+			void playerCompiler.getBundle(root, listProjectFrames(root, { held: heldSpots.of(root) }).frames);
 		};
 		const arm = () => {
 			waitingSince ??= Date.now();
@@ -614,6 +615,8 @@ export function createDaemonApp({
 	}
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
+	/** the spots running turns hold on the canvas for their designers (#365) */
+	const heldSpots = createHeldSpots();
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -1167,6 +1170,8 @@ export function createDaemonApp({
 	 * and names the turn instead (#165).
 	 */
 	const liveTurns = createAgentTurns();
+	/** each held turn's frame witness, which keeps what Put back restores (#365) */
+	const witnesses = new Map<string, WitnessedTurn>();
 	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
 	/** a running turn started on another mode than the machine's: the pick waits for its next turn */
 	function pendingMode(root: string, thread: string, mode: AgentPermissions): boolean {
@@ -2052,7 +2057,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, name);
 			if ("response" in project) return project.response;
 			try {
-				const projection = listProjectFrames(project.root, { seen: true });
+				const projection = listProjectFrames(project.root, { seen: true, held: heldSpots.of(project.root) });
 				return c.json({
 					...projection,
 					frames: projection.frames.map((frame) => {
@@ -2244,7 +2249,7 @@ export function createDaemonApp({
 			// the pass dials this daemon: before the server binds there is no
 			// origin to render from, and in-process app.request() never binds one
 			if (selfOrigin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
-			const listing = listProjectFrames(project.root);
+			const listing = listProjectFrames(project.root, { held: heldSpots.of(project.root) });
 			const frames = listing.frames.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
 			try {
 				const result = await resolvePass.run({
@@ -2522,7 +2527,7 @@ export function createDaemonApp({
 					});
 				}
 				const mode = agentDefaults.read().mode;
-				const turn = selected.engine.start({
+				const engineTurn = selected.engine.start({
 					...(recovery === undefined ? {} : { recovery }),
 					root: project.root,
 					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
@@ -2534,6 +2539,9 @@ export function createDaemonApp({
 					})),
 					ask,
 				});
+				// the frames the turn makes, however it writes them, are read off design/ (#365)
+				const turn = witnessFrames(engineTurn, { root: project.root, hub, spots: heldSpots });
+				witnesses.set(`${project.root} ${thread}`, turn);
 				const picture = readThread(spoolDir, project.root, thread);
 				const pictured = picture ? agentPictureEnding(spoolDir, project.root, picture) : undefined;
 				const held = liveTurns.hold({
@@ -2657,6 +2665,49 @@ export function createDaemonApp({
 				// nothing is running under that name: it ended on its own, or it was never
 				// this project's. Both are the same fact from here, and both mean stopped
 				return c.text(`no turn "${named}" to stop`, 404);
+			},
+		)
+		.post(
+			"/api/p/:project/agent/put-back",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as {
+					thread?: unknown;
+					frame?: unknown;
+					source?: unknown;
+					sidecar?: unknown;
+				};
+				if (typeof body.thread !== "string" || typeof body.frame !== "string" || body.frame === "")
+					return c.text('a put back is { "thread": "…", "frame": "…" }', 400);
+				return {
+					thread: body.thread,
+					frame: body.frame,
+					source: typeof body.source === "string" ? body.source : undefined,
+					sidecar: typeof body.sidecar === "string" ? body.sidecar : null,
+				};
+			}),
+			(c) => {
+				/*
+				 * Put back a frame a turn deleted (#365).
+				 *
+				 * The turn kept the deleted source, so this writes it back from there. A turn
+				 * this daemon no longer holds has only the log the rail kept, which carries the
+				 * same source, so the rail's copy is the fallback rather than a refusal.
+				 */
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { thread, frame, source, sidecar } = c.req.valid("json");
+				const witness = witnesses.get(`${project.root} ${thread}`);
+				const kept = witness?.kept(frame) ?? (source === undefined ? undefined : { source, sidecar });
+				if (kept === undefined) return c.text(`no deleted frame "${frame}" kept in thread "${thread}"`, 404);
+				try {
+					putFrameBack(project.root, { frame, source: kept.source, sidecar: kept.sidecar });
+				} catch (error) {
+					if (error instanceof FrameStandsError) return c.text(error.message, 409);
+					return c.text(error instanceof Error ? error.message : String(error), 400);
+				}
+				witness?.restored(frame, kept.source);
+				hub.publish(project.root, { kind: "frame", frame });
+				return c.body(null, 204);
 			},
 		)
 		.post(
