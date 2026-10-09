@@ -328,6 +328,56 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("tells the canvas where the pointer is inside it, its presses, and every scroller's movement added up", async () => {
+		const shim = await servedShim();
+		const posted: { spool: string }[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: { spool: string }) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		const list = document.createElement("div");
+		document.body.append(list);
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+			const told = () => posted.filter((message) => message.spool === "presence").at(-1);
+			window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 30, clientY: 40 }));
+			expect(told()).toEqual({
+				spool: "presence",
+				frame: "host",
+				x: 30,
+				y: 40,
+				pressed: false,
+				scrolled: { x: 0, y: 0 },
+			});
+			window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 30, clientY: 40 }));
+			expect(told()).toMatchObject({ pressed: true });
+			window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }));
+			expect(told()).toMatchObject({ pressed: false });
+
+			// a list scrolling down and back, then the page: all of it one running total
+			Object.defineProperty(list, "scrollTop", { configurable: true, value: 120 });
+			list.dispatchEvent(new Event("scroll"));
+			expect(told()).toMatchObject({ scrolled: { x: 0, y: 120 } });
+			Object.defineProperty(list, "scrollTop", { configurable: true, value: 50 });
+			list.dispatchEvent(new Event("scroll"));
+			expect(told()).toMatchObject({ scrolled: { x: 0, y: 50 } });
+			const page = document.scrollingElement as Element;
+			Object.defineProperty(page, "scrollTop", { configurable: true, value: 30 });
+			document.dispatchEvent(new Event("scroll"));
+			expect(told()).toMatchObject({ x: 30, y: 40, scrolled: { x: 0, y: 80 } });
+		} finally {
+			dispose?.();
+			list.remove();
+			delete (document.scrollingElement as unknown as { scrollTop?: number }).scrollTop;
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("keeps the middle-button drag for the canvas and leaves every other button to the frame", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
@@ -357,7 +407,7 @@ describe("the canvas shim", () => {
 			window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, screenX: 999, screenY: 999 }));
 
 			expect(middle.defaultPrevented, "middle-drag must not become browser autoscroll").toBe(true);
-			expect(posted).toEqual([
+			expect(posted.filter((message) => (message as { spool: string }).spool === "pan")).toEqual([
 				{ spool: "pan", frame: "host", phase: "start", x: 100, y: 200 },
 				{ spool: "pan", frame: "host", phase: "move", x: 130, y: 180 },
 				{ spool: "pan", frame: "host", phase: "end", x: 0, y: 0 },
