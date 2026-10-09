@@ -68,6 +68,26 @@ const WALL_FOOT: Anchor = { ox: 0, oy: 1, dx: -WALL, dy: 0 };
 /** under the frame, on the notch of the ask standing on the canvas there */
 const FOOT: Anchor = { ox: 0, oy: 1, dx: HANG.notch, dy: HANG.tip };
 
+/** the gap between the docked square and its name, and the name's width at 12px mono, near enough */
+const NAME_GAP = 6;
+const nameWidth = (name: string) => Math.round(name.length * 7.2);
+
+/**
+ * How much of each frame's name row, from its right edge leftward, the companions docked there
+ * take, in screen pixels: the square, and its name when two agents share the page. Teammates'
+ * pills step aside left of it (#373).
+ */
+export function dockRoom(companions: readonly AgentCompanion[]): Map<string, number> {
+	const named = companions.length >= 2;
+	const room = new Map<string, number>();
+	for (const one of companions) {
+		if (one.frame === null) continue;
+		const width = SIDE + (named && one.name !== null ? NAME_GAP + nameWidth(one.name) : 0);
+		room.set(one.frame, Math.max(room.get(one.frame) ?? 0, width));
+	}
+	return room;
+}
+
 function caretOf(lines: number): Anchor {
 	return { ox: 0.045, oy: 0.04 + 0.92 * Math.min(1, Math.max(lines, 1) / FULL), dx: -11, dy: 0 };
 }
