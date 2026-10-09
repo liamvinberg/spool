@@ -2,7 +2,6 @@
 
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { engineModes } from "./agent-model";
 import {
 	CODEX_OFFERED,
 	cell,
@@ -116,8 +115,7 @@ describe("the model menu", () => {
 			modes: false,
 		};
 		// before pi has said it has no modes, there is no mode menu to flash in and out: on a
-		// page that has not heard from pi yet, which earlier tests here are not
-		engineModes.clear();
+		// page that has not heard from pi yet, which every test's page is
 		let answer: (() => void) | undefined;
 		canvas.offered.reading = new Promise<void>((resolve) => {
 			answer = resolve;

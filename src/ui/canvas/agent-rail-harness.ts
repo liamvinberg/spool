@@ -5,6 +5,7 @@ import { onTestFinished, vi } from "vitest";
 import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
+import { forgetAgentDefaults } from "./agent-defaults";
 import { draftsFor } from "./agent-drafts";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
@@ -22,6 +23,8 @@ export const freshBrowser = () => {
 	});
 	const box: Storage | undefined = window.localStorage;
 	box?.clear();
+	// a page that has just loaded knows nothing of the machine's agent yet
+	forgetAgentDefaults();
 };
 
 /** `receipt` sits one page over, which is the normal case: a thread is not bound to a page */

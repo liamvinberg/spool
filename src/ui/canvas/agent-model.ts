@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { type AgentAsk, type AgentOffer, modelOf, modelsOf } from "../../daemon/agent-offer";
 import { agentModelOffer, chooseAgentModel } from "../api";
+import { learnEngineModes, useEngineModes } from "./agent-defaults";
 
 /**
  * Which machine is answering, and what the menu may offer instead (#118, #199).
@@ -134,9 +135,6 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 	};
 }
 
-/** what each engine last said about having modes, for the wait before its next offer; one per page */
-export const engineModes = new Map<AgentEngineId, boolean>();
-
 export interface AgentModelDeck {
 	readonly engine?: AgentEngineId;
 	readonly project?: string;
@@ -259,8 +257,12 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 	const current = reported?.owner === owner ? reported.offer : NO_OFFER;
 	const offer = pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
 	const loaded = reported?.owner === owner;
-	if (loaded && engine !== undefined) engineModes.set(engine, current.modes !== false);
-	const modes = loaded ? current.modes !== false : engine === undefined ? undefined : engineModes.get(engine);
+	const said = loaded ? current.modes !== false : undefined;
+	useEffect(() => {
+		if (said !== undefined && engine !== undefined) learnEngineModes(engine, said);
+	}, [said, engine]);
+	const known = useEngineModes(engine);
+	const modes = said ?? known;
 
 	return {
 		...(engine === undefined ? {} : { engine }),
