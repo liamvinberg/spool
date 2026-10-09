@@ -30,6 +30,7 @@ import {
 	openModelMenu,
 	press,
 	rail,
+	reported,
 	resizeRail,
 	send,
 	settle,
@@ -302,6 +303,55 @@ describe("the model menu", () => {
 		// and the readout drops the level with it, because the model says it has none
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Haiku");
 		expect(modelTrigger(canvas.host)?.textContent).not.toContain("high");
+	});
+
+	/**
+	 * Story 16: another model of the same agent keeps the effort where it has that level,
+	 * and otherwise goes to the model's own default, which is the agent's to say.
+	 */
+	it("carries the effort to a model that has the level, and leaves it to the default where not", async () => {
+		const canvas = mount();
+		const levels = (value: string, displayName: string, supportedEffortLevels: string[]) => ({
+			value,
+			resolvedModel: value,
+			displayName,
+			description: "",
+			supportsEffort: true,
+			supportedEffortLevels,
+		});
+		canvas.offered.offer = {
+			models: [
+				levels("deep", "Deep", ["low", "medium", "high", "max"]),
+				levels("broad", "Broad", ["low", "medium", "high", "max"]),
+				levels("quick", "Quick", ["low", "medium", "high"]),
+			],
+			current: { value: "deep", resolved: "deep", name: null, effort: "max", pin: null },
+		};
+		// the agent answers a model picked with no level on its own default for that model
+		canvas.offered.reply = (offer, wanted) => {
+			const next = reported(offer, wanted);
+			return wanted.effort === undefined && wanted.value !== undefined
+				? { ...next, current: { ...next.current, effort: "medium" } }
+				: next;
+		};
+		await canvas.render();
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Deep") === true);
+
+		await act(async () => modelTrigger(canvas.host)?.click());
+		await settle(50);
+		await act(async () => modelRow(canvas.host, "Broad")?.click());
+		await settle(50);
+		expect(canvas.offered.chose.at(-1)).toEqual({ thread: canvas.offered.asked[0], value: "broad", effort: "max" });
+		await until(() => modelTrigger(canvas.host)?.title === "Claude Code · Broad · max");
+
+		await act(async () => modelTrigger(canvas.host)?.click());
+		await settle(50);
+		await act(async () => modelRow(canvas.host, "Quick")?.click());
+		await settle(50);
+		// quick has no max, so nothing is asked of it: the model's default answers
+		expect(canvas.offered.chose.at(-1)).toEqual({ thread: canvas.offered.asked[0], value: "quick" });
+		await until(() => modelTrigger(canvas.host)?.title !== "Claude Code · Quick · max", 400).catch(() => {});
+		expect(modelTrigger(canvas.host)?.title).toBe("Claude Code · Quick · medium");
 	});
 
 	it("sends the message, and lets the reply move the readout", async () => {
