@@ -79,6 +79,12 @@
 	 * box closing early or late against the words is the same fault one axis over. */
 	--animate-agent-step: agent-step 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-leave: agent-leave 170ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	/* a turn's frames (#365). A frame that lands draws in from the top over 720ms, the
+	 * newest line of one still streaming breathes, slow enough to read as work,
+	 * and the status line's words carry a soft light across them while the turn runs. */
+	--animate-agent-draw-in: agent-draw-in 720ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+	--animate-agent-newest: agent-newest 1400ms ease-in-out infinite alternate;
+	--animate-agent-shimmer: agent-shimmer 2400ms ease-in-out infinite;
 	--animate-agent-spin: agent-spin 1.15s linear infinite;
 	/* the stroke on the composer's top border: the thread is laid out of the left edge,
 	 * carries at its full length, and is taken up into the right edge as the head waits
@@ -265,6 +271,34 @@
 	@keyframes agent-leave {
 		to {
 			opacity: 0;
+		}
+	}
+
+	/* a frame landing: the picture uncovers from its top edge down, nothing moves */
+	@keyframes agent-draw-in {
+		from {
+			clip-path: inset(0 0 100% 0);
+		}
+		to {
+			clip-path: inset(0 0 0 0);
+		}
+	}
+
+	@keyframes agent-newest {
+		from {
+			opacity: 1;
+		}
+		to {
+			opacity: 0.35;
+		}
+	}
+
+	@keyframes agent-shimmer {
+		from {
+			background-position: 100% 0;
+		}
+		to {
+			background-position: 0% 0;
 		}
 	}
 
@@ -507,6 +541,24 @@
 		100% 0;
 }
 
+/* the soft light across a turn's live words (#365): the words are the gradient's
+ * clip, so the light passes through the letters and nothing else */
+.agent-shimmer {
+	background-image: linear-gradient(
+		90deg,
+		var(--color-muted) 0%,
+		var(--color-muted) 38%,
+		var(--color-text) 50%,
+		var(--color-muted) 62%,
+		var(--color-muted) 100%
+	);
+	background-size: 260% 100%;
+	background-position: 30% 0;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.animate-menu-in,
 	.animate-toast-in,
@@ -523,7 +575,10 @@
 	.animate-agent-drop-in,
 	.animate-agent-fade-in,
 	.animate-agent-spin,
-	.animate-agent-wind {
+	.animate-agent-wind,
+	.animate-agent-draw-in,
+	.animate-agent-newest,
+	.animate-agent-shimmer {
 		animation: none;
 	}
 

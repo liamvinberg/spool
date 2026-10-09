@@ -144,6 +144,41 @@ describe("the rail's floats", () => {
 	});
 });
 
+/**
+ * A turn's frames (#365): a landing frame draws in from the top, the newest line of one
+ * still streaming breathes, and the status line's words carry a light across them. All
+ * three stand still when stillness is asked for, and the canvas draws with the same.
+ */
+describe("the turn's frames", () => {
+	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
+	const TOKENS = canvas ? readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8") : "";
+	const NAMES = ["draw-in", "newest", "shimmer"];
+
+	it("draws a frame in from its top edge, moving nothing", () => {
+		expect(CSS).toContain("--animate-agent-draw-in: agent-draw-in 720ms cubic-bezier(0.22, 0.61, 0.36, 1) both");
+		const at = CSS.indexOf("@keyframes agent-draw-in {");
+		const frames = CSS.slice(at, CSS.indexOf("\n\t}", at));
+		expect(frames).toContain("clip-path: inset(0 0 100% 0)");
+		expect(frames).not.toMatch(/transform|translate|scale|blur/);
+	});
+
+	it("stands every one of them still when stillness is asked for", () => {
+		const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+		const still = CSS.slice(at, CSS.indexOf("\n}", at));
+		for (const name of NAMES) expect(still).toContain(`.animate-agent-${name}`);
+	});
+
+	it.runIf(canvas)("is mirrored by the design canvas", () => {
+		for (const name of NAMES) {
+			const line = CSS.split("\n").find((one) => one.includes(`--animate-agent-${name}:`));
+			expect(line).toBeDefined();
+			expect(TOKENS).toContain(line ?? "");
+			const at = CSS.indexOf(`@keyframes agent-${name} {`);
+			expect(TOKENS).toContain(CSS.slice(at, CSS.indexOf("\n\t}", at)));
+		}
+	});
+});
+
 describe("thread stylesheet", () => {
 	/**
 	 * The close lands on the first line's end, so on hover that corner of the ask fades out
