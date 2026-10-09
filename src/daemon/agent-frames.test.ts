@@ -90,6 +90,16 @@ describe("a placeholder frame's name", () => {
 		expect(briefFrames("Create design/frames/hello-loud/frame.tsx as a bold frame.")).toEqual(["hello-loud"]);
 		expect(briefFrames(null)).toEqual([]);
 	});
+
+	it("is read from a path under frames/ too, as a brief written from inside design/ says it", () => {
+		expect(briefFrames("Draw frames/ideas/home--split/frame.tsx, after `frames/app/home/frame.tsx`.")).toEqual([
+			"ideas/home--split",
+			"app/home",
+		]);
+		expect(briefFrames("Draw ./frames/calm/frame.tsx.")).toEqual(["calm"]);
+		// a frames/ folder that is not the design's own is not a frame
+		expect(briefFrames("Read src/frames/x/frame.tsx and my-frames/y/frame.tsx.")).toEqual([]);
+	});
 });
 
 const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";

@@ -175,10 +175,18 @@ export function changedRange(before: string, after: string): { from: number; to:
 	return { from, to: Math.min(to, Math.max(1, now.length)) };
 }
 
+/**
+ * A frame's entry as a brief names it: under `design/frames/`, or under `frames/` as one
+ * written from inside design/ says it, though never another folder that happens to be
+ * called frames (`src/frames/`, `my-frames/`).
+ */
+const BRIEF_PATH =
+	/(?:design\/|(?<![\w./-])(?:\.\/)?)frames\/((?:[^\s"'`\\/<>|;&]+\/)*?[^\s"'`\\/<>|;&]+)\/frame\.tsx/g;
+
 /** Every frame a brief names by its entry, page and all: `design/frames/home/split/frame.tsx` → `home/split`. */
 export function briefFrames(prompt: string | null | undefined): string[] {
 	const named = new Set<string>();
-	for (const match of (prompt ?? "").matchAll(new RegExp(FRAME_PATH.source, "g"))) {
+	for (const match of (prompt ?? "").matchAll(BRIEF_PATH)) {
 		const name = match[1];
 		if (name !== undefined && isFramePath(name)) named.add(name);
 	}
