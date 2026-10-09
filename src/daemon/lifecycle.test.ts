@@ -389,6 +389,22 @@ describe("ensureDaemon", () => {
 
 		expect(result).toEqual({ url: daemon.url, pid: process.pid, started: false, controlToken: expect.any(String) });
 	});
+
+	it("gives up soon after the daemon it started exits, well before its deadline", async () => {
+		const spoolDir = makeSpoolDir();
+		const started = Date.now();
+
+		await expect(
+			// port 0 so the daemon this machine may be running doesn't answer for it
+			ensureDaemon(spoolDir, {
+				command: [process.execPath, "-e", "process.exit(1)"],
+				env: { SPOOL_PORT: "0" },
+				timeoutMs: 60_000,
+			}),
+		).rejects.toThrow(/did not come up/);
+
+		expect(Date.now() - started).toBeLessThan(20_000);
+	});
 });
 
 describe("stopDaemon", () => {

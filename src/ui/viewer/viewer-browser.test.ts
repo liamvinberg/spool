@@ -45,8 +45,12 @@ const editor: ViewerProject = {
 	covers: { home: "/covers/home" },
 	download: "https://spool.test/Spool.dmg",
 };
-/** The same project as an outsider sees it: the one page shared with them, as it last settled, and one line. */
-const outsider: ViewerProject = {
+/**
+ * The same project as an outsider sees it: the one page shared with them, as it last settled, and one line. It
+ * settled 150s before it's asked for, not before this file loaded, so it still reads "2 min ago" however long the
+ * tests before it took.
+ */
+const outsider = (): ViewerProject => ({
 	team: { address: "devosurf", name: "Devosurf", logo: null },
 	project: "checkout",
 	account: "kim@client.com",
@@ -58,7 +62,7 @@ const outsider: ViewerProject = {
 	},
 	frames: FRAMES,
 	shared: { by: "ana", pages: ["shop"], updated: Math.floor(Date.now() / 1000) - 150 },
-};
+});
 /** The project's shares, as spool.page lists them for an editor (with their links) or a viewer (without). */
 const SHARES = [
 	{
@@ -419,7 +423,7 @@ describe("the read-only canvas", () => {
 	});
 
 	it("shows an outsider only the pages shared with them, one line, and nobody", { timeout: 60_000 }, async () => {
-		const opened = await open(PATH, { as: outsider });
+		const opened = await open(PATH, { as: outsider() });
 		const { page, requests } = opened;
 		// no root page of their own: the canvas opens on the page shared with them
 		await expect

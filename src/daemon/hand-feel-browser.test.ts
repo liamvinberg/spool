@@ -165,6 +165,14 @@ it("keeps every pointer and key off the page while Edit is on, and holds its ani
 
 	await page.keyboard.press("e");
 	await expect.poll(ran, { timeout: 15_000 }).toBe(0);
+	// the hold and the canvas taking the frame's pointer are separate renders,
+	// which a loaded runner can set apart: the pointer is the canvas's once the
+	// frame stops taking it, as select() waits for too
+	await expect
+		.poll(() => page.locator('iframe[title="home"]').evaluate((element) => getComputedStyle(element).pointerEvents), {
+			timeout: 15_000,
+		})
+		.toBe("none");
 
 	// hover, click, a double-click on its words, and typing: the canvas hears
 	// all of it and the page none of it

@@ -443,8 +443,9 @@ describe("a ui.state write from a render", () => {
 			await waitForText("#seen", "seed");
 
 			// the harm the warning explains: the flag the walk handed over is gone,
-			// so the frame boots as if it had arrived fresh
-			expect(document.querySelector("#arrived")?.textContent).toBe("false");
+			// so the frame boots as if it had arrived fresh, once the render the
+			// write set off has run
+			await waitForText("#arrived", "false");
 
 			const written = warnings.lines.filter((line) => line.includes("ui.state.justArrived"));
 			expect(written).toHaveLength(1);

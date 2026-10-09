@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { chromium, type Frame, type Page } from "playwright-core";
+import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
 import { MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
@@ -251,49 +251,98 @@ async function readImage(url: string, page: Page) {
 	}, url);
 }
 
-async function startTargetPerformance(frame: Frame): Promise<void> {
+/**
+ * The authored frame's long tasks while it runs, judged by the thread time the
+ * trace records for each rather than by the wall clock. The Long Tasks API
+ * picks out the authored frame's own tasks, but it times them by the wall, and
+ * on a loaded machine the scheduler parks a renderer mid-task for longer than
+ * any budget, so a task of a few milliseconds reads as 80 there. A mark puts
+ * the frame's clock on the trace's, and each long task's window is then priced
+ * at what its run and the microtask checkpoint after it cost the thread.
+ */
+async function startTargetPerformance(browser: Browser, frame: Frame): Promise<void> {
+	await browser.startTracing(undefined, { categories: ["toplevel", "blink.user_timing", "__metadata"] });
 	await frame.evaluate(() => {
-		const longTasks: number[] = [];
-		const rafGaps: number[] = [];
+		const longTasks: { start: number; duration: number }[] = [];
 		const supported = PerformanceObserver.supportedEntryTypes.includes("longtask");
 		const observer = new PerformanceObserver((list) => {
-			for (const entry of list.getEntries()) longTasks.push(entry.duration);
+			for (const entry of list.getEntries()) longTasks.push({ start: entry.startTime, duration: entry.duration });
 		});
 		if (supported) observer.observe({ type: "longtask" });
-		let previous = performance.now();
-		let request = 0;
-		const tick = (now: number) => {
-			const gap = now - previous;
-			if (gap > 50) rafGaps.push(gap);
-			previous = now;
-			request = requestAnimationFrame(tick);
-		};
-		request = requestAnimationFrame(tick);
+		const clock = performance.mark("spool-capture-clock").startTime;
 		Object.defineProperty(window, "__capturePerformance", {
 			configurable: true,
 			value: {
 				async stop() {
 					await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-					cancelAnimationFrame(request);
-					for (const entry of observer.takeRecords()) longTasks.push(entry.duration);
+					for (const entry of observer.takeRecords()) {
+						longTasks.push({ start: entry.startTime, duration: entry.duration });
+					}
 					observer.disconnect();
-					return { supported, longTasks, rafGaps };
+					return { supported, clock, longTasks };
 				},
 			},
 		});
 	});
 }
 
-async function stopTargetPerformance(frame: Frame) {
-	return frame.evaluate(() =>
+interface TraceEvent {
+	name: string;
+	cat: string;
+	ph: string;
+	pid: number;
+	tid: number;
+	ts: number;
+	dur?: number;
+	tdur?: number;
+}
+
+async function stopTargetPerformance(browser: Browser, frame: Frame) {
+	const { supported, clock, longTasks } = await frame.evaluate(() =>
 		(
 			window as unknown as {
 				__capturePerformance: {
-					stop(): Promise<{ supported: boolean; longTasks: number[]; rafGaps: number[] }>;
+					stop(): Promise<{
+						supported: boolean;
+						clock: number;
+						longTasks: { start: number; duration: number }[];
+					}>;
 				};
 			}
 		).__capturePerformance.stop(),
 	);
+	const { traceEvents } = JSON.parse((await browser.stopTracing()).toString()) as { traceEvents: TraceEvent[] };
+	const mark = traceEvents.find((event) => event.name === "spool-capture-clock");
+	if (mark === undefined) throw new Error("the authored frame's clock mark is missing from the trace");
+	// Trace time in microseconds, frame time in milliseconds.
+	const offset = mark.ts / 1000 - clock;
+	const slices: TraceEvent[] = [];
+	let enclosingEnd = 0;
+	for (const event of traceEvents
+		.filter(
+			(event) =>
+				event.ph === "X" &&
+				event.pid === mark.pid &&
+				event.tid === mark.tid &&
+				event.cat.split(",").includes("toplevel"),
+		)
+		.sort((left, right) => left.ts - right.ts)) {
+		// A nested slice is already inside its parent's time.
+		if (event.ts < enclosingEnd) continue;
+		enclosingEnd = event.ts + (event.dur ?? 0);
+		slices.push(event);
+	}
+	const longTaskThreadTimes = longTasks.map(({ start, duration }) => {
+		// The API rounds its times to the millisecond.
+		const from = (start + offset - 1) * 1000;
+		const to = (start + duration + offset + 1) * 1000;
+		const within = slices.filter((slice) => slice.ts >= from && slice.ts < to);
+		if (within.length === 0) throw new Error("a long task has no slice on the authored frame's thread");
+		// A slice too brief for the thread clock carries no thread time; its wall
+		// time is just as brief.
+		return within.reduce((sum, slice) => sum + (slice.tdur ?? slice.dur ?? 0), 0) / 1000;
+	});
+	return { supported, longTaskThreadTimes, longTaskWallTimes: longTasks.map(({ duration }) => duration) };
 }
 
 async function requestCapture(page: Page, captureOrigin: string) {
@@ -629,7 +678,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		),
 	).toBe(0);
 
-	await startTargetPerformance(authored);
+	await startTargetPerformance(browser, authored);
 	const exported = await requestCapture(page, captureOrigin.origin);
 	expect(exported.resultReplies).toBe(1);
 	// An export is one full-resolution lossless sheet.
@@ -644,14 +693,15 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		assetCss: [255, 204, 0, 255],
 	});
 	// The isolation claim is that the authored frame's thread never stalls while
-	// the worker captures: no long task, exactly. Frame gaps are read alongside
-	// but not asserted — a saturated CI runner skips animation frames in a page
-	// whose thread was idle the whole time (66 ms and 133 ms gaps against an
-	// empty long-task list, twice in one run), and that is the scheduler, not
-	// the capture.
-	const performance = await stopTargetPerformance(authored);
+	// the worker captures: no long task, exactly, where long is 50ms of the
+	// thread's own work. A saturated runner stretches idle tasks and frame gaps
+	// past that on the wall clock, and that is the scheduler, not the capture.
+	const performance = await stopTargetPerformance(browser, authored);
 	expect(performance.supported).toBe(true);
-	expect(performance.longTasks).toEqual([]);
+	expect(performance.longTaskThreadTimes.filter((milliseconds) => milliseconds > 50)).toEqual([]);
+	// Thread time misses a thread blocked waiting, as on a synchronous readback:
+	// a loose wall-clock bound still catches that, far above what load stretches.
+	expect(performance.longTaskWallTimes.filter((milliseconds) => milliseconds > 1000)).toEqual([]);
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
 
 	const unsafe = await directWorkerRequest(

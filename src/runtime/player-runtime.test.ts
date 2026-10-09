@@ -47,7 +47,9 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 	expect(res.status, "serving the player").toBe(200);
 	const doc = await res.text();
 
-	// the previous document is gone: real navigation destroys its listeners
+	// the previous document is gone: real navigation destroys its listeners and
+	// its title, so the last case's title cannot pass for this one's
+	document.title = "";
 	for (const { type, listener } of boundListeners.splice(0)) {
 		document.removeEventListener(type, listener);
 	}
@@ -595,13 +597,15 @@ describe("the played page and its bar (#227)", () => {
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
+		// the bar names the screen in its render; the URL and title follow in an
+		// effect after it, so they are waited for rather than read in the same turn
+		await vi.waitFor(() => expect(document.title).toBe(`menu · ${harness.name}`));
 		expect(new URL(window.location.href).searchParams.get("frame")).toBe("menu");
-		expect(document.title).toBe(`menu · ${harness.name}`);
 
 		click("#walk");
 		await waitForFrame("cart");
+		await vi.waitFor(() => expect(document.title).toBe(`cart · ${harness.name}`));
 		expect(new URL(window.location.href).searchParams.get("frame")).toBe("cart");
-		expect(document.title).toBe(`cart · ${harness.name}`);
 
 		// and the browser's own back button walks the session back
 		window.history.back();

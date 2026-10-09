@@ -403,6 +403,9 @@ export interface EnsureResult {
 	controlToken: string;
 }
 
+/** How long ensureDaemon still looks for a daemon after the one it spawned has exited. */
+const EXITED_GRACE_MS = 3000;
+
 /**
  * Tmux-style auto-start: reuse the healthy daemon or spawn one detached,
  * logging to ~/.spool/daemon.log, and wait until it reports healthy.
@@ -414,6 +417,9 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 	}
 
 	const command = options.command ?? defaultServeCommand();
+	// a checkout's daemon runs a whole Vite build of the UI before it binds, which
+	// a loaded machine stretches well past the seconds a built daemon needs
+	const timeoutMs = options.timeoutMs ?? (options.command === undefined && runsFromSource() ? 60_000 : 10_000);
 	const [bin, ...args] = command;
 	if (bin === undefined) throw new SpoolError("cannot determine the spool serve command");
 
@@ -425,11 +431,22 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 		stdio: ["ignore", log, log],
 		env: { ...process.env, ...options.env },
 	});
+	let exitedAt: number | undefined;
+	child.once("exit", () => {
+		exitedAt = Date.now();
+	});
 	child.unref();
 	closeSync(log);
 
-	const live = await poll(options.timeoutMs ?? 10_000, () => liveDaemon(spoolDir));
-	if (live !== undefined)
+	// a child that has exited will never come up, so the deadline only bounds one
+	// still starting. It may have lost the port to a sibling started at the same
+	// moment, whose health probe a loaded machine can slow past a single try, so
+	// the probes go on a little after the exit before giving up.
+	const live = await poll(timeoutMs, async () => {
+		if (exitedAt !== undefined && Date.now() - exitedAt > EXITED_GRACE_MS) return null;
+		return liveDaemon(spoolDir);
+	});
+	if (live !== undefined && live !== null)
 		return { url: live.url, pid: live.state.pid, started: true, controlToken: live.state.controlToken };
 	// the successor cannot bind a port a daemon nobody recorded still holds,
 	// and the log only shows it failing to bind — name the squatter instead
@@ -452,6 +469,10 @@ export function selfCliPath(): string {
 function defaultServeCommand(): string[] {
 	// execArgv carries loader flags, so a dev checkout (tsx) spawns like the built cli
 	return [process.execPath, ...process.execArgv, selfCliPath(), "serve", "--foreground"];
+}
+
+function runsFromSource(): boolean {
+	return selfCliPath().endsWith(".ts");
 }
 
 export type StopResult = { stopped: true; pid: number; adopted: boolean } | { stopped: false };

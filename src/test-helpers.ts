@@ -14,6 +14,7 @@ import { createDaemonApp } from "./daemon/app";
 import { renderOrigin } from "./daemon/lifecycle";
 import { CONTROL_HEADER, PROJECT_HEADER, RENDER_HOST } from "./daemon/security";
 import { serveDaemon } from "./daemon/server";
+import { inertWebfonts } from "./daemon/webfonts";
 import { initProject } from "./init";
 import { setNested } from "./machine-state";
 import { lookupProjectByName } from "./registry";
@@ -124,6 +125,8 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 		controlHost: "localhost",
 		controlToken: "test-control-token",
 		onHistoryNotice: (message) => historyNotices.push(message),
+		// fonts.css passes through as written: a document never waits on a foundry's DNS
+		webfonts: inertWebfonts(),
 		...options,
 	});
 	daemon.setSelfOrigin("http://localhost:7766");

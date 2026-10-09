@@ -1,4 +1,4 @@
-import { afterAll, expect } from "vitest";
+import { afterAll, expect, vi } from "vitest";
 import { closeTestBrowser } from "./test-browser";
 
 const testPath = expect.getState().testPath?.replaceAll("\\", "/") ?? "";
@@ -13,13 +13,15 @@ if (testPath.includes("/src/ui/")) {
 // Playwright's own 30s graceful-shutdown window.
 afterAll(closeTestBrowser, 35_000);
 
-// A browser or native suite polls for exact states a daemon and a Chromium reach
-// together: a preview landing natively, a save arriving in source, a frame
-// mounting. Nothing in those suites expects a poll to time out, so the only
-// thing the default second bounds is how loaded the runner may be before an
-// exact wait reads as a failure. Those suites get the same window the origin
+// A poll waits for a state the test expects to reach: a preview landing
+// natively, a save arriving in source, a frame mounting, a render settling.
+// Nothing expects one to time out, so the default second bounds only how loaded
+// the runner may be before an exact wait reads as a failure, and a poll that
+// holds returns the moment it does. Every suite gets the window the origin
 // helpers already use; a poll that names its own timeout keeps it.
-if (/-(browser|native)\.test\.ts$/.test(testPath)) {
-	const poll = expect.poll;
-	expect.poll = (actual, options) => poll(actual, { timeout: 15_000, ...options });
-}
+const POLL_MS = 15_000;
+const poll = expect.poll;
+expect.poll = (actual, options) => poll(actual, { timeout: POLL_MS, ...options });
+const waitFor = vi.waitFor;
+vi.waitFor = (callback, options) =>
+	waitFor(callback, typeof options === "number" ? options : { timeout: POLL_MS, ...options });

@@ -74,7 +74,9 @@ it.each(["invited", "public"])(
 		access = "removed";
 		await surface.getByText("Again", { exact: true }).click();
 		await expect.poll(() => surface.getByText("Access removed", { exact: true }).count()).toBe(1);
-		await surface.getByText("Next", { exact: true }).click({ force: true });
+		// the start page's button, not the next page's heading of the same word,
+		// which a slow walk back can still be showing behind the notice
+		await surface.getByRole("button", { name: "Next", exact: true }).click({ force: true });
 		await expect.poll(() => surface.getByText("Start", { exact: true }).count()).toBe(1);
 	},
 );
