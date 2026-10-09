@@ -57,7 +57,10 @@ describe("the fallback", () => {
 });
 
 describe("the machine's agent choice", () => {
-	const engines = () => [standIn("pi"), createClaudeEngine(fixtureAgentExecutor().executor, () => true)];
+	const engines = () => [
+		standIn("pi"),
+		createClaudeEngine({ executor: fixtureAgentExecutor().executor, spoolDir: makeTempDir(), look: () => true }),
+	];
 
 	it("is saved before it is answered and read the same after a restart and in every project", async () => {
 		const spoolDir = makeTempDir();
@@ -101,7 +104,10 @@ describe("the machine's agent choice", () => {
 		const { name } = makeProject(spoolDir);
 		const claude = fixtureAgentExecutor();
 		const app = makeApp(spoolDir, {
-			agentEngines: [standIn("pi"), createClaudeEngine(claude.executor, () => true)],
+			agentEngines: [
+				standIn("pi"),
+				createClaudeEngine({ executor: claude.executor, spoolDir: makeTempDir(), look: () => true }),
+			],
 		});
 		// nothing saved: the turn takes the fallback rather than any engine of its own
 		void app.request(`/api/p/${name}/agent/turn`, {

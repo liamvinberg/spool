@@ -15,7 +15,7 @@ function setup(...captures: [string, ...string[]]) {
 	const spoolDir = makeTempDir();
 	const { root, name } = makeProject(spoolDir);
 	const pi = scriptedAgentExecutor(...captures);
-	const engines = () => [createPiEngine(spoolDir, pi.executor, () => true)];
+	const engines = () => [createPiEngine({ executor: pi.executor, spoolDir, look: () => true })];
 	let app = makeApp(spoolDir, { agentEngines: engines() });
 	const path = `/api/p/${name}/agent`;
 	const send = (route: string, body: unknown) =>

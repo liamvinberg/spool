@@ -18,13 +18,14 @@ it("shows pi's live models with local ones marked and no mode menu, and opens an
 	const project = await serveProject({
 		uiDir: await builtUi(),
 		agentEngines: [
-			createPiEngine(makeTempDir(), pi.executor, () => true),
-			createClaudeEngine(
-				() => {
+			createPiEngine({ executor: pi.executor, spoolDir: makeTempDir(), look: () => true }),
+			createClaudeEngine({
+				executor: () => {
 					throw new Error("Claude Code is not started here");
 				},
-				() => false,
-			),
+				spoolDir: makeTempDir(),
+				look: () => false,
+			}),
 		],
 	});
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");
@@ -97,19 +98,20 @@ it("walls a machine with no agent and takes the wall down on focus once one is i
 	const project = await serveProject({
 		uiDir: await builtUi(),
 		agentEngines: [
-			createClaudeEngine(
-				() => {
+			createClaudeEngine({
+				executor: () => {
 					throw new Error("Claude Code is not started here");
 				},
-				() => installed,
-			),
-			createPiEngine(
-				makeTempDir(),
-				() => {
+				spoolDir: makeTempDir(),
+				look: () => installed,
+			}),
+			createPiEngine({
+				executor: () => {
 					throw new Error("pi is not started here");
 				},
-				() => false,
-			),
+				spoolDir: makeTempDir(),
+				look: () => false,
+			}),
 		],
 	});
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1400, height: 900 } });

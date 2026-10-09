@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeProject, serveProject, writeFrame } from "../test-helpers";
+import { builtUi, makeProject, makeTempDir, serveProject, writeFrame } from "../test-helpers";
 import type { AgentEngine } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { permissionClaude } from "./fixtures/claude-permissions";
@@ -31,7 +31,10 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	const claude = permissionClaude();
 	const project = await serveProject({
 		uiDir: await builtUi(),
-		agentEngines: [createClaudeEngine(claude.executor, () => true), piStandIn],
+		agentEngines: [
+			createClaudeEngine({ executor: claude.executor, spoolDir: makeTempDir(), look: () => true }),
+			piStandIn,
+		],
 	});
 	const other = makeProject(project.spoolDir);
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");

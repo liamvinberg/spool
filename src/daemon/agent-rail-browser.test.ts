@@ -5,6 +5,7 @@ import {
 	builtUi,
 	type FakeAgentProc,
 	fixtureAgentExecutor,
+	makeTempDir,
 	seedAgentWidth,
 	serveProject,
 	writeFrame,
@@ -201,7 +202,10 @@ async function opened(others = 0) {
 	const claude = scriptedClaude();
 	const project = await serveProject({
 		uiDir: await builtUi(),
-		agentEngines: [createClaudeEngine(claude.executor, () => true), ...(others > 0 ? [otherAgent(others)] : [])],
+		agentEngines: [
+			createClaudeEngine({ executor: claude.executor, spoolDir: makeTempDir(), look: () => true }),
+			...(others > 0 ? [otherAgent(others)] : []),
+		],
 	});
 	writeFrame(project.root, "home", "export default () => <h1>Home</h1>");
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1400, height: 900 } });

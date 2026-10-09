@@ -71,19 +71,15 @@ function candidates(env: Readonly<Record<string, string | undefined>>, command: 
  */
 export function agentInstalled(
 	env: Readonly<Record<string, string | undefined>>,
+	/** the bare name the engine spawns */
+	command: string,
 	look: Look = runnable,
-	/** the bare name each engine spawns: `claude` unless an engine says otherwise */
-	command: string = AGENT_COMMAND,
 ): boolean {
-	return agentPath(env, look, command) !== undefined;
+	return agentPath(env, command, look) !== undefined;
 }
 
 /** The path a bare command resolves to on this PATH, the first one a shell would run. */
-export function agentPath(
-	env: Readonly<Record<string, string | undefined>>,
-	look: Look = runnable,
-	command: string = AGENT_COMMAND,
-): string | undefined {
+function agentPath(env: Readonly<Record<string, string | undefined>>, command: string, look: Look): string | undefined {
 	const names = candidates(env, command);
 	for (const dir of (env.PATH ?? "").split(delimiter)) {
 		// an empty entry means the working directory to a shell, and spool is not a shell:

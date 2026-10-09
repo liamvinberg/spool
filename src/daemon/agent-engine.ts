@@ -1,7 +1,8 @@
 import type { Attachment } from "../attachment";
 import type { AgentPermissions } from "../settings/registry";
+import type { AgentExecutor } from "./agent-exec";
 import type { AgentAsk, AgentOffer } from "./agent-offer";
-import type { AgentLogin } from "./agent-preflight";
+import type { AgentLogin, Look } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
 
 /** The installed agents spool drives, each through its own adapter. */
@@ -68,6 +69,16 @@ export interface EngineTurnOptions {
 	readonly said: readonly AgentMessage[];
 	readonly ask: AgentAsk;
 	readonly permissions: AgentPermissions;
+}
+
+/** What every engine is built from. */
+export interface EngineDeps {
+	/** how the engine's processes are spawned: the real one, or a capture's replay in tests */
+	readonly executor: AgentExecutor;
+	/** spool's state, where the engine mounts the designer and keeps its session references */
+	readonly spoolDir: string;
+	/** how the engine's command is found on `PATH`; tests make one up */
+	readonly look?: Look;
 }
 
 /**

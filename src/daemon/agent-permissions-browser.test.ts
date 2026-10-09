@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, seedAgentWidth, serveProject, storeRightWidth, writeFrame } from "../test-helpers";
+import { builtUi, makeTempDir, seedAgentWidth, serveProject, storeRightWidth, writeFrame } from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { permissionClaude } from "./fixtures/claude-permissions";
 
@@ -13,7 +13,7 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 	const uiDir = await builtUi();
 	const project = await serveProject({
 		uiDir,
-		agentEngines: [createClaudeEngine(claude.executor, () => true)],
+		agentEngines: [createClaudeEngine({ executor: claude.executor, spoolDir: makeTempDir(), look: () => true })],
 	});
 	writeFrame(project.root, "receipt", "export default () => <main><h1>Order confirmed</h1><p>Order 1042</p></main>");
 	const browser = await testBrowser();

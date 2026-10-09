@@ -27,7 +27,7 @@ import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { parseAgentReply } from "./agent-control";
 import { createAgentDefaults } from "./agent-defaults";
-import { type AgentEngine, type AgentEngineId, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
+import { type AgentEngine, type AgentEngineId, type EngineDeps, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { createCodexEngine } from "./agent-engine-codex";
 import { createPiEngine } from "./agent-engine-pi";
@@ -1124,17 +1124,13 @@ export function createDaemonApp({
 	// for it. Project code never reaches this — it is a control-plane route
 	// behind the control token, the same boundary #41 drew.
 	const executor = agentExecutor ?? claudeExecutor();
+	const engineDeps: EngineDeps = { executor, spoolDir, ...(agentLook === undefined ? {} : { look: agentLook }) };
 	const engines = new Map<AgentEngineId, AgentEngine>(
 		(
 			agentEngines ?? [
-				createClaudeEngine(executor, agentLook, spoolDir),
-				createCodexEngine({
-					executor,
-					spoolDir,
-					version,
-					...(agentLook === undefined ? {} : { look: agentLook }),
-				}),
-				createPiEngine(spoolDir, executor, agentLook),
+				createClaudeEngine(engineDeps),
+				createCodexEngine({ ...engineDeps, version }),
+				createPiEngine(engineDeps),
 			]
 		).map((engine) => [engine.id, engine]),
 	);

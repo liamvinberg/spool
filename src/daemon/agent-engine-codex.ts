@@ -13,10 +13,10 @@ import {
 } from "./agent-codex-spawn";
 import { startCodexTurn } from "./agent-codex-turn";
 import { mountDesigner } from "./agent-designer";
-import type { AgentEngine } from "./agent-engine";
+import type { AgentEngine, EngineDeps } from "./agent-engine";
 import { type AgentExecutor, probeAgent } from "./agent-exec";
 import type { AgentAsk, AgentModel, AgentOffer } from "./agent-offer";
-import { type AgentLogin, agentInstalled, type Look } from "./agent-preflight";
+import { type AgentLogin, agentInstalled } from "./agent-preflight";
 
 /**
  * Codex, the person's own, through `codex app-server` (#362).
@@ -29,12 +29,9 @@ import { type AgentLogin, agentInstalled, type Look } from "./agent-preflight";
  * own thread, resumed by the id spool keeps for it in its state directory.
  */
 
-export interface CodexEngineOptions {
-	readonly executor: AgentExecutor;
-	readonly spoolDir: string;
+export interface CodexEngineOptions extends EngineDeps {
 	/** spool's own version, which Codex is told in the handshake */
 	readonly version: string;
-	readonly look?: Look;
 	/**
 	 * The installed Codex's version, or null when it cannot say. By default the real one,
 	 * `codex --version`; where a test's `look` made the binary up, nothing is run and the
@@ -257,7 +254,7 @@ export function createCodexEngine({
 	return {
 		id: "codex",
 		installed: () => {
-			if (!agentInstalled(process.env, look, CODEX_COMMAND)) return false;
+			if (!agentInstalled(process.env, CODEX_COMMAND, look)) return false;
 			const installed = codexVersion();
 			return installed === null || versionAtLeast(installed, CODEX_MIN_VERSION);
 		},

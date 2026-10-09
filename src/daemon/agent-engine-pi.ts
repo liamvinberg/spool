@@ -2,13 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { DESIGNER_FRAMING, mountDesigner } from "./agent-designer";
-import { type AgentEngine, type AgentMessage, saidText } from "./agent-engine";
+import { type AgentEngine, type AgentMessage, type EngineDeps, saidText } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
 import { framing } from "./agent-framing";
 import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agent-offer";
 import { createPiRpc, piModelValue } from "./agent-pi";
 import { startPiTurn } from "./agent-pi-turn";
-import { agentInstalled, type Look } from "./agent-preflight";
+import { agentInstalled } from "./agent-preflight";
 import type { AgentSpawn } from "./agent-spawn";
 
 /**
@@ -222,7 +222,7 @@ export async function askPiOffer(
 	};
 }
 
-export function createPiEngine(spoolDir: string, executor: AgentExecutor, look?: Look): AgentEngine {
+export function createPiEngine({ executor, spoolDir, look }: EngineDeps): AgentEngine {
 	function remember(id: string, file: string): void {
 		const sessions = readSessions(spoolDir);
 		if (sessions[id] === file) return;
@@ -231,7 +231,7 @@ export function createPiEngine(spoolDir: string, executor: AgentExecutor, look?:
 	return {
 		id: "pi",
 		// pi signs in from inside its own session, with `/login`
-		installed: () => agentInstalled(process.env, look, PI_COMMAND),
+		installed: () => agentInstalled(process.env, PI_COMMAND, look),
 		account: async (root, signal) => {
 			const offer = await askPiOffer(executor, root, {}, { levels: false, ...(signal ? { signal } : {}) });
 			return { signedIn: offer.models.length > 0, account: null };

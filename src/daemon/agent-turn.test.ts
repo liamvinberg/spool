@@ -932,7 +932,7 @@ it("keeps completed Claude work held through repeated authentication failures", 
 	mkdirSync(join(path, ".."), { recursive: true });
 	writeFileSync(path, "{}");
 	const agent = fixtureAgentExecutor((proc) => proc.exit(1, "Not logged in. Please run /login"));
-	const engine = createClaudeEngine(agent.executor);
+	const engine = createClaudeEngine({ executor: agent.executor, spoolDir: makeTempDir() });
 	try {
 		for (let attempt = 0; attempt < 3; attempt++) {
 			const events: AgentEvent[] = [];
