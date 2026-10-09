@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { expect } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { builtUi, fixtureAgentExecutor, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * The one seam the hand's browser cases test through (spool-cloud#149): a
@@ -19,7 +19,8 @@ export async function handCanvas(
 	camera: { x: number; y: number; k: number } = { x: 60, y: 60, k: 1 },
 ) {
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir });
+	// an agent counts as installed, so the rail holds a composer rather than the install wall
+	const project = await serveProject({ uiDir, agentExecutor: fixtureAgentExecutor().executor, agentLook: () => true });
 	for (const [path, source] of Object.entries(files)) writeDesignFile(project.root, path, source);
 	writeFrame(project.root, "home", frameSource);
 	writeDesignFile(project.root, "frames/home/frame.json", JSON.stringify({ x: 0, y: 0, ...size }));
