@@ -79,6 +79,28 @@ describe("the turn's grid, drawn", () => {
 		expect(small()).toEqual([false, false]);
 	});
 
+	it("fades a spot let go empty where it stood, and lets a filled one become its frame", async () => {
+		const calm = tile("calm", "reading", { delegation: "a1" });
+		const loud = tile("loud", "reading", { delegation: "a2" });
+		const quiet = tile("quiet-home", "fresh", { delegation: "a2" });
+		const { host, render } = await draw(footOf([calm, loud, tile("bold", "done")]));
+		const names = () =>
+			[...host.querySelectorAll("[data-agent-tile]")].map((one) => one.getAttribute("data-agent-tile"));
+		const leaving = () =>
+			[...host.querySelectorAll("[data-agent-tile-leaving] [data-agent-tile]")].map((one) =>
+				one.getAttribute("data-agent-tile"),
+			);
+
+		// calm is let go, loud is filled by its designer's frame under another name
+		await render(footOf([quiet, tile("bold", "done")]));
+		expect(names()).toEqual(["calm", "quiet-home", "bold"]);
+		expect(leaving()).toEqual(["calm"]);
+		expect(host.querySelector("[data-agent-tile-leaving]")?.className).toContain("animate-agent-fade-out");
+
+		await wait(FADE_OUT_MS + 40);
+		expect(names()).toEqual(["quiet-home", "bold"]);
+	});
+
 	it("strikes corner marks round a tile while its picture is taken, and folds them in after", async () => {
 		const { host, render } = await draw(footOf([tile("home", "shooting")]));
 		expect(host.querySelector("[data-agent-tile-corners]")?.getAttribute("data-agent-tile-corners")).toBe("open");

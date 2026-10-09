@@ -297,8 +297,17 @@ export function witnessFrames(
 		if (text !== undefined) known.set(frame.name, { source: text, sidecar: sidecarText(frame.dir) });
 	}
 
-	/** the call a frame landing now is most likely the work of */
-	function attribute(frame: string): { call: string | null; parent: string | null; task: string | null } {
+	/**
+	 * The call a frame landing now is most likely the work of. `named` is whether a call
+	 * named the frame's own folder, which makes the frame its delegation's for certain; one
+	 * picked by timing alone is only the likeliest.
+	 */
+	function attribute(frame: string): {
+		call: string | null;
+		parent: string | null;
+		task: string | null;
+		named: boolean;
+	} {
 		const at = now();
 		const live = [...calls.values()].filter((call) => call.closed === undefined || at - call.closed < LATE_MS);
 		const named = live.filter((call) => call.input.includes(`frames/${frame}/`));
@@ -307,10 +316,15 @@ export function witnessFrames(
 		)[0];
 		const delegation = named.find((call) => tasks.has(call.id));
 		const chosen = pick ?? delegation;
-		if (chosen === undefined) return { call: null, parent: null, task: null };
+		if (chosen === undefined) return { call: null, parent: null, task: null, named: false };
 		// a delegating call is its own frames' parent: a designer the engine runs as a tool
 		const parent = tasks.has(chosen.id) ? chosen.id : chosen.parent;
-		return { call: chosen.id, parent, task: parent === null ? null : (tasks.get(parent) ?? null) };
+		return {
+			call: chosen.id,
+			parent,
+			task: parent === null ? null : (tasks.get(parent) ?? null),
+			named: named.length > 0,
+		};
 	}
 
 	/**
@@ -334,9 +348,13 @@ export function witnessFrames(
 	}
 
 	/**
-	 * A frame just born on the root page fills the spot reserved for its delegation, at its
-	 * own size. A frame bigger than the spot that would then cover a neighbour stands beside
-	 * the field instead, as any new frame would, and the spot moves with it (story 57).
+	 * A frame just born on the root page fills the spot reserved for it, at its own size: the
+	 * spot of its name, or else its designer's own, when a call of that designer's named the
+	 * frame, so a designer that wrote under another name still lands where it was held. Only
+	 * a still empty spot fills, so it is the designer's first new frame that does; a frame
+	 * only timing ties to a designer fills none, and the spot is let go when it reports back.
+	 * A frame bigger than the spot that would then cover a neighbour stands beside the field
+	 * instead, as any new frame would, and the spot moves with it (story 57).
 	 */
 	function fill(frame: string, dir: string, task: string | null): string | undefined {
 		if (pageParent(frame) !== ROOT_PAGE || designDir === undefined) return undefined;
@@ -398,7 +416,7 @@ export function witnessFrames(
 			known.set(name, { source: text, sidecar: sidecarText(there.dir) });
 			const who = attribute(name);
 			if (was === undefined) {
-				const spot = fill(name, there.dir, who.task);
+				const spot = fill(name, there.dir, who.named ? who.task : null);
 				deleted.delete(name);
 				push({
 					kind: "frame",

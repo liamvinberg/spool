@@ -438,24 +438,78 @@ function TileGrid({
 	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.delegation === waiting);
 	// while anything is still happening, what is finished steps back to leave the eye on it
 	const working = !settled && tiles.some((tile) => tile.state !== "done" && tile.state !== "deleted");
+	const drawn = useLetGo(tiles);
 	return (
 		<div className="flex flex-col gap-3">
 			<div data-agent-tiles="" className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}>
-				{tiles.map((tile, index) => (
-					<Tile
-						key={tile.key}
-						tile={tile}
-						reach={reach}
-						waiting={index === at}
-						small={working && tile.state === "done" && index !== at}
-					/>
-				))}
+				{drawn.map(({ tile, leaving }) => {
+					const index = tiles.indexOf(tile);
+					return leaving ? (
+						<div key={tile.key} data-agent-tile-leaving="" className="animate-agent-fade-out">
+							<Tile tile={tile} reach={reach} />
+						</div>
+					) : (
+						<Tile
+							key={tile.key}
+							tile={tile}
+							reach={reach}
+							waiting={index === at}
+							small={working && tile.state === "done" && index !== at}
+						/>
+					);
+				})}
 			</div>
 			{under === undefined || at === -1 ? null : (
 				<div data-agent-ask-under={tiles[at]?.frame}>{under(((at % columns) + 0.5) / columns)}</div>
 			)}
 		</div>
 	);
+}
+
+/**
+ * The grid's tiles, with each spot let go empty still drawn while it fades where it stood.
+ *
+ * A spot is let go when its designer reports back without a frame of its own in it; a spot
+ * its designer's frame filled under another name is not let go but becomes that frame, which
+ * is a tile new in the same update with the same delegation, so only a spot nobody took fades.
+ */
+function useLetGo(now: readonly AgentTile[]): { tile: AgentTile; leaving: boolean }[] {
+	const still = useStillness();
+	const keys = now.map((tile) => `[${tile.key}]`).join("");
+	const [was, setWas] = useState({ keys, now });
+	const [gone, setGone] = useState<readonly { tile: AgentTile; at: number }[]>([]);
+	const here = new Set(now.map((tile) => tile.key));
+	// adjusted while rendering, so a spot that goes is never unmounted for a frame first
+	if (was.keys !== keys) {
+		const before = new Set(was.now.map((tile) => tile.key));
+		const arrived = now.filter((tile) => !before.has(tile.key));
+		const left = still
+			? []
+			: was.now.flatMap((tile, at) =>
+					!here.has(tile.key) &&
+					tile.state === "reading" &&
+					!gone.some((one) => one.tile.key === tile.key) &&
+					!arrived.some((one) => tile.delegation !== undefined && one.delegation === tile.delegation)
+						? [{ tile, at }]
+						: [],
+				);
+		setWas({ keys, now });
+		if (left.length > 0 || gone.some((one) => here.has(one.tile.key)))
+			setGone([...gone.filter((one) => !here.has(one.tile.key)), ...left]);
+	}
+	const goneKeys = gone.map((one) => `[${one.tile.key}]`).join("");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the set leaving is the trigger
+	useEffect(() => {
+		if (gone.length === 0) return;
+		const leaving = new Set(gone.map((one) => one.tile.key));
+		const timer = setTimeout(() => setGone((all) => all.filter((one) => !leaving.has(one.tile.key))), FADE_OUT_MS);
+		return () => clearTimeout(timer);
+	}, [goneKeys]);
+	const drawn = now.map((tile) => ({ tile, leaving: false }));
+	// each where it stood, so the tiles after it close up only once it has gone
+	for (const { tile, at } of [...gone].filter((one) => !here.has(one.tile.key)).sort((a, b) => a.at - b.at))
+		drawn.splice(Math.min(at, drawn.length), 0, { tile, leaving: true });
+	return drawn;
 }
 
 function Tile({

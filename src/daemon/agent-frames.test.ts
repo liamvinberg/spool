@@ -439,6 +439,76 @@ describe("a frame landing in its reserved spot", () => {
 	});
 });
 
+describe("a spot its designer writes under another name", () => {
+	const designer = (task: string, call: string, description: string): AgentEvent => ({
+		kind: "task-started",
+		task,
+		call,
+		description,
+		agent: "designer",
+		prompt: null,
+		parent: null,
+	});
+
+	it("is filled by the designer's first new frame, when the designer's own call named it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const turn = witnessed(root);
+		turn.say({ kind: "called", id: "d1", tool: "Agent", input: { description: "Design calm" }, parent: null });
+		turn.say(designer("t1", "d1", "Design calm"));
+		await until(() => turn.log.some((event) => event.kind === "spot" && event.state === "held"));
+		const held = turn.log.find((event) => event.kind === "spot");
+		expect(held?.kind === "spot" && held.name).toBe("calm");
+		for (const frame of ["quiet-home", "quiet-home-2"]) {
+			turn.say({
+				kind: "called",
+				id: `w-${frame}`,
+				tool: "Write",
+				input: { file_path: `design/frames/${frame}/frame.tsx`, content: "x" },
+				parent: "d1",
+			});
+			await until(() => turn.log.some((event) => event.kind === "called" && event.id === `w-${frame}`));
+			writeFrame(root, frame, "export default () => null;\n");
+			turn.ring(frame);
+			await until(() => turn.log.some((event) => event.kind === "frame" && event.frame === frame));
+		}
+		turn.say({ kind: "task-done", task: "t1", status: "completed", summary: null, parent: null });
+		await turn.end();
+
+		const filled = turn.log.filter((event) => event.kind === "spot" && event.state === "filled");
+		expect(filled).toMatchObject([{ name: "calm", frame: "quiet-home", task: "t1" }]);
+		expect(turn.log.find((event) => event.kind === "frame" && event.frame === "quiet-home")).toMatchObject({
+			spot: "calm",
+			task: "t1",
+		});
+		expect(turn.log.find((event) => event.kind === "frame" && event.frame === "quiet-home-2")).not.toHaveProperty(
+			"spot",
+		);
+		expect(turn.log.some((event) => event.kind === "spot" && event.state === "released")).toBe(false);
+	});
+
+	it("is let go empty when only timing ties the frame to the designer", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const turn = witnessed(root);
+		turn.say({ kind: "called", id: "d1", tool: "Agent", input: { description: "Design calm" }, parent: null });
+		turn.say(designer("t1", "d1", "Design calm"));
+		await until(() => turn.log.some((event) => event.kind === "spot" && event.state === "held"));
+		// a script the designer ran, which named no frame
+		turn.say({ kind: "called", id: "s1", tool: "Bash", input: { command: "node make.mjs" }, parent: "d1" });
+		await until(() => turn.log.some((event) => event.kind === "called" && event.id === "s1"));
+		writeFrame(root, "stray", "export default () => null;\n");
+		turn.ring("stray");
+		await until(() => turn.log.some((event) => event.kind === "frame" && event.frame === "stray"));
+		turn.say({ kind: "task-done", task: "t1", status: "completed", summary: null, parent: null });
+		await until(() => turn.log.some((event) => event.kind === "spot" && event.state === "released"));
+		await turn.end();
+
+		expect(turn.log.some((event) => event.kind === "spot" && event.state === "filled")).toBe(false);
+		expect(turn.log.find((event) => event.kind === "frame" && event.frame === "stray")).not.toHaveProperty("spot");
+	});
+});
+
 describe("put back", () => {
 	it("writes a deleted frame back from the source the turn kept, and refuses one that stands", async () => {
 		const { root, name, app, proc, seen, close } = await turnOn((root) => {
