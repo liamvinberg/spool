@@ -1574,59 +1574,37 @@ export async function chooseEngineModel(project: string, engine: AgentEngineId, 
 	}
 }
 
-/** The engines this daemon runs and whether each is installed here (#364), or undefined when unread. */
-export async function fetchAgentEngines(
-	project: string,
-): Promise<readonly { id: AgentEngineId; installed: boolean }[] | undefined> {
-	try {
-		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
-		if (!res.ok) return undefined;
-		const body = (await res.json()) as { engines?: unknown };
-		if (!Array.isArray(body.engines)) return undefined;
-		return body.engines.flatMap((entry: unknown) => {
-			const one = (typeof entry === "object" && entry !== null ? entry : {}) as {
-				id?: unknown;
-				installed?: unknown;
-			};
-			return isAgentEngineId(one.id) ? [{ id: one.id, installed: one.installed === true }] : [];
-		});
-	} catch {
-		return undefined;
-	}
-}
-
-/** The machine's agent choice (#361), or undefined when it could not be read: never a guess. */
-export async function fetchAgentDefaults(
-	project: string,
-): Promise<{ preferred: AgentEngineId | null; mode: AgentPermissions } | undefined> {
-	try {
-		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
-		if (!res.ok) return undefined;
-		return agentDefaultsOf(await res.json());
-	} catch {
-		return undefined;
-	}
-}
-
 /**
- * Which of this daemon's engines have a binary on this machine (#363), or null when the door
- * said nothing. The wall goes up only on an answer that names none.
+ * The machine's agent choice and the engines this daemon runs (#361, #363, #364), off the
+ * one door that says both, or undefined when it could not be read. Each half is undefined
+ * where the answer did not carry it whole: never a guess.
  */
-export async function fetchInstalledEngines(project: string): Promise<readonly AgentEngineId[] | null> {
+export interface AgentEnginesReading {
+	readonly defaults: { preferred: AgentEngineId | null; mode: AgentPermissions } | undefined;
+	/** every engine the daemon runs, and whether its binary is on this machine */
+	readonly engines: readonly { id: AgentEngineId; installed: boolean }[] | undefined;
+}
+
+export async function fetchAgentEngines(project: string): Promise<AgentEnginesReading | undefined> {
 	try {
 		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
-		if (!res.ok) return null;
-		const { engines } = (await res.json()) as { engines?: unknown };
-		if (!Array.isArray(engines)) return null;
-		return engines.flatMap((entry: unknown) => {
-			const { id, installed } = (typeof entry === "object" && entry !== null ? entry : {}) as {
-				id?: unknown;
-				installed?: unknown;
-			};
-			return isAgentEngineId(id) && installed === true ? [id] : [];
-		});
+		if (!res.ok) return undefined;
+		const body: unknown = await res.json();
+		const listed = typeof body === "object" && body !== null ? (body as { engines?: unknown }).engines : undefined;
+		return {
+			defaults: agentDefaultsOf(body),
+			engines: Array.isArray(listed)
+				? listed.flatMap((entry: unknown) => {
+						const { id, installed } = (typeof entry === "object" && entry !== null ? entry : {}) as {
+							id?: unknown;
+							installed?: unknown;
+						};
+						return isAgentEngineId(id) ? [{ id, installed: installed === true }] : [];
+					})
+				: undefined,
+		};
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 

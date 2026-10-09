@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentPermissions } from "../../settings/registry";
-import { fetchAgentDefaults, saveAgentEngine } from "../api";
+import { fetchAgentEngines, saveAgentEngine } from "../api";
 import { useSettings } from "../settings";
 
 /**
@@ -68,8 +68,9 @@ export function useAgentDefaults(project: string): AgentDefaultsDeck {
 		let live = true;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const read = () => {
-			void fetchAgentDefaults(project).then((answer) => {
+			void fetchAgentEngines(project).then((reading) => {
 				if (!live) return;
+				const answer = reading?.defaults;
 				if (answer === undefined) timer = setTimeout(read, AGENT_DEFAULTS_RETRY_MS);
 				else learn(answer);
 			});

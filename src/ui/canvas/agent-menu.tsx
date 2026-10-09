@@ -138,7 +138,8 @@ export function AgentMenu({
 	useEffect(() => {
 		if (!open) return;
 		let live = true;
-		void fetchAgentEngines(project).then((listed) => {
+		void fetchAgentEngines(project).then((reading) => {
+			const listed = reading?.engines;
 			if (!live || listed === undefined) return;
 			setEngines(listed);
 			for (const one of listed) {
