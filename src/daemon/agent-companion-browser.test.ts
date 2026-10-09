@@ -6,6 +6,7 @@ import {
 	fixtureAgentExecutor,
 	seedAgentWidth,
 	serveProject,
+	showAgent,
 	writeDesignFile,
 	writeFrame,
 } from "../test-helpers";
@@ -139,8 +140,8 @@ it("brings the square to the block a write changed, on the frame showing it", { 
 	// the frame is live before anybody types: the design it is about to change is on screen
 	await expect.poll(says, { timeout: 30_000 }).toBe("open until six");
 
-	// properties have the panel until the agent's glyph in the strip is pressed
-	await page.locator('[data-pane-toggle="agent"]').click();
+	// properties have the side until the agent's tab is pressed; here the side starts closed
+	await showAgent(page);
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT);
 	await field.press("Enter");
@@ -191,7 +192,7 @@ it("brings the square to the block a write changed, on the frame showing it", { 
 
 /**
  * The rail shut, the agent stops to ask (#366): the ask stands on the canvas under the
- * frame the agent is at, its square the waiting ring and the dock's glyph wearing the
+ * frame the agent is at, its square the waiting ring and the agent's rail icon wearing the
  * waiting mark, and answering it there is answering it.
  */
 it("stands an ask under its frame while the rail is shut, and answers from there", { timeout: 180_000 }, async () => {
@@ -288,23 +289,22 @@ it("stands an ask under its frame while the rail is shut, and answers from there
 		)
 		.toBe("open until six");
 
-	const glyph = page.locator('[data-pane-toggle="agent"]');
-	await glyph.click();
+	await showAgent(page);
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT_ASK);
 	await field.press("Enter");
-	// shut the rail while the turn runs: the glyph again
+	// close the side while the turn runs, to its rail
 	await page
 		.locator('[data-agent-companion="main"][data-frame="home"]')
 		.waitFor({ state: "attached", timeout: 30_000 });
-	await glyph.click();
+	await page.locator('[data-side-close="right"]').click();
 	await expect.poll(() => page.locator("[data-agent-rail]").isVisible()).toBe(false);
 
 	const card = page.locator("[data-agent-canvas-ask]");
 	await card.waitFor({ timeout: 30_000 });
 	expect(await card.textContent()).toContain("Adding a date library");
 	await expect.poll(() => page.locator('[data-agent-companion="main"]').getAttribute("data-act")).toBe("ask");
-	expect(await page.locator('[data-toggle-mark="waiting"]').count()).toBe(1);
+	expect(await page.locator('[data-rail-icon="agent"] [data-pane-mark="waiting"]').count()).toBe(1);
 	// it stands under the frame it is about
 	const frame = await page.locator('iframe[title="home"]').boundingBox();
 	const stands = await card.boundingBox();
@@ -315,13 +315,13 @@ it("stands an ask under its frame while the rail is shut, and answers from there
 	if (shots) {
 		await page.waitForTimeout(600);
 		await page.screenshot({ path: join(shots, "ask-on-canvas.png") });
-		await glyph.click();
+		await showAgent(page);
 		await page.waitForTimeout(600);
 		await page.screenshot({ path: join(shots, "ask-in-rail.png") });
 		await page.locator("[data-agent-rail] [data-agent-ask-detail]").click();
 		await page.waitForTimeout(300);
 		await page.screenshot({ path: join(shots, "ask-in-rail-open.png") });
-		await glyph.click();
+		await page.locator('[data-side-close="right"]').click();
 		await card.waitFor();
 	}
 	await card.locator('[data-agent-option="Allow"]').click();

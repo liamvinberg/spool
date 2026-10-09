@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, scriptedAgentExecutor, serveProject, writeFrame } from "../test-helpers";
+import { builtUi, makeTempDir, scriptedAgentExecutor, serveProject, showAgent, writeFrame } from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { createPiEngine } from "./agent-engine-pi";
 import { writeThread } from "./agent-threads";
@@ -51,8 +51,7 @@ it("shows pi's live models with local ones marked and no mode menu, and opens an
 	const errors: string[] = [];
 	page.on("pageerror", (error) => errors.push(error.message));
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	const glyph = page.locator('[data-pane-toggle="agent"]');
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+	await showAgent(page);
 	const rail = page.locator("[data-agent-rail]");
 
 	// the old thread's picture is all there, with one quiet line saying it goes no further
@@ -63,7 +62,7 @@ it("shows pi's live models with local ones marked and no mode menu, and opens an
 	expect(await rail.getByRole("button", { name: "Choose model", exact: true }).count()).toBe(0);
 	expect(await rail.locator("[data-permission-trigger]").count()).toBe(0);
 
-	await page.locator('[data-pane-head="agent"] button[aria-label="New chat"]').click();
+	await page.locator('[data-pane-verbs="agent"] button[aria-label="New chat"]').click();
 	const model = rail.getByRole("button", { name: "Choose model", exact: true });
 	await expect.poll(() => model.textContent()).toContain("qwen3-coder:30b");
 	expect(await rail.locator("[data-agent-legacy]").count()).toBe(0);
@@ -117,8 +116,7 @@ it("walls a machine with no agent and takes the wall down on focus once one is i
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1400, height: 900 } });
 	await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	const glyph = page.locator('[data-pane-toggle="agent"]');
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+	await page.locator('[data-pane-tab="agent"]').click();
 	const wall = page.locator("[data-agent-wall]");
 	await wall.waitFor();
 	expect(await wall.locator("[data-agent-install] code").allTextContents()).toEqual([

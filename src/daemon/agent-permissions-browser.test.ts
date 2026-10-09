@@ -2,7 +2,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeTempDir, seedAgentWidth, serveProject, storeRightWidth, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	makeTempDir,
+	seedAgentWidth,
+	serveProject,
+	showAgent,
+	storeRightWidth,
+	writeFrame,
+} from "../test-helpers";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { permissionClaude } from "./fixtures/claude-permissions";
 
@@ -20,7 +28,7 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-pane-toggle="agent"]').click();
+	await showAgent(page);
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const trigger = rail.locator("[data-permission-trigger]");

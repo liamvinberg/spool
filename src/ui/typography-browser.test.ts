@@ -27,7 +27,7 @@ it("loads real typefaces and keeps prose, names and supporting text readable", {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, reducedMotion: "reduce" });
 	await page.goto(`${project.url}/p/${project.name}`, { waitUntil: "domcontentloaded" });
-	await page.getByRole("heading", { name: "Pages", exact: true }).waitFor();
+	await page.getByRole("tab", { name: "Pages", exact: true }).waitFor();
 
 	const bundle = await build({
 		stdin: {

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, makeProject, makeTempDir, serveProject, writeFrame } from "../test-helpers";
+import { builtUi, makeProject, makeTempDir, serveProject, showAgent, writeFrame } from "../test-helpers";
 import type { AgentEngine } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { permissionClaude } from "./fixtures/claude-permissions";
@@ -62,8 +62,7 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	const mode = rail.locator("[data-permission-trigger]");
 	const open = async (name: string) => {
 		await page.goto(`${project.url}/p/${encodeURIComponent(name)}`);
-		const glyph = page.locator('[data-pane-toggle="agent"]');
-		if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+		await showAgent(page);
 		await mode.waitFor();
 	};
 	const settled = async (engine: string, permissions: string) => {
@@ -81,13 +80,11 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	await settled("pi", "Full access");
 
 	await page.reload();
-	await page.locator('[data-pane-toggle="agent"]').waitFor();
-	const glyph = page.locator('[data-pane-toggle="agent"]');
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+	await showAgent(page);
 	await settled("pi", "Full access");
 	expect(await labels()).toEqual(["pi", "Full access"]);
 
-	await page.locator('[data-pane-head="agent"] button[aria-label="New chat"]').click();
+	await page.locator('[data-pane-verbs="agent"] button[aria-label="New chat"]').click();
 	await settled("pi", "Full access");
 	await open(other.name);
 	await settled("pi", "Full access");
@@ -110,8 +107,7 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	await expect.poll(() => mode.getAttribute("title")).toContain("from the next turn");
 	expect(running.inputs.some((line) => line.includes("set_permission_mode"))).toBe(false);
 	await page.reload();
-	await page.locator('[data-pane-toggle="agent"]').waitFor();
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+	await showAgent(page);
 	await expect.poll(() => mode.textContent()).toBe("Ask first");
 	expect(await labels()).not.toContain("Full access");
 	running.exit(0);

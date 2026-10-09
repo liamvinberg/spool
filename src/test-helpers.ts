@@ -679,16 +679,38 @@ export async function pagePointOf(page: Page, world: { x: number; y: number }): 
 }
 
 /**
- * A browser whose right side starts collapsed at `width`, so the first press on
- * the agent's toggle stands the agent alone at that width. Only seeds a
- * browser that has no layout yet, so a reload keeps what the test did.
+ * A browser whose right side starts closed at `width` with the Agent tab lit, so
+ * the first press on its rail icon (`showAgent`) opens the agent at that width.
+ * Only seeds a browser that has no layout yet, so a reload keeps what the test did.
  */
 export async function seedAgentWidth(page: Page, width: number): Promise<void> {
 	const fresh = defaultLayout();
-	const layout = { ...fresh, right: { ...fresh.right, lit: [], open: false, width } };
+	const layout = {
+		...fresh,
+		right: {
+			...fresh.right,
+			groups: fresh.right.groups.map((group) => ({ ...group, active: "agent" })),
+			open: false,
+			width,
+		},
+	};
 	await page.addInitScript((stored) => {
 		if (localStorage.getItem("spool.panes.layout") === null) localStorage.setItem("spool.panes.layout", stored);
 	}, JSON.stringify(layout));
+}
+
+/**
+ * The agent pane, shown and lit: its rail icon when its side is closed, its tab
+ * otherwise. Waits for its composer.
+ */
+export async function showAgent(page: Page): Promise<void> {
+	const tab = page.locator('[data-pane-tab="agent"]');
+	await tab.waitFor({ state: "attached", timeout: 30_000 });
+	const open = await tab.evaluate((element) => element.closest("aside[data-side-open]") !== null);
+	if (!open) await page.locator('[data-rail-icon="agent"]').click();
+	else if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+	await page.locator('[data-pane-tab="agent"][aria-selected="true"]').waitFor();
+	await page.locator("[data-agent-rail] textarea").waitFor();
 }
 
 /** The stored layout's right side at `width`, for the next load to draw. */

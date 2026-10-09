@@ -8,6 +8,7 @@ import {
 	makeTempDir,
 	seedAgentWidth,
 	serveProject,
+	showAgent,
 	writeFrame,
 } from "../test-helpers";
 import type { AgentEngine } from "./agent-engine";
@@ -211,35 +212,27 @@ async function opened(others = 0) {
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1400, height: 900 } });
 	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await show(page);
+	await showAgent(page);
 	return { claude, project, page, ...parts(page) };
-}
-
-/** the agent pane, shown */
-async function show(page: Page) {
-	const glyph = page.locator('[data-pane-toggle="agent"]');
-	await glyph.waitFor();
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
-	await page.locator("[data-agent-rail] textarea").waitFor();
 }
 
 function parts(page: Page) {
 	const rail = page.locator("[data-agent-rail]");
-	const head = page.locator('[data-pane-head="agent"]');
+	const head = page.locator("[data-agent-plate]");
 	const field = rail.locator("textarea");
 	return {
 		rail,
 		head,
 		field,
 		title: head.locator("[data-agent-thread-title]"),
-		newChat: head.locator('button[aria-label="New chat"]'),
+		newChat: page.locator('[data-pane-verbs="agent"] button[aria-label="New chat"]'),
 		chats: page.getByRole("dialog", { name: "Chats", exact: true }),
 		sendButton: rail.getByRole("button", { name: "Send", exact: true }),
 		stop: rail.getByRole("button", { name: "Stop", exact: true }),
 		trigger: rail.getByRole("button", { name: "Choose model", exact: true }),
 		menu: rail.locator("[data-agent-model-menu]:not([inert] *)"),
 		engine: () => rail.getAttribute("data-agent-rail-engine"),
-		dot: page.locator('[data-pane-toggle="agent"] [data-toggle-mark="elsewhere"]'),
+		dot: page.locator('[data-pane-tab="agent"] [data-pane-mark="elsewhere"]'),
 		send: async (text: string) => {
 			await field.fill(text);
 			await field.press("Enter");
@@ -248,7 +241,7 @@ function parts(page: Page) {
 }
 
 describe("the agent rail in a browser", () => {
-	it("switches chats from the title, dots the pane toggle for another thread's news, and queues, takes back and stops", {
+	it("switches chats from the title, dots the Agent tab for another thread's news, and queues, takes back and stops", {
 		timeout: 120_000,
 	}, async () => {
 		const { claude, page, rail, title, newChat, chats, field, send, sendButton, stop, dot } = await opened();
@@ -289,7 +282,7 @@ describe("the agent rail in a browser", () => {
 		await expect.poll(() => title.textContent()).toBe("New chat");
 		await expect.poll(() => dot.count()).toBe(1);
 		await expect
-			.poll(() => page.locator('[data-pane-toggle="agent"]').getAttribute("aria-label"))
+			.poll(() => page.locator('[data-pane-tab="agent"]').getAttribute("aria-label"))
 			.toBe("Agent, another chat has news");
 
 		// the title opens the chats; Escape closes them
@@ -556,7 +549,7 @@ describe("the agent rail in a browser", () => {
 		await resize(480, 480);
 		await expect.poll(stored).toBe(480);
 		await page.reload();
-		await show(page);
+		await showAgent(page);
 		await expect.poll(width).toBe(480);
 		await expect.poll(settled).toBe(true);
 
@@ -564,7 +557,7 @@ describe("the agent rail in a browser", () => {
 		await resize(330, 380);
 		await expect.poll(stored).toBe(380);
 		await page.reload();
-		await show(page);
+		await showAgent(page);
 		await expect.poll(width).toBe(380);
 	});
 });

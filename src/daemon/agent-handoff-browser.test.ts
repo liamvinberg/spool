@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, fixtureAgentExecutor, serveProject } from "../test-helpers";
+import { builtUi, fixtureAgentExecutor, serveProject, showAgent } from "../test-helpers";
 
 it("hands off from the empty canvas and the Help menu without losing the chat", {
 	timeout: 120_000,
@@ -39,7 +39,7 @@ it("hands off from the empty canvas and the Help menu without losing the chat", 
 	await picker.getByRole("button", { name: "Copy project path", exact: true }).click();
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(project.root);
 	await picker.press("Escape");
-	await page.locator('[data-pane-toggle="agent"]').click();
+	await showAgent(page);
 	await page.locator("[data-agent-rail] textarea").fill("Keep my draft");
 	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	const help = page.getByRole("button", { name: "Help", exact: true });
@@ -72,10 +72,7 @@ it("hands off from the empty canvas and the Help menu without losing the chat", 
 		.click({ position: { x: 30, y: 100 } });
 	expect(await menu.count()).toBe(0);
 	await page.reload();
-	await page.locator('[data-pane-toggle="agent"]').waitFor();
-	if ((await page.locator('[data-pane-toggle="agent"]').getAttribute("aria-pressed")) === "false")
-		await page.locator('[data-pane-toggle="agent"]').click();
-	await page.locator("[data-agent-rail] textarea").waitFor();
+	await showAgent(page);
 	expect(await page.locator("[data-agent-rail] textarea").inputValue()).toBe("Keep my draft");
 	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	expect(errors).toEqual([]);

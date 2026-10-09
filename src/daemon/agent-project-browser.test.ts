@@ -1,6 +1,14 @@
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
-import { builtUi, fixtureAgentExecutor, makeProject, readModelsReply, serveProject, writeFrame } from "../test-helpers";
+import {
+	builtUi,
+	fixtureAgentExecutor,
+	makeProject,
+	readModelsReply,
+	serveProject,
+	showAgent,
+	writeFrame,
+} from "../test-helpers";
 import { readThreads } from "./agent-threads";
 
 it("keeps working across projects and restores a reply completed while away", { timeout: 90_000 }, async () => {
@@ -38,7 +46,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 	const page = await browser.newPage();
 	const url = `${project.url}/p/${encodeURIComponent(project.name)}`;
 	await page.goto(url);
-	await page.locator('[data-pane-toggle="agent"]').click();
+	await showAgent(page);
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	await field.fill("Finish this while I look at another project.");
@@ -53,8 +61,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 	expect(working.killed).toBe(false);
 	await page.locator(`[data-tab="${project.root}"] .project-tab-label`).click();
 	await page.locator('[data-frame-label="home"]').waitFor();
-	const glyph = page.locator('[data-pane-toggle="agent"]');
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+	await showAgent(page);
 	await rail.locator('[data-agent-wait="running"]').waitFor({ state: "attached" });
 	expect(await rail.locator('[data-agent-wait="running"]').textContent()).not.toContain("1440:");
 	// and the line that is seen counts from the same start
@@ -76,7 +83,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 		.toContain("Completed in the original project.");
 	await page.locator(`[data-tab="${project.root}"] .project-tab-label`).click();
 	await page.locator('[data-frame-label="home"]').waitFor();
-	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
+	await showAgent(page);
 	await expect.poll(() => rail.textContent()).toContain("Completed in the original project.");
 	expect(await rail.locator('[data-agent-wait="running"]').count()).toBe(0);
 	expect(await rail.getByText("Completed in the original project.", { exact: true }).count()).toBe(1);

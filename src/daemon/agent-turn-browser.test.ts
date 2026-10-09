@@ -7,6 +7,7 @@ import {
 	fixtureAgentExecutor,
 	seedAgentWidth,
 	serveProject,
+	showAgent,
 	writeDesignFile,
 	writeFrame,
 } from "../test-helpers";
@@ -106,7 +107,7 @@ it("runs a turn's grid two across, then three, dims an idle companion and puts a
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('iframe[title="home"]').waitFor({ timeout: 30_000 });
 
-	await page.locator('[data-pane-toggle="agent"]').click();
+	await showAgent(page);
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT);
 	await field.press("Enter");

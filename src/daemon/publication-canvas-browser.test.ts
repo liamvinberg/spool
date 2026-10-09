@@ -218,7 +218,8 @@ it("keeps the popover beside its frame in every frame of a pan", { timeout: 180_
 		requestAnimationFrame(look);
 	});
 	const before = await home.boundingBox();
-	await page.mouse.move(900, 700);
+	// over open canvas: the right side, holding the agent, starts 380 wide and ends the canvas at 900
+	await page.mouse.move(600, 800);
 	for (let tick = 0; tick < 16; tick++) await page.mouse.wheel(12, 0);
 	await page.waitForTimeout(200);
 
