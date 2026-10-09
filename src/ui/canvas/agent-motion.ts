@@ -3,7 +3,7 @@ import { useStillness } from "./stillness";
 
 /**
  * How long a float or a fade takes to leave, matching `--animate-agent-float-out`,
- * `--animate-agent-drop-out` and `--animate-agent-fade-out` in `ui.css` (#364).
+ * `--animate-agent-drop-out`, `--animate-agent-fade-out` and `--animate-agent-step-out` in `ui.css` (#364).
  */
 export const FLOAT_OUT_MS = 120;
 export const FADE_OUT_MS = 160;
