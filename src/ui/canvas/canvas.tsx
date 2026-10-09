@@ -66,7 +66,7 @@ import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
 import { AgentCompanionLayer } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
-import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
+import { type ArmedWrite, rangeKeyOf, useLocatedMarks } from "./agent-hand";
 import { useAgentModel } from "./agent-model";
 import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
@@ -1318,9 +1318,10 @@ export function ProjectCanvas({
 		for (const name of iframes.current.keys()) requestSiteBoxes(name);
 	}, [edges, requestSiteBoxes]);
 
-	// the agent's hand (#214): where it is, and what it has just changed. The arms are a
-	// ref here because `requestSiteBoxes` reads them from inside a message handler
-	const { marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
+	// the blocks the agent's writes changed, as documents measure them (#214, #366): the
+	// located marks its companions ring. The arms are a ref here because `requestSiteBoxes`
+	// reads them from inside a message handler
+	const { marks: locatedMarks, strike } = useLocatedMarks(project, turn, armedWrites);
 	// where each working agent is on the canvas (#366). A call on a file in a frame's own
 	// subfolder names that subfolder (#336): the agent is at the frame holding it
 	const companions = useMemo(
@@ -5892,14 +5893,14 @@ export function ProjectCanvas({
 								marquee={marquee}
 								dropLine={dropLine}
 							/>
-							{/* the agent's hand (#214), in the same screen space as the furniture
-						    beside it: presence on any visible frame at any zoom, and a located
-						    mark wherever a document was live enough to be measured */}
+							{/* the agent's companions (#366), in the same screen space as the furniture
+						    beside them: presence on any visible frame at any zoom, and a ring on
+						    a located mark wherever a document was live enough to be measured */}
 							<AgentCompanionLayer
 								camera={camera}
 								frames={visibleFrames}
 								companions={companions}
-								marks={handMarks}
+								marks={locatedMarks}
 								footed={askFooted}
 							/>
 							{(() => {

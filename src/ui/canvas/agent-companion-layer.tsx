@@ -1,7 +1,7 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import type { AgentCompanion, CompanionAct } from "./agent-companion";
-import type { HandMark } from "./agent-hand";
+import type { LocatedMark } from "./agent-hand";
 import { curve, EASE, MOTION } from "./agent-motion";
 import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
 import type { CameraStore } from "./camera-store";
@@ -85,7 +85,7 @@ export interface CompanionLayerProps {
 	frames: readonly ProjectedFrame[];
 	companions: readonly AgentCompanion[];
 	/** the blocks writes landed in, measured by the documents showing them */
-	marks: readonly HandMark[];
+	marks: readonly LocatedMark[];
 	/** the rail is shut, so an ask stands on the canvas under its frame and the square hangs it */
 	footed: boolean;
 }
@@ -134,7 +134,7 @@ function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood
 	return one.spot;
 }
 
-function latestMark(marks: readonly HandMark[], frame: string): HandMark | null {
+function latestMark(marks: readonly LocatedMark[], frame: string): LocatedMark | null {
 	for (let index = marks.length - 1; index >= 0; index -= 1) {
 		const mark = marks[index];
 		if (mark?.frame === frame) return mark;
@@ -192,7 +192,7 @@ function Companion({
 	camera: CameraStore;
 	companion: AgentCompanion;
 	place: Box;
-	located: HandMark | null;
+	located: LocatedMark | null;
 	named: boolean;
 	footed: boolean;
 	leaving: boolean;
@@ -591,7 +591,7 @@ function cornerStyle(corner: "nw" | "ne" | "se" | "sw"): CSSProperties {
 }
 
 /** where the square stands on a change: the measured block's corner, else the lines' height */
-function cornerOf(companion: AgentCompanion, place: Box, located: HandMark | null): Anchor {
+function cornerOf(companion: AgentCompanion, place: Box, located: LocatedMark | null): Anchor {
 	if (located !== null && place.w > 0 && place.h > 0) {
 		return { ox: located.box.x / place.w, oy: located.box.y / place.h, dx: 0, dy: 0 };
 	}

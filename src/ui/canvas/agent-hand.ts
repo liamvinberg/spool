@@ -4,8 +4,7 @@
  * The canvas reads the transcript and the daemon owns the file, so neither can say alone
  * which block a write changed: the daemon turns the write's strings into a line range,
  * and a frame's own document turns the range into a box. That box is what the agent's
- * companion hops to and rings (`agent-companion-layer`), which replaced the hand's node,
- * thread, plate and lane.
+ * companion hops to and rings (`agent-companion-layer`).
  *
  * A located mark is a fact about the pixels, so it needs a document, and below
  * `LIVE_MIN_CSS_PX` a frame is a stored photograph with no document in it: a frame drawn
@@ -61,7 +60,7 @@ export interface ArmedWrite {
  * of the document rather than computed from the file: a shared component sits in a
  * different place on every page that mounts it.
  */
-export interface HandMark {
+export interface LocatedMark {
 	/** the frame and the write, so a second write to one file restarts rather than stacks */
 	readonly key: string;
 	readonly frame: string;
@@ -70,14 +69,14 @@ export interface HandMark {
 }
 
 /**
- * How long a mark stays on screen, which is how long the canvas holds it.
+ * How long the canvas keeps a located mark once a document has measured it.
  *
- * The lane's life, because it is the longer of the two: the plate is over inside it and
- * takes itself off. Both envelopes and the numbers behind them are in `ui.css`, where the
- * marks are actually drawn — this is the one thing about them the canvas has to know,
- * which is when to stop keeping a mark at all.
+ * Longer than the companion's whole edit — the hop, the ring it holds
+ * and the travel back — because the measure can land after the write's act has begun, and a
+ * companion still on that edit must find its box. Nothing draws the mark by itself: the
+ * ring is the companion's, and this is only when the canvas stops holding the box for it.
  */
-export const LANE_MS = 6000;
+export const MARK_MS = 6000;
 
 /**
  * How long an arm waits for a document to answer before letting go.
@@ -95,20 +94,20 @@ export function markKeyOf(frame: string, write: string): string {
 }
 
 /**
- * The whole hand, as one thing the canvas holds: where the agent is, and every write it
- * has landed that some document has been able to place.
+ * Every write the agent has landed that some document has been able to place, as one
+ * thing the canvas holds: the located marks its companions hop to and ring.
  *
  * The arms live in a ref the caller owns rather than in state here, because the one place
  * they are read is inside the frame-message handler that asks a booting document where
  * those lines went — and that handler is installed once and reads everything through
  * refs, the way every other rung of the canvas does.
  */
-export function useAgentHand(
+export function useLocatedMarks(
 	project: string,
 	turn: AgentTurn,
 	armed: RefObject<Map<string, ArmedWrite>>,
-): { marks: readonly HandMark[]; strike: (frame: string, write: string, box: Box) => void } {
-	const [marks, setMarks] = useState<HandMark[]>([]);
+): { marks: readonly LocatedMark[]; strike: (frame: string, write: string, box: Box) => void } {
+	const [marks, setMarks] = useState<LocatedMark[]>([]);
 	/** every write already sent for locating, since the projection re-lists them each tick */
 	const locating = useRef(new Set<string>());
 	/** every mark already struck, so a second boot inside one arm does not restrike it */
@@ -145,7 +144,7 @@ export function useAgentHand(
 		setTimeout(() => {
 			struck.current.delete(key);
 			setMarks((current) => current.filter((mark) => mark.key !== key));
-		}, LANE_MS);
+		}, MARK_MS);
 	}, []);
 
 	return { marks, strike };
