@@ -891,7 +891,7 @@ export function turnLayout(
 		const foot = turn.findIndex((one) => one.kind === "turn");
 		if (foot === -1) for (const one of turn) out.push({ entry: one, steps: [], asks: [] });
 		else {
-			const steps = turn.filter((one) => one.kind === "row" || one.kind === "wait");
+			const steps = thinkingRuns(turn.filter((one) => one.kind === "row" || one.kind === "wait"));
 			// an ask still waiting opens out of the turn's line or its grid, not out of the log (#366)
 			const asks = turn.filter((one): one is AskEntry => one.kind === "ask" && waitingAsk(one));
 			for (const one of turn) {
@@ -902,6 +902,45 @@ export function turnLayout(
 		}
 		start = at;
 	}
+	return out;
+}
+
+type WaitEntry = Extract<AgentEntry, { kind: "wait" }>;
+
+/**
+ * A run of thinking with no step between is one line in a turn's steps, under the first
+ * one's key so it stays where it arrived. Its time is the run's: the settled waits added
+ * up, and a wait still out counts on from that.
+ */
+function thinkingRuns(steps: readonly AgentEntry[]): AgentEntry[] {
+	const out: AgentEntry[] = [];
+	let run: WaitEntry[] = [];
+	const close = () => {
+		const [first] = run;
+		const last = run[run.length - 1];
+		if (first === undefined || last === undefined) return;
+		if (run.length === 1) out.push(first);
+		else {
+			const before = run.slice(0, -1).reduce((sum, one) => sum + (one.ms ?? 0), 0);
+			const live = last.state === "running" && last.ms === null;
+			const known = run.some((one) => one.ms !== null);
+			out.push({
+				...last,
+				key: first.key,
+				at: live ? last.at - before : first.at,
+				ms: live ? null : known ? before + (last.ms ?? 0) : null,
+			});
+		}
+		run = [];
+	};
+	for (const step of steps) {
+		if (step.kind === "wait") run.push(step);
+		else {
+			close();
+			out.push(step);
+		}
+	}
+	close();
 	return out;
 }
 

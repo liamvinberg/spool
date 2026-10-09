@@ -33,9 +33,10 @@ function startTurn(name: string, app: ReturnType<typeof makeApp>, turn = "t1") {
 	});
 }
 
-/** the capture, a line at a time, up to `stopAt` */
-async function replay(proc: FakeAgentProc, stopAt = Number.POSITIVE_INFINITY): Promise<void> {
+/** the capture, a line at a time, from `startAt` up to `stopAt` */
+async function replay(proc: FakeAgentProc, stopAt = Number.POSITIVE_INFINITY, startAt = 0): Promise<void> {
 	for (const [index, line] of readCapture("claude-background").entries()) {
+		if (index < startAt) continue;
 		if (index >= stopAt) return;
 		proc.emit(JSON.stringify(line));
 		await new Promise((resolve) => setImmediate(resolve));
@@ -112,6 +113,8 @@ describe("a turn with designers in the background", () => {
 		});
 		expect(stopped.status).toBe(204);
 		await until(() => seen.some((event) => event.kind === "ended"));
+		// the binary still answers after the stop: its later results end nothing twice
+		await replay(proc, Number.POSITIVE_INFINITY, 240);
 		proc.exit(0);
 		await reading;
 
@@ -120,8 +123,9 @@ describe("a turn with designers in the background", () => {
 			.map((line) => JSON.parse(line) as { request?: { subtype?: string; task_id?: string } });
 		expect(asked.map((line) => line.request?.subtype)).toEqual(["interrupt", "stop_task", "stop_task"]);
 		expect(asked.slice(1).map((line) => line.request?.task_id)).toEqual(["a333817c7dc56d393", "a102d1706d2f45a67"]);
-		const ended = seen.find((event) => event.kind === "ended");
-		expect(ended?.kind === "ended" && ended.ending).toBe("stopped");
+		const ended = seen.filter((event) => event.kind === "ended");
+		expect(ended).toHaveLength(1);
+		expect(ended[0]?.kind === "ended" && ended[0].ending).toBe("stopped");
 		expect(proc.ended).toBe(true);
 	});
 });
@@ -265,5 +269,7 @@ describe("the hold", () => {
 		hold.read(ended);
 		expect(hold.running()).toEqual(["c1"]);
 		expect(hold.stop()).toMatchObject({ kind: "ended", ending: "stopped" });
+		// the binary's own answer to the stop comes after: the turn already ended
+		expect(hold.read({ ...ended, ending: "stopped" } as AgentEvent)).toEqual({ events: [], over: true });
 	});
 });
