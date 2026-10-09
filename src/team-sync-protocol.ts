@@ -311,6 +311,17 @@ export interface PresenceState {
 	inside: string | null;
 	/** The world rectangle their canvas shows: what following them shows. */
 	view: { x: number; y: number; w: number; h: number } | null;
+	/** How many presses they've made inside a live frame: each new one is a click the others see land. */
+	clicks?: number;
+	/** How far the frame they're inside is scrolled, and how big its document is, in the frame's own pixels. */
+	scroll?: PresenceScroll | null;
+}
+
+export interface PresenceScroll {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
 }
 
 /** Daemon → object: this local copy's person is here, or has left (null). Sent only once caught up. */
@@ -357,7 +368,7 @@ export function readPresence(message: Record<string, unknown>): Presence | undef
 export function readPresenceState(value: unknown): PresenceState | null | undefined {
 	if (value === null) return null;
 	if (!isRecord(value)) return undefined;
-	const { page, pointer, pressed, dragging, inside, view } = value;
+	const { page, pointer, pressed, dragging, inside, view, clicks, scroll } = value;
 	if (!isPresenceName(page) || typeof pressed !== "boolean" || !(inside === null || isPresenceName(inside)))
 		return undefined;
 	if (!Array.isArray(dragging) || dragging.length > PRESENCE_DRAGGING || !dragging.every(isPresenceName))
@@ -365,7 +376,21 @@ export function readPresenceState(value: unknown): PresenceState | null | undefi
 	if (!(pointer === null || (isRecord(pointer) && finite(pointer.x) && finite(pointer.y)))) return undefined;
 	if (!(view === null || (isRecord(view) && finite(view.x) && finite(view.y) && finite(view.w) && finite(view.h))))
 		return undefined;
+	if (!(clicks === undefined || (typeof clicks === "number" && Number.isSafeInteger(clicks) && clicks >= 0)))
+		return undefined;
+	const scrolled =
+		isRecord(scroll) && finite(scroll.x) && finite(scroll.y) && finite(scroll.width) && finite(scroll.height)
+			? {
+					x: scroll.x as number,
+					y: scroll.y as number,
+					width: scroll.width as number,
+					height: scroll.height as number,
+				}
+			: null;
+	if (!(scroll === undefined || scroll === null || scrolled !== null)) return undefined;
 	return {
+		...(clicks === undefined ? {} : { clicks }),
+		...(scroll === undefined ? {} : { scroll: scrolled }),
 		page,
 		pointer: pointer === null ? null : { x: pointer.x as number, y: pointer.y as number },
 		pressed,
