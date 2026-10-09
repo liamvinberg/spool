@@ -11,6 +11,7 @@ import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
 import { draftsFor } from "./agent-drafts";
 import { chunksOf, drawnText } from "./agent-markdown";
+import { engineModes } from "./agent-model";
 import { type FrameJump, followTo, sameEntry, windStrength } from "./agent-rail";
 import type { AgentEntry } from "./agent-transcript";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
@@ -4389,7 +4390,9 @@ describe("the model menu", () => {
 			},
 			modes: false,
 		};
-		// before pi has said it has no modes, there is no mode menu to flash in and out
+		// before pi has said it has no modes, there is no mode menu to flash in and out: on a
+		// page that has not heard from pi yet, which earlier tests here are not
+		engineModes.clear();
 		let answer: (() => void) | undefined;
 		canvas.offered.reading = new Promise<void>((resolve) => {
 			answer = resolve;

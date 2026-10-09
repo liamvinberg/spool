@@ -134,8 +134,8 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 	};
 }
 
-/** what each engine last said about having modes, for the wait before its next offer */
-const engineModes = new Map<AgentEngineId, boolean>();
+/** what each engine last said about having modes, for the wait before its next offer; one per page */
+export const engineModes = new Map<AgentEngineId, boolean>();
 
 export interface AgentModelDeck {
 	readonly engine?: AgentEngineId;
