@@ -83,6 +83,7 @@ interface Other {
  */
 export function AgentMenu({
 	project,
+	engine: own,
 	model,
 	preferred,
 	started,
@@ -93,7 +94,9 @@ export function AgentMenu({
 	onSwitch,
 }: {
 	project: string;
-	/** this chat's own agent and what it offered */
+	/** this chat's own agent, as loaded: the menu is drawn only once it is known (#361) */
+	engine: AgentEngineId;
+	/** what this chat's agent offered */
 	model: AgentModelDeck;
 	/** the machine's usual agent: the trigger names an agent only when it is another */
 	preferred: AgentEngineId | null | undefined;
@@ -110,7 +113,6 @@ export function AgentMenu({
 	 */
 	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 }) {
-	const own = model.engine ?? "claude";
 	const { offer, levels } = model;
 	const [engines, setEngines] = useState<readonly { id: AgentEngineId; installed: boolean }[] | null>(null);
 	const [others, setOthers] = useState<Readonly<Record<string, Other>>>({});

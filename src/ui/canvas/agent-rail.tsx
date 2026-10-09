@@ -2444,8 +2444,9 @@ function Composer({
 									if (files.length > 0) attachFiles(files);
 								}}
 							/>
-							{ready ? (
+							{ready && model.engine !== undefined ? (
 								<ModelMenu
+									engine={model.engine}
 									model={model}
 									limit={limit}
 									open={menu === "models"}
@@ -2623,6 +2624,7 @@ function ContextRing({
 }
 
 function ModelMenu(props: {
+	engine: AgentEngineId;
 	model: AgentModelDeck;
 	limit: AgentLimit | null;
 	open: boolean;
@@ -2631,10 +2633,11 @@ function ModelMenu(props: {
 	onSwitch: (engine: AgentEngineId, fresh: boolean) => Promise<boolean>;
 }) {
 	const recovery = useContext(RecoveryActions);
-	const { model, limit, open, onOpen, onSwitch } = props;
+	const { engine, model, limit, open, onOpen, onSwitch } = props;
 	return (
 		<AgentMenu
 			project={model.project ?? ""}
+			engine={engine}
 			model={model}
 			preferred={recovery?.preferred}
 			started={model.started === true}
