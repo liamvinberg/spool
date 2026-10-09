@@ -15,7 +15,7 @@ export interface FramingOptions {
 	readonly asks: string;
 	/** the engine's line about bringing in designers */
 	readonly designer: string;
-	/** the project's chosen fence is bypass, so nothing asks and the framing says so first */
+	/** the chosen mode is Full access, so nothing asks and the framing says so first */
 	readonly bypass: boolean;
 	/**
 	 * Tell the agent to read the project's own CLAUDE.md or AGENTS.md: the price of an
@@ -29,7 +29,7 @@ export interface FramingOptions {
  * the framing is what stands in for the ask.
  */
 export const BYPASS_FRAMING =
-	"Permissions are bypassed for this project on this machine, by the developer's own setting: nothing you do asks first, so say what you are about to do outside design/ before you do it.";
+	"Permissions are bypassed on this machine, by the developer's own setting: nothing you do asks first, so say what you are about to do outside design/ before you do it.";
 
 const INTRO = `You are the agent inside Spool, a live prototyping canvas. The human is looking at
 frames on that canvas and talking to you from a rail beside them.
