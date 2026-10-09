@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentPermissions } from "../settings/registry";
 import { createBackgroundHold } from "./agent-background";
 import { type CodexAdapter, type CodexItem, callsOf, createCodexAdapter } from "./agent-codex";
@@ -58,6 +58,12 @@ export interface CodexTurnOptions {
 	readonly version: string;
 	/** spool's designer role layer, in spool's state (#367) */
 	readonly designer?: string;
+	/**
+	 * What the person allowed for this thread with "Allow for this chat", by `approvalScopes`.
+	 * Codex's own session accept dies with the turn's process, so spool keeps it for the
+	 * thread, in memory only, and answers a later turn's matching ask itself.
+	 */
+	readonly allowed?: Set<string>;
 }
 
 /** what a signed-out Codex turn bounces as: the rail's sign-in recovery, Codex's own words */
@@ -123,6 +129,31 @@ export function quietApproval(
 	return commands.length > 0 && commands.every((command) => typeof command === "string" && isSpoolRead(command));
 }
 
+/**
+ * What an approval would allow, as the scopes "Allow for this chat" remembers: each file a
+ * change touches, or the command as Codex split it. Codex's own session accept covers the
+ * same, the files of a patch and the exact command. None where the request names neither.
+ */
+export function approvalScopes(
+	root: string,
+	method: string,
+	params: Record<string, unknown>,
+	item?: CodexItem,
+): string[] {
+	if (method === "item/fileChange/requestApproval") {
+		const changes = Array.isArray(item?.changes) ? item.changes : [];
+		const paths = changes.map((change) => (change as { path?: unknown })?.path);
+		return paths.every((path) => typeof path === "string")
+			? paths.map((path) => `file:${resolve(root, path as string)}`)
+			: [];
+	}
+	const actions = Array.isArray(params.commandActions) ? params.commandActions : [];
+	const commands = actions.map((action) => (action as { command?: unknown })?.command);
+	if (commands.length > 0 && commands.every((command) => typeof command === "string"))
+		return [`command:${commands.join("\n")}`];
+	return typeof params.command === "string" ? [`command:${params.command}`] : [];
+}
+
 const DECISIONS = { allow: "accept", always: "acceptForSession", deny: "decline" } as const;
 
 export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
@@ -141,7 +172,8 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	let sent = 0;
 	let leaving: ReturnType<typeof setTimeout> | undefined;
 	/** what is waiting on the person, by the id an answer names */
-	const asking = new Map<string, { id: CodexRequestId; event: AgentAsking }>();
+	const asking = new Map<string, { id: CodexRequestId; event: AgentAsking; scopes: readonly string[] }>();
+	const allowed = options.allowed ?? new Set<string>();
 	/** each sub-agent thread's running turn, which a Stop interrupts too (#365) */
 	const children = new Map<string, string>();
 	/**
@@ -229,10 +261,16 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 				(method === "item/fileChange/requestApproval"
 					? { type: "fileChange", id: itemId ?? String(id), changes: [] }
 					: { type: "commandExecution", id: itemId ?? String(id), ...params });
-			const call = callsOf(item)[0];
 			const offered = Array.isArray(params.availableDecisions)
 				? params.availableDecisions.includes("acceptForSession")
 				: method === "item/fileChange/requestApproval";
+			const scopes = offered ? approvalScopes(root, method, params, reported) : [];
+			// allowed for this thread in an earlier turn: answered as Codex's own session accept
+			if (scopes.length > 0 && scopes.every((scope) => allowed.has(scope))) {
+				target.respond(id, { decision: "acceptForSession" });
+				return;
+			}
+			const call = callsOf(item)[0];
 			const event: AgentAsking = {
 				kind: "asking",
 				request: String(id),
@@ -246,7 +284,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 				suggestions: offered ? [{ decision: "acceptForSession" }] : [],
 				parent: adapter.parentOf(typeof params.threadId === "string" ? params.threadId : undefined),
 			};
-			asking.set(event.request, { id, event });
+			asking.set(event.request, { id, event, scopes });
 			push(event);
 			return;
 		}
@@ -424,6 +462,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		if (reply.kind !== "allow" && reply.kind !== "always" && reply.kind !== "deny") return false;
 		if (reply.kind === "always" && held.event.suggestions.length === 0) return false;
 		asking.delete(request);
+		if (reply.kind === "always") for (const scope of held.scopes) allowed.add(scope);
 		rpc.respond(held.id, { decision: DECISIONS[reply.kind] });
 		push({ kind: "answered", request, answer: reply.kind, words: null, parent: held.event.parent });
 		return true;

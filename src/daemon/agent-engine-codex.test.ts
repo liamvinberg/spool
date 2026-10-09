@@ -219,6 +219,104 @@ describe("a codex turn, replayed", () => {
 	});
 });
 
+/**
+ * A Codex that asks one approval a turn, the way `codex-ask` asks: the item first, then the
+ * request naming it. Every decision spool sends back is kept, turn by turn.
+ */
+function askingCodex(asks: "fileChange" | "command") {
+	const decisions: unknown[] = [];
+	const { executor, spawned } = fixtureAgentExecutor(
+		(proc, line) => {
+			const message = JSON.parse(line) as { id?: number; method?: string; result?: { decision?: unknown } };
+			const answer = (result: unknown) => proc.emit(JSON.stringify({ id: message.id, result }));
+			const thread = { threadId: "main", turnId: "turn" };
+			if (message.method === "initialize") answer({ userAgent: "spool/0.161.0 (Linux; x86_64) unknown" });
+			if (message.method === "account/read") answer({ account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+			if (message.method === "config/read") answer({ config: {}, origins: {} });
+			if (message.method === "thread/start" || message.method === "thread/resume")
+				answer({ thread: { id: "main", cwd: proc.spawn.cwd }, model: "gpt-5.6-luna", approvalPolicy: "untrusted" });
+			if (message.method === "turn/start") {
+				answer({ turn: { id: "turn" } });
+				const item =
+					asks === "fileChange"
+						? {
+								type: "fileChange",
+								id: "patch",
+								changes: [{ path: `${proc.spawn.cwd}/src/app.ts`, kind: { type: "update" }, diff: "x" }],
+								status: "inProgress",
+							}
+						: {
+								type: "commandExecution",
+								id: "patch",
+								command: "/usr/bin/zsh -lc 'touch outside.txt'",
+								cwd: proc.spawn.cwd,
+								commandActions: [{ type: "unknown", command: "touch outside.txt" }],
+								status: "inProgress",
+							};
+				proc.emit(JSON.stringify({ method: "item/started", params: { ...thread, item } }));
+				proc.emit(
+					JSON.stringify({
+						id: 0,
+						method: `item/${asks === "command" ? "commandExecution" : asks}/requestApproval`,
+						params: {
+							...thread,
+							itemId: "patch",
+							...(asks === "command"
+								? {
+										command: item.command,
+										commandActions: item.commandActions,
+										availableDecisions: ["accept", "acceptForSession", "cancel"],
+									}
+								: {}),
+						},
+					}),
+				);
+			}
+			if (message.id === 0 && message.result !== undefined) {
+				decisions.push(message.result.decision);
+				proc.emit(
+					JSON.stringify({
+						method: "turn/completed",
+						params: { threadId: "main", turn: { id: "turn", status: "completed" } },
+					}),
+				);
+			}
+		},
+		(proc) => proc.exit(0),
+	);
+	return { executor, spawned, decisions };
+}
+
+describe("allow for this thread", () => {
+	for (const asks of ["fileChange", "command"] as const)
+		it(`answers a ${asks} the person allowed for the thread in its later turns, and only in that thread`, async () => {
+			const { executor, decisions } = askingCodex(asks);
+			const engine = createCodexEngine({ executor, spoolDir: makeTempDir(), version: "0.33.1" });
+			const root = makeTempDir();
+			const turnOn = (session: { id: string }, reply: "always" | "allow") => {
+				const turn = engine.start({
+					root,
+					session,
+					said: [{ prompt: "go", selection: "" }],
+					ask,
+					permissions: "ask",
+				});
+				return drain(turn, (event) => {
+					if (event.kind === "asking") expect(turn.answer(event.request, { kind: reply })).toBe(true);
+				});
+			};
+			const first = await turnOn(SESSION, "always");
+			expect(first.filter((event) => event.kind === "asking")).toHaveLength(1);
+			// the next turn is a new Codex process, which has forgotten its own session accept
+			const second = await turnOn(SESSION, "allow");
+			expect(second.some((event) => event.kind === "asking")).toBe(false);
+			// another thread still asks
+			const other = await turnOn({ id: "0d9c8b7a-6f5e-4d3c-8b2a-1f0e9d8c7b6a" }, "allow");
+			expect(other.filter((event) => event.kind === "asking")).toHaveLength(1);
+			expect(decisions).toEqual(["acceptForSession", "acceptForSession", "accept"]);
+		});
+});
+
 describe("the codex engine's probes", () => {
 	it("reads the signed-in account's email, and nobody when signed out", async () => {
 		expect(await engineOn("codex-account").engine.account(makeTempDir())).toEqual({
@@ -421,8 +519,8 @@ describe("codex through the daemon", () => {
 
 	/**
 	 * Each of the three answers the rail offers, as the decision Codex reads (#366): Allow
-	 * once, Allow for this chat as the session's own accept — Codex's session is spool's
-	 * thread, so it lasts the thread and nothing longer — and Deny as a decline. Words are
+	 * once, Allow for this chat as the session's own accept, which spool keeps for the
+	 * thread's later turns (see "allow for this thread"), and Deny as a decline. Words are
 	 * no answer to an approval, whichever engine asked.
 	 */
 	for (const [kind, decision] of [

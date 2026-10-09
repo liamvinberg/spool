@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixtureAgentExecutor, makeTempDir } from "../test-helpers";
 import { codexFraming } from "./agent-codex-spawn";
-import { codexInput, inDesign, isSpoolRead, quietApproval, startCodexTurn } from "./agent-codex-turn";
+import { approvalScopes, codexInput, inDesign, isSpoolRead, quietApproval, startCodexTurn } from "./agent-codex-turn";
 
 /** a Codex that answers the handshake, the account, its config and a thread start, and nothing more */
 function codexWith(config: Record<string, unknown>) {
@@ -64,6 +64,25 @@ describe("what spool answers for the person", () => {
 		expect(isSpoolRead("spool status > out.txt")).toBe(false);
 		expect(isSpoolRead("spool init")).toBe(false);
 		expect(isSpoolRead("spoolx skill")).toBe(false);
+	});
+
+	it("remembers an allowed change by each file it touches and a command as Codex split it", () => {
+		const change = { id: "c", type: "fileChange", changes: [{ path: "src/a.ts" }, { path: "/p/b.ts" }] };
+		expect(approvalScopes(root, "item/fileChange/requestApproval", {}, change)).toEqual([
+			"file:/p/src/a.ts",
+			"file:/p/b.ts",
+		]);
+		expect(approvalScopes(root, "item/fileChange/requestApproval", {})).toEqual([]);
+		expect(
+			approvalScopes(root, "item/commandExecution/requestApproval", {
+				command: "/bin/zsh -lc 'ls && pwd'",
+				commandActions: [{ command: "ls" }, { command: "pwd" }],
+			}),
+		).toEqual(["command:ls\npwd"]);
+		expect(approvalScopes(root, "item/commandExecution/requestApproval", { command: "make" })).toEqual([
+			"command:make",
+		]);
+		expect(approvalScopes(root, "item/commandExecution/requestApproval", {})).toEqual([]);
 	});
 
 	it("answers a file change by the item's paths and a command by every part Codex split it into", () => {

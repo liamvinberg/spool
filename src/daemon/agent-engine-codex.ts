@@ -247,6 +247,13 @@ export function createCodexEngine({
 	codexVersion = look === undefined ? codexVersionReader() : () => null,
 }: CodexEngineOptions): AgentEngine {
 	const sessions = codexSessions(spoolDir);
+	/** each spool thread's "Allow for this chat" answers, kept in memory and written nowhere */
+	const allowed = new Map<string, Set<string>>();
+	const allowedIn = (thread: string) => {
+		const scopes = allowed.get(thread) ?? new Set<string>();
+		allowed.set(thread, scopes);
+		return scopes;
+	};
 	return {
 		id: "codex",
 		authentication: { kind: "external", command: "codex login" },
@@ -298,6 +305,7 @@ export function createCodexEngine({
 				onSession: (thread) => sessions.write(session.id, thread),
 				version,
 				designer: mountDesigner(spoolDir).codex,
+				allowed: allowedIn(session.id),
 			}),
 	};
 }
