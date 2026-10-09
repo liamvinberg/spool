@@ -54,22 +54,43 @@ function structural(text: string): number {
 		// one `<hr>` and nothing inside it
 		if (chunk.kind === "rule") return total + 1;
 		if (chunk.kind === "item") return total + 3 + chunk.spans.length;
-		// the grid, then per row a lead and its spans, and per other cell a label with the
-		// header's spans and a value with its own
+		// the list, then per row a line, its bullet, its body and the lead's spans, and per
+		// other cell with words a join (none after an empty lead) and its spans; a wordless
+		// cell also carries its column's label
 		if (chunk.kind === "table")
 			return (
 				total +
 				1 +
-				chunk.rows.reduce(
-					(sum, row) =>
+				chunk.rows.reduce((sum, row) => {
+					const led =
+						(row[0] ?? [])
+							.map((span) => span.text)
+							.join("")
+							.trim() !== "";
+					const rest = row
+						.map((cell, column) => ({ cell, column, text: cell.map((span) => span.text).join("") }))
+						.slice(1)
+						.filter(({ text }) => text.trim() !== "");
+					return (
 						sum +
-						1 +
+						3 +
 						(row[0]?.length ?? 0) +
-						row
-							.slice(1)
-							.reduce((cells, cell, at) => cells + 2 + (chunk.head[at + 1]?.length ?? 0) + cell.length, 0),
-					0,
-				)
+						rest.reduce(
+							(cells, { cell, column, text }, at) =>
+								cells +
+								(at === 0 && !led ? 0 : 1) +
+								(/\p{L}/u.test(text) ||
+								(chunk.head[column] ?? [])
+									.map((span) => span.text)
+									.join("")
+									.trim() === ""
+									? 0
+									: 1) +
+								cell.length,
+							0,
+						)
+					);
+				}, 0)
 			);
 		return total + 1 + chunk.spans.length;
 	}, 1);
@@ -106,6 +127,30 @@ describe("a settled message", () => {
 		const { host } = draw(createElement(Said, { text: "- one\n2. two" }));
 
 		expect([...host.querySelectorAll("[data-marker]")].map((mark) => mark.textContent)).toEqual(["•", "2."]);
+	});
+
+	/** a summary table in a 300px rail is a plain list, not a grid or a stack of label-value pairs (#377) */
+	it("draws a table as a plain list, one bullet per row, its first cell leading", () => {
+		const text =
+			"| Frame | The idea | Frames |\n|---|---|---|\n| `pricing-dense` | One grid, every tier side by side | 3 |\n| Onboarding | Calm, | |";
+		const { host } = draw(createElement(Said, { text }));
+		const table = host.querySelector("[data-agent-table]");
+		const rows = [...(table?.querySelectorAll(":scope > p") ?? [])];
+
+		expect(rows.map((row) => row.textContent)).toEqual([
+			"•pricing-dense – One grid, every tier side by side, Frames: 3",
+			"•Onboarding – Calm,",
+		]);
+		expect(rows.map((row) => row.querySelector("code, strong")?.textContent)).toEqual([
+			"pricing-dense",
+			"Onboarding",
+		]);
+		// the header is not a row, and labels no cell that has words of its own
+		expect(host.textContent).not.toContain("The idea");
+		expect(elements(host)).toBe(structural(text));
+
+		const live = draw(createElement(Said, { text, caret: createElement(Caret) }));
+		expect(live.host.querySelector("[data-agent-table] > p:last-child [data-agent-caret]")).not.toBeNull();
 	});
 
 	it("carries no caret, because nothing is coming", () => {

@@ -38,6 +38,9 @@ export function Caret() {
  */
 const INDENT = 14;
 
+/** the words of a run of spans, without their markers */
+const textOf = (spans: readonly Span[]) => spans.map((span) => span.text).join("");
+
 /**
  * Rendered on its props and nothing else, which is why it is held.
  *
@@ -152,52 +155,54 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 				}
 				if (chunk.kind === "table") {
 					/*
-					 * A table is a stack of its rows. The first cell leads, in the weight a bold
-					 * lead-in has, and every other cell is a line under it: its column's header
-					 * on the left, its own text on the right. One grid for the whole table rather
-					 * than one per row is what lines the labels up down the stack, which is the one
-					 * comparison a column this narrow can still offer. The label track fits its
-					 * longest word and stops at two fifths of the column, so a wordy header cannot
-					 * push the values off the edge.
-					 *
-					 * The header is drawn once per row and never as a row of its own: as a label
-					 * it is the renderer's glyph, exactly as a bullet is, and marked as such.
+					 * A table is a plain list, one bullet per row (#377). The first cell leads in
+					 * a bold lead-in's weight and the other cells follow it as one run of prose,
+					 * so a summary row is a line or two rather than a block of label–value pairs.
+					 * The header is dropped, except beside a cell with no words in it (a count, a
+					 * tick), which means nothing without its column's name. The bullet, the
+					 * joins and any label are the renderer's glyphs, marked as such.
 					 */
 					const rows = chunk.rows;
-					const lastRow = rows.length - 1;
-					const lastCell = lastRow >= 0 ? (rows[lastRow]?.length ?? 0) - 1 : -1;
 					return (
-						<div
-							key={key}
-							data-agent-table=""
-							className="grid grid-cols-[fit-content(40%)_minmax(0,1fr)] gap-x-2.5 gap-y-0.5"
-						>
+						<div key={key} data-agent-table="" className="flex flex-col gap-1">
 							{rows.map((row, at) => {
 								const rowKey = `${at}-${row[0]?.[0]?.text.slice(0, 12) ?? ""}`;
+								const rest = row
+									.map((cell, column) => ({ cell, column }))
+									.slice(1)
+									.filter(({ cell }) => textOf(cell).trim() !== "");
+								const led = textOf(row[0] ?? []).trim() !== "";
 								return (
-									<Fragment key={rowKey}>
-										<p className={cn("col-span-2 font-medium", at > 0 && "mt-1")}>
-											{spans(row[0] ?? [])}
-											{at === lastRow && lastCell === 0 ? end : null}
-										</p>
-										{row.slice(1).map((cell, column) => {
-											const cellKey = `${column}-${cell[0]?.text.slice(0, 12) ?? ""}`;
-											return (
-												<Fragment key={cellKey}>
-													<span data-marker="" className="text-muted">
-														{spans(chunk.head[column + 1] ?? [])}
-													</span>
-													<span>
+									<p key={rowKey} className="flex gap-2 pl-0.5">
+										<span data-marker="" className="shrink-0 text-muted">
+											•
+										</span>
+										<span>
+											{spans((row[0] ?? []).map((span) => ({ ...span, bold: true })))}
+											{rest.map(({ cell, column }, index) => {
+												const label = /\p{L}/u.test(textOf(cell)) ? null : (chunk.head[column] ?? null);
+												return (
+													<Fragment key={`${column}-${cell[0]?.text.slice(0, 12) ?? ""}`}>
+														{index === 0 && !led ? null : (
+															<span data-marker="" className="text-muted">
+																{index === 0 ? " – " : ", "}
+															</span>
+														)}
+														{label === null || textOf(label).trim() === "" ? null : (
+															<span data-marker="" className="text-muted">
+																{`${textOf(label)}: `}
+															</span>
+														)}
 														{spans(cell)}
-														{at === lastRow && column + 1 === lastCell ? end : null}
-													</span>
-												</Fragment>
-											);
-										})}
-									</Fragment>
+													</Fragment>
+												);
+											})}
+											{at === rows.length - 1 ? end : null}
+										</span>
+									</p>
 								);
 							})}
-							{lastRow < 0 ? end : null}
+							{rows.length === 0 ? end : null}
 						</div>
 					);
 				}
