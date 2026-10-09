@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
 import type { AgentCompanion } from "./agent-companion";
 import { AgentCompanionLayer, type CompanionLayerProps } from "./agent-companion-layer";
+import { FADE_OUT_MS } from "./agent-motion";
 import { type CameraStore, createCameraStore } from "./camera-store";
 
 /**
@@ -206,6 +207,21 @@ describe("the agent's companions on the canvas", () => {
 			"calm",
 			"dense",
 		]);
+	});
+
+	it("fades the names out when the second agent goes, rather than cutting them", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const calm = companion({ key: "d1", name: "calm" });
+		const { host, again } = layer({ companions: [calm, companion({ key: "d2", name: "dense", frame: "cart" })] });
+		again({ companions: [calm] });
+		const name = () => host.querySelector('[data-agent-companion="d1"] [data-companion-name]');
+		expect(name()?.getAttribute("data-companion-name")).toBe("leaving");
+		expect(name()?.textContent).toBe("calm");
+		act(() => vi.advanceTimersByTime(FADE_OUT_MS + 10));
+		expect(name()).toBeNull();
 	});
 
 	it("stands at a designer's held spot before its frame exists", () => {

@@ -3,7 +3,7 @@ import type { ProjectedFrame } from "../api";
 import { HANG } from "./agent-canvas-ask";
 import type { AgentCompanion, CompanionAct } from "./agent-companion";
 import type { LocatedMark } from "./agent-hand";
-import { curve, EASE, MOTION } from "./agent-motion";
+import { curve, EASE, FADE_OUT_MS, MOTION, useHeld, useLeaving } from "./agent-motion";
 import { type Box, shellRadiusOnScreen, toScreen, toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { useStillness } from "./stillness";
@@ -195,6 +195,9 @@ function Companion({
 	leaving: boolean;
 }) {
 	const still = useStillness();
+	// a name comes and goes with the second agent on the page, fading rather than cut
+	const name = useLeaving(named, FADE_OUT_MS);
+	const heldName = useHeld(named ? companion.name : null);
 	const square = useRef<HTMLDivElement | null>(null);
 	const trail = useRef<HTMLSpanElement | null>(null);
 	const cover = useRef<HTMLSpanElement | null>(null);
@@ -530,14 +533,14 @@ function Companion({
 				style={{ width: SIDE, height: SIDE, willChange: "transform" }}
 			>
 				<span className={`relative block size-full ${leaving ? "animate-agent-depart" : "animate-agent-arrive"}`}>
-					{named ? (
+					{name === null ? null : (
 						<span
-							data-companion-name=""
-							className="absolute top-1/2 right-full mr-1.5 -translate-y-1/2 whitespace-nowrap text-muted type-detail"
+							data-companion-name={name}
+							className={`absolute top-1/2 right-full mr-1.5 -translate-y-1/2 whitespace-nowrap text-muted type-detail ${name === "leaving" ? "animate-agent-fade-out" : "animate-agent-fade-in"}`}
 						>
-							{companion.name}
+							{heldName}
 						</span>
-					) : null}
+					)}
 					{waiting ? (
 						<svg
 							key="waiting"
