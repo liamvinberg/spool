@@ -1,3 +1,4 @@
+import { DELEGATION_TOOL } from "../../daemon/agent-events";
 /**
  * The canvas's own words for what a tool call is doing (#117, #135, #142, #193).
  *
@@ -441,7 +442,7 @@ export function nameCall(call: {
 		return { ...plain, verb, subject: frame ?? (subject === "" ? null : subject), frame, detail: command };
 	}
 
-	if (tool === "Agent") return { ...plain, verb: "delegate", subject: readField(input, "description", whole) };
+	if (tool === DELEGATION_TOOL) return { ...plain, verb: "delegate", subject: readField(input, "description", whole) };
 
 	// the agent fetching a deferred tool before it can call one. Its own words are the
 	// query, the way a shell row's are its description — spool knows no better noun for

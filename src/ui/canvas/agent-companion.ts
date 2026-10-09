@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentSpot } from "../../daemon/agent-events";
+import { type AgentEvent, type AgentSpot, DELEGATION_TOOL } from "../../daemon/agent-events";
 import { nameCall } from "./agent-nouns";
 
 /**
@@ -138,7 +138,7 @@ export function companionFold(indexes: CompanionIndexes): CompanionFold {
 	const see = (event: AgentEvent, index: number) => {
 		switch (event.kind) {
 			case "called": {
-				if (event.tool === "Agent") return;
+				if (event.tool === DELEGATION_TOOL) return;
 				const named = nameCall({ tool: event.tool, input: event.input, root: indexes.root(), whole: true });
 				if (named?.frame == null || named.writes) return;
 				const agent = event.parent ?? "";

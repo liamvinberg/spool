@@ -1,5 +1,5 @@
 import { type Attachment, restoredAttachments } from "../../attachment";
-import type { AgentEvent, AgentLimit } from "../../daemon/agent-events";
+import { type AgentEvent, type AgentLimit, DELEGATION_TOOL } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, detailOf, questionsOf } from "./agent-ask";
 import { type AgentCompanion, companionFold } from "./agent-companion";
@@ -1525,7 +1525,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				if (block.row === null) break;
 				// a delegation's own result is the launch receipt — measured at 84ms, against a
 				// task that outlives it by minutes — so the row settles on the task instead
-				if (block.tool === "Agent") break;
+				if (block.tool === DELEGATION_TOOL) break;
 				const state = settledBy(event);
 				const run = runs.get(block.delegation);
 				const group = groups.get(block.row);
