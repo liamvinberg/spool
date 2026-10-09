@@ -50,13 +50,6 @@ import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } fro
  */
 const EXIT_GRACE_MS = 10_000;
 
-/**
- * How long a turn whose background designers have all landed waits for the agent to say so
- * (#365). Claude Code wakes the main agent on each notification and it answers within
- * seconds; this is only for one that does not.
- */
-const SETTLE_MS = 60_000;
-
 export interface AgentTurnOptions {
 	readonly executor: AgentExecutor;
 	/** the project root: the agent stands in the product root, not in design/ */
@@ -160,15 +153,10 @@ export function startAgentTurn({
 	/**
 	 * The turn lasts until its background designers land, not until the agent answers
 	 * (#365): an ending the agent reports while they run is held, and the turn reads
-	 * `holding` until the first ending after the last of them.
+	 * `holding` until the agent answers the last of them landing, which Claude Code wakes
+	 * it to do.
 	 */
-	const background = createBackgroundHold({
-		settleMs: SETTLE_MS,
-		onSettled: (ended) => {
-			push(ended);
-			if (proc !== undefined) over(proc);
-		},
-	});
+	const background = createBackgroundHold({ wakes: true });
 	let stopTasks = 0;
 
 	/** the turn is over: no more input is coming, so stdin closes and the binary is left to exit */
@@ -176,7 +164,6 @@ export function startAgentTurn({
 		// a request the turn ended under is a request nobody can answer now, and a
 		// stale one would take an answer meant for the next turn
 		asking.clear();
-		background.close();
 		target.end();
 		// left to go, and not left forever: a binary still up long after its own
 		// ending is holding the thread against its next message, so the grace runs
@@ -377,7 +364,6 @@ export function startAgentTurn({
 		},
 		abandon: () => {
 			stopped = true;
-			background.close();
 			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
 			proc?.kill();

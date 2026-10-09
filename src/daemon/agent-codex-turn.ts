@@ -36,13 +36,6 @@ import type { AgentTurn } from "./agent-turn";
 /** the grace an ended turn's process gets to exit on its own, as in `agent-turn.ts` */
 const EXIT_GRACE_MS = 10_000;
 
-/**
- * How long a turn whose sub-agents have all landed waits before it ends (#365). Codex does
- * not wake the main thread for a child that finished in the background, so this is only
- * long enough for a reply already on its way.
- */
-const SETTLE_MS = 3_000;
-
 export interface CodexTurnOptions {
 	readonly executor: AgentExecutor;
 	readonly root: string;
@@ -181,13 +174,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	 * thread's turn completes (#365): Codex completes the parent's turn while a child it
 	 * did not wait for runs on.
 	 */
-	const background = createBackgroundHold({
-		settleMs: SETTLE_MS,
-		onSettled: (ending) => {
-			push(ending);
-			if (proc !== undefined) end(proc);
-		},
-	});
+	const background = createBackgroundHold({ wakes: false });
 
 	function push(event: AgentEvent): void {
 		if (finished) return;
@@ -229,7 +216,6 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		if (ended) return;
 		ended = true;
 		asking.clear();
-		background.close();
 		target.end();
 		leaving ??= setTimeout(() => target.kill(), EXIT_GRACE_MS);
 		leaving.unref?.();
@@ -479,7 +465,6 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		},
 		abandon: () => {
 			stopped = true;
-			background.close();
 			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
 			rpc?.close("The turn was given up.");

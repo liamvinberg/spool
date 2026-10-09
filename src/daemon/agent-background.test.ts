@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
 	agentReader,
 	type FakeAgentProc,
@@ -27,10 +27,6 @@ import { sourceWritten } from "./agent-frames";
  */
 
 const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
-
-afterEach(() => {
-	vi.useRealTimers();
-});
 
 function startTurn(name: string, app: ReturnType<typeof makeApp>, turn = "t1") {
 	return app.request(`/api/p/${name}/agent/turn`, {
@@ -276,7 +272,7 @@ describe("the hold", () => {
 	const ended = { kind: "ended", ending: "done", parent: null } as unknown as AgentEvent;
 
 	it("ends at once when nothing runs, and never counts a background shell", () => {
-		const hold = createBackgroundHold({ settleMs: 0, onSettled: () => {} });
+		const hold = createBackgroundHold({ wakes: true });
 		expect(
 			hold.read({
 				kind: "background",
@@ -288,7 +284,7 @@ describe("the hold", () => {
 	});
 
 	it("never counts a background shell that starts after the set names it", () => {
-		const hold = createBackgroundHold({ settleMs: 0, onSettled: () => {} });
+		const hold = createBackgroundHold({ wakes: true });
 		hold.read({
 			kind: "task-started",
 			task: "b1",
@@ -303,44 +299,42 @@ describe("the hold", () => {
 		expect(hold.read(ended).over).toBe(true);
 	});
 
-	it("holds an ending under running tasks and lets it go after the settle clock", () => {
-		vi.useFakeTimers();
-		const settled: AgentEvent[] = [];
-		const hold = createBackgroundHold({ settleMs: 3000, onSettled: (event) => settled.push(event) });
-		hold.read({
-			kind: "task-started",
-			task: "c1",
-			call: "x",
-			description: null,
-			agent: null,
-			prompt: null,
-			parent: null,
-		});
+	const started = {
+		kind: "task-started",
+		task: "c1",
+		call: "x",
+		description: null,
+		agent: null,
+		prompt: null,
+		parent: null,
+	} as const satisfies AgentEvent;
+	const landed = { kind: "task-done", task: "c1", status: null, summary: null, parent: null } as const;
+
+	it("holds an ending under running tasks, and ends on the woken agent's answer after they land", () => {
+		const hold = createBackgroundHold({ wakes: true });
+		hold.read(started);
 		const first = hold.read(ended);
 		expect(first.over).toBe(false);
 		expect(first.events).toEqual([{ kind: "holding", tasks: 1, parent: null }]);
-		expect(hold.read({ kind: "task-done", task: "c1", status: null, summary: null, parent: null }).over).toBe(false);
-		vi.advanceTimersByTime(2999);
-		expect(settled).toHaveLength(0);
-		vi.advanceTimersByTime(1);
-		expect(settled).toEqual([ended]);
+		// landed, and no clock: the turn waits for the answer the landing wakes
+		expect(hold.read(landed)).toEqual({ events: [landed], over: false });
+		const answer = { ...ended, reason: "both written" } as AgentEvent;
+		expect(hold.read(answer)).toEqual({ events: [answer], over: true });
+	});
+
+	it("lets the held ending go as the last task lands, for an engine that does not wake its agent", () => {
+		const hold = createBackgroundHold({ wakes: false });
+		hold.read(started);
+		expect(hold.read(ended).over).toBe(false);
+		expect(hold.read(landed)).toEqual({ events: [landed, ended], over: true });
 	});
 
 	it("ends a held turn at once on Stop, as stopped", () => {
-		const hold = createBackgroundHold({ settleMs: 3000, onSettled: () => {} });
-		hold.read({
-			kind: "task-started",
-			task: "c1",
-			call: "x",
-			description: null,
-			agent: null,
-			prompt: null,
-			parent: null,
-		});
+		const hold = createBackgroundHold({ wakes: true });
+		hold.read(started);
 		hold.read(ended);
 		expect(hold.running()).toEqual(["c1"]);
 		expect(hold.stop()).toMatchObject({ kind: "ended", ending: "stopped" });
-		hold.close();
 	});
 });
 
