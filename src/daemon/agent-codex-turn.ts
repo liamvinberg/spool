@@ -49,10 +49,10 @@ export interface CodexTurnOptions {
 	readonly said: readonly AgentMessage[];
 	readonly ask: AgentAsk;
 	readonly permissions: AgentPermissions;
-	/** Codex's own thread id for a thread that already ran, to resume */
-	readonly thread: string | null;
-	/** Codex named the thread: the daemon keeps the id to resume it next turn */
-	readonly onThread: (thread: string) => void;
+	/** the model session that already ran, by Codex's own thread id, to resume */
+	readonly session: string | null;
+	/** Codex named the model session: the daemon keeps its thread id to resume it next turn */
+	readonly onSession: (thread: string) => void;
 	/** spool's version, for Codex's client info */
 	readonly version: string;
 	/** spool's designer role layer, in spool's state (#367) */
@@ -296,23 +296,23 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 			sandbox?: unknown;
 		};
 		try {
-			opened = (await (options.thread === null
+			opened = (await (options.session === null
 				? target.request("thread/start", settings)
 				: target.request("thread/resume", {
-						threadId: options.thread,
+						threadId: options.session,
 						excludeTurns: true,
 						...settings,
 					}))) as typeof opened;
 		} catch (error) {
 			// a thread Codex no longer has (its first turn never ran, or its session was removed)
 			// starts again rather than refusing the person's message
-			if (options.thread === null) throw error;
+			if (options.session === null) throw error;
 			opened = (await target.request("thread/start", settings)) as typeof opened;
 		}
 		const thread = typeof opened?.thread?.id === "string" ? opened.thread.id : undefined;
 		if (thread === undefined) throw new Error("Codex started no thread.");
 		adapter.main = thread;
-		options.onThread(thread);
+		options.onSession(thread);
 		const sandbox = (opened.sandbox as { type?: unknown } | undefined)?.type;
 		push({
 			kind: "ready",

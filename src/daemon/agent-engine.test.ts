@@ -126,7 +126,7 @@ describe("engine ownership through the daemon", () => {
 		expect(pi.offers.at(-1)?.ask).toEqual({ value: "pi" });
 	});
 
-	it("offers any engine's models to a new chat and keeps a pick for that engine's next chat", async () => {
+	it("offers any engine's models to a new thread and keeps a pick for that engine's next thread", async () => {
 		const claude = fakeEngine("claude");
 		const pi = fakeEngine("pi");
 		const { app, path, send } = setup([claude.engine, pi.engine]);
@@ -148,7 +148,7 @@ describe("engine ownership through the daemon", () => {
 		expect((await send("engines/pi/model", { value: "-rf" })).status).toBe(400);
 	});
 
-	it("keeps each agent's model choices separate before a chat's first message", async () => {
+	it("keeps each agent's model choices separate before a thread's first message", async () => {
 		const claude = fakeEngine("claude");
 		const pi = fakeEngine("pi");
 		const { app, path, send, spoolDir } = setup([claude.engine, pi.engine]);

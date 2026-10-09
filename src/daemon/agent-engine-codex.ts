@@ -33,12 +33,14 @@ const PROBE_TIMEOUT_MS = 20_000;
 const NOBODY: AgentLogin = { signedIn: false, account: null };
 
 /**
- * Codex's thread for each spool thread, one small file per thread under spool's state.
+ * Codex's model session for each spool thread, one small file per thread under spool's state.
  *
- * Codex mints its thread id on `thread/start`, so it cannot be the rail's id the way
- * Claude's session is: spool holds the exact reference and hands it to `thread/resume`.
+ * Codex mints the session's id (its `thread` on the wire) on `thread/start`, so it cannot be
+ * the rail's id the way Claude's session is: spool holds the exact reference and hands it to
+ * `thread/resume`. The folder keeps the wire's name, `codex/threads/`, so what earlier
+ * versions stored is still read.
  */
-export function codexThreads(spoolDir: string) {
+export function codexSessions(spoolDir: string) {
 	const dir = join(spoolDir, "codex", "threads");
 	const file = (session: string) => join(dir, `${session.replace(/[^\w-]/g, "")}.json`);
 	return {
@@ -190,7 +192,7 @@ export function codexChoice(offer: AgentOffer, wanted: AgentAsk, held: AgentAsk)
 }
 
 export function createCodexEngine({ executor, spoolDir, version, look }: CodexEngineOptions): AgentEngine {
-	const threads = codexThreads(spoolDir);
+	const sessions = codexSessions(spoolDir);
 	return {
 		id: "codex",
 		authentication: { kind: "external", command: "codex login" },
@@ -225,7 +227,7 @@ export function createCodexEngine({ executor, spoolDir, version, look }: CodexEn
 			return codexOffer(answer?.listed ?? [], answer?.config, { ...ask, ...choose });
 		},
 		choice: codexChoice,
-		continuable: (_root, session) => threads.read(session.id) !== undefined,
+		continuable: (_root, session) => sessions.read(session.id) !== undefined,
 		start: ({ root, session, said, ask, permissions }) =>
 			startCodexTurn({
 				executor,
@@ -234,8 +236,8 @@ export function createCodexEngine({ executor, spoolDir, version, look }: CodexEn
 				said,
 				ask,
 				permissions,
-				thread: threads.read(session.id) ?? null,
-				onThread: (thread) => threads.write(session.id, thread),
+				session: sessions.read(session.id) ?? null,
+				onSession: (thread) => sessions.write(session.id, thread),
 				version,
 				designer: mountDesigner(spoolDir).codex,
 			}),

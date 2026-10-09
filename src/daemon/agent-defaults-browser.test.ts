@@ -26,7 +26,7 @@ const piStandIn: AgentEngine = {
  * The machine's agent choice in the rail (#361): the menu shows what was saved, across a
  * reload, a new chat and another project, and never draws a value it has not loaded.
  */
-it("keeps the agent and mode a person picked across a reload, a new chat and another project", {
+it("keeps the agent and mode a person picked across a reload, a new thread and another project", {
 	timeout: 120_000,
 }, async () => {
 	const claude = permissionClaude();
