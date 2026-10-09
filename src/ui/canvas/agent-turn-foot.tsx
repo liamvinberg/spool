@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
 import { cn } from "../cn";
 import {
@@ -14,7 +14,9 @@ import {
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
-import type { AgentTile, AgentTurnFoot } from "./agent-transcript";
+import { MOTION, useLeaving } from "./agent-motion";
+import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
+import { useStillness } from "./stillness";
 
 /**
  * A turn's foot (#365): the frames it touched as a grid of pictures, and under them its
@@ -60,6 +62,8 @@ export function captionOf(tile: AgentTile): string {
 			return "Landed";
 		case "editing":
 			return tile.range === null ? "Changing it" : `Changed lines ${tile.range.from}–${tile.range.to}`;
+		case "shooting":
+			return "Taking its picture";
 		case "deleted":
 			return "Deleted";
 		case "done": {
@@ -399,11 +403,19 @@ function TileGrid({
 }) {
 	const columns = settled ? 3 : 2;
 	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.delegation === waiting);
+	// while anything is still happening, what is finished steps back to leave the eye on it
+	const working = !settled && tiles.some((tile) => tile.state !== "done" && tile.state !== "deleted");
 	return (
 		<div className="flex flex-col gap-3">
 			<div data-agent-tiles="" className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}>
 				{tiles.map((tile, index) => (
-					<Tile key={tile.key} tile={tile} reach={reach} waiting={index === at} />
+					<Tile
+						key={tile.key}
+						tile={tile}
+						reach={reach}
+						waiting={index === at}
+						small={working && tile.state === "done" && index !== at}
+					/>
 				))}
 			</div>
 			{under === undefined || at === -1 ? null : under(((at % columns) + 0.5) / columns)}
@@ -411,7 +423,18 @@ function TileGrid({
 	);
 }
 
-function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileReach; waiting?: boolean }) {
+function Tile({
+	tile,
+	reach,
+	waiting = false,
+	small = false,
+}: {
+	tile: AgentTile;
+	reach: TileReach;
+	waiting?: boolean;
+	/** finished while others still work: drawn smaller, so attention goes to what moves */
+	small?: boolean;
+}) {
 	const [putting, setPutting] = useState(false);
 	const goes = tile.state !== "deleted" && reach.have.has(tile.frame);
 	const live = tile.state !== "done" && tile.state !== "deleted";
@@ -419,8 +442,10 @@ function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileRe
 	const body = (
 		<>
 			<span
+				data-agent-tile-small={small ? "" : undefined}
 				className={cn(
-					"block w-full rounded-[3px]",
+					"block rounded-[3px] transition-[width] duration-[320ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none",
+					small ? "w-[72%]" : "w-full",
 					waiting && "shadow-[0_0_0_1.5px_var(--color-bg),0_0_0_3px_var(--color-text)]",
 				)}
 			>
@@ -492,7 +517,9 @@ function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileRe
 
 /** the frame's still, or what stands for it before there is one */
 function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }) {
-	const drawn = tile.state !== "reading" && tile.state !== "drawing";
+	const replaying = useReplay(tile.replay);
+	const drawn = tile.state !== "reading" && tile.state !== "drawing" && !replaying;
+	const shooting = useLeaving(tile.state === "shooting", MOTION.cornersIn);
 	return (
 		<span className="relative block aspect-[16/10] w-full shrink-0" aria-hidden="true">
 			{drawn ? (
@@ -509,13 +536,60 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 				</span>
 			) : (
 				<span className="absolute inset-0 rounded-[3px] border border-border-raised border-dashed">
-					{tile.state === "drawing" ? <Writing lines={tile.lines} /> : null}
+					{replaying && tile.replay !== undefined ? (
+						<Writing lines={tile.lines} shape={tile.replay} replay />
+					) : tile.state === "drawing" ? (
+						<Writing lines={tile.lines} />
+					) : null}
 				</span>
 			)}
 			{tile.state === "deleted" ? (
 				<span className="absolute inset-0 rounded-[3px] border border-muted border-dashed" />
 			) : null}
 			{tile.state === "editing" ? <CompanionMark /> : null}
+			{shooting === null ? null : <Corners leaving={shooting === "leaving"} />}
+		</span>
+	);
+}
+
+/**
+ * Whether a designer's real source is replaying in the tile: for about a second from the
+ * moment its file lands in the spot held for it, then the picture draws. Never where
+ * stillness was asked for.
+ */
+function useReplay(shape: AgentTile["replay"]): boolean {
+	const still = useStillness();
+	const [replaying, setReplaying] = useState(shape !== undefined && !still);
+	useEffect(() => {
+		if (!replaying) return;
+		const timer = setTimeout(() => setReplaying(false), MOTION.replay);
+		return () => clearTimeout(timer);
+	}, [replaying]);
+	return replaying && !still;
+}
+
+/** four corners struck just outside the picture while its picture is taken, folding in after */
+function Corners({ leaving }: { leaving: boolean }) {
+	return (
+		<span
+			data-agent-tile-corners={leaving ? "leaving" : "open"}
+			className="pointer-events-none absolute -inset-[3px]"
+		>
+			{(["nw", "ne", "se", "sw"] as const).map((corner) => {
+				const top = corner === "nw" || corner === "ne";
+				const left = corner === "nw" || corner === "sw";
+				return (
+					<span
+						key={corner}
+						className={cn(
+							"absolute block size-2 border-text",
+							top ? "top-0 border-t-[1.5px]" : "bottom-0 border-b-[1.5px]",
+							left ? "left-0 border-l-[1.5px]" : "right-0 border-r-[1.5px]",
+							leaving ? "animate-agent-corners-in" : "animate-agent-corners-out",
+						)}
+					/>
+				);
+			})}
 		</span>
 	);
 }
@@ -524,17 +598,20 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 const RUN = [0.42, 0.7, 0.56, 0.82, 0.36, 0.64, 0.5, 0.76, 0.3, 0.6, 0.86, 0.46, 0.68, 0.4, 0.74, 0.52] as const;
 const INDENT = [0, 1, 2, 2, 3, 3, 2, 3, 4, 4, 3, 2, 3, 3, 2, 1] as const;
 /** rows the outline holds; a frame's usual 320 lines fill it */
-const ROWS = 18;
+const ROWS = SOURCE_ROWS;
 
-/** the lines streamed so far, as rows of source filling the outline from the top */
-function Writing({ lines }: { lines: number }) {
-	const filled = Math.max(1, Math.min(ROWS, Math.round((lines / 320) * ROWS)));
+/**
+ * The lines streamed so far, as rows of source filling the outline from the top. Given a
+ * real source's shape it draws that; replaying, its rows run in one after another over
+ * `MOTION.replay`.
+ */
+function Writing({ lines, shape, replay = false }: { lines: number; shape?: readonly SourceLine[]; replay?: boolean }) {
+	const filled = shape !== undefined ? shape.length : Math.max(1, Math.min(ROWS, Math.round((lines / 320) * ROWS)));
 	return (
-		<span className="absolute inset-[6%]">
+		<span className="absolute inset-[6%]" data-agent-tile-replay={replay ? "" : undefined}>
 			{Array.from({ length: filled }, (_, row) => {
-				const indent = INDENT[row % INDENT.length] ?? 0;
-				const run = RUN[row % RUN.length] ?? 0.5;
-				const last = row === filled - 1;
+				const [indent, run] = shape?.[row] ?? [INDENT[row % INDENT.length] ?? 0, RUN[row % RUN.length] ?? 0.5];
+				const last = !replay && row === filled - 1;
 				return (
 					<span
 						// biome-ignore lint/suspicious/noArrayIndexKey: fixed rows
@@ -547,6 +624,12 @@ function Writing({ lines }: { lines: number }) {
 							top: `${(row / ROWS) * 100}%`,
 							left: `${indent * 4.5}%`,
 							width: `${run * (100 - indent * 4.5)}%`,
+							...(replay
+								? {
+										animation: `agent-fade-in ${MOTION.lineIn}ms cubic-bezier(0.22, 0.61, 0.36, 1) both`,
+										animationDelay: `${Math.round((row / filled) * (MOTION.replay - MOTION.lineIn))}ms`,
+									}
+								: {}),
 						}}
 					/>
 				);

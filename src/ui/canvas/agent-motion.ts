@@ -78,6 +78,8 @@ export const MOTION = {
 	leave: 400,
 	/** each streamed line grows from its indent */
 	lineIn: 180,
+	/** a designer's real source runs into its tile when its file lands, before the picture draws */
+	replay: 1000,
 	/** name brightens, unseen dot in */
 	landed: 300,
 	/** the companion opens into the waiting ring, the ask unfolds under it */

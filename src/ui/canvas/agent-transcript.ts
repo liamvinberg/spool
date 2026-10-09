@@ -227,10 +227,14 @@ export interface AgentPlan {
  * - `drawing`: its source is streaming in and it is not on disk yet; `lines` counts it.
  * - `fresh`: it just landed, and the call or designer that made it is still going.
  * - `editing`: a change just landed in it; `range` is the lines that moved.
+ * - `shooting`: a `spool shot` the turn made is taking its picture.
  * - `done`: nothing is happening to it.
  * - `deleted`: the turn deleted it, and `source` is what Put back writes back.
  */
-export type TileState = "reading" | "drawing" | "fresh" | "editing" | "done" | "deleted";
+export type TileState = "reading" | "drawing" | "fresh" | "editing" | "shooting" | "done" | "deleted";
+
+/** a line of source as the grid draws it: how far in it sits, and how long it runs, as a share */
+export type SourceLine = readonly [indent: number, run: number];
 
 export interface AgentTile {
 	readonly key: string;
@@ -247,11 +251,36 @@ export interface AgentTile {
 	readonly delegation?: string;
 	readonly source?: string;
 	readonly sidecar?: string;
+	/**
+	 * The shape of a designer's real source, for a frame that just filled the spot reserved
+	 * for it: the grid replays it in about a second before the picture draws (#365).
+	 */
+	readonly replay?: readonly SourceLine[];
+}
+
+/** rows of source the grid's outline holds */
+export const SOURCE_ROWS = 18;
+
+/**
+ * The shape of a source as the grid draws it: up to `SOURCE_ROWS` of its lines, picked
+ * evenly from top to bottom, each with its own indent and length.
+ */
+export function sourceShape(source: string): SourceLine[] {
+	const lines = source.split("\n").filter((line) => line.trim() !== "");
+	const step = Math.max(1, lines.length / SOURCE_ROWS);
+	const picked: SourceLine[] = [];
+	for (let at = 0; at < lines.length && picked.length < SOURCE_ROWS; at += step) {
+		const line = lines[Math.floor(at)] ?? "";
+		const lead = /^\s*/.exec(line)?.[0] ?? "";
+		const indent = Math.min(4, Math.round(lead.replace(/\t/g, "  ").length / 2));
+		picked.push([indent, Math.max(0.12, Math.min(1, line.trim().length / 64))]);
+	}
+	return picked;
 }
 
 /** a tile's state once nothing is happening to it: a frame that just landed or changed is done */
 export function settledState(state: TileState): TileState {
-	return state === "fresh" || state === "editing" ? "done" : state;
+	return state === "fresh" || state === "editing" || state === "shooting" ? "done" : state;
 }
 
 /** a tile with nothing happening to it any more */
@@ -487,7 +516,9 @@ export function settledPicture(entries: readonly AgentEntry[]): AgentEntry[] {
  * turn the lights went out on, so it reads stopped.
  */
 function settledFoot(foot: AgentTurnFoot): AgentTurnFoot {
-	const tiles = foot.tiles.filter((tile) => tile.state !== "reading" && tile.state !== "drawing").map(settleTile);
+	const tiles = foot.tiles
+		.filter((tile) => tile.state !== "reading" && tile.state !== "drawing")
+		.map(({ replay: _replay, ...tile }) => settleTile(tile));
 	return { ...foot, tiles, status: null, thinking: false, ending: foot.ending ?? "stopped" };
 }
 
@@ -568,8 +599,11 @@ interface Tile {
 	took: number | null;
 	source?: string;
 	sidecar?: string;
+	replay?: SourceLine[];
 	call: string | null;
 	task: string | null;
+	/** the `spool shot` call taking its picture, while it is out */
+	shooting: string | null;
 }
 
 interface Prose {
@@ -1187,6 +1221,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			took: null,
 			call: null,
 			task: delegated,
+			shooting: null,
 		};
 		tiles.set(frame, made);
 		return made;
@@ -1217,6 +1252,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const finish = () => {
 		// nothing is happening to any frame now: one that never landed was not made
 		for (const [name, tile] of tiles) {
+			tile.shooting = null;
 			if (tile.state === "reading" || tile.state === "drawing") tiles.delete(name);
 			else tile.state = settledState(tile.state);
 		}
@@ -1373,6 +1409,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// canvas can locate is a change that landed, and only the result says so (#214)
 				block.wrote = foreign === null ? writesOf(event.id, event.tool, event.input) : [];
 				nameRow(block, event.input, true, foreign);
+				// a picture the turn takes of a frame it made: its tile gets corner marks
+				for (const shot of block.named?.shots ?? []) {
+					const tile = tiles.get(shot);
+					if (tile !== undefined) tile.shooting = event.id;
+				}
 				break;
 			}
 			case "asking": {
@@ -1446,6 +1487,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 */
 				const waited = asks.get(askOf.get(event.id) ?? "");
 				if (waited !== undefined && unanswered(waited)) waited.state = "dropped";
+				// a picture taken is taken
+				for (const tile of tiles.values()) if (tile.shooting === event.id) tile.shooting = null;
 				// the agent's own call that made a frame is over, so the frame is at rest (#365)
 				for (const tile of tiles.values())
 					if (tile.task === null && tile.call === event.id) tile.state = settledState(tile.state);
@@ -1588,6 +1631,9 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				}
 				delete tile.source;
 				delete tile.sidecar;
+				// a designer's real source, the moment its file lands in the spot held for it
+				if (event.change === "created" && event.spot !== undefined && event.source !== undefined)
+					tile.replay = sourceShape(event.source);
 				if (event.change === "restored") tile.state = "done";
 				else tile.state = event.change === "changed" ? "editing" : "fresh";
 				tile.range = event.range ?? null;
@@ -1853,8 +1899,15 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const foot: AgentTurnFoot = {
 		key: "turn",
 		kind: "turn",
-		tiles: [...tiles.values()].map(({ call: _call, task, ...tile }) => {
+		tiles: [...tiles.values()].map(({ call: _call, task, shooting, replay, ...kept }) => {
 			const delegation = task === null ? undefined : taskCalls.get(task);
+			// a frame being photographed reads so over whatever else it is, unless it is not
+			// drawn yet or has gone; and only a frame that has just landed replays its source
+			const state =
+				shooting !== null && kept.state !== "reading" && kept.state !== "drawing" && kept.state !== "deleted"
+					? "shooting"
+					: kept.state;
+			const tile: AgentTile = { ...kept, state, ...(replay !== undefined && state === "fresh" ? { replay } : {}) };
 			return delegation === undefined ? tile : { ...tile, delegation };
 		}),
 		status: over ? null : statusOf(),
