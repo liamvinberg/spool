@@ -476,21 +476,38 @@ export function witnessFrames(
 	}
 
 	/**
-	 * A designer wrote its placeholder's sidecar before its source, stating a size and no
-	 * place: the placeholder keeps its place and its record, at the size the designer gave.
+	 * A designer wrote a sidecar stating a size and no place into its placeholder. Before
+	 * its source, the placeholder keeps its place and its record at the size the designer
+	 * gave. After, the frame that landed there keeps the place it landed at, and stands
+	 * beside the field only when the new size would cover a neighbour, as at landing:
+	 * never moved off as a new frame would be.
 	 */
 	function keep(frame: string): void {
 		if (designDir === undefined) return;
-		const spot = [...reserved.values()].find((one) => one.state === "held" && one.name === frame);
+		const spot = [...reserved.values()].find(
+			(one) => (one.state === "held" && one.name === frame) || (one.state === "filled" && one.frame === frame),
+		);
 		const note = spot === undefined ? undefined : notes.get(spot.task);
 		if (spot === undefined || note === undefined) return;
 		const dir = join(designDir, "frames", ...frame.split("/"));
 		try {
 			const file = resolveDesignPath(designDir, join(dir, "frame.json"));
-			if (existsSync(join(dir, "frame.tsx"))) return;
+			const landed = existsSync(join(dir, "frame.tsx"));
+			if (landed !== (spot.state === "filled")) return;
 			const sidecar = parseSidecar(JSON.parse(readFileSync(file, "utf8")));
 			if (sidecar.kind !== "sized") return;
-			writeFileSync(file, placeholderBytes({ x: spot.x, y: spot.y, ...sidecar.footprint }, note));
+			let at: Rect = { x: spot.x, y: spot.y, ...sidecar.footprint };
+			if (!landed) {
+				writeFileSync(file, placeholderBytes(at, note));
+				return;
+			}
+			if (at.w > spot.w || at.h > spot.h) {
+				const inSpot = at;
+				const field = pageField(listProjectFrames(root), pageParent(frame), frame);
+				if (field.some((other) => overlaps(inSpot, other))) at = { ...besideField(field), w: at.w, h: at.h };
+			}
+			writeGeometry(file, at, designDir);
+			reserved.set(spot.task, { ...spot, ...at });
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 		}

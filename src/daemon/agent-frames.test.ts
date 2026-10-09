@@ -624,6 +624,43 @@ describe("a placeholder frame (#369)", () => {
 		expect(turn.log.some((event) => event.kind === "spot" && event.state === "released")).toBe(false);
 	});
 
+	it("keeps its frame where it landed when the designer states only a size after its source", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => turn.log.some((event) => event.kind === "spot"));
+		const held = turn.log.find((event) => event.kind === "spot");
+		if (held?.kind !== "spot") throw new Error("no placeholder");
+		writeFrame(root, "ideas/home--split", "export default () => null;\n");
+		turn.ring("ideas/home--split");
+		await until(() => turn.log.some((event) => event.kind === "spot" && event.state === "filled"));
+
+		// its size, stated after the frame landed: the frame stays where its placeholder stood
+		writeDesignFile(root, "frames/ideas/home--split/frame.json", '{ "w": 360, "h": 780 }\n');
+		turn.ring("ideas/home--split", "geometry");
+		expect(sidecarOf(root, "ideas/home--split")).toEqual({ x: held.x, y: held.y, w: 360, h: 780 });
+		expect(listProjectFrames(root).frames.find((frame) => frame.name === "ideas/home--split")).toMatchObject({
+			x: held.x,
+			y: held.y,
+			w: 360,
+			h: 780,
+		});
+
+		// one that would now cover a neighbour stands beside the field, as at landing
+		writeDesignFile(
+			root,
+			"frames/ideas/neighbour/frame.json",
+			`{ "x": ${held.x + 500}, "y": ${held.y}, "w": 100, "h": 100 }\n`,
+		);
+		writeFrame(root, "ideas/neighbour", "export default () => null;\n");
+		writeDesignFile(root, "frames/ideas/home--split/frame.json", '{ "w": 1440, "h": 900 }\n');
+		turn.ring("ideas/home--split", "geometry");
+		const grown = sidecarOf(root, "ideas/home--split");
+		expect(grown).toMatchObject({ w: 1440, h: 900 });
+		expect(grown.x === held.x && grown.y === held.y).toBe(false);
+		await turn.end();
+	});
+
 	it("goes when its designer's first frame lands elsewhere, and the turn's spot follows that frame", async () => {
 		const { root } = project();
 		const turn = witnessed(root);
