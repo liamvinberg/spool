@@ -40,7 +40,15 @@ models served from this computer (Ollama, LM Studio and the like) marked
 
 ## Permissions
 
-The footer's permission menu applies to every project on this machine. Claude
+The footer's permission menu applies to every project on this machine. Its three
+modes promise only what every agent keeps:
+
+- **Ask first:** "Asks before it edits outside design/ or runs commands outside its sandbox."
+- **Auto-edit:** "Edits files without asking. Asks before commands outside its sandbox."
+- **Full access:** "Never asks."
+
+A command the agent runs inside its own sandbox (Claude Code's shell sandbox,
+Codex's `workspace-write`) runs without asking in both asking modes. Claude
 Code maps its three modes to its default, accept-edits and bypass-permissions
 modes; design file edits never ask. A mode picked mid-turn applies from the next
 turn.

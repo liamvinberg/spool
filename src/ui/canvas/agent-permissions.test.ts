@@ -24,8 +24,8 @@ describe("the mode menu", () => {
 		const items = [...(menu(canvas.host)?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
 		expect(items.map((item) => item.getAttribute("data-permission-mode"))).toEqual(["ask", "edits", "bypass"]);
 		expect(items.map((item) => item.textContent)).toEqual([
-			"Ask firstAsks before it edits outside design/ or runs commands.",
-			"Auto-editEdits files without asking. Asks before commands.",
+			"Ask firstAsks before it edits outside design/ or runs commands outside its sandbox.",
+			"Auto-editEdits files without asking. Asks before commands outside its sandbox.",
 			"Full accessNever asks.",
 		]);
 		expect(items.map((item) => item.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);

@@ -96,16 +96,17 @@ const MODE_NAMES: Readonly<Record<AgentPermissions, string>> = {
 };
 
 /**
- * What each mode lets the agent do, in the spec's own sentences (#360). The words are the
- * promise every engine keeps, so none of them names one; `design/` is set as the path it is.
+ * What each mode lets the agent do (#360). The words are the promise every engine keeps, so
+ * none of them names one: a command inside the agent's own sandbox runs without asking in
+ * every engine, so neither asking mode promises more. `design/` is set as the path it is.
  */
 const MODE_SAYS: Readonly<Record<AgentPermissions, ReactNode>> = {
 	ask: (
 		<>
-			Asks before it edits outside <span className="type-detail">design/</span> or runs commands.
+			Asks before it edits outside <span className="type-detail">design/</span> or runs commands outside its sandbox.
 		</>
 	),
-	edits: "Edits files without asking. Asks before commands.",
+	edits: "Edits files without asking. Asks before commands outside its sandbox.",
 	bypass: "Never asks.",
 };
 

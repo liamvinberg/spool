@@ -2995,7 +2995,7 @@ describe("codex (#362)", () => {
 		await until(() => canvas.host.querySelector("[data-permission-trigger]") !== null);
 		await press(canvas.host.querySelector("[data-permission-trigger]"));
 		expect(live(canvas.host, '[data-permission-mode="ask"]')[0]?.textContent).toBe(
-			"Ask firstAsks before it edits outside design/ or runs commands.",
+			"Ask firstAsks before it edits outside design/ or runs commands outside its sandbox.",
 		);
 	});
 
