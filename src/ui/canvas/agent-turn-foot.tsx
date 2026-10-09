@@ -427,7 +427,9 @@ function TileGrid({
 					/>
 				))}
 			</div>
-			{under === undefined || at === -1 ? null : under(((at % columns) + 0.5) / columns)}
+			{under === undefined || at === -1 ? null : (
+				<div data-agent-ask-under={tiles[at]?.frame}>{under(((at % columns) + 0.5) / columns)}</div>
+			)}
 		</div>
 	);
 }

@@ -3151,9 +3151,13 @@ describe("an ask, anchored", () => {
 		);
 		// the turn's own line is still the turn's: one designer waits, the others work
 		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
-		expect(
-			canvas.host.querySelector("[data-agent-ask-under]") ?? canvas.host.querySelector("[data-agent-ask]"),
-		).not.toBeNull();
+		// the card hangs under the grid, from the tile that waits
+		const under = canvas.host.querySelector("[data-agent-ask-under]");
+		expect(under?.getAttribute("data-agent-ask-under")).toBe("home--bold");
+		expect(under?.previousElementSibling?.hasAttribute("data-agent-tiles")).toBe(true);
+		expect(under?.querySelector('[data-agent-ask-look="card"]')?.textContent).toContain(
+			"Taking a picture of home--bold",
+		);
 	});
 
 	/** a designer that asks before its frame exists still has a place: the spot held for it */
