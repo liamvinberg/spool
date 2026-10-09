@@ -29,7 +29,8 @@ export interface BackgroundHold {
 	running(): readonly string[];
 	/**
 	 * A hand pressed Stop: the next ending ends the turn whatever still runs. A turn already
-	 * holding is over at once, as the ending it held, now stopped.
+	 * holding is over at once, as the ending it held, now stopped, and the binary's own
+	 * answer to the stop is not a second ending.
 	 */
 	stop(): AgentEnded | undefined;
 }
@@ -46,12 +47,15 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 	const tasks = new Set<string>();
 	let held: AgentEnded | undefined;
 	let stopping = false;
+	/** the turn's one ending is out: whatever the binary answers after it ends nothing again */
+	let ended = false;
 
 	/** the last task landed while the agent was holding: an agent woken by it says the last word */
 	function drained(): { events: AgentEvent[]; over: boolean } {
 		const ending = held;
 		if (ending === undefined || tasks.size > 0 || wakes) return { events: [], over: false };
 		held = undefined;
+		ended = true;
 		return { events: [ending], over: true };
 	}
 
@@ -77,8 +81,10 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 				return { events: [event, ...after.events], over: after.over };
 			}
 			if (event.kind === "ended" && event.parent === null) {
+				if (ended) return { events: [], over: true };
 				if (stopping || tasks.size === 0 || event.ending === "failed") {
 					held = undefined;
+					ended = true;
 					return { events: [event], over: true };
 				}
 				held = event;
@@ -91,7 +97,9 @@ export function createBackgroundHold({ wakes }: BackgroundHoldOptions): Backgrou
 			stopping = true;
 			const ending = held;
 			held = undefined;
-			return ending === undefined ? undefined : { ...ending, ending: "stopped" };
+			if (ending === undefined) return undefined;
+			ended = true;
+			return { ...ending, ending: "stopped" };
 		},
 	};
 }
