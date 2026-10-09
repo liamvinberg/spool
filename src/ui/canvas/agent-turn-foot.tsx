@@ -14,7 +14,7 @@ import {
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
-import { EndMark, Spinner } from "./agent-marks";
+import { EndMark, Spinner, WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
 import { useStillness } from "./stillness";
@@ -112,9 +112,10 @@ export function TurnFoot({
 	const designer = asks.find(
 		(ask) => ask.delegation !== undefined && ask.delegation !== "" && makers.has(ask.delegation),
 	);
-	// the turn's own ask opens out of its line when it is an approval (story 58) and turns
-	// the grid into the choice when its options name the turn's frames; a question about
-	// no frame is a quiet card at the end of the chat (story 67)
+	// the turn's own ask opens out of its line when it is an approval about a frame (story
+	// 58) and turns the grid into the choice when its options name the turn's frames; an
+	// ask about no frame, an approval to run `npm install` as much as a question, is a quiet
+	// card at the end of the chat (story 67)
 	const mine = asks.find((ask) => ask !== designer && onTheLine(ask, foot.tiles));
 	// each anchor holds one ask; any more wait their turn as cards under the foot, so an
 	// ask is never anywhere but on screen
@@ -122,6 +123,8 @@ export function TurnFoot({
 	// the steps fade in and out under the line rather than appearing in one frame
 	const shownSteps = useLeaving(open && mine === undefined, FADE_OUT_MS);
 	const queued = asks.filter((ask) => ask !== mine && ask !== hung);
+	// a card at the end of the chat is the turn waiting on the person, and its line says so
+	const carded = queued.length > 0;
 	const answer = onAnswer ?? (() => {});
 	return (
 		<div data-agent-turn={over ? "over" : "running"} className="flex flex-col gap-3 pt-1">
@@ -142,7 +145,13 @@ export function TurnFoot({
 							}
 						/>
 					)}
-					<TurnLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
+					<TurnLine
+						foot={foot}
+						elapsed={elapsed}
+						open={open}
+						waiting={carded}
+						onToggle={() => setOpen((was) => !was)}
+					/>
 				</>
 			) : (
 				<LineAsk
@@ -173,9 +182,20 @@ export function TurnFoot({
 	);
 }
 
-/** an approval, or a question whose options name the turn's frames: the asks the line opens into */
+/** a path into a frame's own folder, in an approval's path or command */
+const FRAME_PATH = /(?:^|[\s'"/=])design\/frames\/[a-z0-9]/i;
+
+/** an approval about a frame: what it would let through reaches into `design/frames/` */
+export function aboutFrame(entry: AskEntry): boolean {
+	return FRAME_PATH.test(entry.detail ?? "");
+}
+
+/**
+ * An approval about a frame, or a question whose options name the turn's frames: the asks
+ * the line opens into. Every other ask is about no frame, and is a card.
+ */
 function onTheLine(entry: AskEntry, tiles: readonly AgentTile[]): boolean {
-	if (!entry.question) return true;
+	if (!entry.question) return aboutFrame(entry);
 	return entry.questions.some((question) => !question.multi && optionFrames(question, tiles) !== null);
 }
 
@@ -347,20 +367,24 @@ function TurnLine({
 	foot,
 	elapsed,
 	open,
+	waiting,
 	onToggle,
 }: {
 	foot: AgentTurnFoot;
 	elapsed: number;
 	open: boolean;
+	/** an ask about no frame waits at the end of the chat */
+	waiting: boolean;
 	onToggle: () => void;
 }) {
 	const over = foot.ms !== null;
-	const words = over ? receiptOf(foot) : (foot.status ?? "Working");
+	const asking = waiting && !over;
+	const words = over ? receiptOf(foot) : asking ? "Waiting on you" : (foot.status ?? "Working");
 	return (
 		<button
 			type="button"
 			aria-expanded={open}
-			data-agent-turn-line={over ? (foot.ending ?? "done") : "running"}
+			data-agent-turn-line={over ? (foot.ending ?? "done") : asking ? "waiting" : "running"}
 			onClick={onToggle}
 			className={cn(
 				"-mx-1.5 flex h-[26px] items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150",
@@ -368,9 +392,9 @@ function TurnLine({
 				open && "bg-control",
 			)}
 		>
-			<TurnMark over={over} ending={foot.ending} />
-			<span className="min-w-0 flex-1 truncate text-muted type-control">
-				{over ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
+			{asking ? <WaitingMark /> : <TurnMark over={over} ending={foot.ending} />}
+			<span className={cn("min-w-0 flex-1 truncate type-control", asking ? "text-text" : "text-muted")}>
+				{over || asking ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
 			</span>
 			{over || !Number.isFinite(elapsed) ? null : (
 				<span data-agent-clock="" className="shrink-0 tabular-nums text-muted type-detail">

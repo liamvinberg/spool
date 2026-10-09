@@ -1998,9 +1998,10 @@ describe("a question in the log", () => {
 });
 
 /**
- * An ask opens out of what it concerns (#366): an approval and a question about no frame
- * out of the turn's line, a question whose options name the turn's frames out of its grid,
- * a designer's ask out of its own tile, and every one folds to one quiet line once answered.
+ * An ask opens out of what it concerns (#366): an approval about a frame out of the turn's
+ * line, a question whose options name the turn's frames out of its grid, a designer's ask
+ * out of its own tile, any ask about no frame as a card at the end of the chat, and every
+ * one folds to one quiet line once answered.
  */
 describe("an ask, anchored", () => {
 	const asking = (over: Partial<Extract<AgentEvent, { kind: "asking" }>>): AgentEvent => ({
@@ -2042,7 +2043,26 @@ describe("an ask, anchored", () => {
 		[...host.querySelectorAll("[data-agent-option]")].map((option) => option.getAttribute("data-agent-option"));
 	const look = (host: HTMLElement) => host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask-look");
 
-	it("opens an approval out of the turn's line, its reason first and what it lets through behind a disclosure", async () => {
+	it("opens an approval about a frame out of the turn's line", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "clear out the old take");
+		canvas.turn.push(ready);
+		canvas.turn.push(
+			asking({
+				tool: "Bash",
+				input: { command: "rm -r design/frames/home--old" },
+				description: "Removing the take you set aside.",
+			}),
+		);
+		await until(() => options(canvas.host).length > 0);
+
+		expect(look(canvas.host)).toBe("line");
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')?.textContent).toContain("Waiting on you");
+		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("Removing the take you set aside.");
+	});
+
+	it("asks an approval about no frame as a card at the end of the chat, its reason first and what it lets through behind a disclosure", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "carry the colours into the app");
@@ -2057,8 +2077,11 @@ describe("an ask, anchored", () => {
 		canvas.turn.push(asking({}));
 		await until(() => options(canvas.host).length > 0);
 
-		expect(look(canvas.host)).toBe("line");
-		const status = canvas.host.querySelector('[data-agent-turn-line="waiting"]');
+		expect(look(canvas.host)).toBe("card");
+		const turn = canvas.host.querySelector("[data-agent-turn]");
+		expect(turn?.lastElementChild?.getAttribute("data-agent-ask-look")).toBe("card");
+		// the turn's line says what the turn is doing: waiting on the person
+		const status = turn?.querySelector('[data-agent-turn-line="waiting"]');
 		expect(status?.textContent).toContain("Waiting on you");
 		const block = canvas.host.querySelector<HTMLElement>("[data-agent-ask]");
 		expect(block?.textContent).toContain("Moving the new roast colours");
@@ -2190,12 +2213,12 @@ describe("an ask, anchored", () => {
 			}),
 		);
 		await until(() => options(canvas.host).length === 3);
-		// a question about no frame is a quiet card at the end of the chat (story 67), the
-		// turn's line left as it was
+		// a question about no frame is a quiet card at the end of the chat (story 67), and the
+		// turn's line says it waits
 		expect(look(canvas.host)).toBe("card");
 		const turn = canvas.host.querySelector("[data-agent-turn]");
 		expect(turn?.lastElementChild?.getAttribute("data-agent-ask-look")).toBe("card");
-		expect(turn?.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
+		expect(turn?.querySelector('[data-agent-turn-line="waiting"]')?.textContent).toContain("Waiting on you");
 
 		const sendButton = () =>
 			[...canvas.host.querySelectorAll<HTMLButtonElement>("[data-agent-ask] button")].find((one) =>
@@ -2346,7 +2369,7 @@ describe("an ask, anchored", () => {
 		await canvas.render();
 		await send(canvas.host, "carry the colours into the app");
 		canvas.turn.push(ready);
-		canvas.turn.push(asking({}));
+		canvas.turn.push(asking({ tool: "Bash", input: { command: "rm -r design/frames/home--old" } }));
 		canvas.turn.push(asking({ request: "req-2", call: "c2", tool: "Bash", input: { command: "npm test" } }));
 		await until(() => canvas.host.querySelectorAll('[data-agent-ask="open"]').length === 2);
 		const looks = [...canvas.host.querySelectorAll('[data-agent-ask="open"]')].map((one) =>
