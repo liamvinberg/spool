@@ -6,7 +6,7 @@ import {
 	type ScriptedStep,
 	scriptedAgentExecutor,
 } from "../test-helpers";
-import { callsOf, createCodexAdapter, limitOf } from "./agent-codex";
+import { briefTitle, callsOf, createCodexAdapter, limitOf } from "./agent-codex";
 import { createCodexRpc } from "./agent-codex-rpc";
 import { CODEX_MODES, planCodexSpawn, versionAtLeast, versionIn } from "./agent-codex-spawn";
 import { codexInput, inDesign, isSpoolRead, quietApproval } from "./agent-codex-turn";
@@ -487,5 +487,17 @@ describe("codex's rpc", () => {
 		await expect(failing).rejects.toThrow("no rollout");
 		rpc.read(JSON.stringify({ id: 0, method: "item/commandExecution/requestApproval", params: {} }));
 		expect(asked).toEqual(["item/commandExecution/requestApproval"]);
+	});
+});
+
+describe("a spawn's title", () => {
+	it("is the brief's task name, or its first line cut at a word", () => {
+		expect(briefTitle("task_name: calm hello\nDraw it quiet.")).toBe("calm hello");
+		expect(briefTitle("Draw the calm direction.\nMore.")).toBe("Draw the calm direction.");
+		expect(
+			briefTitle("You are the loud direction designer. In the current project, create design/frames/hello-loud"),
+		).toBe("You are the loud direction designer. In the current…");
+		expect(briefTitle("")).toBeNull();
+		expect(briefTitle(undefined)).toBeNull();
 	});
 });

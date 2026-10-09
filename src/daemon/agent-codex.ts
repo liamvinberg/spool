@@ -11,6 +11,11 @@ import type { AgentEvent, AgentEventBase, AgentForeign, AgentLimit } from "./age
  * under its own thread id. Everything not on the thread the human is talking to is tagged
  * with the call that spawned it, the way a Claude sub-agent's events are tagged with their
  * delegating call, and only the main thread's `turn/completed` ends the turn.
+ *
+ * A spawn is a delegation (#367), drawn the way Claude's `Agent` call is: the call, then a
+ * task for the sub-agent's thread once Codex names it, which lands when that thread's own
+ * turn completes. Codex gives a spawn no title, so the task is named from the first line
+ * of the brief it was handed.
  */
 
 export interface CodexItem {
@@ -89,6 +94,17 @@ export function callsOf(item: CodexItem): readonly CodexCall[] {
 		case "imageView":
 			return [{ id, tool: "Read", input: { file_path: string(item.path) ?? "" } }];
 		case "collabAgentToolCall":
+			if (item.tool === "spawnAgent")
+				return [
+					{
+						id,
+						tool: "Agent",
+						input: {
+							description: briefTitle(item.prompt),
+							...(typeof item.prompt === "string" ? { prompt: item.prompt } : {}),
+						},
+					},
+				];
 			return [
 				{
 					id,
@@ -102,6 +118,25 @@ export function callsOf(item: CodexItem): readonly CodexCall[] {
 		default:
 			return [];
 	}
+}
+
+/** the longest a delegation's title runs before it is cut, in characters */
+const TITLE = 60;
+
+/**
+ * A spawn's title: the `task_name` Codex's newer spawn tool puts on the brief's first line
+ * where there is one, and otherwise the brief's first line, cut at a word.
+ */
+export function briefTitle(prompt: unknown): string | null {
+	if (typeof prompt !== "string") return null;
+	const first = prompt.trim().split("\n")[0]?.trim() ?? "";
+	const named = /^task_name:\s*(.+)$/.exec(first)?.[1]?.trim();
+	const line = named ?? first;
+	if (line === "") return null;
+	if (line.length <= TITLE) return line;
+	const cut = line.slice(0, TITLE);
+	const space = cut.lastIndexOf(" ");
+	return `${(space > TITLE / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 /** what a finished item came back with: the command's output, a call's own text, or nothing */
@@ -172,6 +207,8 @@ export function createCodexAdapter(): CodexAdapter {
 	const items = new Map<string, CodexItem>();
 	/** a sub-agent's thread, by the call that spawned it */
 	const children = new Map<string, string>();
+	/** each sub-agent's last words, which are its task's summary when it lands */
+	const lastWords = new Map<string, string>();
 	let block = 0;
 	let spoke = false;
 	/** what the last limit said, so the same reading is not said after every model call */
@@ -196,7 +233,7 @@ export function createCodexAdapter(): CodexAdapter {
 				case "item/started":
 					return started(record(wire.item) as CodexItem, base);
 				case "item/completed":
-					return completed(record(wire.item) as CodexItem, base);
+					return completed(record(wire.item) as CodexItem, base, thread);
 				case "item/agentMessage/delta": {
 					const text = string(wire.delta);
 					const item = string(wire.itemId);
@@ -206,7 +243,7 @@ export function createCodexAdapter(): CodexAdapter {
 					];
 				}
 				case "turn/completed": {
-					if (base.parent !== null) return [];
+					if (base.parent !== null) return thread === undefined ? [] : [landed(thread, wire)];
 					const turn = record(wire.turn);
 					const status = string(turn.status);
 					const error = record(turn.error);
@@ -240,11 +277,7 @@ export function createCodexAdapter(): CodexAdapter {
 
 	function started(item: CodexItem, base: AgentEventBase): AgentEvent[] {
 		if (item.id !== undefined) items.set(item.id, item);
-		if (item.type === "collabAgentToolCall" && Array.isArray(item.receiverThreadIds) && item.id !== undefined) {
-			for (const receiver of item.receiverThreadIds)
-				if (typeof receiver === "string") children.set(receiver, item.id);
-		}
-		const events: AgentEvent[] = [];
+		const events: AgentEvent[] = [...spawned(item)];
 		if (!spoke && base.parent === null && item.type !== "userMessage") {
 			spoke = true;
 			events.push({ kind: "speaking", message: null, model: null, ...base });
@@ -286,7 +319,7 @@ export function createCodexAdapter(): CodexAdapter {
 		return events;
 	}
 
-	function completed(item: CodexItem, base: AgentEventBase): AgentEvent[] {
+	function completed(item: CodexItem, base: AgentEventBase, thread?: string): AgentEvent[] {
 		if (item.id !== undefined) items.set(item.id, item);
 		switch (item.type) {
 			case "userMessage":
@@ -294,6 +327,7 @@ export function createCodexAdapter(): CodexAdapter {
 				return [];
 			case "agentMessage": {
 				const text = string(item.text) ?? "";
+				if (text !== "" && base.parent !== null && thread !== undefined) lastWords.set(thread, text);
 				return text === "" ? [] : [{ kind: "said", text, ...base }];
 			}
 			case "contextCompaction":
@@ -301,24 +335,61 @@ export function createCodexAdapter(): CodexAdapter {
 			default:
 				break;
 		}
-		if (item.type === "collabAgentToolCall" && Array.isArray(item.receiverThreadIds) && item.id !== undefined) {
-			for (const receiver of item.receiverThreadIds)
-				if (typeof receiver === "string") children.set(receiver, item.id);
-		}
+		const tasks = spawned(item);
 		const calls = callsOf(item);
-		if (calls.length === 0) return [];
+		if (calls.length === 0) return tasks;
 		const failed = failedItem(item);
 		const declined = item.status === "declined";
 		const text = resultText(item);
-		return calls.map((call) => ({
-			kind: "result" as const,
-			id: call.id,
-			failed,
-			...(declined ? { nonExecution: "declined" } : {}),
-			text,
-			images: [],
-			...base,
-		}));
+		return [
+			...calls.map((call) => ({
+				kind: "result" as const,
+				id: call.id,
+				failed,
+				...(declined ? { nonExecution: "declined" } : {}),
+				text,
+				images: [],
+				...base,
+			})),
+			...tasks,
+		];
+	}
+
+	/**
+	 * The sub-agents a spawn just named, each a task under the spawning call. Only a spawn
+	 * makes a child: `wait` and the other collab calls name threads that already exist, and
+	 * a child keeps the call that spawned it as its parent.
+	 */
+	function spawned(item: CodexItem): AgentEvent[] {
+		if (item.type !== "collabAgentToolCall" || item.tool !== "spawnAgent" || item.id === undefined) return [];
+		if (!Array.isArray(item.receiverThreadIds)) return [];
+		const events: AgentEvent[] = [];
+		for (const receiver of item.receiverThreadIds) {
+			if (typeof receiver !== "string" || children.has(receiver)) continue;
+			children.set(receiver, item.id);
+			events.push({
+				kind: "task-started",
+				task: receiver,
+				call: item.id,
+				description: briefTitle(item.prompt),
+				agent: null,
+				prompt: string(item.prompt) ?? null,
+				parent: adapter.parentOf(string(item.senderThreadId)),
+			});
+		}
+		return events;
+	}
+
+	/** a sub-agent's own turn completed: its task lands, with its last words */
+	function landed(thread: string, wire: Record<string, unknown>): AgentEvent {
+		const status = string(record(wire.turn).status);
+		return {
+			kind: "task-done",
+			task: thread,
+			status: status ?? null,
+			summary: lastWords.get(thread) ?? null,
+			parent: adapter.parentOf(thread),
+		};
 	}
 
 	return adapter;

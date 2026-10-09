@@ -1,3 +1,4 @@
+import { DESIGNER_NAME } from "./agent-designer";
 import type { AgentEvent, AgentEventBase, AgentImage } from "./agent-events";
 
 /**
@@ -13,6 +14,10 @@ import type { AgentEvent, AgentEventBase, AgentImage } from "./agent-events";
  * `--mode json` prints. Pi has no approvals and no permission modes, so nothing here
  * ever asks: an extension's own dialog is the one request that could, and the turn
  * declines it where it arrives.
+ *
+ * Spool's designer extension (#367) is a tool pi runs like any other, and a call to it is a
+ * delegation: it reads as Claude's `Agent` call, with a task that starts when the tool
+ * does, steps on each of the tool's progress updates, and lands with its result.
  */
 
 /** The ids spool puts on the commands it sends, so a response is known by what it answers. */
@@ -70,10 +75,14 @@ interface WireLine {
 		readonly type?: string;
 		readonly contentIndex?: number;
 		readonly delta?: string;
+		readonly id?: string;
+		readonly toolName?: string;
 		readonly toolCall?: WireContent;
 	};
 	readonly toolCallId?: string;
 	readonly toolName?: string;
+	readonly args?: { readonly description?: unknown; readonly prompt?: unknown };
+	readonly partialResult?: { readonly details?: { readonly step?: unknown } };
 	readonly result?: { readonly content?: readonly WireContent[] };
 	readonly isError?: boolean;
 	readonly reason?: string;
@@ -95,6 +104,14 @@ export function piModelValue(model: { readonly id?: unknown; readonly provider?:
 	const id = string(model?.id);
 	const provider = string(model?.provider);
 	return id === undefined ? null : provider === undefined ? id : `${provider}/${id}`;
+}
+
+/** what the rail calls a delegation, which the designer tool is */
+const DELEGATION = "Agent";
+
+/** a tool's name as the rail reads it: spool's designer is a delegation */
+function toolOf(name: string | undefined): string {
+	return name === DESIGNER_NAME ? DELEGATION : (name ?? "");
 }
 
 function textOf(content: WireMessage["content"]): string {
@@ -141,7 +158,13 @@ export function createPiAdapter() {
 			case "message_end":
 				return wire.message?.role === "assistant" ? spoke(wire.message, base) : [];
 			case "tool_execution_end":
-				return [resultOf(wire, base)];
+				return wire.toolName === DESIGNER_NAME
+					? [resultOf(wire, base), landed(wire, base)]
+					: [resultOf(wire, base)];
+			case "tool_execution_start":
+				return wire.toolName === DESIGNER_NAME ? [delegated(wire, base)] : [];
+			case "tool_execution_update":
+				return wire.toolName === DESIGNER_NAME ? stepped(wire, base) : [];
 			case "compaction_start":
 				return [{ kind: "compacting", ...base }];
 			case "compaction_end":
@@ -160,8 +183,6 @@ export function createPiAdapter() {
 			case "agent_start":
 			case "agent_end":
 			case "turn_end":
-			case "tool_execution_start":
-			case "tool_execution_update":
 			case "queue_update":
 				return [];
 			default:
@@ -200,13 +221,14 @@ export function createPiAdapter() {
 				return [{ kind: "say", block, text: string(event.delta) ?? "", ...base }];
 			case "thinking_start":
 				return [{ kind: "thinking", block, tokens: 0, ...base }];
+			// pi 1.0 names the call on the event itself; a toolCall block is the older shape
 			case "toolcall_start":
 				return [
 					{
 						kind: "call",
-						id: string(event.toolCall?.id) ?? null,
+						id: string(event.id) ?? string(event.toolCall?.id) ?? null,
 						block,
-						tool: string(event.toolCall?.name) ?? "",
+						tool: toolOf(string(event.toolName) ?? string(event.toolCall?.name)),
 						...base,
 					},
 				];
@@ -228,8 +250,11 @@ export function createPiAdapter() {
 				events.push({
 					kind: "called",
 					id: string(block.id) ?? "",
-					tool: string(block.name) ?? "",
-					input: block.arguments,
+					tool: toolOf(string(block.name)),
+					input:
+						block.name === DESIGNER_NAME
+							? { ...(block.arguments as object | undefined), subagent_type: DESIGNER_NAME }
+							: block.arguments,
 					...base,
 				});
 		}
@@ -247,6 +272,41 @@ export function createPiAdapter() {
 			failed: wire.isError === true,
 			text: textOf(content),
 			images,
+			...base,
+		};
+	}
+
+	/** a designer started: its task, named with the call's own words */
+	function delegated(wire: WireLine, base: AgentEventBase): AgentEvent {
+		const call = string(wire.toolCallId) ?? "";
+		return {
+			kind: "task-started",
+			task: call,
+			call,
+			description: string(wire.args?.description) ?? null,
+			agent: DESIGNER_NAME,
+			prompt: string(wire.args?.prompt) ?? null,
+			...base,
+		};
+	}
+
+	/** what the designer is doing now, as its extension reports it */
+	function stepped(wire: WireLine, base: AgentEventBase): AgentEvent[] {
+		const step = string(wire.partialResult?.details?.step);
+		if (step === undefined) return [];
+		const call = string(wire.toolCallId) ?? "";
+		return [
+			{ kind: "task-step", task: call, call, description: step, lastTool: step.split(" ")[0] ?? null, ...base },
+		];
+	}
+
+	/** the designer finished: its task lands with the words it ended on */
+	function landed(wire: WireLine, base: AgentEventBase): AgentEvent {
+		return {
+			kind: "task-done",
+			task: string(wire.toolCallId) ?? "",
+			status: wire.isError === true ? "failed" : "completed",
+			summary: textOf(wire.result?.content ?? []) || null,
 			...base,
 		};
 	}
