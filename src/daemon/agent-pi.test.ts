@@ -49,6 +49,21 @@ describe("the pi adapter", () => {
 		expect(kinds.filter((kind) => kind === "ended")).toHaveLength(1);
 	});
 
+	it("says how full the window is after each answer: its tokens over the model's window", () => {
+		const events = read("pi-turn");
+		// the window get_state names, and the last message's whole prompt and answer
+		expect(events.filter((event) => event.kind === "context")).toEqual([
+			{ kind: "context", used: 1210, window: 272000, parent: null },
+			{ kind: "context", used: 1239, window: 272000, parent: null },
+		]);
+		// a stopped message carries no usage worth a reading
+		expect(
+			read("pi-stop")
+				.filter((event) => event.kind === "context")
+				.every((event) => event.kind === "context" && event.used > 0),
+		).toBe(true);
+	});
+
 	it("ends a stopped turn as stopped, on pi's own settle rather than the end of a run", () => {
 		const events = read("pi-stop");
 		expect(events.filter((event) => event.kind === "thinking")).not.toHaveLength(0);

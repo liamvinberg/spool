@@ -56,6 +56,7 @@ interface WireMessage {
 	readonly stopReason?: string;
 	readonly errorMessage?: string;
 	readonly responseId?: string;
+	readonly usage?: { readonly totalTokens?: unknown };
 }
 
 interface WireLine {
@@ -68,7 +69,7 @@ interface WireLine {
 		readonly sessionId?: string;
 		readonly sessionFile?: string;
 		readonly thinkingLevel?: string;
-		readonly model?: { readonly id?: string; readonly provider?: string };
+		readonly model?: { readonly id?: string; readonly provider?: string; readonly contextWindow?: unknown };
 	};
 	readonly message?: WireMessage;
 	readonly assistantMessageEvent?: {
@@ -126,6 +127,8 @@ export function createPiAdapter() {
 	/** the last assistant message's own ending, which is what the settled turn ended as */
 	let stopReason: string | null = null;
 	let failure: string | null = null;
+	/** the model's whole window, as `get_state` names it */
+	let window: number | undefined;
 
 	function read(line: string): AgentEvent[] {
 		let wire: WireLine;
@@ -192,6 +195,8 @@ export function createPiAdapter() {
 
 	function responded(wire: WireLine, base: AgentEventBase): AgentEvent[] {
 		if (wire.id === PI_STATE && wire.success === true) {
+			const named = wire.data?.model?.contextWindow;
+			window = typeof named === "number" && named > 0 ? named : undefined;
 			return [
 				{
 					kind: "ready",
@@ -244,6 +249,11 @@ export function createPiAdapter() {
 		stopReason = string(message.stopReason) ?? null;
 		failure = stopReason === "error" ? (string(message.errorMessage) ?? null) : null;
 		const events: AgentEvent[] = [];
+		// how full the window is after this answer: its whole prompt and answer over the
+		// window get_state named
+		const used = message.usage?.totalTokens;
+		if (window !== undefined && typeof used === "number" && used > 0)
+			events.push({ kind: "context", used, window, ...base });
 		for (const block of Array.isArray(message.content) ? message.content : []) {
 			if (block.type === "text") events.push({ kind: "said", text: string(block.text) ?? "", ...base });
 			if (block.type === "toolCall")
