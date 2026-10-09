@@ -14,6 +14,7 @@ import {
 	followAgentTurn,
 	interruptAgentTurn,
 	putAgentThread,
+	putFrameBack,
 } from "../api";
 import { draftsFor } from "./agent-drafts";
 import type { AgentWrite } from "./agent-nouns";
@@ -35,8 +36,10 @@ import {
 	type AgentEntry,
 	type AgentPlan,
 	type AgentSent,
+	type AgentTile,
 	type AgentWords,
 	drawableEntries,
+	footed,
 	type Stamped,
 	settledPicture,
 	type Transcript,
@@ -158,6 +161,8 @@ export interface AgentTurn {
 	 * rather than firing into a turn nobody asked for.
 	 */
 	readonly stop: () => void;
+	/** Put back a frame a turn deleted, from the source the turn kept (#365) */
+	readonly putBack: (tile: AgentTile) => Promise<boolean>;
 	/** whatever left the queue un-fired, for whoever is holding the box (#170) */
 	readonly handback: AgentHandback;
 	/**
@@ -499,7 +504,9 @@ function stirred(thread: Live): void {
 function shownOf(thread: Live): Transcript {
 	const held = thread.folded;
 	if (held !== null && held.rev === thread.rev) return held.shown;
-	const shown = transcriptOf(thread.carried ? [] : thread.said, thread.events);
+	const folded = transcriptOf(thread.carried ? [] : thread.said, thread.events);
+	// the turn's foot draws in the log and is kept with it, so every reading of the turn has it (#365)
+	const shown = { ...folded, entries: footed(folded) };
 	thread.folded = { rev: thread.rev, shown };
 	return shown;
 }
@@ -1484,6 +1491,58 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				handBack(thread, back);
 				void interruptAgentTurn(project, thread.named);
 			}, [project, hold, handBack]),
+			putBack: useCallback(
+				async (tile: AgentTile) => {
+					const thread = threads.current.get(openRef.current);
+					if (thread === undefined || tile.source === undefined) return false;
+					const done = await putFrameBack(project, {
+						thread: thread.id,
+						frame: tile.frame,
+						source: tile.source,
+						...(tile.sidecar === undefined ? {} : { sidecar: tile.sidecar }),
+					});
+					if (!done) return false;
+					const live = thread.events.some(
+						({ event }) => event.kind === "frame" && event.change === "deleted" && event.frame === tile.frame,
+					);
+					// a running turn hears it from the daemon, down the stream everything else
+					// arrives on; one that is over hears it here, in the shape the daemon says it in
+					if (live && !thread.streaming) {
+						const at = thread.events.at(-1)?.at ?? 0;
+						thread.events.push({
+							at,
+							event: {
+								kind: "frame",
+								change: "restored",
+								frame: tile.frame,
+								lines: tile.lines,
+								call: null,
+								task: null,
+								parent: null,
+							},
+						});
+					} else if (!live) {
+						thread.before = thread.before.map((entry) =>
+							entry.kind !== "turn" ||
+							!entry.tiles.some((one) => one.key === tile.key && one.frame === tile.frame)
+								? entry
+								: {
+										...entry,
+										tiles: entry.tiles.map((one) => {
+											if (one.frame !== tile.frame || one.state !== "deleted") return one;
+											const { source: _source, sidecar: _sidecar, ...kept } = one;
+											return { ...kept, state: "done" as const };
+										}),
+									},
+						);
+					}
+					stirred(thread);
+					void save(thread);
+					redraw();
+					return true;
+				},
+				[project, save, redraw],
+			),
 			handback: here.handback,
 			// the stream writes it and no render is involved, which is the whole point of it
 			// being a question rather than a field (#234)

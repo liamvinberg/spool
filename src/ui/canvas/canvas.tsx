@@ -5049,10 +5049,22 @@ export function ProjectCanvas({
 	 * on every pointermove the camera takes. It changes when the frames do, which is the
 	 * only thing in it that is ever about to be different.
 	 */
+	const stills = useMemo(
+		() =>
+			new Map(
+				frames.flatMap(({ name, cover }) =>
+					cover === undefined ? [] : [[name, coverUrl(project, name, cover.hash)] as const],
+				),
+			),
+		[frames, project],
+	);
+	const putBack = turn.putBack;
 	const jump = useMemo<FrameJump>(
 		() => ({
 			have: reach.have,
 			gone: reach.gone,
+			stills,
+			onPutBack: putBack,
 			onPoint: setPointed,
 			onJump: (name) => {
 				// pointing was the question and landing is the answer, so the weaker mark
@@ -5061,7 +5073,7 @@ export function ProjectCanvas({
 				landOnFrame(name);
 			},
 		}),
-		[reach, landOnFrame],
+		[reach, landOnFrame, stills, putBack],
 	);
 
 	// --- keys -------------------------------------------------------------------

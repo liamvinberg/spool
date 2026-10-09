@@ -869,7 +869,7 @@ describe("one turn", () => {
 		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
 			"running",
 		);
-		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(1);
+		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait] .animate-agent-spin")).toHaveLength(1);
 	});
 
 	/** and it settles the moment there is something to read, which is what it was counting to */
@@ -887,7 +887,7 @@ describe("one turn", () => {
 		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
 			"done",
 		);
-		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(0);
+		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait] .animate-agent-spin")).toHaveLength(0);
 	});
 
 	/** while nothing has come back the mark turns, which is the whole of what it is for */
@@ -902,7 +902,7 @@ describe("one turn", () => {
 		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
 			"running",
 		);
-		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(1);
+		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait] .animate-agent-spin")).toHaveLength(1);
 		expect(log(canvas.host)).toContain("thinking");
 	});
 
@@ -1116,6 +1116,72 @@ describe("one turn", () => {
  * thing that makes it skimmable. The log follows the newest words until the reader
  * scrolls up to read earlier ones. */
 
+/**
+ * A turn's foot (#365): the frames the turn touched as a grid, and one status line that
+ * opens into every step. The steps are behind the line rather than in the log.
+ */
+describe("a turn's foot", () => {
+	it("draws the designers' frames, says how many are working, and ends with a receipt", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "two directions for hello");
+
+		canvas.turn.push(waiting);
+		canvas.turn.push({
+			kind: "task-started",
+			task: "t1",
+			call: "a1",
+			description: "Design hello-calm frame",
+			agent: "designer",
+			prompt: null,
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "spot",
+			state: "held",
+			name: "hello-calm",
+			task: "t1",
+			call: "a1",
+			x: 0,
+			y: 0,
+			w: 1440,
+			h: 900,
+			parent: null,
+		});
+		await settle();
+		const status = () => canvas.host.querySelector<HTMLButtonElement>("[data-agent-status]");
+		expect(canvas.host.querySelector('[data-agent-tile="hello-calm"]')?.getAttribute("data-agent-tile-state")).toBe(
+			"reading",
+		);
+		expect(status()?.textContent).toContain("1 designer working");
+		// the steps are behind the line until somebody opens it
+		expect(canvas.host.querySelector("[data-agent-steps]")?.getAttribute("data-agent-steps")).toBe("shut");
+		await act(async () => status()?.click());
+		expect(canvas.host.querySelector("[data-agent-steps]")?.getAttribute("data-agent-steps")).toBe("open");
+
+		canvas.turn.push({
+			kind: "frame",
+			change: "created",
+			frame: "hello-calm",
+			lines: 18,
+			call: "b1",
+			task: "t1",
+			spot: "hello-calm",
+			parent: "a1",
+		});
+		canvas.turn.push({ kind: "task-done", task: "t1", status: "completed", summary: null, parent: null });
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await until(() => status()?.getAttribute("data-agent-status") === "done");
+
+		expect(status()?.textContent).toMatch(/^Done in \d+s/);
+		expect(canvas.host.querySelector('[data-agent-tile="hello-calm"]')?.getAttribute("data-agent-tile-state")).toBe(
+			"done",
+		);
+	});
+});
+
 describe("a long message", () => {
 	it("renders as markdown, whole, and clamps nothing", async () => {
 		const canvas = mount();
@@ -1132,7 +1198,10 @@ describe("a long message", () => {
 		await until(() => canvas.host.querySelectorAll("[data-agent-log] pre").length === 2);
 
 		// the last entry rather than the log's last child: the queue's place follows it (#364)
-		const said = [...canvas.host.querySelectorAll("[data-agent-log] > div > [data-agent-arrive]")].at(-1);
+		// and above the turn's foot, which is the turn's last entry (#365)
+		const said = [...canvas.host.querySelectorAll("[data-agent-log] > div > [data-agent-arrive]")]
+			.filter((one) => one.querySelector("[data-agent-turn]") === null)
+			.at(-1);
 		if (!(said instanceof HTMLElement)) throw new Error("no message");
 		const chunks = chunksOf(DOCUMENT);
 		// every block of it is on screen: the whole message, nothing dropped
@@ -1954,9 +2023,11 @@ describe("a screenshot", () => {
  * animation needs: a grid cell that clips, with the padding inside it.
  */
 describe("a row opening", () => {
-	const arrivals = (host: HTMLElement) => [
-		...host.querySelectorAll<HTMLElement>("[data-agent-log] [data-agent-arrive]"),
-	];
+	/** every entry that opens, the turn's foot aside: its steps open inside it (#365) */
+	const arrivals = (host: HTMLElement) =>
+		[...host.querySelectorAll<HTMLElement>("[data-agent-log] [data-agent-arrive]")].filter(
+			(one) => one.querySelector("[data-agent-turn]") === null,
+		);
 	/** the cell that clips, and the padded content inside it */
 	const cellOf = (arrive: HTMLElement) => arrive.firstElementChild as HTMLElement;
 	const innerOf = (arrive: HTMLElement) => cellOf(arrive).firstElementChild as HTMLElement;
@@ -1984,7 +2055,8 @@ describe("a row opening", () => {
 		// the gap opens with the row rather than landing ahead of it: it is the padding of
 		// the content inside the clip, never a margin on the cell
 		expect(innerOf(words as HTMLElement).style.paddingTop).toBe("0px");
-		expect(innerOf(first as HTMLElement).style.paddingTop).toBe("14px");
+		// the first step is the first thing behind the status line, so nothing stands above it
+		expect(innerOf(first as HTMLElement).style.paddingTop).toBe("0px");
 		expect(innerOf(second as HTMLElement).style.paddingTop).toBe("6px");
 		for (const arrive of arrivals(canvas.host)) {
 			expect(arrive.style.marginTop).toBe("");

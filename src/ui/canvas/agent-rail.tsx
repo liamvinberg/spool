@@ -25,9 +25,11 @@ import {
 	type AgentPlan,
 	type AgentRow,
 	type AgentSent,
+	type AgentTile,
 	duration,
 	type RowState,
 } from "./agent-transcript";
+import { TurnFoot } from "./agent-turn-foot";
 import { ageOf } from "./frame-find";
 import { PaneActions, PaneTitle } from "./pane-window";
 import { ChevronIcon } from "./sidebar";
@@ -82,6 +84,10 @@ const MAX_H = 160;
 export interface FrameJump {
 	/** the frames the project has right now; a name outside this is not a place to go */
 	readonly have: ReadonlySet<string>;
+	/** each frame's still, where the canvas has one, for a turn's grid (#365) */
+	readonly stills?: ReadonlyMap<string, string>;
+	/** Put back a frame a turn deleted (#365); absent where nothing can */
+	readonly onPutBack?: (tile: AgentTile) => Promise<boolean>;
 	/** the frames it had and no longer has, which read as gone and do nothing */
 	readonly gone: ReadonlySet<string>;
 	/** the cursor is on a row naming this frame, or has left; answered out on the canvas */
@@ -1129,6 +1135,7 @@ function Transcript({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const view = useRef<HTMLDivElement>(null);
+	const laidOut = useMemo(() => turnLayout(entries), [entries]);
 	const [follow, setFollow] = useState(true);
 	/**
 	 * Whether the reader is somewhere the way-back chip has something to name, which is
@@ -1299,9 +1306,22 @@ function Transcript({
 				{/* `mt-auto` rather than `justify-end`: a flex container that end-justifies its
 				    overflow puts the top of it out of reach of the scrollbar */}
 				<div className="mt-auto shrink-0">
-					{entries.map((entry, index) => (
-						<Arrive key={entry.key} gap={gapBefore(entries[index - 1], entry)}>
-							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
+					{laidOut.map(({ entry, steps }, index) => (
+						<Arrive key={entry.key} gap={gapBefore(laidOut[index - 1]?.entry, entry)}>
+							{entry.kind === "turn" ? (
+								<TurnFoot
+									foot={entry}
+									elapsed={elapsed}
+									reach={jump}
+									steps={steps.map((step, at) => (
+										<Arrive key={step.key} gap={gapBefore(steps[at - 1], step)}>
+											<Entry entry={step} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
+										</Arrive>
+									))}
+								/>
+							) : (
+								<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
+							)}
 						</Arrive>
 					))}
 					{afterLog ? <div className="mt-5">{afterLog}</div> : null}
@@ -1343,6 +1363,34 @@ function Transcript({
  * happened where the agent only stopped to think.
  */
 const TIGHT: ReadonlySet<AgentEntry["kind"]> = new Set(["row", "wait"]);
+
+/**
+ * The log as a turn draws it (#365): the person's words, then what the agent said and asked,
+ * then the turn's foot, with the turn's rows and waits behind its status line rather than
+ * in the log. A turn a picture kept from before there was a foot has none, so its rows stay
+ * where they always were.
+ */
+export function turnLayout(entries: readonly AgentEntry[]): { entry: AgentEntry; steps: AgentEntry[] }[] {
+	const out: { entry: AgentEntry; steps: AgentEntry[] }[] = [];
+	let start = 0;
+	for (let at = 0; at <= entries.length; at += 1) {
+		const entry = entries[at];
+		if (entry !== undefined && entry.kind !== "user") continue;
+		// one turn: from its first words to the next turn's, or the end of the log
+		const turn = entries.slice(start, at);
+		const foot = turn.findIndex((one) => one.kind === "turn");
+		if (foot === -1) for (const one of turn) out.push({ entry: one, steps: [] });
+		else {
+			const steps = turn.filter((one) => one.kind === "row" || one.kind === "wait");
+			for (const one of turn) {
+				if (one.kind === "row" || one.kind === "wait") continue;
+				out.push({ entry: one, steps: one.kind === "turn" ? steps : [] });
+			}
+		}
+		start = at;
+	}
+	return out;
+}
 
 function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number {
 	if (previous === undefined) return 0;
@@ -1467,6 +1515,8 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
 	if (entry.kind === "wait") return <Wait entry={entry} elapsed={elapsed} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
+	// a foot draws through the log's own layout, which hands it its steps
+	if (entry.kind === "turn") return null;
 	return <Prose entry={entry} />;
 }, sameEntry);
 

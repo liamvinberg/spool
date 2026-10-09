@@ -1388,6 +1388,26 @@ export async function interruptAgentTurn(project: string, turn: string): Promise
 }
 
 /**
+ * Put back a frame a turn deleted (#365). The daemon writes it back from the source the
+ * turn kept, and from the rail's own copy where it no longer holds the turn. False is a
+ * refusal: a frame already stands there again, or nothing was kept.
+ */
+export async function putFrameBack(
+	project: string,
+	back: { thread: string; frame: string; source?: string; sidecar?: string },
+): Promise<boolean> {
+	try {
+		const res = await client.api.p[":project"].agent["put-back"].$post({
+			param: { project },
+			json: { thread: back.thread, frame: back.frame, source: back.source, sidecar: back.sidecar ?? null },
+		});
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Every thread this project has, as spool wrote them down (#120, #136, #200).
  *
  * The picture is the whole of it, so this is the rail's own drawing coming back rather

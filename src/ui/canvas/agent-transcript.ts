@@ -218,7 +218,56 @@ export interface AgentPlan {
 	readonly tasks: readonly AgentPlanTask[];
 }
 
+/**
+ * What is happening to one frame a turn touched, as the turn's grid draws it (#365).
+ *
+ * - `reading`: a designer is at work on it and nothing of it exists yet: the spot held for it.
+ * - `drawing`: its source is streaming in and it is not on disk yet; `lines` counts it.
+ * - `fresh`: it just landed, and the call or designer that made it is still going.
+ * - `editing`: a change just landed in it; `range` is the lines that moved.
+ * - `done`: nothing is happening to it.
+ * - `deleted`: the turn deleted it, and `source` is what Put back writes back.
+ */
+export type TileState = "reading" | "drawing" | "fresh" | "editing" | "done" | "deleted";
+
+export interface AgentTile {
+	readonly key: string;
+	/** the frame's path, or the name of the spot held for it until it lands */
+	readonly frame: string;
+	readonly state: TileState;
+	readonly lines: number;
+	/** whose take it is, in the delegation's own words; null for the agent's own frame */
+	readonly by: string | null;
+	readonly range: { readonly from: number; readonly to: number } | null;
+	/** how long the designer that made it took, once it has landed */
+	readonly took: number | null;
+	readonly source?: string;
+	readonly sidecar?: string;
+}
+
+/**
+ * The foot of a turn: the frames it touched and its one status line (#365).
+ *
+ * An entry rather than a field because a turn's foot outlives the turn: the conversation
+ * keeps every turn's grid and its `Done in` receipt, and an entry is what a stored picture
+ * keeps. The steps behind the status line are the turn's own rows and waits, which the
+ * rail draws behind it rather than in the log.
+ */
+export interface AgentTurnFoot {
+	readonly key: string;
+	readonly kind: "turn";
+	readonly tiles: readonly AgentTile[];
+	/** what is true right now, in plain words; null once over, and while nothing has happened */
+	readonly status: string | null;
+	/** the agent is between calls: the request is out and nothing has come back yet */
+	readonly thinking: boolean;
+	/** how long the turn took, once over; null while it runs and the rail's clock counts */
+	readonly ms: number | null;
+	readonly ending: "done" | "stopped" | "failed" | null;
+}
+
 export type AgentEntry =
+	| AgentTurnFoot
 	/**
 	 * What the human said, in the log the instant they said it — and under it, what
 	 * was sent with the words (#116).
@@ -354,7 +403,7 @@ export type AgentEntry =
 	  };
 
 /** every kind the union has, as the one runtime list of it (see `drawableEntries`) */
-const KINDS: ReadonlySet<string> = new Set(["user", "prose", "row", "wait", "ask", "note"]);
+const KINDS: ReadonlySet<string> = new Set(["user", "prose", "row", "wait", "ask", "note", "turn"]);
 
 /**
  * Entries from outside this fold, as things this rail can draw (#120, #200).
@@ -394,8 +443,33 @@ export function settledPicture(entries: readonly AgentEntry[]): AgentEntry[] {
 	return entries.map((entry) => {
 		if (entry.kind === "prose" && !entry.settled) return { ...entry, settled: true };
 		if (entry.kind === "wait" && entry.state === "running") return { ...entry, state: "stopped" as const };
+		if (entry.kind === "turn") return settledFoot(entry);
 		return entry;
 	});
+}
+
+/**
+ * A turn's foot with nothing still happening to it: a frame that never landed is not one
+ * the turn made, and one that did is done. A foot that reached disk with no ending is a
+ * turn the lights went out on, so it reads stopped.
+ */
+function settledFoot(foot: AgentTurnFoot): AgentTurnFoot {
+	const tiles = foot.tiles
+		.filter((tile) => tile.state !== "reading" && tile.state !== "drawing")
+		.map((tile) => (tile.state === "fresh" || tile.state === "editing" ? { ...tile, state: "done" as const } : tile));
+	return { ...foot, tiles, status: null, thinking: false, ending: foot.ending ?? "stopped" };
+}
+
+/**
+ * A turn's entries with its foot in them, where the rail draws it: under everything the
+ * turn said and did, and above the note that ended it.
+ */
+export function footed(transcript: Pick<Transcript, "entries" | "foot">): AgentEntry[] {
+	const { entries, foot } = transcript;
+	if (foot === null) return [...entries];
+	let at = entries.length;
+	while (at > 0 && entries[at - 1]?.kind === "note") at -= 1;
+	return [...entries.slice(0, at), foot, ...entries.slice(at)];
 }
 
 /** one event and the millisecond it reached the client, measured from the send */
@@ -406,6 +480,12 @@ export interface Stamped {
 
 export interface Transcript {
 	readonly entries: readonly AgentEntry[];
+	/**
+	 * The turn's foot: its frames and its status line (#365), or null before anything has
+	 * come back. Apart from the entries so the log's own rules read without it; what draws
+	 * a turn puts it in with `footed`.
+	 */
+	readonly foot: AgentTurnFoot | null;
 	/** the plan the turn wrote, or null until it writes one — most turns never do */
 	readonly plan: AgentPlan | null;
 	/** the turn is over: nothing more is coming down this stream */
@@ -439,6 +519,21 @@ export interface Transcript {
 	 * the array's length: the same events give the same list every tick.
 	 */
 	readonly writes: readonly AgentWrite[];
+}
+
+/** a tile while the fold is still writing it, with what it was attributed to */
+interface Tile {
+	key: string;
+	frame: string;
+	state: TileState;
+	lines: number;
+	by: string | null;
+	range: { from: number; to: number } | null;
+	took: number | null;
+	source?: string;
+	sidecar?: string;
+	call: string | null;
+	task: string | null;
 }
 
 interface Prose {
@@ -570,7 +665,16 @@ function settledBy(result: Extract<AgentEvent, { kind: "result" }>): RowState {
  * union gains later is a word until somebody says otherwise, which is the safe way
  * round.
  */
-const DELEGATED: ReadonlySet<AgentEvent["kind"]> = new Set(["call", "call-input", "called", "result"]);
+const DELEGATED: ReadonlySet<AgentEvent["kind"]> = new Set([
+	"call",
+	"call-input",
+	"called",
+	"result",
+	// the frames a delegate touches are the turn's frames (#365)
+	"frame",
+	"frame-source",
+	"spot",
+]);
 
 /**
  * The events that mean the request came back.
@@ -660,6 +764,12 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const plans = new Map<string, { row: Row; tasks: PlanTask[] }>();
 	/** the project the agent is standing in, so a path behind a disclosure is relative */
 	let root = "";
+	/** every frame the turn touched, in the order it first touched them (#365) */
+	const tiles = new Map<string, Tile>();
+	/** every delegation the turn started, by its task */
+	const tasks = new Map<string, { description: string | null; agent: string | null; at: number; done: boolean }>();
+	/** the turn's ending, as the wire said it */
+	let ending: AgentTurnFoot["ending"] = null;
 
 	/** the request being answered: block indexes reset with it, so keys carry it */
 	let message = 0;
@@ -926,6 +1036,30 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		return block;
 	};
 
+	/** the frame's tile, opened the first time the turn touches it (#365) */
+	const tileOf = (frame: string, parent: string | null, task: string | null = null): Tile => {
+		const known = tiles.get(frame);
+		if (known !== undefined) return known;
+		const delegated = task ?? (parent === null ? null : (taskOfCall(parent) ?? null));
+		const made: Tile = {
+			key: `tile:${frame}`,
+			frame,
+			state: "done",
+			lines: 0,
+			by: delegated === null ? null : (tasks.get(delegated)?.description ?? null),
+			range: null,
+			took: null,
+			call: null,
+			task: delegated,
+		};
+		tiles.set(frame, made);
+		return made;
+	};
+	const taskOfCall = (call: string): string | undefined => {
+		for (const [task, by] of taskCalls) if (by === call) return task;
+		return undefined;
+	};
+
 	/**
 	 * The stream is over, so nothing that had not landed ever will.
 	 *
@@ -945,6 +1079,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * never arrives (#149).
 	 */
 	const finish = () => {
+		// nothing is happening to any frame now: one that never landed was not made
+		for (const [name, tile] of tiles) {
+			if (tile.state === "reading" || tile.state === "drawing") tiles.delete(name);
+			else if (tile.state === "fresh" || tile.state === "editing") tile.state = "done";
+		}
 		if (outstanding !== null) {
 			outstanding.ms = Math.max(0, last - outstanding.at);
 			outstanding.state = "stopped";
@@ -1156,6 +1295,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 */
 				const waited = asks.get(askOf.get(event.id) ?? "");
 				if (waited !== undefined && unanswered(waited)) waited.state = "dropped";
+				// the agent's own call that made a frame is over, so the frame is at rest (#365)
+				for (const tile of tiles.values())
+					if (tile.task === null && tile.call === event.id && (tile.state === "fresh" || tile.state === "editing"))
+						tile.state = "done";
 				const block = calls.get(event.id);
 				if (block === undefined) break;
 				/*
@@ -1222,6 +1365,18 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// the start is what ties the two together — but a step names its call as well,
 				// and a stream that opened mid-delegation never saw the start
 				if (event.kind !== "task-done" && event.call !== null) taskCalls.set(event.task, event.call);
+				if (event.kind === "task-started")
+					tasks.set(event.task, { description: event.description, agent: event.agent, at, done: false });
+				if (event.kind === "task-done") {
+					const task = tasks.get(event.task);
+					if (task !== undefined) task.done = true;
+					// a designer that reported back is done with its frames, and says how long it took
+					for (const tile of tiles.values()) {
+						if (tile.task !== event.task) continue;
+						if (tile.state === "fresh" || tile.state === "editing") tile.state = "done";
+						if (task !== undefined) tile.took = at - task.at;
+					}
+				}
 				const call = taskCalls.get(event.task);
 				const row = call === undefined ? null : (calls.get(call)?.row ?? null);
 				if (row === null) break;
@@ -1239,6 +1394,55 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				if (event.kind === "task-done") {
 					row.step = null;
 					if (event.status === "completed") row.state = "done";
+				}
+				break;
+			}
+			case "frame-source": {
+				const tile = tileOf(event.frame, event.parent);
+				if (
+					tile.state === "done" ||
+					tile.state === "reading" ||
+					tile.state === "drawing" ||
+					tile.state === "deleted"
+				) {
+					tile.state = "drawing";
+					tile.lines = event.lines;
+				}
+				tile.call = event.call;
+				break;
+			}
+			case "frame": {
+				const tile = tileOf(event.spot ?? event.frame, event.parent, event.task);
+				if (event.spot !== undefined && event.spot !== event.frame) {
+					tiles.delete(event.spot);
+					tile.key = `tile:${event.frame}`;
+					tiles.set(event.frame, tile);
+				}
+				tile.frame = event.frame;
+				tile.call = event.call;
+				tile.lines = event.lines;
+				if (event.change === "deleted") {
+					tile.state = "deleted";
+					tile.range = null;
+					if (event.source !== undefined) tile.source = event.source;
+					if (event.sidecar !== undefined) tile.sidecar = event.sidecar;
+					break;
+				}
+				delete tile.source;
+				delete tile.sidecar;
+				if (event.change === "restored") tile.state = "done";
+				else tile.state = event.change === "changed" ? "editing" : "fresh";
+				tile.range = event.range ?? null;
+				break;
+			}
+			case "spot": {
+				if (event.state === "held") {
+					const tile = tileOf(event.name, event.parent, event.task);
+					tile.state = "reading";
+				}
+				if (event.state === "released") {
+					const tile = tiles.get(event.name);
+					if (tile !== undefined && tile.state === "reading") tiles.delete(event.name);
 				}
 				break;
 			}
@@ -1326,6 +1530,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			case "ended": {
 				over = true;
 				ended = true;
+				ending = event.ending;
 				recovering = Boolean(event.recovery);
 				finish();
 				if (event.ending === "stopped") notes.push({ key: "end", kind: "note", text: "stopped" });
@@ -1374,6 +1579,31 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				break;
 		}
 	}
+
+	/**
+	 * The turn's one line, in plain words (#365): how many designers are working while any
+	 * are, and otherwise the step the agent is on, which is never a bare "thinking".
+	 */
+	const statusOf = (): string | null => {
+		const all = [...tasks.values()];
+		const working = all.filter((task) => !task.done).length;
+		if (working > 0) {
+			const designers = all.every((task) => task.agent === "designer");
+			const noun = (n: number) => (designers ? (n === 1 ? "designer" : "designers") : n === 1 ? "agent" : "agents");
+			const done = all.length - working;
+			return `${working} ${noun(working)} working${done > 0 ? `, ${done} done` : ""}`;
+		}
+		const drawing = [...tiles.values()].reverse().find((tile) => tile.state === "drawing" && tile.task === null);
+		if (drawing !== undefined)
+			return `Drawing ${drawing.frame} · ${drawing.lines} ${drawing.lines === 1 ? "line" : "lines"}`;
+		const own = order.filter((slot) => slot.kind === "row").map((slot) => rows.get(slot.key));
+		const step =
+			own.reverse().find((row) => row !== undefined && row.state === "running") ??
+			own.find((row) => row !== undefined);
+		if (step === undefined) return null;
+		const words = step.subject === null ? step.verb : `${step.verb} ${step.subject}`;
+		return words.charAt(0).toUpperCase() + words.slice(1);
+	};
 
 	/** one row and, under it, whatever the delegate it launched has done so far */
 	const rowOf = (key: string): AgentRow | null => {
@@ -1459,5 +1689,23 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					tasks: written,
 				};
 	const parked = [...asks.values()].find((ask) => ask.state === "open")?.request ?? null;
-	return { entries: [...entries, ...notes], plan: planned, over, asking: parked, limit, writes };
+	const foot: AgentTurnFoot = {
+		key: "turn",
+		kind: "turn",
+		tiles: [...tiles.values()].map(({ call: _call, task: _task, ...tile }) => tile),
+		status: over ? null : statusOf(),
+		thinking: !over && outstanding !== null,
+		ms: over ? last : null,
+		ending: over ? (ending ?? (recovering ? "failed" : "done")) : null,
+	};
+	return {
+		entries: [...entries, ...notes],
+		// a turn nothing has come back from yet has no foot to draw
+		foot: seen.length === 0 ? null : foot,
+		plan: planned,
+		over,
+		asking: parked,
+		limit,
+		writes,
+	};
 }
