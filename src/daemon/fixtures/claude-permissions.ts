@@ -1,5 +1,14 @@
 import { type FakeAgentProc, fixtureAgentExecutor } from "../../test-helpers";
-import { orderQuestion } from "./bundled-question";
+
+/** one question with two answers, as the agent asks it */
+export const orderQuestion = {
+	header: "Order number",
+	question: "Where should the order number go?",
+	options: [
+		{ label: "Under the confirmation", description: "Keep the receipt centered." },
+		{ label: "Beside the total", description: "Group the order details together." },
+	],
+};
 
 /** A deterministic Claude wire peer, retaining the real adapter and live turn. */
 export function permissionClaude() {
@@ -142,7 +151,11 @@ export function permissionClaude() {
 				);
 			}
 		},
-		(proc) => proc.exit(0),
+		(proc) => {
+			// asked `claude auth status --json`, as the agent menu asks of an agent it is not on (#364)
+			if (proc.spawn.args[0] === "auth") proc.emit(JSON.stringify({ loggedIn: true }));
+			proc.exit(0);
+		},
 	);
 	return {
 		...fixture,

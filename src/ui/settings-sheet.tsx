@@ -28,7 +28,7 @@ import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 /**
  * The settings sheet (#282): everything a person is allowed to change, drawn
  * from the registry and written through it. Opens the way the shortcut sheet
- * opens, from the cog at the foot of the right rail or ⌘,, and goes on esc.
+ * opens, from the cog in the window bar or ⌘,, and goes on esc.
  *
  * Nothing about a setting is typed twice here. A row is its entry's label, its
  * `says` under it, and the control its shape names, so a new registry entry is
@@ -143,7 +143,6 @@ function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) =>
 /** The bands, in the order a person reads them: nearest reach first. */
 const BANDS: readonly { scope: SettingScope; name: string; file: string; note?: string }[] = [
 	{ scope: "project", name: "This project", file: "design/canvas.json" },
-	{ scope: "local", name: "This project, on this machine", file: "~/.spool/registry.json" },
 	{ scope: "machine", name: "This machine", file: "~/.spool/config.json" },
 ];
 

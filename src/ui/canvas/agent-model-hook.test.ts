@@ -15,7 +15,6 @@ const offer = (engine: AgentEngineId): AgentOffer => ({
 			resolvedModel: engine,
 			displayName: engine === "claude" ? "Fable" : "Astra",
 			description: "",
-			...(engine === "spool" ? { connection: "ChatGPT" } : {}),
 		},
 	],
 	current: { value: engine, name: null, resolved: null, effort: null, pin: null },
@@ -46,14 +45,14 @@ it("clears another agent's offer immediately and ignores a late choice from that
 	await act(async () => host.querySelector("button")?.click());
 	const nextOffer = deferred();
 	vi.mocked(agentModelOffer).mockReturnValue(nextOffer.promise);
-	await act(async () => root.render(createElement(Harness, { engine: "spool" })));
+	await act(async () => root.render(createElement(Harness, { engine: "pi" })));
 	expect(host.textContent).not.toContain("Fable");
 	expect(host.querySelector("button")?.getAttribute("aria-busy")).toBe("true");
-	await act(async () => nextOffer.resolve(offer("spool")));
-	expect(host.textContent).toContain("ChatGPT");
+	await act(async () => nextOffer.resolve(offer("pi")));
+	expect(host.textContent).toContain("Astra");
 	expect(host.querySelector("button")?.getAttribute("aria-busy")).toBe("false");
 	await act(async () => pending.resolve(offer("claude")));
-	expect(host.textContent).toContain("ChatGPT");
+	expect(host.textContent).toContain("Astra");
 	expect(host.textContent).not.toContain("Fable");
 });
 

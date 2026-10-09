@@ -49,13 +49,13 @@ const runnable: Look = (path) => {
  * report an agent as missing on a machine that has one, which is the one answer this
  * must never invent.
  */
-function candidates(env: Readonly<Record<string, string | undefined>>): readonly string[] {
-	if (process.platform !== "win32") return [AGENT_COMMAND];
+function candidates(env: Readonly<Record<string, string | undefined>>, command: string): readonly string[] {
+	if (process.platform !== "win32") return [command];
 	const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
 		.split(";")
 		.map((ext) => ext.trim())
 		.filter((ext) => ext !== "");
-	return [AGENT_COMMAND, ...exts.map((ext) => `${AGENT_COMMAND}${ext.toLowerCase()}`)];
+	return [command, ...exts.map((ext) => `${command}${ext.toLowerCase()}`)];
 }
 
 /**
@@ -69,16 +69,29 @@ function candidates(env: Readonly<Record<string, string | undefined>>): readonly
  * `look` is a seam for the same reason the executor is one — a test says what this
  * machine has rather than depending on what the machine running it happens to have.
  */
-export function agentInstalled(env: Readonly<Record<string, string | undefined>>, look: Look = runnable): boolean {
-	const names = candidates(env);
+export function agentInstalled(
+	env: Readonly<Record<string, string | undefined>>,
+	/** the bare name the engine spawns */
+	command: string,
+	look: Look = runnable,
+): boolean {
+	return agentPath(env, command, look) !== undefined;
+}
+
+/** The path a bare command resolves to on this PATH, the first one a shell would run. */
+function agentPath(env: Readonly<Record<string, string | undefined>>, command: string, look: Look): string | undefined {
+	const names = candidates(env, command);
 	for (const dir of (env.PATH ?? "").split(delimiter)) {
 		// an empty entry means the working directory to a shell, and spool is not a shell:
 		// resolving a bare command name against the project root would make a `claude` file
 		// somebody committed into a repo the thing spool spawns
 		if (dir === "") continue;
-		for (const name of names) if (look(join(dir, name))) return true;
+		for (const name of names) {
+			const path = join(dir, name);
+			if (look(path)) return path;
+		}
 	}
-	return false;
+	return undefined;
 }
 
 /**
@@ -92,7 +105,6 @@ export function agentInstalled(env: Readonly<Record<string, string | undefined>>
  */
 export interface AgentLogin {
 	readonly signedIn: boolean;
-	readonly connections?: readonly { provider: string; method: "oauth" | "api_key"; label: string }[];
 	readonly account: string | null;
 }
 

@@ -1,0 +1,509 @@
+[
+	{
+		"in": {
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"clientInfo": {
+					"name": "spool",
+					"title": "Spool",
+					"version": "0.33.1"
+				},
+				"capabilities": {
+					"experimentalApi": false,
+					"requestAttestation": false,
+					"optOutNotificationMethods": [
+						"mcpServer/startupStatus/updated",
+						"remoteControl/status/changed",
+						"turn/diff/updated",
+						"item/reasoning/summaryTextDelta",
+						"item/reasoning/summaryPartAdded",
+						"item/reasoning/textDelta",
+						"item/commandExecution/outputDelta",
+						"item/fileChange/outputDelta"
+					]
+				}
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 1,
+			"result": {
+				"userAgent": "spool/0.161.0 (Ubuntu 24.4.0; x86_64) unknown (spool; 0.33.1)",
+				"codexHome": "/home/user/.codex",
+				"platformFamily": "unix",
+				"platformOs": "linux"
+			}
+		}
+	},
+	{
+		"in": {
+			"method": "initialized"
+		}
+	},
+	{
+		"in": {
+			"id": 2,
+			"method": "account/read",
+			"params": {}
+		}
+	},
+	{
+		"out": {
+			"method": "account/updated",
+			"params": {
+				"authMode": "chatgpt",
+				"planType": "free"
+			},
+			"emittedAtMs": 1791490767695
+		}
+	},
+	{
+		"out": {
+			"id": 2,
+			"result": {
+				"account": {
+					"type": "chatgpt",
+					"email": "you@example.com",
+					"planType": "free"
+				},
+				"requiresOpenaiAuth": true,
+				"workspaceRouting": {
+					"chatgptAccountId": "00000000-0000-4000-8000-000000000000",
+					"backendOrigin": "https://chatgpt.com",
+					"accountRoutingOverride": "NO_CONSTRAINT"
+				}
+			}
+		}
+	},
+	{
+		"in": {
+			"id": 5,
+			"method": "config/read",
+			"params": {
+				"cwd": "$ROOT"
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 5,
+			"result": {
+				"config": {
+					"developer_instructions": null
+				},
+				"origins": {}
+			}
+		}
+	},
+	{
+		"in": {
+			"id": 3,
+			"method": "thread/resume",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"excludeTurns": true,
+				"cwd": "$ROOT",
+				"approvalPolicy": "on-request",
+				"sandbox": "workspace-write",
+				"model": "gpt-5.6-luna"
+			}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/status/changed",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"status": {
+					"type": "idle"
+				}
+			},
+			"emittedAtMs": 1791490768004
+		}
+	},
+	{
+		"out": {
+			"id": 3,
+			"result": {
+				"thread": {
+					"id": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+					"environments": [
+						{
+							"environmentId": "local",
+							"cwd": "$ROOT",
+							"runtimeWorkspaceRoots": [
+								"$ROOT"
+							]
+						}
+					],
+					"extra": null,
+					"sessionId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+					"forkedFromId": null,
+					"parentThreadId": null,
+					"preview": "Run the shell command `ls design` and then reply with the single word ready.",
+					"ephemeral": false,
+					"section": null,
+					"sectionEnteredAt": null,
+					"projectId": null,
+					"historyMode": "paginated",
+					"modelProvider": "openai",
+					"model": "gpt-5.6-luna",
+					"reasoningEffort": null,
+					"createdAt": 1791490741,
+					"updatedAt": 1791490767,
+					"recencyAt": 1791490751,
+					"status": {
+						"type": "idle"
+					},
+					"path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T22-19-01-01a11d2b-553f-7da3-89cb-38d1d8daef8c.jsonl",
+					"cwd": "$ROOT",
+					"cliVersion": "0.161.0",
+					"originator": "spool",
+					"source": "vscode",
+					"canAcceptDirectInput": true,
+					"threadSource": null,
+					"agentNickname": null,
+					"agentRole": null,
+					"gitInfo": null,
+					"name": null,
+					"daybreakEnabled": null,
+					"turns": []
+				},
+				"model": "gpt-5.6-luna",
+				"modelProvider": "openai",
+				"serviceTier": null,
+				"disabledPluginIds": [],
+				"cwd": "$ROOT",
+				"runtimeWorkspaceRoots": [
+					"$ROOT"
+				],
+				"instructionSources": [],
+				"approvalPolicy": "on-request",
+				"approvalsReviewer": "user",
+				"sandbox": {
+					"type": "workspaceWrite",
+					"writableRoots": [],
+					"networkAccess": true,
+					"excludeTmpdirEnvVar": false,
+					"excludeSlashTmp": false
+				},
+				"activePermissionProfile": null,
+				"reasoningEffort": null,
+				"collaborationMode": {
+					"mode": "default",
+					"settings": {
+						"model": "gpt-5.6-luna",
+						"reasoning_effort": null,
+						"developer_instructions": null
+					}
+				},
+				"multiAgentMode": "explicitRequestOnly",
+				"initialTurnsPage": null,
+				"turnsBackwardsCursor": "{\"requestedThreadId\":\"01a11d2b-553f-7da3-89cb-38d1d8daef8c\",\"rolloutOrdinal\":22,\"includeAnchor\":true,\"scope\":{\"kind\":\"turns\"}}",
+				"itemsBackwardsCursor": "{\"requestedThreadId\":\"01a11d2b-553f-7da3-89cb-38d1d8daef8c\",\"rolloutOrdinal\":26,\"includeAnchor\":true,\"scope\":{\"kind\":\"itemsByCreatedAtOrdinal\"}}"
+			}
+		}
+	},
+	{
+		"in": {
+			"id": 4,
+			"method": "turn/start",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"input": [
+					{
+						"type": "text",
+						"text": "Which single word did you reply with last time? Answer with just that word.",
+						"text_elements": []
+					}
+				],
+				"effort": "low"
+			}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/tokenUsage/updated",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-7a32-75f2-a495-a4640659cee2",
+				"tokenUsage": {
+					"total": {
+						"totalTokens": 47238,
+						"inputTokens": 47158,
+						"cachedInputTokens": 39168,
+						"cacheWriteInputTokens": 0,
+						"outputTokens": 80,
+						"reasoningOutputTokens": 10
+					},
+					"last": {
+						"totalTokens": 15774,
+						"inputTokens": 15769,
+						"cachedInputTokens": 15104,
+						"cacheWriteInputTokens": 0,
+						"outputTokens": 5,
+						"reasoningOutputTokens": 0
+					},
+					"modelContextWindow": 258400
+				}
+			},
+			"emittedAtMs": 1791490768011
+		}
+	},
+	{
+		"out": {
+			"method": "thread/goal/cleared",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c"
+			},
+			"emittedAtMs": 1791490768011
+		}
+	},
+	{
+		"out": {
+			"id": 4,
+			"result": {
+				"turn": {
+					"id": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+					"items": [],
+					"itemsView": "notLoaded",
+					"status": "inProgress",
+					"error": null,
+					"startedAt": null,
+					"completedAt": null,
+					"durationMs": null
+				}
+			}
+		}
+	},
+	{
+		"out": {
+			"method": "thread/status/changed",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"status": {
+					"type": "active",
+					"activeFlags": []
+				}
+			},
+			"emittedAtMs": 1791490768056
+		}
+	},
+	{
+		"out": {
+			"method": "turn/started",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turn": {
+					"id": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+					"items": [],
+					"itemsView": "notLoaded",
+					"status": "inProgress",
+					"error": null,
+					"startedAt": 1791490768,
+					"completedAt": null,
+					"durationMs": null
+				}
+			},
+			"emittedAtMs": 1791490768056
+		}
+	},
+	{
+		"out": {
+			"method": "item/started",
+			"params": {
+				"item": {
+					"type": "userMessage",
+					"id": "01a11d2b-c20f-74a0-82c3-861b846a5914",
+					"clientId": null,
+					"content": [
+						{
+							"type": "text",
+							"text": "Which single word did you reply with last time? Answer with just that word.",
+							"text_elements": []
+						}
+					]
+				},
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+				"startedAtMs": 1791490769425
+			},
+			"emittedAtMs": 1791490769425
+		}
+	},
+	{
+		"out": {
+			"method": "item/completed",
+			"params": {
+				"item": {
+					"type": "userMessage",
+					"id": "01a11d2b-c20f-74a0-82c3-861b846a5914",
+					"clientId": null,
+					"content": [
+						{
+							"type": "text",
+							"text": "Which single word did you reply with last time? Answer with just that word.",
+							"text_elements": []
+						}
+					]
+				},
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+				"completedAtMs": 1791490769425
+			},
+			"emittedAtMs": 1791490769439
+		}
+	},
+	{
+		"out": {
+			"method": "item/started",
+			"params": {
+				"item": {
+					"type": "agentMessage",
+					"id": "msg_005660313cba4df6016ac7fad243bc81919b35c3191fc9735e",
+					"text": "",
+					"phase": "final_answer",
+					"memoryCitation": null,
+					"delivery": null,
+					"questions": null
+				},
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+				"startedAtMs": 1791490770298
+			},
+			"emittedAtMs": 1791490770299
+		}
+	},
+	{
+		"out": {
+			"method": "item/agentMessage/delta",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+				"itemId": "msg_005660313cba4df6016ac7fad243bc81919b35c3191fc9735e",
+				"delta": "ready"
+			},
+			"emittedAtMs": 1791490770299
+		}
+	},
+	{
+		"out": {
+			"method": "item/completed",
+			"params": {
+				"item": {
+					"type": "agentMessage",
+					"id": "msg_005660313cba4df6016ac7fad243bc81919b35c3191fc9735e",
+					"text": "ready",
+					"phase": "final_answer",
+					"memoryCitation": null,
+					"delivery": null,
+					"questions": null
+				},
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+				"completedAtMs": 1791490770298
+			},
+			"emittedAtMs": 1791490770325
+		}
+	},
+	{
+		"out": {
+			"method": "thread/tokenUsage/updated",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turnId": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+				"tokenUsage": {
+					"total": {
+						"totalTokens": 63039,
+						"inputTokens": 62954,
+						"cachedInputTokens": 54272,
+						"cacheWriteInputTokens": 0,
+						"outputTokens": 85,
+						"reasoningOutputTokens": 10
+					},
+					"last": {
+						"totalTokens": 15801,
+						"inputTokens": 15796,
+						"cachedInputTokens": 15104,
+						"cacheWriteInputTokens": 0,
+						"outputTokens": 5,
+						"reasoningOutputTokens": 0
+					},
+					"modelContextWindow": 258400
+				}
+			},
+			"emittedAtMs": 1791490770436
+		}
+	},
+	{
+		"out": {
+			"method": "account/rateLimits/updated",
+			"params": {
+				"rateLimits": {
+					"limitId": "codex",
+					"limitName": null,
+					"normalModelSlug": null,
+					"primary": {
+						"usedPercent": 100,
+						"windowDurationMins": 43200,
+						"resetsAt": 1793807958
+					},
+					"secondary": null,
+					"credits": {
+						"hasCredits": true,
+						"unlimited": false,
+						"balance": "62489.9673210000"
+					},
+					"individualLimit": null,
+					"spendControlReached": null,
+					"planType": "free",
+					"rateLimitReachedType": null
+				}
+			},
+			"emittedAtMs": 1791490770436
+		}
+	},
+	{
+		"out": {
+			"method": "thread/status/changed",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"status": {
+					"type": "idle"
+				}
+			},
+			"emittedAtMs": 1791490770545
+		}
+	},
+	{
+		"out": {
+			"method": "turn/completed",
+			"params": {
+				"threadId": "01a11d2b-553f-7da3-89cb-38d1d8daef8c",
+				"turn": {
+					"id": "01a11d2b-bc94-7740-b3f4-fa0e710905b5",
+					"items": [
+						{
+							"type": "agentMessage",
+							"id": "msg_005660313cba4df6016ac7fad243bc81919b35c3191fc9735e",
+							"text": "ready",
+							"phase": "final_answer",
+							"memoryCitation": null,
+							"delivery": null,
+							"questions": null
+						}
+					],
+					"itemsView": "summary",
+					"status": "completed",
+					"error": null,
+					"startedAt": 1791490768,
+					"completedAt": 1791490770,
+					"durationMs": 2446
+				}
+			},
+			"emittedAtMs": 1791490770545
+		}
+	}
+]

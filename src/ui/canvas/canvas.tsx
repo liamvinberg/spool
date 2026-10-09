@@ -32,7 +32,6 @@ import {
 	coverUrl,
 	daemonShares,
 	fetchCanvasState,
-	fetchEnginePreference,
 	fetchFlows,
 	fetchProjection,
 	type MoveAsk,
@@ -45,7 +44,6 @@ import {
 	putPlaces,
 	putPresence,
 	putSelection,
-	putSetting,
 	readRungs,
 	resolveFlows,
 	revertPatch,
@@ -64,15 +62,20 @@ import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { SHARES_CHANGED, useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
-import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
-import { AgentHandLayer } from "./agent-hand-layer";
+import { type AskEntry, waitingAsk } from "./agent-ask-view";
+import { CanvasAsk } from "./agent-canvas-ask";
+import { AgentCompanionLayer } from "./agent-companion-layer";
+import { useAgentDefaults } from "./agent-defaults";
+import { type ArmedWrite, rangeKeyOf, useLocatedMarks } from "./agent-hand";
 import { useAgentModel } from "./agent-model";
+import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
+import { BarEnd } from "./bar-end";
 import { BootCurtain } from "./boot-screen";
 import { frameScheme, framesOnScreen } from "./booth-view";
 import {
@@ -199,7 +202,6 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
-import { RailFoot } from "./rail-foot";
 import { setAsideAsk, useSetAside } from "./set-aside";
 import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
@@ -578,31 +580,12 @@ export function ProjectCanvas({
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
-	const [preferredEngine, setPreferredEngine] = useState<AgentEngineId>("spool");
-	const [engineLoaded, setEngineLoaded] = useState(false);
-	const enginePreferenceVersion = useRef(0);
-	useEffect(() => {
-		let live = true;
-		const version = ++enginePreferenceVersion.current;
-		void fetchEnginePreference(project).then((engine) => {
-			if (live && version === enginePreferenceVersion.current) {
-				setPreferredEngine(engine);
-				setEngineLoaded(true);
-			}
-		});
-		return () => {
-			live = false;
-		};
-	}, [project]);
-	const rememberEngine = (engine: AgentEngineId) => {
-		setEngineLoaded(true);
-		enginePreferenceVersion.current += 1;
-		setPreferredEngine(engine);
-		void putSetting("agent.engine", engine, project);
-	};
+	// the machine's agent choice (#361): nothing agent-shaped is drawn until it has loaded
+	const agentDefaults = useAgentDefaults(project);
+	const preferredEngine = agentDefaults.engine ?? undefined;
 	const deck = useAgentThreads(project, preferredEngine, root);
 	const turn = deck.turn;
-	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
+	const permissions = useAgentPermissions(project, deck.open, turn.phase, agentDefaults.mode);
 	/**
 	 * A set-aside mark's Hand to agent: one press is a turn on the open thread, or the next one
 	 * if a turn is running, with both sides of the file. The rail opens on it. Where the rail has
@@ -634,10 +617,12 @@ export function ProjectCanvas({
 	const model = {
 		...offeredModel,
 		started: turn.entries.length > 0,
-		onEngine: (engine: AgentEngineId) => {
-			deck.chooseEngine(engine);
-			rememberEngine(engine);
-		},
+		// saved before the menu moves: the blank chat then follows the confirmed choice
+		onEngine: (engine: AgentEngineId) =>
+			agentDefaults.choose(engine).then((confirmed) => {
+				if (confirmed) deck.follow();
+				return confirmed;
+			}),
 	};
 	/**
 	 * What a row in the rail can do about the frame it names (#143, #194).
@@ -1339,15 +1324,43 @@ export function ProjectCanvas({
 		for (const name of iframes.current.keys()) requestSiteBoxes(name);
 	}, [edges, requestSiteBoxes]);
 
-	// the agent's hand (#214): where it is, and what it has just changed. The arms are a
-	// ref here because `requestSiteBoxes` reads them from inside a message handler
-	const { hand: handRead, marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
-	// a call on a file in a frame's own subfolder names that subfolder (#336): the hand is
-	// on the frame holding it
-	const hand = useMemo(
-		() => (handRead === null ? null : { ...handRead, frame: frameHolding(handRead.frame, reach.have) }),
-		[handRead, reach],
+	// the blocks the agent's writes changed, as documents measure them (#214, #366): the
+	// located marks its companions ring. The arms are a ref here because `requestSiteBoxes`
+	// reads them from inside a message handler
+	const { marks: locatedMarks, strike } = useLocatedMarks(project, turn, armedWrites);
+	// where each working agent is on the canvas (#366). A call on a file in a frame's own
+	// subfolder names that subfolder (#336): the agent is at the frame holding it
+	const companions = useMemo(
+		() =>
+			turn.companions.map((one) =>
+				one.frame === null ? one : { ...one, frame: frameHolding(one.frame, reach.have) },
+			),
+		[turn.companions, reach],
 	);
+	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
+	const [railShown, setRailShown] = useState(true);
+	const askFooted = !railShown && turn.phase === "asking";
+	/**
+	 * The ask that stands on the canvas, and what it hangs from: the frame its agent is at,
+	 * or the spot reserved for a designer's frame before it has one. None where it is about
+	 * neither.
+	 */
+	const footedAsk = useMemo(() => {
+		if (!askFooted) return null;
+		const entry = turn.entries.find(
+			(one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null,
+		);
+		if (entry === undefined) return null;
+		const by = companions.find(
+			(one) => one.key === (entry.delegation ?? "") && (one.frame !== null || one.spot !== null),
+		);
+		if (by === undefined) return null;
+		return { entry, frame: by.frame, spot: by.spot };
+	}, [askFooted, turn.entries, companions]);
+	// answered, or the rail opened, the card fades where it stood rather than vanishing
+	const footedShown = useLeaving(footedAsk !== null, FADE_OUT_MS);
+	const footedLast = useHeld(footedAsk);
+	const standingAsk = footedShown === null ? null : (footedAsk ?? footedLast);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -5092,10 +5105,22 @@ export function ProjectCanvas({
 	 * on every pointermove the camera takes. It changes when the frames do, which is the
 	 * only thing in it that is ever about to be different.
 	 */
+	const stills = useMemo(
+		() =>
+			new Map(
+				frames.flatMap(({ name, cover }) =>
+					cover === undefined ? [] : [[name, coverUrl(project, name, cover.hash)] as const],
+				),
+			),
+		[frames, project],
+	);
+	const putBack = turn.putBack;
 	const jump = useMemo<FrameJump>(
 		() => ({
 			have: reach.have,
 			gone: reach.gone,
+			stills,
+			onPutBack: putBack,
 			onPoint: setPointed,
 			onJump: (name) => {
 				// pointing was the question and landing is the answer, so the weaker mark
@@ -5104,7 +5129,7 @@ export function ProjectCanvas({
 				landOnFrame(name);
 			},
 		}),
-		[reach, landOnFrame],
+		[reach, landOnFrame, stills, putBack],
 	);
 
 	// --- keys -------------------------------------------------------------------
@@ -5621,26 +5646,23 @@ export function ProjectCanvas({
 			icon: <AgentIcon />,
 			hotkey: "panes.agent",
 			working: turn.phase === "playing",
+			// a turn of any chat stopped on a question only a person can answer (#366)
+			waiting: turn.phase === "asking" || deck.threads.some((thread) => thread.life === "waiting"),
+			titled: true,
+			// another chat is running, waiting on a person, or landed unread (#364)
+			elsewhere: deck.threads.some((thread) => thread.id !== deck.open && thread.life !== "read"),
 			focus: (body) => body.querySelector("textarea")?.focus({ preventScroll: true }),
-			render: ({ width, visible, hide }) => (
+			render: ({ width, visible }) => (
 				<AgentRail
 					active={visible}
-					agentReady={engineLoaded && (model.started || deck.engine === preferredEngine)}
-					onUseAgent={
-						root === undefined
-							? undefined
-							: () => {
-									hide();
-									setAgentHandoff(true);
-								}
-					}
+					agentReady={deck.engine !== undefined || deck.legacy}
+					legacy={deck.legacy}
 					request={agentRequest}
-					permissions={permissions}
+					// an agent that never asks has no mode to pick, so the rail draws no mode menu (#363);
+					// nor does one whose word on it has not come, so pi's never flashes in (#364)
+					permissions={model.modes === true ? permissions : undefined}
 					width={width}
-					entries={turn.entries}
-					plan={turn.plan}
-					phase={turn.phase}
-					elapsed={turn.elapsed}
+					turn={turn}
 					jump={jump}
 					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
 					threads={{
@@ -5649,28 +5671,13 @@ export function ProjectCanvas({
 						finished: deck.finished,
 						onOpen: deck.onOpen,
 						onClose: deck.onClose,
-						onNew: (engine) => {
-							// Typing immediately after + belongs to the new chat, even while settings save.
-							deck.onNew(engine);
-							if (engine !== undefined) rememberEngine(engine);
-						},
+						// a chat opened on one engine (a recovery) leaves the machine's choice alone
+						onNew: deck.onNew,
 					}}
 					install={install}
 					login={deck.login}
-					queued={turn.queued}
-					handback={turn.handback}
-					draft={turn.draft}
-					attached={turn.attached}
-					onAttach={turn.onAttach}
-					onDraft={turn.onDraft}
-					running={turn.running}
 					model={model}
-					limit={turn.limit}
-					onSend={turn.send}
-					onQueue={turn.queue}
-					onUnqueue={turn.unqueue}
-					onStop={turn.stop}
-					onAnswer={turn.answer}
+					preferred={agentDefaults.engine}
 				/>
 			),
 		},
@@ -5681,8 +5688,9 @@ export function ProjectCanvas({
 			<PaneWindow
 				panes={panes}
 				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
-				foot={
-					<RailFoot
+				onShown={(panes) => setRailShown(panes.includes("agent"))}
+				barEnd={
+					<BarEnd
 						onSettings={onSettings}
 						onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 					/>
@@ -5905,10 +5913,36 @@ export function ProjectCanvas({
 								marquee={marquee}
 								dropLine={dropLine}
 							/>
-							{/* the agent's hand (#214), in the same screen space as the furniture
-						    beside it: presence on any visible frame at any zoom, and a located
-						    mark wherever a document was live enough to be measured */}
-							<AgentHandLayer camera={camera} frames={visibleFrames} hand={hand} marks={handMarks} />
+							{/* the agent's companions (#366), in the same screen space as the furniture
+						    beside them: presence on any visible frame at any zoom, and a ring on
+						    a located mark wherever a document was live enough to be measured */}
+							<AgentCompanionLayer
+								camera={camera}
+								frames={visibleFrames}
+								companions={companions}
+								marks={locatedMarks}
+								footed={askFooted}
+							/>
+							{(() => {
+								// under its frame, or under the spot held for it while the frame is not there yet
+								const at =
+									standingAsk === null
+										? undefined
+										: (visibleFrames.find((one) => one.name === standingAsk.frame) ??
+											(standingAsk.frame === null || !reach.have.has(standingAsk.frame)
+												? (standingAsk.spot ?? undefined)
+												: undefined));
+								return standingAsk === null || at === undefined ? null : (
+									<CanvasAsk
+										key={standingAsk.entry.key}
+										camera={camera}
+										frame={at}
+										entry={standingAsk.entry}
+										onAnswer={turn.answer}
+										leaving={footedShown === "leaving"}
+									/>
+								);
+							})()}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
 								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />

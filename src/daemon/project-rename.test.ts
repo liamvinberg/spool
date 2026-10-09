@@ -3,9 +3,8 @@ import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import * as atomicWrite from "../atomic-write";
 import { initProject } from "../init";
-import { mutateMachineState } from "../machine-state";
 import { readRegistry } from "../registry";
-import { fixtureAgentExecutor, makeApp, makeTempDir, until } from "../test-helpers";
+import { fixtureAgentExecutor, makeApp, makeTempDir, until, writeOldProjectSetting } from "../test-helpers";
 import { putThread, readThread } from "./agent-threads";
 import { readSession, writeSession } from "./session";
 
@@ -58,7 +57,7 @@ describe("rename a project", () => {
 		const { root } = projectFixture(spoolDir);
 		const other = projectFixture(spoolDir);
 		writeSession(spoolDir, { open: [other.root, root] });
-		mutateMachineState(spoolDir, { kind: "set-project-setting", root, path: ["agent", "effort"], value: "high" });
+		writeOldProjectSetting(spoolDir, root, ["agent", "effort"], "high");
 		const before = readRegistry(spoolDir).projects.find((project) => project.root === root);
 		const thread = "12345678-1234-4234-8234-123456789012";
 		putThread(spoolDir, root, thread, {

@@ -19,6 +19,34 @@ describe("frame birth", () => {
 	});
 });
 
+describe("a reserved spot", () => {
+	const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
+		a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+	it("takes its own frame at the spot, and one too big for it clear of its neighbours", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "neighbour", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "neighbour", "frame.json"), '{ "x": 500, "y": 1000, "w": 390, "h": 844 }\n');
+		writeDesignFile(root, join("frames", "fits", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "fits", "frame.json"), '{ "w": 390, "h": 844 }\n');
+		writeDesignFile(root, join("frames", "wide", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "wide", "frame.json"), '{ "w": 1440, "h": 900 }\n');
+		const reserved = [
+			{ name: "fits", x: 0, y: 0, w: 390, h: 844 },
+			{ name: "wide", x: 0, y: 1000, w: 390, h: 844 },
+		];
+
+		const { frames } = listProjectFrames(root, { reserved });
+
+		const of = (name: string) => frames.find((frame) => frame.name === name) as (typeof frames)[number];
+		expect(of("fits")).toMatchObject({ x: 0, y: 0, w: 390, h: 844 });
+		expect(of("wide")).toMatchObject({ w: 1440, h: 900 });
+		for (const one of frames)
+			for (const other of frames)
+				if (one !== other) expect(overlaps(one, other), `${one.name} on ${other.name}`).toBe(false);
+	});
+});
+
 describe("projection placement", () => {
 	it("preserves authored bytes when its missing-sidecar fill loses the create race", () => {
 		const root = makeTempDir();

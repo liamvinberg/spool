@@ -1,17 +1,19 @@
 import { sessionExists } from "./agent-claude-session";
-import type { AgentEngine } from "./agent-engine";
-import type { AgentExecutor } from "./agent-exec";
+import { mountDesigner } from "./agent-designer";
+import type { AgentEngine, EngineDeps } from "./agent-engine";
 import { askAgentOffer, askFrom } from "./agent-offer";
-import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
-import { agentPromptContent } from "./agent-spawn";
+import { agentInstalled, askAgentLogin } from "./agent-preflight";
+import { AGENT_COMMAND, agentPromptContent } from "./agent-spawn";
 import { startAgentTurn } from "./agent-turn";
 
-/** Claude keeps its process per turn, user settings, authentication and translator. */
-export function createClaudeEngine(executor: AgentExecutor, look?: Look): AgentEngine {
+/**
+ * Claude keeps its process per turn, user settings, authentication and translator.
+ * Every turn mounts spool's designer from spool's state (#367).
+ */
+export function createClaudeEngine({ executor, spoolDir, look }: EngineDeps): AgentEngine {
 	return {
 		id: "claude",
-		authentication: { kind: "external", command: "claude auth login" },
-		installed: () => agentInstalled(process.env, look),
+		installed: () => agentInstalled(process.env, AGENT_COMMAND, look),
 		account: (root, signal) =>
 			askAgentLogin({ executor, root, env: process.env, ...(signal === undefined ? {} : { signal }) }),
 		offer: ({ session: _session, ...options }) => askAgentOffer({ executor, env: process.env, ...options }),
@@ -36,6 +38,7 @@ export function createClaudeEngine(executor: AgentExecutor, look?: Look): AgentE
 				continuing: recovery === "claude-continue",
 				ask,
 				permissions,
+				designer: mountDesigner(spoolDir, "claude"),
 			}),
 	};
 }

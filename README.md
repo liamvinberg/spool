@@ -28,10 +28,9 @@ If your npm setup blocks dependency install scripts, use `npm i -g spool.page --
 
 ## Work with your agent
 
-Open the agent rail to use the bundled **spool** engine. Connect ChatGPT or Grok,
-or an OpenAI, Anthropic, Google or xAI API key. The Mac app includes the runtime;
-no separate agent CLI is required. **Claude Code** remains available through
-your existing local installation and login. See [agent requirements and permissions](docs/agents.md).
+The agent rail runs the agent you already use, **Claude Code**, **Codex** or
+**pi**, with its own login, models and settings. Spool includes no agent; with none installed,
+the rail shows how to install one. See [agent requirements and permissions](docs/agents.md).
 
 Ask your agent to run `spool skill`, then describe what you want to make. Your agent writes TSX frames into your project’s `design/` folder, and spool shows the result on the canvas.
 

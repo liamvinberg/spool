@@ -1560,6 +1560,11 @@ export function CanvasSidebar({
 	return (
 		<aside ref={asideRef} className="relative flex h-full flex-col bg-bg">
 			<PaneActions>
+				{clipboard.length > 0 ? (
+					<span data-pages-copied="" className="mr-1.5 text-muted type-detail">
+						{clipboard.length} copied
+					</span>
+				) : null}
 				{/* a count of nothing is a number saying nothing: zero reads as absence */}
 				{orderedPages.length === 0 ? null : (
 					<span data-pages-count="" className="mr-1.5 text-muted type-detail">
@@ -1699,11 +1704,6 @@ export function CanvasSidebar({
 						</div>
 					)}
 				</div>
-			</div>
-
-			<div className="flex h-9 shrink-0 items-center justify-between border-border border-t px-3.5 text-muted type-detail">
-				<span>folder switches page</span>
-				{clipboard.length > 0 ? <span className="text-muted">{clipboard.length} copied</span> : null}
 			</div>
 
 			{kit === null

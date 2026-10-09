@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, fixtureAgentExecutor, serveProject } from "../test-helpers";
-import { createSettingsStore } from "./settings";
 
-it("hands off from the empty canvas, first recommendation, and Help menu without losing the chat", {
+it("hands off from the empty canvas and the Help menu without losing the chat", {
 	timeout: 120_000,
 }, async () => {
 	const project = await serveProject({
@@ -13,9 +12,6 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 		agentExecutor: fixtureAgentExecutor().executor,
 		agentLook: () => true,
 	});
-	const store = createSettingsStore(project.spoolDir);
-	store.write("agent.engine", "spool", project.root);
-	store.write("agent.introductionSeen", false);
 	const browser = await testBrowser();
 	const page = await browser.newPage({
 		viewport: { width: 1440, height: 900 },
@@ -43,22 +39,7 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 	await picker.getByRole("button", { name: "Copy project path", exact: true }).click();
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(project.root);
 	await picker.press("Escape");
-	await page.locator('[data-rail-icon="agent"]').click();
-	const notice = page.getByRole("dialog", { name: "Use your usual agent.", exact: true });
-	await notice.waitFor();
-	await shot("notice");
-	const box = await notice.boundingBox();
-	expect(box?.width).toBe(536);
-	if (!box) throw new Error("Missing recommendation");
-	expect(Math.abs(box.x + box.width / 2 - 720)).toBeLessThanOrEqual(1);
-	expect(Math.abs(box.y + box.height / 2 - 450)).toBeLessThanOrEqual(1);
-	await notice.getByRole("button", { name: "Use my agent", exact: true }).click();
-	await expect
-		.poll(() => store.read().entries.find((entry) => entry.key === "agent.introductionSeen")?.value)
-		.toBe(true);
-	await picker.waitFor();
-	await picker.getByRole("button", { name: "Back to canvas" }).click();
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	await page.locator("[data-agent-rail] textarea").fill("Keep my draft");
 	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	const help = page.getByRole("button", { name: "Help", exact: true });
@@ -91,37 +72,11 @@ it("hands off from the empty canvas, first recommendation, and Help menu without
 		.click({ position: { x: 30, y: 100 } });
 	expect(await menu.count()).toBe(0);
 	await page.reload();
-	await page.locator('[data-rail-icon="agent"]').waitFor();
-	if ((await page.locator('[data-rail-icon="agent"]').getAttribute("aria-pressed")) === "false")
-		await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').waitFor();
+	if ((await page.locator('[data-pane-toggle="agent"]').getAttribute("aria-pressed")) === "false")
+		await page.locator('[data-pane-toggle="agent"]').click();
 	await page.locator("[data-agent-rail] textarea").waitFor();
-	expect(await notice.count()).toBe(0);
 	expect(await page.locator("[data-agent-rail] textarea").inputValue()).toBe("Keep my draft");
 	expect(await page.getByRole("button", { name: "Open in my agent", exact: false }).count()).toBe(0);
 	expect(errors).toEqual([]);
-});
-
-it("skips Claude Code chats, then starts a Claude chat from the spool recommendation", {
-	timeout: 120_000,
-}, async () => {
-	const project = await serveProject({
-		uiDir: await builtUi(),
-		agentExecutor: fixtureAgentExecutor().executor,
-		agentLook: () => true,
-	});
-	const store = createSettingsStore(project.spoolDir);
-	store.write("agent.introductionSeen", false);
-	const page = await (await testBrowser()).newPage({ viewport: { width: 1440, height: 900 } });
-	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-rail-icon="agent"]').click();
-	const choice = page.getByRole("button", { name: "Choose agent for this new chat", exact: true });
-	await expect.poll(() => choice.textContent()).toContain("Claude Code");
-	expect(await page.locator("dialog").count()).toBe(0);
-	await choice.click();
-	await page.locator('[data-agent-engine="spool"]').click();
-	const notice = page.getByRole("dialog", { name: "Use your usual agent.", exact: true });
-	await notice.waitFor();
-	await notice.getByRole("button", { name: "Use Claude Code here", exact: true }).click();
-	await expect.poll(() => choice.textContent()).toContain("Claude Code");
-	expect(await notice.count()).toBe(0);
 });

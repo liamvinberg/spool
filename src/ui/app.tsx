@@ -22,6 +22,7 @@ import {
 	trashProject,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { type BarSlots, PaneBarSlots } from "./canvas/pane-bar";
 import { PresenceFaces } from "./canvas/presence-faces";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
@@ -98,6 +99,10 @@ export function App() {
 	const requestRename = (project: TabProject, initialName = project.name) =>
 		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
+	/** where the open canvas draws its pane toggles, at either end of the bar */
+	const [barLeft, setBarLeft] = useState<HTMLDivElement | null>(null);
+	const [barRight, setBarRight] = useState<HTMLDivElement | null>(null);
+	const barSlots = useMemo((): BarSlots => ({ left: barLeft, right: barRight }), [barLeft, barRight]);
 	const [forgetting, setForgetting] = useState<ReadonlySet<string>>(new Set());
 	const [keysOpen, setKeysOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -604,6 +609,11 @@ export function App() {
 			<div className="flex h-full flex-col bg-bg">
 				<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-muted)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
 					<div className="flex h-full min-w-0 flex-1 items-center">
+						<div
+							ref={setBarLeft}
+							data-pane-bar="left"
+							className="flex h-full shrink-0 items-center empty:hidden"
+						/>
 						<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-border-raised">
 							<button
 								type="button"
@@ -649,6 +659,11 @@ export function App() {
 							{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
 						</div>
 					)}
+					<div
+						ref={setBarRight}
+						data-pane-bar="right"
+						className="flex h-full shrink-0 items-center empty:hidden"
+					/>
 				</header>
 
 				<main className="min-h-0 flex-1">
@@ -702,15 +717,17 @@ export function App() {
 							}
 						/>
 					) : (
-						<ProjectCanvas
-							key={focusedTab.root}
-							project={focusedTab.name}
-							root={focusedTab.root}
-							onChrome={setChrome}
-							onSettings={openSettings}
-							onFolder={() => setPicking("folder")}
-							onRename={(name) => requestRename(focusedTab, name)}
-						/>
+						<PaneBarSlots.Provider value={barSlots}>
+							<ProjectCanvas
+								key={focusedTab.root}
+								project={focusedTab.name}
+								root={focusedTab.root}
+								onChrome={setChrome}
+								onSettings={openSettings}
+								onFolder={() => setPicking("folder")}
+								onRename={(name) => requestRename(focusedTab, name)}
+							/>
+						</PaneBarSlots.Provider>
 					)}
 				</main>
 

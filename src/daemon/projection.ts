@@ -10,7 +10,7 @@ import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
-import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
+import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, overlaps, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { type Unseen, unseenNow } from "./seen";
@@ -291,10 +291,36 @@ export function describeMissingFrame(name: string): string {
 }
 
 /**
+ * Every frame folder in a project, by name, without placing anything: what a turn's
+ * witness diffs against (#365). Nothing when design/ cannot be read.
+ */
+export function discoverFrames(root: string): { name: string; page?: string; dir: string }[] | undefined {
+	return discover(root)?.frames.map(({ name, page, dir }) =>
+		page === undefined ? { name, dir } : { name, page, dir },
+	);
+}
+
+/**
+ * A spot on the root page reserved for a delegation that has not landed its frame yet (#365).
+ * `frame` is the frame that filled it, once one has.
+ */
+export interface ReservedSpot extends Rect {
+	readonly name: string;
+	readonly frame?: string;
+}
+
+/**
  * Every frame, placed. `seen` decorates each one with whether it has been
  * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
+ *
+ * `reserved` is the spots running turns reserve for their delegations (#365). A frame born
+ * into one stands in it, and every other new frame on the root page stands clear of
+ * the ones still empty.
  */
-export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
+export function listProjectFrames(
+	root: string,
+	options: { seen?: boolean; reserved?: readonly ReservedSpot[] } = {},
+): Projection {
 	const discovery = discover(root);
 	if (discovery === undefined) return { root, pages: [], places: {}, frames: [] };
 
@@ -305,15 +331,17 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 	const placed: ProjectedFrame[] = [];
 	// a frame awaiting a position carries the size it will get it at: the one its
 	// sidecar states, else the default (#113)
-	const unplaced: { frame: DiscoveredFrame; footprint: Footprint }[] = [];
+	const unplaced: { frame: DiscoveredFrame; footprint: Footprint; sized: boolean }[] = [];
 	for (const frame of discovery.frames) {
 		const sidecar = readSidecar(join(frame.dir, "frame.json"), discovery.designDir);
 		if (sidecar.kind === "placed") placed.push(projected(frame, sidecar.geometry, covers.get(frame.name)));
 		else {
 			const footprint = sidecar.kind === "sized" ? sidecar.footprint : DEFAULT_FOOTPRINT;
-			unplaced.push({ frame, footprint });
+			unplaced.push({ frame, footprint, sized: sidecar.kind === "sized" });
 		}
 	}
+	const reserved = options.reserved ?? [];
+	const open = reserved.filter((spot) => spot.frame === undefined);
 
 	const stored = readStoredPlaces(root);
 
@@ -321,13 +349,26 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 	// top of it — and never beside another page's (#39). The pages standing on
 	// that field are part of it (#265): a page is a thing on the canvas, so a
 	// frame may no more be born on top of one than on top of another frame
-	for (const { frame, footprint } of unplaced) {
+	for (const { frame, footprint, sized } of unplaced) {
 		const slot = frame.page ?? ROOT_PAGE;
 		const field: Rect[] = placed.filter((candidate) => candidate.page === frame.page);
 		for (const { at, box } of pageObjectsOn(slot, discovery.pages, placed, stored)) {
 			field.push({ ...at, ...box });
 		}
-		const geometry = { ...besideField(field), ...footprint };
+		// a reserved spot is the root page's: its own frame stands in it, and nothing else does
+		const spot =
+			frame.page === undefined
+				? (reserved.find((one) => one.frame === frame.name) ?? open.find((one) => one.name === frame.name))
+				: undefined;
+		if (frame.page === undefined) field.push(...open.filter((one) => one !== spot));
+		// a frame with a size of its own bigger than its spot stands clear of its neighbours
+		// instead, as any new frame does (story 57), and the turn's spot follows it there
+		const inSpot =
+			spot === undefined ? undefined : { x: spot.x, y: spot.y, ...(sized ? footprint : { w: spot.w, h: spot.h }) };
+		const geometry =
+			inSpot === undefined || field.some((other) => overlaps(inSpot, other))
+				? { ...besideField(field), ...footprint }
+				: inSpot;
 		try {
 			const persisted = writePlacement(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {

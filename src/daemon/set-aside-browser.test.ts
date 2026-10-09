@@ -7,6 +7,7 @@ import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { testBrowser } from "../test-browser";
 import {
 	builtUi,
+	chooseAgent,
 	closeAfterTest,
 	fixtureAgentExecutor,
 	makeApp,
@@ -16,7 +17,6 @@ import {
 	writeFrame,
 } from "../test-helpers";
 import { serveDaemon } from "./server";
-import { createSettingsStore } from "./settings";
 
 /**
  * A set-aside mark as the editor whose save lost sees it: on the canvas, on each frame that renders the file, with
@@ -47,9 +47,7 @@ async function team() {
 	copyFileSync(join(anaRoot, "spool.json"), join(benRoot, "spool.json"));
 	await fetchLocalCopy(benRoot, benState, { origin: TEAM_ORIGIN, request: ben.request, openSocket: ben.openSocket });
 	openProject(benRoot, benState);
-	const settings = createSettingsStore(benState);
-	settings.write("agent.engine", "claude", benRoot);
-	settings.write("agent.introductionSeen", true);
+	chooseAgent(benState, { engine: "claude" });
 	makeApp(anaState, { cloud: ana.cloud, teamNotice: () => {} });
 	const agent = fixtureAgentExecutor();
 	const daemon = await serveDaemon({

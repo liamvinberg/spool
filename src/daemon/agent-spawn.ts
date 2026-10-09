@@ -1,6 +1,7 @@
-import type { AgentPermissions } from "../settings/registry";
-import { skillText } from "../skill";
-import type { AgentMessage } from "./agent-engine";
+import type { AgentPermissions } from "./agent-defaults";
+import { DESIGNER_FRAMING } from "./agent-designer";
+import { type AgentMessage, saidText } from "./agent-engine";
+import { framing } from "./agent-framing";
 
 /**
  * What spool spawns, and what it tells the thing it spawned (#115, #121, #126,
@@ -118,14 +119,11 @@ const AGENT_PERMISSION_MODE = "default";
  * sandbox decide nothing. The choice never rides the repo: it is read off the
  * project's registry entry on this machine at every spawn.
  */
-export const PERMISSION_MODES: Record<AgentPermissions, string> = {
+const PERMISSION_MODES: Record<AgentPermissions, string> = {
 	ask: AGENT_PERMISSION_MODE,
 	edits: "acceptEdits",
 	bypass: "bypassPermissions",
 };
-
-const BYPASS_FRAMING =
-	"Permissions are bypassed for this project on this machine, by the developer's own setting: nothing you do asks first, so say what you are about to do outside design/ before you do it.";
 
 /**
  * Where an approval goes, and the flag the whole of #121 rests on.
@@ -155,51 +153,28 @@ const AGENT_PERMISSION_PROMPT_TOOL = "stdio";
 const AGENT_SETTING_SOURCES = "user";
 
 /**
- * The five lines spool writes for itself (#138).
+ * Claude's boundary paragraph in the framing (#138, `framing`).
  *
- * They say what the agent is for and forbid nothing: #121 left writes outside
- * `design/` possible on purpose, so a prompt that closes them contradicts the
- * fence rather than completing it. The lines about the boundary buy two things
- * a permission rule cannot: the agent saying what it is about to do outside
- * `design/` before the approval lands, rather than the human meeting a modal
- * cold; and outside-`design/` changes routed through the file tools, which is
- * where the ask lives — the sandbox's own write boundary is the project root,
- * so the shell would not ask (the accepted gap on the settings above).
+ * The lines about the boundary buy two things a permission rule cannot: the agent
+ * saying what it is about to do outside `design/` before the approval lands, rather
+ * than the human meeting a modal cold; and outside-`design/` changes routed through
+ * the file tools, which is where the ask lives — the sandbox's own write boundary is
+ * the project root, so the shell would not ask (the accepted gap on the settings above).
  *
- * The line about the project's own memory file is the price of
+ * The framing's line about the project's own memory file is the price of
  * `--setting-sources user`. Spool reading the file itself would mean
  * reimplementing memory discovery — `@` imports, nesting, precedence, the lazy
  * load — and a read that can be skipped is a smaller cost than a settings source
  * that grants.
  */
-const FRAMING = `You are the agent inside Spool, a live prototyping canvas. The human is looking at
-frames on that canvas and talking to you from a rail beside them.
-
-The canvas is design/. Its contract is below; \`spool skill <topic>\` gets you depth
-on any part of it.
-
-What the human has selected arrives in their message inside a <selection> block.
-That is what "this" and "that" mean.
-
-Read the project's own CLAUDE.md or AGENTS.md before your first change. Spool does
-not load it for you.
-
-Reading anywhere, searching the web, shell commands, and writing under design/ are
+const ASKS = `Reading anywhere, searching the web, shell commands, and writing under design/ are
 all silent. Editing files outside design/ asks the human first: say what you are
 about to do before the ask lands, and make changes outside design/ with the file
 tools rather than the shell, so the ask actually happens.`;
 
-/**
- * The framing plus the skill overview, which is a call into the same function
- * `spool skill` answers with rather than a second copy to keep in sync.
- *
- * Only the overview goes in, not the seven topics: 860 tokens against 6,170, and
- * a thread that renames one frame would pay for topics it never opens. The
- * overview's last section is the topic index, so the agent fetches exactly the
- * one it wants. Identical bytes on every spawn, so it caches.
- */
-export function agentFraming(): string {
-	return `${FRAMING}\n\n---\n\n${skillText()}`;
+/** Claude's framing (`framing`), led by the bypass line when the project bypasses permissions. */
+export function agentFraming(bypass = false): string {
+	return framing({ asks: ASKS, designer: DESIGNER_FRAMING, bypass, memory: true });
 }
 
 /** Everything the child process is: what to run, where, and with what. */
@@ -264,6 +239,13 @@ export function planAgentSpawn(
 	session: AgentSession | null,
 	ask: AgentAsk = {},
 	permissions: AgentPermissions = "ask",
+	/**
+	 * Spool's designer (#367): the `--agents` file in spool's own state, which `--print`
+	 * reads as a path. A turn mounts it; a probe has no use for one. The definition sets
+	 * no `background`, so the main agent runs a designer in the background or waits on
+	 * it as it sees fit.
+	 */
+	designer?: string,
 ): AgentSpawn {
 	return {
 		command: AGENT_COMMAND,
@@ -294,8 +276,9 @@ export function planAgentSpawn(
 			// to assert
 			...(ask.value === undefined ? [] : ["--model", ask.value]),
 			...(ask.effort === undefined ? [] : ["--effort", ask.effort]),
+			...(designer === undefined ? [] : ["--agents", designer]),
 			"--append-system-prompt",
-			permissions === "bypass" ? `${BYPASS_FRAMING}\n\n${agentFraming()}` : agentFraming(),
+			agentFraming(permissions === "bypass"),
 		],
 		cwd: root,
 		env: { ...env },
@@ -367,7 +350,7 @@ export function agentPromptContent(said: readonly AgentSaid[]): unknown[] {
 				source: { type: "base64", media_type: attachment.media, data: attachment.data },
 			});
 		}
-		blocks.push({ type: "text", text: one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}` });
+		blocks.push({ type: "text", text: saidText(one) });
 	}
 	return blocks;
 }

@@ -43,13 +43,13 @@ describe("is the agent on this machine", () => {
 	it("finds the bare name on a PATH entry", () => {
 		const dir = bin("claude");
 
-		expect(agentInstalled({ PATH: `${join(dir, "nope")}${delimiter}${dir}` })).toBe(true);
+		expect(agentInstalled({ PATH: `${join(dir, "nope")}${delimiter}${dir}` }, "claude")).toBe(true);
 	});
 
 	it("answers no when nothing on PATH carries the name", () => {
-		expect(agentInstalled({ PATH: bin("cloud") })).toBe(false);
-		expect(agentInstalled({ PATH: "" })).toBe(false);
-		expect(agentInstalled({})).toBe(false);
+		expect(agentInstalled({ PATH: bin("cloud") }, "claude")).toBe(false);
+		expect(agentInstalled({ PATH: "" }, "claude")).toBe(false);
+		expect(agentInstalled({}, "claude")).toBe(false);
 	});
 
 	/**
@@ -62,7 +62,7 @@ describe("is the agent on this machine", () => {
 		writeFileSync(join(dir, "claude"), "not a program\n");
 		chmodSync(join(dir, "claude"), 0o644);
 
-		expect(agentInstalled({ PATH: dir })).toBe(false);
+		expect(agentInstalled({ PATH: dir }, "claude")).toBe(false);
 	});
 
 	/**
@@ -72,7 +72,7 @@ describe("is the agent on this machine", () => {
 	 */
 	it("never resolves a bare name against the working directory", () => {
 		const looked: string[] = [];
-		agentInstalled({ PATH: `${delimiter}${delimiter}/usr/bin` }, (path) => {
+		agentInstalled({ PATH: `${delimiter}${delimiter}/usr/bin` }, "claude", (path) => {
 			looked.push(path);
 			return false;
 		});

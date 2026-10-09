@@ -5,15 +5,18 @@ import { fileURLToPath } from "node:url";
 import type { Page } from "playwright-core";
 import { inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
+import type { AgentPermissions } from "./daemon/agent-defaults";
+import { createAgentDefaults } from "./daemon/agent-defaults";
+import type { AgentEngineId } from "./daemon/agent-engine";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
 import type { AgentSpawn } from "./daemon/agent-spawn";
 import { createDaemonApp } from "./daemon/app";
 import { renderOrigin } from "./daemon/lifecycle";
 import { CONTROL_HEADER, PROJECT_HEADER, RENDER_HOST } from "./daemon/security";
 import { serveDaemon } from "./daemon/server";
-import { createSettingsStore } from "./daemon/settings";
 import { inertWebfonts } from "./daemon/webfonts";
 import { initProject } from "./init";
+import { setNested } from "./machine-state";
 import { lookupProjectByName } from "./registry";
 import { canvasJson } from "./templates";
 import { defaultLayout } from "./ui/canvas/pane-layout";
@@ -166,15 +169,20 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 	};
 }
 
+/** The machine's agent choice, as a person's pick would save it (#361). */
+export function chooseAgent(spoolDir: string, choice: { engine?: AgentEngineId; mode?: AgentPermissions }): void {
+	const defaults = createAgentDefaults(spoolDir, () => []);
+	if (choice.engine !== undefined) defaults.setEngine(choice.engine);
+	if (choice.mode !== undefined) defaults.setMode(choice.mode);
+}
+
 /** A registered project behind a really-served daemon on an ephemeral port. */
 export async function serveProject(options?: Partial<Parameters<typeof serveDaemon>[0]>) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
-	// A Claude fixture names the engine this browser test intends to exercise.
-	if (options?.agentExecutor !== undefined) createSettingsStore(spoolDir).write("agent.engine", "claude", root);
-	// Agent fixtures exercise an established chat; the introduction has its own first-use tests.
-	if (options?.agentExecutor !== undefined || options?.agentEngines !== undefined)
-		createSettingsStore(spoolDir).write("agent.introductionSeen", true);
+	// A Claude fixture, or the first engine a test hands over, is the one it intends to exercise.
+	if (options?.agentExecutor !== undefined) chooseAgent(spoolDir, { engine: "claude" });
+	else if (options?.agentEngines?.[0] !== undefined) chooseAgent(spoolDir, { engine: options.agentEngines[0].id });
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	closeAfterTest(daemon);
 	return {
@@ -491,6 +499,120 @@ export function fixtureAgentExecutor(
 }
 
 /**
+ * One step of a recorded stdio RPC session (#362, #363): a line spool wrote to the
+ * process (`in`) or a line the process printed (`out`). Codex app-server and pi rpc
+ * captures are arrays of these, recorded through spool's own engine.
+ */
+export type ScriptedStep = { readonly in: Record<string, unknown> } | { readonly out: Record<string, unknown> };
+
+/** what a line is, for matching: its method or type, or a response to a request */
+function stepKey(message: Record<string, unknown>): string {
+	if (typeof message.method === "string") return message.method;
+	if (message.type === "response") return "response";
+	if (typeof message.type === "string") return message.type;
+	return "response";
+}
+
+/** a line that is a request and so carries an id its response quotes */
+function isRequest(message: Record<string, unknown>): boolean {
+	return message.id !== undefined && message.id !== null && stepKey(message) !== "response";
+}
+
+/**
+ * A process that answers from a recorded session rather than a model.
+ *
+ * On every line spool writes it takes the next expected `in` step (matched by method or
+ * type), remembers the id spool used for a request, and prints every `out` step up to the
+ * next `in`, with the recorded request ids rewritten to spool's own. A line that is not
+ * the next expected one is kept in `mismatches` and answered with nothing, so a test that
+ * checks `mismatches` catches spool saying something the recording never did.
+ *
+ * `$ROOT` anywhere in the capture is the spawn's working directory, so a project path
+ * recorded in a scratch directory replays as the test's own project.
+ *
+ * `edit` reshapes the recording before it plays, for a wire no recording holds yet; a
+ * test that uses it says what it changed and why.
+ */
+export class ScriptedAgentProc extends FakeAgentProc {
+	readonly capture: string;
+	readonly mismatches: string[] = [];
+	private readonly steps: readonly ScriptedStep[];
+	private cursor = 0;
+	private readonly ids = new Map<string, unknown>();
+	constructor(spawn: AgentSpawn, capture: string, edit?: (steps: ScriptedStep[]) => ScriptedStep[]) {
+		super(spawn);
+		this.capture = capture;
+		const root = JSON.stringify(spawn.cwd).slice(1, -1);
+		const file = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "captures", `${capture}.json`);
+		const steps = JSON.parse(readFileSync(file, "utf8").replaceAll("$ROOT", root)) as ScriptedStep[];
+		this.steps = edit === undefined ? steps : edit(steps);
+		this.whenWritten = (_proc, line) => this.heard(line);
+		this.whenEnded = () => setImmediate(() => this.exit(0));
+		// whatever the process prints before it is asked anything
+		setImmediate(() => this.speak());
+	}
+	/** the steps not yet reached, for a test that wants the whole recording spent */
+	get remaining(): readonly ScriptedStep[] {
+		return this.steps.slice(this.cursor);
+	}
+	private heard(line: string): void {
+		let message: Record<string, unknown>;
+		try {
+			message = JSON.parse(line) as Record<string, unknown>;
+		} catch {
+			this.mismatches.push(line);
+			return;
+		}
+		const next = this.steps[this.cursor];
+		if (next === undefined || !("in" in next) || stepKey(next.in) !== stepKey(message)) {
+			this.mismatches.push(line);
+			return;
+		}
+		if (isRequest(next.in)) this.ids.set(String(next.in.id), message.id);
+		this.cursor += 1;
+		setImmediate(() => this.speak());
+	}
+	private speak(): void {
+		for (;;) {
+			const next = this.steps[this.cursor];
+			if (next === undefined || !("out" in next) || this.killed) return;
+			this.cursor += 1;
+			const out = next.out;
+			const answers = !isRequest(out) && out.id !== undefined && this.ids.has(String(out.id));
+			this.emit(JSON.stringify(answers ? { ...out, id: this.ids.get(String(out.id)) } : out));
+		}
+	}
+}
+
+/**
+ * The executor for recorded stdio RPC sessions (#362, #363): Codex app-server and pi rpc.
+ *
+ * Every capture names its command by its prefix (`codex-turn` is `codex`, `pi-turn` is
+ * `pi`), so one executor serves every engine and routes by `spawn.command`. Each spawn of
+ * a command takes that command's next capture, in the order given, and the last one
+ * repeats. A command with no capture is a binary that is not there.
+ */
+export function scriptedAgentExecutor(captureName: string, ...more: readonly string[]) {
+	const spawned: ScriptedAgentProc[] = [];
+	const byCommand = new Map<string, string[]>();
+	for (const name of [captureName, ...more]) {
+		const command = name.split("-")[0] ?? name;
+		byCommand.set(command, [...(byCommand.get(command) ?? []), name]);
+	}
+	const taken = new Map<string, number>();
+	const executor: AgentExecutor = async (spawn) => {
+		const names = byCommand.get(spawn.command);
+		if (names === undefined) throw new Error(`spawn ${spawn.command} ENOENT`);
+		const index = taken.get(spawn.command) ?? 0;
+		taken.set(spawn.command, index + 1);
+		const proc = new ScriptedAgentProc(spawn, names[Math.min(index, names.length - 1)] as string);
+		spawned.push(proc);
+		return proc;
+	};
+	return { spawned, executor };
+}
+
+/**
  * A binary answering the login probe, and nothing else (#201).
  *
  * `claude auth status --json` prints a document and exits, so the fixture answers on the
@@ -558,7 +680,7 @@ export async function pagePointOf(page: Page, world: { x: number; y: number }): 
 
 /**
  * A browser whose right side starts collapsed at `width`, so the first press on
- * the agent's rail icon stands the agent alone at that width. Only seeds a
+ * the agent's toggle stands the agent alone at that width. Only seeds a
  * browser that has no layout yet, so a reload keeps what the test did.
  */
 export async function seedAgentWidth(page: Page, width: number): Promise<void> {
@@ -578,4 +700,16 @@ export async function storeRightWidth(page: Page, width: number): Promise<void> 
 			JSON.stringify({ ...stored, right: { ...stored.right, width: next } }),
 		);
 	}, width);
+}
+
+/** A per-project setting where registry.json held it before settings went machine-wide (#361). */
+export function writeOldProjectSetting(spoolDir: string, root: string, path: readonly string[], value: unknown): void {
+	const file = join(spoolDir, "registry.json");
+	const registry = JSON.parse(readFileSync(file, "utf8")) as {
+		projects: { root: string; settings?: Record<string, unknown> }[];
+	};
+	const project = registry.projects.find((candidate) => candidate.root === root);
+	if (project === undefined) throw new Error(`not a registered project root: ${root}`);
+	project.settings = setNested(project.settings ?? {}, path, value);
+	writeFileSync(file, JSON.stringify(registry, null, "\t"));
 }

@@ -389,7 +389,8 @@ describe("one turn over the wire", () => {
 		expect(spawn?.command).toBe("claude");
 		expect(args).toContain("--include-partial-messages");
 		expect(args[args.indexOf("--setting-sources") + 1]).toBe("user");
-		expect(args[args.indexOf("--permission-mode") + 1]).toBe("default");
+		// a machine with nothing saved is on Auto-edit (#361), set explicitly rather than left to the user's settings
+		expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
 		// the agent really arrives knowing what spool is: this is the text the
 		// child is handed, not a function a test called on its own
 		expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(agentFraming());
@@ -403,7 +404,8 @@ describe("one turn over the wire", () => {
 	it("closes stdin when the result lands rather than killing the process", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
-		const agent = replayAgentExecutor("claude-fanout");
+		// the last result, after the background designers have landed (#365)
+		const agent = replayAgentExecutor("claude-background");
 		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
 
 		await drainTurn(await startTurn(name, app));
@@ -423,12 +425,12 @@ describe("one turn over the wire", () => {
 	it("takes a binary still up long after its own ending, and lets the thread go", async () => {
 		vi.useFakeTimers();
 		// the whole capture, ending and all, from a process that then never exits
-		const agent = fixtureAgentExecutor((proc) => proc.replay(readCapture("claude-fanout")));
+		const agent = fixtureAgentExecutor((proc) => proc.replay(readCapture("claude-background")));
 		const turn = startAgentTurn({
 			executor: agent.executor,
 			root: "/tmp/product",
 			content: [],
-			session: { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false },
+			session: { id: "6b5c1d2e-1111-4222-8333-444455556665", resume: false },
 		});
 		const seen: AgentEvent[] = [];
 		const reading = (async () => {
@@ -930,7 +932,7 @@ it("keeps completed Claude work held through repeated authentication failures", 
 	mkdirSync(join(path, ".."), { recursive: true });
 	writeFileSync(path, "{}");
 	const agent = fixtureAgentExecutor((proc) => proc.exit(1, "Not logged in. Please run /login"));
-	const engine = createClaudeEngine(agent.executor);
+	const engine = createClaudeEngine({ executor: agent.executor, spoolDir: makeTempDir() });
 	try {
 		for (let attempt = 0; attempt < 3; attempt++) {
 			const events: AgentEvent[] = [];

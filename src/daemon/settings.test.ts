@@ -28,20 +28,6 @@ describe("settings store", () => {
 		expect(store.read(root).entries.find((entry) => entry.key === "history")?.value).toBe(true);
 	});
 
-	it("keeps a local setting on the project's registry entry, never in the repo", () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root } = makeProject(spoolDir);
-		const store = createSettingsStore(spoolDir);
-
-		expect(store.write("agent.permissions", "bypass", root).ok).toBe(true);
-
-		const registry = readJson(join(spoolDir, "registry.json")) as { projects: Record<string, unknown>[] };
-		expect(registry.projects[0]).toMatchObject({ root, settings: { agent: { permissions: "bypass" } } });
-		expect(readJson(join(root, "design", "canvas.json"))).toEqual({ format: FORMAT_VERSION, history: false });
-		expect(store.agentPermissions(root)).toBe("bypass");
-		expect(store.agentPermissions(makeTempDir())).toBe("ask");
-	});
-
 	it("writes a machine setting into config.json by its dotted key, carrying the other keys through", () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root } = makeProject(spoolDir);
@@ -91,7 +77,7 @@ describe("settings store", () => {
 		expect(store.write("theme.dark.mark", "#000000", root)).toMatchObject({ ok: false, status: 404 });
 		expect(store.write("history", "yes", root)).toMatchObject({ ok: false, status: 400 });
 		expect(store.write("history", true)).toMatchObject({ ok: false, status: 400 });
-		expect(store.write("agent.permissions", "bypass", makeTempDir())).toMatchObject({ ok: false, status: 404 });
+		expect(store.write("history", true, makeTempDir())).toMatchObject({ ok: false, status: 404 });
 	});
 
 	it("reads a hand edit the shape refuses as the default", () => {

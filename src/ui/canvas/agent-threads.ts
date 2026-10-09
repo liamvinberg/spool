@@ -1,3 +1,4 @@
+import type { ThreadEngine } from "../../daemon/agent-engine";
 import type { StoredLife } from "../../daemon/agent-threads";
 import { signedOut } from "./agent-preflight";
 import type { TurnPhase } from "./agent-stream";
@@ -35,13 +36,13 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
  *               actually stuck.
  *   unread      it finished while you were away and nobody has read it. A solid dot at
  *               text strength, the way a mailbox says it, and still not the accent.
- *   read        an old thread. A hollow dot: present, and spent. The one life the plate
- *               leaves out, because the plate says what is moving elsewhere.
+ *   read        an old thread. A hollow dot: present, and spent. The one life the list
+ *               leaves out, because the pane toggle says what is moving elsewhere.
  */
 export type Life = "streaming" | "running" | "waiting" | "unread" | "read";
 
 /**
- * What the plate and its list draw of one thread (#205).
+ * What the title and its list draw of one thread (#205).
  *
  * `name` is the ask: the first thing the person said, which stays true whatever the
  * thread went on to write. `wrote` is the frames it changed, recomputed from the entries
@@ -60,6 +61,8 @@ export interface Thread {
 	readonly at: number;
 	/** the last line it drew, in the rail's own nouns, or empty where it has drawn none */
 	readonly last: string;
+	/** the agent it runs on, which the switcher names only when it is not the usual one (#364) */
+	readonly engine?: ThreadEngine;
 }
 
 /**
@@ -132,7 +135,7 @@ export function storedLife(life: Life): StoredLife {
  * What a thread with nothing in it is called.
  *
  * It is the machine saying there is nothing to say yet rather than a name anybody chose,
- * which is why the plate draws it dimmed: exported so the one surface that has to tell a
+ * which is why the list draws it dimmed: exported so the one surface that has to tell a
  * name from its absence tests the same string.
  */
 export const UNSAID = "new thread";

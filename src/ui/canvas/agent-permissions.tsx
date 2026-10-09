@@ -1,184 +1,182 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
-import type { AgentEngineId } from "../../daemon/agent-engine";
-import type { AgentPermissions } from "../../settings/registry";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AGENT_PERMISSIONS, type AgentPermissions } from "../../daemon/agent-engine";
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
-import { settingsMoved, useSettings } from "../settings";
+import { CheckIcon } from "../icons";
+import { useSettings } from "../settings";
+import { AGENT_DEFAULTS_RETRY_MS, learnAgentMode } from "./agent-defaults";
+import { Chevron, RailMenu } from "./agent-float";
 
 export interface PermissionDeck {
+	/** the machine's mode, or the pick on its way to being saved */
 	readonly mode: AgentPermissions;
+	/** a pick is being saved */
+	readonly saving: boolean;
+	/** this thread's running turn started on another mode and takes this one at its next turn */
 	readonly pending: boolean;
 	readonly reason: string | undefined;
 	choose(mode: AgentPermissions): void;
 }
 
+/**
+ * The permission menu's reading (#361): the machine's mode, never a guess. Undefined until
+ * it is known, so the rail draws no mode it has not loaded; a failed read keeps what was
+ * known and tries again. A pick shows at once, is saved, and the menu then holds the value
+ * the daemon confirmed, which it never refuses.
+ */
 export function useAgentPermissions(
 	project: string,
 	thread: string,
-	engine: AgentEngineId,
 	phase: string,
-): PermissionDeck {
+	known: AgentPermissions | undefined,
+): PermissionDeck | undefined {
 	const settings = useSettings(project);
-	const [mode, setMode] = useState<AgentPermissions>("ask");
-	const [pending, setPending] = useState(false);
+	const [read, setRead] = useState<{ owner: string; mode: AgentPermissions; pending: boolean }>();
+	const [picked, setPicked] = useState<AgentPermissions>();
 	const [reason, setReason] = useState<string>();
-	const revision = useRef(0);
-	const owner = `${project}/${thread}/${engine}`;
+	const owner = `${project}/${thread}`;
 	const current = useRef(owner);
-	const applying = useRef(false);
-	const generation = useRef(0);
 	current.current = owner;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: changing thread ownership retires its pending UI operation
+	const picks = useRef(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a turn boundary or settings event is the cue to read again
 	useEffect(() => {
-		++generation.current;
-		applying.current = false;
-		setPending(false);
-		setReason(undefined);
-		return () => {
-			++generation.current;
+		if (thread === "") return;
+		let live = true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const ask = () => {
+			const picking = picks.current;
+			void agentPermissions(project, thread).then((result) => {
+				if (!live) return;
+				if (!("mode" in result)) {
+					timer = setTimeout(ask, AGENT_DEFAULTS_RETRY_MS);
+					return;
+				}
+				// a pick made while this read was out is newer than what it says
+				if (picks.current !== picking) return;
+				setRead({ owner, mode: result.mode, pending: result.pending });
+				learnAgentMode(result.mode);
+			});
 		};
-	}, [owner]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: a turn boundary or settings event invalidates the engine reading
-	useEffect(() => {
-		const read = ++revision.current;
-		void agentPermissions(project, thread, engine).then((result) => {
-			if (!applying.current && revision.current === read && current.current === owner && "mode" in result)
-				setMode(result.mode);
-		});
+		ask();
 		return () => {
-			++revision.current;
+			live = false;
+			if (timer !== undefined) clearTimeout(timer);
 		};
-	}, [project, thread, engine, owner, phase, settings]);
+	}, [project, thread, owner, phase, settings]);
+	const mine = read?.owner === owner ? read : undefined;
+	const mode = picked ?? mine?.mode ?? known;
+	if (mode === undefined || thread === "") return undefined;
 	return {
 		mode,
-		pending,
+		saving: picked !== undefined,
+		pending: picked === undefined && mine?.pending === true,
 		reason,
 		choose: (next) => {
-			if (applying.current) return;
-			applying.current = true;
-			++revision.current;
-			const born = generation.current;
-			setPending(true);
+			const pick = ++picks.current;
+			const born = owner;
+			setPicked(next);
 			setReason(undefined);
-			void agentPermissions(project, thread, engine, next).then(async (result) => {
-				if (current.current !== owner || generation.current !== born) return;
-				applying.current = false;
-				setPending(false);
+			void agentPermissions(project, thread, next).then((result) => {
+				if (picks.current !== pick) return;
+				setPicked(undefined);
 				if ("mode" in result) {
-					setMode(result.mode);
-					settingsMoved();
-				} else {
-					setReason(result.reason);
-					// A transport/save failure can follow an engine acknowledgement.
-					// Read the engine again instead of guessing which side took effect.
-					const read = ++revision.current;
-					const effective = await agentPermissions(project, thread, engine);
-					if (
-						current.current === owner &&
-						generation.current === born &&
-						revision.current === read &&
-						"mode" in effective
-					)
-						setMode(effective.mode);
-				}
+					learnAgentMode(result.mode);
+					if (current.current === born) setRead({ owner: born, mode: result.mode, pending: result.pending });
+				} else setReason(result.reason);
 			});
 		},
 	};
 }
 
-/** The same project preference for both engines; each engine enforces its own modes. */
+/** the three modes as a person reads them (#364) */
+const MODE_NAMES: Readonly<Record<AgentPermissions, string>> = {
+	ask: "Ask first",
+	edits: "Auto-edit",
+	bypass: "Full access",
+};
+
+/**
+ * What each mode lets the agent do (#360). The words are the promise every engine keeps, so
+ * none of them names one: a command inside the agent's own sandbox runs without asking in
+ * every engine, so neither asking mode promises more. `design/` is set as the path it is.
+ */
+const MODE_SAYS: Readonly<Record<AgentPermissions, ReactNode>> = {
+	ask: (
+		<>
+			Asks before it edits outside <span className="type-detail">design/</span> or runs commands outside its sandbox.
+		</>
+	),
+	edits: "Edits files without asking. Asks before commands outside its sandbox.",
+	bypass: "Never asks.",
+};
+
+/**
+ * The machine's one mode for every chat and every agent (#361, #364): a trigger naming the
+ * mode, and a menu rising off it with each mode's name and what it means, the chosen one
+ * checked, and a quiet footnote that it is global. Each engine enforces the mode its own
+ * way; the words are the promise all of them keep.
+ */
 export function PermissionMenu({
-	mode,
-	engine,
-	trigger,
-	onChange,
-	onClose,
+	permissions,
+	open,
+	onOpen,
 }: {
-	mode: AgentPermissions;
-	engine: "spool" | "claude";
-	trigger: RefObject<HTMLButtonElement | null>;
-	onChange: (mode: AgentPermissions) => void;
-	onClose: () => void;
+	permissions: PermissionDeck;
+	open: boolean;
+	onOpen: (open: boolean) => void;
 }) {
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		ref.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
-		return () => trigger.current?.focus();
-	}, [trigger]);
+	const { mode, pending, saving } = permissions;
 	return (
-		<div
-			ref={ref}
-			role="menu"
-			aria-label="Agent permissions"
-			data-permission-menu=""
-			className="absolute right-0 bottom-full z-30 mb-2 w-[250px] max-w-full animate-agent-menu-in rounded-md border border-border-raised bg-raised p-1.5"
-			onKeyDown={(event) => {
-				if (event.key === "Escape" || event.key === "Tab") {
-					event.preventDefault();
-					event.stopPropagation();
-					onClose();
-					return;
-				}
-				if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-				event.preventDefault();
-				const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-				const index =
-					document.activeElement instanceof HTMLButtonElement ? items.indexOf(document.activeElement) : -1;
-				const next =
-					event.key === "Home"
-						? 0
-						: event.key === "End"
-							? items.length - 1
-							: (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-				items[next]?.focus();
-			}}
-		>
-			{(["ask", "edits", "bypass"] as const).map((choice) => (
+		<RailMenu
+			open={open}
+			onOpen={onOpen}
+			label="Agent permissions"
+			className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full"
+			panel={{ "data-permission-menu": "" }}
+			trigger={(props) => (
 				<button
-					key={choice}
 					type="button"
-					role="menuitemradio"
-					aria-checked={choice === mode}
-					aria-label={choice}
-					onClick={() => onChange(choice)}
-					className={cn(
-						"flex w-full items-start gap-3 rounded-sm px-2 py-2 text-left outline-none hover:bg-surface focus-visible:bg-surface",
-						choice === mode && "bg-surface",
-					)}
+					{...props}
+					data-permission-trigger=""
+					aria-label={`Agent permissions: ${MODE_NAMES[mode]}`}
+					title={
+						pending
+							? `${MODE_NAMES[mode]}, from the next turn. Applies to every chat.`
+							: `${MODE_NAMES[mode]}. Applies to every chat.`
+					}
+					aria-busy={saving}
+					className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
 				>
-					<span className="flex min-w-0 flex-1 flex-col gap-1">
-						<span className="font-mono text-xs text-text leading-4">{choice}</span>
-						<span className="text-2xs text-muted leading-4">
-							{choice === "ask"
-								? engine === "spool"
-									? "Ask before access outside design/."
-									: "Use Claude Code’s approval rules."
-								: choice === "edits"
-									? "Allow file edits. Ask before commands."
-									: engine === "spool"
-										? "Skip tool approvals and command restrictions."
-										: "Skip tool approvals."}
-						</span>
-					</span>
-					<svg
-						aria-hidden="true"
-						viewBox="0 0 16 16"
-						fill="none"
-						className={cn("mt-0.5 h-3 w-3 shrink-0 text-muted", choice !== mode && "invisible")}
-					>
-						<path
-							d="m3.5 8 3 3 6-6"
-							stroke="currentColor"
-							strokeWidth="1.5"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						/>
-					</svg>
+					{MODE_NAMES[mode]}
+					<Chevron open={open} />
 				</button>
-			))}
-			<p className="border-border border-t px-2 pt-2 pb-1 text-2xs text-muted leading-4">
-				This project, on this machine.
-			</p>
-		</div>
+			)}
+		>
+			<div className="flex flex-col p-1">
+				{AGENT_PERMISSIONS.map((choice) => (
+					<button
+						key={choice}
+						type="button"
+						role="menuitemradio"
+						aria-checked={choice === mode}
+						data-permission-mode={choice}
+						onClick={() => {
+							onOpen(false);
+							permissions.choose(choice);
+						}}
+						className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised"
+					>
+						<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+							<span className="text-text type-control">{MODE_NAMES[choice]}</span>
+							<span className="text-muted type-label [text-wrap:pretty]">{MODE_SAYS[choice]}</span>
+						</span>
+						<CheckIcon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-text", choice !== mode && "invisible")} />
+					</button>
+				))}
+				<p className="mx-3 mt-1 border-border border-t pt-2 pb-1.5 text-muted type-caption">
+					{pending ? "Applies when this turn ends. " : null}Applies to every chat.
+				</p>
+			</div>
+		</RailMenu>
 	);
 }

@@ -1,100 +1,104 @@
 # Agents in Spool
 
-The agent rail can use **spool**, included with the npm package and Mac app, or
-your installed **Claude Code**. A new project starts with spool. The engine and
-model menu changes the engine by starting a new conversation; existing threads
-keep their engine and history.
+The agent rail runs the agent you already use: **Claude Code**, **Codex** or
+**pi**. Spool ships no agent of its own. The agent menu picks the agent
+a new chat starts on, and that choice applies to every project on this machine;
+existing threads keep their agent and history. If the agent you picked is no
+longer installed and another one is, new chats start on the first installed one
+(Claude Code, then Codex, then pi) until you install yours again; your pick is
+kept. A chat already started on it stays on it and shows its install line.
 
 ## Installation requirements
 
 The npm package needs Node 22.19 or later and runs on macOS or Linux. On Windows,
-run it inside WSL with the Linux requirements below. The Apple silicon Mac app
-needs macOS 14 or later and includes its own Node runtime. Neither installation
-requires pi, Codex, OpenCode or Claude Code to use the bundled engine.
+run it inside WSL. The Apple silicon Mac app needs macOS 14 or later and includes
+its own Node runtime, but not an agent.
+
+Install at least one agent and sign in to it in a terminal, the way you normally
+would:
+
+| Agent | Install | Sign in |
+| --- | --- | --- |
+| Claude Code | `npm i -g @anthropic-ai/claude-code` | run `claude auth login` |
+| Codex (0.151.0 or later) | `npm i -g @openai/codex` | run `codex login` |
+| pi | `npm i -g @earendil-works/pi-coding-agent` | run `pi`, then `/login` |
+
+Spool finds each agent by its command on `PATH`. With none installed, the rail
+shows these install lines with copy buttons, and looks again when you press
+Check again or come back to the window.
 
 Use Chrome for the browser canvas. Automated browser checks use Spool's installed
 Playwright package; `spool skill verbs` gives the package location and browser
 setup command for that installation. The Mac app includes Chromium for its
 canvas and player windows.
 
-The bundled agent runs supported Spool verification commands from this
-installation, one command per tool call. Other bare `spool` shell invocations
-are refused instead of using another installed version. This routing guard does
-not change the access granted to other shell commands.
-
-Restricted shell commands require working OS isolation. macOS uses its built-in
-sandbox. Linux and WSL need `bash`, `bubblewrap`, `socat`, `ripgrep`, and the shared
-libraries used by those helpers and the bundled seccomp executable. The kernel
-must permit unprivileged user and network namespaces, including creating a
-loopback interface inside the network namespace. An installed helper alone does
-not establish that the kernel permits these operations.
-
-The containment CI runs on Ubuntu 22.04. An Ubuntu 24.04 runner has refused
-bubblewrap's loopback setup with `Operation not permitted`; restricted-host CI
-checks the approval path for that actual refusal. Other Linux distributions,
-WSL kernels and local security policies can differ. Spool never installs
-privileged helpers or changes kernel policy for you.
-
-If isolation is unavailable, the rail explains that commands cannot be
-restricted to `design/` on this computer. The command waits for your choice.
-Deny leaves it unexecuted; allow once runs that command with your account's file
-access; for this thread grants that access to subsequent commands in the same
-conversation. Spool never silently switches to unrestricted execution.
-
 ## Accounts and models
 
-The compact connection dialog supports ChatGPT and Grok sign-in, plus OpenAI,
-Anthropic, Google and xAI API keys. Available models depend on the connection
-and its account access. The picker includes models that accept images; a
-subscription does not guarantee access to every model. GPT-6-Astra is offered
-where the bundled provider and account support it.
+Each agent uses its own login, models and settings. Spool stores no
+credentials and never asks for a key. The model menu lists what the agent
+reports on this machine: for Codex, every model it lists with the reasoning
+efforts it reports for that model; for pi, every model it has a login or key for, with
+models served from this computer (Ollama, LM Studio and the like) marked
+**local**, and each model's own thinking levels.
 
-Spool stores bundled credentials privately in its instance state directory,
-separately from project files and other agent applications. It does not import
-their accounts, extensions, hooks or executable settings. Canceling sign-in
-does not discard the composer draft. A rejected or expired login can be renewed
-from the rail. Rate-limit recovery keeps the pending request separate from the
-next draft and requires the displayed continuation action.
+## Permissions
 
-The installed model catalog is available offline, with compatible cached model
-data restored on startup. A background catalog refresh can add model data;
-changing provider code or request endpoints requires a Spool update. Offline
-catalog availability does not make remote inference or sign-in work offline.
+The footer's permission menu applies to every project on this machine. Its three
+modes promise only what every agent keeps:
 
-## File access, commands and questions
+- **Ask first:** "Asks before it edits outside design/ or runs commands outside its sandbox."
+- **Auto-edit:** "Edits files without asking. Asks before commands outside its sandbox."
+- **Full access:** "Never asks."
 
-The footer's permission menu applies to this project on this machine:
+A command the agent runs inside its own sandbox (Claude Code's shell sandbox,
+Codex's `workspace-write`) runs without asking in both asking modes. Claude
+Code maps its three modes to its default, accept-edits and bypass-permissions
+modes; design file edits never ask. A mode picked mid-turn applies from the next
+turn.
 
-| Mode | Bundled engine behavior |
+Codex maps them to its own approval policy and sandbox:
+
+| Mode | Codex approval policy and sandbox |
 | --- | --- |
-| ask | Design file edits are quiet; broader edits and command access ask. |
-| edits | File edits skip approval; broader command access still asks. |
-| bypass | Tool approvals and command restrictions are skipped. |
+| ask | `untrusted`, `workspace-write` |
+| edits | `on-request`, `workspace-write` |
+| bypass | `never`, `danger-full-access` |
 
-File reads and ordinary outbound web access are quiet. Some Spool-owned state
-and credential paths remain protected by the file tools. Command isolation
-restricts filesystem writes; it does not promise isolation from network or
-application APIs. Explicitly unrestricted commands have your account's access.
+Under ask and edits, Spool turns on network access inside Codex's sandbox so
+`spool` verbs can reach the local daemon; Codex has no loopback-only setting.
+Writes inside `design/` and read-only `spool` verbs are approved without asking;
+everything else Codex asks about reaches the rail. Whether Codex trusts the
+project is your own Codex setting: Spool sets none and does not write Codex's
+`config.toml`. A Codex older than 0.151.0, the first release
+that resumes a thread without loading its whole history, counts as not
+installed: the agent menu and the wall say "Codex needs updating", with
+`npm i -g @openai/codex@latest` to copy and Check again. A turn on one that
+could not say its version stops before it starts and says to update it.
 
-An approval names its scope. Allow once covers the pending action. For this
-thread covers the stated scope in that conversation; file grants and command
-grants are separate. New threads and restarted hosts do not inherit these
-runtime grants. Design questions always wait for an answer or dismissal,
-including in bypass mode. Typing into a question is not a permission grant.
+pi never asks before it acts, so a pi chat shows no permission menu. Spool asks
+pi to say what it is about to change outside `design/` before it does it.
 
 Stop cancels the active work. Closing or refreshing the canvas does not stop a
-turn owned by the daemon. If the engine host crashes, the turn stops and history
-remains readable. Another message can restart it; completed tools are not
-automatically replayed.
+turn owned by the daemon.
 
-## Existing Claude Code conversations
+## Designers
 
-Claude Code uses its installed binary, login and user settings. The same footer
-modes map to Claude's default, accept-edits and bypass-permissions modes; they
-do not claim the bundled engine's OS containment. Existing Claude threads keep
-their session identity, transcript, queued messages and draft. Spool does not
-rewrite Claude's configuration or move those sessions into the bundled engine.
+Every agent gets a designer from Spool. When you ask for options or several
+directions, the agent gives each direction to its own designer with a brief, and
+the rail shows one row per designer with what it is doing now. A single edit the
+agent makes itself.
 
-If Claude or a saved session is missing, its history stays readable. Install or
-sign in to Claude and use check again, or explicitly start a new spool thread.
-An engine failure never silently moves a conversation to another engine.
+Spool hands the designer to the agent on each turn from its own state. It is
+never written into your project or into Claude Code's, Codex's or pi's own
+config: Claude Code gets it as `--agents`, Codex as an agent role in `-c`
+flags, and pi as an extension loaded with `-e`. A designer runs on the same
+agent, model and effort as the chat that called it.
+
+## Existing conversations
+
+Claude Code, Codex and pi threads continue in the agent's own saved session. If the
+agent or its session is missing, the thread's history stays readable; install
+or sign in to the agent and use check again, or start a new thread.
+
+Threads from Spool's former built-in agent stay readable and can't be
+continued. A message sent in one starts a new chat on your current agent.

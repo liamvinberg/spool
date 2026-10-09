@@ -32,6 +32,8 @@ export interface AskQuestion {
 	readonly header: string;
 	readonly question: string;
 	readonly options: readonly AskOption[];
+	/** the agent asked for any number of the options rather than one (#366) */
+	readonly multi: boolean;
 }
 
 /** the call the agent stops the turn with, which is a question rather than work */
@@ -55,12 +57,13 @@ export function questionsOf(input: CallInput): readonly AskQuestion[] {
 	if (!Array.isArray(asked)) return [];
 	const questions: AskQuestion[] = [];
 	for (const raw of asked) {
-		const one = raw as { question?: unknown; header?: unknown; options?: unknown } | null;
+		const one = raw as { question?: unknown; header?: unknown; options?: unknown; multiSelect?: unknown } | null;
 		if (one === null || typeof one?.question !== "string") continue;
 		const offered = Array.isArray(one.options) ? one.options : [];
 		questions.push({
 			header: typeof one.header === "string" ? one.header : "",
 			question: one.question,
+			multi: one.multiSelect === true,
 			options: offered
 				.filter((option): option is { label: string; description?: unknown } => typeof option?.label === "string")
 				.map((option) => ({
@@ -70,4 +73,46 @@ export function questionsOf(input: CallInput): readonly AskQuestion[] {
 		});
 	}
 	return questions;
+}
+
+/**
+ * What an approval would let through, behind its quiet disclosure (#366): the command it
+ * runs or the file it changes, project-relative. Null where the call carries neither,
+ * which is a connector's call: its row already names it.
+ */
+export function detailOf(input: unknown, root: string): string | null {
+	if (typeof input !== "object" || input === null) return null;
+	const call = input as { command?: unknown; file_path?: unknown; notebook_path?: unknown };
+	if (typeof call.command === "string" && call.command.trim() !== "") return call.command.trim();
+	const path = typeof call.file_path === "string" ? call.file_path : call.notebook_path;
+	if (typeof path !== "string" || path === "") return null;
+	const prefix = root === "" ? "" : root.endsWith("/") ? root : `${root}/`;
+	return prefix !== "" && path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+/** an approval's kind, in a person's words: the label its disclosure opens from */
+export function approvalWhat(tool: string | null, detail: string | null): string {
+	if (tool === "Bash") return "Run a command";
+	if (tool === "Write" || tool === "Edit" || tool === "MultiEdit" || tool === "NotebookEdit") {
+		return detail !== null && !detail.startsWith("design/") ? "Edit a file outside design/" : "Edit a file";
+	}
+	if (tool === "WebFetch" || tool === "WebSearch") return "Go on the web";
+	return "Use a tool";
+}
+
+/**
+ * The one quiet line an answered approval folds to (#366): "Allowed: edit src/theme.ts",
+ * "Denied: run a command". The words, then the path or command in mono where there is one.
+ */
+export function foldedApproval(
+	state: "allowed" | "always" | "denied",
+	tool: string | null,
+	detail: string | null,
+): { words: string; mono: string | null } {
+	const what = approvalWhat(tool, detail);
+	if (state === "denied") return { words: `Denied: ${what.charAt(0).toLowerCase()}${what.slice(1)}`, mono: null };
+	const lead = state === "always" ? "Allowed for this chat:" : "Allowed:";
+	const verb =
+		tool === "Bash" ? "run" : what.startsWith("Edit") ? "edit" : what.charAt(0).toLowerCase() + what.slice(1);
+	return detail === null ? { words: `${lead} ${verb}`, mono: null } : { words: `${lead} ${verb}`, mono: detail };
 }

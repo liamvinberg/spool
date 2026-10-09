@@ -6,14 +6,15 @@ import {
 	fitWindow,
 	isLayout,
 	type Layout,
+	maxWidth,
 	reduce,
 	resizeSplit,
 	stackHeights,
 } from "./pane-layout";
 
 /**
- * The pane layout as data: two sides of the canvas, each a rail of icons and a
- * stack of the panes lit on it. Every case here goes through the model's own
+ * The pane layout as data: two sides of the canvas, each the panes that stand on it,
+ * a toggle apiece in the window bar, and a stack of the ones lit. Every case here goes through the model's own
  * verbs and reads what a person would see back out of `fitWindow`.
  */
 
@@ -25,22 +26,22 @@ const shown = (layout: Layout, env: Env = WIDE) => {
 };
 
 describe("the default layout", () => {
-	it("shows Pages on the left and Properties on the right, with Agent waiting on the right rail", () => {
+	it("shows Pages on the left and Properties on the right, with Agent waiting on the right", () => {
 		const layout = defaultLayout();
-		expect(layout.left.rail).toEqual(["pages"]);
-		expect(layout.right.rail).toEqual(["properties", "agent"]);
+		expect(layout.left.panes).toEqual(["pages"]);
+		expect(layout.right.panes).toEqual(["properties", "agent"]);
 		expect(shown(layout)).toEqual({ left: ["pages"], right: ["properties"] });
 	});
 
-	it("leaves the canvas what the two rails and two stacks do not take", () => {
+	it("leaves the canvas what the two stacks do not take", () => {
 		const f = fitWindow(defaultLayout(), WIDE);
-		// 44 + 248 on the left, 300 + 44 on the right
-		expect(f.canvas).toBe(1440 - 292 - 344);
+		// 248 on the left, 300 on the right, and no rails
+		expect(f.canvas).toBe(1440 - 248 - 300);
 	});
 });
 
-describe("clicking a rail icon", () => {
-	it("lights an unlit pane under the ones already showing, in rail order", () => {
+describe("clicking a pane toggle", () => {
+	it("lights an unlit pane under the ones already showing, in the side's order", () => {
 		const layout = reduce(defaultLayout(), { type: "click", pane: "agent" }, WIDE);
 		expect(shown(layout).right).toEqual(["properties", "agent"]);
 	});
@@ -51,10 +52,10 @@ describe("clicking a rail icon", () => {
 		expect(shown(layout).right).toEqual(["agent"]);
 	});
 
-	it("collapses the side to its rail when the last pane goes off, and brings it back on the next click", () => {
+	it("collapses the side when the last pane goes off, and brings it back on the next click", () => {
 		const shut = reduce(defaultLayout(), { type: "click", pane: "properties" }, WIDE);
 		expect(fitWindow(shut, WIDE).right.open).toBe(false);
-		expect(fitWindow(shut, WIDE).canvas).toBe(1440 - 292 - 44);
+		expect(fitWindow(shut, WIDE).canvas).toBe(1440 - 248);
 
 		const back = reduce(shut, { type: "click", pane: "properties" }, WIDE);
 		expect(shown(back).right).toEqual(["properties"]);
@@ -92,7 +93,7 @@ describe("moving a pane", () => {
 			{ type: "move", pane: "properties", to: { kind: "stack", side: "left", anchor: "pages", edge: "below" } },
 			WIDE,
 		);
-		expect(layout.left.rail).toEqual(["pages", "properties"]);
+		expect(layout.left.panes).toEqual(["pages", "properties"]);
 		expect(shown(layout)).toEqual({ left: ["pages", "properties"], right: [] });
 		// the split halves the pane it splits
 		expect(layout.weights.pages).toBe(layout.weights.properties);
@@ -104,41 +105,41 @@ describe("moving a pane", () => {
 			{ type: "move", pane: "agent", to: { kind: "stack", side: "right", anchor: "properties", edge: "above" } },
 			WIDE,
 		);
-		expect(layout.right.rail).toEqual(["agent", "properties"]);
+		expect(layout.right.panes).toEqual(["agent", "properties"]);
 		expect(shown(layout).right).toEqual(["agent", "properties"]);
 	});
 
-	it("reorders a rail, and the stack follows the rail's order", () => {
+	it("reorders a side's toggles, and the stack follows their order", () => {
 		const both = reduce(defaultLayout(), { type: "click", pane: "agent" }, WIDE);
-		const layout = reduce(both, { type: "move", pane: "agent", to: { kind: "rail", side: "right", index: 0 } }, WIDE);
-		expect(layout.right.rail).toEqual(["agent", "properties"]);
+		const layout = reduce(both, { type: "move", pane: "agent", to: { kind: "bar", side: "right", index: 0 } }, WIDE);
+		expect(layout.right.panes).toEqual(["agent", "properties"]);
 		expect(shown(layout).right).toEqual(["agent", "properties"]);
 	});
 
-	it("carries a showing pane to the other rail and shows it there", () => {
+	it("carries a showing pane to the other side and shows it there", () => {
 		const layout = reduce(
 			defaultLayout(),
-			{ type: "move", pane: "properties", to: { kind: "rail", side: "left", index: 1 } },
+			{ type: "move", pane: "properties", to: { kind: "bar", side: "left", index: 1 } },
 			WIDE,
 		);
-		expect(layout.left.rail).toEqual(["pages", "properties"]);
-		expect(layout.right.rail).toEqual(["agent"]);
+		expect(layout.left.panes).toEqual(["pages", "properties"]);
+		expect(layout.right.panes).toEqual(["agent"]);
 		expect(shown(layout)).toEqual({ left: ["pages", "properties"], right: [] });
 	});
 
-	it("carries an unlit pane to the other rail without showing it", () => {
+	it("carries an unlit pane to the other side without showing it", () => {
 		const layout = reduce(
 			defaultLayout(),
-			{ type: "move", pane: "agent", to: { kind: "rail", side: "left", index: 0 } },
+			{ type: "move", pane: "agent", to: { kind: "bar", side: "left", index: 0 } },
 			WIDE,
 		);
-		expect(layout.left.rail).toEqual(["agent", "pages"]);
+		expect(layout.left.panes).toEqual(["agent", "pages"]);
 		expect(shown(layout)).toEqual({ left: ["pages"], right: ["properties"] });
 	});
 
 	it("hands back the same layout for a drop that changes nothing", () => {
 		const layout = defaultLayout();
-		expect(reduce(layout, { type: "move", pane: "agent", to: { kind: "rail", side: "right", index: 2 } }, WIDE)).toBe(
+		expect(reduce(layout, { type: "move", pane: "agent", to: { kind: "bar", side: "right", index: 2 } }, WIDE)).toBe(
 			layout,
 		);
 	});
@@ -150,13 +151,13 @@ describe("hiding and removing", () => {
 		expect(shown(reduce(both, { type: "hide", pane: "agent" }, WIDE)).right).toEqual(["properties"]);
 	});
 
-	it("takes a removed pane off its rail, and shows it again where it stood", () => {
+	it("takes a removed pane out of the bar, and shows it again where it stood", () => {
 		const removed = reduce(defaultLayout(), { type: "remove", pane: "properties" }, WIDE);
-		expect(removed.right.rail).toEqual(["agent"]);
+		expect(removed.right.panes).toEqual(["agent"]);
 		expect(shown(removed).right).toEqual([]);
 
 		const back = reduce(removed, { type: "show", pane: "properties" }, WIDE);
-		expect(back.right.rail).toEqual(["properties", "agent"]);
+		expect(back.right.panes).toEqual(["properties", "agent"]);
 		expect(shown(back).right).toEqual(["properties"]);
 		expect(back.removed).toEqual({});
 	});
@@ -174,18 +175,32 @@ describe("widths", () => {
 	it("keeps a side between 200 and 480 wide", () => {
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 120 }, WIDE).left.width).toBe(200);
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 900 }, WIDE).left.width).toBe(480);
+		expect(maxWidth(defaultLayout(), "left", WIDE)).toBe(480);
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 320 }, WIDE).left.width).toBe(320);
+	});
+
+	it("keeps a side showing the agent between 380 and 560 wide (#364)", () => {
+		const agent = reduce(defaultLayout(), { type: "show", pane: "agent" }, WIDE);
+		expect(reduce(agent, { type: "width", side: "right", width: 200 }, WIDE).right.width).toBe(380);
+		expect(reduce(agent, { type: "width", side: "right", width: 900 }, WIDE).right.width).toBe(560);
+		expect(reduce(agent, { type: "width", side: "right", width: 440 }, WIDE).right.width).toBe(440);
+		// a width saved narrower draws at the agent's floor while the agent shows
+		expect(fitWindow(agent, WIDE).right.width).toBe(380);
+		expect(maxWidth(agent, "right", WIDE)).toBe(560);
+		// hiding the agent brings the side back under every other pane's ceiling
+		const wide = reduce(agent, { type: "width", side: "right", width: 540 }, WIDE);
+		expect(fitWindow(reduce(wide, { type: "hide", pane: "agent" }, WIDE), WIDE).right.width).toBe(480);
 	});
 
 	it("never lets a drag take the canvas under 480", () => {
 		const env = { width: 1100, height: 900 };
-		// the right takes 344, the left rail 44: 1100 - 344 - 44 - 480 leaves 232 for the left stack
-		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 400 }, env).left.width).toBe(232);
+		// the right takes 300: 1100 - 300 - 480 leaves 320 for the left stack
+		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 400 }, env).left.width).toBe(320);
 	});
 });
 
 describe("a narrow window", () => {
-	it("folds the side touched least recently to its rail, and opens it again once there is room", () => {
+	it("folds the side touched least recently, and opens it again once there is room", () => {
 		const narrow = { width: 1000, height: 900 };
 		const f = fitWindow(defaultLayout(), narrow);
 		expect(f.left.open).toBe(false);
@@ -218,14 +233,14 @@ describe("refusing a drop", () => {
 	});
 
 	it("calls a drop that changes nothing a no-op", () => {
-		expect(check(defaultLayout(), "agent", { kind: "rail", side: "right", index: 2 }, WIDE)).toBe("noop");
+		expect(check(defaultLayout(), "agent", { kind: "bar", side: "right", index: 2 }, WIDE)).toBe("noop");
 	});
 
 	it("refuses a fourth pane on a side", () => {
 		const two = twoLeft();
 		const extra = {
 			...two,
-			left: { ...two.left, rail: ["pages", "properties", "notes"], lit: ["pages", "properties", "notes"] },
+			left: { ...two.left, panes: ["pages", "properties", "notes"], lit: ["pages", "properties", "notes"] },
 		};
 		expect(check(extra, "agent", { kind: "stack", side: "left", anchor: "pages", edge: "below" }, WIDE)).toBe("cap");
 	});
@@ -239,8 +254,8 @@ describe("refusing a drop", () => {
 
 	it("refuses to open a side where the canvas would go under 480", () => {
 		const narrow = { width: 900, height: 900 };
-		// 900 - 292 on the left - 44 rail - 480 leaves 84, under the side's 200 minimum
-		expect(check(twoLeft(), "properties", { kind: "rail", side: "right", index: 0 }, narrow)).toBe("floor");
+		// 900 - 248 on the left - 480 leaves 172, under the side's 200 minimum
+		expect(check(twoLeft(), "properties", { kind: "bar", side: "right", index: 0 }, narrow)).toBe("floor");
 	});
 });
 
@@ -277,13 +292,13 @@ describe("the stored layout", () => {
 		const broken: unknown[] = [
 			null,
 			"properties",
-			{ ...layout, v: 2 },
-			{ ...layout, left: { ...layout.left, rail: "pages" } },
+			{ ...layout, v: 1 },
+			{ ...layout, left: { ...layout.left, panes: "pages" } },
 			// a pane twice, a pane missing, a pane nobody registered
-			{ ...layout, right: { ...layout.right, rail: ["properties", "agent", "pages"] } },
-			{ ...layout, right: { ...layout.right, rail: ["properties"], lit: ["properties"] } },
-			{ ...layout, left: { ...layout.left, rail: ["pages", "notes"] } },
-			// lit off its rail, too many lit
+			{ ...layout, right: { ...layout.right, panes: ["properties", "agent", "pages"] } },
+			{ ...layout, right: { ...layout.right, panes: ["properties"], lit: ["properties"] } },
+			{ ...layout, left: { ...layout.left, panes: ["pages", "notes"] } },
+			// lit off its side, too many lit
 			{ ...layout, left: { ...layout.left, lit: ["agent"] } },
 			{ ...layout, right: { ...layout.right, lit: ["properties", "agent", "properties", "agent"] } },
 			// a width no side is ever left at, a share that is not a share

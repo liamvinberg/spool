@@ -1,10 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import { getNested, mutateMachineState, setNested } from "../machine-state";
-import { readMachineRegistry } from "../machine-state-files";
+import { getNested, setNested } from "../machine-state";
 import {
-	type AgentPermissions,
 	isSettingKey,
 	parseSetting,
 	SETTING_KEYS,
@@ -51,8 +49,6 @@ export interface SettingsStore {
 	 * should see nine of them land
 	 */
 	writeMany(writes: readonly { key: string; value: unknown }[], root?: string): SettingsWrite;
-	/** the fence a spawn for this project gets, read from the file at spawn time */
-	agentPermissions(root: string): AgentPermissions;
 }
 
 export function createSettingsStore(spoolDir: string): SettingsStore {
@@ -63,11 +59,6 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 		switch (SETTINGS[key].scope) {
 			case "project":
 				return root === undefined ? undefined : getNested(readCanvasFields(root), path);
-			case "local": {
-				if (root === undefined) return undefined;
-				const project = readMachineRegistry(spoolDir).projects.find((candidate) => candidate.root === root);
-				return getNested(project?.settings, path);
-			}
 			case "machine":
 				return getNested(readConfig(configFile).fields, path);
 		}
@@ -139,18 +130,6 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 					}
 					break;
 				}
-				case "local": {
-					const result = mutateMachineState(spoolDir, {
-						kind: "set-project-setting",
-						root: root as string,
-						path: write.path,
-						value: write.value,
-					});
-					if (result.kind === "unregistered") {
-						return { status: 404, reason: `not a registered project root: ${result.root}` };
-					}
-					break;
-				}
 				case "machine":
 					break;
 			}
@@ -178,7 +157,6 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 			return { ok: true, reading: written.readings[0] as SettingReading };
 		},
 		writeMany,
-		agentPermissions: (root) => reading("agent.permissions", root).value,
 	};
 }
 

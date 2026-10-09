@@ -33,10 +33,10 @@ function project(capture: string): AgentEvent[] {
  * shape spool has no member for costs a blank row.
  */
 const UNMODELLED: Readonly<Record<string, readonly string[]>> = {
-	"claude-turn": ["system/background_tasks_changed"],
-	"claude-plan": ["system/background_tasks_changed"],
+	"claude-turn": [],
+	"claude-plan": [],
 	"claude-edits": [],
-	"claude-fanout": ["system/background_tasks_changed"],
+	"claude-fanout": [],
 	"claude-mcp": ["control_response", "system/hook_response", "system/hook_started"],
 	"claude-interrupt": ["control_response", "system/hook_response", "system/hook_started"],
 	"claude-compact": ["system/hook_response", "system/hook_started", "system/status"],
@@ -194,6 +194,38 @@ describe("what the union carries", () => {
 		expect(new Set(delegated.map((event) => event.parent)).size).toBe(3);
 	});
 
+	it("names what kind of task each one is, so a background shell is told from a designer (#365)", () => {
+		const started = project("claude-background").filter((event) => event.kind === "task-started");
+		expect(started.map((event) => event.kind === "task-started" && event.type)).toEqual([
+			"local_agent",
+			"local_agent",
+		]);
+		const shell = createClaudeAdapter().read(
+			JSON.stringify({
+				type: "system",
+				subtype: "task_started",
+				task_id: "bxyz",
+				task_type: "local_bash",
+				tool_use_id: "toolu_shell",
+				description: "pnpm dev",
+				session_id: "s",
+			}),
+		);
+		expect(shell).toMatchObject([{ kind: "task-started", task: "bxyz", type: "local_bash" }]);
+	});
+
+	it("carries the whole background set on every change, and its emptying (#365)", () => {
+		const sets = project("claude-background").filter((event) => event.kind === "background");
+
+		expect(sets.map((event) => event.kind === "background" && event.tasks.length)).toEqual([1, 2, 1, 0]);
+		expect(sets[0]?.kind === "background" && sets[0].tasks[0]).toEqual({
+			task: "a333817c7dc56d393",
+			description: "Design hello-calm frame",
+			agent: "designer",
+			type: "local_agent",
+		});
+	});
+
 	it("tells an interrupted turn from a clean one by its terminal reason", () => {
 		const stopped = project("claude-interrupt").find((event) => event.kind === "ended");
 		const clean = project("claude-fanout").find((event) => event.kind === "ended");
@@ -202,6 +234,16 @@ describe("what the union carries", () => {
 		expect(stopped?.kind === "ended" && stopped.reason).toBe("aborted_streaming");
 		expect(clean?.kind === "ended" && clean.ending).toBe("done");
 		expect(clean?.kind === "ended" && clean.reason).toBe("completed");
+	});
+
+	it("says how full the window was on the last request, just before the turn ends", () => {
+		const events = project("claude-turn");
+		const at = events.findIndex((event) => event.kind === "context");
+		const context = events[at];
+
+		// the last iteration's prompt over the 1M window modelUsage reports
+		expect(context).toEqual({ kind: "context", used: 2 + 107327 + 311, window: 1_000_000, parent: null });
+		expect(events[at + 1]?.kind).toBe("ended");
 	});
 
 	it("reads a compaction as its own two beats", () => {

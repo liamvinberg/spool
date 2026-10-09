@@ -3,7 +3,7 @@ import type { Attachment } from "../attachment";
 import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamProjectHere, TeamRole } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
-import { type AgentEngineId, type AgentLoginProgress, isAgentEngineId } from "../daemon/agent-engine";
+import { AGENT_PERMISSIONS, type AgentEngineId, type AgentPermissions, isAgentEngineId } from "../daemon/agent-engine";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
 import type { AgentLogin } from "../daemon/agent-preflight";
@@ -1382,6 +1382,26 @@ export async function interruptAgentTurn(project: string, turn: string): Promise
 }
 
 /**
+ * Put back a frame a turn deleted (#365). The daemon writes it back from the source the
+ * turn kept, and from the rail's own copy where it no longer holds the turn. False is a
+ * refusal: a frame already stands there again, or nothing was kept.
+ */
+export async function putFrameBack(
+	project: string,
+	back: { thread: string; frame: string; source?: string; sidecar?: string },
+): Promise<boolean> {
+	try {
+		const res = await client.api.p[":project"].agent["put-back"].$post({
+			param: { project },
+			json: { thread: back.thread, frame: back.frame, source: back.source, sidecar: back.sidecar ?? null },
+		});
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Every thread this project has, as spool wrote them down (#120, #136, #200).
  *
  * The picture is the whole of it, so this is the rail's own drawing coming back rather
@@ -1443,15 +1463,15 @@ export async function fetchAgentInstalled(
 	project: string,
 	engine?: AgentEngineId,
 	thread?: string,
-): Promise<boolean | null> {
+): Promise<{ installed: boolean; outdated: boolean } | null> {
 	try {
 		const res = await client.api.p[":project"].agent.installed.$get({
 			param: { project },
 			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
 		});
 		if (!res.ok) return null;
-		const { installed } = (await res.json()) as { installed?: unknown };
-		return typeof installed === "boolean" ? installed : null;
+		const { installed, outdated } = (await res.json()) as { installed?: unknown; outdated?: unknown };
+		return typeof installed === "boolean" ? { installed, outdated: outdated === true } : null;
 	} catch {
 		return null;
 	}
@@ -1475,25 +1495,9 @@ export async function fetchAgentLogin(
 			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
 		});
 		if (!res.ok) return null;
-		const login = (await res.json()) as { signedIn?: unknown; account?: unknown; connections?: unknown };
+		const login = (await res.json()) as { signedIn?: unknown; account?: unknown };
 		if (typeof login.signedIn !== "boolean") return null;
-		const connections: NonNullable<AgentLogin["connections"]>[number][] = [];
-		if (Array.isArray(login.connections))
-			for (const value of login.connections) {
-				if (typeof value !== "object" || value === null) continue;
-				const entry = value as Record<string, unknown>;
-				if (
-					typeof entry.provider === "string" &&
-					(entry.method === "oauth" || entry.method === "api_key") &&
-					typeof entry.label === "string"
-				)
-					connections.push({ provider: entry.provider, method: entry.method, label: entry.label });
-			}
-		return {
-			signedIn: login.signedIn,
-			account: typeof login.account === "string" ? login.account : null,
-			...(Array.isArray(login.connections) ? { connections } : {}),
-		};
+		return { signedIn: login.signedIn, account: typeof login.account === "string" ? login.account : null };
 	} catch {
 		return null;
 	}
@@ -1541,56 +1545,120 @@ export async function chooseAgentModel(
 	return res.ok ? await res.json() : undefined;
 }
 
-export async function fetchEnginePreference(project: string): Promise<AgentEngineId> {
+/** What one engine offers a new chat (#364): the agent menu's group for an engine this chat is not on. */
+export async function engineModelOffer(project: string, engine: AgentEngineId): Promise<unknown> {
 	try {
-		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
-		const value = (await res.json()) as { preferred?: unknown };
-		return isAgentEngineId(value.preferred) ? value.preferred : "spool";
+		const res = await client.api.p[":project"].agent.engines[":engine"].models.$get({ param: { project, engine } });
+		return res.ok ? await res.json() : undefined;
 	} catch {
-		return "spool";
-	}
-}
-export async function accountOperation(
-	project: string,
-	operation:
-		| { action: "start"; provider: string; method: string }
-		| { action: "input"; id: string; value: string; revision?: number }
-		| { action: "poll"; id: string }
-		| { action: "cancel"; id: string }
-		| { action: "disconnect"; provider: string },
-): Promise<AgentLoginProgress> {
-	try {
-		const response = await client.api.p[":project"].agent.account.$post({ param: { project }, json: operation });
-		return response.ok
-			? ((await response.json()) as AgentLoginProgress)
-			: { kind: "error", message: "Could not connect the account. Try again." };
-	} catch {
-		return { kind: "error", message: "Could not reach the bundled engine. Try again." };
+		return undefined;
 	}
 }
 
+/** Choose a model or effort for an engine's next new chat (#364); the answer is the engine's own report. */
+export async function chooseEngineModel(project: string, engine: AgentEngineId, next: AgentAsk): Promise<unknown> {
+	try {
+		const res = await client.api.p[":project"].agent.engines[":engine"].model.$post({
+			param: { project, engine },
+			json: next,
+		});
+		return res.ok ? await res.json() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The machine's agent choice and the engines this daemon runs (#361, #363, #364), off the
+ * one door that says both, or undefined when it could not be read. Each half is undefined
+ * where the answer did not carry it whole: never a guess.
+ */
+export interface AgentEnginesReading {
+	readonly defaults: { preferred: AgentEngineId | null; mode: AgentPermissions } | undefined;
+	/**
+	 * every engine the daemon runs, whether its binary is on this machine, and whether the
+	 * one there is too old to run (#362), which is not installed either
+	 */
+	readonly engines: readonly AgentEngineReading[] | undefined;
+}
+
+export interface AgentEngineReading {
+	readonly id: AgentEngineId;
+	readonly installed: boolean;
+	readonly outdated: boolean;
+}
+
+export async function fetchAgentEngines(project: string): Promise<AgentEnginesReading | undefined> {
+	try {
+		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
+		if (!res.ok) return undefined;
+		const body: unknown = await res.json();
+		const listed = typeof body === "object" && body !== null ? (body as { engines?: unknown }).engines : undefined;
+		return {
+			defaults: agentDefaultsOf(body),
+			engines: Array.isArray(listed)
+				? listed.flatMap((entry: unknown) => {
+						const { id, installed, outdated } = (typeof entry === "object" && entry !== null ? entry : {}) as {
+							id?: unknown;
+							installed?: unknown;
+							outdated?: unknown;
+						};
+						return isAgentEngineId(id)
+							? [{ id, installed: installed === true, outdated: installed !== true && outdated === true }]
+							: [];
+					})
+				: undefined,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/** Save the engine new threads start on; the answer is the value the daemon confirmed. */
+export async function saveAgentEngine(
+	project: string,
+	preferred: AgentEngineId,
+): Promise<{ preferred: AgentEngineId | null; mode: AgentPermissions } | undefined> {
+	try {
+		const res = await client.api.p[":project"].agent.engines.$put({ param: { project }, json: { preferred } });
+		if (!res.ok) return undefined;
+		return agentDefaultsOf(await res.json());
+	} catch {
+		return undefined;
+	}
+}
+
+function agentDefaultsOf(body: unknown): { preferred: AgentEngineId | null; mode: AgentPermissions } | undefined {
+	if (typeof body !== "object" || body === null) return undefined;
+	const { preferred, mode } = body as { preferred?: unknown; mode?: unknown };
+	if (!(preferred === null || isAgentEngineId(preferred)) || !isPermissionMode(mode)) return undefined;
+	return { preferred, mode };
+}
+
+function isPermissionMode(value: unknown): value is AgentPermissions {
+	return (AGENT_PERMISSIONS as readonly unknown[]).includes(value);
+}
+
+/**
+ * The machine's permission mode, read or picked from a thread (#361). `pending` says the
+ * thread's running turn started on another mode and takes this one at its next turn.
+ */
 export async function agentPermissions(
 	project: string,
 	thread: string,
-	engine: AgentEngineId,
-	mode?: "ask" | "edits" | "bypass",
-): Promise<{ mode: "ask" | "edits" | "bypass" } | { reason: string }> {
+	mode?: AgentPermissions,
+): Promise<{ mode: AgentPermissions; pending: boolean } | { reason: string }> {
 	try {
 		const route = client.api.p[":project"].agent.threads[":thread"].permissions;
-		const args = { param: { project, thread }, query: { engine } };
+		const args = { param: { project, thread } };
 		const res = mode === undefined ? await route.$get(args) : await route.$put({ ...args, json: { mode } });
 		if (!res.ok) return { reason: await res.text() };
 		const body: unknown = await res.json();
-		if (
-			typeof body === "object" &&
-			body !== null &&
-			"mode" in body &&
-			(body.mode === "ask" || body.mode === "edits" || body.mode === "bypass")
-		)
-			return { mode: body.mode };
-		return { reason: "The engine did not report its permissions." };
+		if (typeof body === "object" && body !== null && "mode" in body && isPermissionMode(body.mode))
+			return { mode: body.mode, pending: "pending" in body && body.pending === true };
+		return { reason: "Spool did not report the permission mode." };
 	} catch {
-		return { reason: "Could not reach the engine." };
+		return { reason: "Could not reach spool." };
 	}
 }
 

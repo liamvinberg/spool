@@ -204,3 +204,11 @@ export function controlResponseLine(request: string, response: unknown): string 
 export function interruptRequestLine(request: string): string {
 	return `${JSON.stringify({ type: "control_request", request_id: request, request: { subtype: "interrupt" } })}\n`;
 }
+
+/**
+ * Stop one background task the binary is running (#365): Stop ends the designers a turn
+ * started as well as the turn, and `stop_task` is Claude Code's own request for one.
+ */
+export function stopTaskRequestLine(request: string, task: string): string {
+	return `${JSON.stringify({ type: "control_request", request_id: request, request: { subtype: "stop_task", task_id: task } })}\n`;
+}

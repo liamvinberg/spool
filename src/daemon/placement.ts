@@ -35,6 +35,11 @@ export type FieldFrame = Rect & { page?: string };
  * where it stands — so they are answered the same way, and the field each of
  * them is measured against holds both kinds of thing.
  */
+/** two rects share some area; touching edges do not */
+export function overlaps(a: Rect, b: Rect): boolean {
+	return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
 export function besideField(field: readonly Rect[]): { x: number; y: number } {
 	if (field.length === 0) return { x: GUTTER, y: GUTTER };
 	return {

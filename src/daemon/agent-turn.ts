@@ -1,4 +1,4 @@
-import type { AgentPermissions } from "../settings/registry";
+import { createBackgroundHold } from "./agent-background";
 import { createClaudeAdapter } from "./agent-claude";
 import {
 	type AgentReply,
@@ -7,12 +7,15 @@ import {
 	controlResponseLine,
 	DECLINED,
 	interruptRequestLine,
+	stopTaskRequestLine,
 	wordsOf,
 } from "./agent-control";
-import type { AgentAsking, AgentEvent, AgentLimit, AgentRecovery } from "./agent-events";
+import type { AgentPermissions } from "./agent-defaults";
+import type { AgentAsking, AgentEnded, AgentEvent, AgentLimit, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import { providerRecovery } from "./agent-recovery";
-import { type AgentAsk, type AgentSession, agentPromptLine, PERMISSION_MODES, planAgentSpawn } from "./agent-spawn";
+import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { createTurnShell } from "./agent-turn-shell";
 
 /**
  * One turn: spawn the developer's agent, send what the human said, and hand back
@@ -30,23 +33,9 @@ import { type AgentAsk, type AgentSession, agentPromptLine, PERMISSION_MODES, pl
  * request — so the turn holds what is waiting and writes the answer back up stdin.
  * Nothing here runs a clock on the work in either direction: a request waits until
  * somebody answers it, for as long as that takes, and spool never answers one itself.
- * The one clock is below, and it starts only once the turn is already over.
+ * The one clock is the shell's exit grace (`agent-turn-shell.ts`), and it starts only once
+ * the turn is already over.
  */
-
-/**
- * How long a binary that has already said everything gets to exit on its own.
- *
- * Nothing here runs a clock on the *turn*: a turn is as long as the work is, and one
- * parked on a question waits for as long as the person does. This clock starts after the
- * turn is over, on the ending the binary itself reported, and it is about one thing only
- * — a process that has nothing left to do and has not gone. Ten seconds is longer than
- * any tidy-up and shorter than a person's patience.
- *
- * It is not tidiness. The thread's next message is refused while a turn is running in it,
- * and running is what the process being up means, so a binary that never exits takes the
- * conversation with it until the daemon is restarted.
- */
-const EXIT_GRACE_MS = 10_000;
 
 export interface AgentTurnOptions {
 	readonly executor: AgentExecutor;
@@ -62,15 +51,12 @@ export interface AgentTurnOptions {
 	readonly permissions?: AgentPermissions;
 	/** An earlier attempt already completed tools in this pending request. */
 	readonly continuing?: boolean;
+	/** spool's designer, as the `--agents` file in spool's state (#367) */
+	readonly designer?: string;
 }
 
 export interface AgentTurn {
 	readonly events: AsyncIterable<AgentEvent>;
-	/** Present only when an engine can report and change the mode on this live turn. */
-	readonly permissions?: {
-		readonly applied: AgentPermissions;
-		apply(mode: AgentPermissions): Promise<AgentPermissions>;
-	};
 	/**
 	 * Answer a request this turn is parked on, and say whether it was this turn's to
 	 * answer (#121, #145).
@@ -113,56 +99,11 @@ export function startAgentTurn({
 	ask,
 	permissions,
 	continuing,
+	designer,
 }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
-	const queue: AgentEvent[] = [];
-	let waiting: (() => void) | undefined;
-	let finished = false;
-	let stopped = false;
-	let proc: AgentProcess | undefined;
-	let applied = permissions ?? "ask";
-	let changing:
-		| {
-				id: string;
-				mode: AgentPermissions;
-				resolve: (mode: AgentPermissions) => void;
-				reject: (error: Error) => void;
-		  }
-		| undefined;
-	let changeCount = 0;
-	function rejectChange(reason: string): void {
-		const pending = changing;
-		if (!pending) return;
-		changing = undefined;
-		pending.reject(new Error(reason));
-	}
-	function readPermissionReply(line: string): void {
-		if (!changing) return;
-		let wire: { type?: unknown; response?: { request_id?: unknown; subtype?: unknown; error?: unknown } };
-		try {
-			wire = JSON.parse(line);
-		} catch {
-			return;
-		}
-		if (wire?.type !== "control_response" || wire.response?.request_id !== changing.id) return;
-		if (wire.response.subtype !== "success") {
-			rejectChange(
-				typeof wire.response.error === "string" ? wire.response.error : "Claude Code did not apply permissions.",
-			);
-			return;
-		}
-		const pending = changing;
-		changing = undefined;
-		applied = pending.mode;
-		// The CLI has accepted its mode. Release only matching requests already
-		// held by our can_use_tool channel; design questions never take an allow.
-		for (const held of asking.values()) {
-			if (held.interaction || applied === "ask") continue;
-			if (applied === "edits" && !["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(held.tool)) continue;
-			answer(held.request, { kind: "allow" });
-		}
-		pending.resolve(applied);
-	}
+	const shell = createTurnShell();
+	const { push } = shell;
 	let completed = continuing === true;
 	let limit: AgentLimit | undefined;
 	/**
@@ -191,8 +132,30 @@ export function startAgentTurn({
 	 */
 	let interrupts = 0;
 	let asked = 0;
-	/** the grace an ended turn's binary is inside, cancelled by the exit it is waiting for */
-	let leaving: ReturnType<typeof setTimeout> | undefined;
+	/**
+	 * The turn lasts until its background designers land, not until the agent answers
+	 * (#365): an ending the agent reports while they run is held, and the turn reads
+	 * `holding` until the agent answers the last of them landing, which Claude Code wakes
+	 * it to do.
+	 */
+	const background = createBackgroundHold({ wakes: true });
+	let stopTasks = 0;
+
+	/** the turn is over: no more input is coming, so stdin closes and the binary is left to exit */
+	function over(target: AgentProcess): void {
+		// a request the turn ended under is a request nobody can answer now, and a
+		// stale one would take an answer meant for the next turn
+		asking.clear();
+		shell.leave(target);
+	}
+
+	/** a stop ends the background designers too, each by the binary's own `stop_task` */
+	function stopBackground(target: AgentProcess): void {
+		for (const task of background.running()) {
+			stopTasks += 1;
+			target.write(stopTaskRequestLine(`spool-stop-task-${stopTasks}`, task));
+		}
+	}
 
 	/** every press not yet down the wire, in one place so the spawn and the door agree */
 	function interruptFrom(target: AgentProcess): void {
@@ -200,21 +163,14 @@ export function startAgentTurn({
 			asked += 1;
 			target.write(interruptRequestLine(`spool-interrupt-${asked}`));
 		}
-	}
-
-	function push(event: AgentEvent): void {
-		if (finished) return;
-		queue.push(event);
-		waiting?.();
-		waiting = undefined;
-	}
-
-	function finish(): void {
-		if (finished) return;
-		rejectChange("The Claude Code turn ended before permissions were applied.");
-		finished = true;
-		waiting?.();
-		waiting = undefined;
+		if (interrupts > 0) {
+			stopBackground(target);
+			const held = background.stop();
+			if (held !== undefined) {
+				push(held);
+				over(target);
+			}
+		}
 	}
 
 	function recoveryFor(words: string): AgentRecovery | undefined {
@@ -245,116 +201,74 @@ export function startAgentTurn({
 		};
 	}
 
-	void (async () => {
-		let started: AgentProcess;
-		try {
-			started = await executor(planAgentSpawn(root, process.env, session, ask, permissions));
-		} catch (error) {
-			push({
-				kind: "closed",
-				code: null,
-				message: error instanceof Error ? error.message : String(error),
-				parent: null,
-			});
-			finish();
-			return;
-		}
-		proc = started;
-		if (stopped) {
-			started.kill();
-			return;
-		}
-		started.onLine((line) => {
-			readPermissionReply(line);
-			for (const event of adapter.read(line)) {
-				// a connector's own question never reaches anybody: it is declined where it
-				// arrives, on the protocol's own word for it, and the log says nothing
-				// because nothing was asked of the person
-				if (event.kind === "elicit") {
-					started.write(controlResponseLine(event.request, DECLINED));
-					continue;
+	void shell.spawn(
+		() => executor(planAgentSpawn(root, process.env, session, ask, permissions, designer)),
+		(started) => {
+			started.onLine((line) => {
+				for (const event of adapter.read(line)) {
+					// a connector's own question never reaches anybody: it is declined where it
+					// arrives, on the protocol's own word for it, and the log says nothing
+					// because nothing was asked of the person
+					if (event.kind === "elicit") {
+						started.write(controlResponseLine(event.request, DECLINED));
+						continue;
+					}
+					// the turn is parked from here until somebody answers. Nothing is scheduled
+					// and nothing expires: the binary's own away-from-keyboard timeout would
+					// submit whatever was already picked, and spool submits nothing at all
+					if (event.kind === "asking") asking.set(event.request, event);
+					if (event.kind === "result" && !event.nonExecution) completed = true;
+					if (event.kind === "limit") limit = event.limit;
+					const recovery =
+						event.kind === "ended" && event.ending === "failed" ? recoveryFor(event.reason ?? "") : undefined;
+					const read: AgentEvent =
+						recovery && event.kind === "ended"
+							? ({
+									...event,
+									recovery,
+									reason:
+										recovery.kind === "login"
+											? "Sign in to Claude Code to continue."
+											: "Claude Code rate limit reached.",
+									stopReason: null,
+								} satisfies AgentEnded)
+							: event;
+					const { events, over: done } = background.read(read);
+					for (const one of events) push(one);
+					// the turn is over: no more input is coming, so stdin closes and the
+					// binary is left to exit on its own rather than being killed
+					if (done) over(started);
 				}
-				// the turn is parked from here until somebody answers. Nothing is scheduled
-				// and nothing expires: the binary's own away-from-keyboard timeout would
-				// submit whatever was already picked, and spool submits nothing at all
-				if (event.kind === "ready") {
-					const mode = Object.entries(PERMISSION_MODES).find(([, wire]) => wire === event.permissionMode)?.[0];
-					if (mode === "ask" || mode === "edits" || mode === "bypass") applied = mode;
-				}
-				if (event.kind === "asking") asking.set(event.request, event);
-				if (event.kind === "result" && !event.nonExecution) completed = true;
-				if (event.kind === "limit") limit = event.limit;
-				const recovery =
-					event.kind === "ended" && event.ending === "failed" ? recoveryFor(event.reason ?? "") : undefined;
-				if (recovery && event.kind === "ended")
-					push({
-						...event,
-						recovery,
-						reason:
-							recovery.kind === "login"
-								? "Sign in to Claude Code to continue."
-								: "Claude Code rate limit reached.",
-						stopReason: null,
-					});
-				else push(event);
-				// the turn is over: no more input is coming, so stdin closes and the
-				// binary is left to exit on its own rather than being killed
-				if (event.kind === "ended" && event.parent === null) {
-					// a request the turn ended under is a request nobody can answer now, and a
-					// stale one would take an answer meant for the next turn
-					rejectChange("The Claude Code turn ended before permissions were applied.");
-					asking.clear();
-					started.end();
-					// left to go, and not left forever: a binary still up long after its own
-					// ending is holding the thread against its next message, so the grace runs
-					// out and the process is taken. The timer is nothing to keep a daemon alive
-					// for, which is what a turn already over means
-					leaving ??= setTimeout(() => started.kill(), EXIT_GRACE_MS);
-					leaving.unref?.();
-				}
-			}
-		});
-		started.onExit((code, message) => {
-			if (leaving !== undefined) clearTimeout(leaving);
-			asking.clear();
-			const recovery = code === 0 ? undefined : recoveryFor(message ?? "");
-			push({
-				kind: "closed",
-				code,
-				...(message === undefined ? {} : { message }),
-				parent: null,
-				...(recovery
-					? {
-							recovery,
-							message:
-								recovery.kind === "login"
-									? "Sign in to Claude Code to continue."
-									: "Claude Code rate limit reached.",
-						}
-					: {}),
 			});
-			finish();
-		});
-		started.write(agentPromptLine(content));
-		// a press that landed while this was spawning is spent here, in the order the
-		// hands made it and behind the prompt it is stopping
-		interruptFrom(started);
-	})();
-
-	async function* events(): AsyncGenerator<AgentEvent> {
-		for (;;) {
-			while (queue.length > 0) {
-				yield queue.shift() as AgentEvent;
-			}
-			if (finished) return;
-			await new Promise<void>((resolve) => {
-				waiting = resolve;
+			started.onExit((code, message) => {
+				asking.clear();
+				const recovery = code === 0 ? undefined : recoveryFor(message ?? "");
+				shell.close({
+					kind: "closed",
+					code,
+					...(message === undefined ? {} : { message }),
+					parent: null,
+					...(recovery
+						? {
+								recovery,
+								message:
+									recovery.kind === "login"
+										? "Sign in to Claude Code to continue."
+										: "Claude Code rate limit reached.",
+							}
+						: {}),
+				});
 			});
-		}
-	}
+			started.write(agentPromptLine(content));
+			// a press that landed while this was spawning is spent here, in the order the
+			// hands made it and behind the prompt it is stopping
+			interruptFrom(started);
+		},
+	);
 
 	function answer(request: string, reply: AgentReply): boolean {
 		const held = asking.get(request);
+		const proc = shell.proc;
 		// an answer in the wrong vocabulary is refused rather than translated: the
 		// channel is shared and the two things riding it take different answers
 		if (held === undefined || proc === undefined || !answerFits(held, reply)) return false;
@@ -367,35 +281,15 @@ export function startAgentTurn({
 	}
 
 	return {
-		events: { [Symbol.asyncIterator]: () => events() },
-		permissions: {
-			get applied() {
-				return applied;
-			},
-			apply: (mode) => {
-				if (finished || stopped || !proc || leaving)
-					return Promise.reject(new Error("Claude Code is not ready to change permissions."));
-				if (changing) return Promise.reject(new Error("A permission change is already waiting for Claude Code."));
-				const target = proc;
-				return new Promise<AgentPermissions>((resolve, reject) => {
-					const id = `spool-permissions-${++changeCount}`;
-					// A timeout cannot establish rejection: a late acknowledgement could
-					// still apply. The reply or the turn's end settles this operation.
-					changing = { id, mode, resolve, reject };
-					target.write(
-						`${JSON.stringify({ type: "control_request", request_id: id, request: { subtype: "set_permission_mode", mode: PERMISSION_MODES[mode] } })}\n`,
-					);
-				});
-			},
-		},
+		events: shell.events,
 		answer,
 		interrupt: () => {
 			// a turn that is over is nothing to stop, and a turn given up is over — `abandon`
 			// finishes it. One still spawning is not, so the press is taken now and spent
 			// when there is somewhere to spend it
-			if (finished) return false;
+			if (shell.finished) return false;
 			interrupts += 1;
-			if (proc !== undefined) interruptFrom(proc);
+			if (shell.proc !== undefined) interruptFrom(shell.proc);
 			// nothing is pushed and nothing is cleared: the binary answers the request, ends
 			// the turn on its own terms and exits, and the stream says all three. A request
 			// still parked when the press lands is one the binary's own abort resolves —
@@ -403,11 +297,8 @@ export function startAgentTurn({
 			return true;
 		},
 		abandon: () => {
-			stopped = true;
-			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
-			proc?.kill();
-			finish();
+			shell.abandon();
 		},
 	};
 }

@@ -2,7 +2,6 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { makeApp, makeProject, makeTempDir } from "../test-helpers";
 import { createAgentAppLauncher } from "./agent-app";
-import { createSettingsStore } from "./settings";
 
 it("opens one literal project argument through the local CLI", async () => {
 	const run = vi.fn().mockResolvedValue(undefined);
@@ -80,20 +79,4 @@ it("requires the control capability and resolves the registered folder instead o
 	expect(open).toHaveBeenCalledExactlyOnceWith(root);
 	open.mockRejectedValue(new Error("No app"));
 	expect((await app.request(url, { method: "POST" })).status).toBe(409);
-});
-
-it("remembers the introduction across projects and daemon restarts without writing into either project", () => {
-	const spoolDir = join(makeTempDir(), ".spool");
-	const first = makeProject(spoolDir);
-	const second = makeProject(spoolDir);
-	const store = createSettingsStore(spoolDir);
-	expect(store.write("agent.introductionSeen", true).ok).toBe(true);
-	const restarted = createSettingsStore(spoolDir);
-	for (const { root } of [first, second]) {
-		expect(restarted.read(root).entries.find((entry) => entry.key === "agent.introductionSeen")).toMatchObject({
-			value: true,
-			scope: "machine",
-			source: "file",
-		});
-	}
 });

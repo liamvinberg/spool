@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { type AgentAsk, type AgentOffer, modelOf, modelsOf } from "../../daemon/agent-offer";
 import { agentModelOffer, chooseAgentModel } from "../api";
+import { learnEngineModes, useEngineModes } from "./agent-defaults";
 
 /**
  * Which machine is answering, and what the menu may offer instead (#118, #199).
@@ -39,7 +40,7 @@ const string = (value: unknown): string | null => (typeof value === "string" && 
  */
 export function offerOf(body: unknown): AgentOffer | null {
 	if (typeof body !== "object" || body === null) return null;
-	const offer = body as { models?: unknown; current?: unknown };
+	const offer = body as { models?: unknown; current?: unknown; modes?: unknown };
 	if (!Array.isArray(offer.models)) return null;
 	const current = (typeof offer.current === "object" && offer.current !== null ? offer.current : {}) as Record<
 		string,
@@ -57,6 +58,7 @@ export function offerOf(body: unknown): AgentOffer | null {
 			effort: string(current.effort),
 			pin: string(current.pin),
 		},
+		...(offer.modes === false ? { modes: false as const } : {}),
 	};
 }
 
@@ -122,7 +124,7 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 	const wanted = offer.current.pin ?? press.effort ?? offer.current.effort;
 	const levels = model?.supportedEffortLevels ?? [];
 	return {
-		models: offer.models,
+		...offer,
 		current: {
 			...offer.current,
 			value,
@@ -136,14 +138,18 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 export interface AgentModelDeck {
 	readonly engine?: AgentEngineId;
 	readonly project?: string;
-	readonly onEngine?: (engine: AgentEngineId) => void;
+	/** save another agent as the machine's; resolves with whether the daemon confirmed it */
+	readonly onEngine?: (engine: AgentEngineId) => Promise<boolean>;
 	readonly started?: boolean;
-	readonly connect?: () => void;
-	readonly accountOpen?: boolean;
-	readonly closeAccount?: () => void;
 	readonly offer: AgentOffer;
 	/** The current chat has not received its own model offer yet. */
 	readonly loading?: boolean;
+	/**
+	 * Whether this engine has permission modes to pick (#363, #364): its offer's word once it
+	 * has come, the engine's last word before then, and undefined while neither is known. The
+	 * mode menu is drawn only on true, so an agent with none never flashes one while it loads.
+	 */
+	readonly modes?: boolean;
 	/** Await this chat's offer without treating an unanswered request as signed out. */
 	readonly ready?: () => Promise<AgentOffer | null>;
 	/** the readout, and the trigger's own label */
@@ -181,7 +187,6 @@ export interface AgentModelDeck {
  * screen rather than a claim nobody can now check.
  */
 export function useAgentModel(project: string, thread: string, engine?: AgentEngineId): AgentModelDeck {
-	const [accountOpen, setAccountOpen] = useState(false);
 	const owner = JSON.stringify([project, thread, engine]);
 	const activeOwner = useRef(owner);
 	activeOwner.current = owner;
@@ -250,17 +255,21 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 	// the press only ever answers for the thread it was made about, so a rail that moved
 	// on draws the report it has rather than the last thread's finger
 	const current = reported?.owner === owner ? reported.offer : NO_OFFER;
-	const offer =
-		engine === "spool" || pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
+	const offer = pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
+	const loaded = reported?.owner === owner;
+	const said = loaded ? current.modes !== false : undefined;
+	useEffect(() => {
+		if (said !== undefined && engine !== undefined) learnEngineModes(engine, said);
+	}, [said, engine]);
+	const known = useEngineModes(engine);
+	const modes = said ?? known;
 
 	return {
 		...(engine === undefined ? {} : { engine }),
 		project,
-		accountOpen,
-		connect: () => setAccountOpen(true),
-		closeAccount: () => setAccountOpen(false),
 		offer,
-		loading: reported?.owner !== owner,
+		loading: !loaded,
+		...(modes === undefined ? {} : { modes }),
 		ready: async () => {
 			const at = presses.current;
 			const read = pending.current?.owner === owner ? await pending.current.reply : null;

@@ -17,6 +17,12 @@
  *     `stream-json` has no published stability guarantee.
  */
 
+/**
+ * Claude Code's delegation tool, the name every adapter gives a sub-agent call so the rail
+ * draws it as a delegation.
+ */
+export const DELEGATION_TOOL = "Agent";
+
 /** What a turn ended as. The wire's own reason rides beside it. */
 export type AgentEnding = "done" | "stopped" | "failed";
 
@@ -271,6 +277,11 @@ export interface AgentTaskStarted extends AgentEventBase {
 	readonly description: string | null;
 	readonly agent: string | null;
 	readonly prompt: string | null;
+	/**
+	 * The engine's own word for what kind of task it is: `local_agent`, `local_bash`.
+	 * Absent where the engine names none, which is an engine whose only tasks are agents.
+	 */
+	readonly type?: string;
 }
 
 /** A live one-line step: a snapshot, never a log entry, so it replaces rather than appends. */
@@ -293,10 +304,123 @@ export interface AgentTaskDone extends AgentEventBase {
 	readonly summary: string | null;
 }
 
+/**
+ * The background tasks the agent has running, as it reports the whole set (#365).
+ *
+ * Claude Code says it on every change (`background_tasks_changed`), and the set is the
+ * authority on what still runs after the agent has answered. Only `agent` tasks hold a
+ * turn open: a background shell (a dev server) is the agent's to leave running.
+ */
+export interface AgentBackground extends AgentEventBase {
+	readonly kind: "background";
+	readonly tasks: readonly {
+		readonly task: string;
+		readonly description: string | null;
+		readonly agent: string | null;
+		/** the agent's own word for what kind of task it is: `local_agent`, `local_bash` */
+		readonly type: string | null;
+	}[];
+}
+
+/**
+ * The agent answered while delegations it started still run, so the turn holds (#365).
+ *
+ * Emitted by the runner in place of the `ended` it would otherwise have been: a turn ends
+ * when the engine has reported its result and no background task it started is still
+ * running. `tasks` is how many still are.
+ */
+export interface AgentHolding extends AgentEventBase {
+	readonly kind: "holding";
+	readonly tasks: number;
+}
+
+/**
+ * What a turn did to one frame, read off `design/` rather than off any tool call (#365).
+ *
+ * Emitted by the daemon, which watches the project's `design/` while a turn runs, so a
+ * heredoc, a script and a file tool all read the same. Attribution is the daemon's: the
+ * call it came from where the turn's own file-tool calls say so, and the call that was
+ * running when it landed otherwise. `parent` is the delegation it belongs to, as on every
+ * other event.
+ *
+ * - `created`: the frame's entry appeared. `source` is what landed, so a held spot can
+ *   replay it, and `spot` names the held spot it filled.
+ * - `changed`: the source moved. `range` is the changed lines of the new source, 1-based
+ *   and inclusive, which is what the canvas's edit ring locates.
+ * - `deleted`: the frame went. `source` and `sidecar` are kept so Put back restores it.
+ * - `restored`: Put back wrote it back.
+ */
+export interface AgentFrame extends AgentEventBase {
+	readonly kind: "frame";
+	readonly change: "created" | "changed" | "deleted" | "restored";
+	/** the frame's path under frames/ (#336) */
+	readonly frame: string;
+	/** lines in the source now; 0 once deleted */
+	readonly lines: number;
+	readonly range?: { readonly from: number; readonly to: number };
+	readonly source?: string;
+	readonly sidecar?: string;
+	/** the call it was attributed to, or null where nothing was running */
+	readonly call: string | null;
+	/** the delegated task it was attributed to */
+	readonly task: string | null;
+	readonly spot?: string;
+}
+
+/**
+ * A frame's source while the agent is still writing it, before it exists on disk (#365).
+ *
+ * Only where the engine streams a call's input: Claude Code's main agent does, for a file
+ * tool and for a shell heredoc alike. `text` is what arrived since the last one for this
+ * call, so the source so far is every `text` of the call joined, and `lines` counts it.
+ */
+export interface AgentFrameSource extends AgentEventBase {
+	readonly kind: "frame-source";
+	readonly frame: string;
+	readonly call: string;
+	readonly text: string;
+	readonly lines: number;
+}
+
+/**
+ * A spot on the canvas held for a delegation that reports nothing while it works (#365).
+ *
+ * `held` when the delegation starts, placed through the same beside-the-field rule a new
+ * frame gets and named from its task; `filled` when its frame lands there; `released` when
+ * the delegation ended with nothing landing in it. Root page coordinates.
+ */
+export interface AgentSpot extends AgentEventBase {
+	readonly kind: "spot";
+	readonly state: "held" | "filled" | "released";
+	readonly name: string;
+	readonly task: string;
+	/** the delegating call */
+	readonly call: string | null;
+	/** the frame that filled it */
+	readonly frame?: string;
+	readonly x: number;
+	readonly y: number;
+	readonly w: number;
+	readonly h: number;
+}
+
 /** The usage window, said once, when there is something to say. */
 export interface AgentLimitEvent extends AgentEventBase {
 	readonly kind: "limit";
 	readonly limit: AgentLimit;
+}
+
+/**
+ * How full the model's context window is after the turn's last request (#364).
+ *
+ * `used` is the tokens the last request sent (prompt, cache reads and writes), and
+ * `window` the model's whole window, both as the agent reports them. The composer's
+ * ring reads the share; nothing else does.
+ */
+export interface AgentContext extends AgentEventBase {
+	readonly kind: "context";
+	readonly used: number;
+	readonly window: number;
 }
 
 /** The context is being compacted; the turn continues from the summary it writes. */
@@ -371,7 +495,13 @@ export type AgentEvent =
 	| AgentTaskStarted
 	| AgentTaskStep
 	| AgentTaskDone
+	| AgentBackground
+	| AgentHolding
+	| AgentFrame
+	| AgentFrameSource
+	| AgentSpot
 	| AgentLimitEvent
+	| AgentContext
 	| AgentCompacting
 	| AgentCompacted
 	| AgentEnded

@@ -13,15 +13,23 @@ import { useRef, useState } from "react";
  * The two positions a settled rail can be in are the strip and the panel. There is nothing
  * between `STRIP_WIDTH` and `MIN_WIDTH`, and that gap is the point: a rail is either a
  * column you read or an edge you press, and the drag picks whichever the hand was nearer.
- * The strip is a side's rail now (`pane-window.tsx`), always there, so the far end of the
- * range is the side collapsing rather than a width — which is what `onSettle` is for.
+ * A side has no strip any more (`pane-window.tsx`): its toggles are in the window bar, so
+ * the far end of the range is the side collapsing rather than a width — which is what
+ * `onSettle` is for.
  */
 
-/** shut: an edge with the one control that opens it */
+/** shut: what a settle under the snap point reports, which a side reads as collapsing */
 export const STRIP_WIDTH = 44;
 /** the narrowest a rail may be while it is still a rail */
 export const MIN_WIDTH = 200;
+/** the widest a rail may be, unless it is the agent's */
 export const MAX_WIDTH = 480;
+/**
+ * The agent's own range (#364): a side showing the agent rail is 380 to 560 wide,
+ * because the composer's foot and the agent menu need that much to stay on one line.
+ */
+export const AGENT_MIN_WIDTH = 380;
+export const AGENT_MAX_WIDTH = 560;
 /** let go below this and the rail shuts rather than sitting at an unusable width */
 export const SNAP_BELOW = 144;
 
@@ -39,8 +47,8 @@ export const PROPERTIES_WIDTH = 300;
 export const PAGES_WIDTH = 248;
 
 /** where a rail lands when the hand lets go of it */
-export const settledWidth = (latest: number): number =>
-	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, latest));
+export const settledWidth = (latest: number, max: number = MAX_WIDTH): number =>
+	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(max, latest));
 
 /**
  * The grip on a rail's inner edge, as behaviour rather than as markup (#256).
@@ -89,7 +97,7 @@ export function useRailDrag({
 		target.releasePointerCapture(pointerId);
 		held.current = null;
 		setDragging(false);
-		onSettle(settledWidth(Math.min(current.latestWidth, max)));
+		onSettle(settledWidth(current.latestWidth, max));
 	};
 
 	return {

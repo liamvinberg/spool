@@ -1,8 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
-import { buildBundledOAuth } from "./src/daemon/bundled-oauth-build";
 import { collapsedWords } from "./src/daemon/edit-words";
 import { tagWord, wholeComponent } from "./src/daemon/element-name";
 import { buildVendorEntry } from "./src/vendor-entry-build";
@@ -26,8 +23,6 @@ export default defineConfig([
 	{
 		entry: {
 			cli: "src/cli.ts",
-			"bundled-host": "src/daemon/bundled-host.ts",
-			"bundled-command-process": "src/daemon/bundled-command-process.ts",
 			"tailwind-worker": "src/daemon/tailwind-worker.ts",
 		},
 		format: "esm",
@@ -46,20 +41,6 @@ export default defineConfig([
 		removeNodeProtocol: false,
 		define: shimHelpers,
 		esbuildPlugins: [licenses],
-		onSuccess: async () => {
-			const renderer = fileURLToPath(new URL("./src/daemon/bundled-oauth-page.ts", import.meta.url));
-			await writeFile("dist/bundled-oauth-native.js", await buildBundledOAuth(renderer));
-			// pi reads its name, version and config directory from its package.json
-			// as it loads; agent-engine-spool points the host at this copy.
-			const pi = JSON.parse(
-				await readFile(new URL("../package.json", import.meta.resolve("@earendil-works/pi-coding-agent")), "utf8"),
-			);
-			await mkdir("dist/pi", { recursive: true });
-			await writeFile(
-				"dist/pi/package.json",
-				`${JSON.stringify({ name: pi.name, version: pi.version, piConfig: pi.piConfig }, null, "\t")}\n`,
-			);
-		},
 	},
 	{
 		// the runtimes the daemon serves at /vendor/spool.js and /vendor/spool-jsx.js:

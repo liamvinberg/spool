@@ -113,17 +113,17 @@ describe("canvas boot", () => {
 		expect(capture).not.toHaveBeenCalled();
 	});
 
-	it("puts every pane on a rail, and stands the agent only once it is pressed", async () => {
+	it("gives every pane a toggle, and stands the agent only once it is pressed", async () => {
 		stubEmptyProject();
 		const host = mountCanvas();
 		await flush();
 
 		// Pages on the left and Properties on the right stand by default (#359);
-		// the agent is an icon on the right rail, mounted and out of sight
-		expect(host.querySelector('[data-rail="left"] [data-rail-icon="pages"]')?.getAttribute("aria-pressed")).toBe(
-			"true",
-		);
-		const icon = host.querySelector<HTMLElement>('[data-rail="right"] [data-rail-icon="agent"]');
+		// the agent is a toggle at the right end of the bar, mounted and out of sight
+		expect(
+			host.querySelector('[data-pane-toggles="left"] [data-pane-toggle="pages"]')?.getAttribute("aria-pressed"),
+		).toBe("true");
+		const icon = host.querySelector<HTMLElement>('[data-pane-toggles="right"] [data-pane-toggle="agent"]');
 		expect(icon?.getAttribute("aria-pressed")).toBe("false");
 		const agent = host.querySelector("[data-agent-rail]");
 		const slot = agent?.closest("[data-pane-slot]");

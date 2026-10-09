@@ -100,7 +100,7 @@ function mount(stored: readonly ServedThread[] = []) {
 	});
 
 	function Probe() {
-		seen.push(useAgentThreads("test"));
+		seen.push(useAgentThreads("test", "claude"));
 		return null;
 	}
 
@@ -534,7 +534,7 @@ describe("a turn picked back up", () => {
 		]);
 	});
 
-	it("keeps queued messages held when a bundled turn failed while the project was away", async () => {
+	it("never sends what a removed bundled-engine thread was holding", async () => {
 		const canvas = mount([
 			{
 				...midTurn(),

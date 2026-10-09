@@ -38,12 +38,13 @@ it("keeps working across projects and restores a reply completed while away", { 
 	const page = await browser.newPage();
 	const url = `${project.url}/p/${encodeURIComponent(project.name)}`;
 	await page.goto(url);
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	await field.fill("Finish this while I look at another project.");
 	await field.press("Enter");
-	await rail.locator('[data-agent-wait="running"]').waitFor();
+	// the receipt is a step, behind the turn's status line (#365), so it is there rather than seen
+	await rail.locator('[data-agent-wait="running"]').waitFor({ state: "attached" });
 	const working = agent.spawned.find((proc) => proc.inputs.some((line) => line.includes("Finish this")));
 	if (!working) throw new Error("Missing working agent");
 	await field.fill("Keep this next draft.");
@@ -52,10 +53,12 @@ it("keeps working across projects and restores a reply completed while away", { 
 	expect(working.killed).toBe(false);
 	await page.locator(`[data-tab="${project.root}"] .project-tab-label`).click();
 	await page.locator('[data-frame-label="home"]').waitFor();
-	const glyph = page.locator('[data-rail-icon="agent"]');
+	const glyph = page.locator('[data-pane-toggle="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
-	await rail.locator('[data-agent-wait="running"]').waitFor();
+	await rail.locator('[data-agent-wait="running"]').waitFor({ state: "attached" });
 	expect(await rail.locator('[data-agent-wait="running"]').textContent()).not.toContain("1440:");
+	// and the line that is seen counts from the same start
+	expect(await rail.locator('[data-agent-turn-line="running"]').textContent()).not.toContain("1440:");
 	expect(await field.inputValue()).toBe("Keep this next draft.");
 	expect(agent.spawned.filter((proc) => proc.inputs.some((line) => line.includes("Finish this")))).toHaveLength(1);
 	await page.locator(`[data-tab="${other.root}"] .project-tab-label`).click();

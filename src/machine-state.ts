@@ -29,9 +29,7 @@ export type MachineStateMutation =
 	| { kind: "update-session"; root: string; open: boolean }
 	| { kind: "order-session"; order: readonly string[] }
 	| { kind: "remove-project"; root: string }
-	| { kind: "rename-project"; root: string; name: string; bundled?: string }
-	/** one local setting on a registered project (#281); `undefined` takes the key out */
-	| { kind: "set-project-setting"; root: string; path: readonly string[]; value: unknown };
+	| { kind: "rename-project"; root: string; name: string };
 
 export type MachineStateMutationResult<Mutation extends MachineStateMutation> = Mutation extends {
 	kind: "update-session";
@@ -43,11 +41,9 @@ export type MachineStateMutationResult<Mutation extends MachineStateMutation> = 
 			? MachineProjectRemoval
 			: Mutation extends { kind: "rename-project" }
 				? ProjectRename
-				: Mutation extends { kind: "set-project-setting" }
-					? { kind: "written" } | { kind: "unregistered"; root: string }
-					: Mutation extends { kind: "visit-project" }
-						? VisitResult
-						: undefined;
+				: Mutation extends { kind: "visit-project" }
+					? VisitResult
+					: undefined;
 
 export type VisitResult =
 	| { kind: "written"; registry: Registry; openedAt: string }
@@ -102,26 +98,8 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 		case "remove-project":
 			return removeProjectUnlocked(spoolDir, mutation.root);
 		case "rename-project":
-			return renameProjectUnlocked(spoolDir, mutation.root, mutation.name, mutation.bundled);
-		case "set-project-setting":
-			return setProjectSettingUnlocked(spoolDir, mutation.root, mutation.path, mutation.value);
+			return renameProjectUnlocked(spoolDir, mutation.root, mutation.name);
 	}
-}
-
-function setProjectSettingUnlocked(
-	spoolDir: string,
-	root: string,
-	path: readonly string[],
-	value: unknown,
-): { kind: "written" } | { kind: "unregistered"; root: string } {
-	const registry = readMachineRegistry(spoolDir);
-	const project = registry.projects.find((candidate) => candidate.root === root);
-	if (project === undefined) return { kind: "unregistered", root };
-	const settings = setNested(project.settings ?? {}, path, value);
-	if (Object.keys(settings).length === 0) delete project.settings;
-	else project.settings = settings;
-	writeMachineRegistry(spoolDir, registry);
-	return { kind: "written" };
 }
 
 /** `a.b` set into `{ a: { b } }`, carrying every other key through; `undefined` removes and prunes. */
@@ -285,34 +263,15 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 			return typeof root === "string" && typeof open === "boolean" ? { kind, root, open } : undefined;
 		}
 		case "rename-project": {
-			if (
-				!hasExactDataKeys(mutation, ["kind", "name", "root"]) &&
-				!hasExactDataKeys(mutation, ["kind", "name", "root", "bundled"])
-			)
-				return undefined;
-			const bundled = dataValue(mutation, "bundled");
-			if (bundled !== undefined && (typeof bundled !== "string" || !/^[0-9a-f-]{36}$/i.test(bundled)))
-				return undefined;
+			if (!hasExactDataKeys(mutation, ["kind", "name", "root"])) return undefined;
 			const root = dataValue(mutation, "root");
 			const name = dataValue(mutation, "name");
-			return typeof root === "string" && typeof name === "string"
-				? { kind, root, name, ...(typeof bundled === "string" ? { bundled } : {}) }
-				: undefined;
+			return typeof root === "string" && typeof name === "string" ? { kind, root, name } : undefined;
 		}
 		case "order-session": {
 			if (!hasExactDataKeys(mutation, ["kind", "order"])) return undefined;
 			const order = normalizeRoots(dataValue(mutation, "order"));
 			return order === undefined ? undefined : { kind, order };
-		}
-		case "set-project-setting": {
-			if (!hasExactDataKeys(mutation, ["kind", "path", "root", "value"])) return undefined;
-			const root = dataValue(mutation, "root");
-			const path = normalizeRoots(dataValue(mutation, "path"));
-			const value = dataValue(mutation, "value");
-			if (typeof root !== "string" || path === undefined || path.length === 0) return undefined;
-			// a setting is a primitive or its absence; the registry never holds a shape it did not write
-			if (value !== undefined && typeof value !== "boolean" && typeof value !== "string") return undefined;
-			return { kind, root, path, value };
 		}
 		default:
 			return undefined;

@@ -1,46 +1,45 @@
 import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
+import type { Attachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import type { AgentLimit } from "../../daemon/agent-events";
-import { AgentRecommendation } from "../agent-recommendation";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
-import { CloseIcon, PlusIcon } from "../icons";
-import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { AgentChoice } from "./agent-choice";
+import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
+import { composerWidth, stripOf } from "./agent-chips";
+import type { Pointing } from "./agent-composer";
+import { Composer } from "./agent-composer";
+import { Spinner } from "./agent-marks";
 import type { AgentModelDeck } from "./agent-model";
-import { AgentModelPicker } from "./agent-model-picker";
+import { FADE_OUT_MS, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
-import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
+import type { PermissionDeck } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
-import { type AgentHandback, type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
-import { Caret } from "./agent-said";
+import { type AgentQueued, handedBack, handedBackReferences } from "./agent-queue";
 import { SeedParagraphs, SeedSurface } from "./agent-seed";
-import { Lightbox, Shot } from "./agent-shot";
-import type { TurnPhase } from "./agent-stream";
-import { type Life, type Thread, UNSAID } from "./agent-threads";
+import { Shot } from "./agent-shot";
+import type { AgentTurn } from "./agent-stream";
+import { ThreadDrop, type Threads, ThreadTitle } from "./agent-thread-list";
 import {
 	type AgentEntry,
 	type AgentPlan,
 	type AgentRow,
-	type AgentSent,
+	type AgentTile,
 	duration,
 	type RowState,
 } from "./agent-transcript";
-import { ageOf } from "./frame-find";
-import { PaneActions } from "./pane-window";
+import { TurnFoot } from "./agent-turn-foot";
+import { DeadComposer, InstallWall, LoginStrip, RecoveryView } from "./agent-wall";
+import { PaneTitle } from "./pane-window";
 import { ChevronIcon } from "./sidebar";
 import { useStillness } from "./stillness";
 
 /**
- * The agent rail (#144, #192, #193, #194): the right rail, whole, drawn as one
- * conversation.
+ * The agent pane (#144, #192, #193, #194, #359): one thread, drawn whole.
  *
- * There is no tab row. The agent owns this column — `elements` died with the
- * inspector and `connections` left for the ambient walk layer — so the rail is the
+ * There is no tab row. The agent owns this pane — `elements` died with the
+ * inspector and `connections` left for the ambient walk layer — so the pane is the
  * transcript and the composer and nothing between them. What that buys is the width:
- * at 420 a tab row is a whole line of a narrow column spent saying which of two
+ * at 420 a tab row is a whole line of a narrow side spent saying which of two
  * things you are looking at, and there is only one thing to look at.
  *
  * Four things render and nothing else: the plan, the human's words, the agent's
@@ -68,9 +67,6 @@ import { useStillness } from "./stillness";
 /** the mark's own width and the gap beside it, so a disclosure lines up under the verb */
 const INDENT = 14 + 10;
 
-const MIN_H = 60;
-const MAX_H = 160;
-
 /**
  * What a row can do about the frame it names (#143, #194).
  *
@@ -82,61 +78,15 @@ const MAX_H = 160;
 export interface FrameJump {
 	/** the frames the project has right now; a name outside this is not a place to go */
 	readonly have: ReadonlySet<string>;
+	/** each frame's still, where the canvas has one, for a turn's grid (#365) */
+	readonly stills?: ReadonlyMap<string, string>;
+	/** Put back a frame a turn deleted (#365); absent where nothing can */
+	readonly onPutBack?: (tile: AgentTile) => Promise<boolean>;
 	/** the frames it had and no longer has, which read as gone and do nothing */
 	readonly gone: ReadonlySet<string>;
 	/** the cursor is on a row naming this frame, or has left; answered out on the canvas */
 	readonly onPoint: (frame: string | null) => void;
 	readonly onJump: (frame: string) => void;
-}
-
-/**
- * What the hands are pointing at, and what the strip may do about it (#116, #139).
- *
- * The entries are the daemon's own enriched list rather than the canvas's raw
- * selection, because the strip is the promise of what the prompt will carry: what
- * is drawn here and what goes out are one list read twice.
- */
-export interface Pointing {
-	readonly entries: readonly SelectionEntry[];
-	/**
-	 * The list is the frame the hands stepped into rather than one they picked.
-	 *
-	 * It draws as an ordinary chip at full strength with the dismiss control taken
-	 * off: entering is the most specific act the canvas has, and out there the only
-	 * way to stop pointing at the frame you are inside is a mode change.
-	 */
-	readonly inside: boolean;
-	/** the entry the pointer is over, in the rail or out on the canvas */
-	readonly lit: string | null;
-	readonly onLight: (id: string | null) => void;
-	/** null drops the whole selection, which is the count chip's own ✕ */
-	readonly onDrop: (id: string | null) => void;
-}
-
-/**
- * The conversations this project has, and what the column may do about them (#136, #205).
- *
- * One bundle rather than six props for the reason `Pointing` and `FrameJump` are: they
- * arrive together, they change together, and the deck upstream already holds them as one
- * object. The column and the nameplate both take the whole of it, because which thread is
- * open is a fact about the deck rather than a string either of them could be handed.
- */
-export interface Threads {
-	readonly list: readonly Thread[];
-	readonly open: string;
-	/**
-	 * The open thread has a picture and no session left to continue it (#120).
-	 *
-	 * It reads as finished: nothing offers a resume that would fail, and the composer says
-	 * what the next thing said will actually do, which is start a new thread.
-	 */
-	readonly finished: boolean;
-	/** a press on a cell, which reads the thread and moves nothing else */
-	readonly onOpen: (id: string) => void;
-	/** the ✕ in the flyout: it leaves the column, and neither the session nor the picture goes */
-	readonly onClose: (id: string) => void;
-	/** the plus that leads the column */
-	readonly onNew: (engine?: AgentEngineId) => void;
 }
 
 /**
@@ -199,47 +149,35 @@ function changedDraft(was: Holding, draft: string): Holding {
 	return { ...was, draft, prepared };
 }
 
+/** the mode menu's door, for an approval in the log that offers to change the mode (#364) */
 const PermissionAction = createContext<(() => void) | undefined>(undefined);
 
 export function AgentRail({
 	active = true,
 	agentReady = true,
-	onUseAgent,
+	legacy = false,
 	width,
 	permissions,
-	entries,
-	plan,
-	phase,
-	elapsed,
+	turn,
 	jump,
 	pointing,
 	threads,
 	install,
 	login,
-	queued,
-	handback,
 	request,
-	draft,
-	onDraft,
-	attached,
-	onAttach,
-	running,
 	model,
-	limit,
-	onSend,
-	onQueue,
-	onUnqueue,
-	onStop,
-	onAnswer,
+	preferred,
 }: {
 	/** the pane's settled width (`pane-window.tsx`), which the composer measures its chip strip against */
 	width: number;
-	permissions?: PermissionDeck;
-	entries: readonly AgentEntry[];
-	/** the plan, off the log and onto the shelf; absent until the turn writes one */
-	plan: AgentPlan | null;
-	phase: TurnPhase;
-	elapsed: number;
+	permissions?: PermissionDeck | undefined;
+	/**
+	 * The open thread's turn, whole (#117, #170, #234): its log, its plan and phase, the
+	 * queue and the box's draft, the usage window and context, and the doors that send,
+	 * queue, stop and answer. It arrives as one object from `useAgentStream` and is read
+	 * here as one, rather than copied over prop by prop.
+	 */
+	turn: AgentTurn;
 	jump: FrameJump;
 	pointing: Pointing;
 	/** every conversation this project has, newest first (#136, #200) */
@@ -248,46 +186,40 @@ export function AgentRail({
 	install: InstallDeck;
 	/** the agent would not start because nobody is signed in, and the way out (#201) */
 	login: LoginDeck;
-	/** what spool is holding until this turn ends, in the order it will fire (#170) */
-	queued: readonly AgentQueued[];
-	/** whatever left the queue un-fired, for the box below to take back (#170) */
-	handback: AgentHandback;
 	request?: AgentRequest | undefined;
 	active?: boolean;
+	/** the machine's agent choice has loaded: until then no engine, model or mode is drawn (#361) */
 	agentReady?: boolean;
-	onUseAgent?: (() => void) | undefined;
-	/** what this thread was left holding and nobody sent, off its own picture (#234) */
-	draft: string;
-	attached: readonly Attachment[];
-	onAttach: (images: readonly Attachment[], thread?: string) => Promise<void>;
-	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
-	onDraft: (text: string, thread?: string) => void;
-	/**
-	 * Whether a turn is in flight right now, asked rather than rendered (#234).
-	 *
-	 * Enter means one of three things and the turn is what decides between two of them, so
-	 * the press asks the turn at the instant of the press: the window between a stream
-	 * closing and the rail drawing that is exactly where a message was taken for a turn
-	 * that had already ended.
-	 */
-	running: () => boolean;
+	/** the open thread was the removed bundled engine's, which nothing continues (#363) */
+	legacy?: boolean;
 	/** which machine is answering, and the list the binary offered instead (#118, #199) */
 	model: AgentModelDeck;
-	/** the usage window, absent until the binary warns, which is most of a session (#122) */
-	limit: AgentLimit | null;
-	/** it says whether the words were taken, and the box only empties on a yes (#234) */
-	onSend: (text: string, sent: AgentSent) => boolean;
-	/** Enter against a running turn: the words are taken and held rather than sent */
-	onQueue: (text: string, sent: AgentSent) => boolean;
-	onUnqueue: (id: string) => void;
-	/** the Stop button in the footer */
-	onStop: () => void;
-	/** what the person said to a waiting request, on its own way back up (#145) */
-	onAnswer: (request: string, reply: AgentReply) => void;
+	/** the machine's usual agent: what a chat's row and the model trigger leave unsaid (#364) */
+	preferred?: AgentEngineId | null | undefined;
 }) {
+	const {
+		entries,
+		plan,
+		phase,
+		elapsed,
+		queued,
+		handback,
+		draft,
+		onDraft,
+		attached,
+		onAttach,
+		running,
+		limit,
+		context,
+		send: onSend,
+		queue: onQueue,
+		unqueue: onUnqueue,
+		stop: onStop,
+		answer: onAnswer,
+	} = turn;
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
-	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | "agent" | null>(null);
+	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | null>(null);
 	/** the clock read when the thread list was dropped over the log, or null while it is shut */
 	const [listing, setListing] = useState<number | null>(null);
 	/**
@@ -416,555 +348,173 @@ export function AgentRail({
 		(entry): entry is Extract<AgentEntry, { kind: "wait" }> =>
 			entry.kind === "wait" && entry.state === "running" && entry.ms === null,
 	);
-	const [modelRequest, requestModel] = useState(0);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<RecoveryActions value={{ login, modelRequest }}>
-			<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
-				<div data-agent-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
-					{install.missing && model.engine === undefined ? (
-						/*
-						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
-						 *
-						 * The wall takes the transcript's place and the composer stays, dead. The rest of
-						 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
-						 * conversation you cannot continue on a machine with no agent on it.
-						 */
-						<div className="flex h-full min-w-[200px] flex-col">
-							<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-								<InstallWall install={install} />
-							</div>
-							<DeadComposer />
+		<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
+			<div
+				data-agent-rail=""
+				data-agent-rail-engine={model.engine}
+				className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg"
+			>
+				{install.none ? (
+					/*
+					 * There is nothing to spawn, and spool knew it before anybody typed (#201).
+					 *
+					 * The wall takes the transcript's place and the composer stays, dead. The rest of
+					 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
+					 * conversation you cannot continue on a machine with no agent on it.
+					 */
+					<div className="flex h-full min-w-[200px] flex-col">
+						<PaneTitle>
+							<span className="px-1.5 font-semibold text-text type-control">Agent</span>
+						</PaneTitle>
+						<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+							<InstallWall install={install} />
 						</div>
-					) : (
-						/*
-						 * The rail is one panel, and the plate over it is where the other conversations
-						 * live (#205). The panel is everything one conversation is; the list the plate
-						 * drops is every conversation there is, and a press on it changes only the panel.
-						 */
-						<div className="flex h-full min-w-[200px] flex-col">
-							{/* the plate leads the shelf, because it says which thread everything under it
+						<DeadComposer />
+					</div>
+				) : (
+					/*
+					 * The pane is one panel, and its title is where the other threads are reached
+					 * (#205). The panel is everything one thread is; the list the title drops is
+					 * every thread there is, and a press on it changes only the panel.
+					 */
+					<div className="flex h-full min-w-[200px] flex-col">
+						{/* the title leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-							<ThreadPlate
-								threads={threads}
-								model={model}
-								listing={listing}
-								onList={(at) => {
-									setFooterMenu(null);
-									setListing(at);
-								}}
-								menu={footerMenu === "agent" ? footerMenu : null}
-								onMenu={(menu) => {
-									setListing(null);
-									setFooterMenu(menu);
-								}}
-							/>
-							{/* the list drops over the shelf and the log together, so it hangs off the plate
+						<ThreadTitle
+							threads={threads}
+							listing={listing}
+							onList={(at) => {
+								setFooterMenu(null);
+								setListing(at);
+							}}
+						/>
+						{/* the list drops over the shelf and the log together, so it hangs off the title
 					    whatever the shelf is carrying */}
-							<div className="relative flex min-h-0 flex-1 flex-col">
-								{/* the standing half of being signed out, on the shelf the plan would take —
+						<div className="relative flex min-h-0 flex-1 flex-col">
+							{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
-								{model.engine === undefined && login.out ? <LoginStrip login={login} /> : null}
-								{plan === null ? null : <PlanStrip plan={plan} />}
-								<Transcript
-									entries={entries}
-									afterLog={
-										model.engine === undefined || !(install.missing || login.out || login.recovery) ? null : (
-											<RecoveryView
-												onNew={threads.onNew}
-												install={install}
-												login={login}
-												model={model}
-												onModels={() => {
-													setFooterMenu("models");
-													requestModel((value) => value + 1);
-												}}
-											/>
-										)
-									}
-									live={phase === "playing"}
-									spoke={spoke}
-									elapsed={elapsed}
-									jump={jump}
-									onAnswer={onAnswer}
-								/>
-								{listing === null ? null : (
-									<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
-								)}
-							</div>
-							{/* the strip is measured against the composer's own inner width: the same three
-					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
-					    rather than one width */}
-							<Composer
-								thread={open}
-								permissions={permissions}
-								menu={footerMenu}
-								onMenu={setFooterMenu}
-								phase={phase}
-								waited={waited}
-								finished={threads.finished}
-								answering={asking?.kind === "ask" ? asking.request : null}
-								request={active && request?.thread === open ? request.id : undefined}
-								strip={stripOf(
-									Object.values(holding.prepared ?? {}).length
-										? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)
-										: pointing.entries,
-									composerWidth(width),
-									pointing.inside,
-								)}
-								pointing={
-									Object.values(holding.prepared ?? {}).length
-										? {
-												...pointing,
-												entries: Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection),
-												onDrop: () => write((was) => ({ ...was, prepared: {} })),
-											}
-										: pointing
+							{model.engine === undefined && login.out ? <LoginStrip login={login} /> : null}
+							{plan === null ? null : <PlanStrip plan={plan} />}
+							<Transcript
+								entries={entries}
+								afterLog={
+									legacy ? (
+										<p data-agent-legacy="" className="text-muted type-detail">
+											This chat ran on spool’s built-in agent, which is gone. It can’t be continued; what you
+											send starts a new chat.
+										</p>
+									) : model.engine === undefined ||
+										!(install.missing || login.out || login.recovery) ? null : (
+										<RecoveryView
+											onNew={threads.onNew}
+											install={install}
+											login={login}
+											model={model}
+											onModels={() => setFooterMenu("models")}
+										/>
+									)
 								}
-								draft={holding.draft}
-								onDraft={writeDraft}
-								attached={holding.attached}
-								onAttach={async (update) => {
-									const target = open || initialThread.current;
-									const was = heldRef.current[target] ?? (open ? seed : latestSeed.current);
-									const next = update(was.attached);
-									const adding = next.some((image) => !was.attached.includes(image));
-									// A visible new thumbnail is already stored. Removing one is immediate;
-									// its text recovery record prevents an old image returning after refresh.
-									// The thread holds the image before its store lands, so the composer
-									// keeps drawing its own copy rather than the thread's until then.
-									if (adding) write(() => was);
-									if (adding) await onAttach(next, target);
-									write((current) => ({ ...current, attached: next }));
-									if (!adding) await onAttach(next, target);
-								}}
 								queued={queued}
-								model={model}
-								limit={limit}
-								onSend={(text, sent) => {
-									if (install.missing || login.recovery) return false;
-									const took = onSend(text, sent);
-									// the log follows the live edge again because something was said, so a press
-									// that said nothing must not move it
-									if (took) setSpoke((count) => count + 1);
-									return took;
-								}}
-								running={running}
-								onQueue={onQueue}
 								onUnqueue={onUnqueue}
-								onStop={onStop}
+								live={phase === "playing"}
+								spoke={spoke}
+								elapsed={elapsed}
+								jump={jump}
 								onAnswer={onAnswer}
 							/>
+							<ThreadDrop
+								threads={threads}
+								preferred={preferred}
+								now={listing}
+								onDone={() => setListing(null)}
+							/>
 						</div>
-					)}
-				</div>
-				{onUseAgent && (
-					<AgentRecommendation
-						active={active && agentReady && open !== ""}
-						engine={model.engine}
-						onUseAgent={onUseAgent}
-						onClaude={() => threads.onNew("claude")}
-					/>
-				)}
-			</PermissionAction>
-		</RecoveryActions>
-	);
-}
-
-/* ---------- the threads, on the plate over the log (#136, #161, #200, #205) ----------
- * One panel, and every other conversation reached from the line at the top of it. The
- * plate carries the open thread's ask, the marks of whatever is moving in another thread,
- * a chevron that drops the list over the log, and the plus. The column this replaced put a
- * mark per thread down the rail's outer edge and the rest behind a hover; it was a third
- * edge on a 420px rail, and every thread you were not looking at cost a blank cell. The
- * plate spends one line the rail already spends, and the list is drawn only while it is
- * asked for.
- *
- * No collapse caret on the plate: the rail icon that lit the pane is the thing that
- * shuts it, and a second control for the same act was the doubling in miniature.
- *
- * Nothing is coloured and nothing re-sorts. State in this rail is motion, the one accent
- * belongs to the selection and to the row that is open, and the order is recency fixed
- * once, so a row never moves out from under a cursor already reaching for it.
- */
-
-/**
- * The plate: which thread this is, what is moving elsewhere, and the way to the rest.
- *
- * The ask is drawn in sentence type because it is a sentence somebody said, and it
- * truncates to the one line the plate has: the list under it is where it wraps. The marks
- * carry no names, which is exactly what the column was, so a ring turning here means
- * something is working in another thread and a dot means one finished while you were
- * here. A thread that is read draws nothing, because the plate says what is moving.
- *
- * `listing` is the clock read when the list was opened, or null while it is shut: the
- * moment the list opened is the moment the ages in it are about.
- */
-function ThreadPlate({
-	threads,
-	model,
-	menu,
-	onMenu,
-	listing,
-	onList,
-}: {
-	threads: Threads;
-	model: AgentModelDeck;
-	menu: "agent" | null;
-	onMenu: (menu: "agent" | null) => void;
-	listing: number | null;
-	onList: (at: number | null) => void;
-}) {
-	const { list, open, onNew } = threads;
-	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
-	const elsewhere = list.filter((thread) => thread.id !== open && thread.life !== "read");
-	const listed = listing !== null;
-	const plate = useRef<HTMLDivElement>(null);
-	return (
-		<div className="relative z-40 shrink-0 border-border border-b bg-bg">
-			<div ref={plate} data-agent-plate="" className="flex h-11 items-center gap-1 px-3.5">
-				<button
-					type="button"
-					data-agent-plate-ask=""
-					aria-expanded={listed}
-					onClick={() => onList(listed ? null : Date.now())}
-					className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
-				>
-					<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
-						{name === UNSAID ? "New chat" : name}
-					</span>
-					{elsewhere.length === 0 ? null : (
-						<span data-agent-elsewhere="" className="flex shrink-0 items-center gap-1">
-							{elsewhere.map((thread) => (
-								<ThreadMark key={thread.id} life={thread.life} />
-							))}
-						</span>
-					)}
-					<ChevronIcon open={listed} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
-				</button>
-				{/* in the pane's header, where the pane's own verbs are */}
-				<PaneActions>
-					<button
-						type="button"
-						aria-label="New chat"
-						onClick={() => {
-							onList(null);
-							onMenu(null);
-							onNew();
-							plate.current
-								?.closest("[data-agent-rail]")
-								?.querySelector("textarea")
-								?.focus({ preventScroll: true });
-						}}
-						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-colors duration-150 hover:bg-surface hover:text-text"
-					>
-						<PlusIcon />
-					</button>
-				</PaneActions>
-			</div>
-			<AgentChoice model={model} open={menu === "agent"} onOpen={(open) => onMenu(open ? "agent" : null)} />
-		</div>
-	);
-}
-
-/**
- * The list, dropped over the log for as long as it is asked for.
- *
- * One row per thread: the mark, the ask wrapping to three lines, and under it the frames
- * it wrote or, where it has written none, the last line it drew, with its age on the
- * right. The open row is shaded and carries the accent. A close appears on hover at the
- * top right, off the ask so a miss opens rather than closes, and the end of the first
- * line fades out under it (`.agent-thread-ask` in `ui.css`) rather than the two
- * overprinting.
- *
- * It goes the way a menu goes: a press on a row, on the plate, or anywhere else, and
- * escape. The press outside is a backdrop rather than a document listener, which is how
- * the model menu does it; escape is taken on the way down, before the composer or the
- * canvas can read it as theirs, because while the list is up it is the thing escape is
- * about.
- */
-function ThreadDrop({ threads, now, onDone }: { threads: Threads; now: number; onDone: () => void }) {
-	const { list, open, onOpen, onClose } = threads;
-	useEffect(() => {
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key !== "Escape") return;
-			event.preventDefault();
-			event.stopPropagation();
-			onDone();
-		};
-		window.addEventListener("keydown", onKey, true);
-		return () => window.removeEventListener("keydown", onKey, true);
-	}, [onDone]);
-	return (
-		<>
-			<button
-				type="button"
-				aria-label="close the threads"
-				className="fixed inset-0 z-10 cursor-default"
-				onClick={onDone}
-			/>
-			<div
-				data-agent-threads=""
-				className="absolute inset-x-0 top-0 z-20 animate-agent-menu-in border-border border-b bg-bg p-1.5"
-			>
-				{list.map((thread) => (
-					<ThreadRow
-						key={thread.id}
-						thread={thread}
-						on={thread.id === open}
-						now={now}
-						onPick={() => {
-							onOpen(thread.id);
-							onDone();
-						}}
-						onClose={() => onClose(thread.id)}
-					/>
-				))}
-			</div>
-		</>
-	);
-}
-
-function ThreadRow({
-	thread,
-	on,
-	now,
-	onPick,
-	onClose,
-}: {
-	thread: Thread;
-	on: boolean;
-	now: number;
-	onPick: () => void;
-	onClose: () => void;
-}) {
-	// what it did, in one line: where the work landed, or what it was doing where it has
-	// not landed anywhere yet
-	const line = thread.wrote !== "" ? thread.wrote : thread.last !== "" ? thread.last : "nothing yet";
-	return (
-		<div className="group agent-thread-row relative flex">
-			<button
-				type="button"
-				data-agent-thread={thread.name}
-				data-agent-thread-life={thread.life}
-				aria-current={on ? "true" : undefined}
-				onClick={onPick}
-				className={cn(
-					"relative flex min-w-0 flex-1 items-start gap-2.5 rounded-sm px-2 py-2 text-left transition-colors duration-150",
-					on ? "bg-surface/70" : "hover:bg-surface/40",
-				)}
-			>
-				{on ? (
-					<span className="pointer-events-none absolute inset-y-0 left-0 w-[2px] rounded-full bg-thread" />
-				) : null}
-				<ThreadMark life={thread.life} className="mt-px" />
-				<span className="flex min-w-0 flex-1 flex-col gap-1">
-					<span className={cn("agent-thread-ask line-clamp-3 type-label", "text-text")}>{thread.name}</span>
-					<span className="flex items-center gap-2">
-						<span className="min-w-0 flex-1 truncate text-muted type-detail">{line}</span>
-						<span className="shrink-0 text-muted type-detail">{ageOf(thread.at, now)}</span>
-					</span>
-				</span>
-			</button>
-			{/* a close is a tidy rather than a delete: neither the agent's own session nor
-			    spool's stored picture goes with the row */}
-			<span className="absolute top-2 right-2 opacity-0 transition-opacity duration-[180ms] group-focus-within:opacity-100 group-hover:opacity-100">
-				<button
-					type="button"
-					data-agent-thread-close={thread.name}
-					aria-label={`close ${thread.name}`}
-					onClick={onClose}
-					className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted/45 transition-colors duration-150 hover:text-text"
-				>
-					<CloseIcon />
-				</button>
-			</span>
-		</div>
-	);
-}
-
-/**
- * What a thread is doing, in the smallest thing that can say it (#161).
- *
- * The box is always 14px whatever is inside it, so every row in the list draws its mark
- * in the same place and the plate's marks stand in one line.
- *
- * Four drawings of five lives. Streaming and running turn the same ring, colourless,
- * because state in this rail is motion and the one accent belongs to the selection.
- * Waiting is `unread`'s disc held inside `running`'s ring — the turn that stopped, with
- * the thing that stopped it sitting in it — and it is the loudest of the three on
- * purpose, because it is the only one of them that is actually stuck. Unread is a solid
- * dot at text strength, the way a mailbox says it. Read is a hollow one, at the strength
- * a disabled thing gets rather than nothing at all, so a row for an old thread still
- * reads as pressable.
- *
- * Two candidates for waiting died on facts rather than taste. Freezing the spinner is
- * pixel-identical to what `prefers-reduced-motion` already renders for a working thread,
- * so it would be working's drawing with a second meaning for every reduced-motion reader.
- * Borrowing the disc alone breaks on the clearing rule: a disc clears when you open the
- * thread and a question does not, so a mark that spent it here would go quiet about a
- * thread that will never finish.
- */
-function ThreadMark({ life, className }: { life: Life; className?: string }) {
-	// the thread you are watching turns the same ring as the ones you are not: the two
-	// lives are one drawing, and they are separate lives only because `streaming` is a
-	// fact about this browser and never reaches disk
-	const turning = life === "streaming" || life === "running";
-	return (
-		<span data-agent-mark={life} className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center", className)}>
-			{turning ? (
-				<svg
-					viewBox="0 0 14 14"
-					className="h-3.5 w-3.5 animate-agent-spin text-text/60"
-					fill="none"
-					aria-hidden="true"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				</svg>
-			) : life === "waiting" ? (
-				// the same ring working turns, at rest and dimmed so the disc reads as the thing
-				// in it rather than as a second object beside it
-				<svg viewBox="0 0 14 14" className="h-3.5 w-3.5 text-text/85" fill="none" aria-hidden="true">
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
-					<circle cx="7" cy="7" r="2.2" fill="currentColor" />
-				</svg>
-			) : life === "unread" ? (
-				<span className="h-[5px] w-[5px] rounded-full bg-text/85" />
-			) : life === "read" ? (
-				<span className="h-[5px] w-[5px] rounded-full border border-muted/45" />
-			) : null}
-		</span>
-	);
-}
-
-/* ---------- the agent that is not there (#127, #201) ----------
- * Two surfaces, and they are different shapes because the two states are known in
- * different ways. A missing binary is a fact about this machine, true before anyone
- * types, so it takes the transcript's place. A bad login is a fact inside another
- * product, so it is a standing strip over a log that still works.
- *
- * Neither is coloured. There is one accent in this product and it means a chip in the
- * composer and a box out on the canvas are the same object; spending it on a state that
- * is not even a failure — you have not installed something yet — would break the only
- * thing it says. Both step forward in brightness, which is the whole of the emphasis the
- * rest of the rail uses. */
-
-/** the binary's own docs root, as it links it itself */
-const DOCS = "code.claude.com/docs";
-
-/**
- * Ask again: one control, in the rail's own weight, for both of these states.
- *
- * Mono, small, and no border until you are on it. The rail has exactly one filled control
- * anywhere — the composer — and neither of these states is the place to introduce a second.
- * It says what it is doing rather than what it is for while a check is out, because that
- * is the only thing on screen saying the press landed.
- */
-function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
-	return (
-		<button
-			type="button"
-			data-agent-check=""
-			onClick={onClick}
-			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 text-text transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
-		>
-			{busy ? (
-				<svg
-					viewBox="0 0 14 14"
-					className="h-3 w-3 shrink-0 animate-agent-spin text-muted/60"
-					fill="none"
-					aria-hidden="true"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				</svg>
-			) : null}
-			{busy ? "looking" : "check again"}
-		</button>
-	);
-}
-
-/**
- * Nothing to spawn.
- *
- * The composer stays, and it is dead. Removing it would leave the rail as a sentence with
- * no evidence of what the rail is for; leaving it live would collect a prompt for nobody.
- * So it sits there at its resting height, dimmed, saying what it will say once there is
- * something behind it — the one thing a wall owes you past the bad news is a picture of
- * the good state.
- *
- * The threads go with the transcript, column and nameplate both. A conversation you cannot
- * continue is not something to switch to, and the wall is the whole of the rail's body
- * while it is up.
- *
- * The words are not spool's where they do not have to be: `code.claude.com/docs` is the
- * docs root the binary links itself. What spool writes is the sentence about why there is
- * nothing here, because that sentence is about spool.
- */
-function InstallWall({ install }: { install: InstallDeck }) {
-	return (
-		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
-			<div className="animate-agent-entry flex flex-col gap-3">
-				<p className="text-text type-body">Claude Code is not installed</p>
-				<p className="text-muted type-body">
-					Install Claude Code to continue with this engine, or start a new thread with spool.
-				</p>
-				<div className="flex flex-col gap-1.5 pt-1">
-					<div className="flex items-center justify-between">
-						<span className="text-muted type-detail">{DOCS}</span>
-						<Quiet busy={install.checking} onClick={install.look} />
+						{/* the strip is measured against the composer's own inner width: the same three
+					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
+					    rather than one width */}
+						<Composer
+							thread={open}
+							// a legacy chat is read-only: nothing answers it, so there is no one to pick (#363)
+							ready={agentReady && !legacy}
+							permissions={permissions}
+							menu={footerMenu}
+							onMenu={setFooterMenu}
+							phase={phase}
+							waited={waited}
+							finished={threads.finished}
+							answering={asking?.kind === "ask" ? asking.request : null}
+							request={active && request?.thread === open ? request.id : undefined}
+							strip={stripOf(
+								Object.values(holding.prepared ?? {}).length
+									? Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection)
+									: pointing.entries,
+								composerWidth(width),
+								pointing.inside,
+							)}
+							pointing={
+								Object.values(holding.prepared ?? {}).length
+									? {
+											...pointing,
+											entries: Object.values(holding.prepared ?? {}).flatMap((entry) => entry.selection),
+											onDrop: () => write((was) => ({ ...was, prepared: {} })),
+										}
+									: pointing
+							}
+							draft={holding.draft}
+							onDraft={writeDraft}
+							attached={holding.attached}
+							onAttach={async (update) => {
+								const target = open || initialThread.current;
+								const was = heldRef.current[target] ?? (open ? seed : latestSeed.current);
+								const next = update(was.attached);
+								const adding = next.some((image) => !was.attached.includes(image));
+								// A visible new thumbnail is already stored. Removing one is immediate;
+								// its text recovery record prevents an old image returning after refresh.
+								// The thread holds the image before its store lands, so the composer
+								// keeps drawing its own copy rather than the thread's until then.
+								if (adding) write(() => was);
+								if (adding) await onAttach(next, target);
+								write((current) => ({ ...current, attached: next }));
+								if (!adding) await onAttach(next, target);
+							}}
+							model={model}
+							limit={limit}
+							context={context}
+							onSwitch={async (engine, fresh) => {
+								if (fresh) threads.onNew();
+								return (await model.onEngine?.(engine)) === true;
+							}}
+							login={login}
+							preferred={preferred}
+							onNewThread={() => {
+								threads.onNew();
+								setListing(null);
+							}}
+							onSend={(text, sent) => {
+								if (!agentReady || install.missing || login.recovery) return false;
+								const took = onSend(text, sent);
+								// the log follows the live edge again because something was said, so a press
+								// that said nothing must not move it
+								if (took) setSpoke((count) => count + 1);
+								return took;
+							}}
+							running={running}
+							onQueue={(text, sent) => {
+								const took = onQueue(text, sent);
+								// the words wait at the end of the log, so the log follows to show them
+								if (took) setSpoke((count) => count + 1);
+								return took;
+							}}
+							onStop={onStop}
+							onAnswer={onAnswer}
+						/>
 					</div>
-					{/* the check is allowed to fail forever, and a press that leaves no mark reads
-					    as a broken button — so it leaves one line, in the composer's own mono */}
-					{install.foundNothing ? (
-						<span data-agent-looked="" className="animate-agent-entry text-muted type-detail">
-							still nothing on your PATH
-						</span>
-					) : null}
-				</div>
+				)}
 			</div>
-		</div>
-	);
-}
-
-/** the composer at rest and switched off, so the rail still shows what it is for */
-function DeadComposer() {
-	return (
-		<div data-agent-dead="" className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
-			<div className="flex flex-col rounded-md border border-border/70 bg-surface/40 px-3 py-2.5">
-				<span className="text-muted type-body" style={{ height: MIN_H }}>
-					say what to change
-				</span>
-			</div>
-			<div className="flex h-[18px] items-center" />
-		</div>
-	);
-}
-
-/**
- * Signed out, as a standing fact.
- *
- * A strip rather than a wall because the log below it is not empty and must not be: what
- * the human typed is down there in their own voice, and so is the moment the send
- * bounced. The strip is the part that outlives that moment — the same test #117 used to
- * lift the plan out of the transcript and leave the screenshot in it.
- *
- * It sits at the plan strip's height and in the plan strip's place, because the rail has
- * one shelf and those two never want it at once: a plan belongs to a turn that is running,
- * and this exists precisely because none can.
- *
- * Two things on it and no third. The promise about keys is in the log under the remedy,
- * where somebody deciding what to do reads it once, rather than held on screen for as long
- * as the state lasts.
- */
-function LoginStrip({ login }: { login: LoginDeck }) {
-	return (
-		<div data-agent-login="" className="flex h-[34px] shrink-0 items-center border-border border-b px-3.5">
-			<span className="min-w-0 flex-1 truncate text-muted type-value">signed out</span>
-			<Quiet busy={login.checking} onClick={login.check} />
-		</div>
+		</PermissionAction>
 	);
 }
 
@@ -1066,6 +616,8 @@ export function followTo(box: { readonly scrollHeight: number; readonly clientHe
 function Transcript({
 	afterLog,
 	entries,
+	queued,
+	onUnqueue,
 	live,
 	spoke,
 	elapsed,
@@ -1074,6 +626,9 @@ function Transcript({
 }: {
 	afterLog?: ReactNode;
 	entries: readonly AgentEntry[];
+	/** what waits for this turn to end, drawn at the end of the log (#364) */
+	queued: readonly AgentQueued[];
+	onUnqueue: (id: string) => void;
 	/** whether the turn is still writing, which is the word the chip picks for what is below */
 	live: boolean;
 	/**
@@ -1088,6 +643,8 @@ function Transcript({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const view = useRef<HTMLDivElement>(null);
+	const permissions = useContext(PermissionAction);
+	const laidOut = useMemo(() => turnLayout(entries), [entries]);
 	const [follow, setFollow] = useState(true);
 	/**
 	 * Whether the reader is somewhere the way-back chip has something to name, which is
@@ -1161,7 +718,7 @@ function Transcript({
 			return;
 		}
 		setAway(adrift(box));
-	}, [entries, elapsed, follow, spoke]);
+	}, [entries, elapsed, follow, spoke, queued.length]);
 
 	/*
 	 * The pin above re-runs when the list changes; height changes on more than the
@@ -1258,12 +815,31 @@ function Transcript({
 				{/* `mt-auto` rather than `justify-end`: a flex container that end-justifies its
 				    overflow puts the top of it out of reach of the scrollbar */}
 				<div className="mt-auto shrink-0">
-					{entries.map((entry, index) => (
-						<Arrive key={entry.key} gap={gapBefore(entries[index - 1], entry)}>
-							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
+					{laidOut.map(({ entry, steps, asks }, index) => (
+						<Arrive key={entry.key} gap={gapBefore(laidOut[index - 1]?.entry, entry)}>
+							{entry.kind === "turn" ? (
+								<TurnFoot
+									foot={entry}
+									elapsed={elapsed}
+									reach={jump}
+									asks={asks}
+									onAnswer={onAnswer}
+									permissions={permissions}
+									steps={steps.map((step, at) => (
+										<Arrive key={step.key} gap={gapBefore(steps[at - 1], step)}>
+											<Entry entry={step} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
+										</Arrive>
+									))}
+								/>
+							) : (
+								<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
+							)}
 						</Arrive>
 					))}
 					{afterLog ? <div className="mt-5">{afterLog}</div> : null}
+					<div className={cn(queued.length > 0 && "mt-5")}>
+						<QueueTail queued={queued} onUnqueue={onUnqueue} />
+					</div>
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
@@ -1299,6 +875,39 @@ function Transcript({
  * happened where the agent only stopped to think.
  */
 const TIGHT: ReadonlySet<AgentEntry["kind"]> = new Set(["row", "wait"]);
+
+/**
+ * The log as a turn draws it (#365): the person's words, then what the agent said and asked,
+ * then the turn's foot, with the turn's rows and waits behind its status line rather than
+ * in the log. A turn a picture kept from before there was a foot has none, so its rows stay
+ * where they always were.
+ */
+export function turnLayout(
+	entries: readonly AgentEntry[],
+): { entry: AgentEntry; steps: AgentEntry[]; asks: AskEntry[] }[] {
+	const out: { entry: AgentEntry; steps: AgentEntry[]; asks: AskEntry[] }[] = [];
+	let start = 0;
+	for (let at = 0; at <= entries.length; at += 1) {
+		const entry = entries[at];
+		if (entry !== undefined && entry.kind !== "user") continue;
+		// one turn: from its first words to the next turn's, or the end of the log
+		const turn = entries.slice(start, at);
+		const foot = turn.findIndex((one) => one.kind === "turn");
+		if (foot === -1) for (const one of turn) out.push({ entry: one, steps: [], asks: [] });
+		else {
+			const steps = turn.filter((one) => one.kind === "row" || one.kind === "wait");
+			// an ask still waiting opens out of the turn's line or its grid, not out of the log (#366)
+			const asks = turn.filter((one): one is AskEntry => one.kind === "ask" && waitingAsk(one));
+			for (const one of turn) {
+				if (one.kind === "row" || one.kind === "wait") continue;
+				if (one.kind === "ask" && waitingAsk(one)) continue;
+				out.push({ entry: one, steps: one.kind === "turn" ? steps : [], asks: one.kind === "turn" ? asks : [] });
+			}
+		}
+		start = at;
+	}
+	return out;
+}
 
 function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number {
 	if (previous === undefined) return 0;
@@ -1423,6 +1032,8 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
 	if (entry.kind === "wait") return <Wait entry={entry} elapsed={elapsed} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
+	// a foot draws through the log's own layout, which hands it its steps
+	if (entry.kind === "turn") return null;
 	return <Prose entry={entry} />;
 }, sameEntry);
 
@@ -1590,8 +1201,14 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 							<Shot key={slice.id} shot={slice} of={entry.frame ?? entry.detail} quiet />
 						))}
 						{shot === null && entry.detail !== null ? (
-							<span data-agent-detail="" className="block truncate text-muted type-detail">
-								{entry.detail}
+							// a group of reads keeps one path or command a line (#365)
+							<span data-agent-detail="" className="block text-muted type-detail">
+								{entry.detail.split("\n").map((line, at) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same path read twice is two lines
+									<span key={at} className="block truncate">
+										{line}
+									</span>
+								))}
 							</span>
 						) : null}
 					</div>
@@ -1750,6 +1367,11 @@ function Wait({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "wait" }>
  * is an answer. A question's dismiss is not: it refuses the whole question rather than
  * answering it, so it stays one quiet wordless word underneath. */
 
+/**
+ * An ask in the log (#366): folded to one quiet line once nobody is waiting on it, and a
+ * card while it waits where the turn has no line to open it out of yet. A waiting ask in a
+ * turn that has one is drawn by the turn's foot instead (`turnLayout`).
+ */
 function Ask({
 	entry,
 	onAnswer,
@@ -1757,179 +1379,27 @@ function Ask({
 	entry: Extract<AgentEntry, { kind: "ask" }>;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
-	const request = entry.request;
 	const permissions = useContext(PermissionAction);
-	const open = entry.state === "open" && request !== null;
-	const answer = (reply: AgentReply) => {
-		if (request !== null) onAnswer(request, reply);
-	};
-	// held against the request rather than reset by it: the block outlives no ask, but
-	// a key reused by a second thread's ask would otherwise arrive part-answered
-	const [given, setGiven] = useState<{ request: string | null; picks: Record<string, string> }>({
-		request,
-		picks: {},
-	});
-	const picks = given.request === request ? given.picks : {};
-	const live = entry.questions.findIndex((one) => picks[one.question] === undefined);
-	const pick = (question: string, label: string) => {
-		const next = { ...picks, [question]: label };
-		if (entry.questions.every((one) => next[one.question] !== undefined)) answer({ kind: "picked", picks: next });
-		else setGiven({ request, picks: next });
-	};
+	const ask = useAsk(entry, onAnswer);
+	if (waitingAsk(entry)) return <AskCard entry={entry} ask={ask} permissions={permissions} />;
 	return (
-		<div data-agent-ask={entry.state} className="flex flex-col gap-3">
-			{open && entry.access?.unavailable ? (
-				<p className="text-base text-text leading-base">
-					spool can’t restrict commands to design/ on this computer.
-				</p>
-			) : null}
-			{/* the sentences, drawn where the agent's sentences are drawn. A question still
-			    arriving shows a caret, because it is typing itself in the way every tool
-			    call's subject does */}
-			{entry.question ? (
-				entry.questions.map((question, index) => {
-					const chosen = picks[question.question];
-					// nothing below the one being asked: a question nobody has reached is a
-					// decision nobody is making, and drawing it is the block asking twice
-					if (open && chosen === undefined && index !== live) return null;
-					return (
-						<div key={question.question} className="flex flex-col gap-1.5">
-							<p className="text-text type-body">{question.question}</p>
-							{/* a settled pick keeps its sentence and lands in the person's own shape,
-							    which is where the whole answer lands once the last one is in */}
-							{open && chosen !== undefined ? <Answered words={chosen} /> : null}
-							{open && chosen === undefined ? (
-								<div className="flex flex-col gap-1.5">
-									{question.options.map((option) => (
-										<button
-											key={option.label}
-											type="button"
-											data-agent-option={option.label}
-											onClick={() => pick(question.question, option.label)}
-											className="flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
-										>
-											<span className="text-text type-body">{option.label}</span>
-											{option.description === "" ? null : (
-												<span className="text-muted type-caption">{option.description}</span>
-											)}
-										</button>
-									))}
-								</div>
-							) : null}
-						</div>
-					);
-				})
-			) : entry.asked === null || (entry.access !== undefined && !open) ? null : (
-				// nothing where the agent wrote nothing: the row above already named the call,
-				// and a block that repeated it would be the rail saying one thing twice
-				<p className="text-text type-body">
-					{entry.asked}
-					{entry.state === "arriving" ? <Caret /> : null}
-				</p>
-			)}
-			{open && entry.access?.command ? (
-				<code className="break-words font-mono text-xs text-muted leading-4">{entry.access.command}</code>
-			) : null}
-			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
-			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
-			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed once" /> : null}
-			{entry.state === "always" ? (
-				<AskOutcome
-					state="done"
-					text={
-						entry.access === undefined
-							? "allowed for this thread"
-							: entry.access.kind === "command"
-								? entry.access.scope === "commands"
-									? "commands allowed for this thread"
-									: `commands in ${entry.access.scope} allowed for this thread`
-								: `edits in ${entry.access.scope} allowed for this thread`
-					}
-				/>
-			) : null}
-			{/* a deny and a dismiss are one wire and two acts: for an approval the person
-			    answered no, and for a question they refused to answer at all */}
-			{entry.state === "denied" ? (
-				<AskOutcome state="stopped" text={entry.question ? "dismissed" : "denied"} />
-			) : null}
-			{open && entry.question ? (
-				// not a fourth option and it must not look like one, so the options keep their
-				// bordered rows and this is one quiet mono word underneath, in the register
-				// the composer uses for its own hints. It stays wordless so it means one thing
-				<button
-					type="button"
-					data-agent-dismiss=""
-					onClick={() => answer({ kind: "deny" })}
-					className="w-fit text-muted transition-colors duration-150 hover:text-muted type-detail"
-				>
-					dismiss
-				</button>
-			) : null}
-			{open && !entry.question ? (
-				<div className="flex flex-wrap gap-1.5">
-					<AskAction compact label="allow once" onPick={() => answer({ kind: "allow" })} />
-					{/* absent rather than dead where the request suggested no rule: spool never
-					    composes one of its own to fill the gap. Where it is offered it lasts the
-					    thread and is written to no file, because the complaint is repetition */}
-					{entry.always ? (
-						<AskAction compact label="for this thread" onPick={() => answer({ kind: "always" })} />
-					) : null}
-					<AskAction compact label="deny" onPick={() => answer({ kind: "deny" })} />
-				</div>
-			) : null}
-			{open && !entry.question && permissions !== undefined ? (
-				<button
-					type="button"
-					onClick={permissions}
-					className="w-fit py-1 font-mono text-2xs text-muted leading-4 transition-colors hover:text-text"
-				>
-					change permissions…
-				</button>
-			) : null}
+		<div data-agent-ask={entry.state} data-agent-ask-look="folded">
+			<FoldedAsk entry={entry} words={entry.said ? <Answered words={entry.words} /> : undefined} />
 		</div>
-	);
-}
-
-/** one of spool's own answers to an approval, in the same row an option gets */
-function AskAction({ label, onPick, compact = false }: { label: string; onPick: () => void; compact?: boolean }) {
-	return (
-		<button
-			type="button"
-			data-agent-option={label}
-			onClick={onPick}
-			className={cn(
-				"rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45",
-				!compact && "w-full",
-			)}
-		>
-			<span className="text-text type-value">{label}</span>
-		</button>
 	);
 }
 
 /**
  * The answer, in the shape the rail already draws the person's words in.
  *
- * Not a row, because the verb slot has nowhere to put it: `ask` is spent on every call
- * that left the building, and `ask Notion` one line above `asked Shot fix` is two words
- * the eye cannot separate at this size. The person's own accent rail is the answer that
- * needed no new word at all.
+ * A sentence the person typed rather than a pick: the person's own accent rail is the
+ * answer that needed no new word at all.
  */
 function Answered({ words }: { words: string | null }) {
 	return (
 		<div className="relative flex flex-col gap-1.5 pl-3.5">
 			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
 			<p className="whitespace-pre-wrap text-text type-body">{words}</p>
-		</div>
-	);
-}
-
-/** what became of a request nobody is waiting on any more, in one quiet line */
-function AskOutcome({ state, text }: { state: RowState; text: string }) {
-	return (
-		<div className="flex items-center gap-2.5">
-			<StateMark state={state} />
-			<span className="text-muted type-detail">{text}</span>
 		</div>
 	);
 }
@@ -2003,21 +1473,7 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 					ringed ? "opacity-100" : "scale-[0.62] opacity-0",
 				)}
 			>
-				<svg
-					viewBox="0 0 14 14"
-					className={cn(
-						turning ? "text-text/60" : "text-text/35",
-						"h-full w-full",
-						turning && "animate-agent-spin",
-					)}
-					fill="none"
-					aria-hidden="true"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					{turning ? (
-						<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-					) : null}
-				</svg>
+				<Spinner turning={turning} className={cn(turning ? "text-text/60" : "text-text/35", "h-full w-full")} />
 			</span>
 			<svg viewBox="0 0 14 14" className="absolute inset-0 h-full w-full text-muted" fill="none" aria-hidden="true">
 				{strokes.map((stroke) => (
@@ -2046,971 +1502,79 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 	);
 }
 
-/* ---------- the composer ----------
- * One bounded box the whole message is typed into, with what rides along stacked
- * above the field it rides with. Enter sends what is in it verbatim, whatever that
- * is; shift-Enter is a newline.
+/* ---------- the queue, at the end of the log (#170, #364) ----------
+ * A message sent while the turn runs waits at the end of the log, shaped as the ask it
+ * will become and faint, on a dashed hairline, because it has not gone out yet. Firing is
+ * the send it already is: the dashed message becomes the ask in the same place. Take back
+ * puts it back in the box, into the draft that is there — the take-back invariant: words
+ * that leave the queue un-fired land in the composer and nowhere else.
  *
- * Enter has three meanings and the turn's own state resolves them (#170): answering
- * answers, busy queues, otherwise sends. Busy used to refuse — two agents writing one
- * repo is still not a thing to offer — but refusing threw away written words, so the
- * press is taken and held instead and the queue above the field is where it waits.
- * The hint below says which of the three is live, so a press is never a mystery. */
+ * Each message comes and goes on a fade; a queue that fires together leaves together. */
 
-/**
- * The stroke on the composer's top border, which is the whole of what says the agent is
- * alive.
- *
- * A thread is laid out of the left edge, carries at its full length, and is taken up into
- * the right edge as the head waits there for the tail. Spool means winding thread and this
- * product calls its conversations threads, so a stroke on the boundary is closer to what
- * the thing is than a spinner would be — and it says it without spending the logo or a
- * single pixel of the transcript, because it rides the hairline that was already there.
- *
- * **No word, and that is the point.** The stroke is the entire indicator. Idle draws the
- * border unchanged, and a request out, thinking, saying and doing all draw the same
- * laying-and-taking-up. A reader watching the edge of their own eye learns nothing from the
- * difference between a request being out and a `read` being open, because the answer to *do
- * I need to do anything* is no in both.
- *
- * **What it does now say is how long, and only that (#231).** The travel is untouched and
- * the strength ramps: 75% of the text colour at rest, full at thirty seconds of one
- * unbroken silence. That reasoning above holds for the four-second wait it was written
- * against and does not cover a two-and-a-half-minute one, where the peripheral question
- * stops being *do I need to act* and becomes *is this thing alive at all*. Strength answers
- * it in the direction that helps — the line gets more present the longer it has been — and
- * costs neither the accent nor a pixel of travel. `WindStroke` argues the property choice.
- *
- * **The one state that is a call to act gets a shape instead.** Parked on a request, the
- * stroke stops where it was and an 18px break opens in the line. Stopping is
- * `animation-play-state: paused`, which is literally "where it was" and needs no clock of
- * spool's; a break is static, which is correct for a thing that has stopped, and nothing
- * else in this rail is a discontinuous line.
- *
- * The animation is `ui.css`'s, keyframes on one element's `translateX` and `scaleX`. Its
- * cost is stated rather than hidden: 420px of peripheral travel every 1.6s at 0.26px/ms,
- * the largest moving thing in the rail. What it buys is that the transcript gives up
- * nothing at all.
- */
-/**
- * Where the strength ramp tops out, in milliseconds of one silence.
- *
- * 30 seconds, off the thinking blocks in the captures rather than off taste: 22 of the 27
- * are 1,050 estimated tokens or fewer, which is under 18 seconds at the 16.7ms a token the
- * four sequential captures measure. So an ordinary turn lives in the bottom of the ramp
- * and never reaches the top, and the five long ones — up to 9,500 tokens, two minutes
- * thirty-nine — arrive there and stay.
- */
-const WIND_FULL_AT = 30_000;
-/** what the stroke has always been, and the floor the ramp starts from */
-const WIND_FLOOR = 0.75;
-
-/**
- * How present the stroke is, for a silence this long.
- *
- * Exported because it is the whole of the behaviour and the only part of it worth
- * asserting: mounted, the ramp can only be read at whatever instant a test happens to
- * catch, and the thirty seconds it is defined over cannot be waited for. So the
- * arithmetic is tested as arithmetic and the rail is tested for being wired to it.
- */
-export function windStrength(waited: number, laying: boolean): number {
-	if (!laying) return WIND_FLOOR;
-	return WIND_FLOOR + (1 - WIND_FLOOR) * Math.max(0, Math.min(1, waited / WIND_FULL_AT));
-}
-
-function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
-	// every state of a turn in flight draws the same thing, and a parked one draws it
-	// stopped: the animation is the same instance either way, so pausing freezes the two
-	// ends exactly where the request caught them
-	const laying = phase === "playing" || phase === "asking";
-	const parked = phase === "asking";
-	/*
-	 * The one thing the stroke now says about how long (#231).
-	 *
-	 * Strength and never pace, and the reason is the complaint this came from: the rail
-	 * read as stopped, and slowing the only moving thing in it to say so would have been
-	 * answering *is this alive* with less evidence that it is. Brightening says the same
-	 * thing in the opposite direction — the longer it has been, the more present the line
-	 * — and it leaves the travel exactly where it was.
-	 *
-	 * It is opacity on the colour the stroke already had rather than a colour of its own.
-	 * This palette has one accent and `--color-thread` means the human's own thread: on
-	 * the human's words, on the chip's rule, on a hot meter. Spending it here would give
-	 * it a second meaning that has nothing to do with the first. Red would be worse still,
-	 * because a long thought is the product working rather than a fault.
-	 *
-	 * A transition and not a keyframe, which is also why this is not pace. Opacity
-	 * interpolates continuously and costs nothing; `animation-duration` on a running
-	 * keyframe animation remaps the phase, and the head visibly jumps backwards every time
-	 * the number moves.
-	 */
-	const strength = windStrength(waited, laying);
+function QueueTail({ queued, onUnqueue }: { queued: readonly AgentQueued[]; onUnqueue: (id: string) => void }) {
+	const held = useRef(new Map<string, AgentQueued>());
+	const [, redraw] = useState(0);
+	const live = new Set(queued.map((one) => one.id));
+	for (const one of queued) held.current.set(one.id, one);
+	const drawn = [...held.current.values()];
 	return (
-		<>
-			<span
-				aria-hidden="true"
-				data-agent-wind={parked ? "parked" : laying ? "laying" : "idle"}
-				style={{ opacity: strength }}
-				className={cn(
-					// scaled to nothing at rest, so idle is the border and nothing else: the
-					// keyframes take the transform over for as long as they are running.
-					// `transform` rather than Tailwind's `scale-x-0`, which compiles to the
-					// `scale` property and would multiply the animation's own scale by zero
-					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text [transform:scaleX(0)]",
-					// 400ms, so the ramp is a drift rather than a per-tick step: the rail
-					// re-renders on the pace's own clock and an untransitioned opacity would
-					// change sixty times a second
-					"transition-opacity duration-400 ease-linear motion-reduce:transition-none",
-					laying && "animate-agent-wind",
-					parked && "[animation-play-state:paused]",
-				)}
-			/>
-			{/* the break, held rather than mounted so it can open over 200ms rather than
-			    appear: it is a piece of the page laid over the hairline */}
-			<span
-				aria-hidden="true"
-				data-agent-wind-break=""
-				className={cn(
-					"pointer-events-none absolute -top-px left-1/2 block h-px w-[18px] -translate-x-1/2 bg-bg transition-opacity duration-200 motion-reduce:transition-none",
-					parked ? "opacity-100" : "opacity-0",
-				)}
-			/>
-		</>
-	);
-}
-
-/**
- * What the field says it is for, which is what the next press will do (#145, #200).
- *
- * Three, because Enter has three meanings here and the field is what each of them is
- * about: answering a question the turn is parked on, starting the thread again when its
- * session has aged out, and otherwise saying the next thing. A question wins over a
- * finished thread, because a parked turn is a live process and there is nothing to start.
- */
-function fieldSays(answering: string | null, finished: boolean): string {
-	if (answering !== null) return "or say it in your own words";
-	return finished ? "say what to change · this starts a new thread" : "say what to change";
-}
-
-function Composer({
-	thread,
-	request,
-	permissions,
-	menu,
-	onMenu,
-	phase,
-	waited,
-	finished,
-	answering,
-	strip,
-	pointing,
-	draft,
-	onDraft,
-	attached,
-	onAttach,
-	queued,
-	model,
-	limit,
-	running,
-	onSend,
-	onQueue,
-	onUnqueue,
-	onStop,
-	onAnswer,
-}: {
-	thread: string;
-	request: string | undefined;
-	permissions: PermissionDeck | undefined;
-	menu: "models" | "permissions" | "agent" | null;
-	onMenu: (menu: "models" | "permissions" | "agent" | null) => void;
-	phase: TurnPhase;
-	/** how long the request now out has been silent, which is all the stroke reads (#231) */
-	waited: number;
-	/**
-	 * This thread's agent session is gone, so the next thing said starts a new one (#120).
-	 *
-	 * It is a hint rather than a refusal. The transcript is intact and worth reading, the
-	 * words are not thrown away, and what the press will actually do is said out loud
-	 * instead of a resume being offered that would fail.
-	 */
-	finished: boolean;
-	/**
-	 * The request Enter would answer, or null while Enter means what it always meant.
-	 *
-	 * A turn held at a question takes the press as the answer rather than as a new
-	 * turn, and the tool prefers it that way: it tests a typed sentence before the
-	 * picked options and tells the agent to read it carefully, because the person may
-	 * ask for something else entirely. An option list was never the only way to answer.
-	 */
-	answering: string | null;
-	strip: Strip;
-	pointing: Pointing;
-	/** controlled, because a take-back and a stop both write into the field (#170) */
-	draft: string;
-	onDraft: (text: string) => void;
-	/**
-	 * The reference riding with the words, which is bytes and never a path (#119).
-	 *
-	 * Controlled for the field's own reason: a message the queue held carries one, and
-	 * taking it back has to put it where it came from rather than dropping it silently.
-	 */
-	attached: readonly Attachment[];
-	onAttach: (update: (held: readonly Attachment[]) => readonly Attachment[]) => Promise<void>;
-	queued: readonly AgentQueued[];
-	model: AgentModelDeck;
-	limit: AgentLimit | null;
-	/** whether a turn is in flight at the instant of the press, off the turn itself (#234) */
-	running: () => boolean;
-	/** both of them say whether the words were taken, and the field empties on a yes (#234) */
-	onSend: (text: string, sent: AgentSent) => boolean;
-	onQueue: (text: string, sent: AgentSent) => boolean;
-	onUnqueue: (id: string) => void;
-	onStop: () => void;
-	onAnswer: (request: string, reply: AgentReply) => void;
-}) {
-	const currentThread = useRef(thread);
-	currentThread.current = thread;
-	const field = useRef<HTMLTextAreaElement>(null);
-	useEffect(() => {
-		if (!request) return;
-		let second = 0;
-		const first = requestAnimationFrame(() => {
-			second = requestAnimationFrame(() => field.current?.focus({ preventScroll: true }));
-		});
-		return () => {
-			cancelAnimationFrame(first);
-			cancelAnimationFrame(second);
-		};
-	}, [request]);
-	const permissionTrigger = useRef<HTMLButtonElement>(null);
-	const preparing = useRef(false);
-	const reading = useRef(0);
-	const reads = useRef(Promise.resolve());
-	const attachFiles = (files: readonly File[]) => {
-		reading.current += 1;
-		// Serial completion preserves paste order when a larger file reads last.
-		reads.current = reads.current
-			.then(async () => {
-				try {
-					const attached = await Promise.all(files.map(readAttachment));
-					await onAttach((held) => [...held, ...attached]);
-				} finally {
-					reading.current -= 1;
-				}
-			})
-			.catch(() => {});
-	};
-	/*
-	 * A stop is offered against every turn that is still a process (#165, #180, #234).
-	 *
-	 * Parked included. A turn held at a question is spending nothing and moving nowhere,
-	 * which is why the stroke stops there — but it is a live process standing in the repo
-	 * with a queue behind it, and the question's own dismiss answers the question rather
-	 * than ending the turn. The Stop button ends the turn and hands the queue back.
-	 */
-	const cutting = phase === "playing" || phase === "asking";
-
-	const resize = (element: HTMLTextAreaElement) => {
-		element.style.height = "auto";
-		element.style.height = `${Math.max(MIN_H, Math.min(element.scrollHeight, MAX_H))}px`;
-	};
-
-	// words handed back arrive from outside the field, so it has to re-fit to them the
-	// way it does to typing (#170)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the text is what decides the height — the box is measured through the ref
-	useEffect(() => {
-		const element = field.current;
-		if (element !== null) resize(element);
-	}, [draft]);
-
-	const take = async (text: string) => {
-		if (preparing.current || reading.current > 0) return false;
-		// captured here rather than read later: the chips that were up are the bytes
-		// that went out, and the line under the words has to say so afterwards. For a
-		// message the queue holds that is the whole contract, because it fires against a
-		// canvas the hands have moved on from
-		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
-		if (!running() && model.engine === "spool") {
-			preparing.current = true;
-			const offer = model.loading ? await model.ready?.() : model.offer;
-			preparing.current = false;
-			// Changing chats or editing the draft while it loads cancels this pending press.
-			if (!offer || currentThread.current !== thread || field.current?.value !== draft) return false;
-			if (offer.models.length === 0) {
-				model.connect?.();
-				return false;
-			}
-		}
-		/*
-		 * Asked of the turn itself rather than of the last render (#234).
-		 *
-		 * A press lands between a stream closing and React drawing that, and in that window
-		 * the rendered phase still says a turn is running while the queue has already fired:
-		 * a message taken then was held for a turn that had ended, behind everything that had
-		 * just gone out. The turn knows which it is at the instant of the press, and this asks
-		 * it. A turn parked on a question still holds the press, because a parked turn is a
-		 * live process — only a question with somewhere for words to go answers instead, and
-		 * that is decided above.
-		 */
-		const took = running() ? onQueue(text, sent) : onSend(text, sent);
-		// the field is emptied by something having taken the words and never by the press
-		// alone (#234): a rail whose threads are still arriving has nowhere to put them, and
-		// a box cleared over that is a sentence gone with no way back to it
-		if (!took) return false;
-		onDraft("");
-		onAttach(() => []);
-		return true;
-	};
-
-	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: a drop target is not a control, and its keyboard path is the paste the field already takes
-		<div
-			className="relative flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
-			onDragOver={(event) => {
-				// `items` rather than `files`: while a drag is in flight the data store is in
-				// protected mode and `files` is empty, so a guard that read it would never
-				// accept the drag and the browser would navigate to the dropped picture
-				if (!draggingAttachment(event.dataTransfer)) return;
-				event.preventDefault();
-				event.stopPropagation();
-			}}
-			onDrop={(event) => {
-				const files = attachmentsIn(event.dataTransfer);
-				if (files.length === 0) return;
-				event.preventDefault();
-				event.stopPropagation();
-				attachFiles(files);
-			}}
-		>
-			<WindStroke phase={phase} waited={waited} />
-			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
-				<QueueBox queued={queued} onUnqueue={onUnqueue} />
-				{attached.length > 0 && (
-					<div className="flex flex-wrap gap-2">
-						{attached.map((image, index) => (
-							<Attached
-								key={referenceKey(image)}
-								attached={image}
-								onDrop={() => onAttach((held) => held.filter((_, at) => at !== index))}
-							/>
-						))}
-					</div>
-				)}
-				<SelectionStrip strip={strip} pointing={pointing} />
-				{/*
-				 * What the field is for, and what the press will do with it.
-				 *
-				 * #200's word about a thread whose session has aged out lives here rather than in
-				 * the footer: the footer's 18px line went to the model (#184), and "this starts a
-				 * new thread" is a fact about the words being typed rather than about which
-				 * machine is answering.
-				 */}
-				<textarea
-					ref={field}
-					value={draft}
-					rows={3}
-					spellCheck={false}
-					placeholder={fieldSays(answering, finished)}
-					aria-label={fieldSays(answering, finished)}
-					onChange={(event) => {
-						onDraft(event.target.value);
-						resize(event.target);
+		<div data-agent-queue="" className={cn("flex flex-col gap-3", drawn.length === 0 && "hidden")}>
+			{drawn.map((message) => (
+				<QueuedAsk
+					key={message.id}
+					message={message}
+					open={live.has(message.id)}
+					onGone={() => {
+						held.current.delete(message.id);
+						redraw((count) => count + 1);
 					}}
-					onPaste={(event) => {
-						// a screenshot in the clipboard is the commonest reference there is, and
-						// pasting one is how it gets here: a browser never reveals a path, so
-						// there is nothing else a paste could mean
-						const files = attachmentsIn(event.clipboardData);
-						if (files.length === 0) return;
-						event.preventDefault();
-						attachFiles(files);
-					}}
-					onKeyDown={(event) => {
-						if (event.key !== "Enter" || event.shiftKey) return;
-						event.preventDefault();
-						const text = draft.trim();
-						if (text === "") return;
-						// answering answers, busy queues, otherwise sends — the three meanings of
-						// one press, resolved by what the turn is doing (#170)
-						if (answering !== null) {
-							onDraft("");
-							event.currentTarget.style.height = `${MIN_H}px`;
-							onAnswer(answering, { kind: "said", text });
-							return;
-						}
-						const box = event.currentTarget;
-						void take(text).then((took) => {
-							if (took) box.style.height = `${MIN_H}px`;
-						});
-					}}
-					className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted type-body"
-					style={{ height: MIN_H }}
+					onTakeBack={() => onUnqueue(message.id)}
 				/>
-			</div>
-			{permissions?.reason ? (
-				<p role="status" className="text-2xs text-muted leading-4">
-					{permissions.reason}
-				</p>
-			) : null}
-			<div className="relative flex h-[18px] min-w-0 items-center justify-between gap-2.5">
-				<div className="relative flex min-w-0 flex-1 items-center gap-4">
-					<ModelMenu
-						model={model}
-						limit={limit}
-						open={menu === "models"}
-						interrupted={menu !== null && menu !== "models"}
-						onOpen={(next) => onMenu(next ? "models" : null)}
-					/>
-					{cutting ? <StopButton onStop={onStop} /> : null}
-					{permissions === undefined ? null : (
-						<button
-							ref={permissionTrigger}
-							type="button"
-							data-permission-trigger=""
-							aria-label={`Agent permissions: ${permissions.mode}`}
-							aria-haspopup="menu"
-							aria-expanded={menu === "permissions"}
-							title={`Agent permissions: ${permissions.mode}`}
-							aria-busy={permissions.pending}
-							onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
-							onKeyDown={(event) => {
-								if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-									event.preventDefault();
-									onMenu("permissions");
-								}
-							}}
-							className={cn(
-								QUIET,
-								"relative z-30 flex shrink-0 items-center gap-1 py-1 text-muted hover:text-text",
-							)}
-						>
-							{permissions.mode}
-							<ChevronIcon open={menu === "permissions"} className="h-2 w-2 shrink-0" />
-						</button>
-					)}
-					{permissions !== undefined && menu === "permissions" ? (
-						<>
-							<button
-								type="button"
-								tabIndex={-1}
-								aria-label="close the permission menu"
-								className="fixed inset-0 z-10 cursor-default"
-								onClick={() => onMenu(null)}
-							/>
-							<PermissionMenu
-								mode={permissions.mode}
-								engine={model.engine ?? "claude"}
-								trigger={permissionTrigger}
-								onChange={(next) => {
-									onMenu(null);
-									permissions.choose(next);
-								}}
-								onClose={() => onMenu(null)}
-							/>
-						</>
-					) : null}
-				</div>
-			</div>
+			))}
 		</div>
 	);
 }
 
-const QUIET = "type-detail";
-
-function ModelMenu(props: {
-	model: AgentModelDeck;
-	limit: AgentLimit | null;
-	open: boolean;
-	onOpen: (open: boolean) => void;
-	interrupted: boolean;
-}) {
-	const recovery = useContext(RecoveryActions);
-	return <AgentModelPicker {...props} login={recovery?.login} modelRequest={recovery?.modelRequest} />;
-}
-
-/**
- * The way out of a turn that is already running (#165).
- *
- * It sits in the footer rather than in the composer box or at the live edge. The box
- * loses because spool has no send button to morph — Enter sends — so it would be
- * adding the slot it deliberately lacks and leaving it empty whenever no turn runs.
- * The live edge loses because it travels, fastest exactly when rows are piling up,
- * and scrolls away the moment you read back.
- *
- * Stopping requires this button. Escape only dismisses or leaves UI surfaces.
- */
-function StopButton({ onStop }: { onStop: () => void }) {
-	return (
-		<button
-			type="button"
-			onClick={onStop}
-			className="flex h-[18px] w-fit shrink-0 items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45"
-		>
-			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
-			<span className="text-text type-detail">stop</span>
-		</button>
-	);
-}
-
-/* ---------- the queue, inside the composer (#170, #176) ----------
- * A queued message has not left your hands. The log is where things that have
- * happened live and the composer is where your words live, so a message committed and
- * not sent stays in the second one — dimmed, because committed is not sent, and above
- * the field, because the thing being written now is the one nearest the cursor.
- *
- * It makes three things geometry rather than rules. Firing is the send it already is:
- * the stack leaves this box and lands in the log, the exact journey every message in
- * the transcript already made. Take-back is a drop rather than a jump: the row is
- * sitting on the field it returns to, which is the invariant drawn instead of stated.
- * And the stack is what fires together, because every held message goes out at once
- * and the binary reads all of them as one turn.
- *
- * What it costs is room, and the cost lands on the log: an unbounded queue would push
- * the transcript off the top, so it caps and scrolls inside itself. */
-
-/** as much of the composer as the queue may take before it scrolls inside itself */
-const QUEUE_H = 164;
-
-function QueueBox({ queued, onUnqueue }: { queued: readonly AgentQueued[]; onUnqueue: (id: string) => void }) {
-	if (queued.length === 0) return null;
-	return (
-		<div className="flex min-h-0 flex-col gap-2.5">
-			<div
-				data-agent-queue=""
-				className="pages-scrollbar flex min-h-0 flex-col gap-3.5 overflow-x-hidden overflow-y-auto"
-				style={{ maxHeight: QUEUE_H }}
-			>
-				{queued.map((message) => (
-					<QueuedRow key={message.id} message={message} onDrop={() => onUnqueue(message.id)} />
-				))}
-			</div>
-			{/* the composer's own internal rule, the one the selection strip already sits
-			    above: a second border would read as a second place to type */}
-			<span className="h-px shrink-0 bg-border-raised" />
-		</div>
-	);
-}
-
-/**
- * One waiting message, which is the log's own user row and not a new object.
- *
- * A queued message is the only thing this rail draws that has not happened yet, so it
- * cannot wear the transcript's receipt — but it is about to become one, which is why
- * the anatomy has to match to the pixel: the same 2px rail, the same text size, the
- * same mono line under it that a context sits on. Every one of those is dimmed and
- * the line says `queued`. The moment it fires it is not replaced by a row, it is the
- * row.
- *
- * The rail is the one thing that does not dim: it says whose words these are, and
- * that was settled the moment they were typed. What is provisional is only whether
- * they have gone out.
- *
- * The ✕ stands alone rather than splitting the row's click, because one destination
- * cannot need two targets — words that leave the queue un-fired land back in the box,
- * and there is nowhere else for them to go. It is on hover, in the vocabulary a chip's
- * own removal already uses, because the resting state here is two lines of your own
- * words waiting their turn.
- */
-function QueuedRow({ message, onDrop }: { message: AgentQueued; onDrop: () => void }) {
-	return (
-		<div data-agent-queued="" className="group relative flex shrink-0 animate-agent-entry flex-col gap-1 pl-3.5">
-			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
-			<span className="flex h-3.5 items-center gap-1.5">
-				<span className="text-muted type-detail">queued</span>
-				{/* no plate behind it, unlike the composer chip's own ✕: in a dimmed row a
-				    filled box is the brightest thing on the line, and the row is what is
-				    being read */}
-				<button
-					type="button"
-					onClick={onDrop}
-					aria-label={`take back ${message.text}`}
-					className="flex h-3.5 w-3.5 items-center justify-center text-muted/0 transition-colors duration-150 hover:text-text group-hover:text-muted/50"
-				>
-					<CloseIcon />
-				</button>
-			</span>
-		</div>
-	);
-}
-
-/* ---------- the reference that rides along (#119) ----------
- * Look-only, and nothing lands. The bytes go down the same stdin the prompt does,
- * so the project gains no file, no inbox and no deleter — the agent's own
- * transcript is the durable copy, outside the repo. The cost is stated rather than
- * hidden: a browser never reveals a dropped file's path, so a logo cannot be added
- * to the project this way, and adding an asset is already a deliberate import into
- * `design/shared/assets/`.
- *
- * It arrives by paste or by drop and by nothing else. The footer holds the model and
- * the stop and nothing else (#184), and the chip line is the selection's, so a
- * button would need a slot the composer deliberately does not have — where a
- * pasted screenshot is the gesture people already have in their hands. */
-
-/** how wide the tile is: enough to recognise a screenshot, not enough to read it */
-const ATTACHED_W = 44;
-
-/**
- * The tile has two things to do, so it has two targets.
- *
- * The picture is the press, because at this size it can be recognised and not checked,
- * and checking it is what a reference is for: it goes up over the rail in the same
- * overlay a tool call's screenshot goes up in. Taking the reference back is the ✕ in
- * the corner, the smaller target, because it is the rarer intent and the only one of
- * the two that cannot be undone.
- *
- * The ✕ is on hover, in the vocabulary the ✕ on a thread and on a chip already uses.
- * It carries a plate the chip's does not, because it sits on a picture rather than on
- * a surface, and an unbacked glyph over arbitrary pixels is not always there.
- */
-const referenceKeys = new WeakMap<Attachment, string>();
-function referenceKey(image: Attachment): string {
-	let key = referenceKeys.get(image);
-	if (!key) {
-		key = crypto.randomUUID();
-		referenceKeys.set(image, key);
-	}
-	return key;
-}
-
-function Attached({ attached, onDrop }: { attached: Attachment; onDrop: () => void }) {
-	const [big, setBig] = useState(false);
-	// held across renders for the reason `Shot` holds its own: the rail re-projects on
-	// a clock and the string is the size of the picture, now read in two places
-	const src = useMemo(() => `data:${attached.media};base64,${attached.data}`, [attached.media, attached.data]);
-	return (
-		<>
-			<span
-				data-agent-attached=""
-				className="group relative flex w-fit shrink-0 overflow-hidden rounded-xs border border-border-raised bg-bg"
-				style={{ width: ATTACHED_W, height: ATTACHED_W }}
-			>
-				{/* the picture is its own label: `image/png` is a fact about a file and this is a
-				    thing you can see */}
-				<button type="button" onClick={() => setBig(true)} className="flex h-full w-full cursor-zoom-in">
-					<img src={src} alt="attached reference" className="h-full w-full object-cover" />
-				</button>
-				<button
-					type="button"
-					onClick={onDrop}
-					aria-label="drop the attached image"
-					className="absolute top-0 right-0 flex h-4 w-4 items-center justify-center rounded-bl-xs bg-bg/0 text-muted/0 transition-colors duration-150 hover:text-text group-hover:bg-bg/70 group-hover:text-muted/70"
-				>
-					<CloseIcon />
-				</button>
-			</span>
-			{/* beside the tile rather than inside it: the tile clips to 44px, and a picture held
-			    over the whole rail cannot hang off something that small.
-			    No caption, because a browser never reveals a dropped file's path and there is
-			    nothing else to say that the picture is not already saying */}
-			<Lightbox open={big} onClose={() => setBig(false)} caption={null}>
-				<img src={src} alt="attached reference" className="block max-h-full max-w-full" />
-			</Lightbox>
-		</>
-	);
-}
-
-/**
- * Whether a drag in flight is carrying something that could ride along.
- *
- * A dragging browser keeps its data store in protected mode, so `files` is empty
- * until the drop and only each item's `kind` and `type` can be read — which is
- * exactly enough, and reading `files` here would refuse every drag.
- */
-function draggingAttachment(data: DataTransfer | null): boolean {
-	return Array.from(data?.items ?? []).some((item) => item.kind === "file" && ATTACHMENT_MEDIA.has(item.type));
-}
-
-/**
- * The picture in a drop or a paste, if it is one spool can send.
- *
- * The composer refuses exactly what the daemon refuses (`src/attachment.ts`), so a
- * tile never draws for something the turn would be turned away for: nothing appearing
- * is a smaller cost than a prompt lost to a refusal after Enter.
- */
-function attachmentsIn(data: DataTransfer | null): File[] {
-	return Array.from(data?.files ?? []).filter((file) => isSendableAttachment(file));
-}
-
-/** The browser reads and encodes image bytes asynchronously. */
-function readAttachment(file: File): Promise<Attachment> {
-	return new Promise((resolve, reject) => {
-		const reader = new FileReader();
-		reader.onload = () => {
-			if (typeof reader.result !== "string") return reject(new Error("Could not read the image"));
-			resolve({ media: file.type, data: reader.result.slice(reader.result.indexOf(",") + 1) });
-		};
-		reader.onerror = () => reject(reader.error);
-		reader.onabort = () => reject(new Error("Image read was cancelled"));
-		reader.readAsDataURL(file);
-	});
-}
-
-/* ---------- what the hands are pointing at ----------
- * The selection sits in the composer and goes out with the message without being
- * asked for. Its accent is the one the entry wears out on the canvas, because the
- * chip and the outline are one object — which is why hovering either lights the
- * other, and why a chip that cannot be paired with a box out there is a chip that
- * should not be drawn.
- *
- * One line, always. Either the chips fit on it or the strip is a count; the composer
- * never grows downward to make room for context, because the space below is the
- * prompt's. Opening the count is the human asking for the list, and then it is a
- * list: hoverable, individually droppable, eight rows before it scrolls inside
- * itself and no bar when it does. */
-
-/** rows the open list shows before it starts scrolling under a fade */
-const ROWS_SHOWN = 8;
-
-function SelectionStrip({ strip, pointing }: { strip: Strip; pointing: Pointing }) {
-	const [open, setOpen] = useState(false);
-	if (strip.kind === "none") return null;
-
-	// no wrap: the strip is chips because they fit on one line, and a second line
-	// would be the rule breaking quietly rather than the count taking over. If the
-	// estimate is off by a few pixels a chip truncates instead
-	if (strip.kind === "chips") {
-		return (
-			<span data-agent-chips="" className="flex min-w-0 items-center gap-1.5">
-				{strip.chips.map((chip) => (
-					<Chip
-						key={chip.id}
-						words={chip}
-						lit={pointing.lit === chip.id}
-						onLight={pointing.onLight}
-						// the entered frame is the one chip whose ✕ has nowhere to land:
-						// removal mirrors the canvas, and out there the only way to stop
-						// pointing at the frame you are inside is to leave it (#139)
-						onDrop={strip.inside ? undefined : () => pointing.onDrop(chip.id)}
-					/>
-				))}
-			</span>
-		);
-	}
-
-	return (
-		<span data-agent-chips="" className="flex min-w-0 flex-col gap-1.5">
-			<span className="flex min-w-0 items-center">
-				{/* the whole list rather than an entry's own id: the cursor on a count lights
-				    every box the count stands for */}
-				<Chip
-					words={{ id: WHOLE_SELECTION, label: strip.label }}
-					lit={pointing.lit !== null}
-					open={open}
-					onOpen={() => setOpen(!open)}
-					onLight={pointing.onLight}
-					// the count's own ✕ drops the whole selection, which is the one act the
-					// canvas cannot do for you while you are standing inside a frame
-					onDrop={() => pointing.onDrop(null)}
-				/>
-			</span>
-			{open ? (
-				/* Eight rows and then it scrolls, and it scrolls without a bar: the list is
-				   for reaching one member, never for reading forty, and a native scrollbar in
-				   a 420 rail is a grey slab across the only accent on screen. The fade says
-				   there is more the way the transcript's does. */
-				<span className="relative flex flex-col">
-					<span className="flex max-h-[208px] flex-col overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-						{strip.chips.map((chip) => (
-							<button
-								key={chip.id}
-								type="button"
-								data-agent-chip-row={chip.label}
-								onMouseEnter={() => pointing.onLight(chip.id)}
-								onMouseLeave={() => pointing.onLight(null)}
-								onClick={() => pointing.onDrop(chip.id)}
-								className={cn(
-									"group flex h-[26px] shrink-0 items-center gap-2 rounded-xs px-1 text-left",
-									pointing.lit === chip.id && "bg-surface",
-								)}
-							>
-								<span
-									className={cn(
-										"h-2.5 w-[2px] shrink-0 rounded-full",
-										pointing.lit === chip.id ? "bg-thread" : "bg-thread/40",
-									)}
-								/>
-								<span className="min-w-0 flex-1 truncate text-text type-value">{chip.label}</span>
-								<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted">
-									<CloseIcon />
-								</span>
-							</button>
-						))}
-					</span>
-					{strip.chips.length > ROWS_SHOWN ? (
-						<span className="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-surface to-transparent" />
-					) : null}
-				</span>
-			) : null}
-		</span>
-	);
-}
-
-function Chip({
-	words,
-	lit,
+function QueuedAsk({
+	message,
 	open,
-	onOpen,
-	onLight,
-	onDrop,
+	onGone,
+	onTakeBack,
 }: {
-	words: ChipWords;
-	lit: boolean;
-	open?: boolean;
-	onOpen?: () => void;
-	onLight: (id: string | null) => void;
-	/** absent when there is nothing a ✕ could do — then the chip has no ✕ at all */
-	onDrop?: (() => void) | undefined;
+	message: AgentQueued;
+	open: boolean;
+	onGone: () => void;
+	onTakeBack: () => void;
 }) {
-	const body = (
-		<>
-			<span className={cn("h-3 w-[2px] shrink-0 rounded-full", lit ? "bg-thread" : "bg-thread/55")} />
-			<span className="min-w-0 truncate text-text type-value">{words.label}</span>
-			{onOpen === undefined ? null : (
-				<ChevronIcon open={open ?? false} className="h-2.5 w-2.5 shrink-0 text-muted/40" />
-			)}
-		</>
-	);
+	const shown = useLeaving(open, FADE_OUT_MS);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: told once, when the exit has finished
+	useEffect(() => {
+		if (shown === null) onGone();
+	}, [shown]);
+	if (shown === null) return null;
+	const leaving = shown === "leaving";
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: the cursor lighting the box out on the canvas is a hover reading, and its own controls are buttons
-		<span
-			data-agent-chip={words.label}
+		<div
+			data-agent-queued={leaving ? undefined : ""}
+			inert={leaving}
+			aria-hidden={leaving || undefined}
 			className={cn(
-				"flex h-6 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-sm border bg-raised pl-2 transition-colors duration-150",
-				// the ✕'s own padding goes with it, or the chip keeps a gap it no longer uses
-				onDrop === undefined ? "pr-2.5" : "pr-1",
-				lit ? "border-thread/45" : "border-border-raised",
+				"relative flex flex-col items-start gap-0.5 pl-3.5",
+				leaving ? "animate-agent-fade-out" : "animate-agent-fade-in",
 			)}
-			onMouseEnter={() => onLight(words.id)}
-			onMouseLeave={() => onLight(null)}
 		>
-			{onOpen === undefined ? (
-				body
-			) : (
-				<button
-					type="button"
-					onClick={onOpen}
-					aria-expanded={open ?? false}
-					className="flex min-w-0 items-center gap-2 text-left"
-				>
-					{body}
-				</button>
-			)}
-			{onDrop === undefined ? null : (
-				<button
-					type="button"
-					onClick={onDrop}
-					aria-label={`drop ${words.label}`}
-					className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors duration-150 hover:bg-surface hover:text-text"
-				>
-					<CloseIcon />
-				</button>
-			)}
-		</span>
-	);
-}
-
-const RecoveryActions = createContext<{ login: LoginDeck; modelRequest: number } | null>(null);
-
-function RecoveryView({
-	install,
-	login,
-	model,
-	onModels,
-	onNew,
-}: {
-	install: InstallDeck;
-	login: LoginDeck;
-	model: AgentModelDeck;
-	onModels: () => void;
-	onNew: Threads["onNew"];
-}) {
-	const recovery = login.recovery;
-	const claude = model.engine === "claude";
-	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
-	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
-	const originalAccount = recovery?.offer?.split("/").slice(0, 3).join("/");
-	const sameAccount = claude || model.offer.current.value?.startsWith(`${originalAccount}/`);
-	if (claude && (install.missing || login.out))
-		return (
-			<div data-recovery="claude" className="flex flex-col gap-3">
-				<p className="text-base text-text leading-base">
-					{install.missing ? "Claude Code isn’t installed." : "Sign in to Claude Code to continue."}
-				</p>
-				{install.missing ? (
-					<a
-						href="https://code.claude.com/docs/en/quickstart"
-						target="_blank"
-						rel="noreferrer"
-						className="w-fit text-base text-muted underline underline-offset-4 hover:text-text"
-					>
-						Install Claude Code
-					</a>
-				) : (
-					<p className="text-base text-muted leading-base">
-						Run <code className="font-mono text-xs">claude</code> in a terminal, then{" "}
-						<code className="font-mono text-xs">/login</code>.
-					</p>
-				)}
-				<div className="flex flex-wrap items-center gap-3">
-					<button
-						type="button"
-						data-agent-check=""
-						className={action}
-						disabled={install.checking || login.checking}
-						onClick={install.missing ? install.look : login.check}
-					>
-						{install.checking || login.checking ? "checking…" : "check again"}
-					</button>
-					<button type="button" className={action} onClick={() => onNew("spool")}>
-						new thread with spool
-					</button>
-				</div>
-				{install.foundNothing ? (
-					<p data-agent-looked="" className="font-mono text-2xs text-muted">
-						Claude Code is still not installed.
-					</p>
-				) : null}
-			</div>
-		);
-	if (!recovery) return null;
-	if (changed && (!sameAccount || recovery.scope === "model"))
-		return (
-			<button type="button" className={action} onClick={login.retry}>
-				continue with this model
+			{/* the ask's own anatomy, its rail dashed and its words faint: it becomes that ask
+			    in the same place when it goes out, rather than jumping to it */}
+			<span className="absolute top-[3px] bottom-[31px] left-0 w-0 border-border-raised border-l-2 border-dashed" />
+			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
+			<button
+				type="button"
+				onClick={onTakeBack}
+				aria-label={`take back ${message.text}`}
+				className="-ml-1.5 h-7 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-control"
+			>
+				Take back
 			</button>
-		);
-	if (recovery.kind === "login")
-		return (
-			<div data-recovery="login" className="flex flex-col gap-3">
-				<p className="text-base text-text leading-base">Sign in to {recovery.account} to continue.</p>
-				<button type="button" className={`${action} w-fit`} onClick={model.connect}>
-					sign in again
-				</button>
-			</div>
-		);
-	const reset =
-		recovery.resetsAt === undefined
-			? null
-			: new Date(recovery.resetsAt * 1000).toLocaleTimeString("en-GB", {
-					hour: "2-digit",
-					minute: "2-digit",
-					...(recovery.resetsAt * 1000 - Date.now() >= 24 * 3600 * 1000
-						? ({ day: "numeric", month: "short" } as const)
-						: {}),
-				});
-	return (
-		<div data-recovery="limit" className="flex flex-col gap-3">
-			<p className="text-base text-text leading-base">{recovery.account} rate limit reached.</p>
-			{reset === null ? null : <p className="text-base text-muted leading-base">Try again at {reset}.</p>}
-			<div className="flex items-center gap-3">
-				<button type="button" className={action} onClick={login.retry}>
-					retry
-				</button>
-				<button type="button" className={action} onClick={onModels}>
-					choose model
-				</button>
-			</div>
 		</div>
 	);
 }

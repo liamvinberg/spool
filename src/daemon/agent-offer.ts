@@ -48,9 +48,10 @@ export interface AgentModel {
 	readonly resolvedModel: string;
 	readonly displayName: string;
 	readonly description: string;
-	readonly connection?: string;
 	readonly supportsEffort?: boolean;
 	readonly supportedEffortLevels?: readonly string[];
+	/** the model runs on this machine, so it costs nothing and needs no account (#363) */
+	readonly local?: boolean;
 }
 
 /**
@@ -86,6 +87,11 @@ export interface AgentCurrent {
 export interface AgentOffer {
 	readonly models: readonly AgentModel[];
 	readonly current: AgentCurrent;
+	/**
+	 * False where the agent never asks before it acts, so there is no permission mode to
+	 * pick and the rail draws no mode menu (pi, #363). Absent is the usual agent, which asks.
+	 */
+	readonly modes?: false;
 }
 
 /** one control request line, as the binary reads it off stdin */
@@ -168,12 +174,12 @@ export function modelsOf(response: unknown): readonly AgentModel[] {
 			// value, which is what `/model` takes and so is still the machine's own word
 			displayName: string(entry.displayName) ?? value,
 			description: string(entry.description) ?? "",
-			...some("connection", string(entry.connection)),
 			...some("supportsEffort", bool(entry.supportsEffort)),
 			...some("supportedEffortLevels", levels),
 			...some("supportsFastMode", bool(entry.supportsFastMode)),
 			...some("supportsAdaptiveThinking", bool(entry.supportsAdaptiveThinking)),
 			...some("supportsAutoMode", bool(entry.supportsAutoMode)),
+			...some("local", bool(entry.local)),
 		});
 	}
 	return models;

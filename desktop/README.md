@@ -15,9 +15,9 @@ nothing forks.
 
 Apple silicon, macOS 14 or later.
 
-The bundled spool engine and its provider SDK run inside the app's Node runtime.
-No separate Node or agent CLI installation is required. Account connections,
-Linux/WSL CLI requirements and the limits of command isolation are covered in
+The app bundles no agent. The rail runs the agent already installed on the Mac
+(Claude Code, Codex or pi), and shows the install lines when none is found. No separate
+Node installation is required. See
 [agent requirements and permissions](../docs/agents.md).
 
 ## The spool command

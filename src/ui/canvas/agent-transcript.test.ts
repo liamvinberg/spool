@@ -624,17 +624,18 @@ describe("one tool call", () => {
 			`${ROOT}/design/shared/tokens.css`,
 			`${ROOT}/pnpm-lock.yaml`,
 		];
-		const { entries } = transcriptOf(
-			[{ text: "go" }],
-			stamp([
-				ready,
-				waiting,
-				speaking,
-				...paths.map((file, index) => called(`t${index}`, "Read", { file_path: file })),
-			]),
+		// each read on its own, since reads one after another are one row (#365)
+		const named = paths.flatMap(
+			(file) =>
+				rows(
+					transcriptOf(
+						[{ text: "go" }],
+						stamp([ready, waiting, speaking, called("t", "Read", { file_path: file })]),
+					).entries,
+				)[0] ?? [],
 		);
 
-		expect(rows(entries).map((row) => row.subject)).toEqual([
+		expect(named.map((row) => row.subject)).toEqual([
 			"cart",
 			// a frame on a page is named by its path, which is what tells it from a
 			// checkout on any other page (#336)
@@ -648,7 +649,7 @@ describe("one tool call", () => {
 			"tokens.css",
 			"pnpm-lock.yaml",
 		]);
-		expect(rows(entries).map((row) => row.frame)).toEqual(["cart", "app/checkout", "cart", null, null, null]);
+		expect(named.map((row) => row.frame)).toEqual(["cart", "app/checkout", "cart", null, null, null]);
 	});
 
 	/** the agent's own word for what it is doing, where spool has no better noun */
@@ -806,6 +807,64 @@ describe("a run of writes", () => {
 		);
 
 		expect(lines(entries)).toEqual(["edit home", "edit cart ×2"]);
+	});
+});
+
+describe("reads and searches (#365)", () => {
+	const read = (id: string, path: string) => called(id, "Read", { file_path: `${ROOT}/${path}` });
+
+	it("are one row however many files the agent opens, every path behind its disclosure", () => {
+		const events = stamp([
+			ready,
+			read("r1", "design/frames/cart/frame.tsx"),
+			read("r2", "design/shared/tokens.css"),
+			called("g1", "Grep", { pattern: "Button", path: `${ROOT}/design` }),
+			called("b1", "Bash", { command: "rg -n accent design | head -20", description: "Find the accent" }),
+			result("r1"),
+			result("r2"),
+			result("g1"),
+		]);
+		const [row] = rows(transcriptOf([{ text: "go" }], events).entries);
+		expect(rows(transcriptOf([{ text: "go" }], events).entries)).toHaveLength(1);
+		expect(row).toMatchObject({ verb: "search", subject: "4 times", frame: null, count: 1, state: "running" });
+		expect(row?.detail?.split("\n")).toEqual([
+			"design/frames/cart/frame.tsx",
+			"design/shared/tokens.css",
+			"Button",
+			"rg -n accent design | head -20",
+		]);
+		// it settles once every call in it has
+		const settledRow = rows(transcriptOf([{ text: "go" }], [...events, ...stamp([result("b1")])]).entries)[0];
+		expect(settledRow?.state).toBe("done");
+	});
+
+	it("reads as the one call it holds, and says how many files once there are two", () => {
+		const one = rows(
+			transcriptOf([{ text: "go" }], stamp([ready, read("r1", "design/frames/cart/frame.tsx")])).entries,
+		);
+		expect(lines(one)).toEqual(["read cart"]);
+		const two = rows(
+			transcriptOf(
+				[{ text: "go" }],
+				stamp([ready, read("r1", "design/frames/cart/frame.tsx"), read("r2", "design/frames/home/frame.tsx")]),
+			).entries,
+		);
+		expect(lines(two)).toEqual(["read 2 files"]);
+	});
+
+	it("ends on the next thing drawn, and leaves a look and a write rows of their own", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([
+				ready,
+				read("r1", "design/frames/cart/frame.tsx"),
+				read("r2", "design/.spool/verify/cart.png"),
+				read("r3", "design/frames/home/frame.tsx"),
+				called("w1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				read("r4", "design/frames/home/frame.tsx"),
+			]),
+		);
+		expect(lines(entries)).toEqual(["read cart", "look cart", "read home", "edit home", "read home"]);
 	});
 });
 
@@ -1012,6 +1071,33 @@ describe("a waiting request", () => {
 		expect(parked).toBe("req-1");
 	});
 
+	it("keeps what an approval would let through behind it, project-relative (#366)", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, asking({ tool: "Edit", input: { file_path: `${ROOT}/src/theme.ts` } })]),
+		);
+		expect(one(entries)).toMatchObject({ delegation: "", tool: "Edit", detail: "src/theme.ts" });
+	});
+
+	/**
+	 * A designer's ask is the person's business, not the designer's: the delegation's own
+	 * work never draws in the log, but its asks must, or the turn parks on a question
+	 * nobody can see (#366). Codex says who asks on the wire; Claude's request carries no
+	 * parent, and the call it is about was made on the designer's own thread.
+	 */
+	it("draws a designer's ask, and says which designer asks", () => {
+		const delegate = called("d1", "Agent", { description: "Design calm", prompt: "x" });
+		const codex = transcriptOf([{ text: "go" }], stamp([ready, delegate, asking({ call: null, parent: "d1" })]));
+		expect(one(codex.entries)).toMatchObject({ delegation: "d1", state: "open" });
+		expect(codex.asking).toBe("req-1");
+
+		const claude = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, delegate, called("c1", "Bash", { command: "spool upgrade" }, "d1"), asking()]),
+		);
+		expect(one(claude.entries)).toMatchObject({ delegation: "d1", state: "open" });
+	});
+
 	it("offers no always where the request suggested no rule", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([ready, asking({ suggestions: [] })]));
 
@@ -1116,6 +1202,7 @@ describe("a waiting request", () => {
 			{
 				header: "Shot fix",
 				question: QUESTION,
+				multi: false,
 				options: [
 					{ label: "Run `spool upgrade`", description: "I run it, which installs the latest release." },
 					{ label: "Ship it unverified", description: "Leave the frame as authored." },

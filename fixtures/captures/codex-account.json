@@ -1,0 +1,80 @@
+[
+	{
+		"in": {
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"clientInfo": {
+					"name": "spool",
+					"title": "Spool",
+					"version": "0.33.1"
+				},
+				"capabilities": {
+					"experimentalApi": false,
+					"requestAttestation": false,
+					"optOutNotificationMethods": [
+						"mcpServer/startupStatus/updated",
+						"remoteControl/status/changed",
+						"turn/diff/updated",
+						"item/reasoning/summaryTextDelta",
+						"item/reasoning/summaryPartAdded",
+						"item/reasoning/textDelta",
+						"item/commandExecution/outputDelta",
+						"item/fileChange/outputDelta"
+					]
+				}
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 1,
+			"result": {
+				"userAgent": "spool/0.161.0 (Ubuntu 24.4.0; x86_64) unknown (spool; 0.33.1)",
+				"codexHome": "/home/user/.codex",
+				"platformFamily": "unix",
+				"platformOs": "linux"
+			}
+		}
+	},
+	{
+		"in": {
+			"method": "initialized"
+		}
+	},
+	{
+		"in": {
+			"id": 2,
+			"method": "account/read",
+			"params": {}
+		}
+	},
+	{
+		"out": {
+			"method": "account/updated",
+			"params": {
+				"authMode": "chatgpt",
+				"planType": "free"
+			},
+			"emittedAtMs": 1791490728031
+		}
+	},
+	{
+		"out": {
+			"id": 2,
+			"result": {
+				"account": {
+					"type": "chatgpt",
+					"email": "you@example.com",
+					"planType": "free"
+				},
+				"requiresOpenaiAuth": true,
+				"workspaceRouting": {
+					"chatgptAccountId": "00000000-0000-4000-8000-000000000000",
+					"backendOrigin": "https://chatgpt.com",
+					"accountRoutingOverride": "NO_CONSTRAINT"
+				}
+			}
+		}
+	}
+]
