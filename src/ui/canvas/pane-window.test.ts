@@ -4,6 +4,7 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
+import { FADE_OUT_MS } from "./agent-motion";
 import { PaneActions, type PaneDef, PaneWindow } from "./pane-window";
 
 /**
@@ -75,6 +76,11 @@ describe("the rail", () => {
 		expect(icon(host, "agent")?.querySelector('[data-rail-mark="unread"]')).not.toBeNull();
 
 		await click(icon(host, "agent"));
+		// the dot fades out where it was, then it is gone
+		expect(
+			icon(host, "agent")?.querySelector('[data-rail-mark="unread"]')?.getAttribute("data-rail-mark-state"),
+		).toBe("leaving");
+		await act(() => new Promise((resolve) => setTimeout(resolve, FADE_OUT_MS + 40)));
 		expect(icon(host, "agent")?.querySelector("[data-rail-mark]")).toBeNull();
 	});
 
@@ -84,6 +90,7 @@ describe("the rail", () => {
 		await render({ working: true });
 		await render({ working: false });
 		await click(icon(host, "agent"));
+		await act(() => new Promise((resolve) => setTimeout(resolve, FADE_OUT_MS + 40)));
 		expect(icon(host, "agent")?.querySelector("[data-rail-mark]")).toBeNull();
 	});
 

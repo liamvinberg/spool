@@ -3207,7 +3207,9 @@ describe("an ask, anchored", () => {
 		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
 
 		await until(() => canvas.host.querySelector("[data-agent-canvas-ask]") !== null);
-		expect(canvas.host.querySelector("[data-agent-canvas-ask]")?.textContent).toContain("Adding a date library");
+		const card = () => canvas.host.querySelector("[data-agent-canvas-ask]");
+		expect(card()?.textContent).toContain("Adding a date library");
+
 	});
 
 	it("keeps a second waiting ask on screen as a card under the first", async () => {
@@ -3782,7 +3784,9 @@ const nameplate = (host: HTMLElement) => plateAsk(host)?.querySelector(":scope >
 
 /** the dot on the agent's dock icon, which says another chat has news (#364) */
 const elsewhere = (host: HTMLElement) =>
-	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]') !== null;
+	// a dot on its way out is already gone, fading where it stood
+	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]:not([data-rail-mark-state="leaving"])') !==
+	null;
 
 /** the list dropped from the title over the log, or null while it is shut or on its way out */
 const threadList = (host: HTMLElement) => live(host, "[data-agent-threads]")[0] ?? null;
