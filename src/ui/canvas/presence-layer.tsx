@@ -2,6 +2,19 @@ import { useEffect, useReducer, useRef } from "react";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { idle, nextChange, type PresenceRoom, speaking, springStep, type Teammate } from "./presence";
+import {
+	followGesture,
+	GestureAtPointer,
+	GestureMarks,
+	type Glyph,
+	gestureBusy,
+	glyphOf,
+	PresenceVariantBar,
+	ScrollGlyph,
+	type Track,
+	usePresenceVariant,
+	type Variant,
+} from "./presence-gestures";
 
 /**
  * Teammates on this page of a team canvas (DEV-196): each one's pointer in their colour with their name in a
@@ -39,18 +52,6 @@ interface Motion {
 	slot: { x: number; y: number } | null;
 }
 
-/** How long a click's ring takes to spread and fade; the animation in `ui.css` runs the same. */
-const RIPPLE_MS = 650;
-
-interface Ripple {
-	key: string;
-	color: string;
-	/** Where the click landed, in world units. */
-	x: number;
-	y: number;
-	at: number;
-}
-
 export function PresenceLayer({
 	room,
 	camera,
@@ -67,11 +68,9 @@ export function PresenceLayer({
 	const motions = useRef(new Map<string, Motion>());
 	const docked = useRef(new Map<string, string | null>());
 	const kicked = useRef(() => {});
-	// each person's clicks inside a live frame as last counted, and the rings still spreading from them
-	const clicked = useRef(new Map<string, number>());
-	const ripples = useRef<Ripple[]>([]);
-	// where each person's frame was last scrolled to, and since when: a thumb shows only once they scroll
-	const scrolled = useRef(new Map<string, { y: number; at: number | null }>());
+	// what each person's pointer is doing inside their frame: clicks, a drag, a scroll
+	const tracks = useRef(new Map<string, Track>());
+	const { variant } = usePresenceVariant();
 
 	// every change heard, every camera drawn, and every moment the clock alone changes something, is a redraw;
 	// while a pointer or a pill is still easing, so is every animation frame
@@ -96,6 +95,8 @@ export function PresenceLayer({
 				motion.y = motion.y === null ? { p: at.y, v: 0 } : springStep(motion.y, at.y, dt, POINTER_W);
 				moving ||= Math.abs(motion.x.p - at.x) + Math.abs(motion.y.p - at.y) > 0.05;
 			}
+			const now = Date.now();
+			for (const track of tracks.current.values()) moving ||= gestureBusy(track, now);
 			redraw();
 			if (moving) kick();
 		};
@@ -165,25 +166,17 @@ export function PresenceLayer({
 				slot: slot ?? null,
 			});
 		else if (motion !== undefined && slot !== undefined) motion.slot = slot;
-		// a click counted since last time is a ring where it landed; the first time anyone is seen, it's only noted
-		const clicks = mate.state.clicks ?? 0;
-		const before = clicked.current.get(id);
-		clicked.current.set(id, clicks);
-		if (before !== undefined && clicks > before && at !== null && mate.left === null)
-			ripples.current.push({ key: `${id}:${clicks}`, color: mate.person.color, x: at.x, y: at.y, at: now });
+		// what their pointer is doing inside the frame, followed on every render while it moves
+		const eased =
+			motion === undefined || motion.x === null || motion.y === null ? null : { x: motion.x.p, y: motion.y.p };
+		tracks.current.set(id, followGesture(tracks.current.get(id), mate, eased, now));
 	}
-	ripples.current = ripples.current.filter((ripple) => now - ripple.at < RIPPLE_MS);
-	for (const mate of here) {
-		const id = mate.person.accountId;
-		const y = mate.state.scroll?.y;
-		const was = scrolled.current.get(id);
-		if (y === undefined) scrolled.current.delete(id);
-		else if (was === undefined) scrolled.current.set(id, { y, at: null });
-		else if (was.y !== y) scrolled.current.set(id, { y, at: now });
-	}
+	for (const id of [...tracks.current.keys()])
+		if (!here.some((mate) => mate.person.accountId === id)) tracks.current.delete(id);
 
 	return (
-		<div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true" data-presence-layer="">
+		<div className="pointer-events-none absolute inset-0 overflow-hidden" data-presence-layer="">
+			<PresenceVariantBar />
 			{here.flatMap((mate) =>
 				mate.state.dragging.flatMap((name) => {
 					const frame = byName.get(name);
@@ -205,42 +198,18 @@ export function PresenceLayer({
 					];
 				}),
 			)}
-			{here.flatMap((mate) => {
-				// where they are in the frame they're scrolling: a thumb in their colour on its right edge, like the
-				// overlay scrollbar the frame shows them
-				const scroll = mate.state.scroll;
-				const frame = mate.state.inside == null ? undefined : byName.get(mate.state.inside);
-				if (scroll == null || frame === undefined || mate.left !== null || scroll.height <= frame.h + 1) return [];
-				if (scrolled.current.get(mate.person.accountId)?.at == null) return [];
-				const top = toScreen(frame.x + frame.w, frame.y + (scroll.y / scroll.height) * frame.h);
-				const length = (frame.h / scroll.height) * frame.h * cam.k;
-				return [
-					<span
-						key={`${mate.person.accountId}:thumb:${scroll.y}`}
-						data-presence-scroll={mate.person.accountId}
-						className="absolute w-[5px] animate-presence-thumb rounded-full"
-						style={{
-							left: top.x - 8,
-							top: top.y + 2,
-							height: Math.max(16, length - 4),
-							background: mate.person.color,
-						}}
-					/>,
-				];
-			})}
-			{ripples.current.map((ripple) => {
-				const at = toScreen(ripple.x, ripple.y);
+			{here.map((mate) => {
+				const track = tracks.current.get(mate.person.accountId);
+				if (track === undefined || mate.left !== null) return null;
 				return (
-					<span
-						key={ripple.key}
-						data-presence-click=""
-						className="absolute top-0 left-0 size-[44px] animate-presence-click rounded-full border-[2.5px]"
-						style={{
-							left: at.x - 22,
-							top: at.y - 22,
-							borderColor: ripple.color,
-							background: `${ripple.color}40`,
-						}}
+					<GestureMarks
+						key={`marks:${mate.person.accountId}`}
+						variant={variant}
+						track={track}
+						color={mate.person.color}
+						now={now}
+						toScreen={toScreen}
+						k={cam.k}
 					/>
 				);
 			})}
@@ -252,6 +221,8 @@ export function PresenceLayer({
 					motion={motions.current.get(mate.person.accountId)}
 					slot={slots.get(mate.person.accountId)}
 					toScreen={toScreen}
+					variant={variant}
+					track={tracks.current.get(mate.person.accountId)}
 				/>
 			))}
 		</div>
@@ -264,7 +235,11 @@ function Cursor({
 	motion,
 	slot,
 	toScreen,
+	variant,
+	track,
 }: {
+	variant: Variant;
+	track: Track | undefined;
 	mate: Teammate;
 	now: number;
 	motion: Motion | undefined;
@@ -292,6 +267,7 @@ function Cursor({
 				? hand
 				: { x: hand.x + (home.x - hand.x) * dock, y: hand.y + (home.y - hand.y) * dock - lift };
 	const grabbing = state.pressed && state.dragging.length > 0;
+	const glyph: Glyph = grabbing ? "hand" : state.inside === null ? "arrow" : glyphOf(variant, track, now);
 	// out on the canvas the pill speaks and goes quiet; docked it stays, and dims when idle
 	const said = slot !== undefined ? (resting ? 0.45 : 1) : !resting && speaking(mate, now) ? 1 : 0;
 	const ink = gone ? 0 : resting ? IDLE_INK : 1;
@@ -308,8 +284,20 @@ function Cursor({
 					className="absolute top-0 left-0 transition-opacity duration-[400ms]"
 					style={{ transform: `translate(${at.x - 1}px, ${at.y - 1}px)`, opacity: ink }}
 				>
-					<Arrow color={person.color} shown={!grabbing} pressed={state.pressed && state.inside !== null} />
-					<GrabbingHand color={person.color} shown={grabbing} />
+					{/* in Morph a click squashes the arrow itself, from its tip */}
+					<span
+						key={variant === "morph" && track?.click != null ? `squash${track.click.n}` : "still"}
+						className={`absolute top-0 left-0 origin-[1px_1px] ${variant === "morph" && track?.click != null ? "animate-presence-squash" : ""}`}
+					>
+						<Arrow
+							color={person.color}
+							shown={glyph === "arrow" || glyph === "pressed"}
+							pressed={glyph === "pressed"}
+						/>
+					</span>
+					<GrabbingHand color={person.color} shown={glyph === "hand"} />
+					<ScrollGlyph color={person.color} shown={glyph === "scroll"} dir={track?.scroll?.dir ?? 1} />
+					<GestureAtPointer variant={variant} track={track} color={person.color} now={now} />
 				</div>
 			)}
 			{pill !== null && (

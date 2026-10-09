@@ -151,7 +151,7 @@
 	}
 
 	/* a teammate's click inside a live frame: a ring in their colour spreads from where it landed
-	 * (`RIPPLE_MS` in `canvas/presence-layer.tsx`) */
+	 * (`CLICK_MS` in `canvas/presence-gestures.tsx`) */
 	--animate-presence-click: presence-click 650ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 
 	@keyframes presence-click {
@@ -165,16 +165,79 @@
 		}
 	}
 
-	/* a teammate scrolling a frame: their thumb shows while it moves, and fades once it rests */
-	--animate-presence-thumb: presence-thumb 1200ms linear forwards;
+	/* PROTOTYPE (task 94): a teammate's pointer inside a live frame, four ways (`canvas/presence-gestures.tsx`) */
+	--animate-presence-squash: presence-squash 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-presence-burst: presence-burst 460ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--animate-presence-lift: presence-lift 420ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--animate-presence-chevron: presence-chevron 640ms linear infinite;
+	--animate-presence-swipe: presence-swipe 520ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+	--animate-presence-wheel: presence-wheel 360ms linear infinite;
 
-	@keyframes presence-thumb {
-		0%,
-		60% {
-			opacity: 0.9;
+	@keyframes presence-squash {
+		30% {
+			transform: scale(0.68);
+		}
+		65% {
+			transform: scale(1.14);
+		}
+	}
+
+	@keyframes presence-burst {
+		from {
+			opacity: 1;
+			transform: translateX(6px) scaleX(0.5);
 		}
 		to {
 			opacity: 0;
+			transform: translateX(19px) scaleX(1);
+		}
+	}
+
+	@keyframes presence-lift {
+		from {
+			opacity: 0.9;
+			transform: scale(1);
+		}
+		to {
+			opacity: 0;
+			transform: scale(1.9);
+		}
+	}
+
+	@keyframes presence-chevron {
+		0% {
+			opacity: 0;
+			transform: translateY(calc(var(--dir, 1) * -3px));
+		}
+		40% {
+			opacity: 1;
+		}
+		100% {
+			opacity: 0;
+			transform: translateY(calc(var(--dir, 1) * 4px));
+		}
+	}
+
+	@keyframes presence-swipe {
+		0% {
+			opacity: 0;
+			transform: translateY(calc(var(--dir, 1) * 6px));
+		}
+		30% {
+			opacity: 1;
+		}
+		100% {
+			opacity: 0;
+			transform: translateY(calc(var(--dir, 1) * -10px));
+		}
+	}
+
+	@keyframes presence-wheel {
+		from {
+			transform: translateY(calc(var(--dir, 1) * -1.5px));
+		}
+		to {
+			transform: translateY(calc(var(--dir, 1) * 1.5px));
 		}
 	}
 
