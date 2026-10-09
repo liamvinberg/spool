@@ -37,6 +37,11 @@ export interface PresenceRoom {
 	/** Everyone here now, and anyone still fading out, in the order they arrived. */
 	teammates(): Teammate[];
 	get(accountId: string): Teammate | undefined;
+	/**
+	 * Who an account is, as this canvas last heard of them, here or since gone: what a teammate's
+	 * placeholder takes its colour from while its person is away (#378).
+	 */
+	person(accountId: string): PresencePerson | undefined;
 	/** One change from the daemon. */
 	hear(presence: Presence, now?: number): void;
 	/** Forget everyone at once: the stream that told us about them is gone, and a new one says who's here. */
@@ -46,6 +51,7 @@ export interface PresenceRoom {
 
 export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom {
 	const people = new Map<string, Teammate>();
+	const heard = new Map<string, PresencePerson>();
 	const listeners = new Set<() => void>();
 	let sweep: ReturnType<typeof setTimeout> | undefined;
 	const tell = () => {
@@ -67,8 +73,10 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 	return {
 		teammates: () => [...people.values()],
 		get: (accountId) => people.get(accountId),
+		person: (accountId) => heard.get(accountId),
 		hear(presence, now = clock()) {
 			const { person, state, still } = presence;
+			heard.set(person.accountId, person);
 			const was = people.get(person.accountId);
 			if (state === null) {
 				if (was === undefined || was.left !== null) return;
