@@ -81,6 +81,21 @@ export function codexFraming(): string {
 	return `${FRAMING}\n\n---\n\n${skillText()}`;
 }
 
+/**
+ * A turn's developer instructions: the person's own from their Codex config, then spool's
+ * framing, so spool adds to theirs rather than replacing them.
+ *
+ * Codex takes one `developer_instructions`, and whatever sets it last wins: a `-c` flag
+ * replaces the one in `config.toml`, and `thread/start`'s `developerInstructions` replaces
+ * both. So the turn asks Codex for the person's own (`config/read`) and hands both back on
+ * `thread/start` or `thread/resume`, a typed field of each rather than a per-thread `config`.
+ * Codex's own base instructions and the project's AGENTS.md are separate and untouched.
+ */
+export function codexInstructions(own: string | undefined, permissions: AgentPermissions): string {
+	const framing = permissions === "bypass" ? `${BYPASS_FRAMING}\n\n${codexFraming()}` : codexFraming();
+	return own === undefined || own.trim() === "" ? framing : `${own}\n\n${framing}`;
+}
+
 /** a TOML basic string: JSON's escapes are a subset TOML reads the same way */
 function toml(value: string): string {
 	return JSON.stringify(value);
@@ -96,8 +111,8 @@ function toml(value: string): string {
  * `thread/start` that names a `sandbox` cannot use, and which a client that does not
  * read `HTTP_PROXY` (Node's `fetch`) goes around into the sandbox's block. `design/`
  * sits inside the project root, which is the sandbox's own writable root, so it needs no
- * extra root. The framing rides as the developer instructions only on a turn's spawn; a
- * probe asks Codex about itself and needs none.
+ * extra root. Spool's framing is not on the spawn: it rides on the thread, after the
+ * person's own developer instructions (`codexInstructions`).
  *
  * The project's trust is the person's own: spool sets none. Codex writes `[projects."<root>"]
  * trust_level = "trusted"` into `~/.codex/config.toml` when a `thread/start` names a `cwd`
@@ -112,21 +127,14 @@ function toml(value: string): string {
 export function planCodexSpawn(
 	root: string,
 	env: Readonly<Record<string, string | undefined>>,
-	turn?: { readonly permissions: AgentPermissions; readonly designer?: string },
+	turn?: { readonly designer?: string },
 ): AgentSpawn {
-	const framing =
-		turn === undefined
-			? undefined
-			: turn.permissions === "bypass"
-				? `${BYPASS_FRAMING}\n\n${codexFraming()}`
-				: codexFraming();
 	return {
 		command: CODEX_COMMAND,
 		args: [
 			"app-server",
 			"-c",
 			"sandbox_workspace_write.network_access=true",
-			...(framing === undefined ? [] : ["-c", `developer_instructions=${toml(framing)}`]),
 			...(turn?.designer === undefined
 				? []
 				: [

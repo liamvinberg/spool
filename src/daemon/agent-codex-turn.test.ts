@@ -1,5 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { codexInput, inDesign, isSpoolRead, quietApproval } from "./agent-codex-turn";
+import { fixtureAgentExecutor, makeTempDir } from "../test-helpers";
+import { codexFraming } from "./agent-codex-spawn";
+import { codexInput, inDesign, isSpoolRead, quietApproval, startCodexTurn } from "./agent-codex-turn";
+
+/** a Codex that answers the handshake, the account, its config and a thread start, and nothing more */
+function codexWith(config: Record<string, unknown>) {
+	return fixtureAgentExecutor(
+		(proc, line) => {
+			const message = JSON.parse(line) as { id?: number; method?: string };
+			const answer = (result: unknown) => proc.emit(JSON.stringify({ id: message.id, result }));
+			if (message.method === "initialize") answer({ userAgent: "spool/0.161.0 (Linux; x86_64) unknown" });
+			if (message.method === "account/read") answer({ account: { type: "chatgpt" }, requiresOpenaiAuth: true });
+			if (message.method === "config/read") answer({ config, origins: {} });
+			if (message.method === "thread/start") proc.exit(0);
+		},
+		(proc) => proc.exit(0),
+	);
+}
+
+describe("a codex turn's developer instructions", () => {
+	for (const [named, config, starts] of [
+		["the person's own, then spool's", { developer_instructions: "Answer in Swedish." }, "Answer in Swedish.\n\n"],
+		["spool's alone where the person has none", { developer_instructions: null }, ""],
+	] as const)
+		it(`are ${named}`, async () => {
+			const { executor, spawned } = codexWith(config);
+			const turn = startCodexTurn({
+				executor,
+				root: makeTempDir(),
+				env: {},
+				said: [{ prompt: "go", selection: "" }],
+				ask: {},
+				permissions: "edits",
+				session: null,
+				onSession: () => {},
+				version: "0.33.1",
+			});
+			for await (const _ of turn.events);
+			const sent = spawned[0]?.inputs.map((line) => JSON.parse(line) as { method?: string; params?: unknown });
+			expect(sent?.find((line) => line.method === "config/read")?.params).toMatchObject({ cwd: expect.any(String) });
+			const start = sent?.find((line) => line.method === "thread/start")?.params as {
+				developerInstructions?: string;
+			};
+			expect(start.developerInstructions).toBe(`${starts}${codexFraming()}`);
+		});
+});
 
 describe("what spool answers for the person", () => {
 	const root = "/p";

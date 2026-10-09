@@ -79,6 +79,26 @@
 	},
 	{
 		"in": {
+			"id": 5,
+			"method": "config/read",
+			"params": {
+				"cwd": "$ROOT"
+			}
+		}
+	},
+	{
+		"out": {
+			"id": 5,
+			"result": {
+				"config": {
+					"developer_instructions": null
+				},
+				"origins": {}
+			}
+		}
+	},
+	{
+		"in": {
 			"id": 3,
 			"method": "thread/resume",
 			"params": {

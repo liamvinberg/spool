@@ -7,6 +7,7 @@ import {
 	CODEX_MIN_VERSION,
 	CODEX_MODES,
 	codexHandshake,
+	codexInstructions,
 	planCodexSpawn,
 	SPOOL_READ_VERBS,
 	versionAtLeast,
@@ -282,8 +283,15 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 			failed(started, "Sign in to Codex to continue.", SIGNED_OUT);
 			return;
 		}
+		// the person's own developer instructions, which spool's framing goes after
+		const config = (await target.request("config/read", { cwd: root }).catch(() => undefined)) as
+			| { config?: { developer_instructions?: unknown } }
+			| null
+			| undefined;
+		const own = config?.config?.developer_instructions;
 		const mode = CODEX_MODES[permissions];
 		const settings = {
+			developerInstructions: codexInstructions(typeof own === "string" ? own : undefined, permissions),
 			approvalPolicy: mode.approvalPolicy,
 			sandbox: mode.sandbox,
 			...(ask.value === undefined ? {} : { model: ask.value }),
@@ -341,10 +349,7 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		let started: AgentProcess;
 		try {
 			started = await executor(
-				planCodexSpawn(root, env, {
-					permissions,
-					...(options.designer === undefined ? {} : { designer: options.designer }),
-				}),
+				planCodexSpawn(root, env, options.designer === undefined ? {} : { designer: options.designer }),
 			);
 		} catch (error) {
 			push({

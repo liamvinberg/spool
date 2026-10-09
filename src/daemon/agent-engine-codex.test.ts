@@ -178,7 +178,8 @@ describe("a codex turn, replayed", () => {
 		expect(events.find((event) => event.kind === "ready")).toMatchObject({
 			permissionMode: "never dangerFullAccess",
 		});
-		expect(spawned[0]?.spawn.args.join(" ")).toContain("developer_instructions=");
+		const start = spawned[0]?.inputs.map((line) => JSON.parse(line)).find((line) => line.method === "thread/start");
+		expect(start.params.developerInstructions).toContain("Approvals are off");
 	});
 
 	it("stops on Stop with Codex's interrupt, and ends stopped", async () => {

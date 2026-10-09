@@ -120,7 +120,11 @@ account email is `you@example.com`, the ChatGPT account id is zeroed, and
 
 Edited since: each `thread/start` spool wrote has lost its `cwd`, which spool
 stopped sending (a named `cwd` has Codex write the project's trust into the
-person's `config.toml`). Codex's replies are as recorded.
+person's `config.toml`). Each turn's connection has a `config/read` spliced in
+after `account/read`, answered with no `developer_instructions`: spool now reads
+the person's own and sends them with its framing as the thread's
+`developerInstructions`, which the recorded `thread/start` and `thread/resume`
+lines predate. Codex's other replies are as recorded.
 
 ## Designer fan-outs
 
