@@ -71,6 +71,19 @@ describe("a frame on its way (#371)", () => {
 		expect(projection).toMatchObject({ pages: [], frames: [], placeholders: [] });
 	});
 
+	it("is only a folder with no folders of its own: a page with a stray sidecar keeps its frames", async () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "shop", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		writeDesignFile(root, join("frames", "shop", "cart", "frame.tsx"), "export default () => null;\n");
+
+		const projection = listProjectFrames(root);
+		expect(projection.pages).toEqual(["shop"]);
+		expect(projection.frames.map((frame) => frame.name)).toEqual(["shop/cart"]);
+		expect(projection.placeholders).toEqual([]);
+		expect(isPageFolder(join(realDesignDir(root), "frames", "shop"))).toBe(true);
+		expect(await summarizeProject(root)).toMatchObject({ frameCount: 1 });
+	});
+
 	it("is never a page on the home card's walk either", async () => {
 		const root = makeTempDir();
 		writeDesignFile(root, join("frames", "only", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');

@@ -133,11 +133,25 @@ function hasEntry(directory: string): boolean {
 	}
 }
 
-/** A frame.json in a folder with no entry: a frame on its way rather than a page. */
+/**
+ * A frame.json in a folder with no entry and no folders of its own: a frame on its way
+ * rather than a page. A page folder a stray sidecar landed in stays a page, its frames
+ * and all.
+ */
 function hasSidecar(directory: string): boolean {
 	try {
 		lstatSync(join(directory, "frame.json"));
-		return true;
+		return !readdirSync(directory, { withFileTypes: true }).some((entry) => entry.isDirectory());
+	} catch {
+		return false;
+	}
+}
+
+/** The same, read without blocking. */
+async function hasSidecarAwaited(directory: string): Promise<boolean> {
+	if (!(await hasEntryAwaited(directory, "frame.json"))) return false;
+	try {
+		return !(await readdir(directory, { withFileTypes: true })).some((entry) => entry.isDirectory());
 	} catch {
 		return false;
 	}
@@ -274,7 +288,7 @@ async function discoverAwaited(root: string): Promise<Discovery | undefined> {
 					const child = join(dir, entry.name);
 					const here = discovered(page, entry.name, child);
 					if (await hasEntryAwaited(child)) return { pages: [], frames: [here], pending: [] };
-					if (await hasEntryAwaited(child, "frame.json")) return { pages: [], frames: [], pending: [here] };
+					if (await hasSidecarAwaited(child)) return { pages: [], frames: [], pending: [here] };
 					const inner = pageUnder(page, entry.name);
 					const below = await walk(child, inner);
 					return { pages: [inner, ...below.pages], frames: below.frames, pending: below.pending };
