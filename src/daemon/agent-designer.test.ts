@@ -18,8 +18,9 @@ import {
 	designerDir,
 	mountDesigner,
 } from "./agent-designer";
+import { piFraming } from "./agent-engine-pi";
 import type { AgentEvent } from "./agent-events";
-import { agentFraming, piFraming } from "./agent-spawn";
+import { agentFraming } from "./agent-spawn";
 
 /** the spool threads the recordings were made under, which each engine took as its session */
 const CLAUDE = "6b5c1d2e-1111-4222-8333-444455556666";

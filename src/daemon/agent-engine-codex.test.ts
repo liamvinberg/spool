@@ -188,7 +188,7 @@ describe("a codex turn, replayed", () => {
 			permissionMode: "never dangerFullAccess",
 		});
 		const start = spawned[0]?.inputs.map((line) => JSON.parse(line)).find((line) => line.method === "thread/start");
-		expect(start.params.developerInstructions).toContain("Approvals are off");
+		expect(start.params.developerInstructions).toContain("Permissions are bypassed");
 	});
 
 	it("stops on Stop with Codex's interrupt, and ends stopped", async () => {

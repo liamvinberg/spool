@@ -25,7 +25,7 @@ describe("codex's spawn", () => {
 		expect(codexInstructions(undefined, "edits")).toBe(codexFraming());
 		expect(codexInstructions("  ", "ask")).toBe(codexFraming());
 		const bypass = codexInstructions("Mine.", "bypass");
-		expect(bypass.startsWith("Mine.\n\nApprovals are off")).toBe(true);
+		expect(bypass.startsWith("Mine.\n\nPermissions are bypassed")).toBe(true);
 		expect(bypass.endsWith(codexFraming())).toBe(true);
 	});
 

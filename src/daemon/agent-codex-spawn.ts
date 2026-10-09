@@ -1,7 +1,7 @@
 import type { AgentPermissions } from "../settings/registry";
-import { skillText } from "../skill";
 import type { CodexRpc } from "./agent-codex-rpc";
 import { CODEX_DESIGNER_DESCRIPTION, CODEX_DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
+import { framing } from "./agent-framing";
 import type { AgentSpawn } from "./agent-spawn";
 
 /**
@@ -57,28 +57,19 @@ export const SPOOL_READ_VERBS: readonly string[] = [
 	"status",
 ];
 
-const FRAMING = `You are the agent inside Spool, a live prototyping canvas. The human is looking at
-frames on that canvas and talking to you from a rail beside them.
-
-The canvas is design/. Its contract is below; \`spool skill <topic>\` gets you depth
-on any part of it.
-
-What the human has selected arrives in their message inside a <selection> block.
-That is what "this" and "that" mean.
-
-Writing under design/ and Spool's own read-only commands (\`spool skill\`, \`spool shot\`,
+/**
+ * Codex's boundary paragraph in the framing (`framing`). Codex keeps the project's
+ * AGENTS.md itself, so its framing has no line asking for it.
+ */
+const ASKS = `Writing under design/ and Spool's own read-only commands (\`spool skill\`, \`spool shot\`,
 \`spool logs\` and the like) never ask. Write frame files with your file-editing tool
 rather than the shell, and run each spool command on its own rather than chained with
 others, so neither needs an approval. Anything else may ask the human first: say what
-you are about to do outside design/ before you do it.
+you are about to do outside design/ before you do it.`;
 
-${CODEX_DESIGNER_FRAMING}`;
-
-const BYPASS_FRAMING =
-	"Approvals are off on this machine, by the developer's own setting: nothing you do asks first, so say what you are about to do outside design/ before you do it.";
-
-export function codexFraming(): string {
-	return `${FRAMING}\n\n---\n\n${skillText()}`;
+/** Codex's framing (`framing`), led by the bypass line when the project bypasses permissions. */
+export function codexFraming(bypass = false): string {
+	return framing({ asks: ASKS, designer: CODEX_DESIGNER_FRAMING, bypass, memory: false });
 }
 
 /**
@@ -92,8 +83,8 @@ export function codexFraming(): string {
  * Codex's own base instructions and the project's AGENTS.md are separate and untouched.
  */
 export function codexInstructions(own: string | undefined, permissions: AgentPermissions): string {
-	const framing = permissions === "bypass" ? `${BYPASS_FRAMING}\n\n${codexFraming()}` : codexFraming();
-	return own === undefined || own.trim() === "" ? framing : `${own}\n\n${framing}`;
+	const framed = codexFraming(permissions === "bypass");
+	return own === undefined || own.trim() === "" ? framed : `${own}\n\n${framed}`;
 }
 
 /** a TOML basic string: JSON's escapes are a subset TOML reads the same way */

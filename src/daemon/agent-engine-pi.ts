@@ -1,14 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
-import { mountDesigner } from "./agent-designer";
+import { DESIGNER_FRAMING, mountDesigner } from "./agent-designer";
 import { type AgentEngine, type AgentMessage, saidText } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
+import { framing } from "./agent-framing";
 import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agent-offer";
 import { createPiRpc, piModelValue } from "./agent-pi";
 import { startPiTurn } from "./agent-pi-turn";
 import { agentInstalled, type Look } from "./agent-preflight";
-import { type AgentSpawn, piFraming } from "./agent-spawn";
+import type { AgentSpawn } from "./agent-spawn";
 
 /**
  * The person's own pi, driven through `pi --mode rpc` (#363).
@@ -93,6 +94,20 @@ export function piPrompt(said: readonly AgentMessage[]): Record<string, unknown>
 		})),
 	);
 	return { message, ...(images.length === 0 ? {} : { images }) };
+}
+
+/**
+ * Pi's boundary paragraph in the framing (#363). Pi never asks before it acts, so the
+ * line promising an ask would be false; what stays is saying what is about to happen
+ * outside design/ before it does, and making those changes with the file tools.
+ */
+const PI_ASKS = `Nothing you do asks the human first. Say what you are about to do outside design/
+before you do it, and make changes outside design/ with the file tools rather than the
+shell, so the human can follow them.`;
+
+/** Pi's framing (`framing`): it never asks, so there is no bypass for it to announce. */
+export function piFraming(): string {
+	return framing({ asks: PI_ASKS, designer: DESIGNER_FRAMING, bypass: false, memory: true });
 }
 
 const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|\[?::1\]?|0\.0\.0\.0)$/i;
