@@ -342,14 +342,7 @@ function TurnLine({
 		>
 			<TurnMark over={over} ending={foot.ending} />
 			<span className="min-w-0 flex-1 truncate text-muted type-control">
-				{over ? (
-					words
-				) : (
-					<>
-						<span className="agent-shimmer animate-agent-shimmer">{words}</span>
-						{foot.thinking && foot.status !== null ? <span className="pl-2 opacity-70">thinking</span> : null}
-					</>
-				)}
+				{over ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
 			</span>
 			{over || !Number.isFinite(elapsed) ? null : (
 				<span data-agent-clock="" className="shrink-0 tabular-nums text-muted type-detail">

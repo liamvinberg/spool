@@ -63,6 +63,8 @@ export interface CallName {
 	readonly finds: boolean;
 	/** the call only reads or searches, so consecutive ones are one row (#365) */
 	readonly reads: boolean;
+	/** every frame a `spool shot` call photographs, several at once since #368 */
+	readonly shots?: readonly string[];
 }
 
 /**
@@ -114,6 +116,9 @@ const UNDRAWN = new Set(["TaskCreate", "TaskUpdate", "AskUserQuestion"]);
  * those is not a frame however much it looks like a name.
  */
 const TAKES_FRAME = new Set(["shot", "logs", "url"]);
+
+/** what a frame's name looks like on a command line: its path under frames/ */
+const FRAME_NAME = /^[\w-]+(?:\/[\w-]+)*$/;
 
 const PICTURE = /\.(?:png|jpe?g|webp|gif|svg)$/i;
 
@@ -426,7 +431,11 @@ export function nameCall(call: {
 		// a redirection is shell rather than subject: `spool shot home 2>&1` looked at home
 		const subject = (spool[2] ?? "").split(/\s*\d*>/)[0]?.trim() ?? "";
 		const target = subject.split(/\s+/)[0] ?? "";
-		const frame = TAKES_FRAME.has(verb) && /^[\w-]+(?:\/[\w-]+)*$/.test(target) ? target : null;
+		const frame = TAKES_FRAME.has(verb) && FRAME_NAME.test(target) ? target : null;
+		if (verb === "shot" && frame !== null) {
+			const shots = subject.split(/\s+/).filter((one) => FRAME_NAME.test(one));
+			return { ...plain, verb, subject: shots.join(", "), frame, detail: command, shots };
+		}
 		// `spool skill` and `spool selection` take no argument at all, so the verb is the
 		// whole row rather than a verb with an empty slot after it
 		return { ...plain, verb, subject: frame ?? (subject === "" ? null : subject), frame, detail: command };
@@ -454,4 +463,68 @@ export function nameCall(call: {
 		detail: said === undefined ? null : relativeTo(said, root),
 		reads: true,
 	};
+}
+
+/** a verb as what someone is doing: `read` → `reading`, `plan` → `planning`, `write` → `writing` */
+export function participle(verb: string): string {
+	const word = verb.toLowerCase();
+	if (word.endsWith("ing")) return word;
+	if (word.endsWith("ie")) return `${word.slice(0, -2)}ying`;
+	if (word.endsWith("e") && !word.endsWith("ee")) return `${word.slice(0, -1)}ing`;
+	// one short vowel before one last consonant doubles it: run, plan, stop
+	if (/^[^aeiou]*[aeiou][bdgmnprt]$/.test(word)) return `${word}${word.at(-1)}ing`;
+	return `${word}ing`;
+}
+
+/** the agent's own words for what it is doing, its first word made what it is doing now */
+function ongoing(words: string): string {
+	const [first = "", ...rest] = words.trim().split(/\s+/);
+	return [participle(first), ...rest].join(" ");
+}
+
+/**
+ * One step, said as what the agent is doing in plain words for the turn's line (#365):
+ * `Reading cart`, `Reading the spool docs`, `Taking a picture of home`. A command and a
+ * delegation are said in the agent's own words for them, made present: `Installing the
+ * dependencies`, `Designing cart--empty`.
+ */
+export function stepWords(verb: string, subject: string | null): string {
+	const said = ((): string => {
+		switch (verb) {
+			case "skill":
+				return "reading the spool docs";
+			case "search":
+			case "grep":
+			case "glob":
+			case "ls":
+				return "searching";
+			case "look":
+				return subject === null ? "looking" : `looking at ${subject}`;
+			case "shot":
+				return subject === null
+					? "taking a picture"
+					: subject.includes(", ")
+						? `taking pictures of ${subject}`
+						: `taking a picture of ${subject}`;
+			case "logs":
+				return subject === null ? "reading the logs" : `reading the logs of ${subject}`;
+			case "status":
+				return "checking the canvas";
+			case "selection":
+				return "reading the selection";
+			case "flows":
+				return "reading the flows";
+			case "find":
+				return "finding a tool";
+			case "ask":
+				return subject === null ? "asking outside" : `asking ${subject}`;
+			case "run":
+				return subject === null ? "running a command" : ongoing(subject);
+			case "delegate":
+				return subject === null ? "handing off" : ongoing(subject);
+			default:
+				return subject === null ? participle(verb) : `${participle(verb)} ${subject}`;
+		}
+	})();
+	return said.charAt(0).toUpperCase() + said.slice(1);
 }

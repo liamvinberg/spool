@@ -12,6 +12,7 @@ import {
 	nameCall,
 	type RowForeign,
 	readProse,
+	stepWords,
 	taskMoved,
 	taskWritten,
 	writesOf,
@@ -1739,7 +1740,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 
 	/**
 	 * The turn's one line, in plain words (#365): how many designers are working while any
-	 * are, and otherwise the step the agent is on, which is never a bare "thinking".
+	 * are, and otherwise what the agent is doing now — `Reading the spool docs`, `Drawing home
+	 * · 278 lines` — which is never a bare "thinking".
 	 */
 	const statusOf = (): string | null => {
 		const all = [...tasks.values()];
@@ -1753,13 +1755,15 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		const drawing = [...tiles.values()].reverse().find((tile) => tile.state === "drawing" && tile.task === null);
 		if (drawing !== undefined)
 			return `Drawing ${drawing.frame} · ${drawing.lines} ${drawing.lines === 1 ? "line" : "lines"}`;
-		const own = order.filter((slot) => slot.kind === "row").map((slot) => rows.get(slot.key));
-		const step =
-			own.reverse().find((row) => row !== undefined && row.state === "running") ??
-			own.find((row) => row !== undefined);
-		if (step === undefined) return null;
-		const words = step.subject === null ? step.verb : `${step.verb} ${step.subject}`;
-		return words.charAt(0).toUpperCase() + words.slice(1);
+		const own = order.flatMap((slot) => (slot.kind === "row" ? (rows.get(slot.key) ?? []) : []));
+		const running = [...own].reverse().find((row) => row.state === "running");
+		if (running !== undefined) return stepWords(running.verb, running.subject);
+		// the agent is answering in words, or between calls after the last one it made
+		if (order.at(-1)?.kind === "prose") return "Writing an answer";
+		const last = own.at(-1);
+		if (last === undefined) return null;
+		const after = stepWords(last.verb, last.subject);
+		return `Thinking after ${after.charAt(0).toLowerCase()}${after.slice(1)}`;
 	};
 
 	/** one row and, under it, whatever the delegate it launched has done so far */
