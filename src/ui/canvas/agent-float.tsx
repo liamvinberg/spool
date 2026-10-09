@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
 import { FADE_OUT_MS, useLeaving } from "./agent-motion";
@@ -102,39 +102,67 @@ export function Reveal({
 	);
 }
 
-/** a name split into its words and its dotted versions: "Opus 5.5" → "Opus ", "5.5" */
-const versionParts = (name: string) => name.split(/(\d+(?:\.\d+)+)/).filter((part) => part !== "");
-const isVersion = (part: string) => /^\d+(?:\.\d+)+$/.test(part);
+/** where each period of a dotted version sits in a name: "Opus 5.5" → {6} */
+function versionPeriods(name: string): ReadonlySet<number> {
+	const periods = new Set<number>();
+	for (const version of name.matchAll(/\d+(?:\.\d+)+/g))
+		for (let at = 0; at < version[0].length; at++) if (version[0][at] === ".") periods.add(version.index + at);
+	return periods;
+}
 
 /**
  * A model's name with its version kept legible (#364).
  *
  * At control size the font draws the period as a dot with a pixel either side, so
  * "Opus 5.5" reads as "Opus 55". Every dotted version is drawn with its periods at weight
- * 700 and 0.08em either side; the words around it are untouched.
+ * 700 and 0.08em either side; the words around it are untouched. `hit` is what a search
+ * found in the name, marked where it stands, and the versions stay legible through it.
  */
-export function Versioned({ name, className }: { name: string; className?: string | undefined }) {
+export function Versioned({
+	name,
+	hit = "",
+	className,
+}: {
+	name: string;
+	hit?: string | undefined;
+	className?: string | undefined;
+}) {
+	const periods = versionPeriods(name);
+	const q = hit.trim().toLowerCase();
+	const from = q === "" ? -1 : name.toLowerCase().indexOf(q);
+	const to = from < 0 ? -1 : from + q.length;
+	// runs of plain text, each period alone, and whether the search found each
+	const runs: { text: string; period: boolean; marked: boolean }[] = [];
+	for (let at = 0; at < name.length; at++) {
+		const period = periods.has(at);
+		const marked = at >= from && at < to;
+		const last = runs.at(-1);
+		if (last !== undefined && !period && !last.period && last.marked === marked) last.text += name[at];
+		else runs.push({ text: name[at] ?? "", period, marked });
+	}
+	const drawn = (run: (typeof runs)[number], key: number) =>
+		run.period ? (
+			<span key={key} data-version-period="" style={{ fontWeight: 700, marginInline: "0.08em" }}>
+				.
+			</span>
+		) : (
+			<Fragment key={key}>{run.text}</Fragment>
+		);
+	// the marked runs are one stretch, so they are one mark
+	const first = runs.findIndex((run) => run.marked);
+	const last = first + runs.filter((run) => run.marked).length - 1;
 	return (
 		<span data-versioned="" className={className}>
-			{versionParts(name).map((part, at) =>
-				isVersion(part) ? (
-					// biome-ignore lint/suspicious/noArrayIndexKey: a name's own parts, in order
-					<span key={at}>
-						{part.split(".").map((digits, index) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: a version's own digits, in order
-							<span key={index}>
-								{index > 0 ? (
-									<span data-version-period="" style={{ fontWeight: 700, marginInline: "0.08em" }}>
-										.
-									</span>
-								) : null}
-								{digits}
-							</span>
-						))}
-					</span>
-				) : (
-					part
-				),
+			{first < 0 ? (
+				runs.map(drawn)
+			) : (
+				<>
+					{runs.slice(0, first).map(drawn)}
+					<mark className="rounded-[2px] bg-raised text-text">
+						{runs.slice(first, last + 1).map((run, at) => drawn(run, first + at))}
+					</mark>
+					{runs.slice(last + 1).map((run, at) => drawn(run, last + 1 + at))}
+				</>
 			)}
 		</span>
 	);

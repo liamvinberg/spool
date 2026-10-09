@@ -600,21 +600,23 @@ function Quiet({ children }: { children: ReactNode }) {
 
 /** a model as its agent names it: a machine id in mono, a name with its version kept legible */
 function ModelName({ name, hit }: { name: string; hit: string }) {
-	const q = hit.trim().toLowerCase();
-	const at = q === "" ? -1 : name.toLowerCase().indexOf(q);
 	return (
 		<span className={cn("min-w-0 truncate text-text", machineWord(name) ? "type-value" : "type-control")}>
-			{at >= 0 ? (
-				<>
-					{name.slice(0, at)}
-					<mark className="rounded-[2px] bg-raised text-text">{name.slice(at, at + q.length)}</mark>
-					{name.slice(at + q.length)}
-				</>
-			) : machineWord(name) ? (
-				name
-			) : (
-				<Versioned name={name} />
-			)}
+			{machineWord(name) ? <Marked text={name} hit={hit} /> : <Versioned name={name} hit={hit} />}
 		</span>
+	);
+}
+
+/** a machine id with what a search found in it marked */
+function Marked({ text, hit }: { text: string; hit: string }) {
+	const q = hit.trim().toLowerCase();
+	const at = q === "" ? -1 : text.toLowerCase().indexOf(q);
+	if (at < 0) return text;
+	return (
+		<>
+			{text.slice(0, at)}
+			<mark className="rounded-[2px] bg-raised text-text">{text.slice(at, at + q.length)}</mark>
+			{text.slice(at + q.length)}
+		</>
 	);
 }

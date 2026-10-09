@@ -189,7 +189,7 @@ describe("the model menu", () => {
 		const many = Array.from({ length: 13 }, (_, at) => ({
 			value: `model-${at}`,
 			resolvedModel: `model-${at}`,
-			displayName: at === 7 ? "Sonnet" : `Model ${at}`,
+			displayName: at === 7 ? "Sonnet" : at === 8 ? "Opus 5.5" : `Model ${at}`,
 			description: "",
 		}));
 		canvas.offered.offer = { models: many, current: { ...OFFERED.current, value: "model-0", effort: null } };
@@ -209,6 +209,17 @@ describe("the model menu", () => {
 			find?.dispatchEvent(new Event("input", { bubbles: true }));
 		});
 		expect(modelRows(canvas.host)).toEqual(["Sonnet"]);
+
+		// a found version keeps its legible period, inside the mark of what was found (#364)
+		await act(async () => {
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+			setter?.call(find, "5.5");
+			find?.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		expect(modelRows(canvas.host)).toEqual(["Opus 5.5"]);
+		const found = modelRow(canvas.host, "Opus 5.5");
+		expect(found?.querySelector("mark")?.textContent).toBe("5.5");
+		expect(found?.querySelector("mark [data-version-period]")).not.toBeNull();
 
 		await act(async () => {
 			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
