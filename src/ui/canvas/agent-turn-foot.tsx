@@ -14,7 +14,7 @@ import {
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
-import { MOTION, useLeaving } from "./agent-motion";
+import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
 import { useStillness } from "./stillness";
 
@@ -118,6 +118,8 @@ export function TurnFoot({
 	// each anchor holds one ask; any more wait their turn as cards under the foot, so an
 	// ask is never anywhere but on screen
 	const hung = mine === undefined ? designer : undefined;
+	// the steps fade in and out under the line rather than appearing in one frame
+	const shownSteps = useLeaving(open && mine === undefined, FADE_OUT_MS);
 	const queued = asks.filter((ask) => ask !== mine && ask !== hung);
 	const answer = onAnswer ?? (() => {});
 	return (
@@ -153,9 +155,13 @@ export function TurnFoot({
 				/>
 			)}
 			<div
-				data-agent-steps={open && mine === undefined ? "open" : "shut"}
-				hidden={!open || mine !== undefined}
-				className="flex flex-col"
+				data-agent-steps={shownSteps ?? "shut"}
+				hidden={shownSteps === null}
+				className={cn(
+					"flex flex-col",
+					shownSteps === "open" && "animate-agent-fade-in",
+					shownSteps === "leaving" && "pointer-events-none animate-agent-fade-out",
+				)}
 			>
 				{steps}
 			</div>
