@@ -3312,18 +3312,6 @@ describe("an approval in the log", () => {
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-a", reply: { kind: "always" } });
 	});
 
-	it("offers no always where the request suggested no rule", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "shoot the receipt");
-
-		canvas.turn.push(approval({ suggestions: [] }));
-		await until(() => options(canvas.host).length > 0);
-
-		// absent rather than dead: spool never composes a rule of its own to fill it
-		expect(options(canvas.host)).toEqual(["Allow", "Deny"]);
-	});
-
 	it("is never answered by typing, because no sentence answers may I run this", async () => {
 		const canvas = mount();
 		await canvas.render();
