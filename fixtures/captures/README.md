@@ -117,3 +117,24 @@ on the path that only echoes its arguments.
 Scrubbed: the project path is `$ROOT`, home directories are `/home/user`, the
 account email is `you@example.com`, the ChatGPT account id is zeroed, and
 `config/read`'s reply keeps only the model fields spool reads.
+
+## Designer fan-outs
+
+Three recordings of the same ask, two directions for a `hello` frame, one per
+engine, taken on 2026-10-09 through spool's own engines with spool's designer
+mounted (#367) and nothing else of the recording machine's setup changed. Each
+main agent gave each direction to its own designer. The scratch project held
+one frame and a stand-in `spool` that only echoes its arguments.
+
+| capture | shape | what it holds |
+| --- | --- | --- |
+| `claude-designers.json` | stream | Claude Code 2.1.295 on `claude-haiku-5-5` under Auto-edit: the second turn of one process, two `Agent` calls with `subagent_type` `designer`, both sub-agents' work and their task notifications. The `init` lists `designer` among the agents. |
+| `codex-designers.json` | `in`/`out` | `codex-cli` 0.161.0 on `gpt-5.6-luna` at `low`, under edits: two `spawnAgent` calls through code-mode `exec`, both child threads' turns, and two `wait` calls naming them. |
+| `pi-designers.json` | `in`/`out` | pi 1.0.3 on `openai-codex/gpt-5.6-luna` at `low`: two `designer` tool calls run in parallel, each child's tools as `tool_execution_update` steps, and each child's last words as the result. |
+
+Scrubbed as the captures above: the project is `$ROOT`, home is `/home/user`,
+spool's state is `/home/user/.spool`, the ChatGPT account id is zeroed, and
+the init's tool, connector, command, skill and plugin listings and pi's system
+prompt sections are markers. In the Claude window each tool call's streamed
+input is one fragment rather than the recorded several, so the path in it
+could be scrubbed whole.
