@@ -105,8 +105,17 @@ export function useAgentDefaults(project: string): AgentDefaultsDeck {
 			});
 		};
 		read();
+		// an agent installed or removed in a terminal moves which one new threads take, and
+		// the window coming back is when that has most likely happened
+		const again = () => {
+			if (timer !== undefined) clearTimeout(timer);
+			timer = undefined;
+			read();
+		};
+		window.addEventListener("focus", again);
 		return () => {
 			live = false;
+			window.removeEventListener("focus", again);
 			if (timer !== undefined) clearTimeout(timer);
 		};
 	}, [project, settings]);

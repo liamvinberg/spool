@@ -83,6 +83,73 @@ describe("the machine's agent choice", () => {
 		}
 	});
 
+	it("gives way to the fallback while its engine is uninstalled, and comes back once it is installed again", async () => {
+		const spoolDir = makeTempDir();
+		const { name } = makeProject(spoolDir);
+		let piThere = true;
+		const pi = { ...standIn("pi"), installed: () => piThere };
+		const app = makeApp(spoolDir, { agentEngines: [pi, standIn("codex"), standIn("claude", false)] });
+		const read = async () =>
+			(await (await app.request(`/api/p/${name}/agent/engines`)).json()) as {
+				preferred: string;
+			};
+		await app.request(`/api/p/${name}/agent/engines`, { method: "PUT", ...json({ preferred: "pi" }) });
+		expect((await read()).preferred).toBe("pi");
+
+		piThere = false;
+		// the first installed engine in the order, and the saved choice is left as it was
+		expect((await read()).preferred).toBe("codex");
+		expect(JSON.parse(readFileSync(agentDefaultsFile(spoolDir), "utf8"))).toMatchObject({ engine: "pi" });
+
+		piThere = true;
+		expect((await read()).preferred).toBe("pi");
+	});
+
+	it("leaves a started thread on its uninstalled engine, saying so, while new threads take the fallback", async () => {
+		const spoolDir = makeTempDir();
+		const { name } = makeProject(spoolDir);
+		const claude = fixtureAgentExecutor();
+		let claudeThere = true;
+		const app = makeApp(spoolDir, {
+			agentEngines: [
+				standIn("pi"),
+				createClaudeEngine({ executor: claude.executor, spoolDir: makeTempDir(), look: () => claudeThere }),
+			],
+		});
+		await app.request(`/api/p/${name}/agent/engines`, { method: "PUT", ...json({ preferred: "claude" }) });
+		void app.request(`/api/p/${name}/agent/turn`, {
+			method: "POST",
+			...json({ thread: THREAD, said: [{ prompt: "start" }] }),
+		});
+		await until(() => claude.spawned.length === 1);
+		claude.spawned[0]?.exit(0);
+		await expect
+			.poll(
+				async () =>
+					((await (await app.request(`/api/p/${name}/agent/threads`)).json()) as { threads: unknown[] }).threads
+						.length,
+			)
+			.toBe(1);
+
+		claudeThere = false;
+		const installed = async (thread: string) =>
+			(await (await app.request(`/api/p/${name}/agent/installed?thread=${thread}`)).json()) as {
+				installed: boolean;
+			};
+		expect((await installed(THREAD)).installed).toBe(false);
+		expect((await installed(OTHER)).installed).toBe(true);
+		const login = async (thread: string) =>
+			(await (await app.request(`/api/p/${name}/agent/login?thread=${thread}`)).json()) as { account: string };
+		expect((await login(OTHER)).account).toBe("pi");
+	});
+
+	it("stands on an uninstalled engine when nothing else is installed either, for its wall", () => {
+		const spoolDir = makeTempDir();
+		const defaults = createAgentDefaults(spoolDir, () => [standIn("claude", false), standIn("pi", false)]);
+		defaults.setEngine("pi");
+		expect(defaults.read().engine).toBe("pi");
+	});
+
 	it("keeps the last value it read when the file stops parsing", async () => {
 		const spoolDir = makeTempDir();
 		const { name } = makeProject(spoolDir);

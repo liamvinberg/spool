@@ -3,7 +3,10 @@
 The agent rail runs the agent you already use: **Claude Code**, **Codex** or
 **pi**. Spool ships no agent of its own. The agent menu picks the agent
 a new chat starts on, and that choice applies to every project on this machine;
-existing threads keep their agent and history.
+existing threads keep their agent and history. If the agent you picked is no
+longer installed and another one is, new chats start on the first installed one
+(Claude Code, then Codex, then pi) until you install yours again; your pick is
+kept. A chat already started on it stays on it and shows its install line.
 
 ## Installation requirements
 

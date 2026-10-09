@@ -66,7 +66,7 @@ interface Stored {
 }
 
 export interface AgentDefaults {
-	/** the engine and mode a new thread starts on, with the fallback applied */
+	/** the engine and mode a new thread starts on, with the fallback applied, never saved */
 	read(): AgentChoice;
 	/** the model and effort last chosen on this engine, or nothing for the engine's own default */
 	model(engine: AgentEngineId): AgentAsk;
@@ -113,11 +113,18 @@ export function createAgentDefaults(spoolDir: string, engines: () => Iterable<En
 		known = stored;
 	}
 
+	/**
+	 * The saved engine where it can run. One no longer installed gives way to the fallback
+	 * while another engine is, so nobody is stranded on an install wall with an agent beside
+	 * it; the file keeps the saved one, so installing it again brings it back. With nothing
+	 * installed at all it stands, and its wall says how to get it.
+	 */
 	function choice(stored: Stored): AgentChoice {
 		const registered = [...engines()];
-		const saved = stored.engine !== undefined && registered.some((engine) => engine.id === stored.engine);
+		const saved = registered.find((engine) => engine.id === stored.engine);
+		const stands = saved !== undefined && (saved.installed() || !registered.some((engine) => engine.installed()));
 		return {
-			engine: saved ? stored.engine : fallbackEngine(registered),
+			engine: stands ? saved.id : fallbackEngine(registered),
 			mode: stored.mode ?? DEFAULT_MODE,
 		};
 	}
