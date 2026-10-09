@@ -83,7 +83,8 @@ describe("page tree", () => {
 		const onDoubleClickFrame = vi.fn();
 		const { host } = await render({ onSwitchPage, onSelectFrame, onDoubleClickFrame });
 
-		expect(host.querySelector("[data-pages-count]")?.textContent).toBe("1");
+		// the tab says Pages and nothing counts them: the tree is the count (#359)
+		expect(host.querySelector("[data-pages-count]")).toBeNull();
 		// no foot under the tree: stacked, it stood in the middle of the side (#359)
 		expect(host.textContent).not.toContain("folder switches page");
 		// the root page has no row, so its own frame is already on the list
@@ -512,7 +513,7 @@ describe("renaming in place", () => {
 		});
 		expect(host.querySelector('input[aria-label="New page name"]')).toBeNull();
 		expect(asked.some((call) => call.url.endsWith("/pages/create"))).toBe(false);
-		expect(host.querySelector("[data-pages-count]")?.textContent).toBe("1");
+		expect(pagesListed(host)).toHaveLength(1);
 	});
 });
 
@@ -1019,13 +1020,22 @@ describe("pages inside pages", () => {
 
 	/**
 	 * Reach is what tells the two verbs apart: a control on one row may act on
-	 * that row's folder and everything in it, and the whole tree is the header's
-	 * to fold — which is also the only place it can be reached from once the tree
+	 * that row's folder and everything in it, and the whole tree is the tab row's
+	 * ⋯ to fold — which is also the only place it can be reached from once the tree
 	 * is open enough to leave no empty space to right-click.
 	 */
-	it("folds one page's subtree from ⌥ on its chevron, and the whole tree from the header", async () => {
+	it("folds one page's subtree from ⌥ on its chevron, and the whole tree from the tab row's menu", async () => {
 		const { host } = await render({ pages: deepPages, frames: deepFrames });
-		expect(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse all"]')?.disabled).toBe(true);
+		const collapseAll = async () => {
+			await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Pages options"]')?.click());
+			return (
+				[...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].find(
+					(item) => item.textContent === "Collapse all",
+				) ?? null
+			);
+		};
+		expect((await collapseAll())?.disabled).toBe(true);
+		await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Pages options"]')?.click());
 
 		await act(async () => {
 			host
@@ -1036,7 +1046,7 @@ describe("pages inside pages", () => {
 		expect(host.querySelector('button[aria-label="Collapse chat"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="Expand application"]')).not.toBeNull();
 
-		const foldAll = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse all"]');
+		const foldAll = await collapseAll();
 		expect(foldAll?.disabled).toBe(false);
 		await act(async () => foldAll?.click());
 		expect(pagesListed(host)).toEqual(["application page", "explorations page"]);
@@ -1108,8 +1118,6 @@ describe("the root page has no row", () => {
 		expect(framesListed(host)).toEqual(["home frame", "shell frame"]);
 		expect(pagesListed(host)).toEqual([]);
 		expect(host.querySelector('[aria-label="Pages tree"] button[aria-label^="Expand "]')).toBeNull();
-		// no pages to count, so the header says Pages and stops
-		expect(host.querySelector("[data-pages-count]")).toBeNull();
 
 		// a loose frame is a treeitem at the top level, and there is no page row
 		// above it for a spine to hang off

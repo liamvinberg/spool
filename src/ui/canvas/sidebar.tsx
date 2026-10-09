@@ -46,6 +46,7 @@ import {
 	withPageOrder,
 } from "./order";
 import { framesOnPage, pageLabel, pageOf } from "./pages";
+import { PANE_VERB, PaneMore } from "./pane-tabs";
 import { PaneActions } from "./pane-window";
 import { PagePicker } from "./rail-move";
 import {
@@ -1565,38 +1566,22 @@ export function CanvasSidebar({
 						{clipboard.length} copied
 					</span>
 				) : null}
-				{/* a count of nothing is a number saying nothing: zero reads as absence */}
-				{orderedPages.length === 0 ? null : (
-					<span data-pages-count="" className="mr-1.5 text-muted type-detail">
-						{orderedPages.length}
-					</span>
-				)}
 				<button
 					type="button"
 					aria-label="New page"
+					title="New page"
 					onClick={() => newPage()}
-					className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none"
+					className={PANE_VERB}
 				>
 					<PlusIcon className="h-2.5 w-2.5" />
 				</button>
-				{/* a fully open tree has no empty space left to right-click, which is
-				    where this verb used to be the only place it was. Dimmed rather
-				    than taken away when everything is already shut: a header that
-				    reflows as you fold the tree is a header you cannot aim at */}
-				<button
-					type="button"
-					aria-label="Collapse all"
-					disabled={expanded.size === 0}
-					onClick={collapseAll}
-					className={cn(
-						"flex h-7 w-7 items-center justify-center rounded-sm transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-						expanded.size === 0
-							? "text-muted/25"
-							: "text-muted/60 hover:bg-surface hover:text-text active:scale-90",
-					)}
-				>
-					<FoldIcon className="h-2.5 w-2.5" />
-				</button>
+				{/* a fully open tree has no empty space left to right-click, which is where
+				    this verb used to be the only place it was. Dimmed rather than taken away
+				    when everything is already shut */}
+				<PaneMore
+					label="Pages options"
+					items={[{ label: "Collapse all", disabled: expanded.size === 0, onSelect: collapseAll }]}
+				/>
 			</PaneActions>
 			<div
 				ref={listRef}
@@ -2238,21 +2223,6 @@ function PlusIcon({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 10 10" className={className} fill="none" aria-hidden="true">
 			<path d="M5 .75v8.5M.75 5h8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-		</svg>
-	);
-}
-
-/** Two chevrons closing on the line between them: the whole tree folding shut. */
-function FoldIcon({ className }: { className?: string }) {
-	return (
-		<svg viewBox="0 0 10 10" className={className} fill="none" aria-hidden="true">
-			<path
-				d="M1.75 1.5 5 4.25 8.25 1.5M1.75 8.5 5 5.75 8.25 8.5"
-				stroke="currentColor"
-				strokeWidth="1.3"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-			/>
 		</svg>
 	);
 }
