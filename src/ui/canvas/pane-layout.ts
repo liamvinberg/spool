@@ -163,12 +163,6 @@ export function fitWindow(layout: Layout, env: Env): Fit {
 	return { left: one("left"), right: one("right"), canvas: canvas() };
 }
 
-/** every pane a person can see now */
-export function visibleOf(layout: Layout, env: Env): string[] {
-	const f = fitWindow(layout, env);
-	return [...f.left.shown, ...f.right.shown];
-}
-
 /** the widest a side may be dragged while the other stays as it shows now */
 export function maxWidth(layout: Layout, id: SideId, env: Env): number {
 	const f = fitWindow(layout, env);

@@ -89,7 +89,7 @@ export function useAgentPermissions(
 }
 
 /** the three modes as a person reads them (#364) */
-export const MODE_NAMES: Readonly<Record<AgentPermissions, string>> = {
+const MODE_NAMES: Readonly<Record<AgentPermissions, string>> = {
 	ask: "Ask first",
 	edits: "Auto-edit",
 	bypass: "Full access",

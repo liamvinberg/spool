@@ -45,7 +45,7 @@ export function InstallLine({ engine }: { engine: AgentEngineId }) {
 }
 
 /** what each effort level means, said as a person would; a level not here says nothing */
-export const EFFORT_SAYS: Readonly<Record<string, string>> = {
+const EFFORT_SAYS: Readonly<Record<string, string>> = {
 	off: "Answers straight away.",
 	minimal: "Barely thinks before it answers.",
 	low: "Quick, light thinking.",
@@ -56,7 +56,7 @@ export const EFFORT_SAYS: Readonly<Record<string, string>> = {
 };
 
 /** past this many models in all, the menu offers a field to find one */
-export const FIND_AT = 12;
+const FIND_AT = 12;
 
 /** a model matches by what the agent calls it, the name a person reads, or its agent's name */
 function matches(engine: string, model: AgentModel, query: string): boolean {

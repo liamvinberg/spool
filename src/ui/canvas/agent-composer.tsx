@@ -561,7 +561,7 @@ export function Composer({
 }
 
 /** past this share of the window the ring shows; under it there is nothing to act on (#364) */
-export const CONTEXT_SHOWN_AT = 0.6;
+const CONTEXT_SHOWN_AT = 0.6;
 
 /**
  * How full the context window is, as a ring with the used share filled in as a wedge, so it
