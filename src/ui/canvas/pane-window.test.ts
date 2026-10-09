@@ -118,7 +118,7 @@ describe("a pane's header", () => {
 });
 
 describe("the side's edge", () => {
-	it("resizes up to 560 and collapses to the rail when let go under 144", async () => {
+	it("resizes up to 480 and collapses to the rail when let go under 144", async () => {
 		const { host } = await mount();
 		const grip = host.querySelector<HTMLElement>('button[aria-label="Resize left side"]');
 		await act(async () => {
@@ -126,10 +126,10 @@ describe("the side's edge", () => {
 			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 700, pointerId: 1 }));
 			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 700, pointerId: 1 }));
 		});
-		expect(side(host, "left")?.style.width).toBe("604px");
+		expect(side(host, "left")?.style.width).toBe("524px");
 
 		await act(async () => {
-			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 604, pointerId: 2 }));
+			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 524, pointerId: 2 }));
 			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, pointerId: 2 }));
 			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, pointerId: 2 }));
 		});

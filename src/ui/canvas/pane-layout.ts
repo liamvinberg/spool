@@ -1,4 +1,5 @@
 import {
+	AGENT_MAX_WIDTH,
 	AGENT_MIN_WIDTH,
 	MAX_WIDTH,
 	MIN_WIDTH,
@@ -54,7 +55,8 @@ export const LIMITS = {
 	shown: 3,
 	paneMin: 160,
 	sideMin: MIN_WIDTH,
-	sideMax: MAX_WIDTH,
+	/** the widest any side may be, which only a side showing the agent reaches */
+	sideMax: AGENT_MAX_WIDTH,
 	snap: SNAP_BELOW,
 	canvasMin: 480,
 	rail: STRIP_WIDTH,
@@ -112,13 +114,14 @@ export function stackOf(layout: Layout, id: SideId): string[] {
 	return side.rail.filter((pane) => side.lit.includes(pane));
 }
 
+const showsAgent = (side: Side) => side.lit.includes("agent") && side.rail.includes("agent");
 /** the narrowest a side may be: the agent rail's own floor while it shows there (#364) */
-const minOf = (side: Side) =>
-	side.lit.includes("agent") && side.rail.includes("agent") ? AGENT_MIN_WIDTH : LIMITS.sideMin;
+const minOf = (side: Side) => (showsAgent(side) ? AGENT_MIN_WIDTH : LIMITS.sideMin);
+/** the widest a side may be: the agent rail's own ceiling while it shows there (#364) */
+const maxOf = (side: Side) => (showsAgent(side) ? AGENT_MAX_WIDTH : MAX_WIDTH);
 /** the narrowest side `id` may be drawn at as the layout stands */
 export const sideMin = (layout: Layout, id: SideId): number => minOf(layout[id]);
-const clampWidth = (width: number, side?: Side) =>
-	Math.min(LIMITS.sideMax, Math.max(side === undefined ? LIMITS.sideMin : minOf(side), Math.round(width)));
+const clampWidth = (width: number, side: Side) => Math.min(maxOf(side), Math.max(minOf(side), Math.round(width)));
 const wantsOpen = (side: Side) => side.open && side.lit.some((pane) => side.rail.includes(pane));
 const outerOf = (side: Side, open: boolean) => LIMITS.rail + (open ? clampWidth(side.width, side) : 0);
 
@@ -169,7 +172,7 @@ export function visibleOf(layout: Layout, env: Env): string[] {
 /** the widest a side may be dragged while the other stays as it shows now */
 export function maxWidth(layout: Layout, id: SideId, env: Env): number {
 	const f = fitWindow(layout, env);
-	return Math.min(LIMITS.sideMax, env.width - LIMITS.canvasMin - f[other(id)].outer - LIMITS.rail);
+	return Math.min(maxOf(layout[id]), env.width - LIMITS.canvasMin - f[other(id)].outer - LIMITS.rail);
 }
 
 /**

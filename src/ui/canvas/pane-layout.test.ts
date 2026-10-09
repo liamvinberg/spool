@@ -6,6 +6,7 @@ import {
 	fitWindow,
 	isLayout,
 	type Layout,
+	maxWidth,
 	reduce,
 	resizeSplit,
 	stackHeights,
@@ -171,9 +172,10 @@ describe("hiding and removing", () => {
 });
 
 describe("widths", () => {
-	it("keeps a side between 200 and 560 wide", () => {
+	it("keeps a side between 200 and 480 wide", () => {
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 120 }, WIDE).left.width).toBe(200);
-		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 900 }, WIDE).left.width).toBe(560);
+		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 900 }, WIDE).left.width).toBe(480);
+		expect(maxWidth(defaultLayout(), "left", WIDE)).toBe(480);
 		expect(reduce(defaultLayout(), { type: "width", side: "left", width: 320 }, WIDE).left.width).toBe(320);
 	});
 
@@ -184,6 +186,10 @@ describe("widths", () => {
 		expect(reduce(agent, { type: "width", side: "right", width: 440 }, WIDE).right.width).toBe(440);
 		// a width saved narrower draws at the agent's floor while the agent shows
 		expect(fitWindow(agent, WIDE).right.width).toBe(380);
+		expect(maxWidth(agent, "right", WIDE)).toBe(560);
+		// hiding the agent brings the side back under every other pane's ceiling
+		const wide = reduce(agent, { type: "width", side: "right", width: 540 }, WIDE);
+		expect(fitWindow(reduce(wide, { type: "hide", pane: "agent" }, WIDE), WIDE).right.width).toBe(480);
 	});
 
 	it("never lets a drag take the canvas under 480", () => {
