@@ -1,9 +1,10 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Camera, ProjectedFrame } from "../api";
+import type { ProjectedFrame } from "../api";
+import { HANG } from "./agent-canvas-ask";
 import type { AgentCompanion, CompanionAct } from "./agent-companion";
-import type { HandMark } from "./agent-hand";
-import { curve, EASE, MOTION } from "./agent-motion";
-import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
+import type { LocatedMark } from "./agent-hand";
+import { curve, EASE, FADE_OUT_MS, MOTION, useHeld, useLeaving } from "./agent-motion";
+import { type Box, shellRadiusOnScreen, toScreen, toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { useStillness } from "./stillness";
 
@@ -29,7 +30,7 @@ import { useStillness } from "./stillness";
  */
 
 /** the square's side, its halo against the canvas, and how far off the left wall it rides */
-const BEAD = 10;
+const SIDE = 10;
 const HALO = 2;
 const WALL = 12;
 /** the frame's name row: its centre stands this far above the frame's top edge */
@@ -39,10 +40,6 @@ const FULL = 320;
 /** the corners, struck just outside the frame and never closed */
 const OUT = 5;
 const ARM = 10;
-/** how long a changed block stays ringed before the square lets go of it */
-const HOLD_EDIT_MS = 1200;
-/** the read's slide down the wall */
-const READ_MS = 700;
 
 const OUT_EASE = curve(EASE.out);
 const IN_OUT = curve(EASE.inOut);
@@ -65,11 +62,11 @@ interface Step {
 	readonly start?: () => void;
 }
 
-const DOCK: Anchor = { ox: 1, oy: 0, dx: -BEAD / 2, dy: -NAME_ROW };
+const DOCK: Anchor = { ox: 1, oy: 0, dx: -SIDE / 2, dy: -NAME_ROW };
 const WALL_TOP: Anchor = { ox: 0, oy: 0, dx: -WALL, dy: 0 };
 const WALL_FOOT: Anchor = { ox: 0, oy: 1, dx: -WALL, dy: 0 };
-/** under the frame, where an ask standing on the canvas hangs from it */
-const FOOT: Anchor = { ox: 0, oy: 1, dx: 9, dy: 14 };
+/** under the frame, on the notch of the ask standing on the canvas there */
+const FOOT: Anchor = { ox: 0, oy: 1, dx: HANG.notch, dy: HANG.tip };
 
 function caretOf(lines: number): Anchor {
 	return { ox: 0.045, oy: 0.04 + 0.92 * Math.min(1, Math.max(lines, 1) / FULL), dx: -11, dy: 0 };
@@ -85,7 +82,7 @@ export interface CompanionLayerProps {
 	frames: readonly ProjectedFrame[];
 	companions: readonly AgentCompanion[];
 	/** the blocks writes landed in, measured by the documents showing them */
-	marks: readonly HandMark[];
+	marks: readonly LocatedMark[];
 	/** the rail is shut, so an ask stands on the canvas under its frame and the square hangs it */
 	footed: boolean;
 }
@@ -97,7 +94,7 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	for (const frame of frames) stood.current.set(frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h });
 
 	const placed = companions.filter((one) => placeOf(one, byName, stood.current) !== null);
-	const shown = useLeaving(placed);
+	const shown = useDeparting(placed);
 	// names only once two agents share the page: one agent is the agent, two are a team
 	const named = placed.length >= 2;
 
@@ -124,7 +121,7 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	);
 }
 
-/** where a companion stands: its frame, else the frame it just deleted, else its held spot */
+/** where a companion stands: its frame, else the frame it just deleted, else its reserved spot */
 function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood: Map<string, Box>): Box | null {
 	if (one.frame !== null) {
 		const frame = frames.get(one.frame);
@@ -134,7 +131,7 @@ function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood
 	return one.spot;
 }
 
-function latestMark(marks: readonly HandMark[], frame: string): HandMark | null {
+function latestMark(marks: readonly LocatedMark[], frame: string): LocatedMark | null {
 	for (let index = marks.length - 1; index >= 0; index -= 1) {
 		const mark = marks[index];
 		if (mark?.frame === frame) return mark;
@@ -143,7 +140,7 @@ function latestMark(marks: readonly HandMark[], frame: string): HandMark | null 
 }
 
 /** every companion still drawn: the ones working, and the ones leaving where they stopped */
-function useLeaving(now: readonly AgentCompanion[]): { companion: AgentCompanion; leaving: boolean }[] {
+function useDeparting(now: readonly AgentCompanion[]): { companion: AgentCompanion; leaving: boolean }[] {
 	const still = useStillness();
 	const keys = now.map((one) => `[${one.key}]`).join("");
 	const [was, setWas] = useState({ keys, now });
@@ -192,13 +189,16 @@ function Companion({
 	camera: CameraStore;
 	companion: AgentCompanion;
 	place: Box;
-	located: HandMark | null;
+	located: LocatedMark | null;
 	named: boolean;
 	footed: boolean;
 	leaving: boolean;
 }) {
 	const still = useStillness();
-	const bead = useRef<HTMLDivElement | null>(null);
+	// a name comes and goes with the second agent on the page, fading rather than cut
+	const name = useLeaving(named, FADE_OUT_MS);
+	const heldName = useHeld(named ? companion.name : null);
+	const square = useRef<HTMLDivElement | null>(null);
 	const trail = useRef<HTMLSpanElement | null>(null);
 	const cover = useRef<HTMLSpanElement | null>(null);
 	const ring = useRef<HTMLSpanElement | null>(null);
@@ -226,7 +226,7 @@ function Companion({
 	const draw = (now: number): boolean => {
 		const { place: box, camera: store, located: mark } = latest.current;
 		const view = store.get();
-		const element = bead.current;
+		const element = square.current;
 		if (view === null || element === null) return false;
 		const rect = toScreen(box, view);
 		const m = motion.current;
@@ -240,7 +240,7 @@ function Companion({
 		if (m.step !== null) {
 			const step = m.step;
 			const target = at(step.to, rect);
-			const from = m.from === null ? target : worldToScreen(m.from, view);
+			const from = m.from === null ? target : toScreen({ ...m.from, w: 0, h: 0 }, view);
 			const t = step.ms <= 0 ? 1 : Math.min(1, (now - m.began) / step.ms);
 			const e = step.ease(t);
 			point = { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e };
@@ -250,14 +250,14 @@ function Companion({
 				point.y -= Math.sin(Math.PI * t) * lift;
 			}
 			if (t >= 1) {
-				m.from = screenToWorld(target, view);
+				m.from = toWorld(target, view);
 				m.rest = step.to;
 				m.step = null;
 				busy = m.queue.length > 0;
 			} else busy = true;
 		} else point = at(m.rest, rect);
-		drawn.current = screenToWorld(point, view);
-		element.style.transform = `translate(${point.x - BEAD / 2}px, ${point.y - BEAD / 2}px)`;
+		drawn.current = toWorld(point, view);
+		element.style.transform = `translate(${point.x - SIDE / 2}px, ${point.y - SIDE / 2}px)`;
 
 		if (trail.current !== null) {
 			trail.current.style.left = `${rect.x - WALL - 0.5}px`;
@@ -394,7 +394,7 @@ function Companion({
 				go(
 					[
 						travel(WALL_TOP),
-						{ to: WALL_FOOT, ms: READ_MS, ease: IN_OUT, arc: false, start: () => setReading("down") },
+						{ to: WALL_FOOT, ms: MOTION.read, ease: IN_OUT, arc: false, start: () => setReading("down") },
 					],
 					WALL_FOOT,
 				);
@@ -442,15 +442,17 @@ function Companion({
 		const timer = setTimeout(() => {
 			setRinged(null);
 			go([{ to: DOCK, ms: MOTION.travel, ease: IN_OUT, arc: true }], DOCK);
-		}, HOLD_EDIT_MS);
+		}, MOTION.holdEdit);
 		return () => clearTimeout(timer);
 	}, [act, companion.beat, located?.key]);
 
-	// two seconds after its last call the square dims, and lights again the moment it moves
+	// two seconds after its last call the square dims, and lights again the moment it moves.
+	// Whatever nothing holds open is left alone: a frame that landed or changed, which the
+	// witness reports after the call that wrote it has returned, as much as an idle one
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a beat is a new call, which lights it again
 	useEffect(() => {
 		setDim(false);
-		if (act !== "idle") return;
+		if (!RESTING.has(act)) return;
 		const timer = setTimeout(() => setDim(true), MOTION.idleAfter);
 		return () => clearTimeout(timer);
 	}, [act, companion.beat]);
@@ -486,7 +488,7 @@ function Companion({
 				<span
 					ref={flash}
 					data-companion-flash=""
-					className="absolute block animate-agent-flash bg-[#fff]"
+					className="absolute block animate-agent-flash bg-raised"
 					style={{ animationDelay: `${MOTION.cornersOut}ms` }}
 				/>
 			) : null}
@@ -510,7 +512,7 @@ function Companion({
 				<span
 					ref={ring}
 					data-companion-ring=""
-					className="absolute block animate-agent-ring rounded-[3px] border-[1.5px] border-[#fff] mix-blend-difference"
+					className="absolute block animate-agent-ring rounded-[3px] border-[1.5px] border-text"
 					style={{ opacity: 0.6 }}
 				/>
 			) : null}
@@ -528,19 +530,19 @@ function Companion({
 					))
 				: null}
 			<div
-				ref={bead}
+				ref={square}
 				className="absolute top-0 left-0"
-				style={{ width: BEAD, height: BEAD, willChange: "transform" }}
+				style={{ width: SIDE, height: SIDE, willChange: "transform" }}
 			>
 				<span className={`relative block size-full ${leaving ? "animate-agent-depart" : "animate-agent-arrive"}`}>
-					{named ? (
+					{name === null ? null : (
 						<span
-							data-companion-name=""
-							className="absolute top-1/2 right-full mr-1.5 -translate-y-1/2 whitespace-nowrap text-muted type-detail"
+							data-companion-name={name}
+							className={`absolute top-1/2 right-full mr-1.5 -translate-y-1/2 whitespace-nowrap text-muted type-detail ${name === "leaving" ? "animate-agent-fade-out" : "animate-agent-fade-in"}`}
 						>
-							{companion.name}
+							{heldName}
 						</span>
-					) : null}
+					)}
 					{waiting ? (
 						<svg
 							key="waiting"
@@ -549,7 +551,7 @@ function Companion({
 							aria-hidden="true"
 							data-companion-waiting=""
 							className="-top-[2px] -left-[2px] absolute block animate-agent-arrive rounded-full bg-canvas text-text"
-							style={{ width: BEAD + 4, height: BEAD + 4 }}
+							style={{ width: SIDE + 4, height: SIDE + 4 }}
 						>
 							<circle
 								className="animate-agent-breathe"
@@ -563,10 +565,10 @@ function Companion({
 						</svg>
 					) : (
 						<span
-							data-companion-bead=""
+							data-companion-square=""
 							className="block size-full bg-text transition-opacity duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)]"
 							style={{
-								borderRadius: BEAD * 0.3,
+								borderRadius: SIDE * 0.3,
 								boxShadow: `0 0 0 ${HALO}px var(--color-canvas)`,
 								opacity: dim ? 0.45 : 1,
 							}}
@@ -579,6 +581,9 @@ function Companion({
 }
 
 /** one corner's two arms, drawn as the two borders that meet in it */
+/** the acts nothing holds open: a square standing in one is left alone, and dims */
+const RESTING: ReadonlySet<CompanionAct> = new Set(["idle", "landed", "edit", "delete"]);
+
 function cornerStyle(corner: "nw" | "ne" | "se" | "sw"): CSSProperties {
 	const top = corner === "nw" || corner === "ne";
 	const left = corner === "nw" || corner === "sw";
@@ -591,19 +596,11 @@ function cornerStyle(corner: "nw" | "ne" | "se" | "sw"): CSSProperties {
 }
 
 /** where the square stands on a change: the measured block's corner, else the lines' height */
-function cornerOf(companion: AgentCompanion, place: Box, located: HandMark | null): Anchor {
+function cornerOf(companion: AgentCompanion, place: Box, located: LocatedMark | null): Anchor {
 	if (located !== null && place.w > 0 && place.h > 0) {
 		return { ox: located.box.x / place.w, oy: located.box.y / place.h, dx: 0, dy: 0 };
 	}
 	const from = companion.range?.from ?? 1;
 	const share = companion.lines > 0 ? Math.min(1, Math.max(0, (from - 1) / companion.lines)) : 0.4;
 	return { ox: 0, oy: share, dx: 0, dy: 0 };
-}
-
-function worldToScreen(point: { x: number; y: number }, view: Camera) {
-	return { x: point.x * view.k + view.x, y: point.y * view.k + view.y };
-}
-
-function screenToWorld(point: { x: number; y: number }, view: Camera) {
-	return { x: (point.x - view.x) / view.k, y: (point.y - view.y) / view.k };
 }

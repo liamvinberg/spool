@@ -46,7 +46,7 @@ export function Spinner({
 	);
 }
 
-/** waiting on a person: the ring at rest, breathing, with a disc held in it */
+/** waiting on a person: the ring at rest, breathing, with a disc held in it; a className replaces its size and ink */
 export function WaitingMark({ className, ...data }: { className?: string | undefined } & Marked) {
 	return (
 		<svg
@@ -55,7 +55,7 @@ export function WaitingMark({ className, ...data }: { className?: string | undef
 			aria-hidden="true"
 			data-agent-waiting-mark=""
 			{...data}
-			className={cn("h-3.5 w-3.5 shrink-0 text-text", className)}
+			className={cn("shrink-0", className ?? "h-3.5 w-3.5 text-text")}
 		>
 			<circle className="animate-agent-breathe" cx="6" cy="6" r="4.6" stroke="currentColor" strokeWidth="1.4" />
 			<circle cx="6" cy="6" r="2.1" fill="currentColor" />

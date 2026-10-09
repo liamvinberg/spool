@@ -7,6 +7,7 @@ import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
 import { CloseIcon } from "../icons";
 import { useRemembered } from "../remembered";
 import { Spinner, WaitingMark } from "./agent-marks";
+import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
 import {
@@ -1252,6 +1253,19 @@ function RailIcon({
 	onClick: (event: ReactMouseEvent<HTMLElement>) => void;
 	onMenu: (event: ReactMouseEvent<HTMLElement>) => void;
 }) {
+	const now: DockMarkKind | null = waiting
+		? "waiting"
+		: working
+			? "working"
+			: unread
+				? "unread"
+				: def.elsewhere === true
+					? "elsewhere"
+					: null;
+	// a mark that goes fades out rather than vanishing in one frame; what it was is kept for its exit
+	const shown = useLeaving(now !== null, FADE_OUT_MS);
+	const lastMark = useHeld(now);
+	const mark = shown === null ? null : (now ?? lastMark);
 	return (
 		<button
 			type="button"
@@ -1275,30 +1289,62 @@ function RailIcon({
 			)}
 		>
 			{def.icon}
-			{waiting ? (
+			{mark === null ? null : <DockMark kind={mark} leaving={shown === "leaving"} />}
+		</button>
+	);
+}
+
+type DockMarkKind = "waiting" | "working" | "unread" | "elsewhere";
+
+/** what a pane out of sight has to say, on its icon: arriving as it always did, and fading out on its way */
+function DockMark({ kind, leaving }: { kind: DockMarkKind; leaving: boolean }) {
+	const state = leaving ? "leaving" : "open";
+	switch (kind) {
+		case "waiting":
+			return (
 				<WaitingMark
 					data-rail-mark="waiting"
-					className="-right-1 absolute top-0 h-3 w-3 animate-agent-arrive rounded-full bg-bg"
+					data-rail-mark-state={state}
+					className={cn(
+						"-right-1 absolute top-0 h-3 w-3 rounded-full bg-bg text-text",
+						leaving ? "animate-agent-fade-out" : "animate-agent-arrive",
+					)}
 				/>
-			) : working ? (
-				<Spinner
+			);
+		case "working":
+			return (
+				<span
+					aria-hidden="true"
 					data-rail-mark="working"
-					strokeWidth={1.6}
-					className="-right-1 absolute top-0 h-3 w-3 text-text/60"
-				/>
-			) : unread ? (
+					data-rail-mark-state={state}
+					className={cn("-right-1 absolute top-0 h-3 w-3 text-text/60", leaving && "animate-agent-fade-out")}
+				>
+					<Spinner strokeWidth={1.6} className="h-full w-full" />
+				</span>
+			);
+		case "unread":
+			return (
 				<span
 					aria-hidden="true"
 					data-rail-mark="unread"
-					className="-right-0.5 absolute top-0.5 h-1.5 w-1.5 animate-unseen-in rounded-full bg-thread"
+					data-rail-mark-state={state}
+					className={cn(
+						"-right-0.5 absolute top-0.5 h-1.5 w-1.5 rounded-full bg-thread",
+						leaving ? "animate-agent-fade-out" : "animate-unseen-in",
+					)}
 				/>
-			) : def.elsewhere === true ? (
+			);
+		case "elsewhere":
+			return (
 				<span
 					aria-hidden="true"
 					data-rail-mark="elsewhere"
-					className="absolute top-1 right-1 h-1.5 w-1.5 animate-agent-fade-in rounded-full bg-text/85"
+					data-rail-mark-state={state}
+					className={cn(
+						"absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-text/85",
+						leaving ? "animate-agent-fade-out" : "animate-agent-fade-in",
+					)}
 				/>
-			) : null}
-		</button>
-	);
+			);
+	}
 }

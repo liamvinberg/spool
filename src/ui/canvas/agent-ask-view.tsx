@@ -9,12 +9,12 @@ import type { AgentEntry, AgentTile } from "./agent-transcript";
  * An ask, where the turn already has an anchor for it (#366).
  *
  * The ask is not a new block in the chat: it hangs off the thing it concerns. A turn has
- * two anchors, its line and its grid of frames, so an approval and a question about no
- * frame open out of the line — the ring held, "Waiting on you" or the question itself,
- * and the ask under it on the line's own thread — and a question whose options name the
- * turn's frames turns the grid into the choice. A designer's ask hangs off its own tile.
- * An ask with nothing to hang from, in a turn with no line yet, stands as a card. Once
- * answered, every one of them folds to one quiet line where it was asked.
+ * two anchors, its line and its grid of frames, so an approval opens out of the line — the
+ * ring held, "Waiting on you", and the ask under it on the line's own thread — and a
+ * question whose options name the turn's frames turns the grid into the choice. A
+ * designer's ask hangs off its own tile. A question about no frame has nothing to hang
+ * from, and stands as a quiet card at the end of the chat. Once answered, every one of
+ * them folds to one quiet line where it was asked.
  *
  * Every word in it is the agent's own — its one-line reason, its question, its options and
  * their descriptions — and spool adds only its controls and the name of what an approval
@@ -137,7 +137,7 @@ export function WaitingRow({
 	arriving?: boolean;
 }) {
 	return (
-		<div data-agent-status="waiting" className="-mx-1.5 flex min-h-[26px] items-center gap-2 px-1.5">
+		<div data-agent-turn-line="waiting" className="-mx-1.5 flex min-h-[26px] items-center gap-2 px-1.5">
 			<WaitingMark />
 			<span className="min-w-0 flex-1 text-text type-control">
 				{words}
@@ -151,12 +151,12 @@ export function WaitingRow({
 	);
 }
 
-/** what the line opens into, on a thread from its ring */
-export function Thread({ children, tight = false }: { children: ReactNode; tight?: boolean }) {
+/** what the line opens into, on a hairline from its ring */
+export function Hairline({ children, tight = false }: { children: ReactNode; tight?: boolean }) {
 	return (
 		<div
 			className={cn(
-				"ml-[6.25px] flex animate-agent-turn flex-col border-border-raised border-l-[1.5px] py-1",
+				"ml-[6.25px] flex animate-agent-ring-open flex-col border-border-raised border-l-[1.5px] py-1",
 				tight ? "gap-2 pl-[6.75px]" : "gap-3 pl-[12.75px]",
 			)}
 		>
@@ -492,8 +492,8 @@ export function AskCard({
 			className={cn(
 				"relative flex flex-col gap-3 rounded-lg p-4",
 				float
-					? "animate-agent-turn border border-border bg-surface shadow-agent-float"
-					: "animate-agent-turn border border-border",
+					? "animate-agent-ring-open border border-border bg-surface shadow-agent-float"
+					: "animate-agent-ring-open border border-border",
 			)}
 		>
 			{notch === undefined ? null : (

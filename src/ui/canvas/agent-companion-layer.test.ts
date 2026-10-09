@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
 import type { AgentCompanion } from "./agent-companion";
 import { AgentCompanionLayer, type CompanionLayerProps } from "./agent-companion-layer";
+import { FADE_OUT_MS, MOTION } from "./agent-motion";
 import { type CameraStore, createCameraStore } from "./camera-store";
 
 /**
@@ -86,8 +87,8 @@ const layer = (over: Partial<CompanionLayerProps> = {}) =>
 
 /** where a square's centre stands on screen, off its transform */
 function centre(host: HTMLElement, key = "main"): { x: number; y: number } {
-	const bead = host.querySelector<HTMLElement>(`[data-agent-companion="${key}"] > div:last-child`);
-	const [x, y] = (bead?.style.transform ?? "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+	const square = host.querySelector<HTMLElement>(`[data-agent-companion="${key}"] > div:last-child`);
+	const [x, y] = (square?.style.transform ?? "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
 	return { x: (x ?? Number.NaN) + 5, y: (y ?? Number.NaN) + 5 };
 }
 
@@ -153,6 +154,26 @@ describe("the agent's companions on the canvas", () => {
 		expect(host.querySelector("[data-companion-flash]")).not.toBeNull();
 	});
 
+	/** a mark on someone's design is the canvas's own ink and greys, never a blend that takes its colours (story 72) */
+	it("draws every mark in ink and greys, with no blend", () => {
+		const mark = { key: "home:c1", frame: "home", box: { x: 20, y: 300, w: 350, h: 120 } };
+		const marks = [
+			layer({ companions: [companion({ act: "edit", range: { from: 40, to: 52 }, lines: 200 })], marks: [mark] }),
+			layer({ companions: [companion({ act: "shot" })] }),
+			layer({ companions: [companion({ act: "read" })] }),
+		];
+		const classes = marks
+			.flatMap(({ host }) => [...host.querySelectorAll("[data-agent-companion] *")])
+			.map((one) => one.getAttribute("class") ?? "")
+			.join(" ");
+		expect(classes).not.toMatch(/mix-blend|#fff|white|accent|\[#/);
+		const colours =
+			classes.match(/(?<=^|\s)(?:bg|border)-(?!\[|\d|t\b|b\b|l\b|r\b|dashed|solid)[a-z-]+(?:\/\d+)?/g) ?? [];
+		expect(colours.length).toBeGreaterThan(0);
+		for (const colour of colours)
+			expect(colour).toMatch(/^(?:bg|border)-(?:text|muted|canvas|raised|surface|bg)(?:\/\d+)?$/);
+	});
+
 	it("gathers a deleted frame into the square where it last stood", () => {
 		const { host, again } = layer({ companions: [companion()] });
 		again({
@@ -167,11 +188,12 @@ describe("the agent's companions on the canvas", () => {
 	it("opens into the waiting ring when the agent asks, and hangs under the frame when the rail is shut", () => {
 		const docked = layer({ companions: [companion({ act: "ask" })] }).host;
 		expect(docked.querySelector("[data-companion-waiting]")).not.toBeNull();
-		expect(docked.querySelector("[data-companion-bead]")).toBeNull();
+		expect(docked.querySelector("[data-companion-square]")).toBeNull();
 		expect(centre(docked)).toEqual({ x: 495, y: 82 });
 
 		const footed = layer({ companions: [companion({ act: "ask" })], footed: true }).host;
-		expect(centre(footed)).toEqual({ x: 109, y: 914 });
+		// on the notch of the card that hangs 22px under the frame, 15px in from its left foot
+		expect(centre(footed)).toEqual({ x: 115, y: 914 });
 	});
 
 	it("names its agents only once two of them share the page", () => {
@@ -185,6 +207,42 @@ describe("the agent's companions on the canvas", () => {
 			"calm",
 			"dense",
 		]);
+	});
+
+	it("dims about two seconds after a frame lands, as after any call, and lights again when it acts", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const opacity = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-companion-square]")?.style.opacity;
+		for (const resting of ["idle", "landed", "edit"] as const) {
+			const { host } = layer({ companions: [companion({ act: resting })] });
+			expect(opacity(host)).toBe("1");
+			act(() => vi.advanceTimersByTime(MOTION.idleAfter + 10));
+			expect(opacity(host)).toBe("0.45");
+		}
+		const { host, again } = layer({ companions: [companion({ act: "read", beat: 1 })] });
+		act(() => vi.advanceTimersByTime(MOTION.idleAfter + 10));
+		// a read still out is the agent working, not left alone
+		expect(opacity(host)).toBe("1");
+		again({ companions: [companion({ act: "idle", beat: 2 })] });
+		act(() => vi.advanceTimersByTime(MOTION.idleAfter + 10));
+		expect(opacity(host)).toBe("0.45");
+	});
+
+	it("fades the names out when the second agent goes, rather than cutting them", () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const calm = companion({ key: "d1", name: "calm" });
+		const { host, again } = layer({ companions: [calm, companion({ key: "d2", name: "dense", frame: "cart" })] });
+		again({ companions: [calm] });
+		const name = () => host.querySelector('[data-agent-companion="d1"] [data-companion-name]');
+		expect(name()?.getAttribute("data-companion-name")).toBe("leaving");
+		expect(name()?.textContent).toBe("calm");
+		act(() => vi.advanceTimersByTime(FADE_OUT_MS + 10));
+		expect(name()).toBeNull();
 	});
 
 	it("stands at a designer's held spot before its frame exists", () => {

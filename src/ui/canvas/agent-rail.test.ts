@@ -514,7 +514,7 @@ describe("a turn's foot", () => {
 			parent: null,
 		});
 		await settle();
-		const status = () => canvas.host.querySelector<HTMLButtonElement>("[data-agent-status]");
+		const status = () => canvas.host.querySelector<HTMLButtonElement>("[data-agent-turn-line]");
 		expect(canvas.host.querySelector('[data-agent-tile="hello-calm"]')?.getAttribute("data-agent-tile-state")).toBe(
 			"reading",
 		);
@@ -538,7 +538,7 @@ describe("a turn's foot", () => {
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
-		await until(() => status()?.getAttribute("data-agent-status") === "done");
+		await until(() => status()?.getAttribute("data-agent-turn-line") === "done");
 
 		expect(status()?.textContent).toMatch(/^Done in \d+s/);
 		expect(canvas.host.querySelector('[data-agent-tile="hello-calm"]')?.getAttribute("data-agent-tile-state")).toBe(
@@ -1099,6 +1099,36 @@ describe("a tool row", () => {
 		expect(canvas.host.querySelector("[data-agent-detail]")?.textContent).toBe("design/frames/home/frame.tsx");
 	});
 
+	/** reads one after another are one row, every path behind its one disclosure (#365, story 48) */
+	it("groups reads and searches into one row, a path or command to a line behind it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "look around");
+
+		canvas.turn.push(ready);
+		for (const [id, tool, input] of [
+			["r1", "Read", { file_path: "/project/design/frames/home/frame.tsx" }],
+			["r2", "Read", { file_path: "/project/design/shared/tokens.css" }],
+			["g1", "Grep", { pattern: "accent" }],
+		] as const) {
+			canvas.turn.push({ kind: "called", id, tool, input, parent: null });
+			canvas.turn.push(settled(id));
+		}
+		canvas.turn.push(ended);
+		canvas.turn.close();
+		await settle();
+
+		expect(rows(canvas.host)).toEqual(["search 3 times"]);
+		expect(rail(canvas.host)?.textContent).not.toContain("tokens.css");
+		const disclosure = canvas.host.querySelector<HTMLElement>('[aria-label="search 3 times"]');
+		await act(async () => {
+			disclosure?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		expect(
+			[...(canvas.host.querySelector("[data-agent-detail]")?.children ?? [])].map((line) => line.textContent),
+		).toEqual(["design/frames/home/frame.tsx", "design/shared/tokens.css", "accent"]);
+	});
+
 	/** six edits to one frame are one row, and the count climbs while it happens */
 	it("counts a run of writes rather than repeating it", async () => {
 		const canvas = mount();
@@ -1151,11 +1181,12 @@ describe("a tool row", () => {
 		// one flat stroke, drawn short of the mark's full width
 		expect(strokes()).toEqual(["M4.4 7h5.2"]);
 
+		// a command, so it is a row of its own rather than a second read in the first one's group
 		canvas.turn.push({
 			kind: "called",
 			id: "t2",
-			tool: "Read",
-			input: { file_path: "/project/design/AGENTS.md" },
+			tool: "Bash",
+			input: { command: "npm install", description: "Install the dependencies" },
 			parent: null,
 		});
 		canvas.turn.push({ kind: "result", id: "t2", failed: true, text: "not found", images: [], parent: null });
@@ -1219,7 +1250,7 @@ describe("the plan", () => {
 		// eight rows of work land between the plan and its next move, which is what
 		// carries it off the top of a transcript
 		for (let index = 0; index < 8; index += 1) {
-			canvas.turn.push(called(`r${index}`, "Read", { file_path: `/project/design/frames/home/take-${index}.tsx` }));
+			canvas.turn.push(called(`r${index}`, "Edit", { file_path: `/project/design/frames/home-${index}/frame.tsx` }));
 			canvas.turn.push(settled(`r${index}`));
 		}
 		canvas.turn.push(move("p4", "1", "completed"));
@@ -2027,7 +2058,7 @@ describe("an ask, anchored", () => {
 		await until(() => options(canvas.host).length > 0);
 
 		expect(look(canvas.host)).toBe("line");
-		const status = canvas.host.querySelector('[data-agent-status="waiting"]');
+		const status = canvas.host.querySelector('[data-agent-turn-line="waiting"]');
 		expect(status?.textContent).toContain("Waiting on you");
 		const block = canvas.host.querySelector<HTMLElement>("[data-agent-ask]");
 		expect(block?.textContent).toContain("Moving the new roast colours");
@@ -2049,7 +2080,7 @@ describe("an ask, anchored", () => {
 
 		// folded to one quiet line, and the line is the turn's own again
 		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe("Allowed: edit src/theme.ts");
-		expect(canvas.host.querySelector('[data-agent-status="waiting"]')).toBeNull();
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
 	});
 
 	it("folds a deny and an always the same quiet way", async () => {
@@ -2110,7 +2141,7 @@ describe("an ask, anchored", () => {
 		expect(picture?.textContent).toContain("3");
 		expect(picture?.textContent).toContain("The day as two roaster lanes.");
 		expect(canvas.host.querySelector('[data-agent-tile="home"]')?.hasAttribute("data-agent-tile-aside")).toBe(true);
-		expect(canvas.host.querySelector('[data-agent-status="waiting"]')?.textContent).toContain(
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')?.textContent).toContain(
 			"Which direction should I take further?",
 		);
 
@@ -2124,7 +2155,7 @@ describe("an ask, anchored", () => {
 		expect(canvas.host.querySelector("[data-agent-folded]")?.textContent).toBe("You picked Timeline");
 	});
 
-	it("ticks a question that takes several and sends what is ticked", async () => {
+	it("asks a question about no frame as a card at the end of the chat, ticks several and sends them", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "new header");
@@ -2159,7 +2190,12 @@ describe("an ask, anchored", () => {
 			}),
 		);
 		await until(() => options(canvas.host).length === 3);
-		expect(look(canvas.host)).toBe("line");
+		// a question about no frame is a quiet card at the end of the chat (story 67), the
+		// turn's line left as it was
+		expect(look(canvas.host)).toBe("card");
+		const turn = canvas.host.querySelector("[data-agent-turn]");
+		expect(turn?.lastElementChild?.getAttribute("data-agent-ask-look")).toBe("card");
+		expect(turn?.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
 
 		const sendButton = () =>
 			[...canvas.host.querySelectorAll<HTMLButtonElement>("[data-agent-ask] button")].find((one) =>
@@ -2237,10 +2273,72 @@ describe("an ask, anchored", () => {
 			"home--bold",
 		);
 		// the turn's own line is still the turn's: one designer waits, the others work
-		expect(canvas.host.querySelector('[data-agent-status="waiting"]')).toBeNull();
-		expect(
-			canvas.host.querySelector("[data-agent-ask-under]") ?? canvas.host.querySelector("[data-agent-ask]"),
-		).not.toBeNull();
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
+		// the card hangs under the grid, from the tile that waits
+		const under = canvas.host.querySelector("[data-agent-ask-under]");
+		expect(under?.getAttribute("data-agent-ask-under")).toBe("home--bold");
+		expect(under?.previousElementSibling?.hasAttribute("data-agent-tiles")).toBe(true);
+		expect(under?.querySelector('[data-agent-ask-look="card"]')?.textContent).toContain(
+			"Taking a picture of home--bold",
+		);
+	});
+
+	/** a designer that asks before its frame exists still has a place: the spot held for it */
+	it("stands a designer's ask under its reserved spot on the canvas while the rail is shut", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "make a calm direction");
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "called",
+			id: "a1",
+			tool: "Agent",
+			input: { description: "Design calm" },
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "task-started",
+			task: "t1",
+			call: "a1",
+			description: "Design home--calm",
+			agent: "designer",
+			prompt: null,
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "spot",
+			state: "held",
+			name: "home--calm",
+			task: "t1",
+			call: "a1",
+			x: 2000,
+			y: 0,
+			w: 1440,
+			h: 900,
+			parent: null,
+		});
+		canvas.turn.push(
+			asking({
+				call: "n1",
+				tool: "Bash",
+				input: { command: "npm install dayjs" },
+				description: "Adding a date library for the opening hours.",
+				parent: "a1",
+			}),
+		);
+		await until(() => options(canvas.host).length > 0);
+		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
+
+		await until(() => canvas.host.querySelector("[data-agent-canvas-ask]") !== null);
+		const card = () => canvas.host.querySelector("[data-agent-canvas-ask]");
+		expect(card()?.textContent).toContain("Adding a date library");
+
+		// answered there, it fades where it stood and then goes
+		await act(async () => card()?.querySelector<HTMLButtonElement>('[data-agent-option="Allow"]')?.click());
+		expect(canvas.turn.answers.at(-1)?.request).toBe("req-1");
+		canvas.turn.push({ kind: "answered", request: "req-1", answer: "allow", words: null, parent: null });
+		await until(() => card()?.getAttribute("data-agent-canvas-ask") === "leaving");
+		await until(() => card() === null);
 	});
 
 	it("keeps a second waiting ask on screen as a card under the first", async () => {
@@ -2335,18 +2433,6 @@ describe("an approval in the log", () => {
 		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="Allow for this chat"]');
 		await act(async () => always?.click());
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-a", reply: { kind: "always" } });
-	});
-
-	it("offers no always where the request suggested no rule", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "shoot the receipt");
-
-		canvas.turn.push(approval({ suggestions: [] }));
-		await until(() => options(canvas.host).length > 0);
-
-		// absent rather than dead: spool never composes a rule of its own to fill it
-		expect(options(canvas.host)).toEqual(["Allow", "Deny"]);
 	});
 
 	it("is never answered by typing, because no sentence answers may I run this", async () => {

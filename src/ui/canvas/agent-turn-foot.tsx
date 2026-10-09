@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
 import { cn } from "../cn";
 import {
@@ -7,14 +7,16 @@ import {
 	type AskEntry,
 	type AskState,
 	Dismiss,
+	Hairline,
 	OptionList,
 	optionFrames,
 	Settled,
-	Thread,
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
-import type { AgentTile, AgentTurnFoot } from "./agent-transcript";
+import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
+import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
+import { useStillness } from "./stillness";
 
 /**
  * A turn's foot (#365): the frames it touched as a grid of pictures, and under them its
@@ -60,6 +62,8 @@ export function captionOf(tile: AgentTile): string {
 			return "Landed";
 		case "editing":
 			return tile.range === null ? "Changing it" : `Changed lines ${tile.range.from}–${tile.range.to}`;
+		case "shooting":
+			return "Taking its picture";
 		case "deleted":
 			return "Deleted";
 		case "done": {
@@ -102,13 +106,20 @@ export function TurnFoot({
 }) {
 	const [open, setOpen] = useState(false);
 	const over = foot.ms !== null;
-	const makers = new Set(foot.tiles.flatMap((tile) => (tile.agent === undefined ? [] : [tile.agent])));
+	const makers = new Set(foot.tiles.flatMap((tile) => (tile.delegation === undefined ? [] : [tile.delegation])));
 	// a designer's ask hangs off its own tile; anything else is the turn's own
-	const designer = asks.find((ask) => ask.agent !== undefined && ask.agent !== "" && makers.has(ask.agent));
-	const mine = asks.find((ask) => ask !== designer);
+	const designer = asks.find(
+		(ask) => ask.delegation !== undefined && ask.delegation !== "" && makers.has(ask.delegation),
+	);
+	// the turn's own ask opens out of its line when it is an approval (story 58) and turns
+	// the grid into the choice when its options name the turn's frames; a question about
+	// no frame is a quiet card at the end of the chat (story 67)
+	const mine = asks.find((ask) => ask !== designer && onTheLine(ask, foot.tiles));
 	// each anchor holds one ask; any more wait their turn as cards under the foot, so an
 	// ask is never anywhere but on screen
 	const hung = mine === undefined ? designer : undefined;
+	// the steps fade in and out under the line rather than appearing in one frame
+	const shownSteps = useLeaving(open && mine === undefined, FADE_OUT_MS);
 	const queued = asks.filter((ask) => ask !== mine && ask !== hung);
 	const answer = onAnswer ?? (() => {});
 	return (
@@ -120,7 +131,7 @@ export function TurnFoot({
 							tiles={foot.tiles}
 							settled={over}
 							reach={reach}
-							waiting={hung?.agent}
+							waiting={hung?.delegation}
 							under={
 								hung === undefined
 									? undefined
@@ -130,7 +141,7 @@ export function TurnFoot({
 							}
 						/>
 					)}
-					<StatusLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
+					<TurnLine foot={foot} elapsed={elapsed} open={open} onToggle={() => setOpen((was) => !was)} />
 				</>
 			) : (
 				<LineAsk
@@ -143,18 +154,28 @@ export function TurnFoot({
 					permissions={permissions}
 				/>
 			)}
-			{queued.map((entry) => (
-				<DesignerAsk key={entry.key} entry={entry} onAnswer={answer} permissions={permissions} />
-			))}
 			<div
-				data-agent-steps={open && mine === undefined ? "open" : "shut"}
-				hidden={!open || mine !== undefined}
-				className="flex flex-col"
+				data-agent-steps={shownSteps ?? "shut"}
+				hidden={shownSteps === null}
+				className={cn(
+					"flex flex-col",
+					shownSteps === "open" && "animate-agent-fade-in",
+					shownSteps === "leaving" && "pointer-events-none animate-agent-fade-out",
+				)}
 			>
 				{steps}
 			</div>
+			{queued.map((entry) => (
+				<DesignerAsk key={entry.key} entry={entry} onAnswer={answer} permissions={permissions} />
+			))}
 		</div>
 	);
+}
+
+/** an approval, or a question whose options name the turn's frames: the asks the line opens into */
+function onTheLine(entry: AskEntry, tiles: readonly AgentTile[]): boolean {
+	if (!entry.question) return true;
+	return entry.questions.some((question) => !question.multi && optionFrames(question, tiles) !== null);
 }
 
 /**
@@ -185,7 +206,7 @@ function LineAsk({
 		foot.tiles.length === 0 ? null : named === null || question === null ? (
 			<TileGrid tiles={foot.tiles} settled={foot.ms !== null} reach={reach} />
 		) : (
-			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} />
+			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} settled={foot.ms !== null} />
 		);
 	return (
 		<div
@@ -198,9 +219,9 @@ function LineAsk({
 				{!entry.question ? (
 					<>
 						<WaitingRow words="Waiting on you" meta={meta} />
-						<Thread>
+						<Hairline>
 							<ApprovalBody entry={entry} ask={ask} permissions={permissions} />
-						</Thread>
+						</Hairline>
 					</>
 				) : named !== null && question !== null ? (
 					<>
@@ -220,9 +241,9 @@ function LineAsk({
 							arriving={entry.state === "arriving"}
 						/>
 						{ask.open && question !== null ? (
-							<Thread tight>
+							<Hairline tight>
 								<OptionList ask={ask} />
-							</Thread>
+							</Hairline>
 						) : null}
 					</>
 				)}
@@ -253,16 +274,24 @@ function PictureChoice({
 	frames,
 	ask,
 	reach,
+	settled,
 }: {
 	tiles: readonly AgentTile[];
 	frames: readonly string[];
 	ask: AskState;
 	reach: TileReach;
+	/** the turn is over: three across, as the grid it stands in for */
+	settled: boolean;
 }) {
 	const question = ask.question;
 	if (question === null) return null;
 	return (
-		<div role="menu" aria-label={question.question} data-agent-tiles="" className="grid grid-cols-3 gap-x-3 gap-y-4">
+		<div
+			role="menu"
+			aria-label={question.question}
+			data-agent-tiles=""
+			className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}
+		>
 			{tiles.map((tile) => {
 				const at = frames.indexOf(tile.frame);
 				const option = question.options[at];
@@ -313,7 +342,7 @@ function PictureChoice({
 	);
 }
 
-function StatusLine({
+function TurnLine({
 	foot,
 	elapsed,
 	open,
@@ -330,7 +359,7 @@ function StatusLine({
 		<button
 			type="button"
 			aria-expanded={open}
-			data-agent-status={over ? (foot.ending ?? "done") : "running"}
+			data-agent-turn-line={over ? (foot.ending ?? "done") : "running"}
 			onClick={onToggle}
 			className={cn(
 				"-mx-1.5 flex h-[26px] items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150",
@@ -338,16 +367,9 @@ function StatusLine({
 				open && "bg-control",
 			)}
 		>
-			<StatusMark over={over} ending={foot.ending} />
+			<TurnMark over={over} ending={foot.ending} />
 			<span className="min-w-0 flex-1 truncate text-muted type-control">
-				{over ? (
-					words
-				) : (
-					<>
-						<span className="agent-shimmer animate-agent-shimmer">{words}</span>
-						{foot.thinking && foot.status !== null ? <span className="pl-2 opacity-70">thinking</span> : null}
-					</>
-				)}
+				{over ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
 			</span>
 			{over || !Number.isFinite(elapsed) ? null : (
 				<span data-agent-clock="" className="shrink-0 tabular-nums text-muted type-detail">
@@ -367,7 +389,7 @@ function StatusLine({
 }
 
 /** a check once done, a square once stopped, a cross once failed, and a turning ring while live */
-function StatusMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
+function TurnMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
 	return (
 		<svg viewBox="0 0 14 14" aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted" fill="none">
 			{!over ? (
@@ -403,20 +425,41 @@ function TileGrid({
 	under?: ((notch: number) => ReactNode) | undefined;
 }) {
 	const columns = settled ? 3 : 2;
-	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.agent === waiting);
+	const at = waiting === undefined ? -1 : tiles.findIndex((tile) => tile.delegation === waiting);
+	// while anything is still happening, what is finished steps back to leave the eye on it
+	const working = !settled && tiles.some((tile) => tile.state !== "done" && tile.state !== "deleted");
 	return (
 		<div className="flex flex-col gap-3">
 			<div data-agent-tiles="" className={cn("grid gap-x-3 gap-y-4", settled ? "grid-cols-3" : "grid-cols-2")}>
 				{tiles.map((tile, index) => (
-					<Tile key={tile.key} tile={tile} reach={reach} waiting={index === at} />
+					<Tile
+						key={tile.key}
+						tile={tile}
+						reach={reach}
+						waiting={index === at}
+						small={working && tile.state === "done" && index !== at}
+					/>
 				))}
 			</div>
-			{under === undefined || at === -1 ? null : under(((at % columns) + 0.5) / columns)}
+			{under === undefined || at === -1 ? null : (
+				<div data-agent-ask-under={tiles[at]?.frame}>{under(((at % columns) + 0.5) / columns)}</div>
+			)}
 		</div>
 	);
 }
 
-function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileReach; waiting?: boolean }) {
+function Tile({
+	tile,
+	reach,
+	waiting = false,
+	small = false,
+}: {
+	tile: AgentTile;
+	reach: TileReach;
+	waiting?: boolean;
+	/** finished while others still work: drawn smaller, so attention goes to what moves */
+	small?: boolean;
+}) {
 	const [putting, setPutting] = useState(false);
 	const goes = tile.state !== "deleted" && reach.have.has(tile.frame);
 	const live = tile.state !== "done" && tile.state !== "deleted";
@@ -424,8 +467,10 @@ function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileRe
 	const body = (
 		<>
 			<span
+				data-agent-tile-small={small ? "" : undefined}
 				className={cn(
-					"block w-full rounded-[3px]",
+					"block rounded-[3px] transition-[width] duration-[320ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none",
+					small ? "w-[72%]" : "w-full",
 					waiting && "shadow-[0_0_0_1.5px_var(--color-bg),0_0_0_3px_var(--color-text)]",
 				)}
 			>
@@ -497,7 +542,9 @@ function Tile({ tile, reach, waiting = false }: { tile: AgentTile; reach: TileRe
 
 /** the frame's still, or what stands for it before there is one */
 function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }) {
-	const drawn = tile.state !== "reading" && tile.state !== "drawing";
+	const replaying = useReplay(tile.replay);
+	const drawn = tile.state !== "reading" && tile.state !== "drawing" && !replaying;
+	const shooting = useLeaving(tile.state === "shooting", MOTION.cornersIn);
 	return (
 		<span className="relative block aspect-[16/10] w-full shrink-0" aria-hidden="true">
 			{drawn ? (
@@ -514,13 +561,60 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 				</span>
 			) : (
 				<span className="absolute inset-0 rounded-[3px] border border-border-raised border-dashed">
-					{tile.state === "drawing" ? <Writing lines={tile.lines} /> : null}
+					{replaying && tile.replay !== undefined ? (
+						<Writing lines={tile.lines} shape={tile.replay} replay />
+					) : tile.state === "drawing" ? (
+						<Writing lines={tile.lines} />
+					) : null}
 				</span>
 			)}
 			{tile.state === "deleted" ? (
 				<span className="absolute inset-0 rounded-[3px] border border-muted border-dashed" />
 			) : null}
-			{tile.state === "editing" ? <Hand /> : null}
+			{tile.state === "editing" ? <CompanionMark /> : null}
+			{shooting === null ? null : <Corners leaving={shooting === "leaving"} />}
+		</span>
+	);
+}
+
+/**
+ * Whether a designer's real source is replaying in the tile: for about a second from the
+ * moment its file lands in the spot held for it, then the picture draws. Never where
+ * stillness was asked for.
+ */
+function useReplay(shape: AgentTile["replay"]): boolean {
+	const still = useStillness();
+	const [replaying, setReplaying] = useState(shape !== undefined && !still);
+	useEffect(() => {
+		if (!replaying) return;
+		const timer = setTimeout(() => setReplaying(false), MOTION.replay);
+		return () => clearTimeout(timer);
+	}, [replaying]);
+	return replaying && !still;
+}
+
+/** four corners struck just outside the picture while its picture is taken, folding in after */
+function Corners({ leaving }: { leaving: boolean }) {
+	return (
+		<span
+			data-agent-tile-corners={leaving ? "leaving" : "open"}
+			className="pointer-events-none absolute -inset-[3px]"
+		>
+			{(["nw", "ne", "se", "sw"] as const).map((corner) => {
+				const top = corner === "nw" || corner === "ne";
+				const left = corner === "nw" || corner === "sw";
+				return (
+					<span
+						key={corner}
+						className={cn(
+							"absolute block size-2 border-text",
+							top ? "top-0 border-t-[1.5px]" : "bottom-0 border-b-[1.5px]",
+							left ? "left-0 border-l-[1.5px]" : "right-0 border-r-[1.5px]",
+							leaving ? "animate-agent-corners-in" : "animate-agent-corners-out",
+						)}
+					/>
+				);
+			})}
 		</span>
 	);
 }
@@ -529,17 +623,20 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 const RUN = [0.42, 0.7, 0.56, 0.82, 0.36, 0.64, 0.5, 0.76, 0.3, 0.6, 0.86, 0.46, 0.68, 0.4, 0.74, 0.52] as const;
 const INDENT = [0, 1, 2, 2, 3, 3, 2, 3, 4, 4, 3, 2, 3, 3, 2, 1] as const;
 /** rows the outline holds; a frame's usual 320 lines fill it */
-const ROWS = 18;
+const ROWS = SOURCE_ROWS;
 
-/** the lines streamed so far, as rows of source filling the outline from the top */
-function Writing({ lines }: { lines: number }) {
-	const filled = Math.max(1, Math.min(ROWS, Math.round((lines / 320) * ROWS)));
+/**
+ * The lines streamed so far, as rows of source filling the outline from the top. Given a
+ * real source's shape it draws that; replaying, its rows run in one after another over
+ * `MOTION.replay`.
+ */
+function Writing({ lines, shape, replay = false }: { lines: number; shape?: readonly SourceLine[]; replay?: boolean }) {
+	const filled = shape !== undefined ? shape.length : Math.max(1, Math.min(ROWS, Math.round((lines / 320) * ROWS)));
 	return (
-		<span className="absolute inset-[6%]">
+		<span className="absolute inset-[6%]" data-agent-tile-replay={replay ? "" : undefined}>
 			{Array.from({ length: filled }, (_, row) => {
-				const indent = INDENT[row % INDENT.length] ?? 0;
-				const run = RUN[row % RUN.length] ?? 0.5;
-				const last = row === filled - 1;
+				const [indent, run] = shape?.[row] ?? [INDENT[row % INDENT.length] ?? 0, RUN[row % RUN.length] ?? 0.5];
+				const last = !replay && row === filled - 1;
 				return (
 					<span
 						// biome-ignore lint/suspicious/noArrayIndexKey: fixed rows
@@ -552,6 +649,12 @@ function Writing({ lines }: { lines: number }) {
 							top: `${(row / ROWS) * 100}%`,
 							left: `${indent * 4.5}%`,
 							width: `${run * (100 - indent * 4.5)}%`,
+							...(replay
+								? {
+										animation: `agent-fade-in ${MOTION.lineIn}ms cubic-bezier(0.22, 0.61, 0.36, 1) both`,
+										animationDelay: `${Math.round((row / filled) * (MOTION.replay - MOTION.lineIn))}ms`,
+									}
+								: {}),
 						}}
 					/>
 				);
@@ -560,11 +663,14 @@ function Writing({ lines }: { lines: number }) {
 	);
 }
 
-/** the agent's companion, as the canvas draws it at the block it is changing (#366) */
-function Hand() {
+/** the agent's companion, as the canvas draws it at the block it is changing (#366): ink, never a blend */
+function CompanionMark() {
 	return (
-		<span className="pointer-events-none absolute inset-0">
-			<span className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-[#fff] opacity-60 mix-blend-difference" />
+		<span data-agent-companion-mark="" className="pointer-events-none absolute inset-0">
+			<span
+				data-agent-mark-ring=""
+				className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-text opacity-60"
+			/>
 			<span
 				className="absolute top-[38%] left-[4%] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 bg-text"
 				style={{ borderRadius: 1.8, boxShadow: "0 0 0 1.5px var(--color-canvas)" }}

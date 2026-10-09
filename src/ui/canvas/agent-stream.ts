@@ -41,6 +41,7 @@ import {
 	type AgentWords,
 	drawableEntries,
 	footed,
+	restoreTile,
 	type Stamped,
 	settledPicture,
 	type Transcript,
@@ -973,6 +974,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 					}
 					return;
 				}
+				// a blank thread names no engine: the daemon takes the machine's choice
+				const owner = thread.follows ? undefined : engineOf(thread);
 				// A submitted prompt still starts when its project view leaves during the save.
 				detach = followAgentTurn(
 					project,
@@ -981,7 +984,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 						: {
 								say: {
 									thread: thread.id,
-									...(thread.follows || !isAgentEngineId(thread.engine) ? {} : { engine: thread.engine }),
+									...(owner === undefined ? {} : { engine: owner }),
 									turn: thread.named,
 									...(recovery?.token === undefined ? {} : { recovery: recovery.token }),
 									saying: opening.saying.map((words) => ({
@@ -1011,7 +1014,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 			});
 			redraw();
 		},
-		[project, save, redraw],
+		[project, save, redraw, engineOf],
 	);
 
 	const send = useCallback(
@@ -1405,7 +1408,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 	}, [project, note, send, engineOf]);
 
 	return {
-		engine: here.follows ? preferred : isAgentEngineId(here.engine) ? here.engine : undefined,
+		engine: engineOf(here),
 		legacy: !here.follows && here.engine === LEGACY_ENGINE,
 		follow: () => {
 			const current = threads.current.get(open);
@@ -1532,11 +1535,9 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 								? entry
 								: {
 										...entry,
-										tiles: entry.tiles.map((one) => {
-											if (one.frame !== tile.frame || one.state !== "deleted") return one;
-											const { source: _source, sidecar: _sidecar, ...kept } = one;
-											return { ...kept, state: "done" as const };
-										}),
+										tiles: entry.tiles.map((one) =>
+											one.frame !== tile.frame || one.state !== "deleted" ? one : restoreTile(one),
+										),
 									},
 						);
 					}

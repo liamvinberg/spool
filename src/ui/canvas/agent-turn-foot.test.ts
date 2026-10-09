@@ -171,6 +171,49 @@ describe("the turn's grid", () => {
 });
 
 describe("the turn's line", () => {
+	const call = (id: string, tool: string, input: unknown): AgentEvent => ({
+		kind: "called",
+		id,
+		tool,
+		input,
+		parent: null,
+	});
+	const result = (id: string): AgentEvent => ({
+		kind: "result",
+		id,
+		failed: false,
+		text: "",
+		images: [],
+		parent: null,
+	});
+	const statusOf = (events: readonly AgentEvent[]) => transcriptOf([], stamp(events)).foot?.status;
+
+	it("says what the agent is doing now, in present words", () => {
+		expect(statusOf([call("s1", "Bash", { command: "spool skill" })])).toBe("Reading the spool docs");
+		expect(statusOf([call("r1", "Read", { file_path: "design/frames/cart/frame.tsx" })])).toBe("Reading cart");
+		expect(statusOf([call("e1", "Edit", { file_path: "design/frames/home/frame.tsx" })])).toBe("Editing home");
+		expect(statusOf([call("s2", "Bash", { command: "spool shot home cart" })])).toBe("Taking pictures of home, cart");
+		expect(statusOf([call("b1", "Bash", { command: "npm i dayjs", description: "Install dayjs" })])).toBe(
+			"Installing dayjs",
+		);
+		expect(
+			statusOf([
+				call("r1", "Read", { file_path: "design/a.tsx" }),
+				call("r2", "Read", { file_path: "design/b.tsx" }),
+			]),
+		).toBe("Reading 2 files");
+	});
+
+	it("says what it last did while it thinks, and never a bare thinking", () => {
+		const status = statusOf([
+			call("r1", "Read", { file_path: "design/frames/cart/frame.tsx" }),
+			result("r1"),
+			{ kind: "waiting", parent: null },
+		]);
+		expect(status).toBe("Thinking after reading cart");
+		expect(status).not.toMatch(/^thinking$/i);
+	});
+
 	it("says the receipt in words, and the clock in minutes", () => {
 		expect(spokenDuration(528_000)).toBe("8m 48s");
 		expect(spokenDuration(42_400)).toBe("42s");

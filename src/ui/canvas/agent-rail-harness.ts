@@ -964,7 +964,9 @@ export async function running(canvas: ReturnType<typeof mount>, prompt = "start 
 
 /** the dot on the agent's rail icon, which says another thread has news (#364) */
 export const elsewhere = (host: HTMLElement) =>
-	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]') !== null;
+	// a dot on its way out is already gone, fading where it stood
+	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]:not([data-rail-mark-state="leaving"])') !==
+	null;
 
 export const lifeOfCell = async (host: HTMLElement, name: string) =>
 	(await cell(host, name))?.getAttribute("data-agent-thread-life");

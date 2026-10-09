@@ -58,7 +58,7 @@ it("keeps working across projects and restores a reply completed while away", { 
 	await rail.locator('[data-agent-wait="running"]').waitFor({ state: "attached" });
 	expect(await rail.locator('[data-agent-wait="running"]').textContent()).not.toContain("1440:");
 	// and the line that is seen counts from the same start
-	expect(await rail.locator('[data-agent-status="running"]').textContent()).not.toContain("1440:");
+	expect(await rail.locator('[data-agent-turn-line="running"]').textContent()).not.toContain("1440:");
 	expect(await field.inputValue()).toBe("Keep this next draft.");
 	expect(agent.spawned.filter((proc) => proc.inputs.some((line) => line.includes("Finish this")))).toHaveLength(1);
 	await page.locator(`[data-tab="${other.root}"] .project-tab-label`).click();

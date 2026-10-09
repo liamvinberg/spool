@@ -66,8 +66,9 @@ import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
 import { AgentCompanionLayer } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
-import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
+import { type ArmedWrite, rangeKeyOf, useLocatedMarks } from "./agent-hand";
 import { useAgentModel } from "./agent-model";
+import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
@@ -1318,9 +1319,10 @@ export function ProjectCanvas({
 		for (const name of iframes.current.keys()) requestSiteBoxes(name);
 	}, [edges, requestSiteBoxes]);
 
-	// the agent's hand (#214): where it is, and what it has just changed. The arms are a
-	// ref here because `requestSiteBoxes` reads them from inside a message handler
-	const { marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
+	// the blocks the agent's writes changed, as documents measure them (#214, #366): the
+	// located marks its companions ring. The arms are a ref here because `requestSiteBoxes`
+	// reads them from inside a message handler
+	const { marks: locatedMarks, strike } = useLocatedMarks(project, turn, armedWrites);
 	// where each working agent is on the canvas (#366). A call on a file in a frame's own
 	// subfolder names that subfolder (#336): the agent is at the frame holding it
 	const companions = useMemo(
@@ -1333,16 +1335,27 @@ export function ProjectCanvas({
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	const askFooted = !railShown && turn.phase === "asking";
-	/** the ask that stands on the canvas, and the frame it hangs from: none where it is about no frame */
+	/**
+	 * The ask that stands on the canvas, and what it hangs from: the frame its agent is at,
+	 * or the spot reserved for a designer's frame before it has one. None where it is about
+	 * neither.
+	 */
 	const footedAsk = useMemo(() => {
 		if (!askFooted) return null;
 		const entry = turn.entries.find(
 			(one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null,
 		);
 		if (entry === undefined) return null;
-		const by = companions.find((one) => one.key === (entry.agent ?? "") && one.frame !== null);
-		return by?.frame == null ? null : { entry, frame: by.frame };
+		const by = companions.find(
+			(one) => one.key === (entry.delegation ?? "") && (one.frame !== null || one.spot !== null),
+		);
+		if (by === undefined) return null;
+		return { entry, frame: by.frame, spot: by.spot };
 	}, [askFooted, turn.entries, companions]);
+	// answered, or the rail opened, the card fades where it stood rather than vanishing
+	const footedShown = useLeaving(footedAsk !== null, FADE_OUT_MS);
+	const footedLast = useHeld(footedAsk);
+	const standingAsk = footedShown === null ? null : (footedAsk ?? footedLast);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -5875,26 +5888,33 @@ export function ProjectCanvas({
 								marquee={marquee}
 								dropLine={dropLine}
 							/>
-							{/* the agent's hand (#214), in the same screen space as the furniture
-						    beside it: presence on any visible frame at any zoom, and a located
-						    mark wherever a document was live enough to be measured */}
+							{/* the agent's companions (#366), in the same screen space as the furniture
+						    beside them: presence on any visible frame at any zoom, and a ring on
+						    a located mark wherever a document was live enough to be measured */}
 							<AgentCompanionLayer
 								camera={camera}
 								frames={visibleFrames}
 								companions={companions}
-								marks={handMarks}
+								marks={locatedMarks}
 								footed={askFooted}
 							/>
 							{(() => {
+								// under its frame, or under the spot held for it while the frame is not there yet
 								const at =
-									footedAsk === null ? undefined : visibleFrames.find((one) => one.name === footedAsk.frame);
-								return footedAsk === null || at === undefined ? null : (
+									standingAsk === null
+										? undefined
+										: (visibleFrames.find((one) => one.name === standingAsk.frame) ??
+											(standingAsk.frame === null || !reach.have.has(standingAsk.frame)
+												? (standingAsk.spot ?? undefined)
+												: undefined));
+								return standingAsk === null || at === undefined ? null : (
 									<CanvasAsk
-										key={footedAsk.entry.key}
+										key={standingAsk.entry.key}
 										camera={camera}
 										frame={at}
-										entry={footedAsk.entry}
+										entry={standingAsk.entry}
 										onAnswer={turn.answer}
+										leaving={footedShown === "leaving"}
 									/>
 								);
 							})()}

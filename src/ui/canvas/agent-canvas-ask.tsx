@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
+import type { Camera } from "../api";
 import { AskCard, type AskEntry, useAsk } from "./agent-ask-view";
 import { type Box, toScreen } from "./camera";
 import type { CameraStore } from "./camera-store";
@@ -13,22 +14,34 @@ import type { CameraStore } from "./camera-store";
 
 /** the card's width on screen, as wide as the rail's own block */
 const WIDTH = 360;
-/** the gap between the frame's foot and the card's notch */
-const BELOW = 22;
-/** the notch, over the companion that sits at the frame's left foot */
-const NOTCH = 15;
+
+/**
+ * Where the card hangs off its frame's left foot, in screen pixels: its top edge `below`
+ * the foot, and its notch centred `notch` in, whose tip is `tip` below the foot. The
+ * companion that hangs the ask stands on that tip (`agent-companion-layer`).
+ */
+export const HANG = { below: 22, notch: 15, tip: 14 } as const;
+
+/** the card's place on screen, under its frame as the camera shows it */
+function hang(element: HTMLElement, frame: Box, view: Camera): void {
+	const rect = toScreen(frame, view);
+	element.style.transform = `translate(${Math.round(rect.x)}px, ${Math.round(rect.y + rect.h + HANG.below)}px)`;
+}
 
 export function CanvasAsk({
 	camera,
 	frame,
 	entry,
 	onAnswer,
+	leaving = false,
 }: {
 	camera: CameraStore;
 	/** the frame the ask is about, in canvas units */
 	frame: Box;
 	entry: AskEntry;
 	onAnswer: (request: string, reply: AgentReply) => void;
+	/** answered or taken back into the rail: it fades where it stands, and takes no more presses */
+	leaving?: boolean;
 }) {
 	const ask = useAsk(entry, onAnswer);
 	const card = useRef<HTMLDivElement | null>(null);
@@ -44,9 +57,8 @@ export function CanvasAsk({
 				element.style.visibility = "hidden";
 				return;
 			}
-			const rect = toScreen(box.current, view);
 			element.style.visibility = "";
-			element.style.transform = `translate(${Math.round(rect.x)}px, ${Math.round(rect.y + rect.h + BELOW)}px)`;
+			hang(element, box.current, view);
 		};
 		place();
 		return camera.subscribe(place);
@@ -57,20 +69,23 @@ export function CanvasAsk({
 		const view = camera.get();
 		const element = card.current;
 		if (view === null || element === null) return;
-		const rect = toScreen(frame, view);
-		element.style.transform = `translate(${Math.round(rect.x)}px, ${Math.round(rect.y + rect.h + BELOW)}px)`;
+		hang(element, frame, view);
 	}, [frame.x, frame.y, frame.w, frame.h]);
 
 	return (
 		<div
 			ref={card}
-			data-agent-canvas-ask=""
-			className="pointer-events-auto absolute top-0 left-0"
+			data-agent-canvas-ask={leaving ? "leaving" : ""}
+			className={
+				leaving
+					? "pointer-events-none absolute top-0 left-0 animate-agent-fade-out"
+					: "pointer-events-auto absolute top-0 left-0"
+			}
 			style={{ width: WIDTH }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
-			<AskCard entry={entry} ask={ask} notch={NOTCH / WIDTH} float />
+			<AskCard entry={entry} ask={ask} notch={HANG.notch / WIDTH} float />
 		</div>
 	);
 }

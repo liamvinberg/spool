@@ -180,7 +180,7 @@ describe("the turn's frames", () => {
 });
 
 /**
- * The agent on the canvas and its asks (#366): the bead arrives, travels and leaves, its
+ * The agent on the canvas and its asks (#366): the companion arrives, travels and leaves, its
  * corners fly out and fold back, the waiting ring breathes and an ask turns out of its
  * anchor, on the numbers the companion's legend settled. The layer drives travel itself,
  * so the numbers it runs on are the same ones the stylesheet keyframes.
@@ -188,7 +188,7 @@ describe("the turn's frames", () => {
 describe("the agent on the canvas", () => {
 	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
 	const TOKENS = canvas ? readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8") : "";
-	const MOVING = ["arrive", "corners-out", "flash", "ring", "breathe", "turn"];
+	const MOVING = ["arrive", "corners-out", "flash", "ring", "breathe", "ring-open"];
 	const LEAVING = ["depart", "corners-in", "gather"];
 	const SNAP = "cubic-bezier(0.32, 0.72, 0, 1)";
 	const IN_OUT = "cubic-bezier(0.65, 0, 0.35, 1)";
@@ -201,7 +201,7 @@ describe("the agent on the canvas", () => {
 		expect(CSS).toContain(`--animate-agent-corners-in: agent-corners-in ${MOTION.cornersIn}ms ${IN_OUT}`);
 		expect(CSS).toContain(`--animate-agent-flash: agent-flash ${MOTION.flashUp + MOTION.flashDown}ms`);
 		expect(CSS).toContain(`--animate-agent-breathe: agent-breathe ${MOTION.breathe}ms ${IN_OUT} infinite alternate`);
-		expect(CSS).toContain(`--animate-agent-turn: agent-turn ${MOTION.turn}ms ${SNAP}`);
+		expect(CSS).toContain(`--animate-agent-ring-open: agent-ring-open ${MOTION.ringOpen}ms ${SNAP}`);
 		expect(CSS).toContain(`--animate-agent-draw-in: agent-draw-in ${MOTION.drawIn}ms`);
 		expect(MOTION).toMatchObject({ travel: 420, idleAfter: 2000, idle: 400, lineIn: 180, landed: 300 });
 		expect(SNAP).toBe(`cubic-bezier(${EASE.snap.join(", ")})`);
