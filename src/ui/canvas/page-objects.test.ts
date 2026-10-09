@@ -104,6 +104,21 @@ describe("picking a page off the field", () => {
 	});
 });
 
+describe("a page holding frames on their way", () => {
+	const waiting = [{ name: "fresh/home--calm", page: "fresh", x: 0, y: 0, w: 390, h: 844 }];
+	const places = { ...PLACES, fresh: { x: 8000, y: 0 } };
+
+	it("counts its placeholders and draws them in its picture, marked as on their way", () => {
+		const [object] = pageObjectsOn("", ["fresh"], [], places, waiting);
+		expect(object?.count).toBe(1);
+		expect(object?.composition.frames).toMatchObject([{ name: "fresh/home--calm", waiting: true }]);
+	});
+
+	it("is not bare while one is on its way", () => {
+		expect(pageIsBare("fresh", [...PAGES, "fresh"], FRAMES, waiting)).toBe(false);
+	});
+});
+
 describe("a page with nothing anywhere", () => {
 	it("is bare only when it holds neither frames nor pages", () => {
 		expect(pageIsBare("fresh", [...PAGES, "fresh"], FRAMES)).toBe(true);

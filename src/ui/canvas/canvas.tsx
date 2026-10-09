@@ -578,8 +578,8 @@ export function ProjectCanvas({
 	 * object above it as soon as the projection lands.
 	 */
 	const pageObjects = useMemo(
-		() => pageObjectsOn(activePage, navigatorPages, navigatorFrames, places),
-		[activePage, navigatorPages, navigatorFrames, places],
+		() => pageObjectsOn(activePage, navigatorPages, navigatorFrames, places, placeholders),
+		[activePage, navigatorPages, navigatorFrames, places, placeholders],
 	);
 	const pageObjectsRef = useRef(pageObjects);
 	pageObjectsRef.current = pageObjects;
@@ -5547,7 +5547,10 @@ export function ProjectCanvas({
 	 * Page objects answered the first of those, and this answers the second.
 	 */
 	const pageEmpty =
-		loaded && !projectEmpty && activePage !== ROOT_PAGE && pageIsBare(activePage, navigatorPages, navigatorFrames);
+		loaded &&
+		!projectEmpty &&
+		activePage !== ROOT_PAGE &&
+		pageIsBare(activePage, navigatorPages, navigatorFrames, placeholders);
 	/**
 	 * Which rail the right column is standing in (#256).
 	 *
@@ -5649,6 +5652,7 @@ export function ProjectCanvas({
 					pages={navigatorPages}
 					activePage={activePage}
 					frames={navigatorFrames}
+					waiting={placeholders}
 					selected={selected}
 					onSwitchPage={activatePageFromTree}
 					onSelectFrame={selectFrameRow}
