@@ -1365,8 +1365,12 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// the start is what ties the two together — but a step names its call as well,
 				// and a stream that opened mid-delegation never saw the start
 				if (event.kind !== "task-done" && event.call !== null) taskCalls.set(event.task, event.call);
-				if (event.kind === "task-started")
+				if (event.kind === "task-started") {
 					tasks.set(event.task, { description: event.description, agent: event.agent, at, done: false });
+					// a tile opened for this task before the task was said takes its words now
+					for (const tile of tiles.values())
+						if (tile.task === event.task && tile.by === null) tile.by = event.description;
+				}
 				if (event.kind === "task-done") {
 					const task = tasks.get(event.task);
 					if (task !== undefined) task.done = true;

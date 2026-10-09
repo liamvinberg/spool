@@ -510,6 +510,12 @@ export function witnessFrames(
 	void (async () => {
 		try {
 			for await (const event of turn.events) {
+				// a delegation is said before the spot held for it, so the spot has a task to name
+				if (event.kind === "task-started") {
+					push(event);
+					observe(event);
+					continue;
+				}
 				observe(event);
 				// the turn's last word waits for the disk: a write just before it is the turn's
 				// and a spot nothing filled is let go with it
