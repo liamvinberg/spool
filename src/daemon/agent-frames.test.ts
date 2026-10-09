@@ -580,6 +580,23 @@ describe("a placeholder frame (#369)", () => {
 		await turn.end();
 	});
 
+	it("takes the next free name on its nested page when another designer holds the one its brief names", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => turn.log.some((event) => event.kind === "spot"));
+		turn.say(designer("t2", "d2", "Split home again", brief("ideas/home--split")));
+		await until(() => turn.log.filter((event) => event.kind === "spot").length === 2);
+		expect(
+			turn.log.filter((event) => event.kind === "spot").map((event) => event.kind === "spot" && event.name),
+		).toEqual(["ideas/home--split", "ideas/home--split-2"]);
+		expect(listProjectFrames(root).placeholders.map((one) => [one.name, one.page])).toEqual([
+			["ideas/home--split", "ideas"],
+			["ideas/home--split-2", "ideas"],
+		]);
+		await turn.end();
+	});
+
 	it("says whose agent made it on a team project, and says nobody's elsewhere (#378)", async () => {
 		const { root } = project();
 		const ada = { accountId: "acct-ada", name: "ada" };
