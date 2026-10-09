@@ -1,7 +1,7 @@
 import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
-import type { AgentEngineId } from "../../daemon/agent-engine";
+import { AGENT_ENGINE_IDS, type AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
@@ -9,7 +9,7 @@ import { CloseIcon, PlusIcon } from "../icons";
 import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { Chevron, Float } from "./agent-float";
-import { AgentMenu, engineName, INSTALL_LINES } from "./agent-menu";
+import { AgentMenu, ENGINES, engineName, InstallLine } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
@@ -864,37 +864,6 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
  * thing it says. Both step forward in brightness, which is the whole of the emphasis the
  * rest of the rail uses. */
 
-/** a line to paste, with the one control that puts it on the clipboard */
-function InstallLine({ name, line }: { name: string; line: string }) {
-	const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
-	return (
-		<div data-agent-install={name} className="flex flex-col gap-1">
-			<span className="text-muted type-caption">{name}</span>
-			<div className="flex items-center gap-2 rounded-sm border border-border/70 bg-surface/40 py-1 pr-1 pl-2">
-				<code className="min-w-0 flex-1 select-all truncate font-mono text-2xs text-text leading-4">{line}</code>
-				<button
-					type="button"
-					aria-label={`Copy the ${name} install line`}
-					onClick={() => {
-						void navigator.clipboard.writeText(line).then(
-							() => setCopied("copied"),
-							() => setCopied("failed"),
-						);
-					}}
-					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
-				>
-					{copied === "copied" ? "copied" : "copy"}
-				</button>
-			</div>
-			{copied === "failed" ? (
-				<span role="alert" className="text-muted type-caption">
-					Could not copy. Select the line and copy it.
-				</span>
-			) : null}
-		</div>
-	);
-}
-
 /**
  * Ask again: one control, in the rail's own weight, for both of these states.
  *
@@ -946,8 +915,8 @@ function InstallWall({ install }: { install: InstallDeck }) {
 					Spool works with the agent you already use. Install one in a terminal, then check again.
 				</p>
 				<div className="flex flex-col gap-2.5 pt-1">
-					{INSTALL_LINES.map((agent) => (
-						<InstallLine key={agent.id} name={agent.name} line={agent.line} />
+					{AGENT_ENGINE_IDS.map((engine) => (
+						<InstallLine key={engine} engine={engine} />
 					))}
 				</div>
 				<div className="flex items-center justify-between pt-1">
@@ -3068,30 +3037,24 @@ function RecoveryView({
 	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
 	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
 	if (engine !== undefined && (install.missing || login.out || recovery?.kind === "login")) {
-		const name = engineName(engine);
-		const wanted = INSTALL_LINES.find((agent) => agent.id === engine);
+		const { name, login: signIn } = ENGINES[engine];
 		return (
 			<div data-recovery={engine} className="flex flex-col gap-3">
 				<p className="text-base text-text leading-base">
 					{install.missing ? `${name} isn’t installed.` : `Sign in to ${name} to continue.`}
 				</p>
 				{install.missing ? (
-					wanted === undefined ? null : (
-						<InstallLine name={name} line={wanted.line} />
-					)
+					<InstallLine engine={engine} />
 				) : (
 					// each agent signs in in its own terminal flow: spool holds no login of its own
 					<p className="text-base text-muted leading-base">
-						{engine === "codex" ? (
+						Run <code className="font-mono text-xs">{signIn.command}</code> in a terminal
+						{signIn.inside === undefined ? null : (
 							<>
-								Run <code className="font-mono text-xs">codex login</code> in a terminal.
-							</>
-						) : (
-							<>
-								Run <code className="font-mono text-xs">{engine}</code> in a terminal, then{" "}
-								<code className="font-mono text-xs">/login</code>.
+								, then <code className="font-mono text-xs">{signIn.inside}</code>
 							</>
 						)}
+						.
 					</p>
 				)}
 				<div className="flex flex-wrap items-center gap-3">

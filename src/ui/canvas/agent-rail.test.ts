@@ -4306,7 +4306,7 @@ describe("no supported agent at all (#363)", () => {
 		expect(canvas.host.querySelector("[data-agent-dead]")).not.toBeNull();
 		await press(canvas.host.querySelector('[aria-label="Copy the pi install line"]'));
 		expect(copied).toHaveBeenCalledWith("npm i -g @earendil-works/pi-coding-agent");
-		expect(canvas.host.querySelector('[aria-label="Copy the pi install line"]')?.textContent).toBe("copied");
+		expect(canvas.host.querySelector('[data-agent-install="pi"] [aria-label="Copied"]')).not.toBeNull();
 	});
 
 	it("comes down on Check again once one is installed", async () => {
@@ -4435,7 +4435,7 @@ describe("signed out", () => {
 		// the binary's own words, verbatim, and one sentence of spool's under them saying
 		// what to do about it from here
 		expect(rail(canvas.host)?.textContent).toContain("Not logged in · Please run /login");
-		expect(rail(canvas.host)?.textContent).toContain("Run claude in a terminal, then /login.");
+		expect(rail(canvas.host)?.textContent).toContain("Run claude auth login in a terminal.");
 		expect(rail(canvas.host)?.textContent).not.toContain("never asks for a key");
 		expect(outStrip(canvas.host)?.textContent).toContain("Sign in to Claude Code to continue.");
 		// nothing local knows any better than the last spawn did, so the composer stays live

@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
-import type { AgentEngineId } from "../../daemon/agent-engine";
+import { AGENT_ENGINE_IDS, type AgentEngineId, isAgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { AgentAsk, AgentModel, AgentOffer } from "../../daemon/agent-offer";
 import { chooseEngineModel, engineModelOffer, fetchAgentEngines, fetchAgentLogin } from "../api";
@@ -11,30 +11,38 @@ import { type AgentModelDeck, offerOf } from "./agent-model";
 import type { LoginDeck } from "./agent-preflight";
 
 /**
- * One install line per agent spool runs (#363), in the fallback's own order. Codex is listed
- * before spool runs it, because the wall is about what you can install, and the line is the
- * vendor's own npm package either way.
+ * What the rail says about each agent spool drives (#363, #364), in one place: the name a
+ * person reads, the vendor's own npm package that installs it, and how it signs in from a
+ * terminal. `inside` is what to type inside the agent once the command has started it. Every
+ * agent is listed whether or not the machine has it, because the wall and "Get more agents"
+ * are about what you can install; the order is the fallback's, Claude Code, Codex, pi.
  */
-export const INSTALL_LINES = [
-	{ id: "claude", name: "Claude Code", line: "npm i -g @anthropic-ai/claude-code" },
-	{ id: "codex", name: "Codex", line: "npm i -g @openai/codex" },
-	{ id: "pi", name: "pi", line: "npm i -g @earendil-works/pi-coding-agent" },
-] as const;
-
-/**
- * What the rail says about each agent it can drive (#364): the name a person reads, and
- * the commands that install it and sign it in. A stopgap table on this side of the wire
- * until the engines say it themselves; an agent is only ever drawn as a group when the
- * daemon reports it installed, and a lacking one by its install line.
- */
-export const ENGINE_FACTS: Readonly<Record<string, { name: string; install: string; login: string }>> = {
-	claude: { name: "Claude Code", install: INSTALL_LINES[0].line, login: "claude auth login" },
-	codex: { name: "Codex", install: INSTALL_LINES[1].line, login: "codex login" },
-	pi: { name: "pi", install: INSTALL_LINES[2].line, login: "pi, then /login" },
+export const ENGINES: Readonly<
+	Record<AgentEngineId, { name: string; install: string; login: { command: string; inside?: string } }>
+> = {
+	claude: {
+		name: "Claude Code",
+		install: "npm i -g @anthropic-ai/claude-code",
+		login: { command: "claude auth login" },
+	},
+	codex: { name: "Codex", install: "npm i -g @openai/codex", login: { command: "codex login" } },
+	pi: { name: "pi", install: "npm i -g @earendil-works/pi-coding-agent", login: { command: "pi", inside: "/login" } },
 };
 
+/** an engine's name, or the raw id of one spool no longer runs (a legacy chat's "spool") */
 export const engineName = (engine: string | undefined): string =>
-	engine === undefined ? "" : (ENGINE_FACTS[engine]?.name ?? engine);
+	engine === undefined ? "" : isAgentEngineId(engine) ? ENGINES[engine].name : engine;
+
+/** an agent's install line under its name, to copy into a terminal */
+export function InstallLine({ engine }: { engine: AgentEngineId }) {
+	const { name, install } = ENGINES[engine];
+	return (
+		<div data-agent-install={engine} className="flex flex-col gap-1.5">
+			<span className="text-muted type-label">{name}</span>
+			<CommandLine command={install} label={`Copy the ${name} install line`} />
+		</div>
+	);
+}
 
 /** what each effort level means, said as a person would; a level not here says nothing */
 export const EFFORT_SAYS: Readonly<Record<string, string>> = {
@@ -178,7 +186,7 @@ export function AgentMenu({
 	const lacking =
 		engines === null
 			? []
-			: INSTALL_LINES.filter((one) => one.id !== own && !engines.some((has) => has.id === one.id && has.installed));
+			: AGENT_ENGINE_IDS.filter((id) => id !== own && !engines.some((has) => has.id === id && has.installed));
 	const modelsOf = (engine: string) => (engine === own ? offer.models : (others[engine]?.offer?.models ?? []));
 	const total = groups.reduce((sum, engine) => sum + modelsOf(engine).length, 0);
 	const findable = total > FIND_AT;
@@ -238,7 +246,7 @@ export function AgentMenu({
 		// an agent that answered with nothing to list, or whose list could not be read, is
 		// still an agent to pick, on whatever it answers with by default
 		const bare = !mine && others[engine] !== undefined && (others[engine]?.offer?.models.length ?? 0) === 0;
-		const facts = ENGINE_FACTS[engine];
+		const { login: signIn } = ENGINES[engine];
 		const signedOut = mine ? login?.out === true : others[engine]?.signedIn === false;
 		const models = modelsOf(engine).filter((entry) => matches(engine, entry, query));
 		if (models.length === 0 && !signedOut && query.trim() !== "") return null;
@@ -270,7 +278,12 @@ export function AgentMenu({
 						<p className="text-muted type-label">
 							{engineName(engine)} is signed out. Sign in from a terminal and its models show up here.
 						</p>
-						{facts?.login ? <CommandLine command={facts.login} /> : null}
+						<CommandLine command={signIn.command} />
+						{signIn.inside === undefined ? null : (
+							<p className="text-muted type-label">
+								then <span className="type-detail">{signIn.inside}</span>
+							</p>
+						)}
 						<span>
 							<button
 								type="button"
@@ -543,11 +556,8 @@ export function AgentMenu({
 							</button>
 							<Reveal open={more}>
 								<div className="flex flex-col gap-3 pt-1 pr-2 pb-2 pl-7">
-									{lacking.map((one) => (
-										<div key={one.id} data-agent-install={one.id} className="flex flex-col gap-1.5">
-											<span className="text-muted type-label">{one.name}</span>
-											<CommandLine command={one.line} />
-										</div>
+									{lacking.map((id) => (
+										<InstallLine key={id} engine={id} />
 									))}
 									<span>
 										<button

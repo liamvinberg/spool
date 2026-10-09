@@ -170,29 +170,39 @@ export function Versioned({
 
 /**
  * A command to paste in a terminal: verbatim mono on an inset, and a copy at its end
- * that turns to a check once the clipboard has it.
+ * that turns to a check once the clipboard has it. A clipboard that refuses says so, and
+ * the line stays there to select by hand.
  */
-export function CommandLine({ command }: { command: string }) {
-	const [copied, setCopied] = useState(false);
+export function CommandLine({ command, label }: { command: string; label?: string | undefined }) {
+	const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
 	return (
-		<div
-			data-agent-command={command}
-			className="flex min-h-7 min-w-0 items-center gap-2 rounded-sm border border-border bg-bg pr-1 pl-2"
-		>
-			<code className="min-w-0 flex-1 break-all py-1 text-text type-detail">{command}</code>
-			<button
-				type="button"
-				aria-label={copied ? "Copied" : `Copy ${command}`}
-				onClick={() => {
-					void navigator.clipboard
-						?.writeText(command)
-						.then(() => setCopied(true))
-						.catch(() => {});
-				}}
-				className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-raised hover:text-text type-caption"
+		<div className="flex flex-col gap-1">
+			<div
+				data-agent-command={command}
+				className="flex min-h-7 min-w-0 items-center gap-2 rounded-sm border border-border bg-bg pr-1 pl-2"
 			>
-				{copied ? <CheckIcon className="h-3 w-3" /> : "Copy"}
-			</button>
+				<code className="min-w-0 flex-1 select-all break-all py-1 text-text type-detail">{command}</code>
+				<button
+					type="button"
+					aria-label={copied === "copied" ? "Copied" : (label ?? `Copy ${command}`)}
+					onClick={() => {
+						const clipboard = navigator.clipboard;
+						if (clipboard === undefined) return setCopied("failed");
+						void clipboard.writeText(command).then(
+							() => setCopied("copied"),
+							() => setCopied("failed"),
+						);
+					}}
+					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-raised hover:text-text type-caption"
+				>
+					{copied === "copied" ? <CheckIcon className="h-3 w-3" /> : "Copy"}
+				</button>
+			</div>
+			{copied === "failed" ? (
+				<span role="alert" className="text-muted type-caption">
+					Could not copy. Select the line and copy it.
+				</span>
+			) : null}
 		</div>
 	);
 }
