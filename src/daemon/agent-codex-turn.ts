@@ -284,11 +284,13 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		}
 		const mode = CODEX_MODES[permissions];
 		const settings = {
-			cwd: root,
 			approvalPolicy: mode.approvalPolicy,
 			sandbox: mode.sandbox,
 			...(ask.value === undefined ? {} : { model: ask.value }),
 		};
+		// no cwd on a start: a named one has Codex write the project's trust into the person's
+		// config.toml (see `planCodexSpawn`), and the process already runs in the project
+		const start = () => target.request("thread/start", settings);
 		let opened: {
 			thread?: { id?: unknown; cwd?: unknown };
 			model?: unknown;
@@ -297,17 +299,18 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 		};
 		try {
 			opened = (await (options.session === null
-				? target.request("thread/start", settings)
+				? start()
 				: target.request("thread/resume", {
 						threadId: options.session,
 						excludeTurns: true,
+						cwd: root,
 						...settings,
 					}))) as typeof opened;
 		} catch (error) {
 			// a thread Codex no longer has (its first turn never ran, or its session was removed)
 			// starts again rather than refusing the person's message
 			if (options.session === null) throw error;
-			opened = (await target.request("thread/start", settings)) as typeof opened;
+			opened = (await start()) as typeof opened;
 		}
 		const thread = typeof opened?.thread?.id === "string" ? opened.thread.id : undefined;
 		if (thread === undefined) throw new Error("Codex started no thread.");

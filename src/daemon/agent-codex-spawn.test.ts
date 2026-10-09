@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { CODEX_MODES, planCodexSpawn, versionAtLeast, versionIn } from "./agent-codex-spawn";
 
 describe("codex's spawn", () => {
-	it("trusts the project for its own process, so Codex never writes to the person's config", () => {
+	it("runs in the project with loopback open, and leaves the project's trust to the person", () => {
 		const spawn = planCodexSpawn('/work/my "app"', {}, { permissions: "ask" });
-		expect(spawn.args).toContain('projects={"/work/my \\"app\\""={trust_level="trusted"}}');
 		expect(spawn.args).toContain("sandbox_workspace_write.network_access=true");
+		expect(spawn.args.some((arg) => arg.startsWith("projects"))).toBe(false);
 		expect(spawn.cwd).toBe('/work/my "app"');
 	});
 

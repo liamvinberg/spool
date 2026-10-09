@@ -107,6 +107,9 @@ describe("a codex turn, replayed", () => {
 			sandbox: "workspace-write",
 			model: "gpt-5.6-luna",
 		});
+		// a thread/start naming its cwd would have Codex write the project's trust into the
+		// person's config.toml; the process already runs there
+		expect(lines?.find((line) => line.method === "thread/start")?.params).not.toHaveProperty("cwd");
 		expect(lines?.find((line) => line.method === "turn/start")?.params).toMatchObject({ effort: "low" });
 	});
 

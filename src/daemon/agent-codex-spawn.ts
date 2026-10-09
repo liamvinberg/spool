@@ -91,17 +91,19 @@ function toml(value: string): string {
  *
  * `network_access` is the one change to Codex's sandbox: `workspace-write` blocks loopback
  * too, and every spool verb talks to the daemon over localhost, so without it `spool shot`
- * fails under Ask first and Auto-edit. `design/` sits inside the project root, which is the
- * sandbox's own writable root, so it needs no extra root. The framing rides as the
- * developer instructions only on a turn's spawn; a probe asks Codex about itself and needs
- * none.
+ * fails under Ask first and Auto-edit. Codex has no loopback-only switch for it: its
+ * per-domain allowlist is a proxy under `permissions.<profile>.network`, which a
+ * `thread/start` that names a `sandbox` cannot use, and which a client that does not
+ * read `HTTP_PROXY` (Node's `fetch`) goes around into the sandbox's block. `design/`
+ * sits inside the project root, which is the sandbox's own writable root, so it needs no
+ * extra root. The framing rides as the developer instructions only on a turn's spawn; a
+ * probe asks Codex about itself and needs none.
  *
- * The project is trusted for this process only. A `thread/start` that sets a sandbox in a
- * git checkout Codex has no trust entry for writes `[projects."<root>"] trust_level =
- * "trusted"` into the user's `~/.codex/config.toml` (seen on 0.161), and spool never
- * edits that file. Trust handed in on the command line is already there, so nothing is
- * written. It has to be the table form: Codex splits a dotted `-c` key on every dot, so
- * `projects."<root>".trust_level` names the wrong key and the write still happens.
+ * The project's trust is the person's own: spool sets none. Codex writes `[projects."<root>"]
+ * trust_level = "trusted"` into `~/.codex/config.toml` when a `thread/start` names a `cwd`
+ * in a project with no trust entry under a sandbox that can write there, so a turn's
+ * `thread/start` names none (`startCodexTurn`) and Codex takes the process's own directory,
+ * the project root, instead.
  *
  * A turn's spawn also carries spool's designer (#367) as an agent role: its config layer
  * is the file in spool's state, and its description is the hint the spawn tool shows.
@@ -124,8 +126,6 @@ export function planCodexSpawn(
 			"app-server",
 			"-c",
 			"sandbox_workspace_write.network_access=true",
-			"-c",
-			`projects={${toml(root)}={trust_level="trusted"}}`,
 			...(framing === undefined ? [] : ["-c", `developer_instructions=${toml(framing)}`]),
 			...(turn?.designer === undefined
 				? []

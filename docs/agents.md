@@ -53,11 +53,12 @@ Codex maps them to its own approval policy and sandbox:
 | edits | `on-request`, `workspace-write` |
 | bypass | `never`, `danger-full-access` |
 
-Under ask and edits, Spool allows loopback network access inside Codex's sandbox
-so `spool` verbs can reach the local daemon. Writes inside `design/` and
-read-only `spool` verbs are approved without asking; everything else Codex asks
-about reaches the rail. Spool trusts the project for its own Codex process and
-does not write Codex's `config.toml`. A turn on a Codex older than 0.151.0, the
+Under ask and edits, Spool turns on network access inside Codex's sandbox so
+`spool` verbs can reach the local daemon; Codex has no loopback-only setting.
+Writes inside `design/` and read-only `spool` verbs are approved without asking;
+everything else Codex asks about reaches the rail. Whether Codex trusts the
+project is your own Codex setting: Spool sets none and does not write Codex's
+`config.toml`. A turn on a Codex older than 0.151.0, the
 first release that resumes a thread without loading its whole history, stops
 before it starts and says to update it.
 

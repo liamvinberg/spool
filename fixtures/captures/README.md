@@ -118,6 +118,10 @@ Scrubbed: the project path is `$ROOT`, home directories are `/home/user`, the
 account email is `you@example.com`, the ChatGPT account id is zeroed, and
 `config/read`'s reply keeps only the model fields spool reads.
 
+Edited since: each `thread/start` spool wrote has lost its `cwd`, which spool
+stopped sending (a named `cwd` has Codex write the project's trust into the
+person's `config.toml`). Codex's replies are as recorded.
+
 ## Designer fan-outs
 
 Three recordings of the same ask, two directions for a `hello` frame, one per
