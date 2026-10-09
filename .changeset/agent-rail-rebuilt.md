@@ -2,7 +2,7 @@
 "spool.page": minor
 ---
 
-The agent rail has a calmer shell. The header holds the chat's title, which opens your other chats, and a plus for a new one. The agent icon wears a small dot when another chat is running or has news.
+The agent rail has a calmer shell. The chat's title sits on a line under the Agent tab and opens your other chats, and a plus in the tab row starts a new one. The agent icon wears a small dot when another chat is running or has news.
 
 The composer's controls are small and grey: attach, model and mode on the left, send on the right. Send turns into Stop while a turn runs. A message you send mid-turn waits at the end of the log, and Take back puts it back in the box. Once the conversation fills most of the model's context, a small ring says how full it is and offers a new chat.
 
