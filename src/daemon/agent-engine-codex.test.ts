@@ -7,6 +7,7 @@ import {
 	makeProject,
 	makeTempDir,
 	readCapture,
+	ScriptedAgentProc,
 	type ScriptedStep,
 	scriptedAgentExecutor,
 } from "../test-helpers";
@@ -204,6 +205,70 @@ describe("a codex turn, replayed", () => {
 		});
 		expect(spawned[0]?.mismatches).toEqual([]);
 		expect(events.find((event) => event.kind === "ended")).toMatchObject({ ending: "stopped" });
+	});
+
+	it("ends the sub-agents still running with the turn when Stop is pressed while it holds", async () => {
+		const main = threadIn("codex-designers", "turn/started");
+		const completed = outs("codex-designers", "turn/completed").find(
+			(out) => (out.params as { threadId?: string }).threadId === main,
+		);
+		const spawned: ScriptedAgentProc[] = [];
+		// codex-designers.json up to both designers starting, with the main thread's turn
+		// completing there rather than after a `wait`: what Codex does when the agent does not
+		// wait for its children, which no capture holds yet. Then the three interrupts
+		const engine = createCodexEngine({
+			executor: async (spawn) => {
+				const proc = new ScriptedAgentProc(spawn, "codex-designers", (steps) => {
+					const children = steps.findIndex(
+						(step, index) =>
+							index > 0 &&
+							"out" in step &&
+							step.out.method === "turn/started" &&
+							(step.out.params as { threadId?: string }).threadId !== main &&
+							steps.slice(0, index).filter((one) => "out" in one && one.out.method === "turn/started").length ===
+								2,
+					);
+					return [
+						...steps.slice(0, children + 1),
+						{ out: completed as Record<string, unknown> },
+						...[90, 91, 92].map((id) => ({ in: { id, method: "turn/interrupt" } })),
+						...[90, 91, 92].map((id) => ({ out: { id, result: {} } })),
+					];
+				});
+				spawned.push(proc);
+				return proc;
+			},
+			spoolDir: makeTempDir(),
+			version: "0.33.1",
+		});
+		const turn = engine.start({
+			root: makeTempDir(),
+			session: SESSION,
+			said: [{ prompt: "two directions for hello, one designer each", selection: "" }],
+			ask,
+			permissions: "edits",
+		});
+		const events = await drain(turn, (event) => {
+			if (event.kind === "holding") turn.interrupt();
+		});
+
+		const proc = spawned[0] as ScriptedAgentProc;
+		expect(proc.mismatches).toEqual([]);
+		const started = events
+			.filter((event) => event.kind === "task-started")
+			.map((event) => event.kind === "task-started" && event.task);
+		expect(started).toHaveLength(2);
+		// each running designer's own turn is interrupted, by the turn id it started
+		const asked = proc.inputs
+			.map((line) => JSON.parse(line) as { method?: string; params?: { threadId?: string; turnId?: string } })
+			.filter((line) => line.method === "turn/interrupt");
+		expect(asked.slice(1).map((line) => line.params?.threadId)).toEqual(started);
+		const turnIds = outs("codex-designers", "turn/started")
+			.filter((out) => started.includes((out.params as { threadId?: string }).threadId ?? ""))
+			.map((out) => (out.params as { turn: { id: string } }).turn.id);
+		expect(asked.slice(1).map((line) => line.params?.turnId)).toEqual(turnIds);
+		expect(events.filter((event) => event.kind === "ended")).toMatchObject([{ ending: "stopped" }]);
+		expect(proc.ended).toBe(true);
 	});
 
 	it("bounces a signed-out turn to Codex's own sign-in before starting anything", async () => {

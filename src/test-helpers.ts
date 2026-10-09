@@ -529,6 +529,9 @@ function isRequest(message: Record<string, unknown>): boolean {
  *
  * `$ROOT` anywhere in the capture is the spawn's working directory, so a project path
  * recorded in a scratch directory replays as the test's own project.
+ *
+ * `edit` reshapes the recording before it plays, for a wire no recording holds yet; a
+ * test that uses it says what it changed and why.
  */
 export class ScriptedAgentProc extends FakeAgentProc {
 	readonly capture: string;
@@ -536,12 +539,13 @@ export class ScriptedAgentProc extends FakeAgentProc {
 	private readonly steps: readonly ScriptedStep[];
 	private cursor = 0;
 	private readonly ids = new Map<string, unknown>();
-	constructor(spawn: AgentSpawn, capture: string) {
+	constructor(spawn: AgentSpawn, capture: string, edit?: (steps: ScriptedStep[]) => ScriptedStep[]) {
 		super(spawn);
 		this.capture = capture;
 		const root = JSON.stringify(spawn.cwd).slice(1, -1);
 		const file = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "captures", `${capture}.json`);
-		this.steps = JSON.parse(readFileSync(file, "utf8").replaceAll("$ROOT", root)) as ScriptedStep[];
+		const steps = JSON.parse(readFileSync(file, "utf8").replaceAll("$ROOT", root)) as ScriptedStep[];
+		this.steps = edit === undefined ? steps : edit(steps);
 		this.whenWritten = (_proc, line) => this.heard(line);
 		this.whenEnded = () => setImmediate(() => this.exit(0));
 		// whatever the process prints before it is asked anything
