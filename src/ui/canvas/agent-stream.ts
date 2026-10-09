@@ -335,6 +335,8 @@ interface Live {
 	folded: { rev: number; shown: Transcript } | null;
 	/** the revision the clock last drew, so a tick knows whether it has anything to say */
 	ticked: number;
+	/** the whole second of the turn the clock last drew, so the rail's clock ticks on its own */
+	second: number;
 	/** climbs per send, which is what re-arms the clock */
 	run: number;
 	/** the stream is open, written by the stream rather than by a render */
@@ -406,6 +408,7 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		rev: 0,
 		folded: null,
 		ticked: 0,
+		second: 0,
 		run: 0,
 		streaming: false,
 		ms: 0,
@@ -1125,9 +1128,10 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 	 * **A tick that changed nothing draws nothing.** The interval used to redraw for every
 	 * thread that had ever run, which is a render of the whole canvas ten times a second
 	 * for as long as a turn stayed open — including the long middle of a turn where the
-	 * agent is running a tool, no words are arriving and not one pixel is owed. So each
-	 * thread is asked what it has moved, and there are only two answers: events landed
-	 * that nothing else draws, or a request that is still out has a number climbing on it.
+	 * agent is running a tool and no words are arriving. So each
+	 * thread is asked what it has moved, and there are only three answers: events landed
+	 * that nothing else draws, the clock reached a new second, or a request that is still
+	 * out has a number climbing on it.
 	 */
 	useEffect(() => {
 		const timer = setInterval(() => {
@@ -1148,6 +1152,17 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				// whatever else it is or is not doing
 				if (thread.ticked !== thread.rev) {
 					thread.ticked = thread.rev;
+					moved = true;
+				}
+				/*
+				 * The clock itself moves on the clock alone (#370). Designers at work send the
+				 * main thread nothing, so a clock that waited for an event held and then jumped.
+				 * One draw per new second; a parked turn's clock is stopped, so it owes none, and
+				 * under stillness the rail draws no number at all.
+				 */
+				const second = Math.floor(now / 1000);
+				if (!still && second !== thread.second) {
+					thread.second = second;
 					moved = true;
 				}
 				const { entries } = shownOf(thread);
