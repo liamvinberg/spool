@@ -6,6 +6,7 @@ import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
 import { CloseIcon } from "../icons";
 import { useRemembered } from "../remembered";
+import { Spinner, WaitingMark } from "./agent-marks";
 import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
 import {
@@ -1275,34 +1276,16 @@ function RailIcon({
 		>
 			{def.icon}
 			{waiting ? (
-				<svg
-					viewBox="0 0 12 12"
-					aria-hidden="true"
+				<WaitingMark
 					data-rail-mark="waiting"
-					fill="none"
-					className="-right-1 absolute top-0 h-3 w-3 animate-agent-arrive rounded-full bg-bg text-text"
-				>
-					<circle
-						className="animate-agent-breathe"
-						cx="6"
-						cy="6"
-						r="4.6"
-						stroke="currentColor"
-						strokeWidth="1.4"
-					/>
-					<circle cx="6" cy="6" r="2.1" fill="currentColor" />
-				</svg>
+					className="-right-1 absolute top-0 h-3 w-3 animate-agent-arrive rounded-full bg-bg"
+				/>
 			) : working ? (
-				<svg
-					viewBox="0 0 14 14"
-					aria-hidden="true"
+				<Spinner
 					data-rail-mark="working"
-					fill="none"
-					className="-right-1 absolute top-0 h-3 w-3 animate-agent-spin text-text/60"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.6" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-				</svg>
+					strokeWidth={1.6}
+					className="-right-1 absolute top-0 h-3 w-3 text-text/60"
+				/>
 			) : unread ? (
 				<span
 					aria-hidden="true"

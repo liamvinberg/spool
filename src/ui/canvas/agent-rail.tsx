@@ -9,6 +9,7 @@ import { CloseIcon, PlusIcon } from "../icons";
 import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { Chevron, Float, RailMenu } from "./agent-float";
+import { Spinner } from "./agent-marks";
 import { AgentMenu, ENGINES, engineName, InstallLine } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
@@ -827,15 +828,7 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
 	return (
 		<span data-agent-mark={life} className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center", className)}>
 			{turning ? (
-				<svg
-					viewBox="0 0 14 14"
-					className="h-3.5 w-3.5 animate-agent-spin text-text/60"
-					fill="none"
-					aria-hidden="true"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				</svg>
+				<Spinner className="h-3.5 w-3.5 text-text/60" />
 			) : life === "waiting" ? (
 				// the same ring working turns, at rest and dimmed so the disc reads as the thing
 				// in it rather than as a second object beside it
@@ -880,17 +873,7 @@ function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 			onClick={onClick}
 			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 text-text transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
 		>
-			{busy ? (
-				<svg
-					viewBox="0 0 14 14"
-					className="h-3 w-3 shrink-0 animate-agent-spin text-muted/60"
-					fill="none"
-					aria-hidden="true"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-				</svg>
-			) : null}
+			{busy ? <Spinner className="h-3 w-3 text-muted/60" /> : null}
 			{busy ? "looking" : "check again"}
 		</button>
 	);
@@ -1924,21 +1907,7 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 					ringed ? "opacity-100" : "scale-[0.62] opacity-0",
 				)}
 			>
-				<svg
-					viewBox="0 0 14 14"
-					className={cn(
-						turning ? "text-text/60" : "text-text/35",
-						"h-full w-full",
-						turning && "animate-agent-spin",
-					)}
-					fill="none"
-					aria-hidden="true"
-				>
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					{turning ? (
-						<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-					) : null}
-				</svg>
+				<Spinner turning={turning} className={cn(turning ? "text-text/60" : "text-text/35", "h-full w-full")} />
 			</span>
 			<svg viewBox="0 0 14 14" className="absolute inset-0 h-full w-full text-muted" fill="none" aria-hidden="true">
 				{strokes.map((stroke) => (
