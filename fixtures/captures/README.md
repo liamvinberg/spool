@@ -138,3 +138,21 @@ the init's tool, connector, command, skill and plugin listings and pi's system
 prompt sections are markers. In the Claude window each tool call's streamed
 input is one fragment rather than the recorded several, so the path in it
 could be scrubbed whole.
+
+## Background designers
+
+`claude-background.json` (377 lines, stream) is one whole turn on Claude Code
+2.1.295 on `claude-haiku-5-5` at `low`, under Bypass, taken 2026-10-09 through
+spool's own spawn with the designer mounted (#365). Asked for two directions of
+`hello`, the main agent started two `Agent` calls with `run_in_background: true`
+and answered while both still ran. It holds what a turn's lifetime is read off:
+`background_tasks_changed` with the whole running set after each change, a
+`result` at 8 seconds with both designers running, one more `init` and `result`
+each time a `task_notification` wakes the main agent, and the last `result`
+after the set is empty. Each designer wrote its frame with a shell heredoc, and
+one heredoc failed and was retried with an absolute path. Background sub-agents'
+messages carry `parent_tool_use_id` but stream no partial deltas.
+
+Scrubbed as the fan-outs above, except that each streamed input keeps its
+recorded number of fragments: the fragments were joined, scrubbed and cut again
+evenly, so the cuts fall in different places than the wire's.
