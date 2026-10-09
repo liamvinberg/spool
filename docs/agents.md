@@ -16,7 +16,7 @@ would:
 
 | Agent | Install | Sign in |
 | --- | --- | --- |
-| Claude Code | `npm i -g @anthropic-ai/claude-code` | run `claude`, then `/login` |
+| Claude Code | `npm i -g @anthropic-ai/claude-code` | run `claude auth login` |
 | Codex (0.151.0 or later) | `npm i -g @openai/codex` | run `codex login` |
 | pi | `npm i -g @earendil-works/pi-coding-agent` | run `pi`, then `/login` |
 
