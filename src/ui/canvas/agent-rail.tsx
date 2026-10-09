@@ -1693,8 +1693,14 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 							<Shot key={slice.id} shot={slice} of={entry.frame ?? entry.detail} quiet />
 						))}
 						{shot === null && entry.detail !== null ? (
-							<span data-agent-detail="" className="block truncate text-muted type-detail">
-								{entry.detail}
+							// a group of reads keeps one path or command a line (#365)
+							<span data-agent-detail="" className="block text-muted type-detail">
+								{entry.detail.split("\n").map((line, at) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: the same path read twice is two lines
+									<span key={at} className="block truncate">
+										{line}
+									</span>
+								))}
 							</span>
 						) : null}
 					</div>

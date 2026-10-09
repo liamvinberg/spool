@@ -1754,6 +1754,36 @@ describe("a tool row", () => {
 		expect(canvas.host.querySelector("[data-agent-detail]")?.textContent).toBe("design/frames/home/frame.tsx");
 	});
 
+	/** reads one after another are one row, every path behind its one disclosure (#365, story 48) */
+	it("groups reads and searches into one row, a path or command to a line behind it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "look around");
+
+		canvas.turn.push(ready);
+		for (const [id, tool, input] of [
+			["r1", "Read", { file_path: "/project/design/frames/home/frame.tsx" }],
+			["r2", "Read", { file_path: "/project/design/shared/tokens.css" }],
+			["g1", "Grep", { pattern: "accent" }],
+		] as const) {
+			canvas.turn.push({ kind: "called", id, tool, input, parent: null });
+			canvas.turn.push(settled(id));
+		}
+		canvas.turn.push(ended);
+		canvas.turn.close();
+		await settle();
+
+		expect(rows(canvas.host)).toEqual(["search 3 times"]);
+		expect(rail(canvas.host)?.textContent).not.toContain("tokens.css");
+		const disclosure = canvas.host.querySelector<HTMLElement>('[aria-label="search 3 times"]');
+		await act(async () => {
+			disclosure?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		expect(
+			[...(canvas.host.querySelector("[data-agent-detail]")?.children ?? [])].map((line) => line.textContent),
+		).toEqual(["design/frames/home/frame.tsx", "design/shared/tokens.css", "accent"]);
+	});
+
 	/** six edits to one frame are one row, and the count climbs while it happens */
 	it("counts a run of writes rather than repeating it", async () => {
 		const canvas = mount();
