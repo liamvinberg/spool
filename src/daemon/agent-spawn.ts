@@ -1,7 +1,7 @@
 import type { AgentPermissions } from "../settings/registry";
 import { skillText } from "../skill";
 import { DESIGNER_FRAMING } from "./agent-designer";
-import type { AgentMessage } from "./agent-engine";
+import { type AgentMessage, saidText } from "./agent-engine";
 
 /**
  * What spool spawns, and what it tells the thing it spawned (#115, #121, #126,
@@ -394,7 +394,7 @@ export function agentPromptContent(said: readonly AgentSaid[]): unknown[] {
 				source: { type: "base64", media_type: attachment.media, data: attachment.data },
 			});
 		}
-		blocks.push({ type: "text", text: one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}` });
+		blocks.push({ type: "text", text: saidText(one) });
 	}
 	return blocks;
 }

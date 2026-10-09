@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { mountDesigner } from "./agent-designer";
-import type { AgentEngine, AgentMessage } from "./agent-engine";
+import { type AgentEngine, type AgentMessage, saidText } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
 import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agent-offer";
 import { createPiRpc, piModelValue } from "./agent-pi";
@@ -84,9 +84,7 @@ export function planPiSpawn(
 
 /** what one turn says, as pi's `prompt` command takes it */
 export function piPrompt(said: readonly AgentMessage[]): Record<string, unknown> {
-	const message = said
-		.map((one) => (one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}`))
-		.join("\n\n");
+	const message = said.map(saidText).join("\n\n");
 	const images = said.flatMap((one) =>
 		(one.attachments ?? []).map((attachment) => ({
 			type: "image",

@@ -45,6 +45,14 @@ export interface AgentMessage {
 	readonly attachments?: readonly Attachment[];
 }
 
+/**
+ * What one message says as text, the selection block leading the words it is about. An
+ * empty selection adds nothing, not an empty block.
+ */
+export function saidText(one: AgentMessage): string {
+	return one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}`;
+}
+
 export interface EngineOfferOptions {
 	readonly root: string;
 	readonly session: AgentSessionRef;

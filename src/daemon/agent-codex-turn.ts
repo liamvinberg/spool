@@ -13,7 +13,7 @@ import {
 	versionAtLeast,
 } from "./agent-codex-spawn";
 import type { AgentReply } from "./agent-control";
-import type { AgentMessage } from "./agent-engine";
+import { type AgentMessage, saidText } from "./agent-engine";
 import type { AgentAsking, AgentRecovery } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import type { AgentAsk } from "./agent-spawn";
@@ -68,7 +68,7 @@ export function codexInput(said: readonly AgentMessage[]): unknown[] {
 			input.push({ type: "image", url: `data:${attachment.media};base64,${attachment.data}` });
 		input.push({
 			type: "text",
-			text: one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}`,
+			text: saidText(one),
 			text_elements: [],
 		});
 	}
