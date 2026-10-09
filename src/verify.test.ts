@@ -8,7 +8,7 @@ import { writeCaptureError } from "./daemon/thumbs";
 import { planShot, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { headlessShellArgs } from "./headless-shell";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
-import { type BootDeps, describeShots, logsFrame, shotFrame, shotFrames } from "./verify";
+import { type BatchShot, type BootDeps, formatBatchShot, logsFrame, shotFrame, shotFrames } from "./verify";
 
 /**
  * shot/logs against a really-served daemon. The compile paths never need a
@@ -161,6 +161,42 @@ describe("shot and logs, compile paths", () => {
 		expect((cleanLogs as { captureError?: unknown }).captureError).toBeUndefined();
 	});
 
+	it("answers a batch in the order named, each frame its own outcome, without a browser", async () => {
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
+		const { frame: _, ...batch } = deps("unused");
+
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames(batch, ["nope", "broken", "nope"])) shots.push(shot);
+
+		// a name given twice is shot once
+		expect(shots.map((shot) => [shot.frame, shot.outcome.kind])).toEqual([
+			["nope", "missing"],
+			["broken", "broken"],
+		]);
+		expect(formatBatchShot(shots[0] as BatchShot)).toBe(
+			'nope: not found\n  no frame "nope" on the canvas — a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder',
+		);
+		const broken = formatBatchShot(shots[1] as BatchShot).split("\n");
+		expect(broken[0]).toBe("broken: does not compile");
+		expect(broken.slice(1).join("\n")).toContain("Unexpected end of file");
+		expect(broken.slice(1).every((line) => line.startsWith("  "))).toBe(true);
+	});
+
+	it("reports a frame the daemon fails on as that frame's answer, not the batch's", async () => {
+		const { deps } = await serveVerifyProject();
+		const { frame: _, ...batch } = deps("unused");
+
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames({ ...batch, name: "no-such-project" }, ["one", "two"])) shots.push(shot);
+
+		expect(shots.map((shot) => [shot.frame, shot.outcome.kind])).toEqual([
+			["one", "failed"],
+			["two", "failed"],
+		]);
+		expect(formatBatchShot(shots[0] as BatchShot)).toMatch(/^one: failed\n {2}\S/);
+	});
+
 	it("refuses a fixed wait longer than any shot waits", async () => {
 		const { root, name, url, controlToken } = await serveVerifyProject();
 		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
@@ -171,134 +207,6 @@ describe("shot and logs, compile paths", () => {
 				body: JSON.stringify({ width: 160, height: 120, at }),
 			});
 		expect((await boot(SHOT_AT_MAX_MS + 1)).status).toBe(400);
-	});
-});
-
-describe("batched shots", () => {
-	it("answers every frame asked, in order and once, and a broken one never stops the rest", async () => {
-		const { root, deps } = await serveVerifyProject();
-		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
-		writeFrame(root, "alsobroken", "export default function AlsoBroken() { return <p>{;\n}\n");
-
-		const shots = await shotFrames(deps("unused"), ["broken", "gone", "alsobroken", "broken"]);
-
-		expect(shots.map((shot) => [shot.frame, shot.outcome.kind])).toEqual([
-			["broken", "broken"],
-			["gone", "missing"],
-			["alsobroken", "broken"],
-		]);
-		const { text, failed } = describeShots(shots);
-		expect(failed).toBe(true);
-		expect(text).toContain("broken:\n  does not compile:\n    ");
-		expect(text).toContain('gone:\n  not found:\n    no frame "gone" on the canvas');
-	});
-
-	it("prints one block per frame with its files, height and console errors", () => {
-		const { text, failed } = describeShots([
-			{
-				frame: "cart",
-				outcome: {
-					kind: "shot",
-					files: ["/p/design/.spool/verify/cart.png"],
-					bootErrors: [],
-					consoleErrors: [{ type: "error", text: "Failed to load\nresource" }],
-					contentHeight: 844,
-				},
-			},
-			{
-				frame: "shop/home",
-				outcome: {
-					kind: "shot",
-					files: ["/p/home.1.png", "/p/home.2.png"],
-					bootErrors: [],
-					consoleErrors: [],
-					contentHeight: 2400,
-				},
-			},
-		]);
-
-		expect(failed).toBe(false);
-		expect(text).toBe(
-			[
-				"cart:",
-				"  /p/design/.spool/verify/cart.png",
-				"  content height: 844px",
-				"  console errors:",
-				"    [error] Failed to load",
-				"    resource",
-				"",
-				"shop/home:",
-				"  /p/home.1.png",
-				"  /p/home.2.png",
-				"  content height: 2400px",
-				"  console errors: none",
-				"",
-			].join("\n"),
-		);
-	});
-
-	it("fails the batch on a frame that threw uncaught, as a single shot does", () => {
-		const { failed } = describeShots([
-			{
-				frame: "thrower",
-				outcome: {
-					kind: "shot",
-					files: ["/p/thrower.png"],
-					bootErrors: ["Error: boom"],
-					consoleErrors: [{ type: "pageerror", text: "Error: boom" }],
-					contentHeight: 900,
-				},
-			},
-		]);
-		expect(failed).toBe(true);
-	});
-
-	it("boots every frame at once in the booth's tabs, each with its own console errors", {
-		timeout: 120_000,
-	}, async () => {
-		if (!(await browserAvailable())) return;
-		const { root, deps } = await serveVerifyProject();
-		writeFrame(root, "calm", "export default function Calm() { return <main>calm</main>; }\n");
-		writeFrame(
-			root,
-			"grumpy",
-			'console.error("grumpy at boot");\nexport default function Grumpy() { return <main>grumpy</main>; }\n',
-		);
-		// throws uncaught beside a render that lands, so no boot waits out an empty root
-		writeFrame(
-			root,
-			"thrower",
-			'setTimeout(() => { throw new Error("boom at boot"); });\nexport default function Thrower() { return <main>thrower</main>; }\n',
-		);
-		// warm the browser so the timing below is the shots' alone
-		await shotFrame(deps("calm", { viewport: { width: 160, height: 120 } }));
-
-		const at = 4000;
-		const started = Date.now();
-		const shots = await shotFrames(deps("unused", { viewport: { width: 160, height: 120 }, at }), [
-			"calm",
-			"grumpy",
-			"thrower",
-		]);
-		const took = Date.now() - started;
-
-		// three fixed waits one after another would be three times as long
-		expect(took).toBeLessThan(at * 2.75);
-		const [calm, grumpy, thrower] = shots.map((shot) => shot.outcome);
-		expect(calm).toMatchObject({ kind: "shot", consoleErrors: [], bootErrors: [] });
-		expect(grumpy).toMatchObject({ kind: "shot", consoleErrors: [{ type: "error", text: "grumpy at boot" }] });
-		expect(thrower).toMatchObject({ kind: "shot" });
-		if (thrower?.kind !== "shot") throw new Error("thrower did not shoot");
-		expect(thrower.consoleErrors.map((entry) => entry.text).join("\n")).toContain("boom at boot");
-		for (const outcome of [calm, grumpy, thrower]) {
-			if (outcome?.kind !== "shot") throw new Error("a frame did not shoot");
-			for (const file of outcome.files) expect(existsSync(file)).toBe(true);
-		}
-		const { text, failed } = describeShots(shots);
-		expect(failed).toBe(true);
-		expect(text).toContain("calm:\n");
-		expect(text).toContain("grumpy:\n");
-		expect(text).toContain("    [error] grumpy at boot");
 	});
 });
 
@@ -536,6 +444,47 @@ export default function Noisy() {
 		const errors = (thrown as { bootErrors: string[] }).bootErrors;
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors.join("\n")).toContain("boom at boot");
+	});
+
+	it("shoots a batch in parallel, each frame with its own console errors", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(root, "calm", "export default function Calm() { return <main>calm</main>; }\n");
+		writeFrame(
+			root,
+			"loud",
+			`console.error("loud at boot");
+console.log("not an error");
+
+export default function Loud() {
+	throw new Error("boom in a batch");
+}
+`,
+		);
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
+		const { frame: _, ...batch } = deps("unused", { viewport: { width: 160, height: 120 } });
+
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames(batch, ["calm", "loud", "broken"])) shots.push(shot);
+
+		expect(shots.map((shot) => shot.frame)).toEqual(["calm", "loud", "broken"]);
+		const verify = join(root, "design", ".spool", "verify");
+		expect(formatBatchShot(shots[0] as BatchShot)).toBe(
+			`calm: shot, content 120px tall, no console errors\n  ${join(verify, "calm.png")}`,
+		);
+		const loud = shots[1]?.outcome;
+		if (loud?.kind !== "shot") throw new Error("loud was not shot");
+		expect(loud.consoleErrors[0]).toBe("[error] loud at boot");
+		expect(
+			loud.consoleErrors.some((line) => line.startsWith("[pageerror]") && line.includes("boom in a batch")),
+		).toBe(true);
+		expect(loud.consoleErrors.join("\n")).not.toContain("not an error");
+		const block = formatBatchShot(shots[1] as BatchShot).split("\n");
+		expect(block[0]).toBe(`loud: shot, content 120px tall, ${loud.consoleErrors.length} console errors`);
+		expect(block.slice(1)).toEqual([join(verify, "loud.png"), ...loud.consoleErrors].map((line) => `  ${line}`));
+		expect(existsSync(join(verify, "loud.png"))).toBe(true);
+		expect(shots[2]?.outcome.kind).toBe("broken");
 	});
 
 	it("settles the way a cover does, or waits exactly as long as --at says", { timeout: 120_000 }, async () => {

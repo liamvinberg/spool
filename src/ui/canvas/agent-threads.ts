@@ -37,7 +37,7 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
  *   unread      it finished while you were away and nobody has read it. A solid dot at
  *               text strength, the way a mailbox says it, and still not the accent.
  *   read        an old thread. A hollow dot: present, and spent. The one life the list
- *               leaves out, because the rail icon says what is moving elsewhere.
+ *               leaves out, because the pane toggle says what is moving elsewhere.
  */
 export type Life = "streaming" | "running" | "waiting" | "unread" | "read";
 

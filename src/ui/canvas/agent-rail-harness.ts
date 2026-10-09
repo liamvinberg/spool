@@ -517,12 +517,12 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
 			// properties are what the right side shows by default (#359), so a file
-			// about the agent shows the agent alone: ⌥ on its rail icon, which is
+			// about the agent shows the agent alone: ⌥ on its toggle, which is
 			// what every test here starts from
 			await act(async () => {
 				await draftsFor("test").ready;
 			});
-			const icon = host.querySelector<HTMLElement>('[data-rail-icon="agent"]');
+			const icon = host.querySelector<HTMLElement>('[data-pane-toggle="agent"]');
 			if (icon !== null && icon.getAttribute("aria-pressed") !== "true") {
 				await act(async () => {
 					icon.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
@@ -968,11 +968,12 @@ export async function running(canvas: ReturnType<typeof mount>, prompt = "start 
 	await settle();
 }
 
-/** the dot on the agent's rail icon, which says another thread has news (#364) */
+/** the dot on the agent's toggle, which says another thread has news (#364) */
 export const elsewhere = (host: HTMLElement) =>
 	// a dot on its way out is already gone, fading where it stood
-	host.querySelector('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]:not([data-rail-mark-state="leaving"])') !==
-	null;
+	host.querySelector(
+		'[data-pane-toggle="agent"] [data-toggle-mark="elsewhere"]:not([data-toggle-mark-state="leaving"])',
+	) !== null;
 
 export const lifeOfCell = async (host: HTMLElement, name: string) =>
 	(await cell(host, name))?.getAttribute("data-agent-thread-life");

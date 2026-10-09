@@ -62,7 +62,7 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	const mode = rail.locator("[data-permission-trigger]");
 	const open = async (name: string) => {
 		await page.goto(`${project.url}/p/${encodeURIComponent(name)}`);
-		const glyph = page.locator('[data-rail-icon="agent"]');
+		const glyph = page.locator('[data-pane-toggle="agent"]');
 		if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 		await mode.waitFor();
 	};
@@ -81,8 +81,8 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	await settled("pi", "Full access");
 
 	await page.reload();
-	await page.locator('[data-rail-icon="agent"]').waitFor();
-	const glyph = page.locator('[data-rail-icon="agent"]');
+	await page.locator('[data-pane-toggle="agent"]').waitFor();
+	const glyph = page.locator('[data-pane-toggle="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 	await settled("pi", "Full access");
 	expect(await labels()).toEqual(["pi", "Full access"]);
@@ -110,7 +110,7 @@ it("keeps the agent and mode a person picked across a reload, a new thread and a
 	await expect.poll(() => mode.getAttribute("title")).toContain("from the next turn");
 	expect(running.inputs.some((line) => line.includes("set_permission_mode"))).toBe(false);
 	await page.reload();
-	await page.locator('[data-rail-icon="agent"]').waitFor();
+	await page.locator('[data-pane-toggle="agent"]').waitFor();
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 	await expect.poll(() => mode.textContent()).toBe("Ask first");
 	expect(await labels()).not.toContain("Full access");

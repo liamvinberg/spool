@@ -1,15 +1,13 @@
-import type { MouseEvent as ReactMouseEvent, ReactNode, PointerEvent as ReactPointerEvent } from "react";
+import type { ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
-import { CloseIcon } from "../icons";
 import { useRemembered } from "../remembered";
-import { Spinner, WaitingMark } from "./agent-marks";
-import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
+import { BarRule, PaneBarSlots, PaneToggle, ToggleGroup } from "./pane-bar";
 import {
 	type Action,
 	check,
@@ -35,8 +33,10 @@ import { STRIP_WIDTH, useRailDrag } from "./rail-width";
 
 /**
  * The canvas window's two sides (#359): the canvas in the middle, and on each
- * hand of it an always-on rail with a stack of the panes lit beside it. Where a
- * pane stands is `pane-layout.ts`; this file draws it and owns the gestures.
+ * hand of it a stack of the panes lit there, flush with the window's edge, each
+ * pane with a toggle at its side's end of the window bar (`pane-bar.tsx`).
+ * Where a pane stands is `pane-layout.ts`; this file draws it and owns the
+ * gestures.
  *
  * Every pane is rendered once, into a node of its own that is moved into the
  * slot its side gives it, so a pane hidden, collapsed or carried to the other
@@ -60,7 +60,7 @@ export interface PaneDef {
 	readonly render: (context: PaneContext) => ReactNode;
 	/** where its key puts the caret; the first control in it when left out */
 	readonly focus?: ((body: HTMLElement) => void) | undefined;
-	/** a turn in flight: rides its rail icon while the pane is out of sight, and leaves a mark when it lands there */
+	/** a turn in flight: rides its toggle while the pane is out of sight, and leaves a mark when it lands there */
 	readonly working?: boolean | undefined;
 	/**
 	 * Something elsewhere in the pane has news: for the agent, another chat runs, waits on a
@@ -79,8 +79,10 @@ export interface PaneDef {
 
 const STORAGE_KEY = "panes.layout";
 const CURVE = "cubic-bezier(0.23, 1, 0.32, 1)";
-/** a side's edge, the number both rails wore */
+/** a side's edge */
 const SIDE_MS = 300;
+/** a toggle gliding along the bar, and the bar making room for it */
+const TOGGLE_MS = 200;
 /** the layout taking its new shape after a drop */
 const DROP_MS = 250;
 /** the outline gliding between targets */
@@ -88,8 +90,10 @@ const GLIDE_MS = 150;
 /** a press travels this far before it is a drag */
 const SLOP = 4;
 const GHOST_H = 32;
-/** the slot line in a rail, as wide as a lit icon */
-const SLOT_W = 28;
+/** the insertion line among a side's toggles */
+const SLOT_H = 20;
+/** how far either hand of a side's toggles still counts as dropping among them */
+const BAR_REACH = 14;
 
 const REASON: Record<Exclude<Verdict, "ok" | "noop">, string> = {
 	cap: "3 panes a side",
@@ -145,12 +149,14 @@ const sameTarget = (a: Target | null, b: Target | null) => JSON.stringify(a) ===
 
 interface Zones {
 	panes: { pane: string; side: SideId; box: Box }[];
-	rails: { side: SideId; box: Box; items: { pane: string; box: Box }[] }[];
+	bars: { side: SideId; box: Box; items: { pane: string; box: Box }[] }[];
+	/** the window body, where a side would open */
+	body: Box;
 }
 
 interface Held {
 	pane: string;
-	from: "rail" | "head";
+	from: "toggle" | "head";
 	origin: Box;
 }
 
@@ -189,14 +195,14 @@ function useReducedMotion(): boolean {
 
 export function PaneWindow({
 	panes,
-	foot,
+	barEnd,
 	reveal,
 	children,
 	onShown,
 }: {
 	panes: readonly PaneDef[];
-	/** what stands at the foot of the right rail */
-	foot?: ReactNode;
+	/** what stands in the bar just inside the right side's toggles */
+	barEnd?: ReactNode;
 	/** show this pane whenever the key changes: the agent asked for from elsewhere */
 	reveal?: { readonly pane: string; readonly key: string } | undefined;
 	/** the canvas */
@@ -214,8 +220,26 @@ export function PaneWindow({
 	const guard = useMemo(() => isLayout(ids), [ids]);
 	const [layout, setLayout] = useRemembered<Layout>(STORAGE_KEY, defaultLayout(), guard);
 	const reduced = useReducedMotion();
+	const bar = useContext(PaneBarSlots);
 
 	const root = useRef<HTMLDivElement>(null);
+	/** the toggle groups, which stand in the bar outside this window's own tree */
+	const groups = useRef<Record<SideId, HTMLDivElement | null>>({ left: null, right: null });
+	const groupRefs = useMemo(
+		() => ({
+			left: (element: HTMLDivElement | null) => {
+				groups.current.left = element;
+			},
+			right: (element: HTMLDivElement | null) => {
+				groups.current.right = element;
+			},
+		}),
+		[],
+	);
+	const toggleEls = () => [
+		...(groups.current.left?.querySelectorAll<HTMLElement>("[data-pane-toggle]") ?? []),
+		...(groups.current.right?.querySelectorAll<HTMLElement>("[data-pane-toggle]") ?? []),
+	];
 	const body = useRef<HTMLDivElement>(null);
 	const ghost = useRef<HTMLDivElement>(null);
 	const outline = useRef<HTMLDivElement>(null);
@@ -281,7 +305,7 @@ export function PaneWindow({
 		return ref;
 	};
 	const parking = useRef<HTMLDivElement>(null);
-	// a pane off every rail waits out of sight, still mounted, for its key to bring it back
+	// a pane on neither side waits out of sight, still mounted, for its key to bring it back
 	useLayoutEffect(() => {
 		for (const pane of ids) {
 			if (sideOf(layout, pane) !== null) continue;
@@ -296,16 +320,12 @@ export function PaneWindow({
 	/** where each lit pane stood at the last render, so a pane new to a stack is told from one sliding in it */
 	const litBefore = useRef(new Map<string, SideId>());
 
-	const rel = (rect: DOMRect): Box => {
-		const outer = root.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
-		return { x: rect.left - outer.left, y: rect.top - outer.top, w: rect.width, h: rect.height };
-	};
+	// in the viewport's terms: a drag crosses from the sides into the bar, which is outside this window
+	const rel = (rect: DOMRect): Box => ({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
 
 	const capture = (extra?: Map<string, Box>, spawn?: { pane: string; box: Box } | null) => {
 		const rects = new Map<string, Box>();
-		for (const icon of root.current?.querySelectorAll<HTMLElement>("[data-rail-icon]") ?? []) {
-			rects.set(icon.dataset.railIcon ?? "", rel(icon.getBoundingClientRect()));
-		}
+		for (const toggle of toggleEls()) rects.set(toggle.dataset.paneToggle ?? "", rel(toggle.getBoundingClientRect()));
 		for (const [key, box] of extra ?? []) rects.set(key, box);
 		flip.current = { rects, spawn: spawn ?? null };
 	};
@@ -319,15 +339,16 @@ export function PaneWindow({
 		litBefore.current = now;
 		const element = root.current;
 		if (pending === null || element === null || reduced) return;
-		for (const icon of element.querySelectorAll<HTMLElement>("[data-rail-icon]")) {
-			const was = pending.rects.get(icon.dataset.railIcon ?? "");
+		// a toggle that changed sides glides the length of the bar to its new end
+		for (const toggle of toggleEls()) {
+			const was = pending.rects.get(toggle.dataset.paneToggle ?? "");
 			if (was === undefined) continue;
-			const at = rel(icon.getBoundingClientRect());
+			const at = rel(toggle.getBoundingClientRect());
 			const dx = was.x - at.x;
 			const dy = was.y - at.y;
 			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-			animate(icon, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], {
-				duration: DROP_MS,
+			animate(toggle, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], {
+				duration: TOGGLE_MS,
 				easing: CURVE,
 			});
 		}
@@ -454,7 +475,8 @@ export function PaneWindow({
 	const settling = useRef(false);
 
 	const measureZones = (): Zones => {
-		const zones: Zones = { panes: [], rails: [] };
+		const bodyBox = body.current === null ? { x: 0, y: 0, w: 0, h: 0 } : rel(body.current.getBoundingClientRect());
+		const zones: Zones = { panes: [], bars: [], body: bodyBox };
 		const element = root.current;
 		if (element === null) return zones;
 		const shown = fitWindow(
@@ -466,21 +488,29 @@ export function PaneWindow({
 			const pane = slot.dataset.paneSlot ?? "";
 			if (shown[side].shown.includes(pane)) zones.panes.push({ pane, side, box: rel(slot.getBoundingClientRect()) });
 		}
-		for (const rail of element.querySelectorAll<HTMLElement>("[data-rail]")) {
-			const items = [...rail.querySelectorAll<HTMLElement>("[data-rail-icon]")].map((item) => ({
-				pane: item.dataset.railIcon ?? "",
+		for (const id of ["left", "right"] as const) {
+			const group = groups.current[id];
+			if (group === null) continue;
+			const items = [...group.querySelectorAll<HTMLElement>("[data-pane-toggle]")].map((item) => ({
+				pane: item.dataset.paneToggle ?? "",
 				box: rel(item.getBoundingClientRect()),
 			}));
-			zones.rails.push({ side: rail.dataset.rail as SideId, box: rel(rail.getBoundingClientRect()), items });
+			const box = rel(group.getBoundingClientRect());
+			// an empty side's group has no width, and still takes a drop where it stands
+			zones.bars.push({
+				side: id,
+				box: { x: box.x - BAR_REACH, y: box.y, w: box.w + BAR_REACH * 2, h: box.h },
+				items,
+			});
 		}
 		return zones;
 	};
 
 	const hit = (d: Dragging, x: number, y: number): Target | null => {
-		for (const rail of d.zones.rails) {
-			if (!inside(rail.box, x, y)) continue;
-			const index = rail.items.findIndex((item) => y < item.box.y + item.box.h / 2);
-			return { kind: "rail", side: rail.side, index: index === -1 ? rail.items.length : index };
+		for (const group of d.zones.bars) {
+			if (!inside(group.box, x, y)) continue;
+			const index = group.items.findIndex((item) => x < item.box.x + item.box.w / 2);
+			return { kind: "bar", side: group.side, index: index === -1 ? group.items.length : index };
 		}
 		for (const zone of d.zones.panes) {
 			if (!inside(zone.box, x, y)) continue;
@@ -496,13 +526,18 @@ export function PaneWindow({
 	};
 
 	const outlineOf = (d: Dragging, target: Target): Box => {
-		if (target.kind === "rail") {
-			const rail = d.zones.rails.find((zone) => zone.side === target.side);
-			if (rail === undefined) return { x: 0, y: 0, w: 0, h: 0 };
-			const at = rail.items[target.index];
-			const last = rail.items[rail.items.length - 1];
-			const y = at !== undefined ? at.box.y - 2 : last !== undefined ? last.box.y + last.box.h + 2 : rail.box.y + 6;
-			return { x: rail.box.x + (rail.box.w - SLOT_W) / 2, y: y - 1.5, w: SLOT_W, h: 3 };
+		if (target.kind === "bar") {
+			const group = d.zones.bars.find((zone) => zone.side === target.side);
+			if (group === undefined) return { x: 0, y: 0, w: 0, h: 0 };
+			const at = group.items[target.index];
+			const last = group.items[group.items.length - 1];
+			const x =
+				at !== undefined
+					? at.box.x - 1
+					: last !== undefined
+						? last.box.x + last.box.w + 1
+						: group.box.x + group.box.w / 2;
+			return { x: x - 1, y: group.box.y + (group.box.h - SLOT_H) / 2, w: 2, h: SLOT_H };
 		}
 		const zone = d.zones.panes.find((candidate) => candidate.pane === target.anchor);
 		if (zone === undefined) return { x: 0, y: 0, w: 0, h: 0 };
@@ -547,25 +582,22 @@ export function PaneWindow({
 			return;
 		}
 		if (verdict === "ok") {
-			placeOutline(outlineOf(d, aimed), null, aimed.kind === "rail");
+			placeOutline(outlineOf(d, aimed), null, aimed.kind === "bar");
 			return;
 		}
-		// a refusal says why where there is room to read it: over the stack the drop
-		// would have opened beside a rail, or over the whole pane it aimed at
+		// a refusal says why where there is room to read it: over the side the drop
+		// would have opened or filled, or over the whole pane it aimed at
 		let box = outlineOf(d, aimed);
-		if (aimed.kind === "rail") {
-			const rail = d.zones.rails.find((zone) => zone.side === aimed.side);
-			const width = Math.max(LIMITS.sideMin, Math.min(LIMITS.sideMax, d.base[aimed.side].width));
-			if (rail !== undefined)
-				box = inset(
-					{
-						x: aimed.side === "left" ? rail.box.x + rail.box.w : rail.box.x - width,
-						y: rail.box.y,
-						w: width,
-						h: rail.box.h,
-					},
-					4,
-				);
+		if (aimed.kind === "bar") {
+			const open = fitWindow(d.base, d.env)[aimed.side];
+			const width = open.open
+				? open.width
+				: Math.max(LIMITS.sideMin, Math.min(LIMITS.sideMax, d.base[aimed.side].width));
+			const room = d.zones.body;
+			box = inset(
+				{ x: aimed.side === "left" ? room.x : room.x + room.w - width, y: room.y, w: width, h: room.h },
+				4,
+			);
 		} else {
 			const zone = d.zones.panes.find((candidate) => candidate.pane === aimed.anchor);
 			if (zone !== undefined) box = inset(zone.box, 4);
@@ -576,9 +608,10 @@ export function PaneWindow({
 	const moveGhost = (d: Dragging) => {
 		const element = ghost.current;
 		if (element === null) return;
-		const room = root.current?.clientWidth ?? Number.POSITIVE_INFINITY;
-		const x = Math.min(Math.max(d.point.x - d.grab.x, 4), room - element.offsetWidth - 4);
-		element.style.transform = `translate(${x}px, ${d.point.y - d.grab.y}px)`;
+		const x = Math.min(Math.max(d.point.x - d.grab.x, 4), window.innerWidth - element.offsetWidth - 4);
+		// over the bar the ghost hangs under the pointer, clear of the slot it is aiming at
+		const y = d.target?.kind === "bar" ? d.point.y + GHOST_H / 2 + 4 : d.point.y - d.grab.y;
+		element.style.transform = `translate(${x}px, ${y}px)`;
 	};
 
 	const endDrag = () => {
@@ -628,8 +661,8 @@ export function PaneWindow({
 		endDrag();
 		const extra = new Map<string, Box>();
 		const ghostBox = ghost.current === null ? null : rel(ghost.current.getBoundingClientRect());
-		// the moved icon flies in from the ghost's glyph
-		if (ghostBox !== null && target.kind === "rail")
+		// the moved toggle flies in from the ghost's glyph
+		if (ghostBox !== null && target.kind === "bar")
 			extra.set(d.pane, { x: ghostBox.x + 2, y: ghostBox.y, w: GHOST_H, h: GHOST_H });
 		const fresh =
 			target.kind === "stack" &&
@@ -641,16 +674,13 @@ export function PaneWindow({
 		setHeld(null);
 	};
 
-	const press = (pane: string, from: "rail" | "head", event: ReactPointerEvent<HTMLElement>) => {
+	const press = (pane: string, from: "toggle" | "head", event: ReactPointerEvent<HTMLElement>) => {
 		if (event.button !== 0 || settling.current || dragging.current !== null) return;
 		const source = event.currentTarget;
 		const pointerId = event.pointerId;
 		const start = { x: event.clientX, y: event.clientY };
 		clickEaten.current = false;
-		const local = (e: PointerEvent) => {
-			const outer = root.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
-			return { x: e.clientX - outer.left, y: e.clientY - outer.top };
-		};
+		const local = (e: PointerEvent) => ({ x: e.clientX, y: e.clientY });
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== "Escape" || dragging.current === null) return;
 			e.preventDefault();
@@ -664,11 +694,10 @@ export function PaneWindow({
 			if (d === null) {
 				if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < SLOP) return;
 				const origin = rel(source.getBoundingClientRect());
-				const outer = root.current?.getBoundingClientRect() ?? { left: 0, top: 0 };
-				// a header is held where it was taken, up to the title's end; an icon by its glyph
+				// a header is held where it was taken, up to the title's end; a toggle by its glyph
 				const grab =
 					from === "head"
-						? { x: Math.min(start.x - outer.left - origin.x, 96), y: GHOST_H / 2 }
+						? { x: Math.min(start.x - origin.x, 96), y: GHOST_H / 2 }
 						: { x: GHOST_H / 2 + 4, y: GHOST_H / 2 };
 				dragging.current = {
 					pane,
@@ -695,9 +724,9 @@ export function PaneWindow({
 				return;
 			}
 			d.point = local(e);
-			moveGhost(d);
 			const target = hit(d, d.point.x, d.point.y);
 			if (!sameTarget(target, d.target)) aim(d, target);
+			moveGhost(d);
 		};
 		const stop = () => {
 			window.removeEventListener("pointermove", move, true);
@@ -720,7 +749,7 @@ export function PaneWindow({
 		window.addEventListener("pointercancel", lost, true);
 	};
 
-	// the ghost appears where the icon or header was, and lifts
+	// the ghost appears where the toggle or header was, and lifts
 	// biome-ignore lint/correctness/useExhaustiveDependencies: placed once per lift
 	useLayoutEffect(() => {
 		const d = dragging.current;
@@ -798,12 +827,12 @@ export function PaneWindow({
 		handle.addEventListener("pointercancel", up);
 	};
 
-	/* ── the rail's own menu ─────────────────────────────────────────── */
+	/* ── a toggle's own menu ───────────────────────────────────────── */
 
 	useEffect(() => {
 		if (menu === null) return;
 		const away = (event: Event) => {
-			if (!(event.target instanceof Element) || event.target.closest("[data-rail-menu]") === null) setMenu(null);
+			if (!(event.target instanceof Element) || event.target.closest("[data-toggle-menu]") === null) setMenu(null);
 		};
 		const onEscape = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
@@ -849,7 +878,7 @@ export function PaneWindow({
 			const from = sideOf(layout, pane.id);
 			if (from === null) continue;
 			const to = other(from);
-			const target: Target = { kind: "rail", side: to, index: layout[to].rail.length };
+			const target: Target = { kind: "bar", side: to, index: layout[to].panes.length };
 			const verdict = check(layout, pane.id, target, at);
 			if (verdict === "noop") continue;
 			out.push({
@@ -881,7 +910,7 @@ export function PaneWindow({
 			if (sideOf(layout, pane.id) !== null)
 				out.push({
 					id: `remove-${pane.id}`,
-					label: `Remove ${pane.title} from rail`,
+					label: `Remove ${pane.title} from the bar`,
 					run: () => apply({ type: "remove", pane: pane.id }),
 				});
 		}
@@ -892,13 +921,14 @@ export function PaneWindow({
 	/* ── drawing ─────────────────────────────────────────────────────── */
 
 	const heldPane = held?.pane ?? null;
+	const barMotion = reduced ? "none" : `${TOGGLE_MS}ms ${CURVE}`;
 
 	const renderSide = (id: SideId) => {
 		const f = fits[id];
 		const hand = live[id];
 		const edgeDrag = id === "left" ? leftEdge : rightEdge;
 		const stackWidth = hand === null ? f.width : Math.max(sideMin(layout, id), hand);
-		const outer = hand === null ? f.outer : LIMITS.rail + hand;
+		const outer = hand === null ? f.outer : hand;
 		const open = hand === null ? f.open : hand > 0;
 		const stack = stackOf(layout, id);
 		const heights = stackHeights(
@@ -908,17 +938,12 @@ export function PaneWindow({
 		const tops = heights.map((_, i) => heights.slice(0, i).reduce((a, b) => a + b, 0));
 		const still = reduced || env === null || hand !== null;
 		const paneMotion = reduced || splitting ? "none" : `top ${DROP_MS}ms ${CURVE}, height ${DROP_MS}ms ${CURVE}`;
-		const railPanes = layout[id].rail;
 		return (
 			<aside
 				aria-label={`${SIDE_NAME[id]} side`}
 				data-side={id}
 				data-side-open={open ? "" : undefined}
-				onPointerDownCapture={(event) => {
-					// a rail click decides for itself; touching first could open the side under it
-					if (event.target instanceof Element && event.target.closest("[data-rail]") !== null) return;
-					apply({ type: "touch", side: id }, { flip: false });
-				}}
+				onPointerDownCapture={() => apply({ type: "touch", side: id }, { flip: false })}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onContextMenu={(event) => {
 					event.preventDefault();
@@ -927,17 +952,17 @@ export function PaneWindow({
 				className="relative z-20 h-full shrink-0 overflow-hidden bg-bg"
 				style={{ width: outer, transition: still ? "none" : `width ${SIDE_MS}ms ${CURVE}` }}
 			>
+				{/* laid out at its settled width against the window's edge, so the canvas edge uncovers it rather than squashing it */}
 				<div
 					data-side-stack={id}
-					className="absolute inset-y-0"
+					className={cn("absolute inset-y-0", id === "left" ? "left-0" : "right-0")}
 					style={{
 						width: stackWidth,
-						...(id === "left" ? { left: LIMITS.rail } : { right: LIMITS.rail }),
 						visibility: open ? "visible" : "hidden",
 						transition: open || still ? "none" : `visibility 0s linear ${SIDE_MS}ms`,
 					}}
 				>
-					{railPanes.map((pane) => {
+					{layout[id].panes.map((pane) => {
 						const at = stack.indexOf(pane);
 						const lit = at !== -1;
 						const shown = f.shown.includes(pane);
@@ -976,58 +1001,21 @@ export function PaneWindow({
 						</button>
 					))}
 				</div>
-				<nav
-					data-rail={id}
-					aria-label={`${SIDE_NAME[id]} rail`}
-					className={cn(
-						"absolute inset-y-0 z-20 flex flex-col items-center gap-1 border-border bg-bg pt-1.5",
-						id === "left" ? "left-0 border-r" : "right-0 border-l",
-					)}
-					style={{ width: LIMITS.rail }}
-				>
-					{railPanes.map((pane) => {
-						const def = byId.get(pane);
-						if (def === undefined) return null;
-						const lit = visible.includes(pane);
-						return (
-							<RailIcon
-								key={pane}
-								def={def}
-								lit={lit}
-								held={heldPane === pane}
-								working={!lit && def.working === true}
-								waiting={def.waiting === true}
-								unread={!lit && unread.has(pane)}
-								onPress={(event) => press(pane, "rail", event)}
-								onClick={(event) => picked(() => apply({ type: "click", pane, only: event.altKey }))}
-								onMenu={(event) => {
-									event.preventDefault();
-									event.stopPropagation();
-									const box = event.currentTarget.getBoundingClientRect();
-									setMenu({ pane, x: id === "right" ? box.left - 4 : box.right + 4, y: box.top });
-								}}
-							/>
-						);
-					})}
-					{id === "right" && foot !== undefined ? (
-						<div className="mt-auto mb-1.5 flex flex-col items-center gap-1">{foot}</div>
-					) : null}
-				</nav>
-				{/* the hairline on the edge that faces the canvas */}
+				{/* the one hairline, on the edge that faces the canvas, over whatever a pane draws to its edge */}
 				<span
 					aria-hidden="true"
 					className={cn(
-						"pointer-events-none absolute inset-y-0 z-20 w-px bg-border",
+						"pointer-events-none absolute inset-y-0 z-40 w-px bg-border",
 						id === "left" ? "right-0" : "left-0",
 					)}
 				/>
-				{railPanes.length > 0 ? (
+				{open ? (
 					<button
 						type="button"
 						aria-label={`Resize ${id} side`}
 						{...edgeDrag.grip}
 						className={cn(
-							"group absolute top-0 z-30 h-full w-1.5 cursor-col-resize touch-none outline-none",
+							"group absolute top-0 z-50 h-full w-1.5 cursor-col-resize touch-none outline-none",
 							id === "left" ? "right-0" : "left-0",
 						)}
 					>
@@ -1043,21 +1031,83 @@ export function PaneWindow({
 		);
 	};
 
+	const renderToggles = (id: SideId) => {
+		const here = layout[id].panes.filter((pane) => byId.has(pane));
+		return (
+			<ToggleGroup side={id} count={here.length} motion={barMotion} groupRef={groupRefs[id]}>
+				{here.map((pane) => {
+					const def = byId.get(pane) as PaneDef;
+					const lit = visible.includes(pane);
+					return (
+						<PaneToggle
+							key={pane}
+							def={def}
+							lit={lit}
+							held={heldPane === pane}
+							working={!lit && def.working === true}
+							waiting={def.waiting === true}
+							unread={!lit && unread.has(pane)}
+							onPress={(event) => press(pane, "toggle", event)}
+							onClick={(event) => picked(() => apply({ type: "click", pane, only: event.altKey }))}
+							onMenu={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								const box = event.currentTarget.getBoundingClientRect();
+								setMenu({ pane, x: id === "right" ? box.right : box.left, y: box.bottom + 6 });
+							}}
+						/>
+					);
+				})}
+			</ToggleGroup>
+		);
+	};
+	const leftCount = layout.left.panes.length;
+	const rightCount = layout.right.panes.length;
+	const leftBar = (
+		<>
+			{renderToggles("left")}
+			<BarRule shown={leftCount > 0} motion={barMotion} />
+		</>
+	);
+	const rightBar = (
+		<>
+			{barEnd === undefined ? null : <div className="flex h-full shrink-0 items-center gap-0.5">{barEnd}</div>}
+			<BarRule shown={barEnd !== undefined && rightCount > 0} motion={barMotion} />
+			{renderToggles("right")}
+		</>
+	);
+
 	const menuPane = menu === null ? undefined : byId.get(menu.pane);
 	const menuSide = menu === null ? null : sideOf(layout, menu.pane);
 	const heldDef = held === null ? undefined : byId.get(held.pane);
 
 	return (
 		<PaneCommands.Provider value={commands}>
+			{bar === null ? null : (
+				<>
+					{bar.left === null ? null : createPortal(leftBar, bar.left)}
+					{bar.right === null ? null : createPortal(rightBar, bar.right)}
+				</>
+			)}
 			<div
 				ref={root}
 				data-pane-window=""
 				className={cn(
-					"relative flex h-full min-w-0 flex-1 overflow-hidden",
+					"relative flex h-full min-w-0 flex-1 flex-col overflow-hidden",
 					"data-[dragging]:cursor-grabbing data-[dragging]:select-none data-[dragging]:[&_*]:cursor-grabbing",
 				)}
 			>
-				<div ref={body} className="relative flex h-full min-w-0 flex-1">
+				{/* with no window bar around it, the window keeps its toggles in a bar of its own */}
+				{bar === null ? (
+					<div
+						data-pane-bar-own=""
+						className="flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4"
+					>
+						<div className="flex h-full items-center">{leftBar}</div>
+						<div className="flex h-full items-center">{rightBar}</div>
+					</div>
+				) : null}
+				<div ref={body} className="relative flex min-h-0 min-w-0 flex-1">
 					{renderSide("left")}
 					<div className="relative flex h-full min-w-0 flex-1">{children}</div>
 					{renderSide("right")}
@@ -1068,7 +1118,7 @@ export function PaneWindow({
 					aria-hidden="true"
 					data-pane-outline=""
 					className={cn(
-						"group/outline pointer-events-none absolute z-50 flex items-center justify-center rounded-md border-[1.5px] border-thread/75 bg-thread/10",
+						"group/outline pointer-events-none fixed z-50 flex items-center justify-center rounded-md border-[1.5px] border-thread/75 bg-thread/10",
 						"data-[slot]:rounded-full data-[slot]:border-0 data-[slot]:bg-thread",
 						"data-[refused]:border-border-raised data-[refused]:border-dashed data-[refused]:bg-bg/60",
 					)}
@@ -1088,7 +1138,7 @@ export function PaneWindow({
 				</div>
 
 				{held === null || heldDef === undefined ? null : (
-					<div ref={ghost} aria-hidden="true" className="pointer-events-none absolute top-0 left-0 z-50">
+					<div ref={ghost} aria-hidden="true" className="pointer-events-none fixed top-0 left-0 z-50">
 						<div
 							className="flex items-center gap-2 rounded-sm border border-border-raised bg-raised pr-4 pl-2 text-text type-control"
 							style={{ height: GHOST_H, transformOrigin: "16px 50%" }}
@@ -1101,9 +1151,9 @@ export function PaneWindow({
 
 				{menu === null || menuPane === undefined || menuSide === null ? null : (
 					<div
-						data-rail-menu=""
+						data-toggle-menu=""
 						role="menu"
-						aria-label={`${menuPane.title} on the rail`}
+						aria-label={menuPane.title}
 						className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
 						style={{
 							top: menu.y,
@@ -1111,19 +1161,26 @@ export function PaneWindow({
 						}}
 					>
 						<MenuItem
-							label="Move to the other side"
+							label={`${visible.includes(menuPane.id) ? "Hide" : "Show"} ${menuPane.title}`}
+							onClick={() => {
+								setMenu(null);
+								apply({ type: visible.includes(menuPane.id) ? "hide" : "show", pane: menuPane.id });
+							}}
+						/>
+						<MenuItem
+							label={`Move to the ${other(menuSide)} side`}
 							onClick={() => {
 								const to = other(menuSide);
 								setMenu(null);
 								apply({
 									type: "move",
 									pane: menuPane.id,
-									to: { kind: "rail", side: to, index: layout[to].rail.length },
+									to: { kind: "bar", side: to, index: layout[to].panes.length },
 								});
 							}}
 						/>
 						<MenuItem
-							label="Remove from rail"
+							label="Remove from the bar"
 							onClick={() => {
 								setMenu(null);
 								apply({ type: "remove", pane: menuPane.id });
@@ -1164,8 +1221,12 @@ export function PaneWindow({
 	);
 }
 
-/* ── one pane, and one icon ─────────────────────────────────────────── */
+/* ── one pane ───────────────────────────────────────────────────────── */
 
+/**
+ * The pane's one quiet row: its name, which is also the handle it is carried
+ * by. Its verbs and its hide wait for the pointer or the keyboard.
+ */
 function PaneSection({
 	def,
 	context,
@@ -1192,28 +1253,30 @@ function PaneSection({
 				data-pane-head={def.id}
 				onPointerDown={onPress}
 				className={cn(
-					"group/head flex h-9 shrink-0 cursor-grab touch-none select-none items-center gap-2 border-border border-b pr-1.5 pl-3 text-muted transition-opacity duration-150 ease-out",
+					"group/head flex h-9 shrink-0 cursor-grab touch-none select-none items-center gap-2 pr-1.5 pl-3 transition-opacity duration-150 ease-out",
 					held && "opacity-35",
 				)}
 			>
 				{def.titled === true ? (
 					<div ref={setTitleSlot} className="-ml-1.5 flex min-w-0 flex-1 items-center" />
 				) : (
-					<>
-						<span className="flex h-4 w-4 shrink-0 items-center justify-center">{def.icon}</span>
-						<h2 className="min-w-0 flex-1 truncate font-semibold text-text type-control">{def.title}</h2>
-					</>
+					<h2 className="min-w-0 flex-1 truncate text-muted type-label">{def.title}</h2>
 				)}
-				<div ref={setSlot} className="flex shrink-0 items-center" />
-				<button
-					type="button"
-					aria-label={`Hide ${def.title}`}
-					onPointerDown={(event) => event.stopPropagation()}
-					onClick={context.hide}
-					className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 opacity-0 transition-opacity duration-150 ease-out hover:text-text focus-visible:opacity-100 group-hover/head:opacity-100"
-				>
-					<CloseIcon />
-				</button>
+				<div className="flex shrink-0 items-center opacity-0 transition-opacity duration-150 ease-out group-focus-within/head:opacity-100 group-hover/head:opacity-100 motion-reduce:transition-none">
+					<div ref={setSlot} className="flex shrink-0 items-center" />
+					<button
+						type="button"
+						aria-label={`Hide ${def.title}`}
+						onPointerDown={(event) => event.stopPropagation()}
+						onClick={context.hide}
+						className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-[color,background-color] duration-150 hover:bg-surface hover:text-text"
+					>
+						{/* a dash rather than a cross: Pages' collapse-all already stands beside it as two chevrons */}
+						<svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+							<path d="M2 5h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+						</svg>
+					</button>
+				</div>
 			</header>
 			<div data-pane-body={def.id} className="relative min-h-0 flex-1 overflow-hidden">
 				<PaneSlot.Provider value={slot}>
@@ -1224,127 +1287,4 @@ function PaneSection({
 			</div>
 		</section>
 	);
-}
-
-/**
- * One pane on its rail. The press feel is the house's: colour in 140ms on the
- * house curve, and the icon gives under the finger. A pane out of sight with
- * something to say says it here, a turning ring while a turn runs and one dot
- * once it lands unread, and nothing pulses.
- */
-function RailIcon({
-	def,
-	lit,
-	held,
-	working,
-	waiting,
-	unread,
-	onPress,
-	onClick,
-	onMenu,
-}: {
-	def: PaneDef;
-	lit: boolean;
-	held: boolean;
-	working: boolean;
-	waiting: boolean;
-	unread: boolean;
-	onPress: (event: ReactPointerEvent<HTMLElement>) => void;
-	onClick: (event: ReactMouseEvent<HTMLElement>) => void;
-	onMenu: (event: ReactMouseEvent<HTMLElement>) => void;
-}) {
-	const now: DockMarkKind | null = waiting
-		? "waiting"
-		: working
-			? "working"
-			: unread
-				? "unread"
-				: def.elsewhere === true
-					? "elsewhere"
-					: null;
-	// a mark that goes fades out rather than vanishing in one frame; what it was is kept for its exit
-	const shown = useLeaving(now !== null, FADE_OUT_MS);
-	const lastMark = useHeld(now);
-	const mark = shown === null ? null : (now ?? lastMark);
-	return (
-		<button
-			type="button"
-			data-rail-icon={def.id}
-			aria-label={
-				waiting
-					? `${def.title}, waiting on you`
-					: def.elsewhere === true && !working && !unread
-						? `${def.title}, another chat has news`
-						: def.title
-			}
-			aria-pressed={lit}
-			title={`${def.title} ${hotkeyKey(def.hotkey)}`}
-			onPointerDown={onPress}
-			onClick={onClick}
-			onContextMenu={onMenu}
-			className={cn(
-				"relative flex h-8 w-8 shrink-0 touch-none items-center justify-center rounded-sm transition-[background-color,color,transform,opacity] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
-				lit ? "bg-control text-text" : "text-muted/70 hover:text-text",
-				held && "opacity-35",
-			)}
-		>
-			{def.icon}
-			{mark === null ? null : <DockMark kind={mark} leaving={shown === "leaving"} />}
-		</button>
-	);
-}
-
-type DockMarkKind = "waiting" | "working" | "unread" | "elsewhere";
-
-/** what a pane out of sight has to say, on its icon: arriving as it always did, and fading out on its way */
-function DockMark({ kind, leaving }: { kind: DockMarkKind; leaving: boolean }) {
-	const state = leaving ? "leaving" : "open";
-	switch (kind) {
-		case "waiting":
-			return (
-				<WaitingMark
-					data-rail-mark="waiting"
-					data-rail-mark-state={state}
-					className={cn(
-						"-right-1 absolute top-0 h-3 w-3 rounded-full bg-bg text-text",
-						leaving ? "animate-agent-fade-out" : "animate-agent-arrive",
-					)}
-				/>
-			);
-		case "working":
-			return (
-				<span
-					aria-hidden="true"
-					data-rail-mark="working"
-					data-rail-mark-state={state}
-					className={cn("-right-1 absolute top-0 h-3 w-3 text-text/60", leaving && "animate-agent-fade-out")}
-				>
-					<Spinner strokeWidth={1.6} className="h-full w-full" />
-				</span>
-			);
-		case "unread":
-			return (
-				<span
-					aria-hidden="true"
-					data-rail-mark="unread"
-					data-rail-mark-state={state}
-					className={cn(
-						"-right-0.5 absolute top-0.5 h-1.5 w-1.5 rounded-full bg-thread",
-						leaving ? "animate-agent-fade-out" : "animate-unseen-in",
-					)}
-				/>
-			);
-		case "elsewhere":
-			return (
-				<span
-					aria-hidden="true"
-					data-rail-mark="elsewhere"
-					data-rail-mark-state={state}
-					className={cn(
-						"absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-text/85",
-						leaving ? "animate-agent-fade-out" : "animate-agent-fade-in",
-					)}
-				/>
-			);
-	}
 }

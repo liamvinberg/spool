@@ -20,7 +20,7 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	await seedAgentWidth(page, 420);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const trigger = rail.locator("[data-permission-trigger]");

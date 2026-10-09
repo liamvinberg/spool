@@ -40,7 +40,7 @@ For a disposable implementation lane, run \`spool open <lane>\` before verificat
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at, as one <selection> block: frames and elements, paths and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
-  spool shot <frame>... headless screenshot of each frame named, several at once with their console errors
+  spool shot <frame>…   headless screenshot of each frame named, with its console errors when you name several
   spool logs <frame>    the same scenario boot's console, cached by compiled source
   spool url <frame>     mint a player URL; --raw mints the bare frame document
   spool skill [topic]   this text (needs nothing)
@@ -234,10 +234,9 @@ shot and logs are two outputs of one boot: the frame's really-served document in
                        Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
                        Throws uncaught while booting: shot still written, errors on stderr, exit 1.
                        Waits for #root to have children (up to 10s), then settles the way the canvas's picture of the frame does (fonts, finite entry animations, a quiet DOM, up to 900ms), waits for document.fonts.ready, then shoots; a frame that renders nothing still shoots.
-  spool shot <frame> <frame>... [same options, applied to every frame]
-                       Shoots every frame named in parallel, in one call: prefer it to one shot per frame whenever you have several to look at.
-                       Prints one block per frame on stdout, in the order named: "<frame>:", then its printed paths, its content height and its console errors (console.error and uncaught errors, "none" when clean) — or why it was not shot (does not compile, not found).
-                       One frame failing never stops the others; exit 1 when any frame was not shot or threw uncaught while booting.
+  spool shot <frame> <frame> … [same options]
+                       Several frames in one call, shot in parallel in the same browser, the options applying to each. Prints one block per frame on stdout in the order named: a head line (\`<frame>: shot, content <n>px tall, <k> console errors\`, or \`does not compile\`, \`not found\`, \`failed\`), then indented under it the frame's files and each console error as a [type] line, or the reason it has no shot. Exit 1 if any frame did not compile, was not found, or threw uncaught.
+                       To check several frames, name them all in one shot rather than a shot and a logs per frame: the batch is that whole check, and much faster. Reach for logs only for a frame's full console.
   spool logs <frame> [--scenario <name>]
                        Prints the same scenario boot's console as [type] text lines, uncaught errors included.
                        The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario JSON edit under the same name does not. A shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.

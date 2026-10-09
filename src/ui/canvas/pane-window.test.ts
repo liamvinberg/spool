@@ -5,11 +5,12 @@ import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { FADE_OUT_MS } from "./agent-motion";
+import { PaneBarSlots } from "./pane-bar";
 import { PaneActions, type PaneDef, PaneWindow } from "./pane-window";
 
 /**
- * The window around the canvas, with stand-in panes: what the rail's icons do,
- * what a hidden pane keeps, what rides an icon, the edge, the keys, and what is
+ * The window around the canvas, with stand-in panes: what the bar's toggles do,
+ * what a hidden pane keeps, what rides a toggle, the edge, the keys, and what is
  * kept across a reload. Where panes may go is `pane-layout.test.ts`; how the
  * real panes behave in it is the canvas's tests.
  */
@@ -18,19 +19,19 @@ beforeEach(() => {
 	window.localStorage?.clear();
 });
 
-const icon = (host: HTMLElement, pane: string) => host.querySelector<HTMLElement>(`[data-rail-icon="${pane}"]`);
+const icon = (host: HTMLElement, pane: string) => host.querySelector<HTMLElement>(`[data-pane-toggle="${pane}"]`);
 const slot = (host: HTMLElement, pane: string) => host.querySelector<HTMLElement>(`[data-pane-slot="${pane}"]`);
 const side = (host: HTMLElement, id: string) => host.querySelector<HTMLElement>(`aside[data-side="${id}"]`);
 const pressed = (host: HTMLElement, pane: string) => icon(host, pane)?.getAttribute("aria-pressed") === "true";
 
-describe("the rail", () => {
+describe("the toggles", () => {
 	it("starts as today's window: Pages on the left, Properties lit on the right, Agent waiting under it", async () => {
 		const { host } = await mount();
 		expect(pressed(host, "pages")).toBe(true);
 		expect(pressed(host, "properties")).toBe(true);
 		expect(pressed(host, "agent")).toBe(false);
-		expect(side(host, "left")?.style.width).toBe("292px");
-		expect(side(host, "right")?.style.width).toBe("344px");
+		expect(side(host, "left")?.style.width).toBe("248px");
+		expect(side(host, "right")?.style.width).toBe("300px");
 	});
 
 	it("lights a second pane under the first, and a click on the last lit one collapses the side", async () => {
@@ -42,7 +43,7 @@ describe("the rail", () => {
 		await click(icon(host, "properties"));
 		await click(icon(host, "agent"));
 		expect(side(host, "right")?.hasAttribute("data-side-open")).toBe(false);
-		expect(side(host, "right")?.style.width).toBe("44px");
+		expect(side(host, "right")?.style.width).toBe("0px");
 	});
 
 	it("shows only the pane ⌥-clicked", async () => {
@@ -70,18 +71,18 @@ describe("the rail", () => {
 	it("marks a hidden pane while its turn runs, and again once it landed unseen, until it is shown", async () => {
 		const { host, render } = await mount();
 		await render({ working: true });
-		expect(icon(host, "agent")?.querySelector('[data-rail-mark="working"]')).not.toBeNull();
+		expect(icon(host, "agent")?.querySelector('[data-toggle-mark="working"]')).not.toBeNull();
 
 		await render({ working: false });
-		expect(icon(host, "agent")?.querySelector('[data-rail-mark="unread"]')).not.toBeNull();
+		expect(icon(host, "agent")?.querySelector('[data-toggle-mark="unread"]')).not.toBeNull();
 
 		await click(icon(host, "agent"));
 		// the dot fades out where it was, then it is gone
 		expect(
-			icon(host, "agent")?.querySelector('[data-rail-mark="unread"]')?.getAttribute("data-rail-mark-state"),
+			icon(host, "agent")?.querySelector('[data-toggle-mark="unread"]')?.getAttribute("data-toggle-mark-state"),
 		).toBe("leaving");
 		await act(() => new Promise((resolve) => setTimeout(resolve, FADE_OUT_MS + 40)));
-		expect(icon(host, "agent")?.querySelector("[data-rail-mark]")).toBeNull();
+		expect(icon(host, "agent")?.querySelector("[data-toggle-mark]")).toBeNull();
 	});
 
 	it("says nothing about a turn the pane was showing for", async () => {
@@ -91,24 +92,69 @@ describe("the rail", () => {
 		await render({ working: false });
 		await click(icon(host, "agent"));
 		await act(() => new Promise((resolve) => setTimeout(resolve, FADE_OUT_MS + 40)));
-		expect(icon(host, "agent")?.querySelector("[data-rail-mark]")).toBeNull();
+		expect(icon(host, "agent")?.querySelector("[data-toggle-mark]")).toBeNull();
 	});
 
-	it("moves a pane to the other side, or off the rail, from its menu", async () => {
+	it("moves a pane to the other side, or out of the bar, from its menu", async () => {
 		const { host } = await mount();
 		await act(async () => {
 			icon(host, "agent")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
 		});
-		await click(menuItem("Move to the other side"));
-		expect(host.querySelector('[data-rail="left"] [data-rail-icon="agent"]')).not.toBeNull();
+		await click(menuItem("Move to the left side"));
+		expect(host.querySelector('[data-pane-toggles="left"] [data-pane-toggle="agent"]')).not.toBeNull();
 
 		await act(async () => {
 			icon(host, "agent")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
 		});
-		await click(menuItem("Remove from rail"));
+		await click(menuItem("Remove from the bar"));
 		expect(icon(host, "agent")).toBeNull();
 		// still mounted, waiting for its key
 		expect(host.querySelector("textarea[data-draft]")).not.toBeNull();
+	});
+});
+
+describe("the window bar", () => {
+	it("draws each side's toggles at that side's end of the bar it is given, help and settings inside the right's", async () => {
+		const { host, bar } = await mount({ bar: true });
+		const [left, right] = bar;
+		expect(host.querySelector("[data-pane-bar-own]")).toBeNull();
+		expect(
+			[...left.querySelectorAll<HTMLElement>("[data-pane-toggle]")].map((item) => item.dataset.paneToggle),
+		).toEqual(["pages"]);
+		const order = [...right.querySelectorAll<HTMLElement>("[data-pane-toggle], [data-bar-end]")].map(
+			(item) => item.dataset.paneToggle ?? item.dataset.barEnd,
+		);
+		expect(order).toEqual(["help", "properties", "agent"]);
+	});
+
+	it("carries a pane's toggle to the other end of the bar when the pane changes sides", async () => {
+		const { bar } = await mount({ bar: true });
+		const [left, right] = bar;
+		await act(async () => {
+			right
+				.querySelector('[data-pane-toggle="agent"]')
+				?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+		});
+		expect(menuItem("Show Agent")).not.toBeNull();
+		await click(menuItem("Move to the left side"));
+		expect(right.querySelector('[data-pane-toggle="agent"]')).toBeNull();
+		expect(
+			[...left.querySelectorAll<HTMLElement>("[data-pane-toggle]")].map((item) => item.dataset.paneToggle),
+		).toEqual(["pages", "agent"]);
+	});
+
+	it("shows no rule beside a side with no toggles", async () => {
+		const { bar } = await mount({ bar: true });
+		const [left] = bar;
+		expect(left.querySelector("[data-pane-bar-rule]")).not.toBeNull();
+		await act(async () => {
+			left
+				.querySelector('[data-pane-toggle="pages"]')
+				?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+		});
+		await click(menuItem("Move to the right side"));
+		expect(left.querySelector("[data-pane-toggle]")).toBeNull();
+		expect(left.querySelector("[data-pane-bar-rule]")).toBeNull();
 	});
 });
 
@@ -120,27 +166,27 @@ describe("a pane's header", () => {
 
 		await click(head?.querySelector<HTMLElement>('button[aria-label="Hide Pages"]') ?? null);
 		expect(pressed(host, "pages")).toBe(false);
-		expect(side(host, "left")?.style.width).toBe("44px");
+		expect(side(host, "left")?.style.width).toBe("0px");
 	});
 });
 
 describe("the side's edge", () => {
-	it("resizes up to 480 and collapses to the rail when let go under 144", async () => {
+	it("resizes up to 480 and collapses when let go under 144", async () => {
 		const { host } = await mount();
 		const grip = host.querySelector<HTMLElement>('button[aria-label="Resize left side"]');
 		await act(async () => {
-			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 292, pointerId: 1 }));
+			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 248, pointerId: 1 }));
 			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 700, pointerId: 1 }));
 			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 700, pointerId: 1 }));
 		});
-		expect(side(host, "left")?.style.width).toBe("524px");
+		expect(side(host, "left")?.style.width).toBe("480px");
 
 		await act(async () => {
-			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 524, pointerId: 2 }));
+			grip?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 480, pointerId: 2 }));
 			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, pointerId: 2 }));
 			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, pointerId: 2 }));
 		});
-		expect(side(host, "left")?.style.width).toBe("44px");
+		expect(side(host, "left")?.style.width).toBe("0px");
 		expect(pressed(host, "pages")).toBe(false);
 	});
 });
@@ -149,24 +195,24 @@ describe("the keys", () => {
 	it("toggles the left side with ⌘B and the right with ⌘⌥B", async () => {
 		const { host } = await mount();
 		await key({ key: "b", code: "KeyB", metaKey: true });
-		expect(side(host, "left")?.style.width).toBe("44px");
+		expect(side(host, "left")?.style.width).toBe("0px");
 		await key({ key: "∫", code: "KeyB", metaKey: true, altKey: true });
-		expect(side(host, "right")?.style.width).toBe("44px");
+		expect(side(host, "right")?.style.width).toBe("0px");
 		await key({ key: "b", code: "KeyB", metaKey: true });
 		expect(pressed(host, "pages")).toBe(true);
 	});
 
-	it("shows a pane by its key, even one removed from its rail, back where it stood", async () => {
+	it("shows a pane by its key, even one removed from the bar, back where it stood", async () => {
 		const { host } = await mount();
 		await act(async () => {
 			icon(host, "properties")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
 		});
-		await click(menuItem("Remove from rail"));
+		await click(menuItem("Remove from the bar"));
 		expect(icon(host, "properties")).toBeNull();
 
 		await key({ key: "I", code: "KeyI", metaKey: true, shiftKey: true });
-		const rail = [...host.querySelectorAll<HTMLElement>('[data-rail="right"] [data-rail-icon]')];
-		expect(rail.map((item) => item.dataset.railIcon)).toEqual(["properties", "agent"]);
+		const right = [...host.querySelectorAll<HTMLElement>('[data-pane-toggles="right"] [data-pane-toggle]')];
+		expect(right.map((item) => item.dataset.paneToggle)).toEqual(["properties", "agent"]);
 		expect(pressed(host, "properties")).toBe(true);
 	});
 });
@@ -252,13 +298,16 @@ async function key(init: KeyboardEventInit) {
 	});
 }
 
-async function mount(): Promise<{
+async function mount(options: { bar?: boolean } = {}): Promise<{
 	host: HTMLDivElement;
+	/** the shell's bar, left end and right end, when the window was given one */
+	bar: [HTMLDivElement, HTMLDivElement];
 	render: (props: { working?: boolean }) => Promise<void>;
 	unmount: () => void;
 }> {
 	const host = document.createElement("div");
-	document.body.append(host);
+	const bar: [HTMLDivElement, HTMLDivElement] = [document.createElement("div"), document.createElement("div")];
+	document.body.append(...bar, host);
 	const root = createRoot(host);
 	// the dispatcher listens only while some layer is attached, as it does under the canvas
 	const detach = attachHotkeyLayer({ scope: "app", handlers: {} });
@@ -269,13 +318,24 @@ async function mount(): Promise<{
 		act(() => root.unmount());
 		detach();
 		host.remove();
+		for (const end of bar) end.remove();
 	};
 	onTestFinished(unmount);
 	const render = async (props: { working?: boolean }) => {
+		const help = createElement("button", { type: "button", "data-bar-end": "help" }, "?");
+		const tree = createElement(
+			PaneWindow,
+			{ panes: panes(props), barEnd: help },
+			createElement("main", null, "canvas"),
+		);
 		await act(async () => {
-			root.render(createElement(PaneWindow, { panes: panes(props) }, createElement("main", null, "canvas")));
+			root.render(
+				options.bar === true
+					? createElement(PaneBarSlots.Provider, { value: { left: bar[0], right: bar[1] } }, tree)
+					: tree,
+			);
 		});
 	};
 	await render({});
-	return { host, render, unmount };
+	return { host, bar, render, unmount };
 }

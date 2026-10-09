@@ -54,8 +54,8 @@ export type ShotOutcome =
 			kind: "shot";
 			files: string[];
 			bootErrors: string[];
-			/** The boot's console errors and uncaught errors, in the order the frame raised them. */
-			consoleErrors: LogEntry[];
+			/** Every console error and uncaught throw of the boot, as `[type] text` lines the way logs prints them. */
+			consoleErrors: string[];
 			contentHeight: number;
 	  };
 
@@ -74,75 +74,79 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 		kind: "shot",
 		files: boot.files,
 		bootErrors: boot.errors,
-		consoleErrors: boot.entries.filter((entry) => entry.type === "error" || entry.type === "pageerror"),
+		consoleErrors: boot.entries
+			.filter((entry) => entry.type === "error" || entry.type === "pageerror")
+			.map((entry) => `[${entry.type}] ${entry.text}`),
 		contentHeight: boot.contentHeight,
 	};
 }
 
-/** One frame of a batched shot: its outcome, or why spool could not get one. */
-export interface BatchedShot {
+/** One frame of a batched shot: its outcome, or why the CLI could not get one. */
+export interface BatchShot {
 	frame: string;
 	outcome: ShotOutcome | { kind: "failed"; message: string };
 }
 
 /**
- * `spool shot a b c`: every frame at once, each its own boot in the photo
- * booth's browser, so the booth's tabs take them in parallel ahead of any
- * cover. One frame failing never stops the others. A narration every boot
- * hears alike (the first-run fetch) is said once.
+ * `spool shot a b c` (#360): every frame asked of the daemon at once, so the
+ * photo booth's tabs share them the way they share covers, and answered in the
+ * order they were named as each is ready. One frame's failure is that frame's
+ * answer, never the batch's. A line the daemon narrates for every frame alike,
+ * the one-time browser fetch, is said once.
  */
-export async function shotFrames(deps: Omit<BootDeps, "frame">, frames: readonly string[]): Promise<BatchedShot[]> {
+export async function* shotFrames(deps: Omit<BootDeps, "frame">, frames: readonly string[]): AsyncGenerator<BatchShot> {
 	const said = new Set<string>();
 	const narrate = (line: string) => {
 		if (said.has(line)) return;
 		said.add(line);
 		deps.narrate(line);
 	};
-	return Promise.all(
-		[...new Set(frames)].map(async (frame): Promise<BatchedShot> => {
-			try {
-				return { frame, outcome: await shotFrame({ ...deps, frame, narrate }) };
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				return { frame, outcome: { kind: "failed", message } };
-			}
-		}),
+	const pending = [...new Set(frames)].map(
+		(frame): Promise<BatchShot> =>
+			shotFrame({ ...deps, frame, narrate }).then(
+				(outcome) => ({ frame, outcome }),
+				(error: unknown) => ({
+					frame,
+					outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
+				}),
+			),
 	);
+	for (const shot of pending) yield await shot;
+}
+
+/** Whether a batched frame's answer is one the batch exits 1 for. */
+export function batchShotFailed(shot: BatchShot): boolean {
+	return shot.outcome.kind !== "shot" || shot.outcome.bootErrors.length > 0;
 }
 
 /**
- * A batched shot as the agent reads it: one block per frame, in the order
- * asked, each with its printed paths, content height and console errors. It
- * failed when any frame did not shoot or threw uncaught while booting, the
- * same rule a single shot exits 1 by.
+ * One frame's block of a batched shot: a head line naming the frame and how it
+ * went, then its files and its console errors, or the reason it has none,
+ * indented under it. Everything an agent would have run `spool logs` for after
+ * the shot is here, so the batch is the whole check.
  */
-export function describeShots(shots: readonly BatchedShot[]): { text: string; failed: boolean } {
-	const indent = (text: string, by: string) =>
+export function formatBatchShot(shot: BatchShot): string {
+	const { frame, outcome } = shot;
+	const indent = (text: string) =>
 		text
 			.split("\n")
-			.map((line) => `${by}${line}`)
+			.map((line) => `  ${line}`)
 			.join("\n");
-	let failed = false;
-	const blocks = shots.map(({ frame, outcome }) => {
-		const lines = [`${frame}:`];
-		if (outcome.kind === "shot") {
-			lines.push(...outcome.files.map((file) => `  ${file}`));
-			lines.push(`  content height: ${outcome.contentHeight}px`);
-			if (outcome.consoleErrors.length === 0) {
-				lines.push("  console errors: none");
-			} else {
-				lines.push("  console errors:");
-				lines.push(...outcome.consoleErrors.map((entry) => indent(`[${entry.type}] ${entry.text}`, "    ")));
-			}
-			if (outcome.bootErrors.length > 0) failed = true;
-		} else {
-			failed = true;
-			const what = { broken: "does not compile", missing: "not found", failed: "not shot" }[outcome.kind];
-			lines.push(`  ${what}:`, indent(outcome.message, "    "));
+	switch (outcome.kind) {
+		case "shot": {
+			const errors = outcome.consoleErrors.length;
+			const head = `${frame}: shot, content ${outcome.contentHeight}px tall, ${errors === 0 ? "no console errors" : errors === 1 ? "1 console error" : `${errors} console errors`}`;
+			return [head, ...outcome.files, ...outcome.consoleErrors]
+				.map((line, i) => (i === 0 ? line : indent(line)))
+				.join("\n");
 		}
-		return lines.join("\n");
-	});
-	return { text: `${blocks.join("\n\n")}\n`, failed };
+		case "broken":
+			return `${frame}: does not compile\n${indent(outcome.message)}`;
+		case "missing":
+			return `${frame}: not found\n${indent(outcome.message)}`;
+		case "failed":
+			return `${frame}: failed\n${indent(outcome.message)}`;
+	}
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {

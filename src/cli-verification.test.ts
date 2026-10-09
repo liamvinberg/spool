@@ -175,6 +175,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		[["shot", "cart", "--at", "soon"], "--at must be whole milliseconds"],
 		[["shot", "cart", "--scenario", "review/error"], "--scenario must be a scenario name"],
 		[["logs", "cart", "--scenario", ".private"], "--scenario must be a scenario name"],
+		[["shot", "cart", "../cart"], "a frame is named by its path under design/frames"],
 	] as const)("rejects an invalid verification option before resolving the project", (args, message) => {
 		const result = spool([...args], makeTempDir());
 
@@ -248,47 +249,25 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		expect(result.stderr).toBe('spool: "tall" content height: 1800px\n');
 	});
 
-	it("shoots several frames in one call, one block per frame with its console errors", async () => {
-		try {
-			const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-			await browser.close();
-		} catch {
-			return;
-		}
+	it("prints one block per frame for a batched shot and exits 1 when any frame fails", async () => {
 		const home = makeTempDir();
 		const spoolDir = join(home, ".spool");
 		const { root } = makeProject(spoolDir);
-		writeFrame(root, "calm", "export default function Calm() { return <main>calm</main>; }\n");
-		writeFrame(
-			root,
-			"grumpy",
-			'console.error("grumpy at boot");\nexport default function Grumpy() { return <main>grumpy</main>; }\n',
-		);
+		writeFrame(root, "broken", "export default function Broken() { return <main>unclosed;\n}\n");
 		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
 		onTestFinished(() => daemon.close());
-		const result = await spoolAsync(["shot", "calm", "grumpy", "--viewport", "160x120"], home, root, {
-			HOME: process.env.HOME ?? home,
-			SPOOL_DIR: spoolDir,
-		});
 
-		const verify = join(root, "design", ".spool", "verify");
-		expect(result.status).toBe(0);
-		expect(result.stderr).toBe("");
-		expect(result.stdout).toBe(
-			[
-				"calm:",
-				`  ${join(verify, "calm.png")}`,
-				"  content height: 120px",
-				"  console errors: none",
-				"",
-				"grumpy:",
-				`  ${join(verify, "grumpy.png")}`,
-				"  content height: 120px",
-				"  console errors:",
-				"    [error] grumpy at boot",
-				"",
-			].join("\n"),
+		const result = await spoolAsync(["shot", "nope", "broken"], home, root);
+
+		expect(result.status).toBe(1);
+		const blocks = result.stdout.split("\n\n");
+		expect(blocks).toHaveLength(2);
+		expect(blocks[0]).toBe(
+			'nope: not found\n  no frame "nope" on the canvas — a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder',
 		);
+		expect(blocks[1]).toMatch(/^broken: does not compile\n {2}/);
+		expect(blocks[1]).toContain("Unexpected end of file");
+		expect(result.stderr).toBe("");
 	});
 
 	it("says a replayed cache matches current compiled source", async () => {

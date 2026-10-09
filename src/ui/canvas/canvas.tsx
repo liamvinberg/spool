@@ -75,6 +75,7 @@ import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
+import { BarEnd } from "./bar-end";
 import { BootCurtain } from "./boot-screen";
 import { frameScheme, framesOnScreen } from "./booth-view";
 import {
@@ -201,7 +202,6 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
-import { RailFoot } from "./rail-foot";
 import { setAsideAsk, useSetAside } from "./set-aside";
 import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
@@ -5664,8 +5664,8 @@ export function ProjectCanvas({
 				panes={panes}
 				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
 				onShown={(panes) => setRailShown(panes.includes("agent"))}
-				foot={
-					<RailFoot
+				barEnd={
+					<BarEnd
 						onSettings={onSettings}
 						onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 					/>

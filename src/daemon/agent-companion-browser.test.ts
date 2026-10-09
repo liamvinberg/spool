@@ -140,7 +140,7 @@ it("brings the square to the block a write changed, on the frame showing it", { 
 	await expect.poll(says, { timeout: 30_000 }).toBe("open until six");
 
 	// properties have the panel until the agent's glyph in the strip is pressed
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT);
 	await field.press("Enter");
@@ -288,7 +288,7 @@ it("stands an ask under its frame while the rail is shut, and answers from there
 		)
 		.toBe("open until six");
 
-	const glyph = page.locator('[data-rail-icon="agent"]');
+	const glyph = page.locator('[data-pane-toggle="agent"]');
 	await glyph.click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT_ASK);
@@ -304,7 +304,7 @@ it("stands an ask under its frame while the rail is shut, and answers from there
 	await card.waitFor({ timeout: 30_000 });
 	expect(await card.textContent()).toContain("Adding a date library");
 	await expect.poll(() => page.locator('[data-agent-companion="main"]').getAttribute("data-act")).toBe("ask");
-	expect(await page.locator('[data-rail-mark="waiting"]').count()).toBe(1);
+	expect(await page.locator('[data-toggle-mark="waiting"]').count()).toBe(1);
 	// it stands under the frame it is about
 	const frame = await page.locator('iframe[title="home"]').boundingBox();
 	const stands = await card.boundingBox();

@@ -51,7 +51,7 @@ it("shows pi's live models with local ones marked and no mode menu, and opens an
 	const errors: string[] = [];
 	page.on("pageerror", (error) => errors.push(error.message));
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	const glyph = page.locator('[data-rail-icon="agent"]');
+	const glyph = page.locator('[data-pane-toggle="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 	const rail = page.locator("[data-agent-rail]");
 
@@ -117,7 +117,7 @@ it("walls a machine with no agent and takes the wall down on focus once one is i
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1400, height: 900 } });
 	await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	const glyph = page.locator('[data-rail-icon="agent"]');
+	const glyph = page.locator('[data-pane-toggle="agent"]');
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 	const wall = page.locator("[data-agent-wall]");
 	await wall.waitFor();

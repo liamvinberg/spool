@@ -39,11 +39,11 @@ export interface Threads {
 /* ---------- the threads, off the title over the log (#136, #161, #200, #205, #364) ----------
  * One panel, and every other conversation reached from its title. The header holds the
  * chat's title, which opens the switcher, and the + that starts a new chat, and nothing
- * else: what is moving in another thread is the rail icon's one small dot, and who answers
+ * else: what is moving in another thread is the pane toggle's one small dot, and who answers
  * is the composer's. The list drops from the title over the log, one step up on a
  * hairline and a soft shadow, and leaves the way it came.
  *
- * No collapse caret: the rail icon that lit the pane is the thing that shuts it.
+ * No collapse caret: the pane toggle that lit the pane is the thing that shuts it.
  *
  * Nothing is coloured and nothing re-sorts. State in this rail is motion, and the order is
  * recency fixed once, so a row never moves out from under a cursor already reaching for it.

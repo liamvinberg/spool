@@ -6,15 +6,14 @@ import {
 	PAGES_WIDTH,
 	PROPERTIES_WIDTH,
 	SNAP_BELOW,
-	STRIP_WIDTH,
 } from "./rail-width";
 
 /**
  * Where the canvas window's panes stand, as data (#359).
  *
  * The canvas is the fixed centre and never in here: it is whatever the two
- * sides leave. A side is an always-on rail of icons, one per pane assigned to
- * it, and a stack of the panes it has lit, in rail order. Everything is pure so
+ * sides leave. A side is the panes assigned to it, in order, each with a toggle in
+ * the window bar, and a stack of the ones it has lit, in that order. Everything is pure so
  * the window can ask what a drop would do before it lets it land.
  */
 
@@ -23,12 +22,12 @@ export const SIDES: readonly SideId[] = ["left", "right"];
 export const other = (side: SideId): SideId => (side === "left" ? "right" : "left");
 
 export interface Side {
-	/** pane ids, in rail order; the stack shows its lit ones in this order too */
-	readonly rail: readonly string[];
+	/** pane ids, in order: their toggles in the bar, and the stack's lit ones */
+	readonly panes: readonly string[];
 	/** what is lit, which a collapsed side remembers for when it opens again */
 	readonly lit: readonly string[];
 	readonly width: number;
-	/** false: collapsed to its rail */
+	/** false: collapsed, its toggles all unlit */
 	readonly open: boolean;
 	/** the clock when somebody last did something to it; the oldest folds first in a narrow window */
 	readonly touched: number;
@@ -41,7 +40,7 @@ export interface Place {
 }
 
 export interface Layout {
-	readonly v: 1;
+	readonly v: 2;
 	readonly clock: number;
 	readonly left: Side;
 	readonly right: Side;
@@ -59,7 +58,6 @@ export const LIMITS = {
 	sideMax: AGENT_MAX_WIDTH,
 	snap: SNAP_BELOW,
 	canvasMin: 480,
-	rail: STRIP_WIDTH,
 } as const;
 
 /** the window body the sides and the canvas share */
@@ -69,8 +67,8 @@ export interface Env {
 }
 
 export type Target =
-	/** a slot in a rail: before the icon at `index`, or after the last */
-	| { readonly kind: "rail"; readonly side: SideId; readonly index: number }
+	/** a slot among a side's toggles in the bar: before the one at `index`, or after the last */
+	| { readonly kind: "bar"; readonly side: SideId; readonly index: number }
 	/** the top or bottom half of a pane showing in a stack: the pane shows there */
 	| { readonly kind: "stack"; readonly side: SideId; readonly anchor: string; readonly edge: "above" | "below" };
 
@@ -92,10 +90,10 @@ export type Verdict = "ok" | "noop" | "cap" | "height" | "floor";
 /** Pages lit on the left; Properties then Agent on the right, only Properties lit. */
 export function defaultLayout(): Layout {
 	return {
-		v: 1,
+		v: 2,
 		clock: 2,
-		left: { rail: ["pages"], lit: ["pages"], width: PAGES_WIDTH, open: true, touched: 1 },
-		right: { rail: ["properties", "agent"], lit: ["properties"], width: PROPERTIES_WIDTH, open: true, touched: 2 },
+		left: { panes: ["pages"], lit: ["pages"], width: PAGES_WIDTH, open: true, touched: 1 },
+		right: { panes: ["properties", "agent"], lit: ["properties"], width: PROPERTIES_WIDTH, open: true, touched: 2 },
 		weights: { pages: 1, properties: 1, agent: 1 },
 		removed: {},
 	};
@@ -104,17 +102,17 @@ export function defaultLayout(): Layout {
 /* ── reading ─────────────────────────────────────────────────────────── */
 
 export function sideOf(layout: Layout, pane: string): SideId | null {
-	for (const id of SIDES) if (layout[id].rail.includes(pane)) return id;
+	for (const id of SIDES) if (layout[id].panes.includes(pane)) return id;
 	return null;
 }
 
-/** what a side's stack holds, in rail order, whether or not it shows now */
+/** what a side's stack holds, in its order, whether or not it shows now */
 export function stackOf(layout: Layout, id: SideId): string[] {
 	const side = layout[id];
-	return side.rail.filter((pane) => side.lit.includes(pane));
+	return side.panes.filter((pane) => side.lit.includes(pane));
 }
 
-const showsAgent = (side: Side) => side.lit.includes("agent") && side.rail.includes("agent");
+const showsAgent = (side: Side) => side.lit.includes("agent") && side.panes.includes("agent");
 /** the narrowest a side may be: the agent rail's own floor while it shows there (#364) */
 const minOf = (side: Side) => (showsAgent(side) ? AGENT_MIN_WIDTH : LIMITS.sideMin);
 /** the widest a side may be: the agent rail's own ceiling while it shows there (#364) */
@@ -122,14 +120,14 @@ const maxOf = (side: Side) => (showsAgent(side) ? AGENT_MAX_WIDTH : MAX_WIDTH);
 /** the narrowest side `id` may be drawn at as the layout stands */
 export const sideMin = (layout: Layout, id: SideId): number => minOf(layout[id]);
 const clampWidth = (width: number, side: Side) => Math.min(maxOf(side), Math.max(minOf(side), Math.round(width)));
-const wantsOpen = (side: Side) => side.open && side.lit.some((pane) => side.rail.includes(pane));
-const outerOf = (side: Side, open: boolean) => LIMITS.rail + (open ? clampWidth(side.width, side) : 0);
+const wantsOpen = (side: Side) => side.open && side.lit.some((pane) => side.panes.includes(pane));
+const outerOf = (side: Side, open: boolean) => (open ? clampWidth(side.width, side) : 0);
 
 export interface SideFit {
 	readonly open: boolean;
 	/** the stack's width, open or not: contents are laid out at it and clipped */
 	readonly width: number;
-	/** what the side takes from the window, rail included */
+	/** what the side takes from the window: its width, or nothing collapsed */
 	readonly outer: number;
 	/** the panes a person can see on it now, top to bottom */
 	readonly shown: readonly string[];
@@ -143,7 +141,7 @@ export interface Fit {
 
 /**
  * What shows in a window this size. While the canvas would be under its floor
- * the side touched least recently folds to its rail, then the other. Nothing
+ * the side touched least recently folds, then the other. Nothing
  * is written back, so a folded side opens by itself once there is room.
  */
 export function fitWindow(layout: Layout, env: Env): Fit {
@@ -166,7 +164,7 @@ export function fitWindow(layout: Layout, env: Env): Fit {
 /** the widest a side may be dragged while the other stays as it shows now */
 export function maxWidth(layout: Layout, id: SideId, env: Env): number {
 	const f = fitWindow(layout, env);
-	return Math.min(maxOf(layout[id]), env.width - LIMITS.canvasMin - f[other(id)].outer - LIMITS.rail);
+	return Math.min(maxOf(layout[id]), env.width - LIMITS.canvasMin - f[other(id)].outer);
 }
 
 /**
@@ -210,16 +208,16 @@ export function resizeSplit(heights: readonly number[], i: number, dy: number, m
 /* ── the reducer ─────────────────────────────────────────────────────── */
 
 interface Draft {
-	v: 1;
+	v: 2;
 	clock: number;
-	left: { rail: string[]; lit: string[]; width: number; open: boolean; touched: number };
-	right: { rail: string[]; lit: string[]; width: number; open: boolean; touched: number };
+	left: { panes: string[]; lit: string[]; width: number; open: boolean; touched: number };
+	right: { panes: string[]; lit: string[]; width: number; open: boolean; touched: number };
 	weights: Record<string, number>;
 	removed: Record<string, Place>;
 }
 
 function draft(layout: Layout): Draft {
-	const copy = (side: Side) => ({ ...side, rail: [...side.rail], lit: [...side.lit] });
+	const copy = (side: Side) => ({ ...side, panes: [...side.panes], lit: [...side.lit] });
 	return {
 		...layout,
 		left: copy(layout.left),
@@ -255,7 +253,7 @@ function openSide(next: Draft, id: SideId, before?: Layout, env?: Env): void {
 	if (before !== undefined && env !== undefined && !fitWindow(before, env)[id].open) {
 		const o = other(id);
 		const otherOpen = fitWindow(before, env)[o].open && wantsOpen(next[o]);
-		const room = env.width - outerOf(next[o], otherOpen) - LIMITS.rail - LIMITS.canvasMin;
+		const room = env.width - outerOf(next[o], otherOpen) - LIMITS.canvasMin;
 		side.width = clampWidth(Math.min(side.width, room), side);
 	}
 	side.open = true;
@@ -297,15 +295,15 @@ function unlight(next: Draft, id: SideId, pane: string): void {
 	side.touched = tick(next);
 }
 
-/** lifts a pane out of its rail and stack; a side left showing nothing collapses */
+/** lifts a pane off its side and out of its stack; a side left showing nothing collapses */
 function detach(next: Draft, pane: string): { side: SideId; index: number; lit: boolean } | null {
 	const id = sideOf(next, pane);
 	if (id === null) return null;
 	const side = next[id];
-	const index = side.rail.indexOf(pane);
+	const index = side.panes.indexOf(pane);
 	const lit = side.lit.includes(pane);
 	if (lit) bequeath(next, id, pane);
-	side.rail.splice(index, 1);
+	side.panes.splice(index, 1);
 	side.lit = side.lit.filter((p) => p !== pane);
 	if (lit && side.lit.length === 0) side.open = false;
 	return { side: id, index, lit };
@@ -346,8 +344,8 @@ function show(layout: Layout, pane: string, env: Env | undefined): Layout {
 		if (place === undefined) return layout;
 		const next = draft(layout);
 		delete next.removed[pane];
-		const rail = next[place.side].rail;
-		rail.splice(Math.min(place.index, rail.length), 0, pane);
+		const there = next[place.side].panes;
+		there.splice(Math.min(place.index, there.length), 0, pane);
 		current = next;
 	}
 	if (seen(current, pane, env)) {
@@ -359,19 +357,19 @@ function show(layout: Layout, pane: string, env: Env | undefined): Layout {
 	return click(current, pane, false, env);
 }
 
-/** the rails and stacks, which is all a drop can change */
+/** the sides' panes and stacks, which is all a drop can change */
 const shapeOf = (layout: Layout) =>
-	JSON.stringify(SIDES.map((id) => [layout[id].rail, stackOf(layout, id), wantsOpen(layout[id])]));
+	JSON.stringify(SIDES.map((id) => [layout[id].panes, stackOf(layout, id), wantsOpen(layout[id])]));
 
 function move(layout: Layout, pane: string, to: Target, env: Env | undefined): Layout {
 	const next = draft(layout);
 	const was = detach(next, pane);
 	if (was === null) return layout;
 	const side = next[to.side];
-	if (to.kind === "rail") {
-		// a slot counted with the pane still in the rail, before it lifted
+	if (to.kind === "bar") {
+		// a slot counted with the pane still among the toggles, before it lifted
 		const index = was.side === to.side && was.index < to.index ? to.index - 1 : to.index;
-		side.rail.splice(Math.max(0, Math.min(index, side.rail.length)), 0, pane);
+		side.panes.splice(Math.max(0, Math.min(index, side.panes.length)), 0, pane);
 		if (was.lit) {
 			if (was.side === to.side) {
 				side.lit.push(pane);
@@ -386,9 +384,9 @@ function move(layout: Layout, pane: string, to: Target, env: Env | undefined): L
 			}
 		}
 	} else {
-		const at = side.rail.indexOf(to.anchor);
+		const at = side.panes.indexOf(to.anchor);
 		if (at === -1) return layout;
-		side.rail.splice(to.edge === "above" ? at : at + 1, 0, pane);
+		side.panes.splice(to.edge === "above" ? at : at + 1, 0, pane);
 		if (!(was.side === to.side && was.lit)) {
 			// a fresh split halves the pane it splits
 			const half = (next.weights[to.anchor] ?? 1) / 2;
@@ -425,14 +423,14 @@ export function reduce(layout: Layout, action: Action, env?: Env): Layout {
 		}
 		case "open": {
 			const side = layout[action.side];
-			if (action.open && side.rail.length === 0) return layout;
+			if (action.open && side.panes.length === 0) return layout;
 			const next = draft(layout);
 			if (!action.open) {
 				collapse(next, action.side);
 				return next;
 			}
-			// nothing remembered: the first on the rail
-			const first = side.rail[0];
+			// nothing remembered: the side's first pane
+			const first = side.panes[0];
 			if (stackOf(next, action.side).length === 0 && first !== undefined) next[action.side].lit = [first];
 			openSide(next, action.side);
 			return next;
@@ -442,7 +440,7 @@ export function reduce(layout: Layout, action: Action, env?: Env): Layout {
 			const limit = env === undefined ? LIMITS.sideMax : maxWidth(layout, action.side, env);
 			const side = next[action.side];
 			side.width = clampWidth(Math.min(action.width, Math.max(minOf(side), limit)), side);
-			const first = side.rail[0];
+			const first = side.panes[0];
 			if (stackOf(next, action.side).length === 0 && first !== undefined) side.lit = [first];
 			side.open = true;
 			if (side.touched !== next.clock) side.touched = tick(next);
@@ -476,7 +474,7 @@ export function check(layout: Layout, pane: string, to: Target, env: Env): Verdi
 	if (wantsOpen(next[id]) && !before[id].open) {
 		const o = other(id);
 		const otherOpen = before[o].open && wantsOpen(next[o]);
-		if (env.width - outerOf(next[o], otherOpen) - LIMITS.rail - LIMITS.canvasMin < LIMITS.sideMin) return "floor";
+		if (env.width - outerOf(next[o], otherOpen) - LIMITS.canvasMin < LIMITS.sideMin) return "floor";
 	}
 	return "ok";
 }
@@ -491,24 +489,24 @@ const isSideId = (value: unknown): value is SideId => value === "left" || value 
 
 /**
  * The guard `remembered.ts` reads a stored layout through: exactly these panes,
- * each once, on a rail or removed, with nothing lit off its rail and nothing a
+ * each once, on a side or removed, with nothing lit off its side and nothing a
  * side is never left at. Anything else is discarded, never migrated.
  */
 export function isLayout(panes: readonly string[]) {
 	return (value: unknown): value is Layout => {
-		if (!isObject(value) || value.v !== 1 || !isCount(value.clock)) return false;
+		if (!isObject(value) || value.v !== 2 || !isCount(value.clock)) return false;
 		if (!isObject(value.weights) || !isObject(value.removed)) return false;
 		const known = new Set(panes);
 		const placed = new Set<string>();
 		for (const id of SIDES) {
 			const side = value[id];
-			if (!isObject(side) || !isStrings(side.rail) || !isStrings(side.lit)) return false;
+			if (!isObject(side) || !isStrings(side.panes) || !isStrings(side.lit)) return false;
 			if (typeof side.open !== "boolean" || !isCount(side.touched)) return false;
 			if (typeof side.width !== "number" || side.width < LIMITS.sideMin || side.width > LIMITS.sideMax) return false;
-			const rail = side.rail;
+			const panes = side.panes;
 			if (side.lit.length > LIMITS.shown || new Set(side.lit).size !== side.lit.length) return false;
-			if (!side.lit.every((pane) => rail.includes(pane))) return false;
-			for (const pane of rail) {
+			if (!side.lit.every((pane) => panes.includes(pane))) return false;
+			for (const pane of panes) {
 				if (!known.has(pane) || placed.has(pane)) return false;
 				placed.add(pane);
 			}

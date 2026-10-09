@@ -217,7 +217,7 @@ async function opened(others = 0) {
 
 /** the agent pane, shown */
 async function show(page: Page) {
-	const glyph = page.locator('[data-rail-icon="agent"]');
+	const glyph = page.locator('[data-pane-toggle="agent"]');
 	await glyph.waitFor();
 	if ((await glyph.getAttribute("aria-pressed")) !== "true") await glyph.click();
 	await page.locator("[data-agent-rail] textarea").waitFor();
@@ -239,7 +239,7 @@ function parts(page: Page) {
 		trigger: rail.getByRole("button", { name: "Choose model", exact: true }),
 		menu: rail.locator("[data-agent-model-menu]:not([inert] *)"),
 		engine: () => rail.getAttribute("data-agent-rail-engine"),
-		dot: page.locator('[data-rail-icon="agent"] [data-rail-mark="elsewhere"]'),
+		dot: page.locator('[data-pane-toggle="agent"] [data-toggle-mark="elsewhere"]'),
 		send: async (text: string) => {
 			await field.fill(text);
 			await field.press("Enter");
@@ -248,7 +248,7 @@ function parts(page: Page) {
 }
 
 describe("the agent rail in a browser", () => {
-	it("switches chats from the title, dots the rail icon for another thread's news, and queues, takes back and stops", {
+	it("switches chats from the title, dots the pane toggle for another thread's news, and queues, takes back and stops", {
 		timeout: 120_000,
 	}, async () => {
 		const { claude, page, rail, title, newChat, chats, field, send, sendButton, stop, dot } = await opened();
@@ -289,7 +289,7 @@ describe("the agent rail in a browser", () => {
 		await expect.poll(() => title.textContent()).toBe("New chat");
 		await expect.poll(() => dot.count()).toBe(1);
 		await expect
-			.poll(() => page.locator('[data-rail-icon="agent"]').getAttribute("aria-label"))
+			.poll(() => page.locator('[data-pane-toggle="agent"]').getAttribute("aria-label"))
 			.toBe("Agent, another chat has news");
 
 		// the title opens the chats; Escape closes them

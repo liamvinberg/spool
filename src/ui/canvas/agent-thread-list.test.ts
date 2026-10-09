@@ -49,7 +49,7 @@ describe("the thread title", () => {
 		expect(header(canvas.host)?.querySelector("h2")).toBeNull();
 		// the plus is the pane's own verb, in the header beside the title (#359)
 		expect(header(canvas.host)?.querySelector('button[aria-label="New chat"]')).not.toBeNull();
-		// and no marks of other threads in the header: those are the rail icon's one dot (#364)
+		// and no marks of other threads in the header: those are the pane toggle's one dot (#364)
 		expect(elsewhere(canvas.host)).toBe(false);
 	});
 
@@ -102,11 +102,11 @@ describe("the thread title", () => {
 
 	/**
 	 * The column's one glanceable answer, kept: something is moving in a chat you are not
-	 * looking at. It is one dot on the agent's rail icon now (#364), lit or not, and nothing
+	 * looking at. It is one dot on the agent's toggle now (#364), lit or not, and nothing
 	 * for the chat you are in or for one that is read, because the log beside it is already
 	 * the first.
 	 */
-	it("dots the rail icon for another thread's news, and never for the one you are in", async () => {
+	it("dots the pane toggle for another thread's news, and never for the one you are in", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the empty cart");
@@ -116,9 +116,9 @@ describe("the thread title", () => {
 
 		// running elsewhere, with the pane lit
 		await newThread(canvas.host);
-		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("true");
+		expect(canvas.host.querySelector('[data-pane-toggle="agent"]')?.getAttribute("aria-pressed")).toBe("true");
 		expect(elsewhere(canvas.host)).toBe(true);
-		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-label")).toBe(
+		expect(canvas.host.querySelector('[data-pane-toggle="agent"]')?.getAttribute("aria-label")).toBe(
 			"Agent, another chat has news",
 		);
 
@@ -132,7 +132,7 @@ describe("the thread title", () => {
 	});
 
 	/** the open chat's own marks on a hidden pane say more than news elsewhere, so they win */
-	it("gives way on the rail icon to the open thread's own working mark while the pane is hidden", async () => {
+	it("gives way on the pane toggle to the open thread's own working mark while the pane is hidden", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the empty cart");
@@ -144,10 +144,10 @@ describe("the thread title", () => {
 		await settle();
 		expect(elsewhere(canvas.host)).toBe(true);
 
-		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
-		const icon = canvas.host.querySelector('[data-rail-icon="agent"]');
+		await press(canvas.host.querySelector('[data-pane-toggle="agent"]'));
+		const icon = canvas.host.querySelector('[data-pane-toggle="agent"]');
 		expect(icon?.getAttribute("aria-pressed")).toBe("false");
-		expect(icon?.querySelector('[data-rail-mark="working"]')).not.toBeNull();
+		expect(icon?.querySelector('[data-toggle-mark="working"]')).not.toBeNull();
 		expect(elsewhere(canvas.host)).toBe(false);
 	});
 
@@ -227,21 +227,21 @@ describe("the thread title", () => {
 	});
 
 	/**
-	 * The rail icon that lit the pane is the thing that hides it (#256, #359), so the title
+	 * The pane toggle that lit the pane is the thing that hides it (#256, #359), so the title
 	 * carries no caret of its own: a second control for the same act was the doubling in
 	 * miniature.
 	 */
-	it("has no collapse caret, and the rail icon still hides the pane", async () => {
+	it("has no collapse caret, and the pane toggle still hides the pane", async () => {
 		const canvas = mount();
 		await canvas.render();
 
 		expect(header(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 		expect(rail(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
 
-		await press(canvas.host.querySelector('[data-rail-icon="agent"]'));
+		await press(canvas.host.querySelector('[data-pane-toggle="agent"]'));
 
 		expect(canvas.host.querySelector('aside[data-side="right"]')?.hasAttribute("data-side-open")).toBe(false);
-		expect(canvas.host.querySelector('[data-rail-icon="agent"]')?.getAttribute("aria-pressed")).toBe("false");
+		expect(canvas.host.querySelector('[data-pane-toggle="agent"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 
 	/** the plus is a button in the header, so the keyboard reaches it the way it reaches any */

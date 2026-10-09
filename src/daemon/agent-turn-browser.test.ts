@@ -106,7 +106,7 @@ it("runs a turn's grid two across, then three, dims an idle companion and puts a
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('iframe[title="home"]').waitFor({ timeout: 30_000 });
 
-	await page.locator('[data-rail-icon="agent"]').click();
+	await page.locator('[data-pane-toggle="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT);
 	await field.press("Enter");
