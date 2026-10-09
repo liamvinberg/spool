@@ -5261,7 +5261,7 @@ describe("the mode menu", () => {
 		const items = [...(menu(canvas.host)?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
 		expect(items.map((item) => item.getAttribute("data-permission-mode"))).toEqual(["ask", "edits", "bypass"]);
 		expect(items.map((item) => item.textContent)).toEqual([
-			"Ask firstClaude Code asks before it edits outside design/ or runs commands.",
+			"Ask firstAsks before it edits outside design/ or runs commands.",
 			"Auto-editEdits files without asking. Asks before commands.",
 			"Full accessNever asks.",
 		]);
@@ -5643,11 +5643,11 @@ describe("codex (#362)", () => {
 		await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
 		await settle(200);
 
-		// and Ask first says whose approval rules it is
+		// and Ask first says the same promise, naming no engine
 		await until(() => canvas.host.querySelector("[data-permission-trigger]") !== null);
 		await press(canvas.host.querySelector("[data-permission-trigger]"));
-		expect(live(canvas.host, '[data-permission-mode="ask"]')[0]?.textContent).toContain(
-			"Codex asks before it edits outside design/",
+		expect(live(canvas.host, '[data-permission-mode="ask"]')[0]?.textContent).toBe(
+			"Ask firstAsks before it edits outside design/ or runs commands.",
 		);
 	});
 

@@ -2498,7 +2498,6 @@ function Composer({
 										<PermissionMenu
 											mode={permissions.mode}
 											pending={permissions.pending}
-											engine={engineName(model.engine ?? "claude")}
 											trigger={permissionTrigger}
 											onChange={(next) => {
 												onMenu(null);

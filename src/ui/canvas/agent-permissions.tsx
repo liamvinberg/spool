@@ -94,17 +94,19 @@ export const MODE_NAMES: Readonly<Record<AgentPermissions, string>> = {
 	bypass: "Full access",
 };
 
-/** what each mode lets the agent do, in a sentence; `design/` is set as the path it is */
-/** what each mode lets the agent do, the ask line naming whose approval rules it is (#362) */
-const modeSays = (engine: string): Readonly<Record<AgentPermissions, ReactNode>> => ({
+/**
+ * What each mode lets the agent do, in the spec's own sentences (#360). The words are the
+ * promise every engine keeps, so none of them names one; `design/` is set as the path it is.
+ */
+const MODE_SAYS: Readonly<Record<AgentPermissions, ReactNode>> = {
 	ask: (
 		<>
-			{engine} asks before it edits outside <span className="type-detail">design/</span> or runs commands.
+			Asks before it edits outside <span className="type-detail">design/</span> or runs commands.
 		</>
 	),
 	edits: "Edits files without asking. Asks before commands.",
 	bypass: "Never asks.",
-});
+};
 
 /**
  * The machine's one mode for every chat and every agent (#361, #364): each mode its name
@@ -114,14 +116,11 @@ const modeSays = (engine: string): Readonly<Record<AgentPermissions, ReactNode>>
 export function PermissionMenu({
 	mode,
 	pending,
-	engine = "Claude Code",
 	trigger,
 	onChange,
 	onClose,
 }: {
 	mode: AgentPermissions;
-	/** whose approval rules ask is, by the name the rail calls the thread's engine */
-	engine?: string;
 	pending: boolean;
 	trigger: RefObject<HTMLButtonElement | null>;
 	onChange: (mode: AgentPermissions) => void;
@@ -179,7 +178,7 @@ export function PermissionMenu({
 				>
 					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 						<span className="text-text type-control">{MODE_NAMES[choice]}</span>
-						<span className="text-muted type-label [text-wrap:pretty]">{modeSays(engine)[choice]}</span>
+						<span className="text-muted type-label [text-wrap:pretty]">{MODE_SAYS[choice]}</span>
 					</span>
 					<CheckIcon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-text", choice !== mode && "invisible")} />
 				</button>
