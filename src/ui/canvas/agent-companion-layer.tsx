@@ -1,9 +1,10 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Camera, ProjectedFrame } from "../api";
+import type { ProjectedFrame } from "../api";
+import { HANG } from "./agent-canvas-ask";
 import type { AgentCompanion, CompanionAct } from "./agent-companion";
 import type { LocatedMark } from "./agent-hand";
 import { curve, EASE, MOTION } from "./agent-motion";
-import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
+import { type Box, shellRadiusOnScreen, toScreen, toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { useStillness } from "./stillness";
 
@@ -64,8 +65,8 @@ interface Step {
 const DOCK: Anchor = { ox: 1, oy: 0, dx: -SIDE / 2, dy: -NAME_ROW };
 const WALL_TOP: Anchor = { ox: 0, oy: 0, dx: -WALL, dy: 0 };
 const WALL_FOOT: Anchor = { ox: 0, oy: 1, dx: -WALL, dy: 0 };
-/** under the frame, where an ask standing on the canvas hangs from it */
-const FOOT: Anchor = { ox: 0, oy: 1, dx: 9, dy: 14 };
+/** under the frame, on the notch of the ask standing on the canvas there */
+const FOOT: Anchor = { ox: 0, oy: 1, dx: HANG.notch, dy: HANG.tip };
 
 function caretOf(lines: number): Anchor {
 	return { ox: 0.045, oy: 0.04 + 0.92 * Math.min(1, Math.max(lines, 1) / FULL), dx: -11, dy: 0 };
@@ -236,7 +237,7 @@ function Companion({
 		if (m.step !== null) {
 			const step = m.step;
 			const target = at(step.to, rect);
-			const from = m.from === null ? target : worldToScreen(m.from, view);
+			const from = m.from === null ? target : toScreen({ ...m.from, w: 0, h: 0 }, view);
 			const t = step.ms <= 0 ? 1 : Math.min(1, (now - m.began) / step.ms);
 			const e = step.ease(t);
 			point = { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e };
@@ -246,13 +247,13 @@ function Companion({
 				point.y -= Math.sin(Math.PI * t) * lift;
 			}
 			if (t >= 1) {
-				m.from = screenToWorld(target, view);
+				m.from = toWorld(target, view);
 				m.rest = step.to;
 				m.step = null;
 				busy = m.queue.length > 0;
 			} else busy = true;
 		} else point = at(m.rest, rect);
-		drawn.current = screenToWorld(point, view);
+		drawn.current = toWorld(point, view);
 		element.style.transform = `translate(${point.x - SIDE / 2}px, ${point.y - SIDE / 2}px)`;
 
 		if (trail.current !== null) {
@@ -594,12 +595,4 @@ function cornerOf(companion: AgentCompanion, place: Box, located: LocatedMark | 
 	const from = companion.range?.from ?? 1;
 	const share = companion.lines > 0 ? Math.min(1, Math.max(0, (from - 1) / companion.lines)) : 0.4;
 	return { ox: 0, oy: share, dx: 0, dy: 0 };
-}
-
-function worldToScreen(point: { x: number; y: number }, view: Camera) {
-	return { x: point.x * view.k + view.x, y: point.y * view.k + view.y };
-}
-
-function screenToWorld(point: { x: number; y: number }, view: Camera) {
-	return { x: (point.x - view.x) / view.k, y: (point.y - view.y) / view.k };
 }

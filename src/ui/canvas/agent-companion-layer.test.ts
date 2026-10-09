@@ -171,7 +171,8 @@ describe("the agent's companions on the canvas", () => {
 		expect(centre(docked)).toEqual({ x: 495, y: 82 });
 
 		const footed = layer({ companions: [companion({ act: "ask" })], footed: true }).host;
-		expect(centre(footed)).toEqual({ x: 109, y: 914 });
+		// on the notch of the card that hangs 22px under the frame, 15px in from its left foot
+		expect(centre(footed)).toEqual({ x: 115, y: 914 });
 	});
 
 	it("names its agents only once two of them share the page", () => {
