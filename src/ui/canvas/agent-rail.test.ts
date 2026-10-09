@@ -4869,7 +4869,7 @@ describe("the mode menu", () => {
 		const items = [...(menu(canvas.host)?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
 		expect(items.map((item) => item.getAttribute("data-permission-mode"))).toEqual(["ask", "edits", "bypass"]);
 		expect(items.map((item) => item.textContent)).toEqual([
-			"Ask firstAsks before it edits outside design/ or runs commands.",
+			"Ask firstClaude Code asks before it edits outside design/ or runs commands.",
 			"Auto-editEdits files without asking. Asks before commands.",
 			"Full accessNever asks.",
 		]);
@@ -5217,20 +5217,46 @@ describe("no supported agent at all (#363)", () => {
 });
 
 describe("codex (#362)", () => {
-	it("is a row in the agent menu, and a new chat can start on it", async () => {
+	it("is a group in the agent menu with its own efforts, and its chat's modes name it", async () => {
 		const canvas = mount();
 		canvas.preflight.engines = [
 			{ id: "claude", installed: true },
 			{ id: "codex", installed: true },
 		];
 		await canvas.render();
+		await openModelMenu(canvas);
+		await until(() => modelRow(canvas.host, "GPT-5.5") !== null);
+		expect(live(canvas.host, "[data-agent-group]").map((group) => group.getAttribute("data-agent-group"))).toEqual([
+			"claude",
+			"codex",
+		]);
+		// an empty chat takes Codex in place
+		await press(modelRow(canvas.host, "GPT-5.5"));
 		await settle(50);
-		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
-		const row = canvas.host.querySelector('[data-agent-engine="codex"]');
-		expect(row?.textContent).toContain("Uses your own Codex");
-		await press(row);
+		await until(
+			() => canvas.host.querySelector("[data-agent-rail]")?.getAttribute("data-agent-rail-engine") === "codex",
+		);
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("GPT-5.5") === true);
+
+		// its efforts are the ones Codex reports for the model, opened in place
+		await act(async () => modelTrigger(canvas.host)?.click());
 		await settle(50);
-		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("Codex");
+		expect(effortToggle(canvas.host)?.getAttribute("aria-label")).toBe("Effort, medium");
+		await press(effortToggle(canvas.host));
+		expect(effortPills(canvas.host).map((pill) => pill.getAttribute("data-agent-effort"))).toEqual([
+			"low",
+			"medium",
+			"high",
+		]);
+		await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+		await settle(200);
+
+		// and Ask first says whose approval rules it is
+		await until(() => canvas.host.querySelector("[data-permission-trigger]") !== null);
+		await press(canvas.host.querySelector("[data-permission-trigger]"));
+		expect(live(canvas.host, '[data-permission-mode="ask"]')[0]?.textContent).toContain(
+			"Codex asks before it edits outside design/",
+		);
 	});
 
 	it("bounces a signed-out turn to codex login", async () => {
