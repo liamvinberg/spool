@@ -5503,34 +5503,6 @@ export function ProjectCanvas({
 	const insideFrameRef = useRef(insideFrame);
 	insideFrameRef.current = insideFrame;
 
-	// A teammate scrolling a frame this canvas only watches scrolls it here too, so their pointer is over what
-	// it's over for them. The frame entered here is this person's own to scroll. With several inside one frame,
-	// the one who changed last leads.
-	useEffect(() => {
-		if (!team) return;
-		const told = new Map<string, string>();
-		const mirror = () => {
-			const leads = new Map<string, { x: number; y: number; active: number }>();
-			for (const mate of presenceRoom.teammates()) {
-				const { inside, scroll, page } = mate.state;
-				if (mate.left !== null || page !== activePage || inside == null || scroll == null) continue;
-				if (inside === enteredRef.current) continue;
-				const lead = leads.get(inside);
-				if (lead === undefined || mate.active >= lead.active) leads.set(inside, { ...scroll, active: mate.active });
-			}
-			for (const [frame, { x, y }] of leads) {
-				const key = `${x},${y}`;
-				if (told.get(frame) === key) continue;
-				const target = iframes.current.get(frame)?.contentWindow;
-				if (target == null) continue;
-				told.set(frame, key);
-				target.postMessage({ spool: "presence-scroll-to", x, y }, "*");
-			}
-		};
-		mirror();
-		return presenceRoom.subscribe(mirror);
-	}, [team, presenceRoom, activePage]);
-
 	// --- render -------------------------------------------------------------------
 
 	// no frames and no pages anywhere: the project is untouched — the canvas
