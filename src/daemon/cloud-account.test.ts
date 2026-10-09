@@ -74,6 +74,7 @@ it("signs this Mac in through the browser, shows who it is, and signs it out", a
 			state: "signed-in",
 			email: "ada@tidemark.app",
 			accountUrl: "https://cloud.test/account",
+			accountId: ADA.accountId,
 		}),
 	);
 	expect(await api("/sign-out", "POST")).toEqual({ status: 200, body: { state: "signed-out" } });

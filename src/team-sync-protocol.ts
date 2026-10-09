@@ -311,6 +311,36 @@ export interface PresenceState {
 	inside: string | null;
 	/** The world rectangle their canvas shows: what following them shows. */
 	view: { x: number; y: number; w: number; h: number } | null;
+	/**
+	 * Their agent, while a turn of it runs on this project (#378): absent otherwise, and absent from anyone whose
+	 * spool is older. Set by their daemon, never by their canvas.
+	 */
+	agent?: PresenceAgent;
+}
+
+/** What a person's agent is doing, small enough to ride every presence message. */
+export interface PresenceAgent {
+	/** At work; false while it waits on its person to answer it. */
+	running: boolean;
+	/** The turn's one line, `3 designers working`; null when it has none yet. */
+	status: string | null;
+	/** Each of its agents at a frame or at its placeholder frame, at most `PRESENCE_AGENT_WORK`. */
+	work: PresenceAgentWork[];
+}
+
+/** One agent at work on the canvas: where, and what it is doing there. */
+export interface PresenceAgentWork {
+	/** The frame it is at, or the placeholder frame it holds, by path under frames/. */
+	frame: string;
+	/**
+	 * What it is doing, in a word: in its placeholder `reading` or `drawing`; at a frame that stands `new`,
+	 * `landed`, `read`, `edit`, `shot`, `delete`, `ask` or `idle`. A word a reader doesn't know is `idle`.
+	 */
+	act: string;
+	/** The step it says it is on, in its own words; null for none. */
+	detail: string | null;
+	/** Lines of the frame's source it has written so far, or the file holds. */
+	lines: number;
 }
 
 /** Daemon → object: this local copy's person is here, or has left (null). Sent only once caught up. */
@@ -338,9 +368,15 @@ export interface Presence {
 }
 
 /** What a name in a presence message may be: a page or a frame. Small, so a person's whole state stays small. */
-const PRESENCE_NAME = 160;
+export const PRESENCE_NAME = 160;
 /** The frames a dragging pointer names, at most. */
 export const PRESENCE_DRAGGING = 4;
+/** The agents at work a presence names, at most. */
+export const PRESENCE_AGENT_WORK = 6;
+/** How long an agent's status line or a work's detail may be. */
+export const PRESENCE_AGENT_WORDS = 80;
+/** How long an act's word may be. */
+const PRESENCE_ACT = 16;
 
 /** A well-formed presence message, as a daemon or a browser hears it; undefined for anything else. */
 export function readPresence(message: Record<string, unknown>): Presence | undefined {
@@ -357,7 +393,7 @@ export function readPresence(message: Record<string, unknown>): Presence | undef
 export function readPresenceState(value: unknown): PresenceState | null | undefined {
 	if (value === null) return null;
 	if (!isRecord(value)) return undefined;
-	const { page, pointer, pressed, dragging, inside, view } = value;
+	const { page, pointer, pressed, dragging, inside, view, agent } = value;
 	if (!isPresenceName(page) || typeof pressed !== "boolean" || !(inside === null || isPresenceName(inside)))
 		return undefined;
 	if (!Array.isArray(dragging) || dragging.length > PRESENCE_DRAGGING || !dragging.every(isPresenceName))
@@ -373,7 +409,37 @@ export function readPresenceState(value: unknown): PresenceState | null | undefi
 		inside,
 		view:
 			view === null ? null : { x: view.x as number, y: view.y as number, w: view.w as number, h: view.h as number },
+		...withAgent(readPresenceAgent(agent)),
 	};
+}
+
+function withAgent(agent: PresenceAgent | undefined): { agent?: PresenceAgent } {
+	return agent === undefined ? {} : { agent };
+}
+
+/**
+ * A person's agent, copied field by field; undefined for none, and for anything not well formed or past its
+ * bounds, which leaves the rest of where they are standing: an agent is never worth losing their pointer over.
+ */
+export function readPresenceAgent(value: unknown): PresenceAgent | undefined {
+	if (!isRecord(value)) return undefined;
+	const { running, status, work } = value;
+	if (typeof running !== "boolean" || !(status === null || isAgentWords(status))) return undefined;
+	if (!Array.isArray(work) || work.length > PRESENCE_AGENT_WORK) return undefined;
+	const read: PresenceAgentWork[] = [];
+	for (const one of work) {
+		if (!isRecord(one)) return undefined;
+		const { frame, act, detail, lines } = one;
+		if (!isPresenceName(frame) || typeof act !== "string" || act.length > PRESENCE_ACT) return undefined;
+		if (!(detail === null || isAgentWords(detail))) return undefined;
+		if (!(typeof lines === "number" && Number.isInteger(lines) && lines >= 0)) return undefined;
+		read.push({ frame, act, detail, lines });
+	}
+	return { running, status, work: read };
+}
+
+function isAgentWords(value: unknown): value is string {
+	return typeof value === "string" && value.length <= PRESENCE_AGENT_WORDS;
 }
 
 function isPresenceName(value: unknown): value is string {

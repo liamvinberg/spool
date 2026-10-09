@@ -4,9 +4,10 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
-import type { PresenceState } from "../team-sync-protocol";
+import type { PresenceAgent, PresenceState } from "../team-sync-protocol";
 import { fakeTeam, TEAM_COLORS, TEAM_ORIGIN } from "../team-sync-test-harness";
-import { makeApp, makeTempDir, sseReader } from "../test-helpers";
+import { type FakeAgentProc, fixtureAgentExecutor, makeApp, makeTempDir, sseReader, until } from "../test-helpers";
+import { listProjectFrames } from "./projection";
 
 /**
  * Presence as one editor's canvas hears another: the daemon carries where its person is to the team and
@@ -226,5 +227,141 @@ describe("presence on a team canvas", () => {
 		const anas = await canvas(daemon(ana), "checkout");
 		const refused = await anas.say({ page: "", pointer: "here" } as never);
 		expect(refused.status).toBe(400);
+	});
+});
+
+describe("a teammate's agent on a team canvas (#378)", () => {
+	const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
+
+	/** Ana's daemon with an agent the test speaks for, and a turn started on the team project */
+	async function anaTurn(ana: Awaited<ReturnType<typeof team>>["ana"]) {
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(ana.state, { cloud: ana.cloud, teamNotice: () => {}, agentExecutor: agent.executor });
+		const started = await app.request("/api/p/checkout/agent/turn", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				thread: THREAD,
+				turn: "t1",
+				said: [{ prompt: "three directions, one designer each" }],
+			}),
+		});
+		expect(started.status).toBe(200);
+		await until(() => agent.spawned.length === 1);
+		const proc = agent.spawned[0] as FakeAgentProc;
+		proc.emit(JSON.stringify({ type: "system", subtype: "init", session_id: THREAD, cwd: ana.root }));
+		return {
+			app,
+			proc,
+			designer(task: string, description: string) {
+				proc.emit(
+					JSON.stringify({
+						type: "system",
+						subtype: "task_started",
+						task_id: task,
+						task_type: "local_agent",
+						subagent_type: "designer",
+						description,
+						tool_use_id: `toolu_${task}`,
+						session_id: THREAD,
+					}),
+				);
+			},
+			end() {
+				proc.emit(JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: THREAD }));
+				proc.exit(0);
+			},
+		};
+	}
+
+	it("reaches a teammate's disk as a placeholder that says whose designer holds it", async () => {
+		const { ana, ben } = await team();
+		const bens = await canvas(daemon(ben), "checkout");
+		const turn = await anaTurn(ana);
+		// the account she is signed in as is asked as her turn starts; a designer starts a moment later
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		turn.designer("t1", "Design calm home");
+
+		await until(() => listProjectFrames(ben.root).placeholders.length === 1, 8000);
+		expect(listProjectFrames(ben.root).placeholders).toMatchObject([
+			{ name: "calm-home", title: "Design calm home", by: { accountId: "ana", name: "ana" } },
+		]);
+		turn.end();
+		await until(() => listProjectFrames(ben.root).placeholders.length === 0, 8000);
+		await bens.close();
+	});
+
+	it("rides her presence while it runs: its status, and what each designer is doing, then goes when it ends", async () => {
+		const { ana, ben } = await team();
+		const bens = await canvas(daemon(ben), "checkout");
+		const turn = await anaTurn(ana);
+		const anas = await canvas(turn.app, "checkout");
+		await anas.say(at(10, 10));
+		expect((await bens.heard()).state).toMatchObject(at(10, 10));
+
+		turn.designer("t1", "Design calm home");
+		turn.designer("t2", "Design loud home");
+		/** what Ben next hears of her agent, skipping whatever says the same */
+		const agentHeard = async (until: (agent: PresenceAgent | undefined) => boolean) => {
+			for (;;) {
+				const { state } = await bens.heard();
+				const agent = (state as PresenceState | null)?.agent;
+				if (until(agent)) return { state: state as PresenceState, agent };
+			}
+		};
+		const working = await agentHeard((agent) => (agent?.work.length ?? 0) === 2);
+		expect(working.state).toMatchObject(at(10, 10));
+		expect(working.agent).toEqual({
+			running: true,
+			status: "2 designers working",
+			work: [
+				{ frame: "calm-home", act: "reading", detail: null, lines: 0 },
+				{ frame: "loud-home", act: "reading", detail: null, lines: 0 },
+			],
+		});
+
+		// where she is still travels as it did, her agent with it
+		await anas.say(at(20, 20));
+		expect(await agentHeard(() => true)).toMatchObject({ state: at(20, 20), agent: working.agent });
+
+		turn.end();
+		const ended = await agentHeard((agent) => agent === undefined);
+		expect(ended.state).toEqual(at(20, 20));
+		// what an agent is doing is her daemon's to say: a canvas claiming one is not heard
+		await anas.say(at(30, 30, { agent: { running: true, status: "made up", work: [] } }));
+		expect((await bens.heard()).state).toEqual(at(30, 30));
+		await anas.close();
+		await bens.close();
+	});
+
+	it("says it at most once a second however fast the turn talks", async () => {
+		const { ana, ben } = await team();
+		const bens = await canvas(daemon(ben), "checkout");
+		const turn = await anaTurn(ana);
+		const anas = await canvas(turn.app, "checkout");
+		await anas.say(at(0, 0));
+		await bens.heard();
+		const heard: number[] = [];
+		const listening = (async () => {
+			for (;;) {
+				const { state } = await bens.heard().catch(() => ({ state: null }));
+				if (state === null) return;
+				heard.push(Date.now());
+			}
+		})();
+		for (let n = 1; n <= 30; n += 1) {
+			turn.designer(`t${n}`, `Design take ${n}`);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		await new Promise((resolve) => setTimeout(resolve, 1200));
+		turn.end();
+		await anas.close();
+		await listening;
+		const gaps = heard.slice(1).map((at, index) => at - (heard[index] as number));
+		// 30 designers over 1.5s: a handful of states, each a second or so after the last
+		expect(heard.length).toBeGreaterThanOrEqual(2);
+		expect(heard.length).toBeLessThanOrEqual(6);
+		for (const gap of gaps.slice(0, -2)) expect(gap).toBeGreaterThanOrEqual(900);
+		await bens.close();
 	});
 });

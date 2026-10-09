@@ -11,7 +11,7 @@ import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
-import { type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
+import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
@@ -38,6 +38,7 @@ import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { Look } from "./agent-preflight";
+import { createAgentPresence } from "./agent-presence";
 import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { CanvasFileError } from "./canvas-file";
@@ -148,6 +149,7 @@ import {
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
+import type { PlaceholderAuthor } from "./sidecar";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
 import { createTeamSync, endedWith, followedLink, type OpenSyncSocket } from "./team-sync";
@@ -643,6 +645,18 @@ export function createDaemonApp({
 	/** the placeholder frames running turns hold for their designers, and the ones a last run left go (#369) */
 	const placeholders = createPlaceholderLedger(join(spoolDir, "placeholders.json"));
 	placeholders.sweep();
+	/**
+	 * Who this Mac is signed in to spool.page as, which the placeholders its designers make on a team project
+	 * name (#378). Asked again as each turn there starts and the last answer kept, so making one never waits.
+	 */
+	let signedInAs: PlaceholderAuthor | undefined;
+	const askWhoIsSignedIn = (): void =>
+		void account(spoolDir, { ...cloud, origin: originOf(cloud) }).then(
+			(one) => {
+				signedInAs = { accountId: one.accountId, name: one.email.split("@")[0] || one.email };
+			},
+			() => {},
+		);
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -941,6 +955,8 @@ export function createDaemonApp({
 		onSyncChanged: (root) => emitAppEvent({ kind: "sync", root, paused: teamSync.state(root).paused }),
 	});
 	teamSync.keeping(registeredRoots());
+	// what this machine's agent is doing on a team project, said to the team with its person's presence (#378)
+	const agentPresence = createAgentPresence({ publish: (root, agent) => teamSync.copy(root)?.agent(agent) });
 	// DEV-190: a project a teammate moved into the team arrives here with the move commit's pull, and is refilled
 	const movedIn = watchForMoves({
 		refill: async (root) => {
@@ -2573,7 +2589,14 @@ export function createDaemonApp({
 					ask,
 				});
 				// the frames the turn makes, however it writes them, are read off design/ (#365)
-				const turn = witnessFrames(engineTurn, { root: project.root, hub, placeholders });
+				const team = followedLink(project.root) !== undefined;
+				if (team) askWhoIsSignedIn();
+				const turn = witnessFrames(engineTurn, {
+					root: project.root,
+					hub,
+					placeholders,
+					...(team ? { author: () => signedInAs } : {}),
+				});
 				const picture = readThread(spoolDir, project.root, thread);
 				const pictured = picture ? agentPictureEnding(spoolDir, project.root, picture) : undefined;
 				const held = liveTurns.hold({
@@ -2590,6 +2613,7 @@ export function createDaemonApp({
 					mode,
 					...(named === undefined ? {} : { id: named }),
 				});
+				if (team) agentPresence.follow(held);
 				return attachTurn(c, held, 0);
 			},
 		)

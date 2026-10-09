@@ -77,6 +77,28 @@ export interface PlaceholderNote {
 	brief?: string;
 	/** when the designer started, as an ISO time */
 	since?: string;
+	/**
+	 * whose agent made it, on a team project: the account spool.page signs this Mac in as, and
+	 * the name a teammate's canvas calls them by (#378). Written once, when it is made.
+	 */
+	by?: PlaceholderAuthor;
+}
+
+/** the person whose agent made a placeholder: their account, and the name their pill says */
+export interface PlaceholderAuthor {
+	accountId: string;
+	name: string;
+}
+
+/** how long an author's account or name may be, so a sidecar stays small */
+const AUTHOR_CHARS = 160;
+
+function authorOf(value: unknown): PlaceholderAuthor | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const { accountId, name } = value as Record<string, unknown>;
+	const fits = (text: unknown): text is string =>
+		typeof text === "string" && text !== "" && text.length <= AUTHOR_CHARS;
+	return fits(accountId) && fits(name) ? { accountId, name } : undefined;
 }
 
 /** The placeholder record in a sidecar's value; nothing when it holds none. */
@@ -84,10 +106,12 @@ export function parsePlaceholder(value: unknown): PlaceholderNote | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const note = (value as Record<string, unknown>).placeholder;
 	if (typeof note !== "object" || note === null || Array.isArray(note)) return undefined;
-	const { title, brief, since } = note as Record<string, unknown>;
+	const { title, brief, since, by } = note as Record<string, unknown>;
+	const author = authorOf(by);
 	return {
 		...(typeof title === "string" && title !== "" ? { title } : {}),
 		...(typeof brief === "string" && brief !== "" ? { brief } : {}),
 		...(typeof since === "string" && since !== "" ? { since } : {}),
+		...(author === undefined ? {} : { by: author }),
 	};
 }

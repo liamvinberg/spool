@@ -18,6 +18,7 @@ import {
 	PROJECT_LIMIT_BYTES,
 	PROTOCOL_VERSION,
 	type Presence,
+	type PresenceAgent,
 	type PresenceState,
 	RESEND_PATHS,
 	readPresence,
@@ -121,6 +122,11 @@ export interface LocalCopy {
 	state(): Pick<SyncState, "paused" | "held">;
 	/** Where this machine's person is on the canvas, or null once nobody here is looking. Never stored. */
 	presence(state: PresenceState | null): void;
+	/**
+	 * What this machine's agent is doing on the project, or null once no turn of it runs (#378): it rides the
+	 * person's presence, so it is said only while they are on the canvas. Never stored.
+	 */
+	agent(agent: PresenceAgent | null): void;
 	/** Everyone else on the canvas now, `still` counted to this moment. */
 	people(): Presence[];
 	/**
@@ -771,6 +777,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 					? Promise.resolve()
 					: new Promise<void>((resolve, reject) => waiters.push({ resolve, reject })),
 		presence: (state) => presence.say(caughtUp ? socket : undefined, state),
+		agent: (agent) => presence.agent(caughtUp ? socket : undefined, agent),
 		people: () => presence.people(),
 		state: () => ({
 			paused: isPaused() && paused !== undefined ? paused.why : null,
@@ -816,16 +823,39 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
  */
 function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 	let mine: PresenceState | null = null;
+	/** this machine's agent, which the daemon says and rides on where the canvas says its person is */
+	let working: PresenceAgent | null = null;
+	/** what the team was last told, so the same state is never said twice */
+	let told = "null";
 	const others = new Map<string, { presence: Presence; heard: number }>();
 	const tell = (state: PresenceState | null) => encodeFrame({ type: "presence", state });
+	const standing = (): PresenceState | null =>
+		mine === null ? null : working === null ? mine : { ...mine, agent: working };
+	const sayIfChanged = (socket: SyncSocket | undefined) => {
+		const state = standing();
+		const text = JSON.stringify(state);
+		if (socket === undefined || text === told) return;
+		told = text;
+		socket.send(tell(state));
+	};
 	return {
 		say(socket: SyncSocket | undefined, state: PresenceState | null): void {
-			const changed = JSON.stringify(state) !== JSON.stringify(mine);
-			mine = state;
-			if (changed) socket?.send(tell(state));
+			// what an agent is doing is the daemon's to say, never the canvas's
+			if (state === null) mine = null;
+			else {
+				const { agent: _, ...where } = state;
+				mine = where;
+			}
+			sayIfChanged(socket);
+		},
+		agent(socket: SyncSocket | undefined, agent: PresenceAgent | null): void {
+			working = agent;
+			sayIfChanged(socket);
 		},
 		joined(socket: SyncSocket | undefined): void {
-			if (mine !== null) socket?.send(tell(mine));
+			const state = standing();
+			told = JSON.stringify(state);
+			if (state !== null) socket?.send(tell(state));
 		},
 		hear(message: Record<string, unknown>): void {
 			const presence = readPresence(message);

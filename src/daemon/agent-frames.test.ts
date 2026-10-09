@@ -30,6 +30,7 @@ import {
 import type { AgentTurn } from "./agent-turn";
 import type { ChangeEvent } from "./events";
 import { listProjectFrames } from "./projection";
+import type { PlaceholderAuthor } from "./sidecar";
 
 describe("reading a call's input for the frame it writes", () => {
 	it("reads a string field out of JSON that has not finished arriving", () => {
@@ -261,7 +262,7 @@ function designerStarts(proc: FakeAgentProc, task: string, description: string):
  * The witness over a turn whose events the test says, with a hub the test rings: no
  * engine and no watcher, just a call, the disk, and what the turn's log says of it.
  */
-function witnessed(root: string) {
+function witnessed(root: string, author?: () => PlaceholderAuthor | undefined) {
 	const pending: AgentEvent[] = [];
 	let wake: (() => void) | undefined;
 	let done = false;
@@ -289,7 +290,12 @@ function witnessed(root: string) {
 		},
 		publish: () => {},
 	};
-	const witness = witnessFrames(turn, { root, hub, placeholders: createPlaceholderLedger() });
+	const witness = witnessFrames(turn, {
+		root,
+		hub,
+		placeholders: createPlaceholderLedger(),
+		...(author === undefined ? {} : { author }),
+	});
 	const log: AgentEvent[] = [];
 	const reading = (async () => {
 		for await (const event of witness.events) log.push(event);
@@ -562,6 +568,23 @@ describe("a placeholder frame (#369)", () => {
 		const [calm, split] = projection.placeholders;
 		expect(calm !== undefined && split !== undefined && overlaps(calm, split)).toBe(false);
 		await turn.end();
+	});
+
+	it("says whose agent made it on a team project, and says nobody's elsewhere (#378)", async () => {
+		const { root } = project();
+		const ada = { accountId: "acct-ada", name: "ada" };
+		const team = witnessed(root, () => ada);
+		team.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => team.log.some((event) => event.kind === "spot"));
+		expect(sidecarOf(root, "ideas/home--split")).toMatchObject({ placeholder: { title: "Split home", by: ada } });
+		expect(listProjectFrames(root).placeholders).toMatchObject([{ name: "ideas/home--split", by: ada }]);
+		await team.end();
+
+		const solo = witnessed(root, () => undefined);
+		solo.say(designer("t2", "d2", "Calm home", brief("ideas/home--calm")));
+		await until(() => solo.log.some((event) => event.kind === "spot"));
+		expect(sidecarOf(root, "ideas/home--calm")).not.toHaveProperty("placeholder.by");
+		await solo.end();
 	});
 
 	it("becomes its designer's frame in place when the frame lands there, at the frame's own size", async () => {

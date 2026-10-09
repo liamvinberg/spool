@@ -33,6 +33,7 @@ import {
 	coverUrl,
 	daemonShares,
 	fetchCanvasState,
+	fetchCloudAccount,
 	fetchFlows,
 	fetchProjection,
 	type MoveAsk,
@@ -210,6 +211,7 @@ import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } fr
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
+import { TeammateCompanions, TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
@@ -502,6 +504,18 @@ export function ProjectCanvas({
 	const [presenceRoom] = useState(() => createPresenceRoom());
 	const [team, setTeam] = useState(false);
 	const [following, setFollowing] = useState<string | null>(null);
+	/** the account this Mac is signed in as, which tells this canvas's own placeholders from teammates' (#378) */
+	const [you, setYou] = useState<string | null>(null);
+	useEffect(() => {
+		if (!team) return;
+		let live = true;
+		void fetchCloudAccount().then((account) => {
+			if (live && account.state === "signed-in") setYou(account.accountId ?? null);
+		});
+		return () => {
+			live = false;
+		};
+	}, [team]);
 	/**
 	 * Where each page stands on the field holding it (#265).
 	 *
@@ -5784,15 +5798,28 @@ export function ProjectCanvas({
 							))}
 							{/* designers' placeholder frames (#369), dashed where their frames will land,
 						    with what each designer is doing inside its own */}
-							{visiblePlaceholders.map((one) => (
-								<PlaceholderFrame
-									key={one.name}
-									placeholder={one}
-									camera={camera}
-									work={workOf(tileFor(turn.entries, one.name))}
-									pointed={pointed === one.name}
-								/>
-							))}
+							{visiblePlaceholders.map((one) => {
+								// a teammate's designer's, drawn in their colour (#378)
+								const by = team ? teammateOf(one, you) : undefined;
+								return by === undefined ? (
+									<PlaceholderFrame
+										key={one.name}
+										placeholder={one}
+										camera={camera}
+										work={workOf(tileFor(turn.entries, one.name))}
+										pointed={pointed === one.name}
+									/>
+								) : (
+									<TeammatePlaceholder
+										key={one.name}
+										room={presenceRoom}
+										placeholder={one}
+										by={by}
+										camera={camera}
+										pointed={pointed === one.name}
+									/>
+								);
+							})}
 						</CameraField>
 					)}
 					{/* every frame standing as its picture, on the GPU (#81): over the
@@ -5965,6 +5992,8 @@ export function ProjectCanvas({
 								marks={locatedMarks}
 								footed={askFooted}
 							/>
+							{/* teammates' agents at these frames, each in their colour (#378) */}
+							{team && <TeammateCompanions room={presenceRoom} camera={camera} frames={visibleFrames} />}
 							{(() => {
 								// under its frame, or under its placeholder while the frame is not there yet,
 								// and only on the page showing it (#376)

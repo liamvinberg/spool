@@ -11,7 +11,7 @@ import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, overlaps, pageObjectsOn } from "./placement";
 import { discoverFrames, isPageFolder, listProjectFrames, type Projection } from "./projection";
-import { type PlaceholderNote, parseSidecar } from "./sidecar";
+import { type PlaceholderAuthor, type PlaceholderNote, parseSidecar } from "./sidecar";
 
 /**
  * A turn's frames, read off `design/` rather than off its tool calls (#365).
@@ -33,7 +33,7 @@ import { type PlaceholderNote, parseSidecar } from "./sidecar";
  * - **Placeholder frames.** A designer delegation streams nothing while it works, so the
  *   moment it starts spool makes its frame: a folder on the page its brief names, holding a
  *   frame.json with its place and a `placeholder` record of the direction's name and brief,
- *   and no frame.tsx yet. It is placed by the same beside-the-field rule a new frame gets,
+ *   and whose agent it is on a team project, and no frame.tsx yet. It is placed by the same beside-the-field rule a new frame gets,
  *   syncs to teammates as any frame file does, and the canvas draws it dashed. The designer
  *   writes frame.tsx into it; a designer that ends without doing so has it taken away.
  * - **Put back.** A frame this turn deleted is written back from the source kept here.
@@ -305,6 +305,11 @@ export interface FrameWitnessOptions {
 	readonly root: string;
 	readonly hub: FrameHub;
 	readonly placeholders: PlaceholderLedger;
+	/**
+	 * whose agent this is, asked as each placeholder is made: on a team project, the account
+	 * this Mac is signed in as, so a teammate's canvas says whose designer it is (#378)
+	 */
+	readonly author?: () => PlaceholderAuthor | undefined;
 	readonly now?: () => number;
 }
 
@@ -328,7 +333,7 @@ export interface WitnessedTurn extends AgentTurn, FrameWitness {}
 
 export function witnessFrames(
 	turn: AgentTurn,
-	{ root, hub, placeholders, now = Date.now }: FrameWitnessOptions,
+	{ root, hub, placeholders, author, now = Date.now }: FrameWitnessOptions,
 ): WitnessedTurn {
 	const feed = createEventFeed<AgentEvent>();
 	const { push } = feed;
@@ -600,10 +605,12 @@ export function witnessFrames(
 		const size = like === undefined ? DEFAULT_FOOTPRINT : { w: like.w, h: like.h };
 		const at = { ...besideField(pageField(projection, page)), ...size };
 		const brief = (prompt ?? "").trim();
+		const by = author?.();
 		const note: PlaceholderNote = {
 			title: description?.trim() || pageName(name),
 			...(brief === "" ? {} : { brief: brief.length > BRIEF_CHARS ? `${brief.slice(0, BRIEF_CHARS - 1)}…` : brief }),
 			since: new Date(now()).toISOString(),
+			...(by === undefined ? {} : { by }),
 		};
 		// the page folders this makes, deepest first, so taking it away takes them too
 		const pages: string[] = [];
