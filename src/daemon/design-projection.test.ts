@@ -44,6 +44,8 @@ describe("the canvas read from a copy of design/", () => {
 			"frames/next/frame.json",
 			'{ "x": 460, "y": -20, "w": 390, "h": 844, "placeholder": {} }\n',
 		);
+		// a stray sidecar in a page folder leaves it a page
+		writeDesignFile(root, "frames/shop/frame.json", '{ "x": 0, "y": 0, "w": 1, "h": 1 }\n');
 		const copy = files(root);
 
 		const cloud = projectDesign("/copy/design", memoryDesignFiles(copy));
@@ -53,6 +55,7 @@ describe("the canvas read from a copy of design/", () => {
 		expect(cloud.places).toEqual(daemon.places);
 		expect(cloud.frames).toEqual(daemon.frames.map(({ born: _born, ...frame }) => frame));
 		expect(cloud.order).toEqual({ pages: { "": ["shop", "about"] } });
+		expect(cloud.frames.map((frame) => frame.name)).toContain("shop/cart");
 		expect(cloud.frames.find((frame) => frame.name === "home")).toEqual({
 			name: "home",
 			x: 40,

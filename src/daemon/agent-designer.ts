@@ -32,7 +32,7 @@ Plan colour and type before you write any code: a small palette where each colou
 
 Spend boldness in one place, such as the headline, one strong colour, the layout or a single motion, and keep the rest quiet.
 
-Your brief names your frame as design/frames/<page>/<name>/frame.tsx. Spool has already put a placeholder there, a folder whose frame.json holds its place: draw into it by writing that frame.tsx, and keep its frame.json unless you need another size, which you state as w and h alone.
+Your brief names your frame as design/frames/<page>/<name>/frame.tsx. Spool has already put a placeholder there, a folder whose frame.json holds its place: draw into it by writing that frame.tsx, and keep its frame.json unless you need another size, which you state as w and h alone, before you write frame.tsx.
 
 Once the frame renders, look at it with \`spool shot\` and hold it against the brief. Revise whatever reads as generic. Then say in two or three sentences what you drew and where.`;
 

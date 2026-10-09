@@ -63,7 +63,12 @@ export function PageObjectView({
 				{object.composition.frames.map((frame) => (
 					<div
 						key={frame.name}
-						className="absolute bg-surface"
+						data-page-object-waiting={frame.waiting ? "" : undefined}
+						className={
+							frame.waiting
+								? "absolute rounded-[1px] border border-border-raised border-dashed"
+								: "absolute bg-surface"
+						}
 						style={{
 							left: fit.dx + frame.x * fit.scale,
 							top: fit.dy + frame.y * fit.scale,

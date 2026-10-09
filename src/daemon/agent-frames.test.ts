@@ -90,6 +90,16 @@ describe("a placeholder frame's name", () => {
 		expect(briefFrames("Create design/frames/hello-loud/frame.tsx as a bold frame.")).toEqual(["hello-loud"]);
 		expect(briefFrames(null)).toEqual([]);
 	});
+
+	it("is read from a path under frames/ too, as a brief written from inside design/ says it", () => {
+		expect(briefFrames("Draw frames/ideas/home--split/frame.tsx, after `frames/app/home/frame.tsx`.")).toEqual([
+			"ideas/home--split",
+			"app/home",
+		]);
+		expect(briefFrames("Draw ./frames/calm/frame.tsx.")).toEqual(["calm"]);
+		// a frames/ folder that is not the design's own is not a frame
+		expect(briefFrames("Read src/frames/x/frame.tsx and my-frames/y/frame.tsx.")).toEqual([]);
+	});
 });
 
 const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
@@ -570,6 +580,23 @@ describe("a placeholder frame (#369)", () => {
 		await turn.end();
 	});
 
+	it("takes the next free name on its nested page when another designer holds the one its brief names", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => turn.log.some((event) => event.kind === "spot"));
+		turn.say(designer("t2", "d2", "Split home again", brief("ideas/home--split")));
+		await until(() => turn.log.filter((event) => event.kind === "spot").length === 2);
+		expect(
+			turn.log.filter((event) => event.kind === "spot").map((event) => event.kind === "spot" && event.name),
+		).toEqual(["ideas/home--split", "ideas/home--split-2"]);
+		expect(listProjectFrames(root).placeholders.map((one) => [one.name, one.page])).toEqual([
+			["ideas/home--split", "ideas"],
+			["ideas/home--split-2", "ideas"],
+		]);
+		await turn.end();
+	});
+
 	it("says whose agent made it on a team project, and says nobody's elsewhere (#378)", async () => {
 		const { root } = project();
 		const ada = { accountId: "acct-ada", name: "ada" };
@@ -624,6 +651,65 @@ describe("a placeholder frame (#369)", () => {
 		expect(turn.log.some((event) => event.kind === "spot" && event.state === "released")).toBe(false);
 	});
 
+	it("keeps its frame where it landed when the designer states only a size after its source", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => turn.log.some((event) => event.kind === "spot"));
+		const held = turn.log.find((event) => event.kind === "spot");
+		if (held?.kind !== "spot") throw new Error("no placeholder");
+		writeFrame(root, "ideas/home--split", "export default () => null;\n");
+		turn.ring("ideas/home--split");
+		await until(() => turn.log.some((event) => event.kind === "spot" && event.state === "filled"));
+
+		// its size, stated after the frame landed: the frame stays where its placeholder stood
+		writeDesignFile(root, "frames/ideas/home--split/frame.json", '{ "w": 360, "h": 780 }\n');
+		turn.ring("ideas/home--split", "geometry");
+		expect(sidecarOf(root, "ideas/home--split")).toEqual({ x: held.x, y: held.y, w: 360, h: 780 });
+		expect(listProjectFrames(root).frames.find((frame) => frame.name === "ideas/home--split")).toMatchObject({
+			x: held.x,
+			y: held.y,
+			w: 360,
+			h: 780,
+		});
+
+		// one that would now cover a neighbour stands beside the field, as at landing
+		writeDesignFile(
+			root,
+			"frames/ideas/neighbour/frame.json",
+			`{ "x": ${held.x + 500}, "y": ${held.y}, "w": 100, "h": 100 }\n`,
+		);
+		writeFrame(root, "ideas/neighbour", "export default () => null;\n");
+		writeDesignFile(root, "frames/ideas/home--split/frame.json", '{ "w": 1440, "h": 900 }\n');
+		turn.ring("ideas/home--split", "geometry");
+		const grown = sidecarOf(root, "ideas/home--split");
+		expect(grown).toMatchObject({ w: 1440, h: 900 });
+		expect(grown.x === held.x && grown.y === held.y).toBe(false);
+		await turn.end();
+	});
+
+	it("is filled by a frame its designer wrote before reporting back, though the watcher has not said so yet", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		await until(() => turn.log.some((event) => event.kind === "spot"));
+		const held = turn.log.find((event) => event.kind === "spot");
+		if (held?.kind !== "spot") throw new Error("no placeholder");
+		// on disk, and no ring for it: the designer reports back first
+		writeFrame(root, "ideas/home--split", "export default () => null;\n");
+		turn.say(done("t1"));
+		await until(() => turn.log.some((event) => event.kind === "task-done"));
+
+		expect(turn.log.find((event) => event.kind === "frame")).toMatchObject({
+			frame: "ideas/home--split",
+			change: "created",
+			spot: "ideas/home--split",
+		});
+		expect(turn.log.some((event) => event.kind === "spot" && event.state === "released")).toBe(false);
+		expect(sidecarOf(root, "ideas/home--split")).toEqual({ x: held.x, y: held.y, w: held.w, h: held.h });
+		await turn.end();
+	});
+
 	it("goes when its designer's first frame lands elsewhere, and the turn's spot follows that frame", async () => {
 		const { root } = project();
 		const turn = witnessed(root);
@@ -668,6 +754,26 @@ describe("a placeholder frame (#369)", () => {
 
 		expect(existsSync(join(root, "design/frames/ideas"))).toBe(false);
 		expect(listProjectFrames(root)).toMatchObject({ pages: ["app"], placeholders: [] });
+	});
+
+	it("is taken away with what its designer left in it when nothing there is a frame", async () => {
+		const { root } = project();
+		const turn = witnessed(root);
+		turn.say(designer("t1", "d1", "Split home", brief("ideas/home--split")));
+		turn.say(designer("t2", "d2", "Calm home", brief("ideas/home--calm")));
+		await until(() => turn.log.filter((event) => event.kind === "spot").length === 2);
+		// one designer left only a part behind; the other a frame of its own beneath its placeholder
+		writeDesignFile(root, "frames/ideas/home--split/parts.tsx", "export const Part = () => null;\n");
+		writeFrame(root, "ideas/home--calm/inner", "export default () => null;\n");
+		turn.say(done("t1"));
+		turn.say(done("t2"));
+		await until(() => turn.log.filter((event) => event.kind === "spot" && event.state !== "held").length === 2);
+		await turn.end();
+
+		expect(existsSync(join(root, "design/frames/ideas/home--split"))).toBe(false);
+		expect(existsSync(join(root, "design/frames/ideas/home--calm/inner/frame.tsx"))).toBe(true);
+		expect(existsSync(join(root, "design/frames/ideas/home--calm/frame.json"))).toBe(false);
+		expect(listProjectFrames(root)).toMatchObject({ pages: ["app", "ideas", "ideas/home--calm"], placeholders: [] });
 	});
 
 	it("is not made for a designer whose brief names only frames that stand: that is an edit", async () => {

@@ -88,10 +88,15 @@ const nameWidth = (name: string) => Math.round(name.length * 7.2);
 /**
  * How much of each frame's name row, from its right edge leftward, the companions docked there
  * take, in screen pixels: the square, and its name when two agents share the page. Teammates'
- * pills step aside left of it (#373).
+ * pills step aside left of it (#373). Only the companions on `frames`, the page the canvas
+ * shows, as the layer draws and names only those (#376).
  */
-export function dockRoom(companions: readonly AgentCompanion[]): Map<string, number> {
-	const placed = companions.filter((one) => !one.own && one.frame !== null);
+export function dockRoom(
+	companions: readonly AgentCompanion[],
+	frames: readonly { readonly name: string }[],
+): Map<string, number> {
+	const here = new Set(frames.map((frame) => frame.name));
+	const placed = companions.filter((one) => !one.own && one.frame !== null && here.has(one.frame));
 	const named = placed.length >= 2;
 	const fans = fansOf(placed);
 	const room = new Map<string, number>();

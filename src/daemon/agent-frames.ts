@@ -175,10 +175,18 @@ export function changedRange(before: string, after: string): { from: number; to:
 	return { from, to: Math.min(to, Math.max(1, now.length)) };
 }
 
+/**
+ * A frame's entry as a brief names it: under `design/frames/`, or under `frames/` as one
+ * written from inside design/ says it, though never another folder that happens to be
+ * called frames (`src/frames/`, `my-frames/`).
+ */
+const BRIEF_PATH =
+	/(?:design\/|(?<![\w./-])(?:\.\/)?)frames\/((?:[^\s"'`\\/<>|;&]+\/)*?[^\s"'`\\/<>|;&]+)\/frame\.tsx/g;
+
 /** Every frame a brief names by its entry, page and all: `design/frames/home/split/frame.tsx` → `home/split`. */
 export function briefFrames(prompt: string | null | undefined): string[] {
 	const named = new Set<string>();
-	for (const match of (prompt ?? "").matchAll(new RegExp(FRAME_PATH.source, "g"))) {
+	for (const match of (prompt ?? "").matchAll(BRIEF_PATH)) {
 		const name = match[1];
 		if (name !== undefined && isFramePath(name)) named.add(name);
 	}
@@ -264,9 +272,11 @@ export function createPlaceholderLedger(file?: string): PlaceholderLedger {
 }
 
 /**
- * Take a placeholder frame away: its sidecar, its folder once empty, and the page folders
- * made for it once empty. A frame that landed in it is a frame and stays, and so does
- * anything else a designer wrote into the folder.
+ * Take a placeholder frame away: its sidecar, its folder, and the page folders made for it
+ * once empty. A frame that landed in it is a frame and stays. So does a frame its designer
+ * drew beneath it, which leaves the folder a page; with no frame anywhere in it, what the
+ * designer left there (a parts file, say) goes with it, or the folder would stand as a page
+ * of nothing. Only ever inside the placeholder's own folder, which spool made for this.
  */
 export function removePlaceholder(root: string, frame: string, made: readonly string[] = []): void {
 	if (!isFramePath(frame)) return;
@@ -280,19 +290,30 @@ export function removePlaceholder(root: string, frame: string, made: readonly st
 	try {
 		const dir = resolveDesignPath(designDir, folderOf(frame));
 		if (existsSync(join(dir, "frame.tsx"))) return;
-		rmSync(join(dir, "frame.json"), { force: true });
+		if (holdsFrame(dir)) rmSync(join(dir, "frame.json"), { force: true });
+		else rmSync(dir, { recursive: true, force: true });
 	} catch {
 		return;
 	}
 	for (const folder of [frame, ...made]) {
 		try {
 			const dir = resolveDesignPath(designDir, folderOf(folder));
+			if (!existsSync(dir)) continue;
 			if (readdirSync(dir).length > 0) return;
 			rmdirSync(dir);
 		} catch {
 			return;
 		}
 	}
+}
+
+/** Whether a frame entry stands anywhere under a folder; links are not followed. */
+function holdsFrame(dir: string): boolean {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (entry.isDirectory() && (existsSync(join(dir, entry.name, "frame.tsx")) || holdsFrame(join(dir, entry.name))))
+			return true;
+	}
+	return false;
 }
 
 /** The bytes of a placeholder's sidecar: its place, whole numbers, and what it holds. */
@@ -476,21 +497,38 @@ export function witnessFrames(
 	}
 
 	/**
-	 * A designer wrote its placeholder's sidecar before its source, stating a size and no
-	 * place: the placeholder keeps its place and its record, at the size the designer gave.
+	 * A designer wrote a sidecar stating a size and no place into its placeholder. Before
+	 * its source, the placeholder keeps its place and its record at the size the designer
+	 * gave. After, the frame that landed there keeps the place it landed at, and stands
+	 * beside the field only when the new size would cover a neighbour, as at landing:
+	 * never moved off as a new frame would be.
 	 */
 	function keep(frame: string): void {
 		if (designDir === undefined) return;
-		const spot = [...reserved.values()].find((one) => one.state === "held" && one.name === frame);
+		const spot = [...reserved.values()].find(
+			(one) => (one.state === "held" && one.name === frame) || (one.state === "filled" && one.frame === frame),
+		);
 		const note = spot === undefined ? undefined : notes.get(spot.task);
 		if (spot === undefined || note === undefined) return;
 		const dir = join(designDir, "frames", ...frame.split("/"));
 		try {
 			const file = resolveDesignPath(designDir, join(dir, "frame.json"));
-			if (existsSync(join(dir, "frame.tsx"))) return;
+			const landed = existsSync(join(dir, "frame.tsx"));
+			if (landed !== (spot.state === "filled")) return;
 			const sidecar = parseSidecar(JSON.parse(readFileSync(file, "utf8")));
 			if (sidecar.kind !== "sized") return;
-			writeFileSync(file, placeholderBytes({ x: spot.x, y: spot.y, ...sidecar.footprint }, note));
+			let at: Rect = { x: spot.x, y: spot.y, ...sidecar.footprint };
+			if (!landed) {
+				writeFileSync(file, placeholderBytes(at, note));
+				return;
+			}
+			if (at.w > spot.w || at.h > spot.h) {
+				const inSpot = at;
+				const field = pageField(listProjectFrames(root), pageParent(frame), frame);
+				if (field.some((other) => overlaps(inSpot, other))) at = { ...besideField(field), w: at.w, h: at.h };
+			}
+			writeGeometry(file, at, designDir);
+			reserved.set(spot.task, { ...spot, ...at });
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 		}
@@ -715,7 +753,12 @@ export function witnessFrames(
 			if (event.agent === "designer") reserve(event.task, event.call, event.description, event.prompt, event.parent);
 			return;
 		}
-		if (event.kind === "task-done") release(event.task);
+		if (event.kind === "task-done") {
+			// the disk first, as at the turn's end: a frame written just before the designer
+			// reported back fills its placeholder though the watcher has not said so yet
+			rescan();
+			release(event.task);
+		}
 	}
 
 	const unsubscribe = hub.subscribe(root, (change) => {

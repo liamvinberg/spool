@@ -24,7 +24,7 @@ export interface DesignProjection {
 /**
  * The canvas's reading of a design folder held anywhere (`projection.ts` is the
  * daemon's, on its disk): a folder holding frame.tsx is a frame, one holding
- * only frame.json is a frame on its way and no page, every other
+ * frame.json and no folders is a frame on its way and no page, every other
  * safe-named folder under frames/ is a page, and each frame stands where its
  * sidecar says. A frame or page nobody placed is placed as the daemon places
  * it, and nothing is written: the daemon that finds it first writes the place,
@@ -43,8 +43,11 @@ export function projectDesign(designDir: string, files: DesignFiles): DesignProj
 				found.push({ name: pageUnder(page, entry.name), page: page === ROOT_PAGE ? undefined : page, dir: child });
 				continue;
 			}
-			// a sidecar and no entry yet is a frame on its way, never a page
-			if (files.kind(join(child, "frame.json")) !== undefined) {
+			// a sidecar and no entry yet is a frame on its way, never a page, unless it holds folders
+			if (
+				files.kind(join(child, "frame.json")) !== undefined &&
+				!(files.list(child) ?? []).some((inner) => inner.kind === "directory")
+			) {
 				const sidecar = parseSidecar(readJson(files, join(child, "frame.json")));
 				if (sidecar.kind === "placed")
 					waiting.push({ ...sidecar.geometry, page: page === ROOT_PAGE ? undefined : page });

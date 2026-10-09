@@ -75,7 +75,8 @@ export interface PageRow extends RowPlace {
 	readonly page: string;
 	readonly open: boolean;
 	/**
-	 * Every frame under this page, its own pages' included.
+	 * Every frame under this page, its own pages' included, and every frame on its
+	 * way there: a page of designers' placeholders is not empty (#371).
 	 *
 	 * A page holding four pages and no frames of its own was reading 0, which is
 	 * the one thing it is not: the number is what is one chevron away, and what is
@@ -162,6 +163,8 @@ export function railRows(
 	/** the page a new one is being named inside; it waits at the end of that page's own */
 	born: string | null = null,
 	below: RailBelow | null = null,
+	/** how many frames are on their way to each page: its placeholders, which have no rows */
+	waiting: ReadonlyMap<string, number> = new Map(),
 ): RailRow[] {
 	const rows: RailRow[] = [];
 	let top = 0;
@@ -207,7 +210,11 @@ export function railRows(
 	/** A page's frames and every frame under its own pages. */
 	function within(page: string): number {
 		const held = pages.get(page) ?? [];
-		return (framesByPage.get(page) ?? []).length + held.reduce((total, child) => total + within(child), 0);
+		return (
+			(framesByPage.get(page) ?? []).length +
+			(waiting.get(page) ?? 0) +
+			held.reduce((total, child) => total + within(child), 0)
+		);
 	}
 	function block(page: string, index: number, siblings: number, tail: boolean): void {
 		const open = expanded.has(page);
