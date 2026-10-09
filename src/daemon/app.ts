@@ -32,7 +32,7 @@ import { createClaudeEngine } from "./agent-engine-claude";
 import { createCodexEngine } from "./agent-engine-codex";
 import { createPiEngine } from "./agent-engine-pi";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
-import { createHeldSpots, FrameStandsError, putFrameBack, type WitnessedTurn, witnessFrames } from "./agent-frames";
+import { createReservedSpots, FrameStandsError, putFrameBack, type WitnessedTurn, witnessFrames } from "./agent-frames";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
@@ -550,7 +550,7 @@ export function createDaemonApp({
 		frame: string | undefined,
 		projectName: string,
 	): { start: string; projection: ReturnType<typeof listProjectFrames> } | { message: string } {
-		const projection = listProjectFrames(root, { held: heldSpots.of(root) });
+		const projection = listProjectFrames(root, { reserved: reservedSpots.of(root) });
 		const names = projection.frames.map((entry) => entry.name);
 		const first = names[0];
 		if (first === undefined) {
@@ -589,7 +589,7 @@ export function createDaemonApp({
 				return;
 			}
 			waitingSince = undefined;
-			void playerCompiler.getBundle(root, listProjectFrames(root, { held: heldSpots.of(root) }).frames);
+			void playerCompiler.getBundle(root, listProjectFrames(root, { reserved: reservedSpots.of(root) }).frames);
 		};
 		const arm = () => {
 			waitingSince ??= Date.now();
@@ -616,7 +616,7 @@ export function createDaemonApp({
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
 	/** the spots running turns hold on the canvas for their designers (#365) */
-	const heldSpots = createHeldSpots();
+	const reservedSpots = createReservedSpots();
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -2057,7 +2057,10 @@ export function createDaemonApp({
 			const project = resolveProject(c, name);
 			if ("response" in project) return project.response;
 			try {
-				const projection = listProjectFrames(project.root, { seen: true, held: heldSpots.of(project.root) });
+				const projection = listProjectFrames(project.root, {
+					seen: true,
+					reserved: reservedSpots.of(project.root),
+				});
 				return c.json({
 					...projection,
 					frames: projection.frames.map((frame) => {
@@ -2249,7 +2252,7 @@ export function createDaemonApp({
 			// the pass dials this daemon: before the server binds there is no
 			// origin to render from, and in-process app.request() never binds one
 			if (selfOrigin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
-			const listing = listProjectFrames(project.root, { held: heldSpots.of(project.root) });
+			const listing = listProjectFrames(project.root, { reserved: reservedSpots.of(project.root) });
 			const frames = listing.frames.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
 			try {
 				const result = await resolvePass.run({
@@ -2540,7 +2543,7 @@ export function createDaemonApp({
 					ask,
 				});
 				// the frames the turn makes, however it writes them, are read off design/ (#365)
-				const turn = witnessFrames(engineTurn, { root: project.root, hub, spots: heldSpots });
+				const turn = witnessFrames(engineTurn, { root: project.root, hub, spots: reservedSpots });
 				witnesses.set(`${project.root} ${thread}`, turn);
 				const picture = readThread(spoolDir, project.root, thread);
 				const pictured = picture ? agentPictureEnding(spoolDir, project.root, picture) : undefined;

@@ -60,7 +60,7 @@ describe("what moved in a frame", () => {
 	});
 });
 
-describe("a held spot", () => {
+describe("a reserved spot", () => {
 	it("is named from the delegation's own words", () => {
 		expect(spotName("Design hello-calm frame")).toBe("hello-calm");
 		expect(spotName("Design cart--empty restrained")).toBe("cart-empty-restrained");
@@ -74,9 +74,9 @@ describe("a held spot", () => {
 		writeDesignFile(root, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
 		writeFrame(root, "calm", "export default () => null;\n");
 		writeFrame(root, "other", "export default () => null;\n");
-		const held = [{ name: "calm", x: 5000, y: 0, w: 390, h: 844 }];
+		const reserved = [{ name: "calm", x: 5000, y: 0, w: 390, h: 844 }];
 
-		const frames = listProjectFrames(root, { held }).frames;
+		const frames = listProjectFrames(root, { reserved }).frames;
 		expect(frames.find((frame) => frame.name === "calm")).toMatchObject({ x: 5000, y: 0 });
 		const other = frames.find((frame) => frame.name === "other");
 		expect(other !== undefined && (other.x >= 5000 + 390 || other.x + other.w <= 5000)).toBe(true);
@@ -192,7 +192,7 @@ describe("a turn's frames, off claude-background.json", () => {
 		expect(calm?.kind === "frame" && calm.lines).toBe(18);
 		expect(calm?.kind === "frame" && calm.spot).toBe("hello-calm");
 
-		// each held a spot the moment it started, named from its task, and its frame landed there
+		// each reserved a spot the moment it started, named from its task, and its frame landed there
 		const held = seen.filter((event) => event.kind === "spot" && event.state === "held");
 		expect(held.map((event) => event.kind === "spot" && event.name)).toEqual(["hello-calm", "hello-loud"]);
 		const spot = held[0];

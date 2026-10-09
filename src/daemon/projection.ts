@@ -301,10 +301,10 @@ export function discoverFrames(root: string): { name: string; page?: string; dir
 }
 
 /**
- * A spot on the root page held for a delegation that has not landed its frame yet (#365).
+ * A spot on the root page reserved for a delegation that has not landed its frame yet (#365).
  * `frame` is the frame that filled it, once one has.
  */
-export interface HeldSpot extends Rect {
+export interface ReservedSpot extends Rect {
 	readonly name: string;
 	readonly frame?: string;
 }
@@ -313,13 +313,13 @@ export interface HeldSpot extends Rect {
  * Every frame, placed. `seen` decorates each one with whether it has been
  * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
  *
- * `held` is the spots running turns hold for their delegations (#365). A frame born
+ * `reserved` is the spots running turns reserve for their delegations (#365). A frame born
  * into one stands in it, and every other new frame on the root page stands clear of
  * the ones still empty.
  */
 export function listProjectFrames(
 	root: string,
-	options: { seen?: boolean; held?: readonly HeldSpot[] } = {},
+	options: { seen?: boolean; reserved?: readonly ReservedSpot[] } = {},
 ): Projection {
 	const discovery = discover(root);
 	if (discovery === undefined) return { root, pages: [], places: {}, frames: [] };
@@ -340,8 +340,8 @@ export function listProjectFrames(
 			unplaced.push({ frame, footprint, sized: sidecar.kind === "sized" });
 		}
 	}
-	const held = options.held ?? [];
-	const open = held.filter((spot) => spot.frame === undefined);
+	const reserved = options.reserved ?? [];
+	const open = reserved.filter((spot) => spot.frame === undefined);
 
 	const stored = readStoredPlaces(root);
 
@@ -355,10 +355,10 @@ export function listProjectFrames(
 		for (const { at, box } of pageObjectsOn(slot, discovery.pages, placed, stored)) {
 			field.push({ ...at, ...box });
 		}
-		// a held spot is the root page's: its own frame stands in it, and nothing else does
+		// a reserved spot is the root page's: its own frame stands in it, and nothing else does
 		const spot =
 			frame.page === undefined
-				? (held.find((one) => one.frame === frame.name) ?? open.find((one) => one.name === frame.name))
+				? (reserved.find((one) => one.frame === frame.name) ?? open.find((one) => one.name === frame.name))
 				: undefined;
 		if (frame.page === undefined) field.push(...open.filter((one) => one !== spot));
 		const geometry =

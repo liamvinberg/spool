@@ -7,7 +7,7 @@ import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
 import { besideField, DEFAULT_FOOTPRINT, pageObjectsOn } from "./placement";
-import { discoverFrames, type HeldSpot, listProjectFrames } from "./projection";
+import { discoverFrames, listProjectFrames, type ReservedSpot } from "./projection";
 
 /**
  * A turn's frames, read off `design/` rather than off its tool calls (#365).
@@ -26,8 +26,8 @@ import { discoverFrames, type HeldSpot, listProjectFrames } from "./projection";
  * - **Live source.** Where the engine streams a call's input (Claude Code's main agent
  *   does, a file tool or a heredoc alike), the frame's source arrives as `frame-source`
  *   before the file exists.
- * - **Held spots.** A designer delegation streams nothing while it works, so the moment it
- *   starts a spot is held for it on the root page, placed by the same beside-the-field
+ * - **Reserved spots.** A designer delegation streams nothing while it works, so the moment
+ *   it starts a spot is reserved for it on the root page, placed by the same beside-the-field
  *   rule a new frame gets and named from its task. The frame it writes lands there.
  * - **Put back.** A frame this turn deleted is written back from the source kept here.
  */
@@ -184,33 +184,33 @@ export function spotName(description: string | null): string {
 }
 
 /**
- * The spots running turns hold, per project (#365). One instance per daemon, read by the
+ * The spots running turns reserve, per project (#365). One instance per daemon, read by the
  * projection so a frame born into a spot stands in it and no other frame stands on one.
  */
-export interface HeldSpots {
-	of(root: string): HeldSpot[];
-	hold(root: string, key: string, spot: HeldSpot): void;
+export interface ReservedSpots {
+	of(root: string): ReservedSpot[];
+	reserve(root: string, key: string, spot: ReservedSpot): void;
 	fill(root: string, key: string, frame: string): void;
 	release(root: string, key: string): void;
 }
 
-export function createHeldSpots(): HeldSpots {
-	const roots = new Map<string, Map<string, HeldSpot>>();
+export function createReservedSpots(): ReservedSpots {
+	const roots = new Map<string, Map<string, ReservedSpot>>();
 	return {
 		of: (root) => [...(roots.get(root)?.values() ?? [])],
-		hold: (root, key, spot) => {
-			const held = roots.get(root) ?? new Map<string, HeldSpot>();
-			held.set(key, spot);
-			roots.set(root, held);
+		reserve: (root, key, spot) => {
+			const reserved = roots.get(root) ?? new Map<string, ReservedSpot>();
+			reserved.set(key, spot);
+			roots.set(root, reserved);
 		},
 		fill: (root, key, frame) => {
 			const spot = roots.get(root)?.get(key);
 			if (spot !== undefined) roots.get(root)?.set(key, { ...spot, frame });
 		},
 		release: (root, key) => {
-			const held = roots.get(root);
-			held?.delete(key);
-			if (held?.size === 0) roots.delete(root);
+			const reserved = roots.get(root);
+			reserved?.delete(key);
+			if (reserved?.size === 0) roots.delete(root);
 		},
 	};
 }
@@ -218,7 +218,7 @@ export function createHeldSpots(): HeldSpots {
 export interface FrameWitnessOptions {
 	readonly root: string;
 	readonly hub: FrameHub;
-	readonly spots: HeldSpots;
+	readonly spots: ReservedSpots;
 	readonly now?: () => number;
 }
 
@@ -251,9 +251,9 @@ export function witnessFrames(
 	const calls = new Map<string, Call>();
 	/** an open block's call, by the thread and index its fragments name */
 	const blocks = new Map<string, string>();
-	/** the task each delegating call started, and the spot it holds */
+	/** the task each delegating call started, and the spot reserved for it */
 	const tasks = new Map<string, string>();
-	const held = new Map<string, AgentSpot>();
+	const reserved = new Map<string, AgentSpot>();
 	let designDir: string | undefined;
 
 	function source(dir: string): string | undefined {
@@ -305,10 +305,10 @@ export function witnessFrames(
 		return { call: chosen.id, parent, task: parent === null ? null : (tasks.get(parent) ?? null) };
 	}
 
-	/** a frame just born on the root page fills the spot held for its delegation */
+	/** a frame just born on the root page fills the spot reserved for its delegation */
 	function fill(frame: string, dir: string, task: string | null): string | undefined {
 		if (pageParent(frame) !== ROOT_PAGE || designDir === undefined) return undefined;
-		const open = [...held.values()].filter((spot) => spot.state === "held");
+		const open = [...reserved.values()].filter((spot) => spot.state === "held");
 		const spot = open.find((one) => one.name === frame) ?? open.find((one) => task !== null && one.task === task);
 		if (spot === undefined) return undefined;
 		const sidecar = readSidecar(join(dir, "frame.json"), designDir);
@@ -320,7 +320,7 @@ export function witnessFrames(
 			return undefined;
 		}
 		const filled: AgentSpot = { ...spot, state: "filled", frame };
-		held.set(spot.task, filled);
+		reserved.set(spot.task, filled);
 		spots.fill(root, `${spot.task}`, frame);
 		hub.publish(root, { kind: "geometry", frame });
 		push(filled);
@@ -389,12 +389,12 @@ export function witnessFrames(
 		}
 	}
 
-	/** a designer started: hold its spot on the root page, named from its task */
-	function hold(task: string, call: string | null, description: string | null, parent: string | null): void {
-		if (designDir === undefined || held.has(task)) return;
+	/** a designer started: reserve its spot on the root page, named from its task */
+	function reserve(task: string, call: string | null, description: string | null, parent: string | null): void {
+		if (designDir === undefined || reserved.has(task)) return;
 		let projection: ReturnType<typeof listProjectFrames>;
 		try {
-			projection = listProjectFrames(root, { held: spots.of(root) });
+			projection = listProjectFrames(root, { reserved: spots.of(root) });
 		} catch {
 			return;
 		}
@@ -413,18 +413,18 @@ export function witnessFrames(
 		let name = base;
 		for (let n = 2; taken.has(name); n += 1) name = `${base}-${n}`;
 		const spot: AgentSpot = { kind: "spot", state: "held", name, task, call, ...besideField(field), ...size, parent };
-		held.set(task, spot);
-		spots.hold(root, task, { name, x: spot.x, y: spot.y, w: spot.w, h: spot.h });
+		reserved.set(task, spot);
+		spots.reserve(root, task, { name, x: spot.x, y: spot.y, w: spot.w, h: spot.h });
 		push(spot);
 	}
 
 	function release(task: string): void {
-		const spot = held.get(task);
+		const spot = reserved.get(task);
 		if (spot === undefined) return;
 		spots.release(root, task);
 		if (spot.state !== "held") return;
 		const released: AgentSpot = { ...spot, state: "released" };
-		held.set(task, released);
+		reserved.set(task, released);
 		push(released);
 	}
 
@@ -496,7 +496,7 @@ export function witnessFrames(
 		}
 		if (event.kind === "task-started") {
 			if (event.call !== null) tasks.set(event.call, event.task);
-			if (event.agent === "designer") hold(event.task, event.call, event.description, event.parent);
+			if (event.agent === "designer") reserve(event.task, event.call, event.description, event.parent);
 			return;
 		}
 		if (event.kind === "task-done") release(event.task);
@@ -510,7 +510,7 @@ export function witnessFrames(
 	void (async () => {
 		try {
 			for await (const event of turn.events) {
-				// a delegation is said before the spot held for it, so the spot has a task to name
+				// a delegation is said before the spot reserved for it, so the spot has a task to name
 				if (event.kind === "task-started") {
 					push(event);
 					observe(event);
@@ -521,14 +521,14 @@ export function witnessFrames(
 				// and a spot nothing filled is let go with it
 				if (event.kind === "closed" || (event.kind === "ended" && event.parent === null)) {
 					rescan();
-					for (const task of held.keys()) release(task);
+					for (const task of reserved.keys()) release(task);
 				}
 				push(event);
 			}
 		} finally {
 			rescan();
 			unsubscribe();
-			for (const task of held.keys()) release(task);
+			for (const task of reserved.keys()) release(task);
 			finished = true;
 			waiting?.();
 			waiting = undefined;
