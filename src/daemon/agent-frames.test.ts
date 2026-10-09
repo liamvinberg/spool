@@ -15,7 +15,19 @@ import {
 	writeFrame,
 } from "../test-helpers";
 import type { AgentEvent } from "./agent-events";
-import { changedRange, frameWritten, linesOf, partialField, sourceWritten, spotName } from "./agent-frames";
+import {
+	changedRange,
+	createReservedSpots,
+	type FrameHub,
+	frameWritten,
+	linesOf,
+	partialField,
+	sourceWritten,
+	spotName,
+	witnessFrames,
+} from "./agent-frames";
+import type { AgentTurn } from "./agent-turn";
+import type { ChangeEvent } from "./events";
 import { listProjectFrames } from "./projection";
 
 describe("reading a call's input for the frame it writes", () => {
@@ -249,6 +261,111 @@ function designerStarts(proc: FakeAgentProc, task: string, description: string):
 		}),
 	);
 }
+
+/**
+ * The witness over a turn whose events the test says, with a hub the test rings: no
+ * engine and no watcher, just a call, the disk, and what the turn's log says of it.
+ */
+function witnessed(root: string) {
+	const pending: AgentEvent[] = [];
+	let wake: (() => void) | undefined;
+	let done = false;
+	const turn: AgentTurn = {
+		events: {
+			async *[Symbol.asyncIterator]() {
+				for (;;) {
+					while (pending.length > 0) yield pending.shift() as AgentEvent;
+					if (done) return;
+					await new Promise<void>((resolve) => {
+						wake = resolve;
+					});
+				}
+			},
+		},
+		answer: () => false,
+		interrupt: () => false,
+		abandon: () => {},
+	};
+	const listeners: ((event: ChangeEvent) => void)[] = [];
+	const hub: FrameHub = {
+		subscribe: (_root, listener) => {
+			listeners.push(listener);
+			return () => {};
+		},
+		publish: () => {},
+	};
+	const witness = witnessFrames(turn, { root, hub, spots: createReservedSpots() });
+	const log: AgentEvent[] = [];
+	const reading = (async () => {
+		for await (const event of witness.events) log.push(event);
+	})();
+	return {
+		log,
+		say(event: AgentEvent) {
+			pending.push(event);
+			wake?.();
+		},
+		/** the watcher heard this frame's folder move */
+		ring(frame: string) {
+			for (const listener of listeners) listener({ kind: "frame", frame } as ChangeEvent);
+		},
+		async end() {
+			done = true;
+			wake?.();
+			await reading;
+		},
+	};
+}
+
+describe("what a turn did to a frame", () => {
+	const entry = "design/frames/card/frame.tsx";
+	const before = "export default () => <p>one</p>;\n";
+	const after = "export default () => <p>two</p>;\n";
+	const heredoc = (text: string) => ({ command: `cat > ${entry} <<'EOF'\n${text}EOF` });
+	const cases = [
+		{ change: "created", by: "a heredoc", tool: "Bash", input: heredoc(after), there: false },
+		{
+			change: "created",
+			by: "a file tool",
+			tool: "Write",
+			input: { file_path: entry, content: after },
+			there: false,
+		},
+		{ change: "changed", by: "a heredoc", tool: "Bash", input: heredoc(after), there: true },
+		{
+			change: "changed",
+			by: "a file tool",
+			tool: "Edit",
+			input: { file_path: entry, old_string: "one", new_string: "two" },
+			there: true,
+		},
+		{ change: "deleted", by: "a shell", tool: "Bash", input: { command: "rm -rf design/frames/card" }, there: true },
+		// Codex's file change of kind delete, read as the `Delete` tool
+		{ change: "deleted", by: "a file tool", tool: "Delete", input: { file_path: entry }, there: true },
+	] as const;
+
+	for (const { change, by, tool, input, there } of cases)
+		it(`is ${change} by ${by}, and the call that did it is named`, async () => {
+			const spoolDir = join(makeTempDir(), ".spool");
+			const { root } = makeProject(spoolDir);
+			if (there) writeFrame(root, "card", before);
+			const turn = witnessed(root);
+			turn.say({ kind: "called", id: "c1", tool, input, parent: null });
+			await until(() => turn.log.some((event) => event.kind === "called"));
+			if (change === "deleted") rmSync(join(root, "design/frames/card"), { recursive: true });
+			else writeFrame(root, "card", after);
+			turn.ring("card");
+			await until(() => turn.log.some((event) => event.kind === "frame"));
+			await turn.end();
+
+			const frames = turn.log.filter((event) => event.kind === "frame");
+			expect(frames).toHaveLength(1);
+			expect(frames[0]).toMatchObject({ frame: "card", change, call: "c1", parent: null });
+			if (change === "created") expect(frames[0]).toMatchObject({ lines: 1, source: after });
+			if (change === "changed") expect(frames[0]).toMatchObject({ lines: 1, range: { from: 1, to: 1 } });
+			if (change === "deleted") expect(frames[0]).toMatchObject({ source: before });
+		});
+});
 
 describe("a frame landing in its reserved spot", () => {
 	it("stands clear of every frame there, even when it is bigger than the spot", async () => {
