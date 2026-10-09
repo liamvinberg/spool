@@ -125,9 +125,9 @@ describe("the designer's files", () => {
 });
 
 describe("the framing", () => {
-	it("tells every engine's main agent to fan directions out and keep single edits", () => {
+	it("tells every engine's main agent to fan directions out, each into its own frame, and keep single edits", () => {
 		expect(DESIGNER_FRAMING).toBe(
-			"When someone asks for options or several directions, give each direction to its own designer with a brief. Make single edits yourself.",
+			"When someone asks for options or several directions, give each direction to its own designer with a brief. Before it starts, choose each designer's own frame and name it in the brief as design/frames/<page>/<name>/frame.tsx, one new frame per designer: spool puts a placeholder there the moment the designer starts, and the designer draws into it. Make single edits yourself.",
 		);
 		expect(agentFraming()).toContain(DESIGNER_FRAMING);
 		expect(piFraming()).toContain(DESIGNER_FRAMING);

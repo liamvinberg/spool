@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { StampShift } from "../../daemon/hand-write";
+import type { ProjectedPlaceholder } from "../../daemon/projection";
 import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
@@ -172,6 +173,7 @@ import {
 import { type PaneDef, PaneWindow, usePaneCommands } from "./pane-window";
 import { PictureCanvas, PictureClaims } from "./picture-canvas";
 import type { PictureFrame } from "./picture-layer";
+import { PlaceholderFrame, tileFor, workOf } from "./placeholder-frame";
 import { createPresenceRoom, type PresenceRoom } from "./presence";
 import { FollowMark } from "./presence-faces";
 import { PresenceLayer } from "./presence-layer";
@@ -396,6 +398,8 @@ export function ProjectCanvas({
 	// on the document rather than the viewport, which a booting canvas has not drawn yet
 	useEffect(() => watchMotionStrain(camera, document.documentElement), [camera]);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
+	// the frames on their way: designers' placeholders, drawn dashed where their frames will land (#369)
+	const [placeholders, setPlaceholders] = useState<readonly ProjectedPlaceholder[]>([]);
 	// every read of the frame list, and the covers heard between them (frame-reads.ts)
 	const [frameReads] = useState(createFrameReads);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -522,6 +526,12 @@ export function ProjectCanvas({
 		() => frames.filter((f) => pageOf(f) === activePage && !hidden.has(f.name)),
 		[frames, activePage, hidden],
 	);
+	const visiblePlaceholders = useMemo(
+		() => placeholders.filter((one) => (one.page ?? ROOT_PAGE) === activePage),
+		[placeholders, activePage],
+	);
+	const visiblePlaceholdersRef = useRef(visiblePlaceholders);
+	visiblePlaceholdersRef.current = visiblePlaceholders;
 	/**
 	 * The page as the picture layer draws it (#81): every frame in drawing
 	 * order, each with its still's address. Which of them a DOM shell draws
@@ -568,6 +578,7 @@ export function ProjectCanvas({
 		(): Box[] => [
 			...framesRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
 			...pageObjectsRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
+			...visiblePlaceholdersRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
 		],
 		[],
 	);
@@ -635,8 +646,11 @@ export function ProjectCanvas({
 	const reach = useMemo(() => {
 		const here = new Set(navigatorFrames.map((frame) => frame.name));
 		for (const name of here) seenFrames.current.add(name);
-		return { have: here, gone: new Set([...seenFrames.current].filter((name) => !here.has(name))) };
-	}, [navigatorFrames]);
+		const gone = new Set([...seenFrames.current].filter((name) => !here.has(name)));
+		// a designer's placeholder is a place to go too, from the moment it starts (#369)
+		for (const one of placeholders) here.add(one.name);
+		return { have: here, gone };
+	}, [navigatorFrames, placeholders]);
 	/** the frame a row in the rail is pointing at, answered out here rather than in the log */
 	const [pointed, setPointed] = useState<string | null>(null);
 	/**
@@ -672,6 +686,8 @@ export function ProjectCanvas({
 	// the whole projection, for cross-page reads: walks, exits, editor paths
 	const allFramesRef = useRef(frames);
 	allFramesRef.current = frames;
+	const placeholdersRef = useRef(placeholders);
+	placeholdersRef.current = placeholders;
 	const activePageRef = useRef(activePage);
 	activePageRef.current = activePage;
 	const pagesRef = useRef(pages);
@@ -1115,6 +1131,7 @@ export function ProjectCanvas({
 		// a read asked later has landed already, and it knows more than this one
 		if (projected === undefined) return;
 		setFrames(projected);
+		setPlaceholders(projection.placeholders ?? []);
 		setPages(projection.pages);
 		// lenient on the way in, like every other read of a durable: a projection
 		// with nothing to say about places leaves the field with no pages on it
@@ -5038,7 +5055,8 @@ export function ProjectCanvas({
 	/** The page a named frame sits on — the root page when it is unknown. */
 	const framePageOf = (name: string): string => {
 		const frame = allFramesRef.current.find((f) => f.name === name);
-		return frame === undefined ? ROOT_PAGE : pageOf(frame);
+		if (frame !== undefined) return pageOf(frame);
+		return placeholdersRef.current.find((one) => one.name === name)?.page ?? ROOT_PAGE;
 	};
 
 	/**
@@ -5049,7 +5067,11 @@ export function ProjectCanvas({
 	 * lit in the Pages rail — pointing is answered wherever the answer can be drawn, and
 	 * the two cases are exclusive by construction.
 	 */
-	const pointedFrame = pointed !== null && visibleFrames.some((frame) => frame.name === pointed) ? pointed : null;
+	const pointedFrame =
+		pointed !== null &&
+		(visibleFrames.some((frame) => frame.name === pointed) || visiblePlaceholders.some((one) => one.name === pointed))
+			? pointed
+			: null;
 	const pointedPage = pointed === null || pointedFrame !== null ? null : framePageOf(pointed);
 
 	/**
@@ -5072,7 +5094,22 @@ export function ProjectCanvas({
 	const landOnFrame = useCallback(
 		(name: string) => {
 			const frame = allFramesRef.current.find((candidate) => candidate.name === name);
-			if (frame === undefined) return;
+			if (frame === undefined) {
+				// a placeholder is landed on as a frame is, and nothing is selected: there is nothing in it yet
+				const held = placeholdersRef.current.find((candidate) => candidate.name === name);
+				const viewport = viewportRef.current;
+				const cam = camera.get();
+				if (held === undefined) return;
+				recordDeparture();
+				const centred =
+					viewport === null || cam === null
+						? undefined
+						: centerOn(cam, held, viewport.clientWidth, viewport.clientHeight);
+				const page = held.page ?? ROOT_PAGE;
+				if (page !== activePageRef.current) switchToPage(page, cam ?? undefined, centred);
+				else if (centred !== undefined) camera.fly(centred);
+				return;
+			}
 			recordDeparture();
 			const viewport = viewportRef.current;
 			const cam = camera.get();
@@ -5743,6 +5780,17 @@ export function ProjectCanvas({
 									hovered={pointerTool && hoveredPage === object.page}
 								/>
 							))}
+							{/* designers' placeholder frames (#369), dashed where their frames will land,
+						    with what each designer is doing inside its own */}
+							{visiblePlaceholders.map((one) => (
+								<PlaceholderFrame
+									key={one.name}
+									placeholder={one}
+									camera={camera}
+									work={workOf(tileFor(turn.entries, one.name))}
+									pointed={pointed === one.name}
+								/>
+							))}
 						</CameraField>
 					)}
 					{/* every frame standing as its picture, on the GPU (#81): over the
@@ -5916,13 +5964,14 @@ export function ProjectCanvas({
 								footed={askFooted}
 							/>
 							{(() => {
-								// under its frame, or under the spot held for it while the frame is not there yet
+								// under its frame, or under its placeholder while the frame is not there yet,
+								// and only on the page showing it (#376)
 								const at =
 									standingAsk === null
 										? undefined
 										: (visibleFrames.find((one) => one.name === standingAsk.frame) ??
-											(standingAsk.frame === null || !reach.have.has(standingAsk.frame)
-												? (standingAsk.spot ?? undefined)
+											(standingAsk.frame === null
+												? visiblePlaceholders.find((one) => one.name === standingAsk.spot?.name)
 												: undefined));
 								return standingAsk === null || at === undefined ? null : (
 									<CanvasAsk

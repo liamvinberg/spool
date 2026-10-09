@@ -17,6 +17,7 @@ import {
 import { EndMark, Spinner, WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
+import { workOf } from "./placeholder-frame";
 import { useStillness } from "./stillness";
 
 /**
@@ -56,7 +57,8 @@ export function receiptOf(foot: AgentTurnFoot): string {
 export function captionOf(tile: AgentTile): string {
 	switch (tile.state) {
 		case "reading":
-			return "Reading";
+			// what its designer's step says it is at, as its placeholder says it (#369)
+			return workOf(tile)?.phase ?? "Reading";
 		case "drawing":
 			return `Drawing · ${tile.lines} ${tile.lines === 1 ? "line" : "lines"}`;
 		case "fresh":
@@ -551,7 +553,8 @@ function Tile({
 								: "text-text",
 					)}
 				>
-					{tile.frame}
+					{/* its own name, not its page's: a page's name would eat every tile's width alike */}
+					{tile.frame.split("/").pop() ?? tile.frame}
 				</span>
 				<span className="truncate text-muted type-detail">
 					{waiting ? (

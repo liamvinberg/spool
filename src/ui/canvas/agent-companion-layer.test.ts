@@ -27,6 +27,7 @@ const companion = (over: Partial<AgentCompanion> = {}): AgentCompanion => ({
 	name: null,
 	frame: "home",
 	spot: null,
+	own: false,
 	act: "idle",
 	lines: 0,
 	range: null,
@@ -245,10 +246,34 @@ describe("the agent's companions on the canvas", () => {
 		expect(name()).toBeNull();
 	});
 
-	it("stands at a designer's held spot before its frame exists", () => {
+	it("draws nothing for a designer at its own work, which its placeholder shows (#369)", () => {
 		const spot = { name: "home--calm", x: 1100, y: 100, w: 400, h: 800 };
-		const { host } = layer({ companions: [companion({ key: "d1", frame: null, spot })] });
-		expect(centre(host, "d1")).toEqual({ x: 1495, y: 82 });
+		const { host } = layer({
+			companions: [
+				companion({ key: "d1", frame: null, spot, own: true }),
+				companion({ key: "d2", frame: "cart", own: true, act: "landed" }),
+			],
+		});
+		expect(host.querySelector("[data-agent-companion]")).toBeNull();
+	});
+
+	it("draws nothing for a frame on another page, wherever its coordinates are (#376)", () => {
+		const { host } = layer({ companions: [companion({ key: "d1", frame: "elsewhere/home" })] });
+		expect(host.querySelector("[data-agent-companion]")).toBeNull();
+	});
+
+	it("stands several on one frame side by side, under one name (#372)", () => {
+		const { host } = layer({
+			companions: [
+				companion({ key: "d1", name: "split" }),
+				companion({ key: "d2", name: "calm" }),
+				companion({ key: "d3", name: "sentence" }),
+			],
+		});
+		const xs = ["d1", "d2", "d3"].map((key) => centre(host, key).x);
+		expect(xs).toEqual([495, 481, 467]);
+		const names = [...host.querySelectorAll("[data-companion-name]")].map((name) => name.textContent);
+		expect(names).toEqual(["3 designers"]);
 	});
 
 	it("moves with the camera on the frame it moves", () => {

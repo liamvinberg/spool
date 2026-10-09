@@ -26,6 +26,11 @@ import { useStillness } from "./stillness";
  * here frame by frame rather than by a transition, because a CSS transition between two
  * screen points is wrong the moment the camera moves under it.
  *
+ * A designer at its own work, its placeholder or the frame that landed there, has no square:
+ * the placeholder shows that work (#369). Squares are for frames that stand, and never drawn
+ * on a page other than their frame's (#376). Several on one frame stand side by side on its
+ * name row under one name, `3 designers`, rather than piling theirs up (#372).
+ *
  * The vocabulary and every number are `design/frames/explore/agent-rail/marks`'s.
  */
 
@@ -40,6 +45,8 @@ const FULL = 320;
 /** the corners, struck just outside the frame and never closed */
 const OUT = 5;
 const ARM = 10;
+/** how far apart squares sharing a frame stand */
+const FAN = SIDE + 4;
 
 const OUT_EASE = curve(EASE.out);
 const IN_OUT = curve(EASE.inOut);
@@ -76,6 +83,11 @@ function at(anchor: Anchor, rect: Box): { x: number; y: number } {
 	return { x: rect.x + anchor.ox * rect.w + anchor.dx, y: rect.y + anchor.oy * rect.h + anchor.dy };
 }
 
+/** a point moved left along its row, where a square sharing its frame stands */
+function beside(point: { x: number; y: number }, shift: number): { x: number; y: number } {
+	return shift === 0 ? point : { x: point.x - shift, y: point.y };
+}
+
 export interface CompanionLayerProps {
 	camera: CameraStore;
 	/** the frames on the page the canvas shows */
@@ -97,6 +109,7 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	const shown = useDeparting(placed);
 	// names only once two agents share the page: one agent is the agent, two are a team
 	const named = placed.length >= 2;
+	const fans = fansOf(placed);
 
 	return (
 		<div className="pointer-events-none absolute inset-0" aria-hidden="true" data-agent-companions="">
@@ -104,14 +117,17 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 				const place = placeOf(companion, byName, stood.current);
 				if (place === null) return null;
 				const located = companion.frame === null ? null : latestMark(marks, companion.frame);
+				const fan = fans.get(companion.key);
+				const label = fan === undefined ? companion.name : fan.label;
 				return (
 					<Companion
 						key={companion.key === "" ? "main" : companion.key}
 						camera={camera}
-						companion={companion}
+						companion={label === companion.name ? companion : { ...companion, name: label }}
 						place={place}
 						located={located}
-						named={named && companion.name !== null}
+						shift={(fan?.slot ?? 0) * FAN}
+						named={named && label !== null}
 						footed={footed}
 						leaving={leaving}
 					/>
@@ -121,14 +137,40 @@ export function AgentCompanionLayer({ camera, frames, companions, marks, footed 
 	);
 }
 
-/** where a companion stands: its frame, else the frame it just deleted, else its reserved spot */
+/**
+ * Where a companion stands: its frame on this page, else the frame it just deleted. Nowhere
+ * for a designer at its own work, which its placeholder shows, and nowhere for a frame on
+ * another page.
+ */
 function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood: Map<string, Box>): Box | null {
-	if (one.frame !== null) {
-		const frame = frames.get(one.frame);
-		if (frame !== undefined) return frame;
-		if (one.act === "delete") return stood.get(one.frame) ?? null;
+	if (one.own || one.frame === null) return null;
+	const frame = frames.get(one.frame);
+	if (frame !== undefined) return frame;
+	if (one.act === "delete") return stood.get(one.frame) ?? null;
+	return null;
+}
+
+/**
+ * The companions sharing a frame, each with its place along the frame's name row and the
+ * one name the row says: the last of them, furthest left, carries `3 designers`, and the
+ * rest carry none. A companion alone on its frame has no entry.
+ */
+export function fansOf(placed: readonly AgentCompanion[]): Map<string, { slot: number; label: string | null }> {
+	const byFrame = new Map<string, AgentCompanion[]>();
+	for (const one of placed) {
+		if (one.frame === null) continue;
+		byFrame.set(one.frame, [...(byFrame.get(one.frame) ?? []), one]);
 	}
-	return one.spot;
+	const fans = new Map<string, { slot: number; label: string | null }>();
+	for (const group of byFrame.values()) {
+		if (group.length < 2) continue;
+		const designers = group.filter((one) => one.key !== "").length;
+		const label = designers === group.length ? `${designers} designers` : `${group.length} agents`;
+		group.forEach((one, slot) => {
+			fans.set(one.key, { slot, label: slot === group.length - 1 ? label : null });
+		});
+	}
+	return fans;
 }
 
 function latestMark(marks: readonly LocatedMark[], frame: string): LocatedMark | null {
@@ -182,6 +224,7 @@ function Companion({
 	companion,
 	place,
 	located,
+	shift = 0,
 	named,
 	footed,
 	leaving,
@@ -190,6 +233,8 @@ function Companion({
 	companion: AgentCompanion;
 	place: Box;
 	located: LocatedMark | null;
+	/** screen pixels left of where it would stand alone, for a square sharing its frame */
+	shift?: number;
 	named: boolean;
 	footed: boolean;
 	leaving: boolean;
@@ -206,8 +251,8 @@ function Companion({
 	const flash = useRef<HTMLSpanElement | null>(null);
 	const corners = useRef<(HTMLSpanElement | null)[]>([]);
 
-	const latest = useRef({ place, located, camera });
-	latest.current = { place, located, camera };
+	const latest = useRef({ place, located, camera, shift });
+	latest.current = { place, located, camera, shift };
 	const motion = useRef<Motion>({ from: null, step: null, began: 0, queue: [], rest: DOCK });
 	const drawn = useRef<{ x: number; y: number } | null>(null);
 	/** what the read's trail reaches down to, and whether the wipe is uncovering the frame */
@@ -224,7 +269,7 @@ function Companion({
 
 	/** one drawn frame: where the square is now, and everything that rides with it */
 	const draw = (now: number): boolean => {
-		const { place: box, camera: store, located: mark } = latest.current;
+		const { place: box, camera: store, located: mark, shift: aside } = latest.current;
 		const view = store.get();
 		const element = square.current;
 		if (view === null || element === null) return false;
@@ -239,7 +284,7 @@ function Companion({
 		}
 		if (m.step !== null) {
 			const step = m.step;
-			const target = at(step.to, rect);
+			const target = beside(at(step.to, rect), aside);
 			const from = m.from === null ? target : toScreen({ ...m.from, w: 0, h: 0 }, view);
 			const t = step.ms <= 0 ? 1 : Math.min(1, (now - m.began) / step.ms);
 			const e = step.ease(t);
@@ -255,7 +300,7 @@ function Companion({
 				m.step = null;
 				busy = m.queue.length > 0;
 			} else busy = true;
-		} else point = at(m.rest, rect);
+		} else point = beside(at(m.rest, rect), aside);
 		drawn.current = toWorld(point, view);
 		element.style.transform = `translate(${point.x - SIDE / 2}px, ${point.y - SIDE / 2}px)`;
 
@@ -468,7 +513,7 @@ function Companion({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: what moved is the trigger
 	useLayoutEffect(() => {
 		if (!ticking.current) draw(performance.now());
-	}, [place.x, place.y, place.w, place.h, located, shooting, ringed, reading, gathering, drawing]);
+	}, [place.x, place.y, place.w, place.h, shift, located, shooting, ringed, reading, gathering, drawing]);
 
 	const waiting = act === "ask";
 	const id = companion.key === "" ? "main" : companion.key;

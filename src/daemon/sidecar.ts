@@ -64,3 +64,30 @@ export function isFiniteNumber(value: unknown): value is number {
 function isPositiveNumber(value: unknown): value is number {
 	return isFiniteNumber(value) && value > 0;
 }
+
+/**
+ * What a placeholder frame says of the work coming to it: a frame folder whose sidecar holds
+ * a `placeholder` record and no frame.tsx yet. Spool writes it the moment a designer starts,
+ * so the canvas, and every teammate's canvas through sync, shows where the work will land.
+ */
+export interface PlaceholderNote {
+	/** the direction's name, in the delegation's own words */
+	title?: string;
+	/** the designer's brief, cut short */
+	brief?: string;
+	/** when the designer started, as an ISO time */
+	since?: string;
+}
+
+/** The placeholder record in a sidecar's value; nothing when it holds none. */
+export function parsePlaceholder(value: unknown): PlaceholderNote | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const note = (value as Record<string, unknown>).placeholder;
+	if (typeof note !== "object" || note === null || Array.isArray(note)) return undefined;
+	const { title, brief, since } = note as Record<string, unknown>;
+	return {
+		...(typeof title === "string" && title !== "" ? { title } : {}),
+		...(typeof brief === "string" && brief !== "" ? { brief } : {}),
+		...(typeof since === "string" && since !== "" ? { since } : {}),
+	};
+}
