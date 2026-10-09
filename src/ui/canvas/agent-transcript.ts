@@ -248,6 +248,25 @@ export interface AgentTile {
 	readonly sidecar?: string;
 }
 
+/** a tile's state once nothing is happening to it: a frame that just landed or changed is done */
+export function settledState(state: TileState): TileState {
+	return state === "fresh" || state === "editing" ? "done" : state;
+}
+
+/** a tile with nothing happening to it any more */
+export function settleTile<T extends Pick<AgentTile, "state">>(tile: T): T {
+	const state = settledState(tile.state);
+	return state === tile.state ? tile : { ...tile, state };
+}
+
+/** a deleted tile put back: done, with the source Put back wrote no longer kept */
+export function restoreTile<T extends Pick<AgentTile, "state" | "source" | "sidecar">>(
+	tile: T,
+): Omit<T, "source" | "sidecar"> {
+	const { source: _source, sidecar: _sidecar, ...kept } = tile;
+	return { ...kept, state: "done" };
+}
+
 /**
  * The foot of a turn: the frames it touched and its one status line (#365).
  *
@@ -467,9 +486,7 @@ export function settledPicture(entries: readonly AgentEntry[]): AgentEntry[] {
  * turn the lights went out on, so it reads stopped.
  */
 function settledFoot(foot: AgentTurnFoot): AgentTurnFoot {
-	const tiles = foot.tiles
-		.filter((tile) => tile.state !== "reading" && tile.state !== "drawing")
-		.map((tile) => (tile.state === "fresh" || tile.state === "editing" ? { ...tile, state: "done" as const } : tile));
+	const tiles = foot.tiles.filter((tile) => tile.state !== "reading" && tile.state !== "drawing").map(settleTile);
 	return { ...foot, tiles, status: null, thinking: false, ending: foot.ending ?? "stopped" };
 }
 
@@ -1111,7 +1128,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		// nothing is happening to any frame now: one that never landed was not made
 		for (const [name, tile] of tiles) {
 			if (tile.state === "reading" || tile.state === "drawing") tiles.delete(name);
-			else if (tile.state === "fresh" || tile.state === "editing") tile.state = "done";
+			else tile.state = settledState(tile.state);
 		}
 		if (outstanding !== null) {
 			outstanding.ms = Math.max(0, last - outstanding.at);
@@ -1333,8 +1350,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				if (waited !== undefined && unanswered(waited)) waited.state = "dropped";
 				// the agent's own call that made a frame is over, so the frame is at rest (#365)
 				for (const tile of tiles.values())
-					if (tile.task === null && tile.call === event.id && (tile.state === "fresh" || tile.state === "editing"))
-						tile.state = "done";
+					if (tile.task === null && tile.call === event.id) tile.state = settledState(tile.state);
 				const block = calls.get(event.id);
 				if (block === undefined) break;
 				/*
@@ -1413,7 +1429,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					// a designer that reported back is done with its frames, and says how long it took
 					for (const tile of tiles.values()) {
 						if (tile.task !== event.task) continue;
-						if (tile.state === "fresh" || tile.state === "editing") tile.state = "done";
+						tile.state = settledState(tile.state);
 						if (task !== undefined) tile.took = at - task.at;
 					}
 				}
