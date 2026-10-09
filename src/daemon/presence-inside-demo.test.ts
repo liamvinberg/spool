@@ -46,10 +46,13 @@ export default function Frame() {
       <header style={{ position: "sticky", top: 0, background: "#fff", padding: "18px 18px 10px", borderBottom: "1px solid #eee" }}>
         <div style={{ fontSize: 26, fontWeight: 700 }}>Inbox</div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          {["All", "Unread", "Flagged"].map((t, i) => (
+          {["All", "Unread", "Flagged", "Archive"].map((t, i) => (
             <button key={t} style={{ border: 0, borderRadius: 99, padding: "6px 12px", background: i === 0 ? "#111" : "#f1f1f1", color: i === 0 ? "#fff" : "#333", fontSize: 13 }}>{t}</button>
           ))}
         </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, fontSize: 13, color: "#555" }}>
+          Snooze <input type="range" min="0" max="100" defaultValue="20" style={{ flex: 1 }} />
+        </label>
       </header>
       {rows.map(([from, subject, body]) => (
         <div key={subject} style={{ padding: "14px 18px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 12 }}>
@@ -143,7 +146,7 @@ it.skipIf(OUT === "")("records Cata's canvas while Liam works inside a live fram
 	};
 	const [driver, watcher] = await Promise.all([
 		open(`${liam.daemon.url}/p/inbox-app`, "liam"),
-		open(`${cata.daemon.url}/p/inbox-app-cata`, "cata"),
+		open(`${cata.daemon.url}/p/inbox-app-cata?presence=morph`, "cata"),
 	]);
 	await new Promise((resolve) => setTimeout(resolve, 3000));
 
@@ -176,54 +179,79 @@ it.skipIf(OUT === "")("records Cata's canvas while Liam works inside a live fram
 		}
 		mouse = to;
 	};
-	let clicks = 0;
 	const click = async () => {
 		await driver.page.mouse.down();
 		await pause(90);
 		await driver.page.mouse.up();
-		await pause(60);
-		clicks++;
-		await watcher.page.screenshot({ path: join(OUT, `click-${clicks}.png`) });
 	};
 	const world = (x: number, y: number) => pagePointOf(driver.page, { x, y });
 	await show(mouse);
 
-	const start = Date.now();
-	await glide(await world(200, 300), 1000);
-	await pause(300);
+	const inbox = () => {
+		const frame = driver.page
+			.frames()
+			.find((one) => one !== driver.page.mainFrame() && /inbox(?!-app)/u.test(one.url()));
+		if (frame === undefined) throw new Error("no inbox frame");
+		return frame;
+	};
+	const centre = async (selector: string, nth = 0, dx = 0) => {
+		const found = await inbox().locator(selector).nth(nth).boundingBox();
+		if (found === null) throw new Error(`no ${selector}`);
+		return { x: found.x + found.width / 2 + dx, y: found.y + found.height / 2 };
+	};
+	const wheel = async (dy: number, ticks: number) => {
+		for (let i = 0; i < ticks; i++) {
+			await driver.page.mouse.wheel(0, dy);
+			await pause(45);
+		}
+	};
+	const events: { what: string; at: number }[] = [];
+	const note = (what: string) => events.push({ what, at: (Date.now() - start) / 1000 });
+	const routine = async () => {
+		await glide(await centre("button", 1), 650);
+		await pause(150);
+		note("click");
+		await click();
+		await pause(650);
+		await glide(await centre("button", 3), 550);
+		await click();
+		await pause(650);
+		const slider = await inbox().locator("input[type=range]").boundingBox();
+		if (slider === null) throw new Error("no slider");
+		const thumb = { x: slider.x + slider.width * 0.2, y: slider.y + slider.height / 2 };
+		await glide(thumb, 600);
+		await driver.page.mouse.down();
+		await pause(120);
+		note("drag");
+		await glide({ x: slider.x + slider.width * 0.85, y: thumb.y + 4 }, 800);
+		await glide({ x: slider.x + slider.width * 0.2, y: thumb.y }, 600);
+		await pause(120);
+		await driver.page.mouse.up();
+		await pause(500);
+		await glide({ x: thumb.x + 30, y: thumb.y + 260 }, 600);
+		await pause(200);
+		note("scroll");
+		await wheel(45, 22);
+		await pause(700);
+		await wheel(-60, 17);
+		await pause(900);
+	};
 	// in, the way a person goes in
+	await glide(await world(200, 360), 900);
 	await driver.page.mouse.dblclick(mouse.x, mouse.y);
 	await pause(900);
-	await glide(await world(120, 70), 800);
-	await pause(200);
-	await click();
-	await pause(500);
-	await glide(await world(230, 340), 800);
-	await pause(300);
-	for (let i = 0; i < 26; i++) {
-		await driver.page.mouse.wheel(0, 40);
-		await pause(40);
+	const start = Date.now();
+	const marks: { variant: string; at: number }[] = [];
+	for (const variant of ["morph", "trail", "touch", "badge"]) {
+		marks.push({ variant, at: (Date.now() - start) / 1000 });
+		await routine();
+		if (variant !== "badge") {
+			await watcher.page.locator("[data-presence-variant-bar] button").last().click();
+			await pause(600);
+		}
 	}
-	await pause(700);
-	await glide(await world(170, 420), 600);
-	await click();
-	await pause(700);
-	await glide(await world(300, 560), 600);
-	await click();
-	await pause(500);
-	for (let i = 0; i < 12; i++) {
-		await driver.page.mouse.wheel(0, -50);
-		await pause(40);
-	}
-	await pause(800);
-	await glide(await world(100, 230), 700);
-	await click();
-	await pause(300);
-	await click();
-	await pause(1200);
 	const end = Date.now();
 	await expect.poll(() => heard.some((state) => state.inside === "inbox" && (state.clicks ?? 0) > 0)).toBe(true);
-	await watcher.page.screenshot({ path: join(OUT, "cata-still.png") });
 
 	const [liamVideo, cataVideo] = [await driver.page.video()?.path(), await watcher.page.video()?.path()];
 	await driver.context.close();
@@ -233,6 +261,8 @@ it.skipIf(OUT === "")("records Cata's canvas while Liam works inside a live fram
 			liam: { video: liamVideo, skip: (start - driver.born) / 1000 },
 			cata: { video: cataVideo, skip: (start - watcher.born) / 1000 },
 			length: (end - start) / 1000,
+			marks,
+			events,
 			heard: heard.length,
 			sample: heard.filter((s) => s.inside !== null).slice(-3),
 		}),
