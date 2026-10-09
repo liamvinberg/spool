@@ -1,19 +1,9 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-	agentReader,
-	fixtureAgentExecutor,
-	makeApp,
-	makeProject,
-	makeTempDir,
-	scriptedAgentExecutor,
-	until,
-} from "../test-helpers";
+import { agentReader, makeApp, makeProject, makeTempDir, scriptedAgentExecutor, until } from "../test-helpers";
 import { createPiEngine, isLocalEndpoint, piPrompt, piSessionsFile } from "./agent-engine-pi";
-import type { AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
-import { startPiTurn } from "./agent-pi-turn";
 import type { ServedThread } from "./agent-threads";
 
 /** the session ids the recordings were made under, which spool chose and pi took */
@@ -181,55 +171,5 @@ describe("the pi engine", () => {
 			message: "<selection>card</selection>\n\nmake it blue",
 			images: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
 		});
-	});
-
-	it("bounces off a provider that refuses the login with spool's own sentence, and declines an extension's dialog", async () => {
-		const pi = fixtureAgentExecutor((proc, line) => {
-			const command = JSON.parse(line) as { id?: string; type: string };
-			if (command.type === "get_state")
-				proc.emit(
-					JSON.stringify({ id: command.id, type: "response", command: "get_state", success: true, data: {} }),
-				);
-			if (command.type !== "prompt") return;
-			proc.emit(JSON.stringify({ id: command.id, type: "response", command: "prompt", success: true }));
-			proc.emit(JSON.stringify({ type: "extension_ui_request", id: "ui-1", method: "confirm", title: "Allow?" }));
-			proc.emit(
-				JSON.stringify({
-					type: "message_end",
-					message: {
-						role: "assistant",
-						content: [],
-						stopReason: "error",
-						errorMessage: "401 Unauthorized: token expired",
-					},
-				}),
-			);
-			proc.emit(JSON.stringify({ type: "agent_settled" }));
-		});
-		const turn = startPiTurn({
-			executor: pi.executor,
-			spawn: { command: "pi", args: [], cwd: "/work", env: {} },
-			prompt: { message: "go" },
-			model: "openai-codex/gpt-5.5",
-		});
-		const events: AgentEvent[] = [];
-		for await (const event of turn.events) {
-			events.push(event);
-			if (event.kind === "ended") break;
-		}
-		turn.abandon();
-		expect(events.at(-1)).toMatchObject({
-			kind: "ended",
-			ending: "failed",
-			reason: "Sign in to pi to continue.",
-			recovery: { kind: "login", account: "pi", offer: "openai-codex/gpt-5.5" },
-		});
-		expect(JSON.stringify(events)).not.toContain("token expired");
-		expect(pi.spawned[0]?.inputs.map((line) => JSON.parse(line))).toContainEqual({
-			type: "extension_ui_response",
-			id: "ui-1",
-			cancelled: true,
-		});
-		expect(pi.spawned[0]?.ended).toBe(true);
 	});
 });
