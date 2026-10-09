@@ -40,7 +40,7 @@ export function createClaudeEngine(executor: AgentExecutor, look?: Look, spoolDi
 				continuing: recovery === "claude-continue",
 				ask,
 				permissions,
-				...(spoolDir === undefined ? {} : { designer: mountDesigner(spoolDir).claude }),
+				...(spoolDir === undefined ? {} : { designer: mountDesigner(spoolDir, "claude") }),
 			}),
 	};
 }

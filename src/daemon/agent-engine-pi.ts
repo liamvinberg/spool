@@ -252,7 +252,7 @@ export function createPiEngine(spoolDir: string, executor: AgentExecutor, look?:
 					process.env,
 					file !== undefined && existsSync(file) ? { id: session.id, file } : { id: session.id },
 					ask,
-					mountDesigner(spoolDir).pi,
+					mountDesigner(spoolDir, "pi"),
 				),
 				prompt: piPrompt(said),
 				...(ask.value === undefined ? {} : { model: ask.value }),

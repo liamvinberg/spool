@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import type { AgentEngineId } from "./agent-engine";
 
 /**
  * The designer every engine gets (#367): one short prompt and one description, owned by
@@ -37,36 +38,9 @@ Once the frame renders, look at it with \`spool shot\` and hold it against the b
 export const DESIGNER_DESCRIPTION =
 	"Draws one design direction as frames on the spool canvas. Use one designer per direction when someone asks for options or several directions. The brief is all it sees, so give it the product, the page and frame names to write, and what sets this direction apart.";
 
-/**
- * Codex's spawn tool can fork the parent's turns into the child. A designer works from its
- * brief, so the hint asks for none of them. Codex 0.161 offered its v1 spawn tool here,
- * which takes `fork_context` rather than `fork_turns`, so the hint names both.
- */
-export const CODEX_DESIGNER_DESCRIPTION = `${DESIGNER_DESCRIPTION} Spawn it with fork_turns "none" (fork_context false where the spawn tool takes that), so it starts from the brief.`;
-
 /** the framing's one line about designers, the same in every engine */
 export const DESIGNER_FRAMING =
 	"When someone asks for options or several directions, give each direction to its own designer with a brief. Make single edits yourself.";
-
-/**
- * Where Codex keeps the designer, which its framing has to say (#367).
- *
- * Codex 0.161 under its code-mode `exec` lists its multi-agent tools only in `ALL_TOOLS`,
- * not up front. Recorded, a main agent framed with the one line alone said it had no way
- * to spawn a designer and drew both directions itself; told where the tool was, it
- * spawned one designer per direction.
- */
-export const CODEX_DESIGNER_FRAMING = `${DESIGNER_FRAMING} A designer is an agent role: spawn it with spawn_agent and agent_type "designer", one per direction (under exec, spawn_agent is among ALL_TOOLS).`;
-
-/** where the designer lives in spool's state, one file per engine */
-export interface DesignerMount {
-	/** Claude Code's `--agents` file */
-	readonly claude: string;
-	/** Codex's role layer, for `agents.designer.config_file` */
-	readonly codex: string;
-	/** pi's extension, for `-e` */
-	readonly pi: string;
-}
 
 export function designerDir(spoolDir: string): string {
 	return join(spoolDir, "designer");
@@ -198,19 +172,24 @@ function writeIfChanged(file: string, text: string): void {
 }
 
 /**
- * The designer's files, written into spool's state if they are missing or stale, and
- * where they are. Called on every turn's spawn, so a spool upgrade that changes the
+ * Where the designer lives in spool's state, one file per engine in its own vocabulary:
+ * Claude Code's `--agents` file, Codex's role layer for `agents.designer.config_file`, and
+ * pi's extension for `-e`.
+ */
+const DESIGNER_FILES: Readonly<Record<AgentEngineId, { readonly name: string; readonly text: () => string }>> = {
+	claude: { name: "claude-agents.json", text: claudeDesignerFile },
+	codex: { name: "codex-designer.toml", text: codexDesignerFile },
+	pi: { name: "pi-designer.ts", text: piDesignerFile },
+};
+
+/**
+ * One engine's designer file, written into spool's state if it is missing or stale, and
+ * where it is. Called on every turn's spawn, so a spool upgrade that changes the
  * prompt reaches the next turn; a file that already says the same thing is left alone.
  */
-export function mountDesigner(spoolDir: string): DesignerMount {
-	const dir = designerDir(spoolDir);
-	const mount: DesignerMount = {
-		claude: join(dir, "claude-agents.json"),
-		codex: join(dir, "codex-designer.toml"),
-		pi: join(dir, "pi-designer.ts"),
-	};
-	writeIfChanged(mount.claude, claudeDesignerFile());
-	writeIfChanged(mount.codex, codexDesignerFile());
-	writeIfChanged(mount.pi, piDesignerFile());
-	return mount;
+export function mountDesigner(spoolDir: string, engine: AgentEngineId): string {
+	const { name, text } = DESIGNER_FILES[engine];
+	const file = join(designerDir(spoolDir), name);
+	writeIfChanged(file, text());
+	return file;
 }

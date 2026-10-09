@@ -9,15 +9,8 @@ import {
 	replayAgentExecutor,
 	scriptedAgentExecutor,
 } from "../test-helpers";
-import { codexFraming } from "./agent-codex-spawn";
-import {
-	CODEX_DESIGNER_DESCRIPTION,
-	CODEX_DESIGNER_FRAMING,
-	DESIGNER_FRAMING,
-	DESIGNER_PROMPT,
-	designerDir,
-	mountDesigner,
-} from "./agent-designer";
+import { CODEX_DESIGNER_DESCRIPTION, CODEX_DESIGNER_FRAMING, codexFraming } from "./agent-codex-spawn";
+import { DESIGNER_FRAMING, DESIGNER_PROMPT, designerDir, mountDesigner } from "./agent-designer";
 import { piFraming } from "./agent-engine-pi";
 import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
@@ -96,7 +89,11 @@ function fanOut(events: readonly AgentEvent[]) {
 describe("the designer's files", () => {
 	it("live in spool's own state, one per engine", () => {
 		const spoolDir = makeTempDir();
-		const mount = mountDesigner(spoolDir);
+		const mount = {
+			claude: mountDesigner(spoolDir, "claude"),
+			codex: mountDesigner(spoolDir, "codex"),
+			pi: mountDesigner(spoolDir, "pi"),
+		};
 
 		expect(mount).toEqual({
 			claude: join(designerDir(spoolDir), "claude-agents.json"),
@@ -112,12 +109,18 @@ describe("the designer's files", () => {
 		expect(extension).toContain(JSON.stringify(DESIGNER_PROMPT));
 	});
 
+	it("mount only the engine's own file", () => {
+		const spoolDir = makeTempDir();
+		mountDesigner(spoolDir, "codex");
+		expect(readdirSync(designerDir(spoolDir))).toEqual(["codex-designer.toml"]);
+	});
+
 	it("are written again only when spool's designer changed", () => {
 		const spoolDir = makeTempDir();
-		const first = mountDesigner(spoolDir);
-		const stamps = [first.claude, first.codex, first.pi].map((file) => statSync(file).mtimeMs);
-		mountDesigner(spoolDir);
-		expect([first.claude, first.codex, first.pi].map((file) => statSync(file).mtimeMs)).toEqual(stamps);
+		const files = (["claude", "codex", "pi"] as const).map((engine) => mountDesigner(spoolDir, engine));
+		const stamps = files.map((file) => statSync(file).mtimeMs);
+		for (const engine of ["claude", "codex", "pi"] as const) mountDesigner(spoolDir, engine);
+		expect(files.map((file) => statSync(file).mtimeMs)).toEqual(stamps);
 	});
 });
 
@@ -142,7 +145,7 @@ describe("claude's designer", () => {
 		const events = await turn(CLAUDE, "two directions for the hello frame");
 
 		const args = agent.spawned[0]?.spawn.args ?? [];
-		expect(flagValue(args, "--agents")).toBe(mountDesigner(spoolDir).claude);
+		expect(flagValue(args, "--agents")).toBe(mountDesigner(spoolDir, "claude"));
 		expect(flagValue(args, "--agents")?.startsWith(spoolDir)).toBe(true);
 		expect(existsSync(flagValue(args, "--agents") as string)).toBe(true);
 		expect(flagValue(args, "--agents")?.startsWith(root)).toBe(false);
@@ -172,7 +175,7 @@ describe("codex's designer", () => {
 		await turn(CODEX, "two directions for the hello frame");
 
 		const args = codex.spawned[0]?.spawn.args ?? [];
-		const file = mountDesigner(spoolDir).codex;
+		const file = mountDesigner(spoolDir, "codex");
 		expect(overrides(args)).toContain(`agents.designer.config_file=${JSON.stringify(file)}`);
 		expect(overrides(args)).toContain(`agents.designer.description=${JSON.stringify(CODEX_DESIGNER_DESCRIPTION)}`);
 		expect(file.startsWith(spoolDir) && !file.startsWith(root)).toBe(true);
@@ -231,7 +234,7 @@ describe("pi's designer", () => {
 		const events = await turn(PI, "two directions for the hello frame");
 
 		const args = pi.spawned[0]?.spawn.args ?? [];
-		expect(flagValue(args, "-e")).toBe(mountDesigner(spoolDir).pi);
+		expect(flagValue(args, "-e")).toBe(mountDesigner(spoolDir, "pi"));
 		expect(flagValue(args, "-e")?.startsWith(root)).toBe(false);
 		expect(existsSync(flagValue(args, "-e") as string)).toBe(true);
 		expect(added()).toEqual([]);

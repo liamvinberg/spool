@@ -1,6 +1,6 @@
 import type { AgentPermissions } from "../settings/registry";
 import type { CodexRpc } from "./agent-codex-rpc";
-import { CODEX_DESIGNER_DESCRIPTION, CODEX_DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
+import { DESIGNER_DESCRIPTION, DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
 import { framing } from "./agent-framing";
 import type { AgentSpawn } from "./agent-spawn";
 
@@ -56,6 +56,23 @@ export const SPOOL_READ_VERBS: readonly string[] = [
 	"check",
 	"status",
 ];
+
+/**
+ * Codex's spawn tool can fork the parent's turns into the child. A designer works from its
+ * brief, so the hint asks for none of them. Codex 0.161 offered its v1 spawn tool here,
+ * which takes `fork_context` rather than `fork_turns`, so the hint names both.
+ */
+export const CODEX_DESIGNER_DESCRIPTION = `${DESIGNER_DESCRIPTION} Spawn it with fork_turns "none" (fork_context false where the spawn tool takes that), so it starts from the brief.`;
+
+/**
+ * Where Codex keeps the designer, which its framing has to say (#367).
+ *
+ * Codex 0.161 under its code-mode `exec` lists its multi-agent tools only in `ALL_TOOLS`,
+ * not up front. Recorded, a main agent framed with the one line alone said it had no way
+ * to spawn a designer and drew both directions itself; told where the tool was, it
+ * spawned one designer per direction.
+ */
+export const CODEX_DESIGNER_FRAMING = `${DESIGNER_FRAMING} A designer is an agent role: spawn it with spawn_agent and agent_type "designer", one per direction (under exec, spawn_agent is among ALL_TOOLS).`;
 
 /**
  * Codex's boundary paragraph in the framing (`framing`). Codex keeps the project's
