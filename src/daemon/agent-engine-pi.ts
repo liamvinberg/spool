@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { mountDesigner } from "./agent-designer";
 import type { AgentEngine, AgentMessage } from "./agent-engine";
 import { type AgentExecutor, type AgentProcess, probeAgent } from "./agent-exec";
 import { type AgentAsk, type AgentModel, type AgentOffer, askFrom } from "./agent-offer";
@@ -50,12 +51,16 @@ function readSessions(spoolDir: string): Record<string, string> {
  * under the id spool chose (`--session-id`), so the thread's id is the session's from its
  * first turn. A probe opens no session at all (`--no-session`): it asks pi a question
  * about itself and leaves nothing behind.
+ *
+ * A turn loads spool's designer extension (#367) from spool's state with `-e`, which pi
+ * loads beside the person's own extensions without installing it anywhere.
  */
 export function planPiSpawn(
 	root: string,
 	env: Readonly<Record<string, string | undefined>>,
 	session: { readonly id: string; readonly file?: string } | null,
 	ask: AgentAsk = {},
+	designer?: string,
 ): AgentSpawn {
 	return {
 		command: PI_COMMAND,
@@ -69,6 +74,7 @@ export function planPiSpawn(
 					: ["--session", session.file]),
 			...(ask.value === undefined ? [] : ["--model", ask.value]),
 			...(ask.effort === undefined ? [] : ["--thinking", ask.effort]),
+			...(session === null || designer === undefined ? [] : ["-e", designer]),
 			...(session === null ? [] : ["--append-system-prompt", piFraming()]),
 		],
 		cwd: root,
@@ -255,6 +261,7 @@ export function createPiEngine(spoolDir: string, executor: AgentExecutor, look?:
 					process.env,
 					file !== undefined && existsSync(file) ? { id: session.id, file } : { id: session.id },
 					ask,
+					mountDesigner(spoolDir).pi,
 				),
 				prompt: piPrompt(said),
 				...(ask.value === undefined ? {} : { model: ask.value }),

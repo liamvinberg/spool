@@ -62,6 +62,8 @@ export interface AgentTurnOptions {
 	readonly permissions?: AgentPermissions;
 	/** An earlier attempt already completed tools in this pending request. */
 	readonly continuing?: boolean;
+	/** spool's designer, as the `--agents` file in spool's state (#367) */
+	readonly designer?: string;
 }
 
 export interface AgentTurn {
@@ -108,6 +110,7 @@ export function startAgentTurn({
 	ask,
 	permissions,
 	continuing,
+	designer,
 }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
 	const queue: AgentEvent[] = [];
@@ -199,7 +202,7 @@ export function startAgentTurn({
 	void (async () => {
 		let started: AgentProcess;
 		try {
-			started = await executor(planAgentSpawn(root, process.env, session, ask, permissions));
+			started = await executor(planAgentSpawn(root, process.env, session, ask, permissions, designer));
 		} catch (error) {
 			push({
 				kind: "closed",

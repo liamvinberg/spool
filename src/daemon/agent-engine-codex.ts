@@ -4,6 +4,7 @@ import { writeAtomic } from "../atomic-write";
 import { type CodexRpc, createCodexRpc } from "./agent-codex-rpc";
 import { CODEX_COMMAND, codexHandshake, planCodexSpawn } from "./agent-codex-spawn";
 import { startCodexTurn } from "./agent-codex-turn";
+import { mountDesigner } from "./agent-designer";
 import type { AgentEngine } from "./agent-engine";
 import { type AgentExecutor, probeAgent } from "./agent-exec";
 import type { AgentAsk, AgentModel, AgentOffer } from "./agent-offer";
@@ -236,6 +237,7 @@ export function createCodexEngine({ executor, spoolDir, version, look }: CodexEn
 				thread: threads.read(session.id) ?? null,
 				onThread: (thread) => threads.write(session.id, thread),
 				version,
+				designer: mountDesigner(spoolDir).codex,
 			}),
 	};
 }

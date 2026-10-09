@@ -1,5 +1,6 @@
 import type { AgentPermissions } from "../settings/registry";
 import { skillText } from "../skill";
+import { DESIGNER_FRAMING } from "./agent-designer";
 import type { AgentMessage } from "./agent-engine";
 
 /**
@@ -198,7 +199,9 @@ That is what "this" and "that" mean.
 Read the project's own CLAUDE.md or AGENTS.md before your first change. Spool does
 not load it for you.
 
-${ASKS}`;
+${ASKS}
+
+${DESIGNER_FRAMING}`;
 
 /**
  * The framing plus the skill overview, which is a call into the same function
@@ -280,6 +283,13 @@ export function planAgentSpawn(
 	session: AgentSession | null,
 	ask: AgentAsk = {},
 	permissions: AgentPermissions = "ask",
+	/**
+	 * Spool's designer (#367): the `--agents` file in spool's own state, which `--print`
+	 * reads as a path. A turn mounts it; a probe has no use for one. The definition sets
+	 * no `background`, so the main agent runs a designer in the background or waits on
+	 * it as it sees fit.
+	 */
+	designer?: string,
 ): AgentSpawn {
 	return {
 		command: AGENT_COMMAND,
@@ -310,6 +320,7 @@ export function planAgentSpawn(
 			// to assert
 			...(ask.value === undefined ? [] : ["--model", ask.value]),
 			...(ask.effort === undefined ? [] : ["--effort", ask.effort]),
+			...(designer === undefined ? [] : ["--agents", designer]),
 			"--append-system-prompt",
 			permissions === "bypass" ? `${BYPASS_FRAMING}\n\n${agentFraming()}` : agentFraming(),
 		],

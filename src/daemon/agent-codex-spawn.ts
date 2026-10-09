@@ -1,6 +1,7 @@
 import type { AgentPermissions } from "../settings/registry";
 import { skillText } from "../skill";
 import type { CodexRpc } from "./agent-codex-rpc";
+import { CODEX_DESIGNER_DESCRIPTION, CODEX_DESIGNER_FRAMING, DESIGNER_NAME } from "./agent-designer";
 import type { AgentSpawn } from "./agent-spawn";
 
 /**
@@ -69,7 +70,9 @@ Writing under design/ and Spool's own read-only commands (\`spool skill\`, \`spo
 \`spool logs\` and the like) never ask. Write frame files with your file-editing tool
 rather than the shell, and run each spool command on its own rather than chained with
 others, so neither needs an approval. Anything else may ask the human first: say what
-you are about to do outside design/ before you do it.`;
+you are about to do outside design/ before you do it.
+
+${CODEX_DESIGNER_FRAMING}`;
 
 const BYPASS_FRAMING =
 	"Approvals are off on this machine, by the developer's own setting: nothing you do asks first, so say what you are about to do outside design/ before you do it.";
@@ -99,11 +102,15 @@ function toml(value: string): string {
  * edits that file. Trust handed in on the command line is already there, so nothing is
  * written. It has to be the table form: Codex splits a dotted `-c` key on every dot, so
  * `projects."<root>".trust_level` names the wrong key and the write still happens.
+ *
+ * A turn's spawn also carries spool's designer (#367) as an agent role: its config layer
+ * is the file in spool's state, and its description is the hint the spawn tool shows.
+ * Both ride as `-c` flags, so Codex's own config never learns of it.
  */
 export function planCodexSpawn(
 	root: string,
 	env: Readonly<Record<string, string | undefined>>,
-	turn?: { readonly permissions: AgentPermissions },
+	turn?: { readonly permissions: AgentPermissions; readonly designer?: string },
 ): AgentSpawn {
 	const framing =
 		turn === undefined
@@ -120,6 +127,14 @@ export function planCodexSpawn(
 			"-c",
 			`projects={${toml(root)}={trust_level="trusted"}}`,
 			...(framing === undefined ? [] : ["-c", `developer_instructions=${toml(framing)}`]),
+			...(turn?.designer === undefined
+				? []
+				: [
+						"-c",
+						`agents.${DESIGNER_NAME}.config_file=${toml(turn.designer)}`,
+						"-c",
+						`agents.${DESIGNER_NAME}.description=${toml(CODEX_DESIGNER_DESCRIPTION)}`,
+					]),
 		],
 		cwd: root,
 		env: { ...env },

@@ -1124,7 +1124,7 @@ export function createDaemonApp({
 	const engines = new Map<AgentEngineId, AgentEngine>(
 		(
 			agentEngines ?? [
-				createClaudeEngine(executor, agentLook),
+				createClaudeEngine(executor, agentLook, spoolDir),
 				createCodexEngine({
 					executor,
 					spoolDir,

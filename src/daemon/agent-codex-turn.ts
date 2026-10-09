@@ -47,6 +47,8 @@ export interface CodexTurnOptions {
 	readonly onThread: (thread: string) => void;
 	/** spool's version, for Codex's client info */
 	readonly version: string;
+	/** spool's designer role layer, in spool's state (#367) */
+	readonly designer?: string;
 }
 
 /** what a signed-out Codex turn bounces as: the rail's sign-in recovery, Codex's own words */
@@ -300,7 +302,12 @@ export function startCodexTurn(options: CodexTurnOptions): AgentTurn {
 	void (async () => {
 		let started: AgentProcess;
 		try {
-			started = await executor(planCodexSpawn(root, env, { permissions }));
+			started = await executor(
+				planCodexSpawn(root, env, {
+					permissions,
+					...(options.designer === undefined ? {} : { designer: options.designer }),
+				}),
+			);
 		} catch (error) {
 			push({
 				kind: "closed",
