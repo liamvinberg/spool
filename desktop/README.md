@@ -16,7 +16,7 @@ nothing forks.
 Apple silicon, macOS 14 or later.
 
 The app bundles no agent. The rail runs the agent already installed on the Mac
-(Claude Code or pi), and shows the install lines when none is found. No separate
+(Claude Code, Codex or pi), and shows the install lines when none is found. No separate
 Node installation is required. See
 [agent requirements and permissions](../docs/agents.md).
 

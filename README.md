@@ -28,8 +28,8 @@ If your npm setup blocks dependency install scripts, use `npm i -g spool.page --
 
 ## Work with your agent
 
-The agent rail runs the agent you already use, **Claude Code** or **pi**, with
-its own login, models and settings. Spool includes no agent; with none installed,
+The agent rail runs the agent you already use, **Claude Code**, **Codex** or
+**pi**, with its own login, models and settings. Spool includes no agent; with none installed,
 the rail shows how to install one. See [agent requirements and permissions](docs/agents.md).
 
 Ask your agent to run `spool skill`, then describe what you want to make. Your agent writes TSX frames into your project’s `design/` folder, and spool shows the result on the canvas.
