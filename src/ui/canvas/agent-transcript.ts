@@ -677,6 +677,47 @@ interface Run {
 	/** the frame the run is about, or the path where it is a file that is not one */
 	readonly name: string;
 	settle: RowState | null;
+	/**
+	 * A group of reads and searches rather than of writes (#365): what each call in it
+	 * named, in order, which is what its one row is told from and what its disclosure holds.
+	 */
+	readonly reads?: Map<Block, CallName>;
+	/** how each call of a group settled, null while it runs: the row settles as they do */
+	readonly settled?: Map<Block, RowState | null>;
+}
+
+/** a group's mark: working while any call in it is, then the worst of how they ended */
+function groupState(settled: ReadonlyMap<Block, RowState | null>): RowState {
+	const states = [...settled.values()];
+	if (states.some((state) => state === null)) return "running";
+	if (states.includes("failed")) return "failed";
+	if (states.includes("stopped")) return "stopped";
+	return "done";
+}
+
+/** the tools whose path decides whether the call is a read that joins a group or a look */
+const READ_TOOLS: ReadonlySet<string> = new Set(["Read", "read"]);
+
+/**
+ * One row for a group of reads and searches (#365): a lone call reads as itself, and two
+ * or more say how many, with every path or command behind the disclosure, one a line.
+ */
+function readRow(row: Row, members: readonly CallName[]): void {
+	const [first] = members;
+	if (first === undefined) return;
+	if (members.length === 1) {
+		row.verb = first.verb;
+		row.subject = first.subject;
+		row.frame = first.frame;
+		row.detail = first.detail;
+		return;
+	}
+	const reading = members.every((one) => one.verb === "read");
+	row.verb = reading ? "read" : "search";
+	row.subject = reading ? `${members.length} files` : `${members.length} times`;
+	row.frame = null;
+	const details = members.flatMap((one) => (one.detail === null ? [] : [one.detail]));
+	row.detail = details.length === 0 ? null : details.join("\n");
 }
 
 /**
@@ -781,6 +822,22 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const blocks = new Map<string, Block>();
 	/** every call by its own id, which is what a whole call and a result arrive with */
 	const calls = new Map<string, Block>();
+	/** every group of reads by its row, which its calls settle long after it closes */
+	const groups = new Map<Row, Run>();
+	/** a group of reads opened on a row, its first call in it */
+	const openGroup = (block: Block, row: Row, named: CallName) => {
+		const group: Run = {
+			row,
+			name: "",
+			settle: null,
+			reads: new Map([[block, named]]),
+			settled: new Map([[block, null]]),
+		};
+		runs.set(block.delegation, group);
+		groups.set(row, group);
+	};
+	/** the row each delegation drew last, while nothing has been drawn after it */
+	const latest = new Map<string, Row>();
 	/** the run still open on each delegation, "" for the human's own thread */
 	const runs = new Map<string, Run>();
 	/** which call a delegated task answers to, so the task's end settles the row */
@@ -860,6 +917,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * across all of them would end every run on the next delegate's row.
 	 */
 	const endRun = (delegation: string) => {
+		latest.delete(delegation);
 		const run = runs.get(delegation);
 		if (run === undefined) return;
 		runs.delete(delegation);
@@ -877,6 +935,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		};
 		block.row = made;
 		rows.set(made.key, made);
+		latest.set(block.delegation, made);
 		// a delegate's row goes inside the row that delegated it, unless spool never saw
 		// that call — a stream joined mid-delegation has a row and nowhere to file it, and
 		// the log is the honest place for a row whose parent spool cannot name
@@ -955,12 +1014,36 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		if (named === null) return;
 		block.named = named;
 		if (whole) block.settled = true;
+		const run = runs.get(block.delegation);
+		// a group's call learning its path or command is the group's row learning it
+		if (block.joined && run?.reads?.has(block) === true && run.row === block.row) {
+			run.reads.set(block, named);
+			readRow(run.row, [...run.reads.values()]);
+			return;
+		}
 		// a run's next call adds a count and nothing else: the calls are the same verb on
 		// the same frame, and the count is the entire difference between them
 		if (block.joined) return;
-		const run = runs.get(block.delegation);
 		const name = named.frame ?? named.detail ?? named.subject;
 		if (block.row === null) {
+			/*
+			 * A read while a group of them is open joins it (#365): reading around a codebase
+			 * is one act however many files it opens. A read whose path has not arrived waits
+			 * for it, because a picture's is a look, which keeps a row of its own.
+			 */
+			if (run?.reads !== undefined) {
+				if (READ_TOOLS.has(block.tool) && named.subject === null && !whole) return;
+				if (named.reads) {
+					block.joined = true;
+					block.row = run.row;
+					run.reads.set(block, named);
+					run.settled?.set(block, null);
+					readRow(run.row, [...run.reads.values()]);
+					run.row.state = "running";
+					if (block.id !== null) calls.set(block.id, block);
+					return;
+				}
+			}
 			/*
 			 * A write while a run is open is either that run's next call or a row of its
 			 * own, and the only thing that says which is the file it names — so it waits for
@@ -968,7 +1051,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			 * agent finishes with a frame before it picks up the next one, but the rule is
 			 * the rule and this is where it would fire.
 			 */
-			if (named.writes && run !== undefined) {
+			if (named.writes && run !== undefined && run.reads === undefined) {
 				if (name === null) return;
 				if (name === run.name) {
 					block.joined = true;
@@ -996,6 +1079,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				foreign,
 			});
 			if (named.writes && name !== null) runs.set(block.delegation, { row, name, settle: null });
+			else if (named.reads) openGroup(block, row, named);
 			return;
 		}
 		// the row learns: the verb sharpens where the argument settles it, and the
@@ -1010,6 +1094,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		}
 		if (named.detail !== null) block.row.detail = named.detail;
 		if (foreign !== null) block.row.foreign = foreign;
+		// a call that opened its row before it knew it reads opens a group once it does,
+		// unless something has been drawn under it since
+		if (named.reads && latest.get(block.delegation) === block.row && runs.get(block.delegation)?.row !== block.row)
+			openGroup(block, block.row, named);
+		else if (named.reads) runs.get(block.delegation)?.reads?.set(block, named);
 		// the path landed on a write that opened before it, so this is where its run starts
 		if (named.writes && name !== null && runs.get(block.delegation)?.row !== block.row)
 			runs.set(block.delegation, { row: block.row, name, settle: null });
@@ -1395,7 +1484,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				if (block.tool === "Agent") break;
 				const state = settledBy(event);
 				const run = runs.get(block.delegation);
-				if (run !== undefined && run.row === block.row) run.settle = state;
+				const group = groups.get(block.row);
+				if (group?.settled?.has(block) === true) {
+					group.settled.set(block, state);
+					block.row.state = groupState(group.settled);
+				} else if (run !== undefined && run.row === block.row) run.settle = state;
 				else block.row.state = state;
 				/*
 				 * Where a rule refused the call, the content is the developer's own sentence —

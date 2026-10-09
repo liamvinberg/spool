@@ -61,6 +61,24 @@ export interface CallName {
 	readonly writes: boolean;
 	/** the call is the binary fetching a deferred tool rather than work on the project (#142) */
 	readonly finds: boolean;
+	/** the call only reads or searches, so consecutive ones are one row (#365) */
+	readonly reads: boolean;
+}
+
+/**
+ * The tools that only read or search, under each engine's own name for them: Claude
+ * Code's, and pi's lowercase ones. A `Read` of a picture is a look, which keeps its row:
+ * the picture is its payload.
+ */
+const SEARCHES = new Set(["Grep", "Glob", "LS", "read", "grep", "find", "ls"]);
+
+/** the programs a shell call only reads or searches with, when every one of its commands is one */
+const SEARCHING = new Set(["rg", "grep", "find", "ls", "cat", "head", "tail", "wc", "tree", "pwd", "cd"]);
+
+/** a shell command that only reads or searches: every command in it is one of `SEARCHING`'s */
+function onlyReads(command: string): boolean {
+	const parts = command.split(/\s*(?:&&|\|\||[;|])\s*/).filter((part) => part !== "");
+	return parts.length > 0 && parts.every((part) => SEARCHING.has(part.split(/\s+/)[0] ?? ""));
 }
 
 /**
@@ -342,7 +360,7 @@ export function nameCall(call: {
 	readonly whole: boolean;
 }): CallName | null {
 	const { tool, input, root, foreign, whole } = call;
-	const plain = { frame: null, detail: null, writes: false, finds: false } as const;
+	const plain = { frame: null, detail: null, writes: false, finds: false, reads: false } as const;
 
 	if (foreign !== undefined) {
 		/*
@@ -381,6 +399,7 @@ export function nameCall(call: {
 			detail: relativeTo(path, root),
 			writes: WRITES.has(tool),
 			finds: false,
+			reads: verb === "read",
 		};
 	}
 
@@ -401,7 +420,7 @@ export function nameCall(call: {
 		const spool = last === undefined ? null : /^spool\s+(\w+)\s*(.*)$/.exec(last);
 		if (spool === null) {
 			const description = readField(input, "description", whole);
-			return { ...plain, verb: "run", subject: description, detail: command };
+			return { ...plain, verb: "run", subject: description, detail: command, reads: onlyReads(command) };
 		}
 		const verb = spool[1] ?? "run";
 		// a redirection is shell rather than subject: `spool shot home 2>&1` looked at home
@@ -422,5 +441,17 @@ export function nameCall(call: {
 
 	// a tool spool has no noun for keeps the agent's own name for it, once the call is
 	// whole enough to know no metadata is coming to name it better
-	return whole ? { ...plain, verb: tool.toLowerCase(), subject: null } : null;
+	if (!whole) return null;
+	if (!SEARCHES.has(tool)) return { ...plain, verb: tool.toLowerCase(), subject: null };
+	// a search's pattern, or the path a read or listing names, is what goes behind the disclosure
+	const said = ["pattern", "path", "file_path", "query"]
+		.map((field) => readField(input, field, whole))
+		.find((value) => value !== null);
+	return {
+		...plain,
+		verb: tool.toLowerCase(),
+		subject: null,
+		detail: said === undefined ? null : relativeTo(said, root),
+		reads: true,
+	};
 }

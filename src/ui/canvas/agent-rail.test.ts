@@ -1806,11 +1806,12 @@ describe("a tool row", () => {
 		// one flat stroke, drawn short of the mark's full width
 		expect(strokes()).toEqual(["M4.4 7h5.2"]);
 
+		// a command, so it is a row of its own rather than a second read in the first one's group
 		canvas.turn.push({
 			kind: "called",
 			id: "t2",
-			tool: "Read",
-			input: { file_path: "/project/design/AGENTS.md" },
+			tool: "Bash",
+			input: { command: "npm install", description: "Install the dependencies" },
 			parent: null,
 		});
 		canvas.turn.push({ kind: "result", id: "t2", failed: true, text: "not found", images: [], parent: null });
@@ -1874,7 +1875,7 @@ describe("the plan", () => {
 		// eight rows of work land between the plan and its next move, which is what
 		// carries it off the top of a transcript
 		for (let index = 0; index < 8; index += 1) {
-			canvas.turn.push(called(`r${index}`, "Read", { file_path: `/project/design/frames/home/take-${index}.tsx` }));
+			canvas.turn.push(called(`r${index}`, "Edit", { file_path: `/project/design/frames/home-${index}/frame.tsx` }));
 			canvas.turn.push(settled(`r${index}`));
 		}
 		canvas.turn.push(move("p4", "1", "completed"));
