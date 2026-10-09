@@ -3,7 +3,17 @@ import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { getNested } from "../machine-state";
 import { readMachineRegistry } from "../machine-state-files";
-import { AGENT_ENGINE_IDS, type AgentEngineId, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
+import {
+	AGENT_ENGINE_IDS,
+	AGENT_PERMISSIONS,
+	type AgentEngineId,
+	type AgentPermissions,
+	isAgentEngineId,
+	LEGACY_ENGINE,
+} from "./agent-engine";
+
+export { AGENT_PERMISSIONS, type AgentPermissions };
+
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { threadsDir } from "./agent-threads";
 
@@ -23,15 +33,6 @@ import { threadsDir } from "./agent-threads";
  * engine is never here.
  */
 export const ENGINE_ORDER: readonly AgentEngineId[] = AGENT_ENGINE_IDS;
-
-/**
- * How a spawned agent is fenced (#121, #281). `ask` is the fence as built: the allow rules
- * make design/ quiet and everything else asks. `edits` accepts file edits and still asks for
- * the rest. `bypass` hands the agent its own bypass mode. The mode is this machine's, never
- * the repo's, and is part of the agent choice this module keeps (#361).
- */
-export const AGENT_PERMISSIONS = ["ask", "edits", "bypass"] as const;
-export type AgentPermissions = (typeof AGENT_PERMISSIONS)[number];
 
 /** A machine with nothing saved asks before commands and edits without asking. */
 export const DEFAULT_MODE: AgentPermissions = "edits";

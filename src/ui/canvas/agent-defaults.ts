@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AgentPermissions } from "../../daemon/agent-defaults";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import { fetchAgentDefaults, saveAgentEngine } from "../api";
+import { fetchAgentEngines, saveAgentEngine } from "../api";
 import { useSettings } from "../settings";
 
 /**
@@ -14,6 +14,11 @@ import { useSettings } from "../settings";
  */
 let engine: AgentEngineId | null | undefined;
 let mode: AgentPermissions | undefined;
+/**
+ * What each engine last said about having permission modes (#363, #364), for the wait
+ * before its next offer: an engine's word on it is the machine's, like the choice.
+ */
+const modes = new Map<AgentEngineId, boolean>();
 const listeners = new Set<() => void>();
 
 /** how long a failed read waits before it asks again */
@@ -35,8 +40,28 @@ export function learnAgentMode(next: AgentPermissions): void {
 	notify();
 }
 
-export function knownAgentMode(): AgentPermissions | undefined {
-	return mode;
+/** An engine's offer said whether it has modes. */
+export function learnEngineModes(of: AgentEngineId, has: boolean): void {
+	if (modes.get(of) === has) return;
+	modes.set(of, has);
+	notify();
+}
+
+/** Whether `of` has modes, as it last said; undefined until it has, and for no engine. */
+export function useEngineModes(of: AgentEngineId | undefined): boolean | undefined {
+	return useSyncExternalStore(
+		subscribe,
+		() => (of === undefined ? undefined : modes.get(of)),
+		() => undefined,
+	);
+}
+
+/** Everything this page has learned, gone, as on a page that has just loaded: for tests. */
+export function forgetAgentDefaults(): void {
+	engine = undefined;
+	mode = undefined;
+	modes.clear();
+	notify();
 }
 
 function learn(next: { preferred: AgentEngineId | null; mode: AgentPermissions }): void {
@@ -72,8 +97,9 @@ export function useAgentDefaults(project: string): AgentDefaultsDeck {
 		let live = true;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const read = () => {
-			void fetchAgentDefaults(project).then((answer) => {
+			void fetchAgentEngines(project).then((reading) => {
 				if (!live) return;
+				const answer = reading?.defaults;
 				if (answer === undefined) timer = setTimeout(read, AGENT_DEFAULTS_RETRY_MS);
 				else learn(answer);
 			});

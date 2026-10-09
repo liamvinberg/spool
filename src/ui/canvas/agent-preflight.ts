@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentRecovery } from "../../daemon/agent-events";
-import { fetchAgentInstalled, fetchInstalledEngines } from "../api";
+import { fetchAgentEngines, fetchAgentInstalled } from "../api";
 
 /**
  * The two ways there is no agent to talk to, on the rail's side (#127, #201).
@@ -87,11 +87,12 @@ async function lookFor(
 	engine: AgentEngineId | undefined,
 	thread: string | undefined,
 ): Promise<{ there: boolean | null; any: boolean | null }> {
-	const [there, installed] = await Promise.all([
+	const [there, reading] = await Promise.all([
 		fetchAgentInstalled(project, engine, thread),
-		fetchInstalledEngines(project),
+		fetchAgentEngines(project),
 	]);
-	return { there, any: installed === null ? null : installed.length > 0 };
+	const listed = reading?.engines;
+	return { there, any: listed === undefined ? null : listed.some((one) => one.installed) };
 }
 
 /**

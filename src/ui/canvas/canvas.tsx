@@ -612,11 +612,11 @@ export function ProjectCanvas({
 		...offeredModel,
 		started: turn.entries.length > 0,
 		// saved before the menu moves: the blank chat then follows the confirmed choice
-		onEngine: (engine: AgentEngineId) => {
-			void agentDefaults.choose(engine).then((confirmed) => {
+		onEngine: (engine: AgentEngineId) =>
+			agentDefaults.choose(engine).then((confirmed) => {
 				if (confirmed) deck.follow();
-			});
-		},
+				return confirmed;
+			}),
 	};
 	/**
 	 * What a row in the rail can do about the frame it names (#143, #194).
@@ -5624,10 +5624,7 @@ export function ProjectCanvas({
 					// nor does one whose word on it has not come, so pi's never flashes in (#364)
 					permissions={model.modes === true ? permissions : undefined}
 					width={width}
-					entries={turn.entries}
-					plan={turn.plan}
-					phase={turn.phase}
-					elapsed={turn.elapsed}
+					turn={turn}
 					jump={jump}
 					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
 					threads={{
@@ -5641,22 +5638,8 @@ export function ProjectCanvas({
 					}}
 					install={install}
 					login={deck.login}
-					queued={turn.queued}
-					handback={turn.handback}
-					draft={turn.draft}
-					attached={turn.attached}
-					onAttach={turn.onAttach}
-					onDraft={turn.onDraft}
-					running={turn.running}
 					model={model}
-					limit={turn.limit}
-					context={turn.context}
 					preferred={agentDefaults.engine}
-					onSend={turn.send}
-					onQueue={turn.queue}
-					onUnqueue={turn.unqueue}
-					onStop={turn.stop}
-					onAnswer={turn.answer}
 				/>
 			),
 		},

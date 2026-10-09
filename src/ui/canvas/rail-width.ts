@@ -21,12 +21,14 @@ import { useRef, useState } from "react";
 export const STRIP_WIDTH = 44;
 /** the narrowest a rail may be while it is still a rail */
 export const MIN_WIDTH = 200;
-export const MAX_WIDTH = 560;
+/** the widest a rail may be, unless it is the agent's */
+export const MAX_WIDTH = 480;
 /**
- * The agent's own floor (#364): a side showing the agent rail is 380 to 560 wide,
+ * The agent's own range (#364): a side showing the agent rail is 380 to 560 wide,
  * because the composer's foot and the agent menu need that much to stay on one line.
  */
 export const AGENT_MIN_WIDTH = 380;
+export const AGENT_MAX_WIDTH = 560;
 /** let go below this and the rail shuts rather than sitting at an unusable width */
 export const SNAP_BELOW = 144;
 
@@ -44,8 +46,8 @@ export const PROPERTIES_WIDTH = 300;
 export const PAGES_WIDTH = 248;
 
 /** where a rail lands when the hand lets go of it */
-export const settledWidth = (latest: number): number =>
-	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, latest));
+export const settledWidth = (latest: number, max: number = MAX_WIDTH): number =>
+	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(max, latest));
 
 /**
  * The grip on a rail's inner edge, as behaviour rather than as markup (#256).
@@ -94,7 +96,7 @@ export function useRailDrag({
 		target.releasePointerCapture(pointerId);
 		held.current = null;
 		setDragging(false);
-		onSettle(settledWidth(Math.min(current.latestWidth, max)));
+		onSettle(settledWidth(current.latestWidth, max));
 	};
 
 	return {

@@ -1,9 +1,18 @@
 import type { Attachment } from "../attachment";
-import type { AgentPermissions } from "./agent-defaults";
 import type { AgentExecutor } from "./agent-exec";
 import type { AgentAsk, AgentOffer } from "./agent-offer";
 import type { AgentLogin, Look } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
+
+/**
+ * How a spawned agent is fenced (#121, #281). `ask` is the fence as built: the allow rules
+ * make design/ quiet and everything else asks. `edits` accepts file edits and still asks for
+ * the rest. `bypass` hands the agent its own bypass mode. The mode is this machine's, never
+ * the repo's, and is part of the agent choice agent-defaults keeps (#361). It lives here,
+ * in a module with no runtime imports, so the rail can read it too.
+ */
+export const AGENT_PERMISSIONS = ["ask", "edits", "bypass"] as const;
+export type AgentPermissions = (typeof AGENT_PERMISSIONS)[number];
 
 /** The installed agents spool drives, each through its own adapter. */
 export const AGENT_ENGINE_IDS = ["claude", "codex", "pi"] as const;
