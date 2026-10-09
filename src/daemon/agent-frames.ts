@@ -8,7 +8,7 @@ import { createEventQueue } from "./agent-turn-shell";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import type { ChangeEvent } from "./events";
 import { readSidecar, writeGeometry } from "./geometry";
-import { besideField, DEFAULT_FOOTPRINT, pageObjectsOn } from "./placement";
+import { besideField, DEFAULT_FOOTPRINT, overlaps, pageObjectsOn } from "./placement";
 import { discoverFrames, listProjectFrames, type Projection, type ReservedSpot } from "./projection";
 
 /**
@@ -168,11 +168,6 @@ export function changedRange(before: string, after: string): { from: number; to:
 	const from = Math.min(top + 1, Math.max(1, now.length));
 	const to = Math.max(from, now.length - bottom);
 	return { from, to: Math.min(to, Math.max(1, now.length)) };
-}
-
-/** two rects share some area; touching edges do not */
-function overlaps(a: Rect, b: Rect): boolean {
-	return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
 /** a frame name read from a task's own description: `Design hello-calm frame` → `hello-calm` */

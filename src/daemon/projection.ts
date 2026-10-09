@@ -10,7 +10,7 @@ import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
-import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
+import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, overlaps, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { type Unseen, unseenNow } from "./seen";
@@ -361,10 +361,14 @@ export function listProjectFrames(
 				? (reserved.find((one) => one.frame === frame.name) ?? open.find((one) => one.name === frame.name))
 				: undefined;
 		if (frame.page === undefined) field.push(...open.filter((one) => one !== spot));
+		// a frame with a size of its own bigger than its spot stands clear of its neighbours
+		// instead, as any new frame does (story 57), and the turn's spot follows it there
+		const inSpot =
+			spot === undefined ? undefined : { x: spot.x, y: spot.y, ...(sized ? footprint : { w: spot.w, h: spot.h }) };
 		const geometry =
-			spot === undefined
+			inSpot === undefined || field.some((other) => overlaps(inSpot, other))
 				? { ...besideField(field), ...footprint }
-				: { x: spot.x, y: spot.y, ...(sized ? footprint : { w: spot.w, h: spot.h }) };
+				: inSpot;
 		try {
 			const persisted = writePlacement(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {
