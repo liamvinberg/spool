@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.35.0
+
+### Minor Changes
+
+- cb817c5: Each designer the agent brings in now gets its own frame on the canvas the moment it starts. The frame shows up dashed on the page where the work will land, with the direction's name and brief, and says what its designer is doing inside it. The designer draws into it, so the chat tile and the frame stay one thing, on any page. A frame folder that has no source yet no longer shows up as an empty page. When several designers work on one frame, their names no longer pile up or repeat the frame's name, and nothing from another page is drawn on the one you are looking at.
+- 2083e19: On a team project you can now see your teammates' agents while they work. Inside their designers' placeholder frames you see what each one is doing, and their agent shows on the frames it reads or edits, in their colour. Their status line, like "3 designers working", shows beside their name on the canvas and in the list of who is here. This needs spool.page to be updated too, so it may take a little while after this release to show up.
+- eb99f5c: On a team project, a placeholder frame now says whose designer is drawing it. Your teammates see it in your colour with your name, like "ada's designer is drawing this frame", and you see theirs the same way. Your own placeholders look as they did.
+- 6231a64: On a team canvas, you now see what a teammate does inside a live frame. Their pointer keeps moving in there instead of stopping where they went in. A click makes it squash and burst, a drag turns it into a hand with a line trailing behind, and a scroll turns it into a mouse with arrows showing which way. Your own copy of the frame stays yours to use while they work in theirs.
+
+### Patch Changes
+
+- 1f84a0a: The agent in the rail always finds a `spool` command now, and it is the spool that started it. Before, a daemon run from a checkout gave the agent no `spool` at all, and it could spend minutes searching the disk for one.
+- c3a8d15: The agent's square on a frame is quieter while it rests. Parked beside the frame's name it is now smaller and grey, and it turns back into the full square when the agent works on the frame.
+- 5b26ce9: A table in the agent's chat now reads as a short bulleted list, one line per row, instead of a long stack of labelled rows. The agent is also asked to sum up its designers' work as a list.
+- 7cc4c79: A teammate's name on a frame no longer covers the agent's square on that frame. The name steps aside to its left.
+- 470649d: The turn status counts only the designers the agent hands work to. Commands it runs in the background no longer show up as agents working.
+- 2161bad: Stopping an agent while its designers are still working now shows "stopped" once under the turn, not twice.
+- 83682ba: A turn's steps no longer list "thinking" over and over. Thinking with no step in between now shows as one line, with the time it took all together.
+- a1e34d5: The agent's turn clock ticks every second while designers work, instead of holding and then jumping ahead.
+
 ## 0.34.0
 
 ### Minor Changes
