@@ -67,6 +67,19 @@ pi to say what it is about to change outside `design/` before it does it.
 Stop cancels the active work. Closing or refreshing the canvas does not stop a
 turn owned by the daemon.
 
+## Designers
+
+Every agent gets a designer from Spool. When you ask for options or several
+directions, the agent gives each direction to its own designer with a brief, and
+the rail shows one row per designer with what it is doing now. A single edit the
+agent makes itself.
+
+Spool hands the designer to the agent on each turn from its own state. It is
+never written into your project or into Claude Code's, Codex's or pi's own
+config: Claude Code gets it as `--agents`, Codex as an agent role in `-c`
+flags, and pi as an extension loaded with `-e`. A designer runs on the same
+agent, model and effort as the chat that called it.
+
 ## Existing conversations
 
 Claude Code, Codex and pi threads continue in the agent's own saved session. If the
