@@ -16,6 +16,7 @@ import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
 import { crumbsOf, shortPath } from "./picker-model";
 import { Checkbox } from "./primitives/selection";
+import { ListRow } from "./primitives/structure";
 import { useWriteSetting } from "./settings";
 import { useFolderBrowser } from "./use-folder-browser";
 
@@ -642,31 +643,45 @@ function FolderRow({
 	onBrowse: () => void;
 }) {
 	return (
-		<div
-			className={cn(
-				"picker-folder-row flex relative h-[36px] [&:hover]:bg-surface-raised [&.is-selected]:bg-surface-raised [&.is-selected]:before:content-[''] [&.is-selected]:before:w-[2px] [&.is-selected]:before:rounded-[2px] [&.is-selected]:before:absolute [&.is-selected]:before:left-0 [&.is-selected]:before:top-[4px] [&.is-selected]:before:bottom-[4px] [&.is-selected]:before:bg-accent [&_button]:flex [&_button]:items-center [&>button:first-child]:min-w-0 [&>button:first-child]:flex-1 [&>button:first-child]:py-0 [&>button:first-child]:px-[16px] [&>button:first-child]:gap-[12px] [&>button:first-child]:text-left [&>button:first-child]:[font:var(--type-control)] [&>button:first-child>span]:flex-1 [&>button:first-child>span]:truncate [&>button:first-child>svg]:text-secondary [&>button:first-child>svg]:opacity-50 [&>button:first-child>svg]:size-[12px] [&>button:first-child>.is-project]:text-accent [&>button:first-child>.is-project]:opacity-90 [&_code]:[font:var(--type-detail)] [&_code]:text-secondary [&_code]:truncate [&_code]:max-w-[45%] [&>button:last-child]:py-0 [&>button:last-child]:pr-[16px] [&>button:last-child]:pl-[8px] [&>button:last-child]:text-secondary [&>button:last-child>svg]:size-[11px]",
-				selected ? "is-selected" : "",
-			)}
+		<ListRow
+			size="lg"
+			tone="raised"
+			marked={selected}
+			className={cn("picker-folder-row", selected && "bg-state-selected-strong")}
 			data-at={index}
-		>
-			<button
-				type="button"
-				role="option"
-				aria-selected={selected}
-				aria-label={`Select ${row.name}`}
-				disabled={disabled}
-				onClick={onSelect}
-				onDoubleClick={onBrowse}
-			>
-				<FolderIcon className={row.isProject ? "is-project" : ""} />
-				<span>{row.name}</span>
-				{searching && <code>{display(row.parent)}</code>}
-				{row.frames !== undefined && <code>{row.frames} frames</code>}
-			</button>
-			<button type="button" aria-label={`Browse ${row.name}`} disabled={disabled} onClick={onBrowse}>
-				<ChevronIcon />
-			</button>
-		</div>
+			icon={FolderIcon}
+			lit={row.isProject}
+			label={
+				<>
+					{row.name}
+					{searching && <span className="ml-3 text-secondary type-detail">{display(row.parent)}</span>}
+				</>
+			}
+			meta={row.frames === undefined ? undefined : `${row.frames} frames`}
+			decor={
+				<button
+					type="button"
+					role="option"
+					aria-selected={selected}
+					aria-label={`Select ${row.name}`}
+					disabled={disabled}
+					onClick={onSelect}
+					onDoubleClick={onBrowse}
+					className="absolute inset-0 z-1 focus-ring-inset"
+				/>
+			}
+			trailing={
+				<button
+					type="button"
+					aria-label={`Browse ${row.name}`}
+					disabled={disabled}
+					onClick={onBrowse}
+					className="flex size-control-sm items-center justify-center rounded-xs text-secondary hover:text-primary focus-ring-inset [&>svg]:size-3"
+				>
+					<ChevronIcon />
+				</button>
+			}
+		/>
 	);
 }
 
