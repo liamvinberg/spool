@@ -41,6 +41,7 @@
 		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit && tsc -p bench/evidence/tsconfig.json --noEmit",
 		"check": "biome check . && tsx src/design-lint.ts",
 		"design:lint": "tsx src/design-lint.ts",
+		"design:sync": "tsx src/design-sync.ts",
 		"test": "vitest run",
 		"test:changed": "tsx src/test-changed.ts",
 		"test:canvas": "SPOOL_TEST_CANVAS=1 vitest run src/daemon/class-scanner.test.ts",
