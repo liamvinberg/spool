@@ -3,6 +3,7 @@ import type { CloudAccountState } from "./api";
 import { cn } from "./cn";
 import { HOME_ACTION } from "./home-actions";
 import { ChevronIcon } from "./icons";
+import { Dot } from "./primitives/display";
 
 /**
  * The foot of Home's sidebar, where this Mac's account lives: Sign in, the wait while the
@@ -56,7 +57,7 @@ export function AccountFoot({
 					className={cn(HOME_ACTION, "w-full justify-start bg-surface-raised")}
 					onClick={onReopen}
 				>
-					<span className="h-[8px] w-[8px] shrink-0 rounded-full bg-secondary motion-safe:animate-pulse" />
+					<Dot tone="secondary" size="md" className="motion-safe:animate-pulse!" />
 					Waiting for the browser
 				</button>
 			</div>
