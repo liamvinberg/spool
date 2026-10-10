@@ -5,6 +5,7 @@ import { pageName } from "../../page-path";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { FolderIcon } from "../icons";
+import { Kbd } from "../primitives/display";
 import { ageOf, findFrames, newestFirst } from "./frame-find";
 import { pageLabel, pageOf } from "./pages";
 import { UnseenMark } from "./unseen-mark";
@@ -382,7 +383,11 @@ function CommandRow({
 					</span>
 				))}
 			</span>
-			<span className="shrink-0 text-secondary type-detail">{command.refused ?? command.keys ?? ""}</span>
+			{command.refused !== undefined ? (
+				<span className="shrink-0 text-secondary type-detail">{command.refused}</span>
+			) : command.keys !== undefined ? (
+				<Kbd>{command.keys}</Kbd>
+			) : null}
 		</button>
 	);
 }

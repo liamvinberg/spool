@@ -16,6 +16,7 @@ import {
 	RibbonMark,
 	SearchIcon,
 } from "./icons";
+import { Kbd } from "./primitives/display";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -212,7 +213,7 @@ export function Home({
 											<CloseIcon />
 										</button>
 									) : (
-										<kbd className="type-detail">/</kbd>
+										<Kbd>/</Kbd>
 									)}
 								</label>
 								<button type="button" className={cn("home-action h-[35px]", HOME_ACTION)} onClick={onImport}>
