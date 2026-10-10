@@ -299,3 +299,35 @@ export function CheckIcon({ className }: { className?: string }) {
 		</svg>
 	);
 }
+
+/** Settings' Appearance: a look, as a circle half in ink. */
+export function LookIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<circle cx="8" cy="8" r="5.75" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M8 2.25a5.75 5.75 0 0 1 0 11.5z" fill="currentColor" />
+		</svg>
+	);
+}
+
+/** Settings' Colours: the theme's own, as three swatches and a dot. */
+export function ColoursIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<rect x="2.25" y="2.25" width="5" height="5" rx="1.25" stroke="currentColor" strokeWidth="1.5" />
+			<rect x="8.75" y="2.25" width="5" height="5" rx="1.25" stroke="currentColor" strokeWidth="1.5" />
+			<rect x="2.25" y="8.75" width="5" height="5" rx="1.25" stroke="currentColor" strokeWidth="1.5" />
+			<circle cx="11.25" cy="11.25" r="2.5" fill="currentColor" />
+		</svg>
+	);
+}
+
+/** Settings' This Mac: the machine, as a laptop. */
+export function MachineIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<rect x="3.25" y="3.25" width="9.5" height="7" rx="1" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M1.75 12.75h12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
