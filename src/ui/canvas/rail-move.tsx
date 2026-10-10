@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../cn";
 import { FolderIcon } from "../icons";
+import { SearchField } from "../primitives/inputs";
 import { pagePathLabel } from "./pages";
 
 /**
@@ -19,7 +20,7 @@ import { pagePathLabel } from "./pages";
 
 const WIDTH = 232;
 const ROW = 28;
-const FIELD = 34;
+const FIELD = 32;
 const PAD = 8;
 /** how many rows are drawn before the list starts scrolling */
 const VISIBLE = 7;
@@ -93,34 +94,38 @@ export function PagePicker({
 			}}
 			onContextMenu={(event) => event.preventDefault()}
 		>
-			<input
-				ref={field}
-				aria-label="Move to page"
-				value={query}
-				spellCheck={false}
-				autoComplete="off"
-				placeholder="type part of a page"
-				onChange={(event) => {
-					setQuery(event.target.value);
-					setWanted(0);
-				}}
-				onKeyDown={(event) => {
-					if (event.key === "ArrowDown") {
-						event.preventDefault();
-						setWanted(Math.min(cursor + 1, Math.max(hits.length - 1, 0)));
-					} else if (event.key === "ArrowUp") {
-						event.preventDefault();
-						setWanted(Math.max(cursor - 1, 0));
-					} else if (event.key === "Enter") {
-						event.preventDefault();
-						if (pick !== undefined) onPick(pick);
-					} else if (event.key === "Escape") {
-						event.preventDefault();
-						onClose();
-					}
-				}}
-				className="h-[34px] shrink-0 border-line-default border-b bg-transparent px-2.5 text-primary caret-accent outline-none placeholder:text-secondary type-value"
-			/>
+			<div className="shrink-0 px-unit pt-unit">
+				<SearchField
+					size="md"
+					hotkey=""
+					mono
+					label="Move to page"
+					placeholder="type part of a page"
+					value={query}
+					onValueChange={(next) => {
+						setQuery(next);
+						setWanted(0);
+					}}
+					inputProps={{
+						ref: field,
+						onKeyDown: (event) => {
+							if (event.key === "ArrowDown") {
+								event.preventDefault();
+								setWanted(Math.min(cursor + 1, Math.max(hits.length - 1, 0)));
+							} else if (event.key === "ArrowUp") {
+								event.preventDefault();
+								setWanted(Math.max(cursor - 1, 0));
+							} else if (event.key === "Enter") {
+								event.preventDefault();
+								if (pick !== undefined) onPick(pick);
+							} else if (event.key === "Escape") {
+								event.preventDefault();
+								onClose();
+							}
+						},
+					}}
+				/>
+			</div>
 			<div ref={list} className="min-h-0 flex-1 overflow-y-auto p-unit" style={{ height: rows * ROW + PAD }}>
 				{hits.length === 0 ? (
 					<div className="flex items-center px-1.5 text-secondary type-value" style={{ height: ROW }}>
