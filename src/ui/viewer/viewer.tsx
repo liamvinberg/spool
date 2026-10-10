@@ -521,7 +521,7 @@ function ViewerCanvas({
 					>
 						+
 					</button>
-					<Divider orientation="vertical" tone="strong" />
+					<Divider tone="strong" />
 					<button
 						type="button"
 						className="rounded-xs px-2 py-1 text-secondary transition-colors hover:text-primary type-value"

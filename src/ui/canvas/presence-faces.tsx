@@ -96,7 +96,7 @@ export function PresenceFaces({
 
 	return (
 		<div ref={faces} className="relative flex h-full items-center" data-presence-faces="">
-			<Divider orientation="vertical" tone="strong" className="mr-3" />
+			<Divider tone="strong" className="mr-3" />
 			<span className="relative flex h-[30px] items-center">
 				{shown.map((mate, i) => (
 					<button

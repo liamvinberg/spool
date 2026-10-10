@@ -689,7 +689,7 @@ function AccentRow({ entry, write }: { entry: SettingReading & { value: string }
 						</button>
 					);
 				})}
-				<Divider orientation="vertical" className="mx-1" />
+				<Divider className="mx-1" />
 				<ColourControl
 					settingKey={entry.key}
 					value={entry.value}

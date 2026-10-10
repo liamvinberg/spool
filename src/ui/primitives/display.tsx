@@ -38,7 +38,7 @@ export type CountTone = "secondary" | "pill" | "accent";
 const PILL = "h-4 min-w-4 justify-center rounded-full px-1";
 
 const COUNT_TONE: Record<CountTone, string> = {
-	/** a count that is the line's whole content */
+	/** the quiet count beside what it counts */
 	secondary: "text-secondary",
 	pill: `${PILL} bg-state-selected-strong text-primary`,
 	accent: `${PILL} bg-accent-strong text-on-accent`,
@@ -176,9 +176,8 @@ const MARK_SIZE: Record<MarkSize, string> = {
  * A project's mark when there is no picture: the name's first letter,
  * lowercase, semibold. `sm` 16 on a tab, `md` 20 in a menu or on a card.
  *
- * Without `hue` it is neutral. `hue` is data, the colour the app picked from
- * the name, and tints the field at 24% with the letter mixed toward the ink of
- * the mode.
+ * `hue` is data, the colour the app picked from the name: it tints the field
+ * at 24%, with the letter mixed toward the ink of the mode.
  */
 export function LetterMark({
 	name,
@@ -187,22 +186,18 @@ export function LetterMark({
 	className,
 	style,
 	...rest
-}: ComponentProps<"span"> & { name: string; size?: MarkSize | undefined; hue?: string | undefined }) {
-	const tint: CSSProperties | undefined =
-		hue === undefined
-			? undefined
-			: ({
-					"--mark-hue": hue,
-					background: "color-mix(in srgb, var(--mark-hue) 24%, transparent)",
-					borderColor: "color-mix(in srgb, var(--mark-hue) 40%, transparent)",
-					color: "light-dark(color-mix(in srgb, var(--mark-hue) 78%, black), color-mix(in srgb, var(--mark-hue) 70%, white))",
-				} as CSSProperties);
+}: ComponentProps<"span"> & { name: string; size?: MarkSize | undefined; hue: string }) {
+	const tint = {
+		"--mark-hue": hue,
+		background: "color-mix(in srgb, var(--mark-hue) 24%, transparent)",
+		borderColor: "color-mix(in srgb, var(--mark-hue) 40%, transparent)",
+		color: "light-dark(color-mix(in srgb, var(--mark-hue) 78%, black), color-mix(in srgb, var(--mark-hue) 70%, white))",
+	} as CSSProperties;
 	return (
 		<span
 			aria-hidden="true"
 			className={cn(
 				"grid shrink-0 place-items-center overflow-hidden rounded-xs border",
-				hue === undefined && "border-line-strong bg-state-selected-strong text-secondary",
 				MARK_SIZE[size],
 				className,
 			)}
@@ -266,22 +261,19 @@ export function Thumbnail({
 export type DividerTone = "default" | "strong";
 
 /**
- * A hairline between things. `default` divides regions, `strong` sits on a
- * raised surface. Vertical, it is the height of a line of text unless the
- * parent stretches it.
+ * A hairline standing between things in a row, the height of a line of text.
+ * `default` divides regions, `strong` sits on a raised surface.
  */
 export function Divider({
-	orientation = "horizontal",
 	tone = "default",
 	className,
 	...rest
-}: ComponentProps<"hr"> & { orientation?: "horizontal" | "vertical" | undefined; tone?: DividerTone | undefined }) {
+}: ComponentProps<"hr"> & { tone?: DividerTone | undefined }) {
 	return (
 		<hr
-			aria-orientation={orientation}
+			aria-orientation="vertical"
 			className={cn(
-				"m-0 shrink-0 border-0",
-				orientation === "horizontal" ? "h-px w-full" : "h-4 w-px",
+				"m-0 h-4 w-px shrink-0 border-0",
 				tone === "default" ? "bg-line-default" : "bg-line-strong",
 				className,
 			)}
