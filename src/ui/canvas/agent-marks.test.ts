@@ -3,7 +3,8 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { EndMark, Spinner, WaitingMark } from "./agent-marks";
+import { SpinRing } from "../primitives/display";
+import { EndMark, WaitingMark } from "./agent-marks";
 
 function draw(element: ReturnType<typeof createElement>) {
 	const host = document.createElement("div");
@@ -18,19 +19,14 @@ function draw(element: ReturnType<typeof createElement>) {
 }
 
 describe("the agent's marks", () => {
-	it("turns a ring with its arc, and rests it as a track alone", () => {
-		const turning = draw(createElement(Spinner, { className: "h-3 w-3" })).querySelector("svg") as SVGElement;
+	it("turns a ring with its arc", () => {
+		const turning = draw(createElement(SpinRing, { className: "h-3 w-3" })).querySelector("svg") as SVGElement;
 		expect(turning.getAttribute("class")).toContain("animate-agent-spin");
 		expect(turning.querySelectorAll("path")).toHaveLength(1);
-
-		const resting = draw(createElement(Spinner, { turning: false })).querySelector("svg") as SVGElement;
-		expect(resting.getAttribute("class")).not.toContain("animate-agent-spin");
-		expect(resting.querySelectorAll("path")).toHaveLength(0);
-		expect(resting.querySelectorAll("circle")).toHaveLength(1);
 	});
 
 	it("wears the data marks of the surface that draws it", () => {
-		const host = draw(createElement(Spinner, { "data-rail-mark": "working" }));
+		const host = draw(createElement(SpinRing, { "data-rail-mark": "working" } as Record<string, string>));
 		expect(host.querySelector('svg[data-rail-mark="working"]')).not.toBeNull();
 		const waiting = draw(createElement(WaitingMark, { "data-rail-mark": "waiting" }));
 		expect(waiting.querySelector('[data-rail-mark="waiting"] .animate-agent-breathe')).not.toBeNull();
