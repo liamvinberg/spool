@@ -1571,10 +1571,10 @@ export function CanvasSidebar({
 				: chosenFrames.filter((name) => unseen.has(name)).length;
 
 	return (
-		<aside ref={asideRef} className="relative flex h-full flex-col bg-bg">
+		<aside ref={asideRef} className="relative flex h-full flex-col bg-surface-window">
 			<PaneActions>
 				{clipboard.length > 0 ? (
-					<span data-pages-copied="" className="mr-1.5 text-muted type-detail">
+					<span data-pages-copied="" className="mr-1.5 text-secondary type-detail">
 						{clipboard.length} copied
 					</span>
 				) : null}
@@ -1672,7 +1672,7 @@ export function CanvasSidebar({
 							// the room folds on the house curve over 300ms and moves with its
 							// row; reduced motion opens and folds it at once, and it still
 							// slides with its row the way every row does
-							className="absolute inset-x-0 overflow-clip bg-bg [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:transform_280ms_cubic-bezier(0.23,1,0.32,1)]"
+							className="absolute inset-x-0 overflow-clip bg-surface-window [transition:transform_280ms_cubic-bezier(0.23,1,0.32,1),height_300ms_cubic-bezier(0.23,1,0.32,1)] motion-reduce:[transition:transform_280ms_cubic-bezier(0.23,1,0.32,1)]"
 							style={{
 								transform: `translateY(${underRow.top + underRow.height}px)`,
 								height: underRow.below,
@@ -1682,7 +1682,7 @@ export function CanvasSidebar({
 							{/* the page's spine runs on past the room to the frames below it */}
 							{underRow.page === ROOT_PAGE || underRow.last ? null : (
 								<span
-									className="absolute inset-y-0 w-px bg-border-raised"
+									className="absolute inset-y-0 w-px bg-line-strong"
 									style={{ left: guideX(underRow.depth) }}
 								/>
 							)}
@@ -1696,8 +1696,8 @@ export function CanvasSidebar({
 							className="pointer-events-none absolute z-20 h-[2px]"
 							style={{ left: landingGuideX(landing), top: landing.y - 1, right: 10 }}
 						>
-							<span className="block h-full w-full rounded-full bg-thread" />
-							<span className="-left-px -top-[1.5px] absolute h-[5px] w-[5px] rounded-full bg-thread" />
+							<span className="block h-full w-full rounded-full bg-accent" />
+							<span className="-left-px -top-[1.5px] absolute h-[5px] w-[5px] rounded-full bg-accent" />
 						</div>
 					)}
 				</div>
@@ -1707,15 +1707,15 @@ export function CanvasSidebar({
 				? null
 				: createPortal(
 						<div ref={overlayRef} className="pointer-events-none fixed top-0 left-0 z-50 will-change-transform">
-							<div className="flex h-8 w-fit max-w-[190px] items-center gap-2 rounded-sm border border-border-raised bg-raised px-2.5">
+							<div className="flex h-8 w-fit max-w-[190px] items-center gap-2 rounded-sm border border-line-strong bg-surface-raised px-2.5">
 								{kit.kind === "page" ? (
-									<FolderIcon className="h-3.5 w-3.5 shrink-0 text-thread-strong" />
+									<FolderIcon className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
 								) : (
-									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-thread-strong" />
+									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
 								)}
-								<span className="min-w-0 truncate text-text type-value">{kit.label}</span>
+								<span className="min-w-0 truncate text-primary type-value">{kit.label}</span>
 								{kit.names.length > 1 ? (
-									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-thread-strong px-1 text-on-thread type-detail">
+									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-accent-strong px-1 text-on-accent type-detail">
 										{kit.names.length}
 									</span>
 								) : null}
@@ -1819,12 +1819,12 @@ function NewPageRow({ row, rename }: { row: BornRow; rename: RenameHandle }) {
 				tabIndex={-1}
 				aria-selected
 				aria-level={row.depth + 1}
-				className="relative flex h-full items-center bg-surface pr-1.5"
+				className="relative flex h-full items-center bg-surface-panel pr-1.5"
 				style={{ paddingLeft: row.depth * INDENT }}
 			>
 				<span className="flex h-full w-6 shrink-0" />
 				<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
-					<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+					<FolderIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 					<RenameField
 						state={rename.state}
 						onDraft={rename.onDraft}
@@ -1902,9 +1902,9 @@ function TreeRow({
 				data-page-lit={lit ? "" : undefined}
 				className={cn(
 					"group/row relative flex h-full items-center pr-1.5",
-					(chosen || active || cursored || lit) && "bg-surface",
-					!chosen && !active && !cursored && !into && "hover:bg-surface/60",
-					into && "-outline-offset-1 outline-1 outline-thread/70",
+					(chosen || active || cursored || lit) && "bg-surface-panel",
+					!chosen && !active && !cursored && !into && "hover:bg-surface-panel/60",
+					into && "-outline-offset-1 outline-1 outline-accent/70",
 				)}
 				// a page's own rows step in one INDENT per level; a frame's spine and
 				// content are placed outright, so only a page row needs the padding
@@ -1912,7 +1912,7 @@ function TreeRow({
 				onPointerDown={(event) => onPress(event, row)}
 				onContextMenu={(event) => onMenu(event, target)}
 			>
-				{active ? <span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" /> : null}
+				{active ? <span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-accent" /> : null}
 
 				{row.kind === "page" ? (
 					<>
@@ -1938,7 +1938,7 @@ function TreeRow({
 									className="flex h-full min-w-0 flex-1 items-center gap-2 pr-3 text-left"
 								>
 									<FolderIcon
-										className={cn("h-3.5 w-3.5 shrink-0", active ? "text-thread-strong" : "text-muted")}
+										className={cn("h-3.5 w-3.5 shrink-0", active ? "text-accent-strong" : "text-secondary")}
 									/>
 									<span
 										className={cn(
@@ -1946,7 +1946,7 @@ function TreeRow({
 											// as on a frame row: the menu fades in over the tail of the
 											// name, and takes that last stretch of it with it
 											"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
-											active || cursored ? "text-text" : "text-muted",
+											active || cursored ? "text-primary" : "text-secondary",
 										)}
 									>
 										{label}
@@ -1959,14 +1959,14 @@ function TreeRow({
 								    the rows under it are the count, and a total beside them reads
 								    as a second, wrong number */}
 								{row.open ? null : (
-									<span className="shrink-0 text-muted transition-opacity group-hover/row:opacity-0 type-detail">
+									<span className="shrink-0 text-secondary transition-opacity group-hover/row:opacity-0 type-detail">
 										{row.count}
 									</span>
 								)}
 							</>
 						) : (
 							<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
-								<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								<FolderIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 								<RenameField
 									state={rename.state}
 									onDraft={rename.onDraft}
@@ -1984,11 +1984,11 @@ function TreeRow({
 						{row.page === ROOT_PAGE ? null : (
 							<>
 								<span
-									className="absolute w-px bg-border-raised"
+									className="absolute w-px bg-line-strong"
 									style={{ left: guideX(row.depth), top: 0, height: row.last ? row.height - 6 : row.height }}
 								/>
 								<span
-									className="absolute h-px w-2.5 bg-border-raised"
+									className="absolute h-px w-2.5 bg-line-strong"
 									style={{ left: guideX(row.depth), top: row.height / 2 }}
 								/>
 							</>
@@ -2004,7 +2004,7 @@ function TreeRow({
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
 								<FrameIcon
-									className={cn("h-3.5 w-3.5 shrink-0", chosen ? "text-thread-strong" : "text-muted")}
+									className={cn("h-3.5 w-3.5 shrink-0", chosen ? "text-accent-strong" : "text-secondary")}
 								/>
 								<span
 									className={cn(
@@ -2012,7 +2012,7 @@ function TreeRow({
 										// its tail takes the last stretch of it with it
 										"min-w-0 flex-1 truncate type-value",
 										"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
-										chosen || cursored || mark !== undefined ? "text-text" : "text-muted",
+										chosen || cursored || mark !== undefined ? "text-primary" : "text-secondary",
 									)}
 								>
 									{label}
@@ -2026,7 +2026,7 @@ function TreeRow({
 								className="flex h-full w-full min-w-0 items-center gap-2 pr-3"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 								<RenameField
 									state={rename.state}
 									onDraft={rename.onDraft}
@@ -2059,7 +2059,7 @@ function RowMenuButton({ label, onMenu }: { label: string; onMenu: (event: React
 			aria-label={`${label} menu`}
 			onPointerDown={(event) => event.stopPropagation()}
 			onClick={onMenu}
-			className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-sm text-muted opacity-0 transition-opacity hover:text-text focus-visible:opacity-100 group-hover/row:opacity-100"
+			className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-sm text-secondary opacity-0 transition-opacity hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100"
 		>
 			<DotsIcon />
 		</button>
@@ -2134,12 +2134,12 @@ function RenameField({
 					onCancel();
 				}}
 				className={cn(
-					"-my-px min-w-0 flex-1 rounded-xs bg-bg px-1 text-text caret-thread outline-1 outline-thread/70",
+					"-my-px min-w-0 flex-1 rounded-xs bg-surface-window px-1 text-primary caret-accent outline-1 outline-accent/70",
 					"type-value",
 				)}
 			/>
 			{state.error === null ? null : (
-				<span role="alert" className="pointer-events-none absolute right-1.5 text-thread-strong type-detail">
+				<span role="alert" className="pointer-events-none absolute right-1.5 text-accent-strong type-detail">
 					{state.error}
 				</span>
 			)}
@@ -2204,7 +2204,7 @@ function SpringArc() {
 	return (
 		<svg
 			viewBox="0 0 20 20"
-			className="pointer-events-none absolute h-5 w-5 text-thread-strong"
+			className="pointer-events-none absolute h-5 w-5 text-accent-strong"
 			fill="none"
 			aria-hidden="true"
 		>
@@ -2243,7 +2243,7 @@ export function ChevronIcon({ open, className }: { open: boolean; className?: st
 	return (
 		<svg
 			viewBox="0 0 12 12"
-			className={`${className ?? ""} origin-center text-muted transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
+			className={`${className ?? ""} origin-center text-secondary transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
 			fill="none"
 			aria-hidden="true"
 		>

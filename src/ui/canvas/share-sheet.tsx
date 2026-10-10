@@ -97,24 +97,24 @@ export function ShareSheet({
 	const ready = chosen.size > 0 && (kind === "link" || addresses.length > 0) && !busy;
 
 	return (
-		<div className="absolute inset-0 z-30 flex items-center justify-center bg-bg/55" data-share-sheet="">
+		<div className="absolute inset-0 z-30 flex items-center justify-center bg-surface-window/55" data-share-sheet="">
 			<div
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="share-sheet-title"
-				className="flex max-h-[80vh] w-[420px] flex-col rounded-lg border border-border-raised bg-raised"
+				className="flex max-h-[80vh] w-[420px] flex-col rounded-lg border border-line-strong bg-surface-raised"
 			>
-				<div className="flex items-center justify-between border-border-raised border-b px-5 py-4">
+				<div className="flex items-center justify-between border-line-strong border-b px-5 py-4">
 					<h2 id="share-sheet-title" className="font-medium type-title">
 						Share {[...chosen].sort().map(sharedPageName).join(", ") || "pages"}
 					</h2>
-					<button type="button" aria-label="Close" className="text-muted hover:text-text" onClick={onClose}>
+					<button type="button" aria-label="Close" className="text-secondary hover:text-primary" onClick={onClose}>
 						×
 					</button>
 				</div>
 				{made === null ? (
 					<>
-						<div className="flex gap-2 border-border-raised border-b px-5 py-3">
+						<div className="flex gap-2 border-line-strong border-b px-5 py-3">
 							{(["people", "link"] as const).map((each) => (
 								<button
 									key={each}
@@ -123,7 +123,9 @@ export function ShareSheet({
 									onClick={() => setKind(each)}
 									className={cn(
 										"flex h-8 flex-1 items-center justify-center gap-2 rounded-sm border type-control",
-										kind === each ? "border-thread bg-surface text-text" : "border-border-raised text-muted",
+										kind === each
+											? "border-accent bg-surface-panel text-primary"
+											: "border-line-strong text-secondary",
 									)}
 								>
 									<KindGlyph kind={each} />
@@ -132,8 +134,8 @@ export function ShareSheet({
 							))}
 						</div>
 						{kind === "people" && (
-							<label className="flex flex-col gap-1.5 border-border-raised border-b px-5 py-3">
-								<span className="text-muted type-label">
+							<label className="flex flex-col gap-1.5 border-line-strong border-b px-5 py-3">
+								<span className="text-secondary type-label">
 									They sign in with one of these addresses to see it
 								</span>
 								<input
@@ -142,11 +144,11 @@ export function ShareSheet({
 									placeholder="kim@client.com, ola@client.com"
 									value={people}
 									onChange={(event) => setPeople(event.target.value)}
-									className="h-8 rounded-sm border border-muted bg-bg px-2 text-text outline-none type-detail placeholder:text-muted focus:border-text"
+									className="h-8 rounded-sm border border-secondary bg-surface-window px-2 text-primary outline-none type-detail placeholder:text-secondary focus:border-primary"
 								/>
 							</label>
 						)}
-						<fieldset className="min-h-0 overflow-y-auto border-border-raised border-b px-5 py-3">
+						<fieldset className="min-h-0 overflow-y-auto border-line-strong border-b px-5 py-3">
 							<legend className="sr-only">Pages</legend>
 							{[ROOT_PAGE, ...pages].map((each) => (
 								<label key={each} className="flex h-7 cursor-pointer items-center gap-2 type-detail">
@@ -154,10 +156,10 @@ export function ShareSheet({
 										type="checkbox"
 										checked={chosen.has(each)}
 										onChange={() => toggle(each)}
-										className="accent-thread"
+										className="accent-accent"
 									/>
 									<span
-										className={chosen.has(each) ? "text-text" : "text-muted"}
+										className={chosen.has(each) ? "text-primary" : "text-secondary"}
 										style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
 									>
 										{sharedPageName(each)}
@@ -166,23 +168,23 @@ export function ShareSheet({
 							))}
 						</fieldset>
 						{leaving.length > 0 && (
-							<div className="flex flex-col gap-1 border-border-raised border-b px-5 py-3" data-share-leaving="">
-								<p className="text-muted type-label">
+							<div className="flex flex-col gap-1 border-line-strong border-b px-5 py-3" data-share-leaving="">
+								<p className="text-secondary type-label">
 									{leaving.length === 1 ? "A link leaves" : `${leaving.length} links leave`} these pages.
 									Whoever follows one sees it isn’t shared with them.
 								</p>
 								{leaving.slice(0, 5).map((link) => (
 									<p
 										key={`${link.from}\0${link.to}`}
-										className="flex items-center gap-2 text-text type-detail"
+										className="flex items-center gap-2 text-primary type-detail"
 									>
 										<span className="min-w-0 flex-1 truncate">
 											{pageName(link.from)} → {pageName(link.to)}
-											<span className="text-muted"> on {sharedPageName(link.page)}</span>
+											<span className="text-secondary"> on {sharedPageName(link.page)}</span>
 										</span>
 										<button
 											type="button"
-											className="shrink-0 text-muted hover:text-text type-label"
+											className="shrink-0 text-secondary hover:text-primary type-label"
 											onClick={() => toggle(link.page)}
 										>
 											Add {sharedPageName(link.page)}
@@ -192,15 +194,15 @@ export function ShareSheet({
 							</div>
 						)}
 						<div className="flex items-center justify-end gap-3 px-5 py-3">
-							{error !== null && <span className="min-w-0 flex-1 text-thread type-label">{error}</span>}
-							<button type="button" className="text-muted hover:text-text type-control" onClick={onClose}>
+							{error !== null && <span className="min-w-0 flex-1 text-accent type-label">{error}</span>}
+							<button type="button" className="text-secondary hover:text-primary type-control" onClick={onClose}>
 								Cancel
 							</button>
 							<button
 								type="button"
 								disabled={!ready}
 								onClick={() => void share()}
-								className="h-8 rounded-sm bg-text px-3 text-bg disabled:opacity-40 type-control"
+								className="h-8 rounded-sm bg-primary px-3 text-surface-window disabled:opacity-40 type-control"
 							>
 								{busy ? "Sharing…" : "Share"}
 							</button>
@@ -208,7 +210,7 @@ export function ShareSheet({
 					</>
 				) : (
 					<div className="flex flex-col gap-3 px-5 py-4">
-						<p className="text-text type-detail">
+						<p className="text-primary type-detail">
 							{made.kind === "link"
 								? "Anyone with this link sees these pages."
 								: "They sign in with their address at this link to see these pages."}
@@ -218,17 +220,21 @@ export function ShareSheet({
 								readOnly
 								aria-label="Link"
 								value={made.link ?? ""}
-								className="h-8 min-w-0 flex-1 rounded-sm border border-border-raised bg-bg px-2 text-text type-detail"
+								className="h-8 min-w-0 flex-1 rounded-sm border border-line-strong bg-surface-window px-2 text-primary type-detail"
 							/>
 							<button
 								type="button"
-								className="h-8 rounded-sm bg-text px-3 text-bg type-control"
+								className="h-8 rounded-sm bg-primary px-3 text-surface-window type-control"
 								onClick={() => void navigator.clipboard?.writeText(made.link ?? "").then(() => setCopied(true))}
 							>
 								{copied ? "Copied" : "Copy link"}
 							</button>
 						</div>
-						<button type="button" className="self-end text-muted hover:text-text type-control" onClick={onClose}>
+						<button
+							type="button"
+							className="self-end text-secondary hover:text-primary type-control"
+							onClick={onClose}
+						>
 							Done
 						</button>
 					</div>

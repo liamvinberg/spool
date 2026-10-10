@@ -193,7 +193,7 @@ export function springStep(
 	return { p: goal + (x + c * dt) * e, v: (value.v - w * c * dt) * e };
 }
 
-/** How long a click's squash and burst take; `presence-burst` in `ui.css` runs the same. */
+/** How long a click's squash and burst take; `presence-burst` in `theme.css` runs the same. */
 export const CLICK_MS = 460;
 /** How long after the last scroll their pointer stays a scrolling mouse. */
 export const SCROLL_MS = 450;

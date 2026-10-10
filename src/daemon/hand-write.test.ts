@@ -29,7 +29,7 @@ export default function Frame() {
 	return (
 		<main className="flex flex-col gap-2 p-4">
 			<h1 className="text-lg">Cart</h1>
-			<button className="rounded-md bg-thread px-3 py-2" onClick={() => pay()}>
+			<button className="rounded-md bg-accent px-3 py-2" onClick={() => pay()}>
 				Pay now
 			</button>
 			<img src="/a.png" alt="a" />

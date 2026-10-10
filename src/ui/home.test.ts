@@ -127,7 +127,7 @@ describe("a project's picture on its cover", () => {
 		expect(picture?.getAttribute("src")).toBe(`/covers/shop/home/${"b".repeat(32)}`);
 		expect(picture?.classList).toContain("object-contain");
 		expect(picture?.classList).not.toContain("object-cover");
-		expect(host.querySelector(".pj-cover-art")?.classList).toContain("bg-canvas");
+		expect(host.querySelector(".pj-cover-art")?.classList).toContain("bg-surface-canvas");
 	});
 
 	it("shows the thumbnail file over the top-left frame, fitted the same way", () => {

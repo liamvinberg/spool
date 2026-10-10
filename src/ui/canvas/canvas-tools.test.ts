@@ -26,9 +26,9 @@ it("previews a hovered frame without selecting it", async () => {
 
 	const hover = host.querySelector<HTMLElement>('[data-frame-hover="home"]');
 	expect(hover?.style.opacity).toBe("1");
-	expect(hover?.classList.contains("border-border-raised")).toBe(true);
-	expect(host.querySelector('[data-frame-label="home"] .text-text')).not.toBeNull();
-	expect(host.querySelector('[data-frame-label="home"] .text-thread-strong')).toBeNull();
+	expect(hover?.classList.contains("border-line-strong")).toBe(true);
+	expect(host.querySelector('[data-frame-label="home"] .text-primary')).not.toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-accent-strong')).toBeNull();
 
 	await act(async () => {
 		canvas.dispatchEvent(
@@ -38,7 +38,7 @@ it("previews a hovered frame without selecting it", async () => {
 
 	expect(hover?.style.opacity).toBe("0");
 	expect(hover?.style.transition).toBe("opacity 80ms ease-out");
-	expect(host.querySelector('[data-frame-label="home"] .text-muted')).not.toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-secondary')).not.toBeNull();
 
 	await act(async () => {
 		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
@@ -51,7 +51,7 @@ it("previews a hovered frame without selecting it", async () => {
 	});
 
 	expect(host.querySelector('[data-frame-hover="home"]')).toBeNull();
-	expect(host.querySelector('[data-frame-label="home"] .text-thread-strong')).not.toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-accent-strong')).not.toBeNull();
 });
 
 it("opens in Select, takes a frame with one click, and enters it on a double-click", async () => {
@@ -129,7 +129,7 @@ it("marquee-selects from an empty-canvas drag, now that Select is the resting to
 		);
 	});
 
-	expect(host.querySelector('[data-frame-label="home"] .text-thread-strong')).not.toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-accent-strong')).not.toBeNull();
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 

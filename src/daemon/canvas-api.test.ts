@@ -1015,7 +1015,7 @@ describe("serving the canvas page", () => {
 		const daily = await (await makeApp(join(makeTempDir(), ".spool"), { uiDir }).request("/")).text();
 
 		expect(development).toContain("--color-mark:#3b82f6");
-		expect(development).not.toContain("--color-thread");
+		expect(development).not.toContain("--color-accent");
 		expect(daily).not.toContain("--color-mark");
 	});
 

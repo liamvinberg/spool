@@ -251,7 +251,7 @@ function LineAsk({
 						<Settled entry={entry} ask={ask} />
 						<WaitingRow words={question.question} meta={meta} />
 						<div className="flex items-center justify-between gap-2 pl-[22px]">
-							<span className="text-muted type-detail">Press a picture, or type your own answer.</span>
+							<span className="text-secondary type-detail">Press a picture, or type your own answer.</span>
 							<Dismiss onPress={ask.dismiss} />
 						</div>
 					</>
@@ -328,7 +328,7 @@ function PictureChoice({
 							className="flex min-w-0 flex-col gap-1.5 opacity-40"
 						>
 							<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
-							<span className="truncate text-muted type-detail">{tile.frame}</span>
+							<span className="truncate text-secondary type-detail">{tile.frame}</span>
 						</div>
 					);
 				}
@@ -346,16 +346,16 @@ function PictureChoice({
 						onMouseLeave={() => reach.onPoint(null)}
 						className="group/pic flex min-w-0 flex-col items-start gap-1.5 rounded-xs text-left"
 					>
-						<span className="relative block w-full rounded-[3px] transition-shadow duration-150 group-hover/pic:shadow-[0_0_0_1.5px_var(--color-bg),0_0_0_2.5px_var(--color-border-raised)]">
+						<span className="relative block w-full rounded-[3px] transition-shadow duration-150 group-hover/pic:shadow-[0_0_0_1.5px_var(--color-surface-window),0_0_0_2.5px_var(--color-line-strong)]">
 							<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
-							<span className="absolute top-1 left-1 flex h-4 w-4 items-center justify-center rounded-xs bg-bg/85 tabular-nums text-text type-detail">
+							<span className="absolute top-1 left-1 flex h-4 w-4 items-center justify-center rounded-xs bg-surface-window/85 tabular-nums text-primary type-detail">
 								{at + 1}
 							</span>
 						</span>
 						<span className="flex w-full min-w-0 flex-col">
-							<span className="text-text type-control">{option.label}</span>
+							<span className="text-primary type-control">{option.label}</span>
 							{option.description === "" ? null : (
-								<span className="text-pretty text-muted type-detail">{option.description}</span>
+								<span className="text-pretty text-secondary type-detail">{option.description}</span>
 							)}
 						</span>
 					</button>
@@ -390,23 +390,23 @@ function TurnLine({
 			onClick={onToggle}
 			className={cn(
 				"-mx-1.5 flex h-[26px] items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150",
-				"hover:bg-control",
-				open && "bg-control",
+				"hover:bg-surface-control",
+				open && "bg-surface-control",
 			)}
 		>
 			{asking ? <WaitingMark /> : <TurnMark over={over} ending={foot.ending} />}
-			<span className={cn("min-w-0 flex-1 truncate type-control", asking ? "text-text" : "text-muted")}>
+			<span className={cn("min-w-0 flex-1 truncate type-control", asking ? "text-primary" : "text-secondary")}>
 				{over || asking ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
 			</span>
 			{over || !Number.isFinite(elapsed) ? null : (
-				<span data-agent-clock="" className="shrink-0 tabular-nums text-muted type-detail">
+				<span data-agent-clock="" className="shrink-0 tabular-nums text-secondary type-detail">
 					{clockOf(elapsed)}
 				</span>
 			)}
 			<svg
 				viewBox="0 0 12 12"
 				aria-hidden="true"
-				className={cn("h-3 w-3 shrink-0 text-muted transition-transform duration-150", open && "rotate-90")}
+				className={cn("h-3 w-3 shrink-0 text-secondary transition-transform duration-150", open && "rotate-90")}
 				fill="none"
 			>
 				<path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -417,7 +417,7 @@ function TurnLine({
 
 /** a check once done, a square once stopped, a cross once failed, and a turning ring while live */
 function TurnMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
-	return over ? <EndMark ending={ending ?? "done"} /> : <Spinner className="h-3.5 w-3.5 text-muted" />;
+	return over ? <EndMark ending={ending ?? "done"} /> : <Spinner className="h-3.5 w-3.5 text-secondary" />;
 }
 
 /** two to a row while the turn runs, three once it settles and gives the chat back its height */
@@ -537,7 +537,7 @@ function Tile({
 				className={cn(
 					"block rounded-[3px] transition-[width] duration-[320ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none",
 					small ? "w-[72%]" : "w-full",
-					waiting && "shadow-[0_0_0_1.5px_var(--color-bg),0_0_0_3px_var(--color-text)]",
+					waiting && "shadow-[0_0_0_1.5px_var(--color-surface-window),0_0_0_3px_var(--color-primary)]",
 				)}
 			>
 				<Picture tile={tile} still={reach.stills?.get(tile.frame)} />
@@ -547,18 +547,18 @@ function Tile({
 					className={cn(
 						"truncate type-detail",
 						tile.state === "deleted"
-							? "text-muted line-through"
+							? "text-secondary line-through"
 							: tile.state === "reading" || tile.state === "drawing"
-								? "text-muted"
-								: "text-text",
+								? "text-secondary"
+								: "text-primary",
 					)}
 				>
 					{/* its own name, not its page's: a page's name would eat every tile's width alike */}
 					{tile.frame.split("/").pop() ?? tile.frame}
 				</span>
-				<span className="truncate text-muted type-detail">
+				<span className="truncate text-secondary type-detail">
 					{waiting ? (
-						<span className="text-text">Waiting on you</span>
+						<span className="text-primary">Waiting on you</span>
 					) : live ? (
 						<span className="agent-shimmer animate-agent-shimmer">{caption}</span>
 					) : (
@@ -598,7 +598,7 @@ function Tile({
 						setPutting(true);
 						void reach.onPutBack?.(tile).finally(() => setPutting(false));
 					}}
-					className="-ml-1.5 rounded-sm px-1.5 py-0.5 text-text type-control hover:bg-control disabled:opacity-50"
+					className="-ml-1.5 rounded-sm px-1.5 py-0.5 text-primary type-control hover:bg-surface-control disabled:opacity-50"
 				>
 					Put back
 				</button>
@@ -617,7 +617,7 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 			{drawn ? (
 				<span
 					className={cn(
-						"absolute inset-0 overflow-hidden rounded-[3px] border border-border bg-surface",
+						"absolute inset-0 overflow-hidden rounded-[3px] border border-line-default bg-surface-panel",
 						tile.state === "fresh" && "animate-agent-draw-in",
 						tile.state === "deleted" && "opacity-35 grayscale",
 					)}
@@ -627,7 +627,7 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 					)}
 				</span>
 			) : (
-				<span className="absolute inset-0 rounded-[3px] border border-border-raised border-dashed">
+				<span className="absolute inset-0 rounded-[3px] border border-line-strong border-dashed">
 					{replaying && tile.replay !== undefined ? (
 						<Writing lines={tile.lines} shape={tile.replay} replay />
 					) : tile.state === "drawing" ? (
@@ -636,7 +636,7 @@ function Picture({ tile, still }: { tile: AgentTile; still: string | undefined }
 				</span>
 			)}
 			{tile.state === "deleted" ? (
-				<span className="absolute inset-0 rounded-[3px] border border-muted border-dashed" />
+				<span className="absolute inset-0 rounded-[3px] border border-secondary border-dashed" />
 			) : null}
 			{tile.state === "editing" ? <CompanionMark /> : null}
 			{shooting === null ? null : <Corners leaving={shooting === "leaving"} />}
@@ -674,7 +674,7 @@ function Corners({ leaving }: { leaving: boolean }) {
 					<span
 						key={corner}
 						className={cn(
-							"absolute block size-2 border-text",
+							"absolute block size-2 border-primary",
 							top ? "top-0 border-t-[1.5px]" : "bottom-0 border-b-[1.5px]",
 							left ? "left-0 border-l-[1.5px]" : "right-0 border-r-[1.5px]",
 							leaving ? "animate-agent-corners-in" : "animate-agent-corners-out",
@@ -710,7 +710,7 @@ function Writing({ lines, shape, replay = false }: { lines: number; shape?: read
 						key={row}
 						className={cn(
 							"absolute h-[2px] rounded-full",
-							last ? "animate-agent-newest bg-text" : "bg-muted opacity-60",
+							last ? "animate-agent-newest bg-primary" : "bg-secondary opacity-60",
 						)}
 						style={{
 							top: `${(row / ROWS) * 100}%`,
@@ -736,11 +736,11 @@ function CompanionMark() {
 		<span data-agent-companion-mark="" className="pointer-events-none absolute inset-0">
 			<span
 				data-agent-mark-ring=""
-				className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-text opacity-60"
+				className="absolute inset-x-[4%] top-[38%] h-[22%] rounded-[2px] border-[1.5px] border-primary opacity-60"
 			/>
 			<span
-				className="absolute top-[38%] left-[4%] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 bg-text"
-				style={{ borderRadius: 1.8, boxShadow: "0 0 0 1.5px var(--color-canvas)" }}
+				className="absolute top-[38%] left-[4%] h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 bg-primary"
+				style={{ borderRadius: 1.8, boxShadow: "0 0 0 1.5px var(--color-surface-canvas)" }}
 			/>
 		</span>
 	);

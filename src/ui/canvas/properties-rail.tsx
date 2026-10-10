@@ -84,7 +84,7 @@ export function PropertiesRail({
 	acts: PropertiesActs;
 }) {
 	return (
-		<div data-properties-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg">
+		<div data-properties-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-surface-window">
 			<Head held={held} acts={acts} />
 			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
 				<Body held={held} acts={acts} />
@@ -206,7 +206,7 @@ function Body({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 function Empty({ says }: { says: string }) {
 	return (
 		<div className="flex h-9 items-center px-2.5">
-			<span className={cn("text-muted", VALUE)}>{says}</span>
+			<span className={cn("text-secondary", VALUE)}>{says}</span>
 		</div>
 	);
 }
@@ -225,7 +225,7 @@ function Head({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 	// the pane's own header already says what this is; with no frame held there is nothing to add
 	if (frame === null && !(acts.onAsk && held)) return null;
 	return (
-		<div className="shrink-0 border-border border-b">
+		<div className="shrink-0 border-line-default border-b">
 			<div className="flex h-9 items-center gap-2 px-2.5">
 				<span data-properties-head="" className={cn("min-w-0 flex-1 truncate", VALUE)}>
 					{frame === null ? null : pageName(frame)}
@@ -260,9 +260,9 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 				aria-expanded={at !== null}
 				onClick={() => (at === null ? show() : shut())}
 				className={cn(
-					"flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-xs text-text hover:bg-surface focus:outline-none",
+					"flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-xs text-primary hover:bg-surface-panel focus:outline-none",
 					VALUE,
-					at !== null && "bg-surface",
+					at !== null && "bg-surface-panel",
 				)}
 			>
 				⋯
@@ -273,7 +273,7 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 					role="menu"
 					aria-label="Element actions"
 					style={{ left: at.left, top: at.top }}
-					className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+					className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 					onPointerDown={(event) => event.stopPropagation()}
 				>
 					<MenuItem

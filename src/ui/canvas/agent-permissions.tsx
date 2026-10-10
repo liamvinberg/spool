@@ -145,7 +145,7 @@ export function PermissionMenu({
 							: `${MODE_NAMES[mode]}. Applies to every chat.`
 					}
 					aria-busy={saving}
-					className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
+					className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary type-control"
 				>
 					{MODE_NAMES[mode]}
 					<Chevron open={open} />
@@ -164,16 +164,18 @@ export function PermissionMenu({
 							onOpen(false);
 							permissions.choose(choice);
 						}}
-						className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised"
+						className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-surface-raised focus-visible:bg-surface-raised"
 					>
 						<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-							<span className="text-text type-control">{MODE_NAMES[choice]}</span>
-							<span className="text-muted type-label [text-wrap:pretty]">{MODE_SAYS[choice]}</span>
+							<span className="text-primary type-control">{MODE_NAMES[choice]}</span>
+							<span className="text-secondary type-label [text-wrap:pretty]">{MODE_SAYS[choice]}</span>
 						</span>
-						<CheckIcon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-text", choice !== mode && "invisible")} />
+						<CheckIcon
+							className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 text-primary", choice !== mode && "invisible")}
+						/>
 					</button>
 				))}
-				<p className="mx-3 mt-1 border-border border-t pt-2 pb-1.5 text-muted type-caption">
+				<p className="mx-3 mt-1 border-line-default border-t pt-2 pb-1.5 text-secondary type-caption">
 					{pending ? "Applies when this turn ends. " : null}Applies to every chat.
 				</p>
 			</div>

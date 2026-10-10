@@ -449,7 +449,7 @@ export function TabStrip({
 					</motion.div>
 					<button
 						type="button"
-						className="project-tabs-plus relative flex items-center justify-center shrink-0 w-[32px] h-[30px] ml-[6px] rounded-[6px] [color:var(--color-muted)] cursor-pointer before:content-[''] before:absolute before:[inset:3px_4px] before:rounded-[5px] before:pointer-events-none [&_svg]:relative [&:hover]:before:[background:light-dark(#00000006,#ffffff06)] [&:hover]:text-text"
+						className="project-tabs-plus relative flex items-center justify-center shrink-0 w-[32px] h-[30px] ml-[6px] rounded-[6px] [color:var(--color-secondary)] cursor-pointer before:content-[''] before:absolute before:[inset:3px_4px] before:rounded-[5px] before:pointer-events-none [&_svg]:relative [&:hover]:before:[background:light-dark(#00000006,#ffffff06)] [&:hover]:text-primary"
 						onClick={onPick}
 						title="New project"
 						aria-label="New project"
@@ -563,7 +563,7 @@ function Tab({
 				inert={!present}
 				aria-hidden={present ? undefined : true}
 				className={cn(
-					"project-tab relative flex items-center w-max min-w-[112px] max-w-[228px] h-full mx-[1px] [border-radius:8px_8px_0_0] touch-none select-none [&.is-active_.project-tab-label]:text-text [&.is-dragging_.project-tab-label]:cursor-grabbing [&:is(:hover,:focus-within,.is-active)_.project-tab-close]:opacity-100 [&:not(.is-active):hover]:[background:light-dark(#00000004,#ffffff04)]",
+					"project-tab relative flex items-center w-max min-w-[112px] max-w-[228px] h-full mx-[1px] [border-radius:8px_8px_0_0] touch-none select-none [&.is-active_.project-tab-label]:text-primary [&.is-dragging_.project-tab-label]:cursor-grabbing [&:is(:hover,:focus-within,.is-active)_.project-tab-close]:opacity-100 [&:not(.is-active):hover]:[background:light-dark(#00000004,#ffffff04)]",
 					active && present && "is-active",
 					lifted && "is-dragging",
 				)}
@@ -588,13 +588,13 @@ function Tab({
 				{active && present && (
 					<motion.div
 						layoutId="selection"
-						className="project-tab-selection absolute [inset:0_0_-4px] [border-width:1px_1px_0] border-solid border-border [border-radius:8px_8px_0_0] bg-canvas pointer-events-none"
+						className="project-tab-selection absolute [inset:0_0_-4px] [border-width:1px_1px_0] border-solid border-line-default [border-radius:8px_8px_0_0] bg-surface-canvas pointer-events-none"
 						transition={{ duration: growing ? 0 : selectionDuration, ease: EASE }}
 					/>
 				)}
 				<button
 					type="button"
-					className="project-tab-label relative flex items-center gap-[10px] flex-auto min-w-0 h-full [padding:0_38px_0_10px] [font:var(--type-control)] [color:var(--color-muted)] cursor-default after:content-[''] after:absolute after:[inset:0_0_-4px]"
+					className="project-tab-label relative flex items-center gap-[10px] flex-auto min-w-0 h-full [padding:0_38px_0_10px] [font:var(--type-control)] [color:var(--color-secondary)] cursor-default after:content-[''] after:absolute after:[inset:0_0_-4px]"
 					onContextMenu={(event) => {
 						event.preventDefault();
 						onMenu(event.clientX, event.clientY, event.currentTarget);
@@ -617,7 +617,7 @@ function Tab({
 						team={tab.teamAddress}
 						paused={tab.paused}
 						// the gap round the badge is the colour the tab is drawn on
-						cut={active && present ? "var(--color-canvas)" : "var(--color-bg)"}
+						cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
 					/>
 					<span className="project-tab-name min-w-0 overflow-hidden whitespace-nowrap text-ellipsis">
 						{tab.name}
@@ -625,7 +625,7 @@ function Tab({
 				</button>
 				<button
 					type="button"
-					className="project-tab-close absolute right-[4px] flex items-center justify-center shrink-0 w-[24px] h-[24px] rounded-[5px] [color:var(--color-muted)] opacity-0 cursor-pointer [&:hover]:[background:light-dark(#00000012,#ffffff12)] [&:hover]:text-text"
+					className="project-tab-close absolute right-[4px] flex items-center justify-center shrink-0 w-[24px] h-[24px] rounded-[5px] [color:var(--color-secondary)] opacity-0 cursor-pointer [&:hover]:[background:light-dark(#00000012,#ffffff12)] [&:hover]:text-primary"
 					onPointerDown={(event) => event.stopPropagation()}
 					onClick={onClose}
 					aria-label={`Close ${tab.name}`}

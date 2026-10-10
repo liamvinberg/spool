@@ -20,7 +20,7 @@ export function TrashProjectDialog({
 			onConfirm={onTrash}
 			onClose={onClose}
 		>
-			<code className="block [margin:12px_0_20px] [overflow-wrap:anywhere] text-muted [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">
+			<code className="block [margin:12px_0_20px] [overflow-wrap:anywhere] text-secondary [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">
 				{project.root}
 			</code>
 		</ConfirmDialog>

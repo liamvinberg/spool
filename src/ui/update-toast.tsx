@@ -52,38 +52,38 @@ export function UpdateToastPill({
 }) {
 	return (
 		<div
-			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 overflow-hidden rounded-md border border-border-raised bg-raised px-3.5 py-2.5 ${
+			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 overflow-hidden rounded-md border border-line-strong bg-surface-raised px-3.5 py-2.5 ${
 				aboveCanvasTools ? "bottom-[120px]" : "bottom-6"
 			}`}
 		>
 			{toast.kind === "offer" && (
 				<>
-					<span className="text-text type-control">Update available — v{toast.latest}</span>
-					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
+					<span className="text-primary type-control">Update available — v{toast.latest}</span>
+					<button type="button" className="font-medium text-accent-strong type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
 			)}
 			{toast.kind === "updating" && (
 				<>
-					<span className="text-muted type-control">
+					<span className="text-secondary type-control">
 						{toast.stage === "installing" ? "Installing update…" : "Restarting…"}
 					</span>
-					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-thread" />
+					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-accent" />
 				</>
 			)}
 			{toast.kind === "failed" && (
 				<>
-					<span className="text-text type-control">{toast.message ?? "Update failed"}</span>
-					<span className="h-4 w-px bg-border-raised" />
-					<span className="text-muted type-value">spool upgrade</span>
+					<span className="text-primary type-control">{toast.message ?? "Update failed"}</span>
+					<span className="h-4 w-px bg-line-strong" />
+					<span className="text-secondary type-value">spool upgrade</span>
 				</>
 			)}
 			{toast.kind === "app" && <AppUpdateBody update={toast.update} onUpdate={onUpdate} />}
 			{!updateToastBusy(toast) && (
 				<button
 					type="button"
-					className="flex items-center text-muted hover:text-text"
+					className="flex items-center text-secondary hover:text-primary"
 					onClick={onDismiss}
 					title="Dismiss"
 				>
@@ -99,8 +99,8 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "ready":
 			return (
 				<>
-					<span className="text-text type-control">Spool is ready to update.</span>
-					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
+					<span className="text-primary type-control">Spool is ready to update.</span>
+					<button type="button" className="font-medium text-accent-strong type-control" onClick={onUpdate}>
 						Restart to update
 					</button>
 				</>
@@ -108,8 +108,8 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "offer":
 			return (
 				<>
-					<span className="text-text type-control">Spool {update.version} is out</span>
-					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
+					<span className="text-primary type-control">Spool {update.version} is out</span>
+					<button type="button" className="font-medium text-accent-strong type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
@@ -117,11 +117,11 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "downloading":
 			return (
 				<>
-					<span className="text-muted type-control">
+					<span className="text-secondary type-control">
 						Downloading Spool {update.version} · {update.percent}%
 					</span>
 					<span
-						className="absolute bottom-0 left-0 h-px bg-thread transition-[width] duration-300"
+						className="absolute bottom-0 left-0 h-px bg-accent transition-[width] duration-300"
 						style={{ width: `${update.percent}%` }}
 					/>
 				</>
@@ -131,25 +131,25 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "preparing":
 			return (
 				<>
-					<span className="text-muted type-control">
+					<span className="text-secondary type-control">
 						{update.kind === "checking"
 							? "Checking for updates…"
 							: update.kind === "preparing"
 								? `Preparing Spool ${update.version}…`
 								: `Restarting into Spool ${update.version}…`}
 					</span>
-					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-thread" />
+					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-accent" />
 				</>
 			);
 		case "failed":
 			return (
 				<>
-					<span className="max-w-[56ch] text-text type-control">{update.message}</span>
-					<span className="h-4 w-px bg-border-raised" />
+					<span className="max-w-[56ch] text-primary type-control">{update.message}</span>
+					<span className="h-4 w-px bg-line-strong" />
 					{update.retryable && (
 						<button
 							type="button"
-							className="whitespace-nowrap font-medium text-thread-strong type-control"
+							className="whitespace-nowrap font-medium text-accent-strong type-control"
 							onClick={onUpdate}
 						>
 							Retry
@@ -159,7 +159,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 						href={DOWNLOAD_URL}
 						target="_blank"
 						rel="noreferrer"
-						className="whitespace-nowrap font-medium text-thread-strong type-control"
+						className="whitespace-nowrap font-medium text-accent-strong type-control"
 					>
 						Download Spool.dmg
 					</a>

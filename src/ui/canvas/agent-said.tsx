@@ -22,7 +22,7 @@ export function Caret() {
 	return (
 		<span
 			data-agent-caret=""
-			className="ml-[3px] inline-block h-[12px] w-[2px] translate-y-[1px] rounded-[1px] bg-text/70 align-baseline"
+			className="ml-[3px] inline-block h-[12px] w-[2px] translate-y-[1px] rounded-[1px] bg-primary/70 align-baseline"
 			aria-hidden="true"
 		/>
 	);
@@ -68,11 +68,14 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 					span.italic === true && "italic",
 					// struck text is over, so it is dimmed as well as ruled: a line alone at full
 					// strength reads as emphasis at a glance
-					span.strike === true && "text-muted line-through",
+					span.strike === true && "text-secondary line-through",
 				);
 				if (span.code === true) {
 					return (
-						<code key={key} className={cn("rounded-xs bg-surface px-[3px] py-px type-value", "text-text", face)}>
+						<code
+							key={key}
+							className={cn("rounded-xs bg-surface-panel px-[3px] py-px type-value", "text-primary", face)}
+						>
 							{span.text}
 						</code>
 					);
@@ -95,8 +98,8 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 							target="_blank"
 							rel="noreferrer"
 							className={cn(
-								"underline decoration-border-raised underline-offset-2 transition-colors duration-150 hover:decoration-text",
-								span.bold === true && "font-medium text-text",
+								"underline decoration-line-strong underline-offset-2 transition-colors duration-150 hover:decoration-primary",
+								span.bold === true && "font-medium text-primary",
 								face,
 							)}
 						>
@@ -106,7 +109,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 				}
 				if (span.bold === true) {
 					return (
-						<strong key={key} className={cn("font-medium text-text", face)}>
+						<strong key={key} className={cn("font-medium text-primary", face)}>
 							{span.text}
 						</strong>
 					);
@@ -121,7 +124,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 	);
 
 	return (
-		<div className="flex flex-col gap-2 text-text type-body">
+		<div className="flex flex-col gap-2 text-primary type-body">
 			{chunks.map((chunk: Chunk, at) => {
 				const key = `${at}-${chunk.kind}`;
 				/*
@@ -135,7 +138,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 					return (
 						<pre
 							key={key}
-							className="pages-scrollbar overflow-x-auto rounded-sm border border-border bg-surface px-2.5 py-2 text-text type-value"
+							className="pages-scrollbar overflow-x-auto rounded-sm border border-line-default bg-surface-panel px-2.5 py-2 text-primary type-value"
 						>
 							{chunk.text}
 							{end}
@@ -144,7 +147,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 				}
 				if (chunk.kind === "quote") {
 					return (
-						<p key={key} className="border-border-raised border-l-2 pl-2.5 text-text">
+						<p key={key} className="border-line-strong border-l-2 pl-2.5 text-primary">
 							{spans(chunk.spans)}
 							{end}
 						</p>
@@ -153,7 +156,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 				if (chunk.kind === "rule") {
 					// a rule is the agent ending a section, so it is drawn at the strength of the
 					// borders that already separate things here rather than as a line of its own
-					return <hr key={key} className="my-1 border-border border-t" />;
+					return <hr key={key} className="my-1 border-line-default border-t" />;
 				}
 				if (chunk.kind === "table") {
 					/*
@@ -176,7 +179,7 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 								const led = textOf(row[0] ?? []).trim() !== "";
 								return (
 									<p key={rowKey} className="flex gap-2 pl-0.5">
-										<span data-marker="" className="shrink-0 text-muted">
+										<span data-marker="" className="shrink-0 text-secondary">
 											•
 										</span>
 										<span>
@@ -186,12 +189,12 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 												return (
 													<Fragment key={`${column}-${cell[0]?.text.slice(0, 12) ?? ""}`}>
 														{index === 0 && !led ? null : (
-															<span data-marker="" className="text-muted">
+															<span data-marker="" className="text-secondary">
 																{index === 0 ? " – " : joinAfter(rest[index - 1]?.cell ?? [])}
 															</span>
 														)}
 														{label === null || textOf(label).trim() === "" ? null : (
-															<span data-marker="" className="text-muted">
+															<span data-marker="" className="text-secondary">
 																{`${textOf(label)}: `}
 															</span>
 														)}
@@ -214,10 +217,10 @@ export const Said = memo(function Said({ text, caret }: { text: string; caret?: 
 							{/* the one glyph in the block that is the renderer's rather than the
 							    agent's, and marked as such: a word count over this prose has to
 							    skip it */}
-							<span data-marker="" className="shrink-0 text-muted tabular-nums">
+							<span data-marker="" className="shrink-0 text-secondary tabular-nums">
 								{chunk.done === undefined ? chunk.marker : chunk.done ? "☑" : "☐"}
 							</span>
-							<span className={chunk.done === true ? "text-muted" : undefined}>
+							<span className={chunk.done === true ? "text-secondary" : undefined}>
 								{spans(chunk.spans)}
 								{end}
 							</span>

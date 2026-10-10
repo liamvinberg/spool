@@ -25,7 +25,7 @@ export function AccountFoot({
 	if (account.state === "signed-out")
 		return (
 			<div className="pj-account flex flex-col gap-[10px] [@media(max-width:720px)]:hidden">
-				<p className="pl-[2px] text-muted type-label">Sign in to share links and join a team.</p>
+				<p className="pl-[2px] text-secondary type-label">Sign in to share links and join a team.</p>
 				<button type="button" className={cn(HOME_ACTION, "w-full justify-start")} onClick={onSignIn}>
 					Sign in
 				</button>
@@ -36,10 +36,10 @@ export function AccountFoot({
 			<div className="pj-account relative [@media(max-width:720px)]:hidden">
 				<div
 					role="status"
-					className="absolute bottom-[calc(100%+12px)] left-0 z-30 w-[300px] animate-menu-in rounded-[9px] border border-border-raised bg-raised p-[16px]"
+					className="absolute bottom-[calc(100%+12px)] left-0 z-30 w-[300px] animate-menu-in rounded-[9px] border border-line-strong bg-surface-raised p-[16px]"
 				>
 					<p className="type-title">Finish in your browser</p>
-					<p className="mt-[6px] text-muted type-control">
+					<p className="mt-[6px] text-secondary type-control">
 						spool.page is open in your browser. This comes back by itself once you’re in.
 					</p>
 					<div className="mt-[14px] flex gap-[8px]">
@@ -51,8 +51,12 @@ export function AccountFoot({
 						</button>
 					</div>
 				</div>
-				<button type="button" className={cn(HOME_ACTION, "w-full justify-start bg-raised")} onClick={onReopen}>
-					<span className="h-[8px] w-[8px] shrink-0 rounded-full bg-muted motion-safe:animate-pulse" />
+				<button
+					type="button"
+					className={cn(HOME_ACTION, "w-full justify-start bg-surface-raised")}
+					onClick={onReopen}
+				>
+					<span className="h-[8px] w-[8px] shrink-0 rounded-full bg-secondary motion-safe:animate-pulse" />
 					Waiting for the browser
 				</button>
 			</div>
@@ -68,23 +72,23 @@ export function AccountFoot({
 						aria-label="Close menu"
 						onClick={() => setMenuOpen(false)}
 					/>
-					<div className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex w-[260px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit">
-						<p className="truncate px-3 pt-[8px] pb-[9px] text-text type-control">{account.email}</p>
-						<div className="mx-2 my-unit h-px bg-border-raised" />
+					<div className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex w-[260px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit">
+						<p className="truncate px-3 pt-[8px] pb-[9px] text-primary type-control">{account.email}</p>
+						<div className="mx-2 my-unit h-px bg-line-strong" />
 						<a
 							href={account.accountUrl}
 							target="_blank"
 							rel="noreferrer"
-							className="flex h-[30px] items-center justify-between gap-[12px] rounded-sm px-3 text-text type-control hover:bg-surface"
+							className="flex h-[30px] items-center justify-between gap-[12px] rounded-sm px-3 text-primary type-control hover:bg-surface-panel"
 							onClick={() => setMenuOpen(false)}
 						>
 							Passkeys and Macs
-							<span className="text-muted type-detail">spool.page ↗</span>
+							<span className="text-secondary type-detail">spool.page ↗</span>
 						</a>
-						<div className="mx-2 my-unit h-px bg-border-raised" />
+						<div className="mx-2 my-unit h-px bg-line-strong" />
 						<button
 							type="button"
-							className="flex h-[30px] items-center rounded-sm px-3 text-left text-text type-control hover:bg-surface"
+							className="flex h-[30px] items-center rounded-sm px-3 text-left text-primary type-control hover:bg-surface-panel"
 							onClick={() => {
 								setMenuOpen(false);
 								onSignOut();
@@ -97,18 +101,18 @@ export function AccountFoot({
 			)}
 			<button
 				type="button"
-				className="flex w-full items-center gap-[8px] rounded-[7px] px-[8px] py-[6px] text-left hover:bg-surface aria-expanded:bg-surface [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0"
+				className="flex w-full items-center gap-[8px] rounded-[7px] px-[8px] py-[6px] text-left hover:bg-surface-panel aria-expanded:bg-surface-panel [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0"
 				aria-expanded={menuOpen}
 				aria-label={`Signed in as ${account.email}`}
 				onClick={() => setMenuOpen(!menuOpen)}
 			>
-				<span className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full bg-control text-text uppercase type-detail">
+				<span className="grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full bg-surface-control text-primary uppercase type-detail">
 					{account.email.slice(0, 1)}
 				</span>
-				<span className="min-w-0 flex-1 truncate text-muted type-detail [@media(max-width:720px)]:hidden">
+				<span className="min-w-0 flex-1 truncate text-secondary type-detail [@media(max-width:720px)]:hidden">
 					{account.email}
 				</span>
-				<span className="h-[10px] w-[10px] shrink-0 -rotate-90 text-muted [@media(max-width:720px)]:hidden [&>svg]:h-full [&>svg]:w-full">
+				<span className="h-[10px] w-[10px] shrink-0 -rotate-90 text-secondary [@media(max-width:720px)]:hidden [&>svg]:h-full [&>svg]:w-full">
 					<ChevronIcon />
 				</span>
 			</button>

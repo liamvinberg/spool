@@ -95,11 +95,11 @@ export function Home({
 		[],
 	);
 	return (
-		<div className="pj-body h-full overflow-auto bg-bg text-text [scrollbar-width:thin] [scrollbar-color:var(--color-border-raised)_transparent]">
+		<div className="pj-body h-full overflow-auto bg-surface-window text-primary [scrollbar-width:thin] [scrollbar-color:var(--color-line-strong)_transparent]">
 			<div className="pj-layout grid min-h-full grid-cols-[208px_minmax(0,1fr)] [@media(max-width:720px)]:grid-cols-[64px_minmax(0,1fr)]">
-				<aside className="pj-navigation sticky top-0 z-10 flex h-[calc(100vh-44px)] flex-col border-r border-border bg-bg px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
+				<aside className="pj-navigation sticky top-0 z-10 flex h-[calc(100vh-44px)] flex-col border-r border-line-default bg-surface-window px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
 					<div className="pj-wordmark mb-[30px] flex h-[32px] items-center gap-[10px] px-[13px] [font:var(--type-mark)] tracking-[-1px] [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden">
-						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-thread" />
+						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-accent" />
 						<span>spool</span>
 					</div>
 					{switcher}
@@ -112,7 +112,7 @@ export function Home({
 							</NavigationButton>
 						)}
 					</nav>
-					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-muted [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
+					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
 							<NavigationButton
 								icon={<CogIcon />}
@@ -135,7 +135,7 @@ export function Home({
 					<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
 						{notice && <div className="w-[650px] max-w-full">{notice}</div>}
 						<EmptyState
-							className="pj-welcome mt-[-50px] w-[650px] [&>p]:mt-[14px] [&>p]:[font:var(--type-body)] [&>p]:text-muted [&>.spool-empty-actions]:grid [&>.spool-empty-actions]:w-full [&>.spool-empty-actions]:grid-cols-2 [&>.spool-empty-actions]:gap-[22px] [&>.spool-empty-actions]:mt-[44px] [&>.spool-empty-actions]:text-left [@media(max-width:720px)]:m-0 [@media(max-width:720px)]:[&>.spool-empty-actions]:grid-cols-1"
+							className="pj-welcome mt-[-50px] w-[650px] [&>p]:mt-[14px] [&>p]:[font:var(--type-body)] [&>p]:text-secondary [&>.spool-empty-actions]:grid [&>.spool-empty-actions]:w-full [&>.spool-empty-actions]:grid-cols-2 [&>.spool-empty-actions]:gap-[22px] [&>.spool-empty-actions]:mt-[44px] [&>.spool-empty-actions]:text-left [@media(max-width:720px)]:m-0 [@media(max-width:720px)]:[&>.spool-empty-actions]:grid-cols-1"
 							heading="h1"
 							align="start"
 							title="Start with an idea."
@@ -144,7 +144,7 @@ export function Home({
 								<>
 									<button
 										type="button"
-										className="flex flex-col items-start rounded-lg border border-border-raised bg-surface px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-control [&:hover]:border-muted disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-thread"
+										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
 										onClick={onStart}
 									>
 										<PlusIcon />
@@ -152,7 +152,7 @@ export function Home({
 											New project…
 											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 										</strong>
-										<small className="mt-[10px] text-muted type-control">
+										<small className="mt-[10px] text-secondary type-control">
 											Open a blank canvas.
 											<br />
 											spool saves the project on your Mac.
@@ -160,15 +160,15 @@ export function Home({
 									</button>
 									<button
 										type="button"
-										className="flex flex-col items-start rounded-lg border border-border-raised bg-surface px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-control [&:hover]:border-muted disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
+										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
 										onClick={onFolder}
 									>
-										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-muted" />
+										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
 										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
 											Open…
 											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 										</strong>
-										<small className="mt-[10px] text-muted type-control">
+										<small className="mt-[10px] text-secondary type-control">
 											Bring your codebase.
 											<br />
 											Keep the design beside your code.
@@ -176,15 +176,17 @@ export function Home({
 									</button>
 									<button
 										type="button"
-										className="flex flex-col items-start rounded-lg border border-border-raised bg-surface px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-control [&:hover]:border-muted disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
+										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
 										onClick={onImport}
 									>
-										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-muted" />
+										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
 										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
 											Import…
 											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 										</strong>
-										<small className="mt-[10px] text-muted type-control">Open a .spool project file.</small>
+										<small className="mt-[10px] text-secondary type-control">
+											Open a .spool project file.
+										</small>
 									</button>
 								</>
 							}
@@ -195,10 +197,10 @@ export function Home({
 						<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
 							<h1 className="type-page font-medium">Projects</h1>
 							<div className="flex items-center gap-[13px] [@media(max-width:720px)]:flex-wrap">
-								<label className="home-search flex h-[35px] w-[212px] items-center gap-[10px] rounded-[7px] border border-border bg-transparent px-[11px] text-muted focus-within:border-muted">
+								<label className="home-search flex h-[35px] w-[212px] items-center gap-[10px] rounded-[7px] border border-line-default bg-transparent px-[11px] text-secondary focus-within:border-secondary">
 									<SearchIcon />
 									<input
-										className="w-full min-w-0 bg-transparent text-text outline-none type-control placeholder:text-muted"
+										className="w-full min-w-0 bg-transparent text-primary outline-none type-control placeholder:text-secondary"
 										ref={searchRef}
 										value={query}
 										onChange={(event) => setQuery(event.target.value)}
@@ -230,20 +232,20 @@ export function Home({
 							</div>
 						</header>
 						{notice}
-						<div className="pj-toolbar mb-[24px] flex h-[23px] items-center justify-between text-muted type-caption">
+						<div className="pj-toolbar mb-[24px] flex h-[23px] items-center justify-between text-secondary type-caption">
 							<span className="type-detail">
 								{visible.length} {visible.length === 1 ? "project" : "projects"}
 							</span>
 							<label className="flex items-center gap-[4px]">
 								Sort by
 								<select
-									className="cursor-pointer bg-transparent pt-[3px] pr-[2px] pb-[3px] pl-[5px] text-text type-caption"
+									className="cursor-pointer bg-transparent pt-[3px] pr-[2px] pb-[3px] pl-[5px] text-primary type-caption"
 									aria-label="Sort projects"
 									value={sort}
 									onChange={(event) => setSort(event.target.value)}
 								>
-									<option className="bg-surface">Recent</option>
-									<option className="bg-surface">Name</option>
+									<option className="bg-surface-panel">Recent</option>
+									<option className="bg-surface-panel">Name</option>
 								</select>
 							</label>
 						</div>
@@ -319,7 +321,7 @@ export function HerePill({ people }: { people: readonly HerePerson[] | undefined
 	return (
 		<span
 			data-here={people.map((person) => person.name).join(" ")}
-			className="pointer-events-none absolute bottom-[10px] left-[10px] z-10 flex items-center gap-[8px] rounded-full bg-bg py-[3px] pr-[10px] pl-[3px] text-text"
+			className="pointer-events-none absolute bottom-[10px] left-[10px] z-10 flex items-center gap-[8px] rounded-full bg-surface-window py-[3px] pr-[10px] pl-[3px] text-primary"
 		>
 			<span className="flex">
 				{shown.map((person, i) => (
@@ -329,7 +331,7 @@ export function HerePill({ people }: { people: readonly HerePerson[] | undefined
 						style={{
 							background: person.color,
 							color: "#0e0e0e",
-							boxShadow: "0 0 0 2px var(--color-bg)",
+							boxShadow: "0 0 0 2px var(--color-surface-window)",
 							marginLeft: i === 0 ? 0 : -5,
 							zIndex: shown.length - i,
 						}}
@@ -495,7 +497,7 @@ function ProjectTile({
 				aria-label={`Open ${project.name}`}
 				onClick={onOpen}
 			>
-				<div className="pj-cover-art relative aspect-[1.82] overflow-hidden rounded-[8px] bg-canvas">
+				<div className="pj-cover-art relative aspect-[1.82] overflow-hidden rounded-[8px] bg-surface-canvas">
 					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
 					{project.thumbnail !== undefined ? (
 						<img
@@ -517,7 +519,7 @@ function ProjectTile({
 						)
 					)}
 					<HerePill people={here} />
-					<span className="pj-cover-enter absolute right-[12px] bottom-[12px] grid h-[30px] w-[30px] place-items-center rounded-[6px] border border-border-raised bg-bg text-text opacity-0 [transform:translateX(-3px)] group-focus-visible/cover:opacity-100 group-focus-visible/cover:[transform:none] group-hover/cover:opacity-100 group-hover/cover:[transform:none] motion-reduce:transition-none">
+					<span className="pj-cover-enter absolute right-[12px] bottom-[12px] grid h-[30px] w-[30px] place-items-center rounded-[6px] border border-line-strong bg-surface-window text-primary opacity-0 [transform:translateX(-3px)] group-focus-visible/cover:opacity-100 group-focus-visible/cover:[transform:none] group-hover/cover:opacity-100 group-hover/cover:[transform:none] motion-reduce:transition-none">
 						<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
 					</span>
 				</div>
@@ -533,13 +535,13 @@ function ProjectTile({
 						/>
 						<strong className="truncate type-title font-[500]">{project.name}</strong>
 					</span>
-					<span className="shrink-0 text-muted type-detail">
+					<span className="shrink-0 text-secondary type-detail">
 						{project.frameCount
 							? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}`
 							: "no frames yet"}
 					</span>
 				</div>
-				<span className="pj-opened-time mt-[7px] block pl-[30px] text-muted type-detail">
+				<span className="pj-opened-time mt-[7px] block pl-[30px] text-secondary type-detail">
 					{relativeTime(project.openedAt)}
 					{copies > 1 && ` · ${copies} copies on this Mac`}
 					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
@@ -549,7 +551,7 @@ function ProjectTile({
 				type="button"
 				ref={manageRef}
 				className={cn(
-					"pj-manage absolute right-[-4px] bottom-[23px] flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[5px] text-muted opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100 hover:bg-surface hover:text-text",
+					"pj-manage absolute right-[-4px] bottom-[23px] flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[5px] text-secondary opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100 hover:bg-surface-panel hover:text-primary",
 					menuOpen ? "is-open" : "",
 				)}
 				aria-label={`Manage ${project.name}`}
@@ -560,7 +562,7 @@ function ProjectTile({
 			{menuOpen && (
 				<div
 					ref={menuRef}
-					className="fixed z-20 flex w-[196px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+					className="fixed z-20 flex w-[196px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 					style={
 						menuAt === null
 							? { visibility: "hidden", top: 0, left: 0 }
@@ -637,7 +639,7 @@ function ProjectTile({
 							void navigator.clipboard?.writeText(project.root);
 						}}
 					/>
-					<div className="mx-2 my-unit h-px bg-border-raised" />
+					<div className="mx-2 my-unit h-px bg-line-strong" />
 					<MenuItem
 						label="Hide from Spool"
 						onClick={() => {
@@ -699,7 +701,7 @@ function NavigationButton({
 	return (
 		<button
 			type="button"
-			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-muted type-control [&:hover]:bg-surface [&:hover]:text-text aria-[current=page]:bg-surface aria-[current=page]:text-text [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0 [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:[&>span]:hidden"
+			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-secondary type-control [&:hover]:bg-surface-panel [&:hover]:text-primary aria-[current=page]:bg-surface-panel aria-[current=page]:text-primary [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0 [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:[&>span]:hidden"
 			aria-current={active ? "page" : undefined}
 			onClick={onClick}
 			title={title}
@@ -715,8 +717,8 @@ function MenuItem({ label, onClick, danger = false }: { label: string; onClick: 
 		<button
 			type="button"
 			className={cn(
-				"flex h-[30px] items-center rounded-sm px-3 text-left hover:bg-surface type-control",
-				danger ? "text-[light-dark(#bb2614,#ff604b)]" : "text-text",
+				"flex h-[30px] items-center rounded-sm px-3 text-left hover:bg-surface-panel type-control",
+				danger ? "text-[light-dark(#bb2614,#ff604b)]" : "text-primary",
 			)}
 			onClick={onClick}
 		>

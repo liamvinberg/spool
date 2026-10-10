@@ -84,7 +84,7 @@ export function PagePicker({
 			ref={panel}
 			role="dialog"
 			aria-label="Move to page"
-			className="fixed z-50 flex animate-menu-in flex-col overflow-hidden rounded-md border border-border-raised bg-raised"
+			className="fixed z-50 flex animate-menu-in flex-col overflow-hidden rounded-md border border-line-strong bg-surface-raised"
 			style={{
 				left: flipX ? at.x - WIDTH : at.x,
 				top: flipY ? at.y - height : at.y,
@@ -119,11 +119,11 @@ export function PagePicker({
 						onClose();
 					}
 				}}
-				className="h-[34px] shrink-0 border-border border-b bg-transparent px-2.5 text-text caret-thread outline-none placeholder:text-muted type-value"
+				className="h-[34px] shrink-0 border-line-default border-b bg-transparent px-2.5 text-primary caret-accent outline-none placeholder:text-secondary type-value"
 			/>
 			<div ref={list} className="min-h-0 flex-1 overflow-y-auto p-unit" style={{ height: rows * ROW + PAD }}>
 				{hits.length === 0 ? (
-					<div className="flex items-center px-1.5 text-muted type-value" style={{ height: ROW }}>
+					<div className="flex items-center px-1.5 text-secondary type-value" style={{ height: ROW }}>
 						no page answers to that
 					</div>
 				) : (
@@ -138,11 +138,11 @@ export function PagePicker({
 							onClick={() => onPick(page)}
 							className={cn(
 								"flex w-full items-center gap-2 rounded-xs px-1.5 text-left",
-								index === cursor ? "bg-surface text-text" : "text-text/80",
+								index === cursor ? "bg-surface-panel text-primary" : "text-primary/80",
 							)}
 							style={{ height: ROW }}
 						>
-							<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+							<FolderIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 							<span className="min-w-0 flex-1 truncate type-value">{pagePathLabel(page)}</span>
 						</button>
 					))

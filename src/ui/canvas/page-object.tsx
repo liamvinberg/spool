@@ -56,8 +56,8 @@ export function PageObjectView({
 			style={{ transform: `translate(${object.x}px, ${object.y}px)`, width: object.w, height: object.h }}
 		>
 			<div
-				className={`absolute inset-0 overflow-hidden rounded-[2px] border bg-canvas ${
-					selected ? "border-thread" : hovered ? "border-border-raised" : "border-border"
+				className={`absolute inset-0 overflow-hidden rounded-[2px] border bg-surface-canvas ${
+					selected ? "border-accent" : hovered ? "border-line-strong" : "border-line-default"
 				}`}
 			>
 				{object.composition.frames.map((frame) => (
@@ -66,8 +66,8 @@ export function PageObjectView({
 						data-page-object-waiting={frame.waiting ? "" : undefined}
 						className={
 							frame.waiting
-								? "absolute rounded-[1px] border border-border-raised border-dashed"
-								: "absolute bg-surface"
+								? "absolute rounded-[1px] border border-line-strong border-dashed"
+								: "absolute bg-surface-panel"
 						}
 						style={{
 							left: fit.dx + frame.x * fit.scale,
@@ -88,7 +88,7 @@ export function PageObjectView({
 				))}
 			</div>
 
-			{selected && <span ref={ring} className="pointer-events-none absolute rounded-[3px] border-thread" />}
+			{selected && <span ref={ring} className="pointer-events-none absolute rounded-[3px] border-accent" />}
 		</div>
 	);
 }
@@ -139,15 +139,15 @@ export function PageObjectLabel({
 				ref={label}
 				className="absolute bottom-full left-0 flex w-full min-w-0 origin-bottom-left items-center gap-1.5 whitespace-nowrap pb-2.5"
 			>
-				<FolderIcon className={`h-3 w-3 shrink-0 ${selected ? "text-thread-strong" : "text-muted"}`} />
+				<FolderIcon className={`h-3 w-3 shrink-0 ${selected ? "text-accent-strong" : "text-secondary"}`} />
 				<span
 					className={`min-w-0 truncate type-value ${
-						selected ? "text-thread-strong" : hovered ? "text-text" : "text-muted"
+						selected ? "text-accent-strong" : hovered ? "text-primary" : "text-secondary"
 					}`}
 				>
 					{object.name}
 				</span>
-				<span className="shrink-0 pl-1 text-muted type-detail">{object.count}</span>
+				<span className="shrink-0 pl-1 text-secondary type-detail">{object.count}</span>
 			</div>
 		</div>
 	);

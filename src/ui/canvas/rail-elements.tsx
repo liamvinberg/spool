@@ -224,10 +224,10 @@ function TreeRows({
 					return (
 						<div
 							key={row.key}
-							className="flex h-6 items-center gap-1 pr-2.5 text-muted type-detail"
+							className="flex h-6 items-center gap-1 pr-2.5 text-secondary type-detail"
 							style={{ paddingLeft: 15 + treeIndent(row.depth) }}
 						>
-							<span className="text-text/80">.map</span>
+							<span className="text-primary/80">.map</span>
 							<span>×{row.count}</span>
 						</div>
 					);
@@ -247,7 +247,7 @@ function TreeRows({
 						aria-expanded={row.hasChildren ? row.open : undefined}
 						className={cn(
 							"flex h-6 items-center gap-1 pr-2.5",
-							current ? "bg-thread/15 text-text" : "text-muted hover:bg-surface hover:text-text",
+							current ? "bg-accent/15 text-primary" : "text-secondary hover:bg-surface-panel hover:text-primary",
 						)}
 						style={{ paddingLeft: treeIndent(row.depth) }}
 						onPointerDown={keepFocus}
@@ -287,16 +287,16 @@ function TreeRows({
 							className="flex h-full min-w-0 flex-1 cursor-default items-center gap-1 text-left"
 						>
 							{row.number === null ? null : (
-								<span className="shrink-0 text-muted/70 type-detail">{row.number}</span>
+								<span className="shrink-0 text-secondary/70 type-detail">{row.number}</span>
 							)}
 							<span
-								className={cn("shrink-0 type-value", node.component !== null && "text-text")}
+								className={cn("shrink-0 type-value", node.component !== null && "text-primary")}
 							>{`<${label}>`}</span>
 							{node.words === null ? null : (
-								<span className="min-w-0 truncate text-text/80 type-detail">{node.words}</span>
+								<span className="min-w-0 truncate text-primary/80 type-detail">{node.words}</span>
 							)}
 							{row.file === null ? null : (
-								<span className="ml-auto shrink-0 pl-2 text-muted/70 type-detail">{row.file}</span>
+								<span className="ml-auto shrink-0 pl-2 text-secondary/70 type-detail">{row.file}</span>
 							)}
 						</button>
 					</div>

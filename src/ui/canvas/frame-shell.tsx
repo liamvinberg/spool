@@ -367,7 +367,7 @@ export const FrameShell = memo(function FrameShell({
 					// a fresh capture replaces this image while the canvas is in
 					// use; decoding it off the main thread keeps that invisible
 					decoding="async"
-					className="pointer-events-none absolute inset-0 h-full w-full bg-surface object-contain object-left-top"
+					className="pointer-events-none absolute inset-0 h-full w-full bg-surface-panel object-contain object-left-top"
 					style={{ visibility: "hidden" }}
 				/>
 			)}
@@ -396,19 +396,19 @@ export const FrameShell = memo(function FrameShell({
 							cover={cover}
 							alt={name}
 							draggable={false}
-							className="absolute inset-0 h-full w-full bg-surface object-contain object-left-top"
+							className="absolute inset-0 h-full w-full bg-surface-panel object-contain object-left-top"
 						/>
 					) : (
-						<div className="absolute inset-0 flex items-center justify-center bg-surface">
-							<span className="text-muted type-value">{pageName(name)}</span>
+						<div className="absolute inset-0 flex items-center justify-center bg-surface-panel">
+							<span className="text-secondary type-value">{pageName(name)}</span>
 						</div>
 					)}
 					{plan.badge && (
 						<>
 							{/* boot cover per the system page: bg veil at 55%, mono "booting" */}
-							<div className="absolute inset-0 bg-bg opacity-55" />
+							<div className="absolute inset-0 bg-surface-window opacity-55" />
 							<div className="absolute inset-0 flex items-center justify-center">
-								<span className="text-text type-value">booting</span>
+								<span className="text-primary type-value">booting</span>
 							</div>
 						</>
 					)}

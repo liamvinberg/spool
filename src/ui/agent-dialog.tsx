@@ -5,10 +5,10 @@ import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { CloseIcon } from "./icons";
 
 export const AGENT_PRIMARY =
-	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm bg-text px-4 text-bg type-control hover:bg-text/90 disabled:opacity-50";
+	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm bg-primary px-4 text-surface-window type-control hover:bg-primary/90 disabled:opacity-50";
 export const AGENT_SECONDARY =
-	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm border border-border-raised px-4 text-text type-control hover:bg-raised";
-export const AGENT_QUIET = "rounded-sm text-muted type-control hover:text-text";
+	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm border border-line-strong px-4 text-primary type-control hover:bg-surface-raised";
+export const AGENT_QUIET = "rounded-sm text-secondary type-control hover:text-primary";
 
 /** The agent handoff's modal, with native focus containment. */
 export function AgentDialog({
@@ -41,7 +41,7 @@ export function AgentDialog({
 			tabIndex={-1}
 			aria-labelledby={id}
 			className={cn(
-				"agent-dialog max-h-[calc(100dvh-32px)] m-auto p-0 overflow-auto border border-border-raised rounded-[8px] bg-surface text-text backdrop:[background:color-mix(in_srgb,var(--color-bg)_75%,transparent)] [&_button:focus-visible]:[outline:2px_solid_var(--color-thread)] [&_button:focus-visible]:outline-offset-[4px] [&_summary:focus-visible]:[outline:2px_solid_var(--color-thread)] [&_summary:focus-visible]:outline-offset-[4px]",
+				"agent-dialog max-h-[calc(100dvh-32px)] m-auto p-0 overflow-auto border border-line-strong rounded-[8px] bg-surface-panel text-primary backdrop:[background:color-mix(in_srgb,var(--color-surface-window)_75%,transparent)] [&_button:focus-visible]:[outline:2px_solid_var(--color-accent)] [&_button:focus-visible]:outline-offset-[4px] [&_summary:focus-visible]:[outline:2px_solid_var(--color-accent)] [&_summary:focus-visible]:outline-offset-[4px]",
 				wide ? "agent-dialog-wide w-[min(800px,calc(100vw-32px))]" : "w-[min(536px,calc(100vw-32px))]",
 			)}
 			onCancel={(event) => {
@@ -54,7 +54,7 @@ export function AgentDialog({
 			{children(id)}
 			<button
 				type="button"
-				className="agent-dialog-close absolute top-[12px] right-[12px] grid place-items-center w-[28px] h-[28px] rounded-[4px] text-muted [&:hover]:bg-raised [&:hover]:text-text [&_svg]:w-[16px] [&_svg]:h-[16px]"
+				className="agent-dialog-close absolute top-[12px] right-[12px] grid place-items-center w-[28px] h-[28px] rounded-[4px] text-secondary [&:hover]:bg-surface-raised [&:hover]:text-primary [&_svg]:w-[16px] [&_svg]:h-[16px]"
 				aria-label={`Close ${title}`}
 				onClick={onClose}
 			>

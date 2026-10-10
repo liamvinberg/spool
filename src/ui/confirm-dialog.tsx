@@ -49,7 +49,7 @@ export function ConfirmDialog({
 	return (
 		<dialog
 			ref={dialogRef}
-			className="confirm-dialog w-[min(440px,calc(100vw-32px))] max-h-[calc(100dvh-32px)] m-auto p-[24px] overflow-auto border border-border-raised rounded-[8px] bg-surface text-text backdrop:[background:color-mix(in_srgb,var(--color-bg)_70%,transparent)]"
+			className="confirm-dialog w-[min(440px,calc(100vw-32px))] max-h-[calc(100dvh-32px)] m-auto p-[24px] overflow-auto border border-line-strong rounded-[8px] bg-surface-panel text-primary backdrop:[background:color-mix(in_srgb,var(--color-surface-window)_70%,transparent)]"
 			tabIndex={-1}
 			aria-labelledby={`${id}-title`}
 			aria-describedby={description === undefined ? undefined : `${id}-description`}
@@ -88,14 +88,14 @@ export function ConfirmDialog({
 					{title}
 				</h2>
 				{description !== undefined && (
-					<p className="m-0 mb-[20px] text-muted [font:var(--type-body)]" id={`${id}-description`}>
+					<p className="m-0 mb-[20px] text-secondary [font:var(--type-body)]" id={`${id}-description`}>
 						{description}
 					</p>
 				)}
 				<fieldset className="min-w-0 p-0 border-0" disabled={busy} onChange={() => setNotice(null)}>
 					{children}
 					{notice && (
-						<p className="m-0 mb-[20px] text-thread-strong [font:var(--type-body)]" role="alert">
+						<p className="m-0 mb-[20px] text-accent-strong [font:var(--type-body)]" role="alert">
 							{notice}
 						</p>
 					)}

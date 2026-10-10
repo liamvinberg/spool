@@ -216,7 +216,7 @@ function Seed({
 					<rect
 						ref={ink}
 						visibility="hidden"
-						fill="var(--color-text)"
+						fill="var(--color-primary)"
 						style={{ opacity: 0.32, transition: "opacity 180ms ease-out" }}
 					/>
 				</g>

@@ -217,8 +217,8 @@ describe("the thread title", () => {
 		// the open row holds the lightest wash, and no accent: the accent is the selection's
 		const open = threadList(canvas.host)?.querySelector('[data-agent-thread][aria-current="true"]');
 		expect(open?.getAttribute("data-agent-thread")).toBe("write the swedish copy deck");
-		expect(open?.classList.contains("bg-raised")).toBe(true);
-		expect(open?.querySelector(".bg-thread")).toBeNull();
+		expect(open?.classList.contains("bg-surface-raised")).toBe(true);
+		expect(open?.querySelector(".bg-accent")).toBeNull();
 
 		await openCell(canvas.host, "tighten the header");
 

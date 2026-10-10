@@ -124,12 +124,12 @@ export function WaitingRow({
 	return (
 		<div data-agent-turn-line="waiting" className="-mx-1.5 flex min-h-[26px] items-center gap-2 px-1.5">
 			<WaitingMark />
-			<span className="min-w-0 flex-1 text-text type-control">
+			<span className="min-w-0 flex-1 text-primary type-control">
 				{words}
 				{arriving ? <Caret /> : null}
 			</span>
-			{meta === undefined ? null : <span className="shrink-0 tabular-nums text-muted type-detail">{meta}</span>}
-			<svg viewBox="0 0 12 12" aria-hidden="true" className="h-3 w-3 shrink-0 rotate-90 text-muted" fill="none">
+			{meta === undefined ? null : <span className="shrink-0 tabular-nums text-secondary type-detail">{meta}</span>}
+			<svg viewBox="0 0 12 12" aria-hidden="true" className="h-3 w-3 shrink-0 rotate-90 text-secondary" fill="none">
 				<path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
 			</svg>
 		</div>
@@ -141,7 +141,7 @@ export function Hairline({ children, tight = false }: { children: ReactNode; tig
 	return (
 		<div
 			className={cn(
-				"ml-[6.25px] flex animate-agent-ring-open flex-col border-border-raised border-l-[1.5px] py-1",
+				"ml-[6.25px] flex animate-agent-ring-open flex-col border-line-strong border-l-[1.5px] py-1",
 				tight ? "gap-2 pl-[6.75px]" : "gap-3 pl-[12.75px]",
 			)}
 		>
@@ -160,7 +160,7 @@ function Disclosure({ label, detail }: { label: string; detail: string }) {
 				aria-expanded={open}
 				data-agent-ask-detail={open ? "open" : "shut"}
 				onClick={() => setOpen((was) => !was)}
-				className="-mx-1 flex w-fit items-center gap-1 rounded-xs px-1 text-muted transition-colors duration-150 hover:text-text type-detail"
+				className="-mx-1 flex w-fit items-center gap-1 rounded-xs px-1 text-secondary transition-colors duration-150 hover:text-primary type-detail"
 			>
 				{label}
 				<svg
@@ -180,7 +180,7 @@ function Disclosure({ label, detail }: { label: string; detail: string }) {
 				)}
 			>
 				<div className="min-h-0 overflow-hidden">
-					<code className="block break-words pt-1 font-mono text-text text-xs leading-4">{detail}</code>
+					<code className="block break-words pt-1 font-mono text-primary text-xs leading-4">{detail}</code>
 				</div>
 			</div>
 		</div>
@@ -214,8 +214,8 @@ export function AskButton({
 			className={cn(
 				"h-7 shrink-0 rounded-sm px-2.5 transition-colors duration-150 type-control disabled:opacity-45",
 				quiet
-					? "text-muted hover:bg-control hover:text-text"
-					: "border border-border-raised text-text hover:bg-control",
+					? "text-secondary hover:bg-surface-control hover:text-primary"
+					: "border border-line-strong text-primary hover:bg-surface-control",
 			)}
 		>
 			{label}
@@ -242,13 +242,13 @@ export function ApprovalBody({
 	return (
 		<>
 			{entry.access?.unavailable ? (
-				<p className="text-text type-body">spool can’t restrict commands to design/ on this computer.</p>
+				<p className="text-primary type-body">spool can’t restrict commands to design/ on this computer.</p>
 			) : null}
 			<div className="flex flex-col gap-1">
-				{entry.asked === null ? null : <p className="text-pretty text-text type-body">{entry.asked}</p>}
+				{entry.asked === null ? null : <p className="text-pretty text-primary type-body">{entry.asked}</p>}
 				{detail === null ? (
 					entry.asked === null ? (
-						<p className="text-muted type-detail">{what}</p>
+						<p className="text-secondary type-detail">{what}</p>
 					) : null
 				) : (
 					<Disclosure label={what} detail={detail} />
@@ -275,7 +275,7 @@ export function ApprovalBody({
 				<button
 					type="button"
 					onClick={permissions}
-					className="w-fit text-muted transition-colors hover:text-text type-detail"
+					className="w-fit text-secondary transition-colors hover:text-primary type-detail"
 				>
 					Change permissions…
 				</button>
@@ -308,7 +308,7 @@ function OptionRow({
 				: { role: "menuitemradio", "aria-checked": chosen })}
 			data-agent-option={label}
 			onClick={onPick}
-			className="group/opt flex w-full items-start gap-3 rounded-sm px-2 py-1.5 text-left transition-colors duration-150 hover:bg-control aria-checked:bg-control"
+			className="group/opt flex w-full items-start gap-3 rounded-sm px-2 py-1.5 text-left transition-colors duration-150 hover:bg-surface-control aria-checked:bg-surface-control"
 		>
 			{multi ? (
 				<span className="flex h-5 shrink-0 items-center">
@@ -316,7 +316,7 @@ function OptionRow({
 						data-agent-tick={chosen ? "on" : "off"}
 						className={cn(
 							"flex h-3.5 w-3.5 items-center justify-center rounded-xs border transition-colors duration-150",
-							chosen ? "border-transparent bg-text text-bg" : "border-muted",
+							chosen ? "border-transparent bg-primary text-surface-window" : "border-secondary",
 						)}
 					>
 						{chosen ? (
@@ -327,13 +327,13 @@ function OptionRow({
 					</span>
 				</span>
 			) : (
-				<span className="flex h-5 w-3 shrink-0 items-center justify-center tabular-nums text-muted type-detail group-aria-checked/opt:text-text">
+				<span className="flex h-5 w-3 shrink-0 items-center justify-center tabular-nums text-secondary type-detail group-aria-checked/opt:text-primary">
 					{n}
 				</span>
 			)}
 			<span className="flex min-w-0 flex-1 flex-col">
-				<span className="text-text type-control">{label}</span>
-				{description === "" ? null : <span className="text-pretty text-muted type-detail">{description}</span>}
+				<span className="text-primary type-control">{label}</span>
+				{description === "" ? null : <span className="text-pretty text-secondary type-detail">{description}</span>}
 			</span>
 		</button>
 	);
@@ -346,7 +346,7 @@ export function Dismiss({ onPress }: { onPress: () => void }) {
 			type="button"
 			data-agent-dismiss=""
 			onClick={onPress}
-			className="-mr-1.5 h-7 shrink-0 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-control hover:text-text type-control"
+			className="-mr-1.5 h-7 shrink-0 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-control hover:text-primary type-control"
 		>
 			Dismiss
 		</button>
@@ -361,7 +361,7 @@ export function Settled({ entry, ask }: { entry: AskEntry; ask: AskState }) {
 		<div className="flex flex-col gap-1">
 			{done.map((one) => (
 				<div key={one.question} className="flex flex-col">
-					<p className="text-muted type-detail">{one.question}</p>
+					<p className="text-secondary type-detail">{one.question}</p>
 					<Folded>You picked {ask.picks[one.question]}</Folded>
 				</div>
 			))}
@@ -403,7 +403,7 @@ export function Folded({ children, mark = "done" }: { children: ReactNode; mark?
 	return (
 		<div data-agent-folded={mark} className="flex min-h-[26px] items-center gap-2">
 			<EndMark ending={mark} />
-			<span className="min-w-0 flex-1 text-muted type-control">{children}</span>
+			<span className="min-w-0 flex-1 text-secondary type-control">{children}</span>
 		</div>
 	);
 }
@@ -432,7 +432,7 @@ export function FoldedAsk({ entry, words }: { entry: AskEntry; words?: ReactNode
 					{folded.mono === null ? null : (
 						<>
 							{" "}
-							<span className="break-all font-mono text-muted text-xs">{folded.mono}</span>
+							<span className="break-all font-mono text-secondary text-xs">{folded.mono}</span>
 						</>
 					)}
 				</Folded>
@@ -469,16 +469,16 @@ export function AskCard({
 			className={cn(
 				"relative flex flex-col gap-3 rounded-lg p-4",
 				float
-					? "animate-agent-ring-open border border-border bg-surface shadow-agent-float"
-					: "animate-agent-ring-open border border-border",
+					? "animate-agent-ring-open border border-line-default bg-surface-panel shadow-agent-float"
+					: "animate-agent-ring-open border border-line-default",
 			)}
 		>
 			{notch === undefined ? null : (
 				<span
 					aria-hidden="true"
 					className={cn(
-						"-top-[6px] absolute size-[11px] rotate-45 border-border border-t border-l",
-						float ? "bg-surface" : "bg-bg",
+						"-top-[6px] absolute size-[11px] rotate-45 border-line-default border-t border-l",
+						float ? "bg-surface-panel" : "bg-surface-window",
 					)}
 					style={{ left: `calc(${notch * 100}% - 5.5px)` }}
 				/>
@@ -502,7 +502,7 @@ export function AskInside({
 	return (
 		<>
 			<Settled entry={entry} ask={ask} />
-			<p className="text-pretty text-text type-body">
+			<p className="text-pretty text-primary type-body">
 				{ask.question?.question ?? entry.asked}
 				{entry.state === "arriving" ? <Caret /> : null}
 			</p>

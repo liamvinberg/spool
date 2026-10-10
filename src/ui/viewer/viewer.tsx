@@ -204,7 +204,11 @@ function saidFrames(frames: readonly string[]): string {
 }
 
 function Quiet({ children }: { children: ReactNode }) {
-	return <div className="flex h-dvh items-center justify-center bg-canvas text-muted type-detail">{children}</div>;
+	return (
+		<div className="flex h-dvh items-center justify-center bg-surface-canvas text-secondary type-detail">
+			{children}
+		</div>
+	);
 }
 
 /** How far past the viewport frames keep their documents, as a fraction of it on every side. */
@@ -418,7 +422,7 @@ function ViewerCanvas({
 	const followed = following === null ? undefined : room?.get(following);
 
 	return (
-		<div className="flex h-dvh select-none overflow-hidden bg-bg text-text">
+		<div className="flex h-dvh select-none overflow-hidden bg-surface-window text-primary">
 			<PagesRail
 				project={project}
 				page={page}
@@ -430,7 +434,7 @@ function ViewerCanvas({
 				}}
 				onPlay={play}
 			/>
-			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
+			<div className="relative min-w-0 flex-1 overflow-hidden bg-surface-canvas">
 				<div
 					ref={viewport}
 					data-viewer-field=""
@@ -475,7 +479,7 @@ function ViewerCanvas({
 						</LabelField>
 					</div>
 					{frames.length === 0 && (
-						<div className="absolute inset-0 flex items-center justify-center text-muted type-detail">
+						<div className="absolute inset-0 flex items-center justify-center text-secondary type-detail">
 							nothing on this page yet
 						</div>
 					)}
@@ -493,16 +497,16 @@ function ViewerCanvas({
 				{toast !== null && (
 					<div
 						role="status"
-						className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[viewer-page-in_160ms_ease-out] rounded-sm border border-border-raised bg-raised px-3 py-2 text-text type-detail"
+						className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[viewer-page-in_160ms_ease-out] rounded-sm border border-line-strong bg-surface-raised px-3 py-2 text-primary type-detail"
 					>
 						{toast}
 					</div>
 				)}
-				<div className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-border bg-bg px-1">
+				<div className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-line-default bg-surface-window px-1">
 					<button
 						type="button"
 						aria-label="Zoom out"
-						className="rounded-xs px-2 py-1 text-muted transition-colors hover:text-text type-value"
+						className="rounded-xs px-2 py-1 text-secondary transition-colors hover:text-primary type-value"
 						onClick={() => zoomBy(1 / K_STEP)}
 					>
 						−
@@ -511,15 +515,15 @@ function ViewerCanvas({
 					<button
 						type="button"
 						aria-label="Zoom in"
-						className="rounded-xs px-2 py-1 text-muted transition-colors hover:text-text type-value"
+						className="rounded-xs px-2 py-1 text-secondary transition-colors hover:text-primary type-value"
 						onClick={() => zoomBy(K_STEP)}
 					>
 						+
 					</button>
-					<span className="h-3.5 w-px bg-border-raised" />
+					<span className="h-3.5 w-px bg-line-strong" />
 					<button
 						type="button"
-						className="rounded-xs px-2 py-1 text-muted transition-colors hover:text-text type-value"
+						className="rounded-xs px-2 py-1 text-secondary transition-colors hover:text-primary type-value"
 						onClick={fit}
 					>
 						fit
@@ -608,7 +612,7 @@ function FieldFrame({
 			style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h }}
 		>
 			<ShellClip camera={camera} near={near} frame={frame}>
-				<div className="absolute inset-0 bg-surface" />
+				<div className="absolute inset-0 bg-surface-panel" />
 				{cover !== undefined && (
 					<img
 						src={cover}
@@ -715,7 +719,7 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 		<button
 			type="button"
 			disabled={knocking}
-			className="flex h-8 cursor-pointer items-center rounded-sm border border-border-raised bg-bg px-3 text-text transition-colors hover:bg-surface active:scale-[0.97] type-control"
+			className="flex h-8 cursor-pointer items-center rounded-sm border border-line-strong bg-surface-window px-3 text-primary transition-colors hover:bg-surface-panel active:scale-[0.97] type-control"
 			onClick={async () => {
 				setKnocking(true);
 				const answered = await knock();
@@ -740,9 +744,9 @@ function SharedLine({ shared }: { shared: ViewerShared }) {
 	return (
 		<span
 			data-viewer-shared=""
-			className="flex items-center gap-2 rounded-sm border border-border bg-bg/90 py-1.5 pr-3 pl-1.5 text-muted backdrop-blur type-detail"
+			className="flex items-center gap-2 rounded-sm border border-line-default bg-surface-window/90 py-1.5 pr-3 pl-1.5 text-secondary backdrop-blur type-detail"
 		>
-			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-border-raised bg-surface text-[9px] text-text">
+			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[9px] text-primary">
 				{shared.by[0]?.toUpperCase()}
 			</span>
 			{shared.by} shared {saidList(shared.pages.map(sharedPageName))} with you
@@ -796,12 +800,12 @@ function PagesRail({
 		[tree, framesByPage, page],
 	);
 	return (
-		<aside className="flex w-[232px] shrink-0 flex-col border-border border-r bg-bg">
-			<div className="flex h-11 shrink-0 items-center gap-2 border-border border-b pr-2 pl-3.5">
+		<aside className="flex w-[232px] shrink-0 flex-col border-line-default border-r bg-surface-window">
+			<div className="flex h-11 shrink-0 items-center gap-2 border-line-default border-b pr-2 pl-3.5">
 				{project.team !== null && <TeamMark team={project.team} size={18} />}
 				<span className="truncate type-control">{project.project}</span>
 				{!edits(project.role) && project.shared === undefined && (
-					<span className="ml-auto shrink-0 text-muted type-detail">view only</span>
+					<span className="ml-auto shrink-0 text-secondary type-detail">view only</span>
 				)}
 			</div>
 			<nav aria-label="Pages" className="min-h-0 flex-1 overflow-y-auto py-2">
@@ -813,14 +817,14 @@ function PagesRail({
 							aria-current={row.page === page ? "page" : undefined}
 							onClick={() => onPage(row.page)}
 							className={cn(
-								"relative flex h-8 w-full items-center pr-3 text-left transition-colors hover:bg-surface/60",
-								row.page === page && "bg-surface",
+								"relative flex h-8 w-full items-center pr-3 text-left transition-colors hover:bg-surface-panel/60",
+								row.page === page && "bg-surface-panel",
 							)}
 							style={{ paddingLeft: contentX(row.depth) - 18 }}
 						>
 							<span
 								className={cn(
-									"flex h-8 w-4 shrink-0 items-center justify-center text-muted",
+									"flex h-8 w-4 shrink-0 items-center justify-center text-secondary",
 									row.open && "rotate-90",
 								)}
 							>
@@ -831,28 +835,28 @@ function PagesRail({
 							<FolderIcon
 								className={cn(
 									"mr-2 ml-0.5 h-3.5 w-3.5 shrink-0",
-									row.page === page ? "text-thread" : "text-muted",
+									row.page === page ? "text-accent" : "text-secondary",
 								)}
 							/>
 							<span
 								className={cn(
 									"min-w-0 flex-1 truncate type-value",
-									row.page === page ? "text-text" : "text-muted",
+									row.page === page ? "text-primary" : "text-secondary",
 								)}
 							>
 								{pageName(row.page)}
 							</span>
-							{!row.open && <span className="text-muted type-detail">{row.count}</span>}
+							{!row.open && <span className="text-secondary type-detail">{row.count}</span>}
 						</button>
 					) : row.kind === "frame" ? (
 						<div
 							key={`frame:${row.name}`}
-							className="group relative flex h-7 w-full items-center pr-2 hover:bg-surface"
+							className="group relative flex h-7 w-full items-center pr-2 hover:bg-surface-panel"
 						>
 							{row.page !== ROOT_PAGE && (
 								<>
 									<span
-										className="absolute w-px bg-border-raised"
+										className="absolute w-px bg-line-strong"
 										style={{
 											left: guideX(row.depth),
 											top: 0,
@@ -860,7 +864,7 @@ function PagesRail({
 										}}
 									/>
 									<span
-										className="absolute h-px w-2.5 bg-border-raised"
+										className="absolute h-px w-2.5 bg-line-strong"
 										style={{ left: guideX(row.depth), top: row.height / 2 }}
 									/>
 								</>
@@ -872,11 +876,11 @@ function PagesRail({
 								className="flex h-7 min-w-0 flex-1 items-center gap-2 text-left"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 								<span
 									className={cn(
 										"min-w-0 flex-1 truncate type-value",
-										marks.has(row.name) ? "text-text" : "text-muted",
+										marks.has(row.name) ? "text-primary" : "text-secondary",
 									)}
 								>
 									{pageName(row.name)}
@@ -887,7 +891,7 @@ function PagesRail({
 								type="button"
 								onClick={() => onPlay(row.name)}
 								aria-label={`Play ${pageName(row.name)}`}
-								className="ml-1 hidden h-5 items-center gap-1 rounded-xs px-1 text-muted hover:text-thread group-hover:flex type-detail"
+								className="ml-1 hidden h-5 items-center gap-1 rounded-xs px-1 text-secondary hover:text-accent group-hover:flex type-detail"
 							>
 								<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
 									<path d="M2 1.2 8.4 5 2 8.8Z" />
@@ -899,7 +903,9 @@ function PagesRail({
 				)}
 			</nav>
 			{project.account !== null && (
-				<div className="truncate border-border border-t px-3.5 py-3 text-muted type-detail">{project.account}</div>
+				<div className="truncate border-line-default border-t px-3.5 py-3 text-secondary type-detail">
+					{project.account}
+				</div>
 			)}
 		</aside>
 	);
@@ -916,7 +922,9 @@ function ZoomReadout({ camera }: { camera: CameraStore }) {
 		write(camera.get()?.k);
 		return camera.subscribe((now) => write(now?.k));
 	}, [camera]);
-	return <span ref={readout} data-viewer-zoom="" className="w-11 text-center text-muted tabular-nums type-value" />;
+	return (
+		<span ref={readout} data-viewer-zoom="" className="w-11 text-center text-secondary tabular-nums type-value" />
+	);
 }
 
 function useSize(ref: { current: HTMLElement | null }): { w: number; h: number } {

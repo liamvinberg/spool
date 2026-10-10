@@ -183,7 +183,7 @@ export function RailMenu({
 		<div
 			role="menu"
 			aria-label={`${named} menu`}
-			className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+			className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 			style={{
 				left: flipX ? menu.x - MENU_WIDTH : menu.x,
 				top: flipY ? menu.y - height : menu.y,

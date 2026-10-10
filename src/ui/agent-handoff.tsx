@@ -40,7 +40,7 @@ function CopyButton({ text, label, primary = false }: { text: string; label: str
 				{state === "copied" ? "Copied" : label}
 			</button>
 			{state === "failed" && (
-				<span role="alert" className="text-muted type-label">
+				<span role="alert" className="text-secondary type-label">
 					Could not copy. Select the text and copy it manually.
 				</span>
 			)}
@@ -68,19 +68,19 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 		<AgentDialog title="agent picker" wide onClose={onClose}>
 			{(id) => (
 				<>
-					<header className="border-border-raised border-b px-7 py-6">
+					<header className="border-line-strong border-b px-7 py-6">
 						<h2
 							id={id}
 							className="pr-5 font-medium text-[23px] leading-[30px] tracking-tight [overflow-wrap:anywhere]"
 						>
 							Open {project} in your agent
 						</h2>
-						<p className="mt-2 text-muted type-body">Edits appear on this canvas.</p>
+						<p className="mt-2 text-secondary type-body">Edits appear on this canvas.</p>
 					</header>
 					<div className="flex min-h-[312px] max-[540px]:flex-col">
 						<nav
 							aria-label="Agent apps"
-							className="w-[194px] shrink-0 border-border-raised border-r p-3 max-[540px]:flex max-[540px]:w-full max-[540px]:border-r-0 max-[540px]:border-b"
+							className="w-[194px] shrink-0 border-line-strong border-r p-3 max-[540px]:flex max-[540px]:w-full max-[540px]:border-r-0 max-[540px]:border-b"
 						>
 							{APPS.map((item) => (
 								<button
@@ -92,23 +92,23 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 										setNotice(null);
 									}}
 									className={cn(
-										"mb-1 flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left hover:bg-raised max-[540px]:flex-col max-[540px]:gap-1 max-[540px]:px-1 max-[540px]:text-center",
-										app === item.id ? "bg-raised text-text" : "text-muted",
+										"mb-1 flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left hover:bg-surface-raised max-[540px]:flex-col max-[540px]:gap-1 max-[540px]:px-1 max-[540px]:text-center",
+										app === item.id ? "bg-surface-raised text-primary" : "text-secondary",
 									)}
 								>
 									<AppLogo app={item.id} />
 									<span>
 										<span className="block type-control">{item.name}</span>
-										<span className="mt-0.5 block text-muted type-caption">{item.detail}</span>
+										<span className="mt-0.5 block text-secondary type-caption">{item.detail}</span>
 									</span>
 								</button>
 							))}
 						</nav>
 						<div key={app} className="min-w-0 flex-1 px-7 py-6">
 							<h3 className="type-heading">Open in {info?.name}</h3>
-							<div className="mt-4 flex items-center gap-2.5 rounded-sm border border-border-raised px-3 py-3">
-								<FolderIcon className="h-4 w-4 shrink-0 text-muted" />
-								<code className="select-text text-muted type-detail [overflow-wrap:anywhere]">{root}</code>
+							<div className="mt-4 flex items-center gap-2.5 rounded-sm border border-line-strong px-3 py-3">
+								<FolderIcon className="h-4 w-4 shrink-0 text-secondary" />
+								<code className="select-text text-secondary type-detail [overflow-wrap:anywhere]">{root}</code>
 							</div>
 							<div className="mt-4 flex flex-wrap items-start gap-3">
 								{app === "chatgpt" && available && (
@@ -140,22 +140,22 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 								<CopyButton primary={app !== "chatgpt" || !available} text={root} label="Copy project path" />
 							</div>
 							{app === "chatgpt" && notice && (
-								<p role="status" className="mt-3 text-muted type-label">
+								<p role="status" className="mt-3 text-secondary type-label">
 									{notice}
 								</p>
 							)}
-							<details className="mt-6 border-border-raised border-t pt-4 text-muted type-label">
-								<summary className="cursor-pointer hover:text-text">Setup details</summary>
+							<details className="mt-6 border-line-strong border-t pt-4 text-secondary type-label">
+								<summary className="cursor-pointer hover:text-primary">Setup details</summary>
 								<div className="space-y-4 pt-4">
 									{app === "claude" && (
 										<p>
-											In Claude: <span className="text-text">Code → Local → Select folder.</span> Use this
+											In Claude: <span className="text-primary">Code → Local → Select folder.</span> Use this
 											folder so edits reach the canvas.
 										</p>
 									)}
 									{app === "antigravity" && (
 										<p>
-											In Antigravity: <span className="text-text">New Project → Add Folder.</span> Choose
+											In Antigravity: <span className="text-primary">New Project → Add Folder.</span> Choose
 											this folder, then start in Local Mode.
 										</p>
 									)}
@@ -165,7 +165,7 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 												Open this folder locally. On macOS, you can also launch it from Terminal with the
 												Codex CLI:
 											</p>
-											<code className="block select-text text-text type-detail [overflow-wrap:anywhere]">
+											<code className="block select-text text-primary type-detail [overflow-wrap:anywhere]">
 												{agentAppCommand(root)}
 											</code>
 											<CopyButton text={agentAppCommand(root)} label="Copy command" />
@@ -177,7 +177,7 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 							</details>
 						</div>
 					</div>
-					<footer className="flex justify-end border-border-raised border-t px-7 py-4">
+					<footer className="flex justify-end border-line-strong border-t px-7 py-4">
 						<button type="button" className={AGENT_QUIET} onClick={onClose}>
 							Back to canvas
 						</button>

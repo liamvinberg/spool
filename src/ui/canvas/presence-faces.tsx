@@ -95,7 +95,7 @@ export function PresenceFaces({
 
 	return (
 		<div ref={faces} className="relative flex h-full items-center" data-presence-faces="">
-			<span className="mr-3 h-[18px] w-px bg-border-raised" />
+			<span className="mr-3 h-[18px] w-px bg-line-strong" />
 			<span className="relative flex h-[30px] items-center">
 				{shown.map((mate, i) => (
 					<button
@@ -118,7 +118,7 @@ export function PresenceFaces({
 					</button>
 				))}
 				{more > 0 && (
-					<span className="ml-[5px] flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-surface px-1 text-muted tabular-nums type-detail">
+					<span className="ml-[5px] flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-surface-panel px-1 text-secondary tabular-nums type-detail">
 						+{more}
 					</span>
 				)}
@@ -129,8 +129,8 @@ export function PresenceFaces({
 				aria-label="Who is here"
 				data-presence-count=""
 				className={cn(
-					"ml-1 flex h-8 items-center rounded-sm px-1.5 text-muted tabular-nums transition-colors duration-[140ms] type-detail hover:bg-surface",
-					open !== null && "bg-surface",
+					"ml-1 flex h-8 items-center rounded-sm px-1.5 text-secondary tabular-nums transition-colors duration-[140ms] type-detail hover:bg-surface-panel",
+					open !== null && "bg-surface-panel",
 				)}
 				onClick={(event) => {
 					const at = event.currentTarget.getBoundingClientRect();
@@ -144,7 +144,7 @@ export function PresenceFaces({
 					<div
 						ref={list}
 						data-presence-list=""
-						className="fixed z-50 flex w-[264px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+						className="fixed z-50 flex w-[264px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 						style={open}
 					>
 						{here.map((mate) => (
@@ -152,7 +152,7 @@ export function PresenceFaces({
 								key={mate.person.accountId}
 								type="button"
 								data-presence-row={mate.person.accountId}
-								className="flex h-[30px] items-center gap-2.5 rounded-sm px-2.5 text-left hover:bg-border-raised/60"
+								className="flex h-[30px] items-center gap-2.5 rounded-sm px-2.5 text-left hover:bg-line-strong/60"
 								onClick={() => follow(mate)}
 							>
 								<span className="relative h-[18px] w-[18px] shrink-0">
@@ -167,19 +167,19 @@ export function PresenceFaces({
 								<span
 									className={cn(
 										"min-w-0 flex-1 truncate type-control",
-										idle(mate, now) ? "text-muted" : "text-text",
+										idle(mate, now) ? "text-secondary" : "text-primary",
 									)}
 								>
 									{mate.person.name}
 								</span>
-								<span className="max-w-[140px] truncate text-muted type-detail" data-presence-row-says="">
+								<span className="max-w-[140px] truncate text-secondary type-detail" data-presence-row-says="">
 									{agentSays(mate) ?? (idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page))}
 								</span>
 							</button>
 						))}
-						<div className="mx-auto my-1 h-px w-[240px] bg-border-raised" />
-						<div className="flex h-[30px] items-center gap-2.5 rounded-sm px-2.5 text-muted">
-							<span className="h-[18px] w-[18px] shrink-0 rounded-full border border-border-raised" />
+						<div className="mx-auto my-1 h-px w-[240px] bg-line-strong" />
+						<div className="flex h-[30px] items-center gap-2.5 rounded-sm px-2.5 text-secondary">
+							<span className="h-[18px] w-[18px] shrink-0 rounded-full border border-line-strong" />
 							<span className="min-w-0 flex-1 type-control">You</span>
 							<span className="type-detail">{pageLabel(page)}</span>
 						</div>
@@ -218,9 +218,9 @@ export function Face({
 			<span
 				className="absolute inset-0 flex items-center justify-center rounded-full font-semibold text-[10px] uppercase leading-none"
 				style={{
-					background: away ? "var(--color-bg)" : color,
+					background: away ? "var(--color-surface-window)" : color,
 					color: away ? color : "#0e0e0e",
-					boxShadow: `0 0 0 2px var(--color-bg)${away ? `, inset 0 0 0 1.25px ${color}` : ""}`,
+					boxShadow: `0 0 0 2px var(--color-surface-window)${away ? `, inset 0 0 0 1.25px ${color}` : ""}`,
 				}}
 			>
 				{name.charAt(0)}

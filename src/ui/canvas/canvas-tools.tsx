@@ -38,7 +38,7 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 			<div
 				role="toolbar"
 				aria-label="canvas tools"
-				className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-border-raised bg-bg/90 p-1 backdrop-blur"
+				className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line-strong bg-surface-window/90 p-1 backdrop-blur"
 				onPointerDown={(event) => event.stopPropagation()}
 				onPointerMove={(event) => event.stopPropagation()}
 				onDoubleClick={(event) => event.stopPropagation()}
@@ -58,11 +58,13 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 							onClick={() => onTool(meta.id)}
 							className={cn(
 								"group relative flex h-9 w-9 items-center justify-center rounded-md",
-								active ? "bg-control text-text" : "text-muted hover:bg-surface hover:text-text",
+								active
+									? "bg-surface-control text-primary"
+									: "text-secondary hover:bg-surface-panel hover:text-primary",
 							)}
 						>
 							<meta.Icon className="h-[18px] w-[18px]" />
-							<span className="pointer-events-none absolute -top-8 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border-raised bg-bg px-2 py-1 text-muted opacity-0 transition-opacity group-hover:opacity-100 type-detail">
+							<span className="pointer-events-none absolute -top-8 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary opacity-0 transition-opacity group-hover:opacity-100 type-detail">
 								{meta.label}
 								{meta.key === null ? null : <Kbd>{meta.key}</Kbd>}
 								{meta.hold === null ? null : <span>· {meta.hold}</span>}
@@ -77,7 +79,7 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 
 function Kbd({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-border-raised bg-surface px-1 text-muted type-detail">
+		<span className="flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-line-strong bg-surface-panel px-1 text-secondary type-detail">
 			{children}
 		</span>
 	);

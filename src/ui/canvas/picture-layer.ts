@@ -289,7 +289,7 @@ export class PictureLayer {
 		this.loads.setBooting(booting);
 	}
 
-	/** The surface a frame stands on before and around its picture, as the shell's `bg-surface`. */
+	/** The surface a frame stands on before and around its picture, as the shell's `bg-surface-panel`. */
 	setSurface(rgba: readonly [number, number, number, number]): void {
 		if (rgba.every((value, i) => value === this.surface[i])) return;
 		this.surface = rgba;

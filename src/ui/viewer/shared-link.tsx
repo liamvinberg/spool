@@ -39,7 +39,7 @@ export function SharedLink({ config, project }: { config: ViewerConfig; project:
 
 	if (start === null)
 		return (
-			<div className="flex h-dvh items-center justify-center bg-bg text-muted type-detail">
+			<div className="flex h-dvh items-center justify-center bg-surface-window text-secondary type-detail">
 				Nothing here is ready yet
 			</div>
 		);
@@ -74,28 +74,28 @@ function FirstOpen({ project, shared, onOpen }: { project: string; shared: Viewe
 			role="dialog"
 			aria-label={`${project}, shared with you`}
 			data-first-open=""
-			className="fixed inset-x-2.5 z-40 animate-[viewer-page-in_160ms_ease-out] rounded-lg border border-border-raised bg-raised p-5 text-text shadow-[0_16px_48px_rgba(0,0,0,0.55)]"
+			className="fixed inset-x-2.5 z-40 animate-[viewer-page-in_160ms_ease-out] rounded-lg border border-line-strong bg-surface-raised p-5 text-primary shadow-[0_16px_48px_rgba(0,0,0,0.55)]"
 			style={{ bottom: "calc(10px + env(safe-area-inset-bottom))" }}
 		>
 			<div className="flex items-center gap-3">
-				<span className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-border-raised bg-bg">
+				<span className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-line-strong bg-surface-window">
 					<RibbonMark className="h-[22px] w-[17px]" />
 				</span>
 				<div className="min-w-0">
 					<div className="truncate type-heading">{project}</div>
-					<div className="text-muted type-detail">
+					<div className="text-secondary type-detail">
 						{shared.by} shared this
 						{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
 					</div>
 				</div>
 			</div>
-			<p className="mt-4 mb-5 text-muted type-control">
-				To open it like an app, tap <b className="text-text tracking-widest">···</b> in Safari’s bar, then{" "}
-				<b className="text-text">Share</b>, then <b className="text-text">Add to Home Screen</b>.
+			<p className="mt-4 mb-5 text-secondary type-control">
+				To open it like an app, tap <b className="text-primary tracking-widest">···</b> in Safari’s bar, then{" "}
+				<b className="text-primary">Share</b>, then <b className="text-primary">Add to Home Screen</b>.
 			</p>
 			<button
 				type="button"
-				className="h-11 w-full cursor-pointer rounded-md bg-text text-bg active:scale-[0.98] type-control"
+				className="h-11 w-full cursor-pointer rounded-md bg-primary text-surface-window active:scale-[0.98] type-control"
 				onClick={onOpen}
 			>
 				Open it here

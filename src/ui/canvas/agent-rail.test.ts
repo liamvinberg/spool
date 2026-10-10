@@ -2522,7 +2522,7 @@ describe("the queue", () => {
 		// dashed because it has not gone out, with a Take back under it (#364)
 		expect(queuedRows(canvas.host)).toEqual(["hold off on add-habit until i've seen home"]);
 		const row = canvas.host.querySelector("[data-agent-log] [data-agent-queued]");
-		expect(row?.querySelector("p")?.className).toContain("text-muted");
+		expect(row?.querySelector("p")?.className).toContain("text-secondary");
 		expect(row?.querySelector(".border-dashed")).not.toBeNull();
 		const back = row?.querySelector('button[aria-label^="take back"]');
 		expect(back?.textContent).toBe("Take back");

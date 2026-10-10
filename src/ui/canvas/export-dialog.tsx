@@ -59,7 +59,7 @@ export function ExportDialog({
 		}
 	};
 	return (
-		<div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/55">
+		<div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-window/55">
 			<div
 				ref={dialogRef}
 				role="dialog"
@@ -67,42 +67,42 @@ export function ExportDialog({
 				aria-labelledby="export-dialog-title"
 				aria-busy={exporting}
 				tabIndex={-1}
-				className="w-[380px] rounded-lg border border-border-raised bg-raised"
+				className="w-[380px] rounded-lg border border-line-strong bg-surface-raised"
 				onKeyDown={trapFocus}
 			>
-				<div className="flex items-center justify-between border-border-raised border-b px-5 py-4">
+				<div className="flex items-center justify-between border-line-strong border-b px-5 py-4">
 					<h2 id="export-dialog-title" className="font-medium type-title">
 						Export {count} frames
 					</h2>
-					<span className="text-muted type-value">{count} selected</span>
+					<span className="text-secondary type-value">{count} selected</span>
 				</div>
 
-				<div className="flex gap-2 border-border-raised border-b px-5 py-4">
+				<div className="flex gap-2 border-line-strong border-b px-5 py-4">
 					{visiblePreviews.map((frame, index) => (
 						<div
 							key={frame.name}
-							className="relative h-[70px] w-[40px] shrink-0 overflow-hidden rounded-xs border border-border-raised bg-surface"
+							className="relative h-[70px] w-[40px] shrink-0 overflow-hidden rounded-xs border border-line-strong bg-surface-panel"
 						>
 							{frame.thumbnail === undefined ? (
-								<span className="absolute inset-0 flex items-center justify-center text-muted type-preview">
+								<span className="absolute inset-0 flex items-center justify-center text-secondary type-preview">
 									{frame.name}
 								</span>
 							) : (
 								<Thumbnail {...frame.thumbnail} alt="" className="h-full w-full object-cover object-top" />
 							)}
-							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-bg/75 px-0.5 text-text type-preview">
+							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-surface-window/75 px-0.5 text-primary type-preview">
 								{index + 1}
 							</span>
 						</div>
 					))}
 					{count > visiblePreviews.length ? (
-						<div className="flex h-[70px] w-[40px] shrink-0 items-center justify-center rounded-xs border border-border-raised bg-surface text-muted type-value">
+						<div className="flex h-[70px] w-[40px] shrink-0 items-center justify-center rounded-xs border border-line-strong bg-surface-panel text-secondary type-value">
 							+{count - visiblePreviews.length}
 						</div>
 					) : null}
 					<div className="ml-2 flex min-w-0 flex-1 flex-col justify-center">
 						<span className="truncate type-control">{frames.map((frame) => frame.name).join(", ")}</span>
-						<span className="text-muted type-label">Canvas order, left to right</span>
+						<span className="text-secondary type-label">Canvas order, left to right</span>
 					</div>
 				</div>
 
@@ -124,16 +124,16 @@ export function ExportDialog({
 				</div>
 
 				{error === undefined ? null : (
-					<p role="alert" className="px-5 pb-3 text-thread-strong type-control">
+					<p role="alert" className="px-5 pb-3 text-accent-strong type-control">
 						{error}
 					</p>
 				)}
 
-				<div className="flex items-center justify-end gap-2 border-border-raised border-t px-4 py-3">
+				<div className="flex items-center justify-end gap-2 border-line-strong border-t px-4 py-3">
 					<button
 						type="button"
 						disabled={exporting}
-						className="flex h-8 items-center rounded-sm px-3 text-muted disabled:opacity-50 type-control"
+						className="flex h-8 items-center rounded-sm px-3 text-secondary disabled:opacity-50 type-control"
 						onClick={onCancel}
 					>
 						Cancel
@@ -142,7 +142,7 @@ export function ExportDialog({
 						ref={primaryRef}
 						type="button"
 						disabled={exporting}
-						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-thread-strong px-4 font-medium text-on-thread disabled:opacity-70 type-control"
+						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-accent-strong px-4 font-medium text-on-accent disabled:opacity-70 type-control"
 						onClick={() => onExport(format)}
 					>
 						{exporting ? "Exporting…" : "Export"}
@@ -170,7 +170,7 @@ function FormatOption({
 		<label
 			className={cn(
 				"flex items-center gap-3 rounded-md border px-3 py-2.5 text-left",
-				checked ? "border-thread bg-surface" : "border-transparent",
+				checked ? "border-accent bg-surface-panel" : "border-transparent",
 				disabled ? "cursor-default opacity-60" : "cursor-pointer",
 			)}
 		>
@@ -185,14 +185,14 @@ function FormatOption({
 			<span
 				className={cn(
 					"flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-					checked ? "border-thread" : "border-muted",
+					checked ? "border-accent" : "border-secondary",
 				)}
 			>
-				{checked ? <span className="h-2 w-2 rounded-full bg-thread" /> : null}
+				{checked ? <span className="h-2 w-2 rounded-full bg-accent" /> : null}
 			</span>
 			<span className="flex min-w-0 flex-1 flex-col">
 				<span className="type-control">{label}</span>
-				<span className="text-muted type-label">{description}</span>
+				<span className="text-secondary type-label">{description}</span>
 			</span>
 		</label>
 	);

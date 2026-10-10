@@ -1,0 +1,93 @@
+{
+	"src/ui/bar-end.tsx": {
+		"ad-hoc-motion": 2
+	},
+	"src/ui/canvas/agent-ask-view.tsx": {
+		"ad-hoc-motion": 7
+	},
+	"src/ui/canvas/agent-companion-layer.tsx": {
+		"ad-hoc-motion": 4
+	},
+	"src/ui/canvas/agent-composer.tsx": {
+		"ad-hoc-motion": 11
+	},
+	"src/ui/canvas/agent-float.tsx": {
+		"ad-hoc-motion": 5
+	},
+	"src/ui/canvas/agent-menu.tsx": {
+		"ad-hoc-motion": 11
+	},
+	"src/ui/canvas/agent-permissions.tsx": {
+		"ad-hoc-motion": 2
+	},
+	"src/ui/canvas/agent-rail.tsx": {
+		"ad-hoc-motion": 6
+	},
+	"src/ui/canvas/agent-said.tsx": {
+		"ad-hoc-motion": 1
+	},
+	"src/ui/canvas/agent-thread-list.tsx": {
+		"ad-hoc-motion": 7
+	},
+	"src/ui/canvas/agent-turn-foot.tsx": {
+		"ad-hoc-motion": 5
+	},
+	"src/ui/canvas/agent-wall.tsx": {
+		"ad-hoc-motion": 1
+	},
+	"src/ui/canvas/find-palette.tsx": {
+		"ad-hoc-motion": 2
+	},
+	"src/ui/canvas/pane-tabs.tsx": {
+		"ad-hoc-motion": 2
+	},
+	"src/ui/canvas/pane-window.tsx": {
+		"ad-hoc-motion": 4
+	},
+	"src/ui/canvas/placeholder-frame.tsx": {
+		"ad-hoc-motion": 1
+	},
+	"src/ui/canvas/presence-faces.tsx": {
+		"raw-colour": 2,
+		"ad-hoc-motion": 2
+	},
+	"src/ui/canvas/presence-layer.tsx": {
+		"raw-colour": 7,
+		"ad-hoc-motion": 5
+	},
+	"src/ui/canvas/sidebar.tsx": {
+		"ad-hoc-motion": 4
+	},
+	"src/ui/canvas/walk-layer.tsx": {
+		"ad-hoc-motion": 1
+	},
+	"src/ui/confirm-dialog.tsx": {
+		"raw-colour": 2
+	},
+	"src/ui/home.tsx": {
+		"raw-colour": 3,
+		"ad-hoc-motion": 3
+	},
+	"src/ui/project-icon.tsx": {
+		"raw-colour": 7
+	},
+	"src/ui/settings-sheet.tsx": {
+		"raw-colour": 6,
+		"ad-hoc-motion": 13
+	},
+	"src/ui/tab-strip.tsx": {
+		"raw-colour": 6
+	},
+	"src/ui/teams.tsx": {
+		"raw-colour": 6
+	},
+	"src/ui/update-toast.tsx": {
+		"ad-hoc-motion": 1
+	},
+	"src/ui/viewer/phone-play.tsx": {
+		"raw-colour": 10
+	},
+	"src/ui/viewer/viewer-player.tsx": {
+		"raw-colour": 1
+	}
+}

@@ -45,7 +45,7 @@ export type SettingPrimitive = boolean | string;
 
 /**
  * Which of the chrome's two looks is on. `system` follows the OS, live. The
- * look is one `color-scheme` on `:root`: every token in `ui.css` is declared
+ * look is one `color-scheme` on `:root`: every token in `theme.css` is declared
  * as `light-dark(light, dark)`, so the stylesheet picks the value and nothing
  * is swapped by hand.
  */
@@ -53,7 +53,7 @@ export const APPEARANCES = ["dark", "light", "system"] as const;
 export type Appearance = (typeof APPEARANCES)[number];
 
 /**
- * The interface's own colours: the tokens in `src/ui/ui.css` the chrome is
+ * The interface's own colours: the tokens in `src/ui/theme.css` the chrome is
  * built on, with the values it ships with, per look. The light is authored,
  * not inverted: off-white panels on a grey canvas with edges that show, since a
  * light chrome has no tonal depth to lean on. A test holds the stylesheet's
@@ -262,7 +262,7 @@ export interface SettingsSnapshot {
 
 /** The custom property a theme token lands on, the one the stylesheet already declares. */
 export function themeVariable(token: ThemeToken): string {
-	return `--color-${token}`;
+	return `--theme-${token}`;
 }
 
 /** Every token's value for one look: the file's where somebody moved it, the stylesheet's otherwise. */

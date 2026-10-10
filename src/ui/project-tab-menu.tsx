@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ProjectMark, useMarkTeam } from "./project-icon";
 import type { TabProject } from "./tab-strip";
 
-const ITEM = "flex h-[30px] items-center rounded-sm px-3 text-left text-text hover:bg-surface type-control";
+const ITEM = "flex h-[30px] items-center rounded-sm px-3 text-left text-primary hover:bg-surface-panel type-control";
 
 /**
  * A tab's menu opens on its project: the icon as the tab draws it and the name, over where it lives, a team (and
@@ -58,7 +58,7 @@ export function ProjectTabMenu({
 			ref={ref}
 			role="menu"
 			aria-label="Project actions"
-			className="fixed z-50 flex w-[244px] flex-col rounded-md border border-border-raised bg-raised p-unit"
+			className="fixed z-50 flex w-[244px] flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 			onKeyDown={(event) => {
 				if (["Escape", "Tab"].includes(event.key)) {
 					event.preventDefault();
@@ -88,16 +88,16 @@ export function ProjectTabMenu({
 					team={project.teamAddress}
 					paused={project.paused}
 					size={24}
-					cut="var(--color-raised)"
+					cut="var(--color-surface-raised)"
 				/>
 				<div className="flex min-w-0 flex-col gap-[1px]">
-					<span className="truncate text-text type-control">{project.name}</span>
-					<span className="truncate text-muted type-detail">
+					<span className="truncate text-primary type-control">{project.name}</span>
+					<span className="truncate text-secondary type-detail">
 						{team === undefined ? "On this Mac" : `${team.name}${project.paused ? " · sync paused" : ""}`}
 					</span>
 				</div>
 			</div>
-			<div className="mx-2 my-unit h-px bg-border-raised" />
+			<div className="mx-2 my-unit h-px bg-line-strong" />
 			{onChangeIcon && (
 				<button type="button" role="menuitem" className={ITEM} onClick={() => act(onChangeIcon)}>
 					Change icon…
@@ -111,7 +111,7 @@ export function ProjectTabMenu({
 			<button type="button" role="menuitem" className={ITEM} onClick={() => act(onExport)}>
 				Export project…
 			</button>
-			<div className="mx-2 my-unit h-px bg-border-raised" />
+			<div className="mx-2 my-unit h-px bg-line-strong" />
 			<button type="button" role="menuitem" className={ITEM} onClick={() => act(onCloseTab)}>
 				Close tab
 			</button>

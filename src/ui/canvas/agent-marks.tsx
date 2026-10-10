@@ -55,7 +55,7 @@ export function WaitingMark({ className, ...data }: { className?: string | undef
 			aria-hidden="true"
 			data-agent-waiting-mark=""
 			{...data}
-			className={cn("shrink-0", className ?? "h-3.5 w-3.5 text-text")}
+			className={cn("shrink-0", className ?? "h-3.5 w-3.5 text-primary")}
 		>
 			<circle className="animate-agent-breathe" cx="6" cy="6" r="4.6" stroke="currentColor" strokeWidth="1.4" />
 			<circle cx="6" cy="6" r="2.1" fill="currentColor" />
@@ -77,7 +77,7 @@ export function EndMark({
 			fill="none"
 			aria-hidden="true"
 			data-agent-end-mark={ending}
-			className={cn("h-3.5 w-3.5 shrink-0 text-muted", className)}
+			className={cn("h-3.5 w-3.5 shrink-0 text-secondary", className)}
 		>
 			{ending === "stopped" ? (
 				<rect x="4" y="4" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />

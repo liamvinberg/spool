@@ -37,14 +37,14 @@ import { MenuItem } from "./src/ui/canvas/context-menu";
 const root = document.createElement("section");
 root.id = "type-specimen";
 root.style.cssText = "position:fixed;inset:60px auto auto 20px;z-index:9999;width:420px;padding:16px";
-root.className = "bg-bg text-text";
+root.className = "bg-surface-window text-primary";
 document.body.append(root);
 createRoot(root).render(<>
  <h2 className="type-title font-semibold">Properties</h2>
  <Said text={"Åsa’s café order is **ready**. Keep the *emphasis* and open \`checkout--delivery-instructions-with-extra-notes\`."} />
  <p id="type-name" className="type-value truncate">checkout--delivery-instructions-with-extra-notes</p>
- <p id="type-detail" className="type-detail text-muted">4 changes · 18s</p>
- <textarea aria-label="Message" className="type-body text-text bg-surface placeholder:text-muted w-full" placeholder="Say what to change" />
+ <p id="type-detail" className="type-detail text-secondary">4 changes · 18s</p>
+ <textarea aria-label="Message" className="type-body text-primary bg-surface-panel placeholder:text-secondary w-full" placeholder="Say what to change" />
  <div role="menu"><MenuItem label="Open frame" keys="↵" onClick={() => {}} /></div>
 </>);`,
 			resolveDir: process.cwd(),
@@ -119,7 +119,7 @@ createRoot(root).render(<>
 		await page.evaluate((look) => {
 			document.documentElement.dataset.appearance = look;
 		}, appearance);
-		for (const surface of ["bg", "canvas", "surface", "raised"]) {
+		for (const surface of ["surface-window", "surface-canvas", "surface-panel", "surface-raised"]) {
 			const colors = await page.locator("#type-specimen").evaluate((element, name) => {
 				element.style.backgroundColor = `var(--color-${name})`;
 				return {

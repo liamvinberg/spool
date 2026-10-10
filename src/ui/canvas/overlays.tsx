@@ -260,7 +260,7 @@ export function SelectionOverlay({
 					key={`v${x}`}
 					camera={camera}
 					screen={(at) => ({ left: x * at.k + at.x })}
-					className="absolute inset-y-0 w-px bg-thread"
+					className="absolute inset-y-0 w-px bg-accent"
 				/>
 			))}
 			{marks.h.map((y) => (
@@ -268,7 +268,7 @@ export function SelectionOverlay({
 					key={`h${y}`}
 					camera={camera}
 					screen={(at) => ({ top: y * at.k + at.y })}
-					className="absolute inset-x-0 h-px bg-thread"
+					className="absolute inset-x-0 h-px bg-accent"
 				/>
 			))}
 			{marks.spans.map((span) => (
@@ -280,7 +280,7 @@ export function SelectionOverlay({
 					camera={camera}
 					screen={(at) => ringBox(at, hoveredFrame)}
 					data-frame-hover={hoveredFrame.name}
-					className="absolute border border-border-raised"
+					className="absolute border border-line-strong"
 					style={{
 						opacity: hovered?.visible === true ? 1 : 0,
 						transition: hovered?.visible === true ? "none" : "opacity 80ms ease-out",
@@ -299,7 +299,7 @@ export function SelectionOverlay({
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)
-						className={`absolute border-[1.5px] border-thread ${lit === name || lit === WHOLE_SELECTION ? "bg-thread/10" : ""}`}
+						className={`absolute border-[1.5px] border-accent ${lit === name || lit === WHOLE_SELECTION ? "bg-accent/10" : ""}`}
 					/>
 				);
 			})}
@@ -346,7 +346,7 @@ export function SelectionOverlay({
 							className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
 							style={{ cursor: HANDLE_CURSORS[corner] }}
 						>
-							<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
+							<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-accent bg-on-accent" />
 						</Follow>
 					))}
 					<Follow
@@ -355,10 +355,10 @@ export function SelectionOverlay({
 							const rect = toScreen(single, at);
 							return { left: rect.x + rect.w / 2, top: rect.y + rect.h + 14 };
 						}}
-						className="absolute flex items-center justify-center rounded-xs bg-thread-strong px-2 py-[3px]"
+						className="absolute flex items-center justify-center rounded-xs bg-accent-strong px-2 py-[3px]"
 						style={{ transform: "translateX(-50%)" }}
 					>
-						<span className="text-on-thread type-detail">{`${Math.round(single.w)} × ${Math.round(single.h)}`}</span>
+						<span className="text-on-accent type-detail">{`${Math.round(single.w)} × ${Math.round(single.h)}`}</span>
 					</Follow>
 				</>
 			)}
@@ -411,7 +411,7 @@ export function SelectionOverlay({
 										return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
 									}}
 									data-element-union=""
-									className="absolute border border-thread border-dashed opacity-60"
+									className="absolute border border-accent border-dashed opacity-60"
 								/>
 							)}
 							<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
@@ -463,12 +463,12 @@ export function SelectionOverlay({
 							// the chip stands outside the element it is about, which is over
 							// whatever is drawn under that: it says its piece and takes no
 							// press of its own, only the two it offers as doors (#321)
-							className="pointer-events-none absolute flex max-w-[360px] items-baseline gap-2 rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
+							className="pointer-events-none absolute flex max-w-[360px] items-baseline gap-2 rounded-md border border-line-strong bg-surface-raised px-2 py-1 text-secondary type-detail"
 						>
 							<span className="truncate">
 								{refused.refusal.says}
 								{refused.refusal.expression !== undefined && refused.attempted === undefined && (
-									<span className="text-thread-strong"> {refused.refusal.expression}</span>
+									<span className="text-accent-strong"> {refused.refusal.expression}</span>
 								)}
 							</span>
 							{refused.file !== undefined && onOpenFile !== undefined && (
@@ -478,7 +478,7 @@ export function SelectionOverlay({
 								<button
 									type="button"
 									data-hand-instead=""
-									className="pointer-events-auto shrink-0 text-thread-strong hover:underline"
+									className="pointer-events-auto shrink-0 text-accent-strong hover:underline"
 									onPointerDown={(event) => event.stopPropagation()}
 									onClick={refused.instead.act}
 								>
@@ -489,7 +489,7 @@ export function SelectionOverlay({
 								<button
 									type="button"
 									data-hand-ask
-									className="pointer-events-auto shrink-0 text-thread-strong hover:underline"
+									className="pointer-events-auto shrink-0 text-accent-strong hover:underline"
 									onPointerDown={(event) => event.stopPropagation()}
 									onClick={onAsk}
 								>
@@ -512,14 +512,14 @@ export function SelectionOverlay({
 								return { left: box.x, top: box.y, width: Math.max(box.w, 2), height: Math.max(box.h, 2) };
 							}}
 							data-drop-line=""
-							className="absolute rounded-full bg-thread"
+							className="absolute rounded-full bg-accent"
 						/>
 					);
 				})()}
 
 			{marquee !== null && (
 				<div
-					className="absolute border border-thread bg-thread/10"
+					className="absolute border border-accent bg-accent/10"
 					style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
 				/>
 			)}
@@ -547,10 +547,10 @@ function SpanBar({ camera, span }: { camera: CameraStore; span: SnapMarks["spans
 					: { left: line, top: from, width: girth, height: length };
 			}}
 			data-snap-span={span.axis}
-			className={`absolute border-thread ${flat ? "border-r border-l" : "border-t border-b"}`}
+			className={`absolute border-accent ${flat ? "border-r border-l" : "border-t border-b"}`}
 		>
 			<div
-				className={`absolute bg-thread ${flat ? "inset-x-0 h-px" : "inset-y-0 w-px"}`}
+				className={`absolute bg-accent ${flat ? "inset-x-0 h-px" : "inset-y-0 w-px"}`}
 				style={flat ? { top: SPAN_TICK_PX } : { left: SPAN_TICK_PX }}
 			/>
 		</Follow>
@@ -573,7 +573,7 @@ function NameLabel({ camera, name, rect }: { camera: CameraStore; name: string; 
 				return { left: box.x - 2, top: box.y - 2 };
 			}}
 			data-name-label={name}
-			className="absolute -translate-y-full whitespace-nowrap rounded-t-[3px] bg-thread px-1.5 py-px text-on-thread type-detail"
+			className="absolute -translate-y-full whitespace-nowrap rounded-t-[3px] bg-accent px-1.5 py-px text-on-accent type-detail"
 		>
 			{name}
 		</Follow>
@@ -633,7 +633,7 @@ function ClippedEdges({
 		<>
 			{(["left", "right", "top", "bottom"] as const).map((edge) =>
 				past[edge] ? (
-					<div key={edge} data-ring-clipped={edge} className="absolute bg-thread" style={place[edge]} />
+					<div key={edge} data-ring-clipped={edge} className="absolute bg-accent" style={place[edge]} />
 				) : null,
 			)}
 		</>
@@ -661,7 +661,7 @@ function SpillMark({ camera, rect, side }: { camera: CameraStore; rect: Box; sid
 					: { left: box.x - 2, top: box.y + box.h, width: box.w + 4, height: 2 };
 			}}
 			data-ring-spill={side}
-			className="absolute bg-thread"
+			className="absolute bg-accent"
 		/>
 	);
 }
@@ -705,7 +705,7 @@ function ElementOutline({
 				};
 			}}
 			{...(mark === true ? { "data-element-ring": "" } : {})}
-			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
+			className={`absolute border border-accent ${faded === true ? "opacity-50" : ""} ${lit === true ? "bg-accent/10" : ""}`}
 		/>
 	);
 }
@@ -729,7 +729,7 @@ function FileLink({
 			type="button"
 			data-hand-file={`${path}:${line}`}
 			title={`Copy ${path}:${line}`}
-			className="pointer-events-auto shrink-0 text-thread-strong hover:underline text-muted type-detail"
+			className="pointer-events-auto shrink-0 text-accent-strong hover:underline text-secondary type-detail"
 			onPointerDown={(event) => event.stopPropagation()}
 			onClick={() => onOpen(path, line)}
 		>

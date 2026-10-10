@@ -29,7 +29,7 @@ export function HomeIcon() {
 export function PlayIcon() {
 	return (
 		<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-			<path d="M2.5 1.5 L10.5 6 L2.5 10.5 Z" fill="var(--color-text)" />
+			<path d="M2.5 1.5 L10.5 6 L2.5 10.5 Z" fill="var(--color-primary)" />
 		</svg>
 	);
 }
@@ -49,7 +49,7 @@ export function BackIcon() {
 			<path
 				d="M10 3 L5 8 L10 13"
 				fill="none"
-				stroke="var(--color-muted)"
+				stroke="var(--color-secondary)"
 				strokeWidth="1.5"
 				strokeLinecap="round"
 				strokeLinejoin="round"

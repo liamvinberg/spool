@@ -38,22 +38,22 @@ export function SyncStateLine({ state }: { state: SyncState }) {
 		<section
 			aria-label="Sync"
 			data-sync-state=""
-			className="absolute top-4 left-4 z-30 flex max-h-[40vh] w-[380px] flex-col gap-2 overflow-auto rounded-md border border-border-raised bg-raised p-3 type-control"
+			className="absolute top-4 left-4 z-30 flex max-h-[40vh] w-[380px] flex-col gap-2 overflow-auto rounded-md border border-line-strong bg-surface-raised p-3 type-control"
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
 			{ended !== null && (
-				<p className="text-text">No longer synced with {ended}. This is now a project on this Mac only.</p>
+				<p className="text-primary">No longer synced with {ended}. This is now a project on this Mac only.</p>
 			)}
 			{paused !== null && (
-				<p className="text-text">Sync paused: {paused}. Changes stay on this Mac until it lifts.</p>
+				<p className="text-primary">Sync paused: {paused}. Changes stay on this Mac until it lifts.</p>
 			)}
 			{held.length > 0 && (
 				<>
 					<button
 						type="button"
 						aria-expanded={open}
-						className="self-start text-text hover:text-muted"
+						className="self-start text-primary hover:text-secondary"
 						onClick={() => setOpen((was) => !was)}
 					>
 						{held.length === 1 ? "1 file" : `${held.length} files`} didn't travel
@@ -61,8 +61,8 @@ export function SyncStateLine({ state }: { state: SyncState }) {
 					{open && (
 						<ul className="flex flex-col gap-1">
 							{held.map(({ path, why }) => (
-								<li key={path} className="text-muted type-detail">
-									<span className="font-mono text-text">{path}</span> {why}
+								<li key={path} className="text-secondary type-detail">
+									<span className="font-mono text-primary">{path}</span> {why}
 								</li>
 							))}
 						</ul>

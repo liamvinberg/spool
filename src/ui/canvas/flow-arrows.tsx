@@ -305,11 +305,11 @@ export function FlowArrows({
 				<g
 					key={arrow.key}
 					fill="none"
-					stroke="var(--color-thread)"
+					stroke="var(--color-accent)"
 					opacity={arrow.faint ? FAINT_OPACITY : undefined}
 				>
 					<path />
-					<path fill="var(--color-thread)" stroke="none" />
+					<path fill="var(--color-accent)" stroke="none" />
 				</g>
 			))}
 		</svg>

@@ -102,7 +102,7 @@ export function TeamMark({
 			className={cn(
 				"grid shrink-0 place-items-center",
 				small ? "font-semibold leading-none" : "font-medium",
-				paused ? "text-muted" : "text-[#EDEDED]",
+				paused ? "text-secondary" : "text-[#EDEDED]",
 			)}
 			style={{
 				width: size,
@@ -111,7 +111,7 @@ export function TeamMark({
 				background: paused ? (cut ?? "transparent") : hue,
 				fontSize: small ? Math.max(6.5, Math.round(size * 0.56)) : Math.round(size * 0.52),
 				boxShadow:
-					[paused ? "inset 0 0 0 1.25px var(--color-muted)" : undefined, gap].filter(Boolean).join(", ") ||
+					[paused ? "inset 0 0 0 1.25px var(--color-secondary)" : undefined, gap].filter(Boolean).join(", ") ||
 					undefined,
 			}}
 		>
@@ -121,8 +121,8 @@ export function TeamMark({
 }
 
 const MENU_ROW =
-	"flex h-[36px] w-full items-center gap-[10px] rounded-[6px] px-[9px] text-left text-text type-control hover:bg-surface";
-const RULE = <div className="mx-[8px] my-[5px] h-px bg-border-raised" />;
+	"flex h-[36px] w-full items-center gap-[10px] rounded-[6px] px-[9px] text-left text-primary type-control hover:bg-surface-panel";
+const RULE = <div className="mx-[8px] my-[5px] h-px bg-line-strong" />;
 
 /**
  * One team at a time: the switcher picks it, and your own projects are one more entry. A team you only
@@ -148,14 +148,14 @@ export function TeamSwitcher({
 		<div className="pj-team-switch relative mb-[18px] [@media(max-width:720px)]:hidden">
 			<button
 				type="button"
-				className="flex h-[40px] w-full items-center gap-[10px] rounded-[7px] border border-border-raised px-[10px] text-left hover:bg-surface aria-expanded:bg-surface"
+				className="flex h-[40px] w-full items-center gap-[10px] rounded-[7px] border border-line-strong px-[10px] text-left hover:bg-surface-panel aria-expanded:bg-surface-panel"
 				aria-expanded={open}
 				aria-haspopup="menu"
 				onClick={() => setOpen(!open)}
 			>
 				{current ? <TeamMark team={current} /> : <OwnMark />}
 				<span className="min-w-0 flex-1 truncate type-control">{current ? current.name : "Your projects"}</span>
-				<span className="h-[10px] w-[10px] shrink-0 rotate-90 text-muted [&>svg]:h-full [&>svg]:w-full">
+				<span className="h-[10px] w-[10px] shrink-0 rotate-90 text-secondary [&>svg]:h-full [&>svg]:w-full">
 					<ChevronIcon />
 				</span>
 			</button>
@@ -169,7 +169,7 @@ export function TeamSwitcher({
 					/>
 					<div
 						role="menu"
-						className="absolute top-[calc(100%+6px)] left-0 z-30 w-[260px] animate-menu-in rounded-[9px] border border-border-raised bg-raised p-[5px]"
+						className="absolute top-[calc(100%+6px)] left-0 z-30 w-[260px] animate-menu-in rounded-[9px] border border-line-strong bg-surface-raised p-[5px]"
 					>
 						{teams.teams.map((team) =>
 							team.role === "viewer" ? (
@@ -184,19 +184,19 @@ export function TeamSwitcher({
 								>
 									<TeamMark team={team} />
 									<span className="min-w-0 flex-1 truncate">{team.name}</span>
-									<span className="shrink-0 text-muted type-detail">viewer ↗</span>
+									<span className="shrink-0 text-secondary type-detail">viewer ↗</span>
 								</a>
 							) : (
 								<button
 									key={team.id}
 									type="button"
 									role="menuitem"
-									className={cn(MENU_ROW, team.address === current?.address && "bg-surface")}
+									className={cn(MENU_ROW, team.address === current?.address && "bg-surface-panel")}
 									onClick={() => choose(team.address)}
 								>
 									<TeamMark team={team} />
 									<span className="min-w-0 flex-1 truncate">{team.name}</span>
-									<span className="shrink-0 text-muted type-detail">
+									<span className="shrink-0 text-secondary type-detail">
 										{team.people} {team.people === 1 ? "person" : "people"}
 									</span>
 									{team.address === current?.address && <CheckIcon className="h-[12px] w-[12px] shrink-0" />}
@@ -207,7 +207,7 @@ export function TeamSwitcher({
 						<button
 							type="button"
 							role="menuitem"
-							className={cn(MENU_ROW, !current && "bg-surface")}
+							className={cn(MENU_ROW, !current && "bg-surface-panel")}
 							onClick={() => choose(null)}
 						>
 							<OwnMark />
@@ -224,7 +224,7 @@ export function TeamSwitcher({
 								onNewTeam();
 							}}
 						>
-							<span className="grid w-[20px] place-items-center text-muted [&>svg]:h-[10px] [&>svg]:w-[10px]">
+							<span className="grid w-[20px] place-items-center text-secondary [&>svg]:h-[10px] [&>svg]:w-[10px]">
 								<PlusIcon />
 							</span>
 							<span className="flex-1">New team…</span>
@@ -238,7 +238,7 @@ export function TeamSwitcher({
 
 function OwnMark() {
 	return (
-		<span className="grid h-[20px] w-[20px] shrink-0 place-items-center text-muted">
+		<span className="grid h-[20px] w-[20px] shrink-0 place-items-center text-secondary">
 			<FrameIcon className="h-[16px] w-[16px]" />
 		</span>
 	);
@@ -266,13 +266,13 @@ export function InviteLine({
 	};
 	return (
 		<div
-			className="pj-invite-line flex min-h-[48px] items-center gap-[12px] border-border border-y py-[8px]"
+			className="pj-invite-line flex min-h-[48px] items-center gap-[12px] border-line-default border-y py-[8px]"
 			aria-busy={busy}
 		>
 			<TeamMark team={invite.team} />
 			<span className="min-w-0 flex-1 type-control">
 				{invite.invitedBy} invited you to {invite.team.name}.{" "}
-				<span className="text-muted">
+				<span className="text-secondary">
 					{notice ??
 						(invite.role === "viewer"
 							? "You’d watch their projects live in the browser."
@@ -281,7 +281,7 @@ export function InviteLine({
 			</span>
 			<button
 				type="button"
-				className="px-[10px] text-muted type-control hover:text-text"
+				className="px-[10px] text-secondary type-control hover:text-primary"
 				disabled={busy}
 				onClick={() => run(onDecline)}
 			>
@@ -299,13 +299,13 @@ export function TeamNav({ team, page, onPage }: { team: CloudTeam; page: TeamPag
 	const item = (to: TeamPage, icon: ReactNode, label: string, count?: number) => (
 		<button
 			type="button"
-			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-muted type-control [&:hover]:bg-surface [&:hover]:text-text aria-[current=page]:bg-surface aria-[current=page]:text-text [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0"
+			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-secondary type-control [&:hover]:bg-surface-panel [&:hover]:text-primary aria-[current=page]:bg-surface-panel aria-[current=page]:text-primary [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0"
 			aria-current={page === to ? "page" : undefined}
 			onClick={() => onPage(to)}
 		>
 			{icon}
 			<span className="flex-1">{label}</span>
-			{count !== undefined && <span className="text-muted type-detail">{count}</span>}
+			{count !== undefined && <span className="text-secondary type-detail">{count}</span>}
 		</button>
 	);
 	return (
@@ -436,7 +436,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 			<header className="pj-heading mb-[10px] flex h-[35px] items-center">
 				<h1 className="type-page font-medium">People</h1>
 			</header>
-			<p className="mb-[22px] text-muted type-detail">
+			<p className="mb-[22px] text-secondary type-detail">
 				{people ? `${people.members.length} ${people.members.length === 1 ? "person" : "people"}` : " "}
 			</p>
 			<InviteForm
@@ -448,25 +448,28 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 					{notice}
 				</p>
 			)}
-			<ul className="flex flex-col border-border border-b">
+			<ul className="flex flex-col border-line-default border-b">
 				{people?.members.map((person) => (
-					<li key={person.accountId} className="flex h-[58px] items-center gap-[14px] border-border border-t">
+					<li
+						key={person.accountId}
+						className="flex h-[58px] items-center gap-[14px] border-line-default border-t"
+					>
 						<Initial email={person.email} />
 						<span className="min-w-0 flex-1 truncate type-control">
 							{person.email}
-							{person.you && <span className="text-muted"> (you)</span>}
+							{person.you && <span className="text-secondary"> (you)</span>}
 						</span>
 						{admin ? (
 							<span className="relative shrink-0">
 								<button
 									type="button"
-									className="flex h-[30px] items-center gap-[8px] rounded-[6px] border border-transparent px-[10px] type-control hover:border-border-raised aria-expanded:border-border-raised aria-expanded:bg-raised"
+									className="flex h-[30px] items-center gap-[8px] rounded-[6px] border border-transparent px-[10px] type-control hover:border-line-strong aria-expanded:border-line-strong aria-expanded:bg-surface-raised"
 									aria-expanded={menu === person.accountId}
 									aria-label={`Role of ${person.email}`}
 									onClick={() => setMenu(menu === person.accountId ? null : person.accountId)}
 								>
 									{ROLE_LABEL[person.role]}
-									<span className="h-[9px] w-[9px] rotate-90 text-muted [&>svg]:h-full [&>svg]:w-full">
+									<span className="h-[9px] w-[9px] rotate-90 text-secondary [&>svg]:h-full [&>svg]:w-full">
 										<ChevronIcon />
 									</span>
 								</button>
@@ -480,7 +483,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 										/>
 										<div
 											role="menu"
-											className="absolute top-[36px] right-0 z-30 w-[220px] animate-menu-in rounded-[9px] border border-border-raised bg-raised p-[5px]"
+											className="absolute top-[36px] right-0 z-30 w-[220px] animate-menu-in rounded-[9px] border border-line-strong bg-surface-raised p-[5px]"
 										>
 											{(["admin", "editor", "viewer"] as const).map((role) => (
 												<button
@@ -500,7 +503,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 											<button
 												type="button"
 												role="menuitem"
-												className={cn(MENU_ROW, "pl-[33px] text-thread")}
+												className={cn(MENU_ROW, "pl-[33px] text-accent")}
 												onClick={() => remove(person)}
 											>
 												{person.you ? `Leave ${team.name}` : `Remove from ${team.name}`}
@@ -511,7 +514,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 							</span>
 						) : (
 							<>
-								<span className="w-[86px] shrink-0 text-muted type-control">{ROLE_LABEL[person.role]}</span>
+								<span className="w-[86px] shrink-0 text-secondary type-control">{ROLE_LABEL[person.role]}</span>
 								<span className="w-[80px] shrink-0 text-right">
 									{person.you && (
 										<button type="button" className={HOME_ACTION} onClick={() => remove(person)}>
@@ -527,17 +530,17 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 			{people && people.invites.length > 0 && (
 				<>
 					<h2 className="mt-[34px] mb-[8px] flex items-baseline gap-[10px] type-title">
-						Invited <span className="text-muted type-detail">{people.invites.length}</span>
+						Invited <span className="text-secondary type-detail">{people.invites.length}</span>
 					</h2>
 					<ul className="flex flex-col">
 						{people.invites.map((invite) => (
-							<li key={invite.id} className="flex h-[58px] items-center gap-[14px] border-border border-t">
-								<span className="h-[30px] w-[30px] shrink-0 rounded-full border border-muted/60 border-dashed" />
+							<li key={invite.id} className="flex h-[58px] items-center gap-[14px] border-line-default border-t">
+								<span className="h-[30px] w-[30px] shrink-0 rounded-full border border-secondary/60 border-dashed" />
 								<span className="flex min-w-0 flex-1 flex-col">
-									<span className={cn("truncate type-control", invite.expired && "text-muted")}>
+									<span className={cn("truncate type-control", invite.expired && "text-secondary")}>
 										{invite.email}
 									</span>
-									<span className="truncate text-muted type-detail">
+									<span className="truncate text-secondary type-detail">
 										{ROLE_LABEL[invite.role].toLowerCase()} ·{" "}
 										{invite.expired
 											? "expired"
@@ -548,7 +551,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 									<>
 										<button
 											type="button"
-											className="h-[28px] rounded-[6px] px-[8px] text-muted type-control hover:bg-raised hover:text-text"
+											className="h-[28px] rounded-[6px] px-[8px] text-secondary type-control hover:bg-surface-raised hover:text-primary"
 											onClick={() =>
 												void act(
 													() => teamActions.resendInvite(team.address, invite.id),
@@ -560,7 +563,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 										</button>
 										<button
 											type="button"
-											className="h-[28px] rounded-[6px] px-[8px] text-muted type-control hover:bg-raised hover:text-text"
+											className="h-[28px] rounded-[6px] px-[8px] text-secondary type-control hover:bg-surface-raised hover:text-primary"
 											onClick={() => void act(() => teamActions.cancelInvite(team.address, invite.id))}
 										>
 											Cancel
@@ -604,7 +607,7 @@ function daysLeft(expiresAt: number): string {
 function Initial({ email }: { email: string }) {
 	return (
 		<span
-			className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-control text-text uppercase type-detail"
+			className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-surface-control text-primary uppercase type-detail"
 			aria-hidden="true"
 		>
 			{email.slice(0, 1)}
@@ -642,16 +645,16 @@ function InviteForm({
 				onChange={(event) => setEmail(event.target.value)}
 				placeholder="Email address"
 				aria-label="Email address"
-				className="h-[38px] min-w-0 flex-1 rounded-[7px] border border-border-raised bg-bg px-[11px] text-text outline-none type-control placeholder:text-muted focus:border-muted"
+				className="h-[38px] min-w-0 flex-1 rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none type-control placeholder:text-secondary focus:border-secondary"
 			/>
 			<select
 				value={role}
 				aria-label="Role"
 				onChange={(event) => setRole(event.target.value as TeamRole)}
-				className="h-[38px] cursor-pointer rounded-[7px] border border-border-raised bg-transparent px-[9px] text-text type-control"
+				className="h-[38px] cursor-pointer rounded-[7px] border border-line-strong bg-transparent px-[9px] text-primary type-control"
 			>
 				{(admin ? (["admin", "editor", "viewer"] as const) : (["viewer"] as const)).map((option) => (
-					<option key={option} value={option} className="bg-surface">
+					<option key={option} value={option} className="bg-surface-panel">
 						as {ROLE_LABEL[option]}
 					</option>
 				))}
@@ -697,16 +700,18 @@ export function TeamSettingsPage({
 		onChanged();
 	};
 	const row = (label: string, says: string | null, control: ReactNode, top = true) => (
-		<div className={cn("flex items-center justify-between gap-[40px] py-[18px]", top && "border-border border-t")}>
+		<div
+			className={cn("flex items-center justify-between gap-[40px] py-[18px]", top && "border-line-default border-t")}
+		>
 			<span className="flex min-w-0 flex-col gap-[4px]">
 				<span className="type-control">{label}</span>
-				{says && <span className="max-w-[400px] text-muted type-label">{says}</span>}
+				{says && <span className="max-w-[400px] text-secondary type-label">{says}</span>}
 			</span>
 			<span className="flex shrink-0 items-center gap-[8px]">{control}</span>
 		</div>
 	);
 	const field =
-		"h-[34px] rounded-[7px] border border-border-raised bg-bg px-[11px] text-text outline-none type-control focus:border-muted";
+		"h-[34px] rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none type-control focus:border-secondary";
 	return (
 		<div className="pj-team-settings max-w-[720px]">
 			<header className="pj-heading mb-[28px] flex h-[35px] items-center">
@@ -781,9 +786,9 @@ export function TeamSettingsPage({
 					}}
 				>
 					<span className={cn(field, "flex w-[260px] items-center")}>
-						<span className="text-muted type-value">{new URL(origin).host}/</span>
+						<span className="text-secondary type-value">{new URL(origin).host}/</span>
 						<input
-							className="min-w-0 flex-1 bg-transparent text-text outline-none type-value"
+							className="min-w-0 flex-1 bg-transparent text-primary outline-none type-value"
 							value={address}
 							maxLength={40}
 							aria-label="Address"
@@ -800,7 +805,7 @@ export function TeamSettingsPage({
 				"Everyone loses access at once. Gone for good after 30 days.",
 				<button
 					type="button"
-					className="inline-flex h-[34px] items-center rounded-[7px] border border-thread/50 px-[13px] text-thread type-control hover:bg-thread/10"
+					className="inline-flex h-[34px] items-center rounded-[7px] border border-accent/50 px-[13px] text-accent type-control hover:bg-accent/10"
 					onClick={() => setDeleting(true)}
 				>
 					Delete {team.name}…
@@ -876,7 +881,7 @@ export function NewTeamDialog({
 					value={name}
 					maxLength={64}
 					onChange={(event) => setName(event.target.value)}
-					className="h-[38px] rounded-[7px] border border-border-raised bg-bg px-[11px] text-text outline-none focus:border-muted"
+					className="h-[38px] rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none focus:border-secondary"
 				/>
 			</label>
 		</ConfirmDialog>
