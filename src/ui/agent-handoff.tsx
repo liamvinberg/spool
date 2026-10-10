@@ -66,7 +66,7 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 	const busy = useRef(false);
 	const info = APPS.find((item) => item.id === app);
 	return (
-		<AgentDialog title="agent picker" wide onClose={onClose}>
+		<AgentDialog title="agent picker" onClose={onClose}>
 			{(id) => (
 				<>
 					<header className="border-line-strong border-b px-7 py-6">

@@ -14,10 +14,12 @@ import {
 } from "./api";
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
-import { CheckIcon, ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
+import { ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
+import { NavItem } from "./primitives/navigation";
+import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 
 /**
  * Home's teams: the switcher at the top of the sidebar, the invite line above the covers, and a team's
@@ -121,10 +123,6 @@ export function TeamMark({
 	);
 }
 
-const MENU_ROW =
-	"flex h-[36px] w-full items-center gap-[10px] rounded-[6px] px-[9px] text-left text-primary type-control hover:bg-surface-panel";
-const RULE = <div className="mx-[8px] my-[5px] h-px bg-line-strong" />;
-
 /**
  * One team at a time: the switcher picks it, and your own projects are one more entry. A team you only
  * watch opens in the browser, since its projects never come to this Mac.
@@ -168,69 +166,49 @@ export function TeamSwitcher({
 						aria-label="Close menu"
 						onClick={() => setOpen(false)}
 					/>
-					<div
-						role="menu"
-						className="absolute top-[calc(100%+6px)] left-0 z-30 w-[260px] animate-menu-in rounded-[9px] border border-line-strong bg-surface-raised p-[5px]"
-					>
+					<Menu className="absolute top-[calc(100%+6px)] left-0 z-30">
 						{teams.teams.map((team) =>
 							team.role === "viewer" ? (
-								<a
+								<MenuItem
 									key={team.id}
-									role="menuitem"
-									className={MENU_ROW}
 									href={`${teams.origin}/${team.address}`}
 									target="_blank"
 									rel="noreferrer"
+									icon={<TeamMark team={team} size={16} />}
+									label={team.name}
+									meta="viewer ↗"
 									onClick={() => setOpen(false)}
-								>
-									<TeamMark team={team} />
-									<span className="min-w-0 flex-1 truncate">{team.name}</span>
-									<span className="shrink-0 text-secondary type-detail">viewer ↗</span>
-								</a>
+								/>
 							) : (
-								<button
+								<MenuItem
 									key={team.id}
-									type="button"
-									role="menuitem"
-									className={cn(MENU_ROW, team.address === current?.address && "bg-surface-panel")}
+									icon={<TeamMark team={team} size={16} />}
+									label={team.name}
+									meta={`${team.people} ${team.people === 1 ? "person" : "people"}`}
+									aria-current={team.address === current?.address || undefined}
+									className="aria-[current]:bg-state-selected-strong"
 									onClick={() => choose(team.address)}
-								>
-									<TeamMark team={team} />
-									<span className="min-w-0 flex-1 truncate">{team.name}</span>
-									<span className="shrink-0 text-secondary type-detail">
-										{team.people} {team.people === 1 ? "person" : "people"}
-									</span>
-									{team.address === current?.address && <CheckIcon className="h-[12px] w-[12px] shrink-0" />}
-								</button>
+								/>
 							),
 						)}
-						{teams.teams.length > 0 && RULE}
-						<button
-							type="button"
-							role="menuitem"
-							className={cn(MENU_ROW, !current && "bg-surface-panel")}
+						{teams.teams.length > 0 && <MenuSeparator />}
+						<MenuItem
+							icon={<FrameIcon className="size-4" />}
+							label="Your projects"
+							aria-current={!current || undefined}
+							className="aria-[current]:bg-state-selected-strong"
 							onClick={() => choose(null)}
-						>
-							<OwnMark />
-							<span className="min-w-0 flex-1 truncate">Your projects</span>
-							{!current && <CheckIcon className="h-[12px] w-[12px] shrink-0" />}
-						</button>
-						{RULE}
-						<button
-							type="button"
-							role="menuitem"
-							className={MENU_ROW}
+						/>
+						<MenuSeparator />
+						<MenuItem
+							icon={<PlusIcon />}
+							label="New team…"
 							onClick={() => {
 								setOpen(false);
 								onNewTeam();
 							}}
-						>
-							<span className="grid w-[20px] place-items-center text-secondary [&>svg]:h-[10px] [&>svg]:w-[10px]">
-								<PlusIcon />
-							</span>
-							<span className="flex-1">New team…</span>
-						</button>
-					</div>
+						/>
+					</Menu>
 				</>
 			)}
 		</div>
@@ -293,16 +271,7 @@ export function InviteLine({
 /** A team's nav under the switcher: Projects, People, and Settings for admins. */
 export function TeamNav({ team, page, onPage }: { team: CloudTeam; page: TeamPage; onPage: (page: TeamPage) => void }) {
 	const item = (to: TeamPage, icon: ReactNode, label: string, count?: number) => (
-		<button
-			type="button"
-			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-secondary type-control [&:hover]:bg-surface-panel [&:hover]:text-primary aria-[current=page]:bg-surface-panel aria-[current=page]:text-primary [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0"
-			aria-current={page === to ? "page" : undefined}
-			onClick={() => onPage(to)}
-		>
-			{icon}
-			<span className="flex-1">{label}</span>
-			{count !== undefined && <span className="text-secondary type-detail">{count}</span>}
-		</button>
+		<NavItem icon={icon} label={label} meta={count} current={page === to} onClick={() => onPage(to)} />
 	);
 	return (
 		<>
@@ -472,34 +441,23 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 											aria-label="Close menu"
 											onClick={() => setMenu(null)}
 										/>
-										<div
-											role="menu"
-											className="absolute top-[36px] right-0 z-30 w-[220px] animate-menu-in rounded-[9px] border border-line-strong bg-surface-raised p-[5px]"
-										>
+										<Menu className="absolute top-[36px] right-0 z-30">
 											{(["admin", "editor", "viewer"] as const).map((role) => (
-												<button
+												<MenuItem
 													key={role}
-													type="button"
-													role="menuitem"
-													className={MENU_ROW}
+													checked={role === person.role}
+													label={ROLE_LABEL[role]}
 													onClick={() => changeRole(person, role)}
-												>
-													<span className="w-[14px] shrink-0">
-														{role === person.role && <CheckIcon className="h-[12px] w-[12px]" />}
-													</span>
-													{ROLE_LABEL[role]}
-												</button>
+												/>
 											))}
-											{RULE}
-											<button
-												type="button"
-												role="menuitem"
-												className={cn(MENU_ROW, "pl-[33px] text-accent")}
+											<MenuSeparator />
+											<MenuItem
+												inset
+												destructive
+												label={person.you ? `Leave ${team.name}` : `Remove from ${team.name}`}
 												onClick={() => remove(person)}
-											>
-												{person.you ? `Leave ${team.name}` : `Remove from ${team.name}`}
-											</button>
-										</div>
+											/>
+										</Menu>
 									</>
 								)}
 							</span>
@@ -850,7 +808,7 @@ export function NewTeamDialog({
 			}}
 			onClose={onClose}
 		>
-			<Field label="Name" className="mb-1">
+			<Field label="Name">
 				{(id) => <TextField size="lg" value={name} onValueChange={setName} inputProps={{ id, maxLength: 64 }} />}
 			</Field>
 		</ConfirmDialog>

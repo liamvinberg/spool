@@ -1,13 +1,8 @@
 import { Fragment, type KeyboardEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
+import { FLOATING } from "../primitives/overlays";
 import { FADE_OUT_MS, useLeaving } from "./agent-motion";
-
-/**
- * What floats over the rail (#364): one step up from the window the rail is drawn in, on
- * a hairline and a soft shadow. Never the raised grey, and never the accent.
- */
-export const FLOAT = "rounded-md border border-line-default bg-surface-panel shadow-agent-float";
 
 /**
  * A float that comes and goes: it rises off the composer (`up`) or drops from the header
@@ -35,7 +30,8 @@ export function Float({
 			data-float={from}
 			data-leaving={leaving ? "" : undefined}
 			className={cn(
-				FLOAT,
+				"rounded-md",
+				FLOATING,
 				from === "up"
 					? leaving
 						? "animate-agent-float-out"
@@ -310,7 +306,7 @@ export function Versioned({
 			) : (
 				<>
 					{runs.slice(0, first).map(drawn)}
-					<mark className="rounded-[2px] bg-surface-raised text-primary">
+					<mark className="rounded-[2px] bg-state-selected-strong text-primary">
 						{runs.slice(first, last + 1).map((run, at) => drawn(run, first + at))}
 					</mark>
 					{runs.slice(last + 1).map((run, at) => drawn(run, last + 1 + at))}
@@ -345,7 +341,7 @@ export function CommandLine({ command, label }: { command: string; label?: strin
 							() => setCopied("failed"),
 						);
 					}}
-					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-primary type-caption"
+					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-state-hover-raised hover:text-primary type-caption"
 				>
 					{copied === "copied" ? <CheckIcon className="h-3 w-3" /> : "Copy"}
 				</button>

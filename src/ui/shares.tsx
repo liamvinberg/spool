@@ -13,6 +13,7 @@ import {
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
 import { TextField } from "./primitives/inputs";
+import { Popover } from "./primitives/overlays";
 
 /** Said on the window whenever this tab changed a project's shares, so every Shared control reads them again. */
 export const SHARES_CHANGED = "spool-shares-change";
@@ -55,7 +56,7 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 	/** Where the popover hangs, under the button: on the page's top layer, over whatever the window holds. */
 	const [at, setAt] = useState<{ top: number; right: number } | null>(null);
 	const box = useRef<HTMLDivElement | null>(null);
-	const popover = useRef<HTMLElement | null>(null);
+	const popover = useRef<HTMLDivElement | null>(null);
 	useEffect(() => {
 		if (!open) return;
 		const away = (event: PointerEvent) => {
@@ -93,11 +94,11 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 			{open &&
 				at !== null &&
 				createPortal(
-					<section
+					<Popover
 						ref={popover}
-						role="dialog"
 						aria-label="Shared"
-						className="fixed z-50 w-[344px] animate-menu-in overflow-hidden rounded-md border border-line-strong bg-surface-raised py-1"
+						pad="none"
+						className="fixed z-50 w-[344px] overflow-hidden py-1"
 						style={at}
 					>
 						{shares.shares.map((share) =>
@@ -122,7 +123,7 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 							),
 						)}
 						{said !== null && <p className="px-3.5 pt-1 pb-2 text-accent type-caption">{said}</p>}
-					</section>,
+					</Popover>,
 					document.body,
 				)}
 		</div>

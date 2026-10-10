@@ -33,7 +33,7 @@ it("loads real typefaces and keeps prose, names and supporting text readable", {
 		stdin: {
 			contents: `import { createRoot } from "react-dom/client";
 import { Said } from "./src/ui/canvas/agent-said";
-import { MenuItem } from "./src/ui/canvas/context-menu";
+import { MenuItem } from "./src/ui/primitives/overlays";
 const root = document.createElement("section");
 root.id = "type-specimen";
 root.style.cssText = "position:fixed;inset:60px auto auto 20px;z-index:9999;width:420px;padding:16px";
@@ -45,7 +45,7 @@ createRoot(root).render(<>
  <p id="type-name" className="type-value truncate">checkout--delivery-instructions-with-extra-notes</p>
  <p id="type-detail" className="type-detail text-secondary">4 changes · 18s</p>
  <textarea aria-label="Message" className="type-body text-primary bg-surface-panel placeholder:text-secondary w-full" placeholder="Say what to change" />
- <div role="menu"><MenuItem label="Open frame" keys="↵" onClick={() => {}} /></div>
+ <div role="menu"><MenuItem label="Open frame" shortcut="↵" onClick={() => {}} /></div>
 </>);`,
 			resolveDir: process.cwd(),
 			loader: "tsx",

@@ -48,8 +48,8 @@ export interface Layout {
 	readonly right: Side;
 }
 
-/** a closed side's rail of icons */
-export const RAIL_WIDTH = 40;
+/** a closed side's rail of icons, as wide as the IconRail that draws it */
+export const RAIL_WIDTH = 44;
 
 export const LIMITS = {
 	/** groups on one side */

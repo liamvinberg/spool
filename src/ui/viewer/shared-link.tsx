@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { pageName, pageUnder, ROOT_PAGE } from "../../page-path";
 import { saidAgo } from "../../share-view";
 import { mergeOrder } from "../canvas/order";
+import { cn } from "../cn";
 import { RibbonMark } from "../icons";
+import { MODAL } from "../primitives/overlays";
 import { standalone } from "./phone";
 import { PhonePlay } from "./phone-play";
 import { address, locate, type ViewerConfig, type ViewerProject, type ViewerShared } from "./source";
@@ -74,7 +76,10 @@ function FirstOpen({ project, shared, onOpen }: { project: string; shared: Viewe
 			role="dialog"
 			aria-label={`${project}, shared with you`}
 			data-first-open=""
-			className="fixed inset-x-2.5 z-40 animate-[viewer-page-in_160ms_ease-out] rounded-lg border border-line-strong bg-surface-raised p-5 text-primary shadow-[0_16px_48px_rgba(0,0,0,0.55)]"
+			className={cn(
+				"fixed inset-x-2.5 z-40 animate-[viewer-page-in_160ms_ease-out] rounded-lg p-5 text-primary",
+				MODAL,
+			)}
 			style={{ bottom: "calc(10px + env(safe-area-inset-bottom))" }}
 		>
 			<div className="flex items-center gap-3">

@@ -7,6 +7,8 @@ import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, Rib
 import { Button, ButtonGroup, IconButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
+import { NavItem } from "./primitives/navigation";
+import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -98,20 +100,24 @@ export function Home({
 						{team ? (
 							team.nav
 						) : (
-							<NavigationButton icon={<FrameIcon />} active onClick={() => setQuery("")}>
-								Projects
-							</NavigationButton>
+							<NavItem
+								icon={<FrameIcon />}
+								label="Projects"
+								current
+								className={NARROW_NAV}
+								onClick={() => setQuery("")}
+							/>
 						)}
 					</nav>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
-							<NavigationButton
+							<NavItem
 								icon={<CogIcon />}
+								label="Settings"
+								className={NARROW_NAV}
 								onClick={onSettings}
 								title={`Settings ${hotkeyKey("app.settings")}`}
-							>
-								Settings
-							</NavigationButton>
+							/>
 						</nav>
 						{account ?? <span>On this Mac</span>}
 					</div>
@@ -531,9 +537,9 @@ function ProjectTile({
 				onClick={onToggleMenu}
 			/>
 			{menuOpen && (
-				<div
+				<Menu
 					ref={menuRef}
-					className="fixed z-20 flex w-[196px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
+					className="fixed z-20"
 					style={
 						menuAt === null
 							? { visibility: "hidden", top: 0, left: 0 }
@@ -610,7 +616,7 @@ function ProjectTile({
 							void navigator.clipboard?.writeText(project.root);
 						}}
 					/>
-					<div className="mx-2 my-unit h-px bg-line-strong" />
+					<MenuSeparator />
 					<MenuItem
 						label="Hide from Spool"
 						onClick={() => {
@@ -620,14 +626,14 @@ function ProjectTile({
 					/>
 					<MenuItem
 						label={`Move to ${systemTrashName()}…`}
-						danger
+						destructive
 						onClick={() => {
 							manageRef.current?.focus();
 							onCloseMenu();
 							onTrash();
 						}}
 					/>
-				</div>
+				</Menu>
 			)}
 		</article>
 	);
@@ -635,7 +641,7 @@ function ProjectTile({
 
 /** How close to the window's edge a cover's menu may sit before it opens upwards. */
 const MENU_MARGIN = 8;
-const MENU_WIDTH = 196;
+const MENU_WIDTH = 200;
 
 interface MenuPlace {
 	top: number;
@@ -656,47 +662,9 @@ export function menuPlace(tile: DOMRect, manage: DOMRect, height: number): MenuP
 	};
 }
 
-function NavigationButton({
-	icon,
-	children,
-	onClick,
-	active = false,
-	title,
-}: {
-	icon: ReactNode;
-	children: ReactNode;
-	onClick: () => void;
-	active?: boolean;
-	title?: string;
-}) {
-	return (
-		<button
-			type="button"
-			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-secondary type-control [&:hover]:bg-surface-panel [&:hover]:text-primary aria-[current=page]:bg-surface-panel aria-[current=page]:text-primary [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0 [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:[&>span]:hidden"
-			aria-current={active ? "page" : undefined}
-			onClick={onClick}
-			title={title}
-		>
-			{icon}
-			<span>{children}</span>
-		</button>
-	);
-}
-
-function MenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
-	return (
-		<button
-			type="button"
-			className={cn(
-				"flex h-[30px] items-center rounded-sm px-3 text-left hover:bg-surface-panel type-control",
-				danger ? "text-[light-dark(#bb2614,#ff604b)]" : "text-primary",
-			)}
-			onClick={onClick}
-		>
-			{label}
-		</button>
-	);
-}
+/** a narrow window keeps the sidebar's icons and drops their words */
+const NARROW_NAV =
+	"[@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden";
 
 /**
  * A removal reflows every card after it. Where the browser can morph that (view

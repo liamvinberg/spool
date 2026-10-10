@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { fetchSyncState, type SyncState } from "../api";
+import { Popover } from "../primitives/overlays";
 
 /** Said whenever a project's sync changes, so its canvas reads it again. */
 export const SYNC_CHANGED = "spool-sync-change";
@@ -35,10 +36,11 @@ export function SyncStateLine({ state }: { state: SyncState }) {
 	const { ended, paused, held } = state;
 	if (ended === null && paused === null && held.length === 0) return null;
 	return (
-		<section
+		<Popover
+			role="region"
 			aria-label="Sync"
 			data-sync-state=""
-			className="absolute top-4 left-4 z-30 flex max-h-[40vh] w-[380px] flex-col gap-2 overflow-auto rounded-md border border-line-strong bg-surface-raised p-3 type-control"
+			className="absolute top-4 left-4 z-30 max-h-[40vh] w-toast gap-2 overflow-auto type-control"
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
@@ -69,6 +71,6 @@ export function SyncStateLine({ state }: { state: SyncState }) {
 					)}
 				</>
 			)}
-		</section>
+		</Popover>
 	);
 }

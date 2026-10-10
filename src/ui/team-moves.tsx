@@ -162,7 +162,7 @@ export function GetItDialog({
 			}}
 			onClose={onClose}
 		>
-			<RadioGroup label="Where it goes" className="mb-4">
+			<RadioGroup label="Where it goes">
 				{project.checkouts.map((path) =>
 					choice(
 						path,
