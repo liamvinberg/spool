@@ -1,7 +1,4 @@
 {
-	"src/ui/bar-end.tsx": {
-		"ad-hoc-motion": 2
-	},
 	"src/ui/canvas/agent-ask-view.tsx": {
 		"ad-hoc-motion": 7
 	},
@@ -9,19 +6,19 @@
 		"ad-hoc-motion": 4
 	},
 	"src/ui/canvas/agent-composer.tsx": {
-		"ad-hoc-motion": 11
+		"ad-hoc-motion": 6
 	},
 	"src/ui/canvas/agent-float.tsx": {
 		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-menu.tsx": {
-		"ad-hoc-motion": 10
+		"ad-hoc-motion": 9
 	},
 	"src/ui/canvas/agent-permissions.tsx": {
 		"ad-hoc-motion": 2
 	},
 	"src/ui/canvas/agent-rail.tsx": {
-		"ad-hoc-motion": 6
+		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-said.tsx": {
 		"ad-hoc-motion": 1
@@ -38,11 +35,8 @@
 	"src/ui/canvas/find-palette.tsx": {
 		"ad-hoc-motion": 2
 	},
-	"src/ui/canvas/pane-tabs.tsx": {
-		"ad-hoc-motion": 2
-	},
 	"src/ui/canvas/pane-window.tsx": {
-		"ad-hoc-motion": 4
+		"ad-hoc-motion": 2
 	},
 	"src/ui/canvas/placeholder-frame.tsx": {
 		"ad-hoc-motion": 1
@@ -61,9 +55,6 @@
 	"src/ui/canvas/walk-layer.tsx": {
 		"ad-hoc-motion": 1
 	},
-	"src/ui/confirm-dialog.tsx": {
-		"raw-colour": 2
-	},
 	"src/ui/home.tsx": {
 		"raw-colour": 3,
 		"ad-hoc-motion": 3
@@ -73,7 +64,7 @@
 	},
 	"src/ui/settings-sheet.tsx": {
 		"raw-colour": 6,
-		"ad-hoc-motion": 10
+		"ad-hoc-motion": 9
 	},
 	"src/ui/tab-strip.tsx": {
 		"raw-colour": 6
