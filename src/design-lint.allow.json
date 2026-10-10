@@ -1,7 +1,4 @@
 {
-	"src/ui/bar-end.tsx": {
-		"ad-hoc-motion": 2
-	},
 	"src/ui/canvas/agent-ask-view.tsx": {
 		"ad-hoc-motion": 7
 	},
@@ -9,19 +6,19 @@
 		"ad-hoc-motion": 4
 	},
 	"src/ui/canvas/agent-composer.tsx": {
-		"ad-hoc-motion": 10
+		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-float.tsx": {
 		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-menu.tsx": {
-		"ad-hoc-motion": 9
+		"ad-hoc-motion": 8
 	},
 	"src/ui/canvas/agent-permissions.tsx": {
 		"ad-hoc-motion": 1
 	},
 	"src/ui/canvas/agent-rail.tsx": {
-		"ad-hoc-motion": 6
+		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-said.tsx": {
 		"ad-hoc-motion": 1
@@ -38,22 +35,19 @@
 	"src/ui/canvas/find-palette.tsx": {
 		"ad-hoc-motion": 2
 	},
-	"src/ui/canvas/pane-tabs.tsx": {
-		"ad-hoc-motion": 2
-	},
 	"src/ui/canvas/pane-window.tsx": {
-		"ad-hoc-motion": 4
+		"ad-hoc-motion": 2
 	},
 	"src/ui/canvas/placeholder-frame.tsx": {
 		"ad-hoc-motion": 1
 	},
 	"src/ui/canvas/presence-faces.tsx": {
-		"raw-colour": 2,
-		"ad-hoc-motion": 2
+		"ad-hoc-motion": 2,
+		"raw-colour": 2
 	},
 	"src/ui/canvas/presence-layer.tsx": {
-		"raw-colour": 7,
-		"ad-hoc-motion": 5
+		"ad-hoc-motion": 5,
+		"raw-colour": 7
 	},
 	"src/ui/canvas/sidebar.tsx": {
 		"ad-hoc-motion": 4
@@ -61,19 +55,16 @@
 	"src/ui/canvas/walk-layer.tsx": {
 		"ad-hoc-motion": 1
 	},
-	"src/ui/confirm-dialog.tsx": {
-		"raw-colour": 2
-	},
 	"src/ui/home.tsx": {
-		"raw-colour": 3,
-		"ad-hoc-motion": 3
+		"ad-hoc-motion": 3,
+		"raw-colour": 3
 	},
 	"src/ui/project-icon.tsx": {
 		"raw-colour": 7
 	},
 	"src/ui/settings-sheet.tsx": {
-		"raw-colour": 6,
-		"ad-hoc-motion": 8
+		"ad-hoc-motion": 7,
+		"raw-colour": 6
 	},
 	"src/ui/tab-strip.tsx": {
 		"raw-colour": 6

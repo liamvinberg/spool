@@ -15,6 +15,7 @@ import { type DirectoryRequest, desktopWindow } from "./desktop-window";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
 import { crumbsOf, shortPath } from "./picker-model";
+import { Button, IconButton } from "./primitives/actions";
 import { Checkbox } from "./primitives/selection";
 import { useWriteSetting } from "./settings";
 import { useFolderBrowser } from "./use-folder-browser";
@@ -275,14 +276,10 @@ export function ProjectPicker({
 						{parent === undefined ? <span>Loading…</span> : <PickerPath path={display(parent)} />}
 						<ChevronIcon />
 					</button>
-					<button
-						type="submit"
-						className="picker-primary inline-flex items-center justify-center shrink-0 gap-[12px] h-[30px] py-0 px-[10px] bg-primary text-surface-window rounded-sm [font:var(--type-control)] disabled:opacity-35 disabled:cursor-default [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--color-primary)_85%,var(--color-secondary))]"
-						disabled={!canCreate}
-					>
+					<Button type="submit" variant="primary" disabled={!canCreate}>
 						{busy ? "Creating…" : "Create project"}
 						<ArrowRightIcon />
-					</button>
+					</Button>
 				</div>
 				{nativeChoose && chosenLocation !== null && (
 					<Checkbox
@@ -342,27 +339,26 @@ export function ProjectPicker({
 			{browsing && nativeChoose ? (
 				<div className="picker-native flex items-center justify-between gap-[16px] p-[20px] [font:var(--type-title)]">
 					<span>{step === "location" ? "Choose a save location" : "Open a spool project"}</span>
-					<button
-						type="button"
-						className="picker-primary inline-flex items-center justify-center shrink-0 gap-[12px] h-[30px] py-0 px-[10px] bg-primary text-surface-window rounded-sm [font:var(--type-control)] disabled:opacity-35 disabled:cursor-default [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--color-primary)_85%,var(--color-secondary))]"
+					<Button
+						variant="primary"
 						disabled={busy}
 						onClick={() => chooseNative(step === "location" ? "location" : "open", true)}
 					>
 						{busy ? "Choosing…" : "Choose folder…"}
-					</button>
+					</Button>
 				</div>
 			) : browsing ? (
 				<>
-					<div className="picker-field flex items-center gap-[8px] h-[52px] py-0 px-[16px] [&>button]:flex [&>button]:justify-center [&>button]:items-center [&>button]:shrink-0 [&>button]:size-[24px] [&>button]:rounded-sm [&>button]:text-secondary [&>button:first-child]:ml-[-4px] [&>button:hover]:bg-surface-raised [&>button:hover]:text-primary [&>.picker-plus]:text-accent [&_.picker-search-icon]:size-[12px] [&_.picker-search-icon]:text-secondary [&_.picker-search-icon]:opacity-60 [&_input]:[outline:none] [&_input]:min-w-0 [&_input]:flex-1 [&_input]:text-primary [&_input]:bg-transparent [&_input]:caret-accent [&_input]:[font:var(--type-code-input)] [&_input::placeholder]:text-secondary [&_input::placeholder]:opacity-50 [&>code]:[font:var(--type-detail)] [&>code]:text-secondary">
-						<button
-							type="button"
-							aria-label="Parent folder"
+					<div className="picker-field flex items-center gap-[8px] h-[52px] py-0 px-[16px] [&_.picker-search-icon]:size-[12px] [&_.picker-search-icon]:text-secondary [&_.picker-search-icon]:opacity-60 [&_input]:[outline:none] [&_input]:min-w-0 [&_input]:flex-1 [&_input]:text-primary [&_input]:bg-transparent [&_input]:caret-accent [&_input]:[font:var(--type-code-input)] [&_input::placeholder]:text-secondary [&_input::placeholder]:opacity-50 [&>code]:[font:var(--type-detail)] [&>code]:text-secondary">
+						<IconButton
+							size="sm"
+							icon={<BackIcon />}
+							label="Parent folder"
 							title="Go up one folder"
+							className="-ml-1"
 							disabled={busy || folder.pending || !folder.listing?.parent}
 							onClick={up}
-						>
-							<BackIcon />
-						</button>
+						/>
 						<SearchIcon className="picker-search-icon" />
 						{!folder.query && (
 							<nav
@@ -417,10 +413,10 @@ export function ProjectPicker({
 								}
 							}}
 						/>
-						<button
-							type="button"
-							className="picker-plus"
-							aria-label={step === "location" ? "New folder here" : "New project inside this folder"}
+						<IconButton
+							size="sm"
+							icon={<PlusIcon />}
+							label={step === "location" ? "New folder here" : "New project inside this folder"}
 							title={
 								folder.listing
 									? `New ${step === "location" ? "folder" : "project"} inside ${display(folder.listing.path)}`
@@ -438,9 +434,7 @@ export function ProjectPicker({
 									move("name");
 								}
 							}}
-						>
-							<PlusIcon />
-						</button>
+						/>
 					</div>
 					<div
 						ref={folder.list}
@@ -498,15 +492,10 @@ export function ProjectPicker({
 								/>
 							)}
 						</div>
-						<button
-							type="button"
-							className="picker-primary inline-flex items-center justify-center shrink-0 gap-[12px] h-[30px] py-0 px-[10px] bg-primary text-surface-window rounded-sm [font:var(--type-control)] disabled:opacity-35 disabled:cursor-default [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--color-primary)_85%,var(--color-secondary))]"
-							disabled={busy || folder.pending || target === undefined}
-							onClick={confirm}
-						>
+						<Button variant="primary" disabled={busy || folder.pending || target === undefined} onClick={confirm}>
 							{busy ? "Working…" : label}
 							<ArrowRightIcon />
-						</button>
+						</Button>
 					</div>
 				</>
 			) : step === "directory" ? (
@@ -517,10 +506,8 @@ export function ProjectPicker({
 					}}
 				>
 					<fieldset disabled={busy}>
-						<div className="picker-small-heading flex items-center gap-[10px] pt-[14px] px-[16px] pb-0 [font:var(--type-control)] [&>button]:text-secondary [&>button]:p-[4px] [&>button]:ml-[-4px] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:gap-[6px]">
-							<button type="button" aria-label="Back" onClick={back}>
-								<BackIcon />
-							</button>
+						<div className="picker-small-heading flex items-center gap-[10px] pt-[14px] px-[16px] pb-0 [font:var(--type-control)] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:gap-[6px]">
+							<IconButton size="sm" icon={<BackIcon />} label="Back" className="-ml-1" onClick={back} />
 							<span>New folder</span>
 						</div>
 						<div className="picker-name-field flex items-center gap-[14px] py-[16px] px-[20px] h-[64px] [&>svg]:size-[20px] [&>svg]:text-accent [&_input]:w-full [&_input]:[outline:none] [&_input]:bg-transparent [&_input]:text-primary [&_input]:[font:var(--type-title)] [&_input]:caret-accent [&_input::placeholder]:text-secondary [.picker-expanded_&]:h-[58px] [.picker-expanded_&_input]:[font:var(--type-control)] [.picker-expanded_&>svg]:size-[18px]">
@@ -535,23 +522,24 @@ export function ProjectPicker({
 						</div>
 						<div className="picker-name-bottom flex justify-between gap-[16px] pt-0 px-[20px] pb-[18px] items-center [@media(max-width:480px)]:flex-wrap">
 							<code>{folder.listing && display(folder.listing.path)}</code>
-							<button
-								type="submit"
-								className="picker-primary inline-flex items-center justify-center shrink-0 gap-[12px] h-[30px] py-0 px-[10px] bg-primary text-surface-window rounded-sm [font:var(--type-control)] disabled:opacity-35 disabled:cursor-default [&:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--color-primary)_85%,var(--color-secondary))]"
-								disabled={!isSafeName(directoryName.trim())}
-							>
+							<Button type="submit" variant="primary" disabled={!isSafeName(directoryName.trim())}>
 								{busy ? "Creating…" : "Create folder"}
 								<ArrowRightIcon />
-							</button>
+							</Button>
 						</div>
 					</fieldset>
 				</form>
 			) : step === "name" ? (
 				<>
-					<div className="picker-small-heading flex items-center gap-[10px] pt-[14px] px-[16px] pb-0 [font:var(--type-control)] [&>button]:text-secondary [&>button]:p-[4px] [&>button]:ml-[-4px] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:gap-[6px]">
-						<button type="button" aria-label="Back" disabled={busy} onClick={back}>
-							<BackIcon />
-						</button>
+					<div className="picker-small-heading flex items-center gap-[10px] pt-[14px] px-[16px] pb-0 [font:var(--type-control)] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:gap-[6px]">
+						<IconButton
+							size="sm"
+							icon={<BackIcon />}
+							label="Back"
+							className="-ml-1"
+							disabled={busy}
+							onClick={back}
+						/>
 						<span>New project here</span>
 						<span className="picker-untitled-hint ml-auto text-secondary [font:var(--type-label)] [@media(max-width:480px)]:ml-0">
 							Blank name becomes untitled.

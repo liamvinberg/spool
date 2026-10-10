@@ -3,12 +3,7 @@ import { createPortal } from "react-dom";
 import { cn } from "./cn";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { CloseIcon } from "./icons";
-
-export const AGENT_PRIMARY =
-	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm bg-primary px-4 text-surface-window type-control hover:bg-primary/90 disabled:opacity-50";
-export const AGENT_SECONDARY =
-	"inline-flex min-h-10 items-center justify-center gap-2 rounded-sm border border-line-strong px-4 text-primary type-control hover:bg-surface-raised";
-export const AGENT_QUIET = "rounded-sm text-secondary type-control hover:text-primary";
+import { IconButton } from "./primitives/actions";
 
 /** The agent handoff's modal, with native focus containment. */
 export function AgentDialog({
@@ -52,14 +47,12 @@ export function AgentDialog({
 			onPointerDown={(event) => event.stopPropagation()}
 		>
 			{children(id)}
-			<button
-				type="button"
-				className="agent-dialog-close absolute top-[12px] right-[12px] grid place-items-center w-[28px] h-[28px] rounded-[4px] text-secondary [&:hover]:bg-surface-raised [&:hover]:text-primary [&_svg]:w-[16px] [&_svg]:h-[16px]"
-				aria-label={`Close ${title}`}
+			<IconButton
+				icon={<CloseIcon />}
+				label={`Close ${title}`}
+				className="agent-dialog-close absolute top-[12px] right-[12px]"
 				onClick={onClose}
-			>
-				<CloseIcon />
-			</button>
+			/>
 		</dialog>,
 		document.body,
 	);

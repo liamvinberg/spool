@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { cn } from "../cn";
 import { CheckIcon, PlusIcon } from "../icons";
+import { Button } from "../primitives/actions";
 import { Dot } from "../primitives/display";
 import { SearchField, SelectTrigger } from "../primitives/inputs";
 import { Segment, SegmentedControl } from "../primitives/selection";
@@ -588,13 +589,9 @@ function NewThreadNote({ engine, onAccept }: { engine: string; onAccept: () => v
 			<p className="min-w-0 flex-1 text-secondary type-label">
 				Starts a new chat on {engineName(engine)}. This one stays in your chats.
 			</p>
-			<button
-				type="button"
-				onClick={onAccept}
-				className="h-7 shrink-0 rounded-sm bg-primary px-2.5 text-surface-window transition-opacity duration-150 hover:opacity-90 type-control"
-			>
+			<Button variant="primary" onClick={onAccept}>
 				New chat
-			</button>
+			</Button>
 		</div>
 	);
 }

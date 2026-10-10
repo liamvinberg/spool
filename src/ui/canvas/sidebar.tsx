@@ -30,6 +30,7 @@ import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { DotsIcon, FolderIcon } from "../icons";
+import { IconButton } from "../primitives/actions";
 import { Count } from "../primitives/display";
 import { TextField } from "../primitives/inputs";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
@@ -48,7 +49,7 @@ import {
 	withPageOrder,
 } from "./order";
 import { framesOnPage, pageLabel, pageOf } from "./pages";
-import { PANE_VERB, PaneMore } from "./pane-tabs";
+import { PaneMore } from "./pane-tabs";
 import { PaneActions } from "./pane-window";
 import { PagePicker } from "./rail-move";
 import {
@@ -1580,15 +1581,7 @@ export function CanvasSidebar({
 						{clipboard.length} copied
 					</span>
 				) : null}
-				<button
-					type="button"
-					aria-label="New page"
-					title="New page"
-					onClick={() => newPage()}
-					className={PANE_VERB}
-				>
-					<PlusIcon className="h-2.5 w-2.5" />
-				</button>
+				<IconButton icon={<PlusIcon className="h-2.5 w-2.5" />} label="New page" onClick={() => newPage()} />
 				{/* a fully open tree has no empty space left to right-click, which is where
 				    this verb used to be the only place it was. Dimmed rather than taken away
 				    when everything is already shut */}

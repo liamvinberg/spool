@@ -2,13 +2,13 @@ import { useEffect, useRef } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
+import { IconButton } from "../primitives/actions";
 import { StatusMark } from "../primitives/display";
 import { Float } from "./agent-float";
 import { engineName } from "./agent-menu";
 import { useHeld } from "./agent-motion";
 import { type Life, type Thread, UNSAID } from "./agent-threads";
 import { ageOf } from "./frame-find";
-import { PANE_VERB } from "./pane-tabs";
 import { PaneActions } from "./pane-window";
 
 /**
@@ -116,18 +116,15 @@ export function ThreadTitle({
 				</button>
 			</div>
 			<PaneActions>
-				<button
-					type="button"
-					aria-label="New chat"
+				<IconButton
+					icon={<PlusIcon />}
+					label="New chat"
 					onClick={() => {
 						onList(null);
 						onNew();
 						title.current?.closest("[data-pane]")?.querySelector("textarea")?.focus({ preventScroll: true });
 					}}
-					className={PANE_VERB}
-				>
-					<PlusIcon />
-				</button>
+				/>
 			</PaneActions>
 		</>
 	);
