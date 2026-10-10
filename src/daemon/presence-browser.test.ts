@@ -406,6 +406,11 @@ it("shows the faces of who's here, collapses a crowd into a count, and follows a
 	expect(await page.locator("[data-presence-faces]").textContent()).toContain("+3");
 	await page.locator("[data-presence-count]").click();
 	expect(await page.locator("[data-presence-row]").count()).toBe(6);
+	// each row's face sits in its own row, not stacked on the first
+	const faceTops = await page
+		.locator("[data-presence-row]")
+		.evaluateAll((rows) => rows.map((row) => Math.round(row.querySelector("span[style]")?.getBoundingClientRect().top ?? -1)));
+	expect(new Set(faceTops).size).toBe(6);
 });
 
 it("tells the team where this canvas's person is, and what they drag", { timeout: 120_000 }, async () => {
