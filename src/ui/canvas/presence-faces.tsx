@@ -149,13 +149,15 @@ export function PresenceFaces({
 								key={mate.person.accountId}
 								data-presence-row={mate.person.accountId}
 								icon={
-									<Face
-										mate={mate}
-										away={mate.state.page !== page}
-										resting={idle(mate, now)}
-										followed={false}
-										size={16}
-									/>
+									<span className="relative block size-4">
+										<Face
+											mate={mate}
+											away={mate.state.page !== page}
+											resting={idle(mate, now)}
+											followed={false}
+											size={16}
+										/>
+									</span>
 								}
 								label={<span className={cn(idle(mate, now) && "text-secondary")}>{mate.person.name}</span>}
 								meta={
