@@ -29,8 +29,9 @@ import {
 import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
-import { DotsIcon, FolderIcon } from "../icons";
+import { DotsIcon, FolderIcon, FrameIcon } from "../icons";
 import { Count } from "../primitives/display";
+import { TreeRow } from "../primitives/structure";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
 	flatPages,
@@ -52,13 +53,11 @@ import { PaneActions } from "./pane-window";
 import { PagePicker } from "./rail-move";
 import {
 	type BornRow,
-	contentX,
 	DEPTH_BAND,
 	type FrameRow,
 	frameLanding,
 	framesBetween,
 	guideX,
-	INDENT,
 	type Landing,
 	LIST_PAD,
 	landingGuideX,
@@ -73,7 +72,6 @@ import {
 	sameLanding,
 } from "./rail-rows";
 import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
-import { UnseenMark } from "./unseen-mark";
 
 /**
  * The pages rail as a file explorer (#229, #231, #232).
@@ -1629,7 +1627,7 @@ export function CanvasSidebar({
 							return rename === null ? null : <NewPageRow key="born" row={row} rename={rename} />;
 						}
 						return (
-							<TreeRow
+							<RailTreeRow
 								key={rowKey(row)}
 								row={row}
 								activePage={activePage}
@@ -1687,7 +1685,7 @@ export function CanvasSidebar({
 									style={{ left: guideX(underRow.depth) }}
 								/>
 							)}
-							<div style={{ paddingLeft: contentX(underRow.depth) - 18 }}>{under.content}</div>
+							<div style={{ paddingLeft: guideX(underRow.depth) - 2 }}>{under.content}</div>
 						</div>
 					)}
 
@@ -1811,30 +1809,29 @@ function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: bo
 function NewPageRow({ row, rename }: { row: BornRow; rename: RenameHandle }) {
 	return (
 		<RowShell row={row}>
-			<div
-				role="treeitem"
+			<TreeRow
 				tabIndex={-1}
-				aria-selected
-				aria-level={row.depth + 1}
-				className="relative flex h-full items-center bg-surface-panel pr-1.5"
-				style={{ paddingLeft: row.depth * INDENT }}
-			>
-				<span className="flex h-full w-6 shrink-0" />
-				<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
-					<FolderIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
+				selected
+				depth={row.depth}
+				icon={FolderIcon}
+				mono
+				label={
 					<RenameField
 						state={rename.state}
 						onDraft={rename.onDraft}
 						onCommit={rename.onCommit}
 						onCancel={rename.onCancel}
 					/>
-				</div>
-			</div>
+				}
+			/>
 		</RowShell>
 	);
 }
 
-function TreeRow({
+/** The row's own button, laid across the row for the keyboard and for a reader: the row takes its clicks. */
+const ROW_ACTION = "absolute inset-0 z-1 focus-ring-inset";
+
+function RailTreeRow({
 	row,
 	activePage,
 	litPage,
@@ -1882,160 +1879,85 @@ function TreeRow({
 	const active = row.kind === "page" && row.page === activePage;
 	const lit = row.kind === "page" && row.page === litPage;
 	const chosen = selected || holding;
+	const page = row.kind === "page";
 
 	return (
 		<RowShell row={row} lifted={lifted}>
 			{/* the row itself, which takes the whole width of drags and right-clicks;
 			    the controls inside it are what a keyboard reaches, exactly as before */}
-			<div
-				role="treeitem"
+			<TreeRow
 				// the tree itself carries the tab stop and its keys walk the rows, which
 				// is the roving-tabindex a tree is supposed to have
 				tabIndex={-1}
-				aria-selected={selected || cursored}
-				aria-level={row.depth + 1}
+				depth={row.depth}
+				// the root page has no row, so its frames stand at the margin with no spine to hang on
+				{...(page
+					? { branch: { open: row.open, label, onToggle: onOpen } }
+					: row.page === ROOT_PAGE
+						? {}
+						: { guide: row.last ? "last" : "mid" })}
+				icon={page ? FolderIcon : FrameIcon}
+				mono
+				label={
+					rename === null ? (
+						label
+					) : (
+						<RenameField
+							state={rename.state}
+							onDraft={rename.onDraft}
+							onCommit={rename.onCommit}
+							onCancel={rename.onCancel}
+						/>
+					)
+				}
+				selected={selected || cursored}
+				current={active}
+				lit={!page && chosen}
+				unseen={mark === undefined ? undefined : mark === "new" ? true : "moved"}
+				// the count is what is one chevron away, so an open page has none: the rows
+				// under it are the count, and a total beside them reads as a second, wrong number
+				meta={page && !row.open && rename === null ? row.count : undefined}
+				// the row's menu, reachable without a right click (#229)
+				trailing={
+					rename === null ? <RowMenuButton label={label} onMenu={(event) => onMenu(event, target)} /> : undefined
+				}
+				reveal
 				// something outside this rail is pointing at this page: the finder's pick, or
 				// a row in the agent rail naming a frame that is not on screen (#194)
 				data-page-lit={lit ? "" : undefined}
 				className={cn(
-					"group/row relative flex h-full items-center pr-1.5",
-					(chosen || active || cursored || lit) && "bg-surface-panel",
-					!chosen && !active && !cursored && !into && "hover:bg-surface-panel/60",
-					into && "-outline-offset-1 outline-1 outline-accent/70",
+					// held without being selected, or pointed at from outside the rail
+					((holding && !selected) || lit) && "bg-state-selected",
+					into && "-outline-offset-1 outline-1 outline-accent",
 				)}
-				// a page's own rows step in one INDENT per level; a frame's spine and
-				// content are placed outright, so only a page row needs the padding
-				style={{ paddingLeft: row.kind === "page" ? row.depth * INDENT : 0 }}
-				onPointerDown={(event) => onPress(event, row)}
-				onContextMenu={(event) => onMenu(event, target)}
-			>
-				{active ? <span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-accent" /> : null}
-
-				{row.kind === "page" ? (
+				decor={
 					<>
-						<button
-							type="button"
-							aria-label={`${row.open ? "Collapse" : "Expand"} ${label}`}
-							aria-expanded={row.open}
-							onPointerDown={(event) => event.stopPropagation()}
-							onClick={(event) => onOpen(event.altKey)}
-							className="relative flex h-full w-6 shrink-0 items-center justify-center"
-						>
-							<ChevronIcon open={row.open} className="h-2.5 w-2.5" />
-							{springing ? <SpringArc /> : null}
-						</button>
-						{rename === null ? (
-							<>
-								<button
-									type="button"
-									aria-label={`${label} page`}
-									aria-current={active ? "page" : undefined}
-									onClick={onActivate}
-									onDoubleClick={onRename}
-									className="flex h-full min-w-0 flex-1 items-center gap-2 pr-3 text-left"
-								>
-									<FolderIcon
-										className={cn("h-3.5 w-3.5 shrink-0", active ? "text-accent-strong" : "text-secondary")}
-									/>
-									<span
-										className={cn(
-											"min-w-0 flex-1 truncate type-value",
-											// as on a frame row: the menu fades in over the tail of the
-											// name, and takes that last stretch of it with it
-											"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
-											active || cursored ? "text-primary" : "text-secondary",
-										)}
-									>
-										{label}
-									</span>
-								</button>
-								{mark === undefined ? null : (
-									<UnseenMark mark={mark} className="mr-0.5 transition-opacity group-hover/row:opacity-0" />
-								)}
-								{/* the count is what is one chevron away, so an open page has none:
-								    the rows under it are the count, and a total beside them reads
-								    as a second, wrong number */}
-								{row.open ? null : (
-									<span className="shrink-0 text-secondary transition-opacity group-hover/row:opacity-0 type-detail">
-										{row.count}
-									</span>
-								)}
-							</>
+						{rename !== null ? null : page ? (
+							<button
+								type="button"
+								aria-label={`${label} page`}
+								aria-current={active ? "page" : undefined}
+								className={ROW_ACTION}
+							/>
 						) : (
-							<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
-								<FolderIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
-								<RenameField
-									state={rename.state}
-									onDraft={rename.onDraft}
-									onCommit={rename.onCommit}
-									onCancel={rename.onCancel}
-								/>
-							</div>
-						)}
-					</>
-				) : (
-					<>
-						{/* the spine hangs off the row of the page holding the frame, and the
-						    root page has no row: its frames stand at the margin with nothing
-						    drawn around them */}
-						{row.page === ROOT_PAGE ? null : (
-							<>
-								<span
-									className="absolute w-px bg-line-strong"
-									style={{ left: guideX(row.depth), top: 0, height: row.last ? row.height - 6 : row.height }}
-								/>
-								<span
-									className="absolute h-px w-2.5 bg-line-strong"
-									style={{ left: guideX(row.depth), top: row.height / 2 }}
-								/>
-							</>
-						)}
-						{rename === null ? (
 							<button
 								type="button"
 								aria-label={`${label} frame`}
 								aria-pressed={selected}
-								onClick={onSelect}
-								onDoubleClick={onFly}
-								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 text-left"
-								style={{ paddingLeft: contentX(row.depth) }}
-							>
-								<FrameIcon
-									className={cn("h-3.5 w-3.5 shrink-0", chosen ? "text-accent-strong" : "text-secondary")}
-								/>
-								<span
-									className={cn(
-										// the name runs to the row's edge; the menu that fades in over
-										// its tail takes the last stretch of it with it
-										"min-w-0 flex-1 truncate type-value",
-										"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
-										chosen || cursored || mark !== undefined ? "text-primary" : "text-secondary",
-									)}
-								>
-									{label}
-								</span>
-								{mark === undefined ? null : (
-									<UnseenMark mark={mark} className="transition-opacity group-hover/row:opacity-0" />
-								)}
-							</button>
-						) : (
-							<div
-								className="flex h-full w-full min-w-0 items-center gap-2 pr-3"
-								style={{ paddingLeft: contentX(row.depth) }}
-							>
-								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
-								<RenameField
-									state={rename.state}
-									onDraft={rename.onDraft}
-									onCommit={rename.onCommit}
-									onCancel={rename.onCancel}
-								/>
-							</div>
+								className={ROW_ACTION}
+							/>
 						)}
+						{springing ? <SpringArc depth={row.depth} /> : null}
 					</>
-				)}
-				{rename === null ? <RowMenuButton label={label} onMenu={(event) => onMenu(event, target)} /> : null}
-			</div>
+				}
+				// a click anywhere on the row is its button's, which says what it does; a
+				// field being typed in is not
+				{...(rename === null
+					? { onClick: page ? onActivate : onSelect, onDoubleClick: page ? onRename : onFly }
+					: {})}
+				onPointerDown={(event) => onPress(event, row)}
+				onContextMenu={(event) => onMenu(event, target)}
+			/>
 		</RowShell>
 	);
 }
@@ -2055,8 +1977,11 @@ function RowMenuButton({ label, onMenu }: { label: string; onMenu: (event: React
 			type="button"
 			aria-label={`${label} menu`}
 			onPointerDown={(event) => event.stopPropagation()}
-			onClick={onMenu}
-			className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-sm text-secondary opacity-0 transition-opacity hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100"
+			onClick={(event) => {
+				event.stopPropagation();
+				onMenu(event);
+			}}
+			className="flex size-control-xs items-center justify-center rounded-xs text-secondary hover:bg-state-hover-raised hover:text-primary focus-ring-inset"
 		>
 			<DotsIcon />
 		</button>
@@ -2197,11 +2122,13 @@ function refusalLine(status: number): string {
  * is a thing being watched rather than a delay being suffered. `stroke-dasharray`
  * is the circumference of an r=8 circle, which is what the keyframe unwinds.
  */
-function SpringArc() {
+function SpringArc({ depth }: { depth: number }) {
 	return (
 		<svg
 			viewBox="0 0 20 20"
-			className="pointer-events-none absolute h-5 w-5 text-accent-strong"
+			// centred on the chevron, which stands at the row's indent
+			className="pointer-events-none absolute top-1 size-5 text-accent-strong"
+			style={{ left: `calc(${depth} * var(--spacing) * 3 + var(--spacing) * 0.5)` }}
 			fill="none"
 			aria-hidden="true"
 		>
@@ -2215,15 +2142,6 @@ function SpringArc() {
 				className="animate-spring-load origin-center -rotate-90"
 				style={{ strokeDasharray: 50.3, strokeDashoffset: 0, "--spring-ms": `${SPRING_MS}ms` } as CSSProperties}
 			/>
-		</svg>
-	);
-}
-
-function FrameIcon({ className }: { className?: string }) {
-	return (
-		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
-			<path d="M3 1.75h5l3 3v7.5H3z" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
-			<path d="M8 1.75v3h3" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
 		</svg>
 	);
 }
