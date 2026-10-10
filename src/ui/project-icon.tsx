@@ -1,5 +1,7 @@
 import { createContext, useContext, useState } from "react";
 import { iconUrl, type ProjectIcon } from "./api";
+import { cn } from "./cn";
+import { LetterMark, type MarkSize } from "./primitives/display";
 import { type MarkTeam, TeamMark } from "./teams";
 
 /**
@@ -31,22 +33,24 @@ export function useMarkTeam(address: string | undefined): MarkTeam | undefined {
 	return teams.get(address) ?? { address, name: address, logo: null };
 }
 
+/** The mark's two sizes in pixels, for the team badge's sums: on a tab, and in a menu or on a card. */
+const MARK_PX: Record<MarkSize, number> = { sm: 16, md: 20 };
+
 /** The project's own picture, or its letter. */
 export function ProjectIconView({
 	project,
 	name,
 	icon,
-	size = 16,
+	size = "sm",
 }: {
 	/** The project's registered name, which the icon's address is under. */
 	project: string;
 	name: string;
 	icon?: ProjectIcon | undefined;
-	size?: number;
+	size?: MarkSize;
 }) {
 	// an address that answers nothing (the file changed under it) falls back to the letter until the next icon
 	const [broken, setBroken] = useState<string | null>(null);
-	const radius = Math.max(3, size * 0.24);
 	if (icon !== undefined && broken !== icon.hash) {
 		return (
 			<img
@@ -54,33 +58,12 @@ export function ProjectIconView({
 				alt=""
 				draggable={false}
 				data-project-icon={icon.from}
-				className="block shrink-0 object-cover"
-				style={{ width: size, height: size, borderRadius: radius }}
+				className={cn("block shrink-0 rounded-xs object-cover", size === "sm" ? "size-4" : "size-5")}
 				onError={() => setBroken(icon.hash)}
 			/>
 		);
 	}
-	const hue = nameHue(name);
-	return (
-		<span
-			aria-hidden="true"
-			data-project-icon="letter"
-			className="grid shrink-0 place-items-center font-semibold leading-none"
-			style={{
-				width: size,
-				height: size,
-				borderRadius: radius,
-				fontSize: Math.round(size * 0.66),
-				paddingBottom: Math.round(size * 0.06),
-				background: `color-mix(in srgb, ${hue} 24%, transparent)`,
-				boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${hue} 40%, transparent)`,
-				// a pale letter on a dark field, a deep one on a light field
-				color: `light-dark(color-mix(in srgb, ${hue} 78%, black), color-mix(in srgb, ${hue} 70%, white))`,
-			}}
-		>
-			{[...name][0]?.toLowerCase()}
-		</span>
-	);
+	return <LetterMark name={name} size={size} hue={nameHue(name)} data-project-icon="letter" />;
 }
 
 /**
@@ -93,7 +76,7 @@ export function ProjectMark({
 	icon,
 	team,
 	paused = false,
-	size = 16,
+	size = "sm",
 	cut = "var(--color-surface-window)",
 }: {
 	project: string;
@@ -102,16 +85,17 @@ export function ProjectMark({
 	/** The team a team project's local copy belongs to, by address. */
 	team?: string | undefined;
 	paused?: boolean | undefined;
-	size?: number;
+	size?: MarkSize;
 	cut?: string;
 }) {
 	const markTeam = useMarkTeam(team);
 	const own = <ProjectIconView project={project} name={name} icon={icon} size={size} />;
 	if (markTeam === undefined) return own;
-	const badge = Math.round(size * 0.62);
+	const px = MARK_PX[size];
+	const badge = Math.round(px * 0.62);
 	const out = -Math.round(badge * 0.36);
 	return (
-		<span className="relative block shrink-0" style={{ width: size, height: size }}>
+		<span className="relative block shrink-0" style={{ width: px, height: px }}>
 			{own}
 			<span className="absolute flex" style={{ right: out, bottom: out }}>
 				<TeamMark team={markTeam} size={badge} paused={paused} cut={cut} />

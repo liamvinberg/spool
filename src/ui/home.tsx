@@ -532,7 +532,7 @@ function ProjectTile({
 							icon={project.icon}
 							team={project.team?.team}
 							paused={project.syncPaused !== undefined}
-							size={20}
+							size="md"
 						/>
 						<strong className="truncate type-title font-[500]">{project.name}</strong>
 					</span>

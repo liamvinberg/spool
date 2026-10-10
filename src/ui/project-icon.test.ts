@@ -36,15 +36,15 @@ describe("a project's icon", () => {
 		const image = host.querySelector("img");
 		expect(image?.getAttribute("src")).toBe(`/icons/kvitt/${FILE.hash}`);
 		expect(image?.dataset.projectIcon).toBe("file");
-		expect(image?.style.width).toBe("16px");
+		expect(image?.classList.contains("size-4")).toBe(true);
 	});
 
 	it("falls back to the name's first letter, lowercase on a tint picked from the name", async () => {
-		const host = await mount(createElement(ProjectMark, { project: "Kvitt", name: "Kvitt", size: 20 }));
+		const host = await mount(createElement(ProjectMark, { project: "Kvitt", name: "Kvitt", size: "md" }));
 		const letter = host.querySelector<HTMLElement>('[data-project-icon="letter"]');
 		expect(letter?.textContent).toBe("k");
-		// the same name always gets the same tint (happy-dom keeps only the ring's colour-mix to read it by)
-		expect(letter?.style.boxShadow).toContain(nameHue("Kvitt"));
+		// the same name always gets the same tint
+		expect(letter?.style.getPropertyValue("--mark-hue")).toBe(nameHue("Kvitt"));
 		expect(new Set(["kvitt", "atlas", "notes", "spool", "kaffe"].map(nameHue)).size).toBeGreaterThan(1);
 		expect(host.querySelector("[data-team-mark]")).toBeNull();
 	});
@@ -134,7 +134,7 @@ describe("a tab", () => {
 	it("opens its menu on the project: its icon, its name and where it lives", async () => {
 		const host = await strip({ onChangeIcon: () => {}, onRemoveIcon: () => {} });
 		const solo = await openMenu(host, 0);
-		expect(solo?.querySelector("img")?.style.width).toBe("24px");
+		expect(solo?.querySelector("img")?.classList.contains("size-5")).toBe(true);
 		expect(solo?.textContent).toContain("kvittOn this Mac");
 		expect(rows(solo)).toEqual(["Change icon…", "Remove icon", "Export project…", "Close tab"]);
 		expect(document.activeElement?.textContent).toBe("Change icon…");

@@ -191,11 +191,12 @@ export function LetterMark({
 	const tint: CSSProperties | undefined =
 		hue === undefined
 			? undefined
-			: {
-					background: `color-mix(in srgb, ${hue} 24%, transparent)`,
-					borderColor: `color-mix(in srgb, ${hue} 40%, transparent)`,
-					color: `light-dark(color-mix(in srgb, ${hue} 78%, black), color-mix(in srgb, ${hue} 70%, white))`,
-				};
+			: ({
+					"--mark-hue": hue,
+					background: "color-mix(in srgb, var(--mark-hue) 24%, transparent)",
+					borderColor: "color-mix(in srgb, var(--mark-hue) 40%, transparent)",
+					color: "light-dark(color-mix(in srgb, var(--mark-hue) 78%, black), color-mix(in srgb, var(--mark-hue) 70%, white))",
+				} as CSSProperties);
 	return (
 		<span
 			aria-hidden="true"
