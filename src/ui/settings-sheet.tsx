@@ -23,6 +23,7 @@ import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
 import { ProjectPicker } from "./picker";
+import { Button, ToggleButton } from "./primitives/actions";
 import { Divider } from "./primitives/display";
 import { Segment, SegmentedControl, Switch } from "./primitives/selection";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
@@ -186,13 +187,7 @@ function General({
 								label="Team"
 								says="Only on this Mac. Move it to a team to work on it live with your teammates."
 							>
-								<button
-									type="button"
-									className="rounded-md border border-line-strong px-3 py-2 type-value"
-									onClick={moving}
-								>
-									Move to team…
-								</button>
+								<Button onClick={moving}>Move to team…</Button>
 							</Row>
 						)}
 					</Band>
@@ -218,14 +213,10 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 		<Row label={entry.label} says={entry.says} reason={reason}>
 			{entry.shape.kind === "directory" ? (
 				<>
-					<button
-						type="button"
-						className="max-w-64 truncate rounded-md border border-line-strong px-3 py-2 type-value"
-						onClick={() => setPicking(true)}
-						title={String(entry.value)}
-					>
-						{String(entry.value)} · Change…
-					</button>
+					<Button className="max-w-64" onClick={() => setPicking(true)} title={String(entry.value)}>
+						<span className="truncate type-value">{String(entry.value)}</span>
+						<span className="text-secondary">Change…</span>
+					</Button>
 					{picking && (
 						<ProjectPicker
 							initial="location"
@@ -595,10 +586,12 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 
 	return (
 		<span className="relative flex items-center gap-1">
-			<TextButton onClick={copy}>{copied ? "Copied" : "Copy"}</TextButton>
-			<TextButton lit={pasting} onClick={() => setPasting(!pasting)}>
+			<Button size="sm" onClick={copy}>
+				{copied ? "Copied" : "Copy"}
+			</Button>
+			<ToggleButton size="sm" pressed={pasting} onPressedChange={setPasting}>
 				Paste
-			</TextButton>
+			</ToggleButton>
 			{pasting ? (
 				<span className="absolute top-8 right-0 z-20 flex w-[360px] animate-menu-in flex-col gap-2 rounded-md border border-line-strong bg-surface-raised p-2">
 					<textarea
@@ -619,30 +612,13 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 					{reason === undefined ? null : <Reason className="pt-0">{reason}</Reason>}
 					<span className="flex items-center justify-between">
 						<span className="text-secondary type-detail">{accelLabel().replace(/\+$/, "")}↵ applies</span>
-						<TextButton lit onClick={submit}>
+						<Button size="sm" variant="primary" onClick={submit}>
 							Apply
-						</TextButton>
+						</Button>
 					</span>
 				</span>
 			) : null}
 		</span>
-	);
-}
-
-function TextButton({ children, lit = false, onClick }: { children: ReactNode; lit?: boolean; onClick: () => void }) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={cn(
-				"flex h-6 items-center rounded-sm border px-2 transition-colors duration-150 type-label",
-				lit
-					? "border-line-strong bg-surface-control text-primary"
-					: "border-line-default text-secondary hover:border-line-strong hover:text-primary",
-			)}
-		>
-			{children}
-		</button>
 	);
 }
 
