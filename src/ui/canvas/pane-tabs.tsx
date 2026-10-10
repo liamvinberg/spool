@@ -47,7 +47,7 @@ export function PaneMark({ kind, placed }: { kind: PaneMarkKind | null; placed: 
 					data-pane-mark="working"
 					data-pane-mark-state={state}
 					className={cn(
-						"text-primary/60",
+						"text-secondary",
 						corner ? "-top-0.5 -right-0.5 absolute h-3 w-3" : "h-2.5 w-2.5",
 						leaving && "animate-agent-fade-out",
 					)}
