@@ -9,16 +9,16 @@
 		"ad-hoc-motion": 4
 	},
 	"src/ui/canvas/agent-composer.tsx": {
-		"ad-hoc-motion": 11
+		"ad-hoc-motion": 10
 	},
 	"src/ui/canvas/agent-float.tsx": {
 		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-menu.tsx": {
-		"ad-hoc-motion": 10
+		"ad-hoc-motion": 9
 	},
 	"src/ui/canvas/agent-permissions.tsx": {
-		"ad-hoc-motion": 2
+		"ad-hoc-motion": 1
 	},
 	"src/ui/canvas/agent-rail.tsx": {
 		"ad-hoc-motion": 6
@@ -73,7 +73,7 @@
 	},
 	"src/ui/settings-sheet.tsx": {
 		"raw-colour": 6,
-		"ad-hoc-motion": 10
+		"ad-hoc-motion": 8
 	},
 	"src/ui/tab-strip.tsx": {
 		"raw-colour": 6

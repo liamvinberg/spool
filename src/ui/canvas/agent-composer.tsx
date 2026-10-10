@@ -6,6 +6,7 @@ import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon } from "../icons";
+import { FieldBox, TextareaBare } from "../primitives/inputs";
 import { type Chip as ChipWords, contextOf, type Strip, WHOLE_SELECTION } from "./agent-chips";
 import { Fade, RailMenu } from "./agent-float";
 import { AgentMenu } from "./agent-menu";
@@ -418,9 +419,11 @@ export function Composer({
 				<span aria-hidden="true" className="pointer-events-none absolute inset-x-3 top-px block">
 					<WindStroke phase={phase} waited={waited} />
 				</span>
-				<div
+				<FieldBox
+					as="div"
+					size="auto"
 					data-agent-composer=""
-					className="flex min-h-0 flex-col gap-2 rounded-lg border border-line-default bg-surface-window px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-secondary/45"
+					className="min-h-0 flex-col items-stretch gap-2 rounded-md px-3 pt-3 pb-2"
 				>
 					{attached.length > 0 && (
 						<div className="flex flex-wrap gap-2">
@@ -442,16 +445,15 @@ export function Composer({
 					 * machine is answering. While a turn runs it asks for what comes next, because
 					 * Enter then queues (#364).
 					 */}
-					<textarea
+					<TextareaBare
 						ref={field}
 						value={draft}
 						rows={2}
-						spellCheck={false}
 						placeholder={says}
 						aria-label={says}
-						onChange={(event) => {
-							onDraft(event.target.value);
-							resize(event.target);
+						onValueChange={(next) => {
+							onDraft(next);
+							if (field.current !== null) resize(field.current);
 						}}
 						onPaste={(event) => {
 							// a screenshot in the clipboard is the commonest reference there is, and
@@ -467,7 +469,6 @@ export function Composer({
 							event.preventDefault();
 							submit(event.currentTarget);
 						}}
-						className="w-full resize-none bg-transparent text-primary outline-none placeholder:text-secondary type-body"
 						style={{ height: MIN_H }}
 					/>
 					{/* the foot: small grey controls, who answers and what it may do on the left,
@@ -554,7 +555,7 @@ export function Composer({
 							</span>
 						</div>
 					</div>
-				</div>
+				</FieldBox>
 			</div>
 		</div>
 	);

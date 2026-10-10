@@ -3,9 +3,10 @@ import { AGENT_PERMISSIONS, type AgentPermissions } from "../../daemon/agent-eng
 import { agentPermissions } from "../api";
 import { cn } from "../cn";
 import { CheckIcon } from "../icons";
+import { SelectTrigger } from "../primitives/inputs";
 import { useSettings } from "../settings";
 import { AGENT_DEFAULTS_RETRY_MS, learnAgentMode } from "./agent-defaults";
-import { Chevron, RailMenu } from "./agent-float";
+import { RailMenu } from "./agent-float";
 
 export interface PermissionDeck {
 	/** the machine's mode, or the pick on its way to being saved */
@@ -134,9 +135,9 @@ export function PermissionMenu({
 			className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full"
 			panel={{ "data-permission-menu": "" }}
 			trigger={(props) => (
-				<button
-					type="button"
+				<SelectTrigger
 					{...props}
+					open={open}
 					data-permission-trigger=""
 					aria-label={`Agent permissions: ${MODE_NAMES[mode]}`}
 					title={
@@ -145,11 +146,9 @@ export function PermissionMenu({
 							: `${MODE_NAMES[mode]}. Applies to every chat.`
 					}
 					aria-busy={saving}
-					className="relative z-30 flex h-7 shrink-0 items-center gap-1.5 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary type-control"
-				>
-					{MODE_NAMES[mode]}
-					<Chevron open={open} />
-				</button>
+					className="z-30"
+					value={MODE_NAMES[mode]}
+				/>
 			)}
 		>
 			<div className="flex flex-col p-1">

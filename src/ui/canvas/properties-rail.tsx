@@ -343,12 +343,9 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 							onScrubCancel={() => cancel(axis.key)}
 						>
 							<NumField
-								value={String(Math.round(geometry[axis.key]))}
+								value={Math.round(geometry[axis.key])}
 								readout="px"
-								onCommit={(typed) => {
-									const next = Number.parseInt(typed, 10);
-									if (!Number.isNaN(next)) write(axis.key, next);
-								}}
+								onCommit={(typed) => write(axis.key, Math.trunc(typed))}
 								onStep={(units) => write(axis.key, geometry[axis.key] + units * 4)}
 							/>
 						</Row>

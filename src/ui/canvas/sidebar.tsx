@@ -31,6 +31,7 @@ import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { DotsIcon, FolderIcon } from "../icons";
 import { Count } from "../primitives/display";
+import { TextField } from "../primitives/inputs";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
 	flatPages,
@@ -2097,46 +2098,46 @@ function RenameField({
 	}, [state.error]);
 	return (
 		<span className="relative flex min-w-0 flex-1 items-center">
-			<input
-				ref={(element) => {
-					field.current = element;
-					// once, on arrival: focus and pre-select. Re-running it on every
-					// render would re-select the text under each keystroke
-					if (element === null || primed.current) return;
-					primed.current = true;
-					element.focus();
-					element.select();
-				}}
-				aria-label={state.born === null ? "Rename" : "New page name"}
-				aria-invalid={state.error !== null}
+			<TextField
+				size="xs"
+				mono
+				className="flex-1"
+				label={state.born === null ? "Rename" : "New page name"}
+				error={state.error !== null}
 				value={state.draft}
-				spellCheck={false}
-				autoComplete="off"
-				onChange={(event) => onDraft(event.target.value)}
+				onValueChange={onDraft}
 				onPointerDown={(event) => event.stopPropagation()}
-				onKeyDown={(event) => {
-					event.stopPropagation();
-					if (event.key === "Enter") event.currentTarget.blur();
-					if (event.key === "Escape") {
-						cancelled.current = true;
-						event.currentTarget.blur();
-					}
+				inputProps={{
+					autoComplete: "off",
+					ref: (element) => {
+						field.current = element;
+						// once, on arrival: focus and pre-select. Re-running it on every
+						// render would re-select the text under each keystroke
+						if (element === null || primed.current) return;
+						primed.current = true;
+						element.focus();
+						element.select();
+					},
+					onKeyDown: (event) => {
+						event.stopPropagation();
+						if (event.key === "Enter") event.currentTarget.blur();
+						if (event.key === "Escape") {
+							cancelled.current = true;
+							event.currentTarget.blur();
+						}
+					},
+					onBlur: () => {
+						if (!cancelled.current) {
+							onCommit();
+							return;
+						}
+						cancelled.current = false;
+						onCancel();
+					},
 				}}
-				onBlur={() => {
-					if (!cancelled.current) {
-						onCommit();
-						return;
-					}
-					cancelled.current = false;
-					onCancel();
-				}}
-				className={cn(
-					"-my-px min-w-0 flex-1 rounded-xs bg-surface-window px-1 text-primary caret-accent outline-1 outline-accent/70",
-					"type-value",
-				)}
 			/>
 			{state.error === null ? null : (
-				<span role="alert" className="pointer-events-none absolute right-1.5 text-accent-strong type-detail">
+				<span role="alert" className="pointer-events-none absolute right-1.5 text-danger-strong type-detail">
 					{state.error}
 				</span>
 			)}
