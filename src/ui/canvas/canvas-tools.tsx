@@ -1,6 +1,6 @@
-import { cn } from "../cn";
 import { hotkeyChips, hotkeyEntry, hotkeyKey } from "../hotkeys";
 import { EditIcon, HandIcon, SelectIcon } from "../icons";
+import { IconButton, ToolGroup } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 
 export type CanvasTool = "select" | "edit" | "hand";
@@ -36,10 +36,9 @@ const TOOLS: readonly ToolMeta[] = [
 export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool: CanvasTool) => void }) {
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center">
-			<div
-				role="toolbar"
+			<ToolGroup
 				aria-label="canvas tools"
-				className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line-strong bg-surface-window/90 p-1 backdrop-blur"
+				className="pointer-events-auto"
 				onPointerDown={(event) => event.stopPropagation()}
 				onPointerMove={(event) => event.stopPropagation()}
 				onDoubleClick={(event) => event.stopPropagation()}
@@ -48,32 +47,25 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 					event.stopPropagation();
 				}}
 			>
-				{TOOLS.map((meta) => {
-					const active = tool === meta.id;
-					return (
-						<button
-							key={meta.id}
-							type="button"
-							aria-label={meta.label}
-							aria-pressed={active}
-							onClick={() => onTool(meta.id)}
-							className={cn(
-								"group relative flex h-9 w-9 items-center justify-center rounded-md",
-								active
-									? "bg-surface-control text-primary"
-									: "text-secondary hover:bg-surface-panel hover:text-primary",
-							)}
-						>
-							<meta.Icon className="h-[18px] w-[18px]" />
-							<span className="pointer-events-none absolute -top-8 flex items-center gap-1.5 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary opacity-0 transition-opacity group-hover:opacity-100 type-detail">
-								{meta.label}
-								{meta.key === null ? null : <Kbd>{meta.key}</Kbd>}
-								{meta.hold === null ? null : <span>· {meta.hold}</span>}
-							</span>
-						</button>
-					);
-				})}
-			</div>
+				{TOOLS.map((meta) => (
+					<IconButton
+						key={meta.id}
+						size="lg"
+						icon={<meta.Icon className="size-4" />}
+						label={meta.label}
+						title={undefined}
+						pressed={tool === meta.id}
+						onClick={() => onTool(meta.id)}
+						className="group"
+					>
+						<span className="pointer-events-none absolute -top-8 left-1/2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary opacity-0 transition-opacity group-hover:opacity-100 type-detail">
+							{meta.label}
+							{meta.key === null ? null : <Kbd>{meta.key}</Kbd>}
+							{meta.hold === null ? null : <span>· {meta.hold}</span>}
+						</span>
+					</IconButton>
+				))}
+			</ToolGroup>
 		</div>
 	);
 }
