@@ -26,6 +26,7 @@ import { ProjectPicker } from "./picker";
 import { Button, ToggleButton } from "./primitives/actions";
 import { Divider } from "./primitives/display";
 import { ColourField, Textarea } from "./primitives/inputs";
+import { Tab, Tabs } from "./primitives/navigation";
 import { Segment, SegmentedControl, Switch } from "./primitives/selection";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
@@ -121,24 +122,13 @@ function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) =>
 		{ id: "appearance", name: "Appearance" },
 	];
 	return (
-		<div className="flex h-10 shrink-0 items-stretch gap-6 border-line-default border-b px-6">
+		<Tabs className="px-6">
 			{tabs.map((candidate) => (
-				<button
-					key={candidate.id}
-					type="button"
-					role="tab"
-					aria-selected={tab === candidate.id}
-					onClick={() => onTab(candidate.id)}
-					className={cn(
-						"relative flex items-center transition-colors duration-150 type-control",
-						tab === candidate.id ? "text-primary" : "text-secondary hover:text-primary",
-					)}
-				>
+				<Tab key={candidate.id} selected={tab === candidate.id} onClick={() => onTab(candidate.id)}>
 					{candidate.name}
-					{tab === candidate.id ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-accent" /> : null}
-				</button>
+				</Tab>
 			))}
-		</div>
+		</Tabs>
 	);
 }
 
