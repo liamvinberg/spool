@@ -409,7 +409,9 @@ it("shows the faces of who's here, collapses a crowd into a count, and follows a
 	// each row's face sits in its own row, not stacked on the first
 	const faceTops = await page
 		.locator("[data-presence-row]")
-		.evaluateAll((rows) => rows.map((row) => Math.round(row.querySelector("span[style]")?.getBoundingClientRect().top ?? -1)));
+		.evaluateAll((rows) =>
+			rows.map((row) => Math.round(row.querySelector("span[style]")?.getBoundingClientRect().top ?? -1)),
+		);
 	expect(new Set(faceTops).size).toBe(6);
 });
 
