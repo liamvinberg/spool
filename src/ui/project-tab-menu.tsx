@@ -1,9 +1,8 @@
 import { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { ProjectMark, useMarkTeam } from "./project-icon";
 import type { TabProject } from "./tab-strip";
-
-const ITEM = "flex h-[30px] items-center rounded-sm px-3 text-left text-primary hover:bg-surface-panel type-control";
 
 /**
  * A tab's menu opens on its project: the icon as the tab draws it and the name, over where it lives, a team (and
@@ -54,11 +53,10 @@ export function ProjectTabMenu({
 		action();
 	};
 	return createPortal(
-		<div
+		<Menu
 			ref={ref}
-			role="menu"
 			aria-label="Project actions"
-			className="fixed z-50 flex w-[244px] flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
+			className="fixed z-50"
 			onKeyDown={(event) => {
 				if (["Escape", "Tab"].includes(event.key)) {
 					event.preventDefault();
@@ -97,25 +95,15 @@ export function ProjectTabMenu({
 					</span>
 				</div>
 			</div>
-			<div className="mx-2 my-unit h-px bg-line-strong" />
-			{onChangeIcon && (
-				<button type="button" role="menuitem" className={ITEM} onClick={() => act(onChangeIcon)}>
-					Change icon…
-				</button>
-			)}
+			<MenuSeparator />
+			{onChangeIcon && <MenuItem label="Change icon…" onClick={() => act(onChangeIcon)} />}
 			{onRemoveIcon && project.icon?.from === "file" && (
-				<button type="button" role="menuitem" className={ITEM} onClick={() => act(onRemoveIcon)}>
-					Remove icon
-				</button>
+				<MenuItem label="Remove icon" onClick={() => act(onRemoveIcon)} />
 			)}
-			<button type="button" role="menuitem" className={ITEM} onClick={() => act(onExport)}>
-				Export project…
-			</button>
-			<div className="mx-2 my-unit h-px bg-line-strong" />
-			<button type="button" role="menuitem" className={ITEM} onClick={() => act(onCloseTab)}>
-				Close tab
-			</button>
-		</div>,
+			<MenuItem label="Export project…" onClick={() => act(onExport)} />
+			<MenuSeparator />
+			<MenuItem label="Close tab" onClick={() => act(onCloseTab)} />
+		</Menu>,
 		document.body,
 	);
 }

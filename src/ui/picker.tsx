@@ -16,6 +16,7 @@ import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
 import { crumbsOf, shortPath } from "./picker-model";
 import { Button, IconButton } from "./primitives/actions";
+import { Dialog } from "./primitives/overlays";
 import { Checkbox } from "./primitives/selection";
 import { ListRow } from "./primitives/structure";
 import { useWriteSetting } from "./settings";
@@ -300,9 +301,12 @@ export function ProjectPicker({
 	);
 
 	return (
-		<dialog
+		<Dialog
+			native
 			ref={dialog}
-			className="project-picker fixed m-auto inset-0 p-0 w-[520px] max-w-[calc(100vw-48px)] max-h-[calc(100dvh-48px)] border border-line-strong rounded-lg text-primary bg-surface-panel overflow-auto [outline:none] backdrop:bg-[color-mix(in_srgb,var(--color-surface-window)_70%,transparent)] [&_button]:cursor-pointer [&_button:focus-visible]:[outline:1px_solid_var(--color-accent)] [&_button:focus-visible]:outline-offset-[-3px] [&_:where(svg)]:size-[14px] [&_svg]:shrink-0 [&_fieldset]:border-0 [&_fieldset]:p-0 [&_fieldset]:min-w-0 [&_button:disabled]:cursor-default [&_button:disabled]:opacity-40"
+			width="free"
+			padded={false}
+			className="fixed inset-0 w-[520px] [outline:none] [&_button]:cursor-pointer [&_button]:focus-ring-inset [&_:where(svg)]:size-[14px] [&_svg]:shrink-0 [&_fieldset]:border-0 [&_fieldset]:p-0 [&_fieldset]:min-w-0 [&_button:disabled]:cursor-default [&_button:disabled]:opacity-40"
 			tabIndex={-1}
 			aria-label={
 				browsing
@@ -580,7 +584,7 @@ export function ProjectPicker({
 					{notice ?? folder.notice}
 				</p>
 			)}
-		</dialog>
+		</Dialog>
 	);
 }
 

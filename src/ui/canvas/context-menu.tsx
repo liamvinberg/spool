@@ -15,25 +15,24 @@
  */
 
 import { hotkeyKey } from "../hotkeys";
-import { Kbd } from "../primitives/display";
+import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
 
 export interface MenuPlacement {
 	x: number;
 	y: number;
 }
 
+/** the menu's box: rows and rules in a 4px inset, inside a hairline */
 const MENU_WIDTH = 200;
-const MENU_HEIGHT_WITH_EXPORT = 252;
-const MENU_HEIGHT_WITHOUT_EXPORT = 222;
+const ROW = 28;
+const RULE = 9;
+const FRAME = 10;
 
 /** `shareRows` is the sharing verbs the menu carries: none, the one that makes a link, or a live link's three. */
 export function contextMenuSize(canExport: boolean, shareRows: 0 | 1 | 3 = 0): { w: number; h: number } {
-	return {
-		w: MENU_WIDTH,
-		h:
-			(canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT) +
-			(shareRows === 0 ? 0 : 1 + shareRows * 30),
-	};
+	const rows = 6 + (canExport ? 1 : 0) + shareRows;
+	const rules = 2 + (shareRows === 0 ? 0 : 1);
+	return { w: MENU_WIDTH, h: rows * ROW + rules * RULE + FRAME };
 }
 
 /**
@@ -46,43 +45,6 @@ export interface MenuShare {
 	onCopy: () => void;
 	onManage: () => void;
 	onStop: () => void;
-}
-
-/**
- * One row of a spool menu. The rail's menus are built from this too (#229), so
- * a right-click means the same thing everywhere: the same height, the same key
- * face, and the same word for the same verb.
- */
-export function MenuItem({
-	label,
-	keys,
-	disabled = false,
-	onClick,
-}: {
-	label: string;
-	keys?: string;
-	/** an item that exists but has nothing to act on right now — told, not hidden */
-	disabled?: boolean;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			role="menuitem"
-			disabled={disabled}
-			className={`flex h-[30px] shrink-0 items-center justify-between gap-3 rounded-sm px-3 text-left type-control ${
-				disabled ? "text-secondary/40" : "text-primary hover:bg-surface-panel"
-			}`}
-			onClick={onClick}
-		>
-			<span className="truncate">{label}</span>
-			{keys === undefined ? null : <Kbd>{keys}</Kbd>}
-		</button>
-	);
-}
-
-export function MenuRule() {
-	return <div className="mx-auto h-px w-[176px] shrink-0 bg-line-strong" />;
 }
 
 export function ContextMenu({
@@ -110,23 +72,22 @@ export function ContextMenu({
 	onTrash: () => void;
 }) {
 	return (
-		<div
-			role="menu"
-			className="absolute z-30 flex w-[200px] flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
+		<Menu
+			className="absolute z-30"
 			style={{ left: at.x, top: at.y }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onContextMenu={(event) => event.preventDefault()}
 		>
-			<MenuItem label="Play from here" keys={hotkeyKey("canvas.play")} onClick={onPlay} />
+			<MenuItem label="Play from here" shortcut={hotkeyKey("canvas.play")} onClick={onPlay} />
 			<MenuItem label="Copy path" onClick={onCopyPath} />
-			<MenuItem label="Reload frame" keys={hotkeyKey("canvas.reload")} onClick={onReload} />
+			<MenuItem label="Reload frame" shortcut={hotkeyKey("canvas.reload")} onClick={onReload} />
 			<MenuItem
 				label="Set as thumbnail"
 				disabled={onSetThumbnail === undefined}
 				onClick={() => onSetThumbnail?.()}
 			/>
-			<MenuRule />
-			<MenuItem label={tidyLabel} keys={hotkeyKey("canvas.tidy")} onClick={onTidy} />
+			<MenuSeparator />
+			<MenuItem label={tidyLabel} shortcut={hotkeyKey("canvas.tidy")} onClick={onTidy} />
 			{exportAction !== null ? (
 				<MenuItem
 					label={
@@ -137,7 +98,7 @@ export function ContextMenu({
 			) : null}
 			{share !== undefined && (
 				<>
-					<MenuRule />
+					<MenuSeparator />
 					{share.shared ? (
 						<>
 							<MenuItem label="Copy link" onClick={share.onCopy} />
@@ -149,8 +110,8 @@ export function ContextMenu({
 					)}
 				</>
 			)}
-			<MenuRule />
-			<MenuItem label="Move to Trash" keys={hotkeyKey("canvas.trash")} onClick={onTrash} />
-		</div>
+			<MenuSeparator />
+			<MenuItem label="Move to Trash" shortcut={hotkeyKey("canvas.trash")} onClick={onTrash} />
+		</Menu>
 	);
 }

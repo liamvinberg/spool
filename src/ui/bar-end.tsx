@@ -1,10 +1,10 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MenuItem } from "./canvas/context-menu";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { hotkeyKey } from "./hotkeys";
 import { CogIcon } from "./icons";
 import { IconButton } from "./primitives/actions";
+import { Menu, MenuItem } from "./primitives/overlays";
 
 /**
  * What stands at the window bar's right end, on Home and on every canvas alike: help and
@@ -104,13 +104,12 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 			{open &&
 				at !== null &&
 				createPortal(
-					<div
+					<Menu
 						ref={menu}
 						id={id}
-						role="menu"
 						aria-label="Help"
 						onKeyDown={onKeyDown}
-						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit [&>button:focus-visible]:bg-surface-panel"
+						className="fixed z-50"
 						style={{ right: at.right, top: at.top }}
 					>
 						{onUseAgent === undefined ? null : (
@@ -125,13 +124,13 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 						)}
 						<MenuItem
 							label="Keyboard shortcuts"
-							keys={hotkeyKey("app.help")}
+							shortcut={hotkeyKey("app.help")}
 							onClick={() => {
 								close();
 								onShortcuts();
 							}}
 						/>
-					</div>,
+					</Menu>,
 					document.body,
 				)}
 		</>

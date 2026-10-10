@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ROOT_PAGE } from "../../page-path";
 import { cn } from "../cn";
 import { Divider } from "../primitives/display";
+import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
 import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
 
 /**
@@ -142,49 +143,36 @@ export function PresenceFaces({
 			</button>
 			{open !== null &&
 				createPortal(
-					<div
-						ref={list}
-						data-presence-list=""
-						className="fixed z-50 flex w-[264px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
-						style={open}
-					>
+					<Menu ref={list} aria-label="Who is here" data-presence-list="" className="fixed z-50" style={open}>
 						{here.map((mate) => (
-							<button
+							<MenuItem
 								key={mate.person.accountId}
-								type="button"
 								data-presence-row={mate.person.accountId}
-								className="flex h-[30px] items-center gap-2.5 rounded-sm px-2.5 text-left hover:bg-line-strong/60"
-								onClick={() => follow(mate)}
-							>
-								<span className="relative h-[18px] w-[18px] shrink-0">
+								icon={
 									<Face
 										mate={mate}
 										away={mate.state.page !== page}
 										resting={idle(mate, now)}
 										followed={false}
-										size={18}
+										size={16}
 									/>
-								</span>
-								<span
-									className={cn(
-										"min-w-0 flex-1 truncate type-control",
-										idle(mate, now) ? "text-secondary" : "text-primary",
-									)}
-								>
-									{mate.person.name}
-								</span>
-								<span className="max-w-[140px] truncate text-secondary type-detail" data-presence-row-says="">
-									{agentSays(mate) ?? (idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page))}
-								</span>
-							</button>
+								}
+								label={<span className={cn(idle(mate, now) && "text-secondary")}>{mate.person.name}</span>}
+								meta={
+									<span className="block max-w-[96px] truncate" data-presence-row-says="">
+										{agentSays(mate) ?? (idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page))}
+									</span>
+								}
+								onClick={() => follow(mate)}
+							/>
 						))}
-						<div className="mx-auto my-1 h-px w-[240px] bg-line-strong" />
-						<div className="flex h-[30px] items-center gap-2.5 rounded-sm px-2.5 text-secondary">
-							<span className="h-[18px] w-[18px] shrink-0 rounded-full border border-line-strong" />
+						<MenuSeparator />
+						<div className="flex h-row items-center gap-2 px-2 text-secondary">
+							<span className="size-4 shrink-0 rounded-full border border-line-strong" />
 							<span className="min-w-0 flex-1 type-control">You</span>
 							<span className="type-detail">{pageLabel(page)}</span>
 						</div>
-					</div>,
+					</Menu>,
 					document.body,
 				)}
 		</div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../cn";
 import { FolderIcon } from "../icons";
 import { SearchField } from "../primitives/inputs";
+import { Popover } from "../primitives/overlays";
 import { pagePathLabel } from "./pages";
 
 /**
@@ -81,11 +82,11 @@ export function PagePicker({
 	const flipY = at.y + height > window.innerHeight - SCREEN_MARGIN;
 
 	return (
-		<div
+		<Popover
 			ref={panel}
-			role="dialog"
 			aria-label="Move to page"
-			className="fixed z-50 flex animate-menu-in flex-col overflow-hidden rounded-md border border-line-strong bg-surface-raised"
+			pad="none"
+			className="fixed z-50 overflow-hidden"
 			style={{
 				left: flipX ? at.x - WIDTH : at.x,
 				top: flipY ? at.y - height : at.y,
@@ -153,6 +154,6 @@ export function PagePicker({
 					))
 				)}
 			</div>
-		</div>
+		</Popover>
 	);
 }

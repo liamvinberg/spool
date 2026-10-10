@@ -3,8 +3,8 @@ import { pageName } from "../../page-path";
 import type { Geometry, RungRead } from "../api";
 import { readRungs } from "../api";
 import { cn } from "../cn";
+import { Menu, MenuItem } from "../primitives/overlays";
 import { Bar, PropertyValue, ScrollArea, Section } from "../primitives/structure";
-import { MenuItem } from "./context-menu";
 import type { PickedHit } from "./protocol";
 import { NumField, popoverAt, Row, useCloseOnPressAway, VALUE } from "./rail-fields";
 
@@ -266,12 +266,11 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 				⋯
 			</button>
 			{at === null ? null : (
-				<div
+				<Menu
 					ref={list}
-					role="menu"
 					aria-label="Element actions"
 					style={{ left: at.left, top: at.top }}
-					className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
+					className="fixed z-50"
 					onPointerDown={(event) => event.stopPropagation()}
 				>
 					<MenuItem
@@ -281,7 +280,7 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 							onAsk();
 						}}
 					/>
-				</div>
+				</Menu>
 			)}
 		</>
 	);
@@ -289,8 +288,9 @@ function Actions({ onAsk }: { onAsk: () => void }) {
 
 /** the canvas menu's box, which the `⋯` opens a short one of */
 const MENU_WIDTH = 200;
-const MENU_ROW = 30;
-const MENU_PAD = 8;
+const MENU_ROW = 28;
+/** the 4px inset and the hairline, top and bottom */
+const MENU_PAD = 10;
 
 /* ---------- the frame: frame.json, in raw pixels ---------- */
 

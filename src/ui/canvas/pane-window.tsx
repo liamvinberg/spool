@@ -6,8 +6,8 @@ import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
 import { IconButton } from "../primitives/actions";
 import { IconRail, IconRailItem, Tab, Tabs } from "../primitives/navigation";
+import { Menu, MenuItem } from "../primitives/overlays";
 import { useRemembered } from "../remembered";
-import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
 import {
 	type Action,
@@ -1225,12 +1225,11 @@ export function PaneWindow({
 				)}
 
 				{menu === null || menuDef === undefined || menuItems.length === 0 ? null : (
-					<div
+					<Menu
 						data-pane-tab-menu=""
-						role="menu"
 						aria-label={menuDef.title}
-						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
-						style={{ top: menu.y + 4, left: Math.min(menu.x, window.innerWidth - 228) }}
+						className="fixed z-50"
+						style={{ top: menu.y + 4, left: Math.min(menu.x, window.innerWidth - 208) }}
 					>
 						{menuItems.map((item) => (
 							<MenuItem
@@ -1243,7 +1242,7 @@ export function PaneWindow({
 								}}
 							/>
 						))}
-					</div>
+					</Menu>
 				)}
 
 				<div ref={parking} hidden />

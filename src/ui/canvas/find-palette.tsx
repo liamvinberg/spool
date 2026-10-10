@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { charWeights, matchName, runsIn, type Weight } from "../../name-match";
 import { pageName } from "../../page-path";
@@ -6,6 +6,7 @@ import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { FolderIcon } from "../icons";
 import { Kbd } from "../primitives/display";
+import { Palette, PaletteEmpty, Scrim } from "../primitives/overlays";
 import { ageOf, findFrames, newestFirst } from "./frame-find";
 import { pageLabel, pageOf } from "./pages";
 import { UnseenMark } from "./unseen-mark";
@@ -42,7 +43,6 @@ const TONE: Record<Weight, string> = {
 const EMPTY: ReadonlyMap<string, Unseen> = new Map();
 
 const VISIBLE = 10;
-const ROW = 30;
 
 /**
  * Something the palette can do rather than somewhere it can land: the pane
@@ -100,7 +100,7 @@ export function FindPalette({
 	const [query, setQuery] = useState("");
 	const [at, setAt] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
-	const listRef = useRef<HTMLDivElement>(null);
+	const paletteRef = useRef<HTMLDivElement>(null);
 	// the moment the palette opened: ages hold still while it is up
 	const openedAt = useMemo(() => Date.now(), []);
 
@@ -126,152 +126,101 @@ export function FindPalette({
 
 	// the pick has to stay on screen, and a real project is screens of list
 	useEffect(() => {
-		listRef.current?.querySelector<HTMLElement>(`[data-at="${at}"]`)?.scrollIntoView({ block: "nearest" });
+		paletteRef.current?.querySelector<HTMLElement>(`[data-at="${at}"]`)?.scrollIntoView({ block: "nearest" });
 	}, [at]);
-
-	// the fade only while rows remain below it: at the end, nothing says "more"
-	const [more, setMore] = useState(false);
-	const measureMore = useCallback(() => {
-		const list = listRef.current;
-		setMore(list !== null && list.scrollTop + list.clientHeight < list.scrollHeight - 1);
-	}, []);
-	useEffect(() => {
-		if (rows === 0) {
-			setMore(false);
-			return;
-		}
-		measureMore();
-	}, [rows, measureMore]);
 
 	const empty = query.trim().length === 0;
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
-				{/* the scrim is a door out, the way the picker's backdrop is */}
-				<button
-					type="button"
-					aria-label="Close the finder"
-					tabIndex={-1}
-					className="absolute inset-0 cursor-default"
-					onMouseDown={onClose}
-				/>
-			</div>
+			{/* the scrim is a door out, the way the picker's backdrop is */}
+			<Scrim label="Close the finder" onMouseDown={onClose} />
 			{/* fixed, so the panel centres on the window: the rails are asymmetric most of
 			    the time, and a viewport centre reads as off-centre. 148 is the 44px bar plus
 			    the 104 the prototype set below it. The scrim still stops at the rails. */}
 			<div className="pointer-events-none fixed inset-x-0 top-[148px] z-30 flex justify-center px-8">
-				<div
-					role="dialog"
-					aria-modal="true"
+				<Palette
+					ref={paletteRef}
 					aria-label="Find a frame"
 					// a caret that never leaves: clicking the panel is never clicking away from the field
 					onMouseDown={(event) => {
 						if (event.target !== inputRef.current) event.preventDefault();
 						inputRef.current?.focus();
 					}}
-					className="pointer-events-auto flex h-fit w-[560px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-line-strong bg-surface-panel"
-				>
-					<label className="flex h-12 shrink-0 items-center gap-3 border-line-default border-b px-4">
-						{/* the summon key, left as the prompt: the field says which key opened it */}
-						<span className="shrink-0 text-secondary type-code-input">/</span>
-						<input
-							ref={inputRef}
-							value={query}
-							spellCheck={false}
-							autoComplete="off"
-							placeholder="type part of a name"
-							onChange={(event) => {
-								setQuery(event.target.value);
-								setAt(0);
-							}}
-							onKeyDown={(event) => {
-								if (event.key === "ArrowDown") {
-									event.preventDefault();
-									setAt((n) => Math.min(n + 1, Math.max(rows - 1, 0)));
-								} else if (event.key === "ArrowUp") {
-									event.preventDefault();
-									setAt((n) => Math.max(n - 1, 0));
-								} else if (event.key === "Enter") {
-									event.preventDefault();
-									if (picked !== undefined) onLand(picked.frame.name);
-									else if (pickedCommand !== undefined) runCommand(pickedCommand.command);
-								} else if (event.key === "Escape") {
-									event.preventDefault();
-									onClose();
-								}
-							}}
-							className="min-w-0 flex-1 bg-transparent text-primary caret-accent outline-none placeholder:text-secondary type-code-input"
-							aria-label="Find a frame"
-						/>
-						<span className="flex shrink-0 items-center gap-2 type-detail">
+					className="pointer-events-auto h-fit"
+					// an overflowing list stops half a row short, so the cut is the thing that
+					// says there is more, rather than a trough down the side of it
+					listHeight={`calc(var(--spacing-row) * ${VISIBLE + 0.5} + var(--spacing) * 3)`}
+					input={{
+						ref: inputRef,
+						value: query,
+						placeholder: "type part of a name",
+						"aria-label": "Find a frame",
+						onChange: (event) => {
+							setQuery(event.target.value);
+							setAt(0);
+						},
+						onKeyDown: (event) => {
+							if (event.key === "ArrowDown") {
+								event.preventDefault();
+								setAt((n) => Math.min(n + 1, Math.max(rows - 1, 0)));
+							} else if (event.key === "ArrowUp") {
+								event.preventDefault();
+								setAt((n) => Math.max(n - 1, 0));
+							} else if (event.key === "Enter") {
+								event.preventDefault();
+								if (picked !== undefined) onLand(picked.frame.name);
+								else if (pickedCommand !== undefined) runCommand(pickedCommand.command);
+							} else if (event.key === "Escape") {
+								event.preventDefault();
+								onClose();
+							}
+						},
+					}}
+					status={
+						<>
 							{unseen.size === 0 ? null : (
 								<span className="flex items-center gap-1 text-primary">
 									<UnseenMark mark="new" className="-mr-1" />
 									{unseen.size} unseen
 								</span>
 							)}
-							<span className="text-secondary">
-								{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
-							</span>
-						</span>
-					</label>
-
-					<div className="relative shrink-0">
-						<div
-							ref={listRef}
-							onScroll={measureMore}
-							className="overflow-y-auto py-1.5"
-							// an overflowing list stops half a row short, so the cut is the thing
-							// that says there is more, rather than a trough down the side of it
-							style={{
-								height: Math.min(Math.max(rows, 1), VISIBLE) * ROW + 12 + (rows > VISIBLE ? 15 : 0),
-							}}
-						>
-							{rows === 0 ? (
-								<div className="flex h-[30px] items-center px-4 text-secondary type-value">
-									nothing answers to that
-								</div>
-							) : (
-								hits.map((hit, index) => (
-									<FindRow
-										key={hit.frame.name}
-										name={pageName(hit.frame.name)}
-										mark={unseen.get(hit.frame.name)}
-										gutter={unseen.size > 0}
-										page={pageLabel(pageOf(hit.frame))}
-										matched={hit.matched}
-										index={index}
-										age={empty ? ageOf(hit.frame.born, openedAt) : undefined}
-										picked={index === at}
-										onPoint={() => setAt(index)}
-										onLand={() => onLand(hit.frame.name)}
-									/>
-								))
-							)}
-							{doing.map((hit, index) => (
-								<CommandRow
-									key={hit.command.id}
-									command={hit.command}
-									matched={hit.matched}
-									index={hits.length + index}
-									picked={hits.length + index === at}
-									onPoint={() => setAt(hits.length + index)}
-									onRun={() => runCommand(hit.command)}
-								/>
-							))}
-						</div>
-						{more ? (
-							<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface-panel via-surface-panel/85 to-transparent" />
-						) : null}
-					</div>
-
-					<div className="flex h-9 shrink-0 items-center gap-5 border-line-default border-t px-4 text-secondary type-detail">
-						<span>{"↑↓ moves"}</span>
-						<span>{"↵ lands there"}</span>
-						<span>esc closes</span>
-					</div>
-				</div>
+							<span>{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}</span>
+						</>
+					}
+					hints={["↑↓ moves", "↵ lands there", "esc closes"]}
+				>
+					{rows === 0 ? (
+						<PaletteEmpty>nothing answers to that</PaletteEmpty>
+					) : (
+						hits.map((hit, index) => (
+							<FindRow
+								key={hit.frame.name}
+								name={pageName(hit.frame.name)}
+								mark={unseen.get(hit.frame.name)}
+								gutter={unseen.size > 0}
+								page={pageLabel(pageOf(hit.frame))}
+								matched={hit.matched}
+								index={index}
+								age={empty ? ageOf(hit.frame.born, openedAt) : undefined}
+								picked={index === at}
+								onPoint={() => setAt(index)}
+								onLand={() => onLand(hit.frame.name)}
+							/>
+						))
+					)}
+					{doing.map((hit, index) => (
+						<CommandRow
+							key={hit.command.id}
+							command={hit.command}
+							matched={hit.matched}
+							index={hits.length + index}
+							picked={hits.length + index === at}
+							onPoint={() => setAt(hits.length + index)}
+							onRun={() => runCommand(hit.command)}
+						/>
+					))}
+				</Palette>
 			</div>
 		</>
 	);
@@ -311,10 +260,9 @@ function FindRow({
 			onMouseMove={onPoint}
 			onClick={onLand}
 			className={cn(
-				"relative flex w-full items-center gap-5 px-4 text-left transition-colors duration-100",
-				picked && "bg-surface-control",
+				"relative flex h-row w-full items-center gap-5 px-4 text-left transition-colors duration-quick",
+				picked && "bg-state-selected-strong",
 			)}
-			style={{ height: ROW }}
 		>
 			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-accent" /> : null}
 			{gutter ? (
@@ -370,10 +318,9 @@ function CommandRow({
 			onMouseMove={onPoint}
 			onClick={onRun}
 			className={cn(
-				"relative flex w-full items-center gap-5 px-4 text-left transition-colors duration-100",
-				picked && "bg-surface-control",
+				"relative flex h-row w-full items-center gap-5 px-4 text-left transition-colors duration-quick",
+				picked && "bg-state-selected-strong",
 			)}
-			style={{ height: ROW }}
 		>
 			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-accent" /> : null}
 			<span className={cn("min-w-0 flex-1 truncate type-value", refused && "opacity-50")}>

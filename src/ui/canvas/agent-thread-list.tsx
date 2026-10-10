@@ -224,7 +224,7 @@ function ThreadRow({
 				onClick={onPick}
 				className={cn(
 					"relative flex h-9 min-w-0 flex-1 items-center gap-3 rounded-sm pr-2 pl-2.5 text-left transition-colors duration-150",
-					on ? "bg-surface-raised" : "hover:bg-surface-raised/60",
+					on ? "bg-state-selected-strong" : "hover:bg-state-hover-raised",
 				)}
 			>
 				<span className="agent-thread-ask min-w-0 flex-1 truncate text-primary type-control">

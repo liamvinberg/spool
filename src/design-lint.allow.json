@@ -32,9 +32,6 @@
 	"src/ui/canvas/agent-wall.tsx": {
 		"ad-hoc-motion": 1
 	},
-	"src/ui/canvas/find-palette.tsx": {
-		"ad-hoc-motion": 2
-	},
 	"src/ui/canvas/pane-window.tsx": {
 		"ad-hoc-motion": 1
 	},
@@ -57,7 +54,7 @@
 	},
 	"src/ui/home.tsx": {
 		"ad-hoc-motion": 3,
-		"raw-colour": 3
+		"raw-colour": 1
 	},
 	"src/ui/project-icon.tsx": {
 		"raw-colour": 7

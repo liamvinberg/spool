@@ -27,6 +27,7 @@ import { Button, ToggleButton } from "./primitives/actions";
 import { Divider } from "./primitives/display";
 import { ColourField, Textarea } from "./primitives/inputs";
 import { Tab, Tabs } from "./primitives/navigation";
+import { Popover, Scrim } from "./primitives/overlays";
 import { Segment, SegmentedControl, Switch } from "./primitives/selection";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
@@ -79,15 +80,7 @@ export function SettingsSheet({
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
-				<button
-					type="button"
-					aria-label="Close settings"
-					tabIndex={-1}
-					className="absolute inset-0 cursor-default"
-					onMouseDown={onClose}
-				/>
-			</div>
+			<Scrim label="Close settings" onMouseDown={onClose} />
 			<div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center px-8">
 				<div
 					role="dialog"
@@ -584,7 +577,7 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 				Paste
 			</ToggleButton>
 			{pasting ? (
-				<span className="absolute top-8 right-0 z-20 flex w-[360px] animate-menu-in flex-col gap-2 rounded-md border border-line-strong bg-surface-raised p-2">
+				<Popover aria-label="Paste a theme" pad="none" className="absolute top-8 right-0 z-20 w-[360px] gap-2 p-2">
 					<Textarea
 						label="Theme to paste"
 						mono
@@ -610,7 +603,7 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 							Apply
 						</Button>
 					</span>
-				</span>
+				</Popover>
 			) : null}
 		</span>
 	);
