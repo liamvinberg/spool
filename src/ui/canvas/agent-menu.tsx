@@ -10,8 +10,9 @@ import {
 	fetchAgentLogin,
 } from "../api";
 import { cn } from "../cn";
-import { CheckIcon, PlusIcon, SearchIcon } from "../icons";
+import { CheckIcon, PlusIcon } from "../icons";
 import { Dot } from "../primitives/display";
+import { SearchField, SelectTrigger } from "../primitives/inputs";
 import { Segment, SegmentedControl } from "../primitives/selection";
 import { Chevron, CommandLine, Fade, RailMenu, Reveal, Versioned } from "./agent-float";
 import { limitReadout, resetsIn } from "./agent-limit";
@@ -495,41 +496,33 @@ export function AgentMenu({
 				panel={{ "data-agent-model-menu": "" }}
 				busy={switching !== null && !switching.failed}
 				trigger={(props) => (
-					<button
-						type="button"
+					<SelectTrigger
 						{...props}
+						open={open}
 						aria-label="Choose model"
 						title={[engineName(own), name, effort].filter(Boolean).join(" · ")}
-						className="relative z-30 flex h-7 min-w-0 max-w-[200px] items-center gap-1.5 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary type-control"
-					>
-						{usage !== null ? <Dot tone="secondary" data-agent-limit-dot="" /> : null}
-						<span className="min-w-0 truncate">
-							{unusual ? (
-								<>
-									<span data-agent-trigger-engine="">{engineName(own)}</span>
-									<span className="px-1 text-secondary/60">·</span>
-								</>
-							) : null}
-							{machineWord(name) ? <span className="type-value">{name}</span> : <Versioned name={name} />}
-						</span>
-						<Chevron open={open} />
-					</button>
+						className="z-30 max-w-[200px]"
+						value={
+							<>
+								{usage !== null ? <Dot tone="secondary" data-agent-limit-dot="" /> : null}
+								<span className="min-w-0 truncate">
+									{unusual ? (
+										<>
+											<span data-agent-trigger-engine="">{engineName(own)}</span>
+											<span className="px-1 text-secondary/60">·</span>
+										</>
+									) : null}
+									{machineWord(name) ? <span className="type-value">{name}</span> : <Versioned name={name} />}
+								</span>
+							</>
+						}
+					/>
 				)}
 			>
 				<Fade fold open={findable}>
-					<label className="flex h-10 shrink-0 items-center gap-2 border-line-default border-b px-3">
-						<SearchIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
-						<input
-							type="search"
-							value={query}
-							onChange={(event) => setQuery(event.target.value)}
-							placeholder="Find a model"
-							aria-label="Find a model"
-							spellCheck={false}
-							autoComplete="off"
-							className="min-w-0 flex-1 bg-transparent text-primary outline-none placeholder:text-secondary type-control [&::-webkit-search-cancel-button]:hidden"
-						/>
-					</label>
+					<div className="p-1">
+						<SearchField size="md" hotkey="" value={query} onValueChange={setQuery} placeholder="Find a model" />
+					</div>
 				</Fade>
 				<div
 					className={cn("pages-scrollbar overflow-y-auto p-1", findable ? "max-h-[360px] pt-0" : "max-h-[420px]")}
