@@ -816,7 +816,7 @@ export function NewTeamDialog({
 			}}
 			onClose={onClose}
 		>
-			<Field label="Name" className="mb-1">
+			<Field label="Name">
 				{(id) => <TextField size="lg" value={name} onValueChange={setName} inputProps={{ id, maxLength: 64 }} />}
 			</Field>
 		</ConfirmDialog>

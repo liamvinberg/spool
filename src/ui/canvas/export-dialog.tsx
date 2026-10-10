@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
 import { coverUrl } from "../api";
-import { Button, ButtonGroup } from "../primitives/actions";
+import { Button } from "../primitives/actions";
 import { Thumbnail } from "../primitives/display";
+import { Dialog, DialogBody, DialogFooter, DialogHeader, Scrim } from "../primitives/overlays";
 import { RadioCard, RadioGroup } from "../primitives/selection";
 
 export type ExportFormat = "png" | "pdf";
@@ -61,93 +62,84 @@ export function ExportDialog({
 		}
 	};
 	return (
-		<div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-window/55">
-			<div
-				ref={dialogRef}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="export-dialog-title"
-				aria-busy={exporting}
-				tabIndex={-1}
-				className="w-[380px] rounded-lg border border-line-strong bg-surface-raised"
-				onKeyDown={trapFocus}
-			>
-				<div className="flex items-center justify-between border-line-strong border-b px-5 py-4">
-					<h2 id="export-dialog-title" className="font-medium type-title">
-						Export {count} frames
-					</h2>
-					<span className="text-secondary type-value">{count} selected</span>
-				</div>
-
-				<div className="flex gap-2 border-line-strong border-b px-5 py-4">
-					{visiblePreviews.map((frame, index) => (
-						<Thumbnail
-							key={frame.name}
-							src={
-								frame.thumbnail === undefined
-									? undefined
-									: coverUrl(frame.thumbnail.project, frame.thumbnail.frame, frame.thumbnail.cover.hash)
-							}
-							count={index + 1}
-							className="h-[70px] w-[40px]"
-						/>
-					))}
-					{count > visiblePreviews.length ? (
-						<Thumbnail className="h-[70px] w-[40px]">
-							<span className="flex size-full items-center justify-center text-secondary type-value">
-								+{count - visiblePreviews.length}
+		<>
+			<Scrim />
+			<div className="absolute inset-0 z-30 flex items-center justify-center p-4">
+				<Dialog
+					ref={dialogRef}
+					aria-labelledby="export-dialog-title"
+					aria-busy={exporting}
+					tabIndex={-1}
+					onKeyDown={trapFocus}
+				>
+					<DialogHeader
+						title={`Export ${count} frames`}
+						titleId="export-dialog-title"
+						description="Canvas order, left to right"
+					/>
+					<DialogBody notice={error}>
+						<div className="flex gap-2">
+							{visiblePreviews.map((frame, index) => (
+								<Thumbnail
+									key={frame.name}
+									src={
+										frame.thumbnail === undefined
+											? undefined
+											: coverUrl(frame.thumbnail.project, frame.thumbnail.frame, frame.thumbnail.cover.hash)
+									}
+									count={index + 1}
+									className="h-[70px] w-[40px]"
+								/>
+							))}
+							{count > visiblePreviews.length ? (
+								<Thumbnail className="h-[70px] w-[40px]">
+									<span className="flex size-full items-center justify-center text-secondary type-value">
+										+{count - visiblePreviews.length}
+									</span>
+								</Thumbnail>
+							) : null}
+							<span className="ml-2 min-w-0 flex-1 self-center truncate type-value">
+								{frames.map((frame) => frame.name).join(", ")}
 							</span>
-						</Thumbnail>
-					) : null}
-					<div className="ml-2 flex min-w-0 flex-1 flex-col justify-center">
-						<span className="truncate type-control">{frames.map((frame) => frame.name).join(", ")}</span>
-						<span className="text-secondary type-label">Canvas order, left to right</span>
-					</div>
-				</div>
-
-				<RadioGroup label="Export format" className="px-3 py-3">
-					<RadioCard
-						name="export-format"
-						value="png"
-						checked={format === "png"}
-						onSelect={() => setFormat("png")}
-						disabled={exporting}
-						label="PNG images"
-						description={`${count} separate image files`}
-					/>
-					<RadioCard
-						name="export-format"
-						value="pdf"
-						checked={format === "pdf"}
-						onSelect={() => setFormat("pdf")}
-						disabled={exporting}
-						label="PDF document"
-						description={`One document with ${count} pages`}
-					/>
-				</RadioGroup>
-
-				{error === undefined ? null : (
-					<p role="alert" className="px-5 pb-3 text-accent-strong type-control">
-						{error}
-					</p>
-				)}
-
-				<ButtonGroup align="end" className="border-line-strong border-t px-4 py-3">
-					<Button size="lg" variant="ghost" disabled={exporting} onClick={onCancel}>
-						Cancel
-					</Button>
-					<Button
-						ref={primaryRef}
-						size="lg"
-						variant="primary"
-						disabled={exporting}
-						loading={exporting}
-						onClick={() => onExport(format)}
-					>
-						{exporting ? "Exporting…" : "Export"}
-					</Button>
-				</ButtonGroup>
+						</div>
+						<RadioGroup label="Export format">
+							<RadioCard
+								name="export-format"
+								value="png"
+								checked={format === "png"}
+								onSelect={() => setFormat("png")}
+								disabled={exporting}
+								label="PNG images"
+								description={`${count} separate image files`}
+							/>
+							<RadioCard
+								name="export-format"
+								value="pdf"
+								checked={format === "pdf"}
+								onSelect={() => setFormat("pdf")}
+								disabled={exporting}
+								label="PDF document"
+								description={`One document with ${count} pages`}
+							/>
+						</RadioGroup>
+					</DialogBody>
+					<DialogFooter>
+						<Button size="lg" disabled={exporting} onClick={onCancel}>
+							Cancel
+						</Button>
+						<Button
+							ref={primaryRef}
+							size="lg"
+							variant="primary"
+							disabled={exporting}
+							loading={exporting}
+							onClick={() => onExport(format)}
+						>
+							{exporting ? "Exporting…" : "Export"}
+						</Button>
+					</DialogFooter>
+				</Dialog>
 			</div>
-		</div>
+		</>
 	);
 }

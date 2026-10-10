@@ -4,6 +4,7 @@ import { type ShareKind, type ShareRequest, type ShareView, sharedPageName } fro
 import { CloseIcon } from "../icons";
 import { Button, IconButton } from "../primitives/actions";
 import { Field, TextField } from "../primitives/inputs";
+import { Dialog, DialogBody, DialogFooter, DialogHeader, Scrim } from "../primitives/overlays";
 import { Checkbox, RadioCard, RadioGroup } from "../primitives/selection";
 import { KindGlyph, refusalSaid } from "../shares";
 
@@ -100,137 +101,139 @@ export function ShareSheet({
 	const ready = chosen.size > 0 && (kind === "link" || addresses.length > 0) && !busy;
 
 	return (
-		<div className="absolute inset-0 z-30 flex items-center justify-center bg-surface-window/55" data-share-sheet="">
-			<div
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby="share-sheet-title"
-				className="flex max-h-[80vh] w-[420px] flex-col rounded-lg border border-line-strong bg-surface-raised"
-			>
-				<div className="flex items-center justify-between border-line-strong border-b px-5 py-4">
-					<h2 id="share-sheet-title" className="font-medium type-title">
-						Share {[...chosen].sort().map(sharedPageName).join(", ") || "pages"}
-					</h2>
-					<IconButton icon={<CloseIcon />} label="Close" className="-mr-1.5" onClick={onClose} />
-				</div>
-				{made === null ? (
-					<>
-						<RadioGroup label="Who can see it" className="border-line-strong border-b px-3 py-3">
-							{(["people", "link"] as const).map((each) => (
-								<RadioCard
-									key={each}
-									name="share-kind"
-									value={each}
-									checked={kind === each}
-									onSelect={() => setKind(each)}
-									label={
-										<span className="flex items-center gap-2">
-											<KindGlyph kind={each} />
-											{each === "people" ? "Named people" : "Anyone with the link"}
-										</span>
-									}
-								/>
-							))}
-						</RadioGroup>
-						{kind === "people" && (
-							<Field
-								label="They sign in with one of these addresses to see it"
-								className="border-line-strong border-b px-5 py-3"
-							>
-								{(id) => (
+		<>
+			<Scrim />
+			<div className="absolute inset-0 z-30 flex items-center justify-center p-4" data-share-sheet="">
+				<Dialog aria-labelledby="share-sheet-title" className="relative max-h-[80vh]">
+					<DialogHeader
+						title={`Share ${[...chosen].sort().map(sharedPageName).join(", ") || "pages"}`}
+						titleId="share-sheet-title"
+						className="pr-8"
+					/>
+					<IconButton icon={<CloseIcon />} label="Close" className="absolute top-5 right-5" onClick={onClose} />
+					{made === null ? (
+						<>
+							<DialogBody notice={error ?? undefined} className="min-h-0">
+								<RadioGroup label="Who can see it">
+									{(["people", "link"] as const).map((each) => (
+										<RadioCard
+											key={each}
+											name="share-kind"
+											value={each}
+											checked={kind === each}
+											onSelect={() => setKind(each)}
+											label={
+												<span className="flex items-center gap-2">
+													<KindGlyph kind={each} />
+													{each === "people" ? "Named people" : "Anyone with the link"}
+												</span>
+											}
+										/>
+									))}
+								</RadioGroup>
+								{kind === "people" && (
+									<Field label="They sign in with one of these addresses to see it">
+										{(id) => (
+											<TextField
+												size="lg"
+												label="Email addresses"
+												placeholder="kim@client.com, ola@client.com"
+												value={people}
+												onValueChange={setPeople}
+												inputProps={{ id, ref: field }}
+											/>
+										)}
+									</Field>
+								)}
+								<fieldset className="min-h-0 overflow-y-auto">
+									<legend className="sr-only">Pages</legend>
+									{[ROOT_PAGE, ...pages].map((each) => (
+										<div
+											key={each}
+											className="flex h-row items-center"
+											style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
+										>
+											<Checkbox
+												checked={chosen.has(each)}
+												onCheckedChange={() => toggle(each)}
+												label={sharedPageName(each)}
+											/>
+										</div>
+									))}
+								</fieldset>
+								{leaving.length > 0 && (
+									<div className="flex flex-col gap-1" data-share-leaving="">
+										<p className="text-secondary type-label">
+											{leaving.length === 1 ? "A link leaves" : `${leaving.length} links leave`} these pages.
+											Whoever follows one sees it isn’t shared with them.
+										</p>
+										{leaving.slice(0, 5).map((link) => (
+											<p
+												key={`${link.from}\0${link.to}`}
+												className="flex items-center gap-2 text-primary type-detail"
+											>
+												<span className="min-w-0 flex-1 truncate">
+													{pageName(link.from)} → {pageName(link.to)}
+													<span className="text-secondary"> on {sharedPageName(link.page)}</span>
+												</span>
+												<button
+													type="button"
+													className="shrink-0 text-secondary hover:text-primary type-label"
+													onClick={() => toggle(link.page)}
+												>
+													Add {sharedPageName(link.page)}
+												</button>
+											</p>
+										))}
+									</div>
+								)}
+							</DialogBody>
+							<DialogFooter>
+								<Button size="lg" onClick={onClose}>
+									Cancel
+								</Button>
+								<Button size="lg" variant="primary" disabled={!ready} onClick={() => void share()}>
+									{busy ? "Sharing…" : "Share"}
+								</Button>
+							</DialogFooter>
+						</>
+					) : (
+						<>
+							<DialogBody>
+								<p className="text-primary type-body">
+									{made.kind === "link"
+										? "Anyone with this link sees these pages."
+										: "They sign in with their address at this link to see these pages."}
+								</p>
+								<div className="flex items-center gap-2">
 									<TextField
 										size="lg"
-										label="Email addresses"
-										placeholder="kim@client.com, ola@client.com"
-										value={people}
-										onValueChange={setPeople}
-										inputProps={{ id, ref: field }}
+										mono
+										className="flex-1"
+										label="Link"
+										value={made.link ?? ""}
+										inputProps={{ readOnly: true }}
 									/>
-								)}
-							</Field>
-						)}
-						<fieldset className="min-h-0 overflow-y-auto border-line-strong border-b px-5 py-3">
-							<legend className="sr-only">Pages</legend>
-							{[ROOT_PAGE, ...pages].map((each) => (
-								<div
-									key={each}
-									className="flex h-row items-center"
-									style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
-								>
-									<Checkbox
-										checked={chosen.has(each)}
-										onCheckedChange={() => toggle(each)}
-										label={sharedPageName(each)}
-									/>
-								</div>
-							))}
-						</fieldset>
-						{leaving.length > 0 && (
-							<div className="flex flex-col gap-1 border-line-strong border-b px-5 py-3" data-share-leaving="">
-								<p className="text-secondary type-label">
-									{leaving.length === 1 ? "A link leaves" : `${leaving.length} links leave`} these pages.
-									Whoever follows one sees it isn’t shared with them.
-								</p>
-								{leaving.slice(0, 5).map((link) => (
-									<p
-										key={`${link.from}\0${link.to}`}
-										className="flex items-center gap-2 text-primary type-detail"
+									<Button
+										size="lg"
+										variant="primary"
+										onClick={() =>
+											void navigator.clipboard?.writeText(made.link ?? "").then(() => setCopied(true))
+										}
 									>
-										<span className="min-w-0 flex-1 truncate">
-											{pageName(link.from)} → {pageName(link.to)}
-											<span className="text-secondary"> on {sharedPageName(link.page)}</span>
-										</span>
-										<button
-											type="button"
-											className="shrink-0 text-secondary hover:text-primary type-label"
-											onClick={() => toggle(link.page)}
-										>
-											Add {sharedPageName(link.page)}
-										</button>
-									</p>
-								))}
-							</div>
-						)}
-						<div className="flex items-center justify-end gap-3 px-5 py-3">
-							{error !== null && <span className="min-w-0 flex-1 text-accent type-label">{error}</span>}
-							<Button size="lg" variant="ghost" onClick={onClose}>
-								Cancel
-							</Button>
-							<Button size="lg" variant="primary" disabled={!ready} onClick={() => void share()}>
-								{busy ? "Sharing…" : "Share"}
-							</Button>
-						</div>
-					</>
-				) : (
-					<div className="flex flex-col gap-3 px-5 py-4">
-						<p className="text-primary type-detail">
-							{made.kind === "link"
-								? "Anyone with this link sees these pages."
-								: "They sign in with their address at this link to see these pages."}
-						</p>
-						<div className="flex items-center gap-2">
-							<TextField
-								size="lg"
-								mono
-								className="flex-1"
-								label="Link"
-								value={made.link ?? ""}
-								inputProps={{ readOnly: true }}
-							/>
-							<Button
-								size="lg"
-								variant="primary"
-								onClick={() => void navigator.clipboard?.writeText(made.link ?? "").then(() => setCopied(true))}
-							>
-								{copied ? "Copied" : "Copy link"}
-							</Button>
-						</div>
-						<Button size="lg" variant="ghost" className="self-end" onClick={onClose}>
-							Done
-						</Button>
-					</div>
-				)}
+										{copied ? "Copied" : "Copy link"}
+									</Button>
+								</div>
+							</DialogBody>
+							<DialogFooter>
+								<Button size="lg" onClick={onClose}>
+									Done
+								</Button>
+							</DialogFooter>
+						</>
+					)}
+				</Dialog>
 			</div>
-		</div>
+		</>
 	);
 }

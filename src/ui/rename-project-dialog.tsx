@@ -30,7 +30,7 @@ export function RenameProjectDialog({
 					<TextField size="lg" value={draft} onValueChange={setDraft} inputProps={{ id, autoComplete: "off" }} />
 				)}
 			</Field>
-			<code className="block [margin:12px_0_20px] [overflow-wrap:anywhere] text-secondary [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">{`${parent}/${name || project.name}`}</code>
+			<code className="block [overflow-wrap:anywhere] text-secondary [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">{`${parent}/${name || project.name}`}</code>
 		</ConfirmDialog>
 	);
 }

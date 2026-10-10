@@ -9,7 +9,7 @@ import {
 } from "../api";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
-import { Popover } from "../primitives/overlays";
+import { Dialog, Popover } from "../primitives/overlays";
 
 /**
  * Set-aside marks on a team project's canvas.
@@ -283,10 +283,12 @@ function SetAsideCompareDialog({
 	}, []);
 	useEffect(() => attachHotkeyLayer({ scope: "dialog", handlers: {} }), []);
 	return (
-		<dialog
+		<Dialog
+			native
 			ref={dialogRef}
+			width="free"
 			aria-labelledby={`${id}-title`}
-			className="m-auto flex max-h-[calc(100dvh-64px)] w-[min(1100px,calc(100vw-64px))] flex-col gap-4 rounded-[8px] border border-line-strong bg-surface-panel p-6 text-primary backdrop:[background:color-mix(in_srgb,var(--color-surface-window)_70%,transparent)]"
+			className="w-[1100px] gap-4"
 			onCancel={(event) => {
 				event.preventDefault();
 				onClose();
@@ -302,7 +304,7 @@ function SetAsideCompareDialog({
 				<CompareSide title="Yours, set aside" side={sides.mine} />
 				<CompareSide title={mark.by === null ? "The team's" : `The team's, from ${mark.by}`} side={sides.team} />
 			</div>
-		</dialog>
+		</Dialog>
 	);
 }
 
