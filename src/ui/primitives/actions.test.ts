@@ -2,7 +2,7 @@
 import { act, createElement, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { Button, IconButton, ToggleButton } from "./actions";
+import { Button, IconButton, SplitButton, ToggleButton } from "./actions";
 
 /**
  * The action primitives are native buttons: a toggle asks for the other value
@@ -89,4 +89,21 @@ it("an icon button is named by its label and lit while pressed", () => {
 	expect(button?.getAttribute("aria-pressed")).toBe("true");
 	press(button);
 	expect(onClick).toHaveBeenCalledTimes(1);
+});
+
+it("a split button acts on its left and opens its menu from the chevron", () => {
+	const onClick = vi.fn();
+	const onMenu = vi.fn();
+	const host = render(
+		createElement(SplitButton, { onClick, onMenu, menuLabel: "More ways", menuOpen: true }, "New project…"),
+	);
+	const [main, chevron] = host.querySelectorAll("button");
+	press(main);
+	expect(onClick).toHaveBeenCalledOnce();
+	expect(onMenu).not.toHaveBeenCalled();
+	press(chevron);
+	expect(onMenu).toHaveBeenCalledOnce();
+	expect(chevron?.getAttribute("aria-label")).toBe("More ways");
+	expect(chevron?.getAttribute("aria-haspopup")).toBe("menu");
+	expect(chevron?.getAttribute("aria-expanded")).toBe("true");
 });
