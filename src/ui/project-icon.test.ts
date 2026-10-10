@@ -99,6 +99,7 @@ async function strip(props: Partial<Parameters<typeof TabStrip>[0]> = {}) {
 			onClose: () => {},
 			onReorder: () => {},
 			onPick: () => {},
+			onHome: () => {},
 			...props,
 		}),
 	);

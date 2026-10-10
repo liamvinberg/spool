@@ -32,7 +32,6 @@ import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import type { HotkeyIdFor } from "./hotkeys";
-import { HomeIcon } from "./icons";
 import { ProjectPicker } from "./picker";
 import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
@@ -47,6 +46,7 @@ import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
+import { WindowEdgeContext, windowEdge } from "./window-edge";
 
 /**
  * The shell (#4/#12/#13): one top bar with a pinned Home button, one
@@ -603,235 +603,227 @@ export function App() {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);
 	}, [appWindow, canvasActive]);
+	/** where the left side ends, on Home and on a canvas: the tabs start there */
+	const [edge] = useState(windowEdge);
 
 	return (
 		<ProjectTeams.Provider value={markTeams}>
-			<div className="flex h-full flex-col bg-surface-window">
-				<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-line-default after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-secondary)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-surface-window px-4">
-					<div className="flex h-full min-w-0 flex-1 items-center">
-						<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-line-strong">
-							<button
-								type="button"
-								className="app-home flex items-center gap-[9px] h-[32px] [padding:0_4px_0_6px] [font:var(--type-control)] [color:var(--color-secondary)] cursor-pointer [&:is(:hover,[aria-current])]:text-primary active:[transform:translateY(1px)] motion-reduce:active:transform-none"
-								onClick={() => focusProject(null)}
-								aria-current={focusedTab === undefined ? "page" : undefined}
-								title="Home"
-							>
-								<HomeIcon />
-								<span>Home</span>
-							</button>
+			<WindowEdgeContext.Provider value={edge}>
+				<div className="flex h-full flex-col bg-surface-window">
+					<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-line-default after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-secondary)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-bar shrink-0 items-center justify-between gap-[18px] bg-surface-window pr-4">
+						<div className="flex h-full min-w-0 flex-1 items-center">
+							<TabStrip
+								tabs={tabs}
+								focused={focused}
+								onHome={() => focusProject(null)}
+								onFocus={focusProject}
+								onClose={closeTab}
+								onReorder={reorderTabs}
+								onExport={transfer.exportProject}
+								onChangeIcon={icons.change}
+								onRemoveIcon={icons.remove}
+								onPick={() => setPicking("new")}
+							/>
 						</div>
 
-						<TabStrip
-							tabs={tabs}
-							focused={focused}
-							onFocus={focusProject}
-							onClose={closeTab}
-							onReorder={reorderTabs}
-							onExport={transfer.exportProject}
-							onChangeIcon={icons.change}
-							onRemoveIcon={icons.remove}
-							onPick={() => setPicking("new")}
-						/>
-					</div>
-
-					{focusedTab !== undefined && chrome !== null && (
-						<div className="flex h-full shrink-0 items-center gap-4">
-							{/* Play lives on the selection now (#13/#24), where the frame it
+						{focusedTab !== undefined && chrome !== null && (
+							<div className="flex h-full shrink-0 items-center gap-4">
+								{/* Play lives on the selection now (#13/#24), where the frame it
 						    would open is the frame you are looking at. A header button
 						    could only ever guess, and its guess with nothing selected was
 						    the first frame by name — a start that means nothing. */}
-							{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
-							{chrome.presence !== undefined && (
-								<PresenceFaces
-									room={chrome.presence.room}
-									page={chrome.presence.page}
-									following={chrome.presence.following}
-									onFollow={chrome.presence.follow}
+								{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
+								{chrome.presence !== undefined && (
+									<PresenceFaces
+										room={chrome.presence.room}
+										page={chrome.presence.page}
+										following={chrome.presence.following}
+										onFollow={chrome.presence.follow}
+									/>
+								)}
+								{/* who the project's pages are shared with, outside the team (DEV-193) */}
+								{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
+							</div>
+						)}
+						{/* the same on Home and on every canvas, so nothing in the bar moves on the way between them */}
+						<div data-bar-end-group="" className="flex h-full shrink-0 items-center gap-0.5">
+							<BarEnd
+								settingsOpen={settingsOpen}
+								onSettings={settingsOpen ? closeSettings : openSettings}
+								onShortcuts={() => {
+									setSettingsOpen(false);
+									setKeysOpen(true);
+								}}
+								onUseAgent={focusedTab === undefined ? undefined : chrome?.useAgent}
+							/>
+						</div>
+					</header>
+
+					<main className="relative min-h-0 flex-1">
+						{/* hidden rather than gone while settings stands in for it, so esc finds the tab exactly as it was; by
+					    opacity, since the panes set their own visibility */}
+						<div className={cn("h-full", settingsOpen && "opacity-0")} inert={settingsOpen}>
+							{focusedTab === undefined ? (
+								<Home
+									projects={projects.filter(
+										(project) =>
+											!forgetting.has(project.root) &&
+											(project.team === undefined || !teamHome.teams.has(project.team.team)),
+									)}
+									loading={!projectsLoaded}
+									onStart={() => {
+										setPickingTeam(undefined);
+										setPicking("new");
+									}}
+									onFolder={() => setPicking("folder")}
+									onSettings={openSettings}
+									onImport={transfer.importProject}
+									onExportProject={transfer.exportProject}
+									onChangeIcon={icons.change}
+									onRemoveIcon={icons.remove}
+									onRemoveThumbnail={icons.removeThumbnail}
+									onOpenProject={(project) => openTab(project)}
+									onForgetProject={(project) => void forgetProject(project)}
+									onTrashProject={setTrashRequest}
+									onRenameProject={(project) => void requestRename(project)}
+									onMoveToTeam={moveToTeam}
+									switcher={teamHome.switcher}
+									notice={
+										moveNote === null ? (
+											teamHome.notice
+										) : (
+											<>
+												<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
+												{teamHome.notice}
+											</>
+										)
+									}
+									team={teamHome.team}
+									account={
+										<AccountFoot
+											account={account}
+											onSignIn={() => {
+												setAccount({ state: "signing-in" });
+												void signInCloudAccount();
+											}}
+											onReopen={() => void reopenCloudSignIn()}
+											onCancel={() => void cancelCloudSignIn()}
+											onSignOut={() => void signOutCloudAccount().finally(readAccount)}
+										/>
+									}
+								/>
+							) : (
+								<ProjectCanvas
+									key={focusedTab.root}
+									project={focusedTab.name}
+									root={focusedTab.root}
+									onChrome={setChrome}
+									onFolder={() => setPicking("folder")}
+									onRename={(name) => requestRename(focusedTab, name)}
 								/>
 							)}
-							{/* who the project's pages are shared with, outside the team (DEV-193) */}
-							{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
 						</div>
-					)}
-					{/* the same on Home and on every canvas, so nothing in the bar moves on the way between them */}
-					<div data-bar-end-group="" className="flex h-full shrink-0 items-center gap-0.5">
-						<BarEnd
-							settingsOpen={settingsOpen}
-							onSettings={settingsOpen ? closeSettings : openSettings}
-							onShortcuts={() => {
-								setSettingsOpen(false);
-								setKeysOpen(true);
-							}}
-							onUseAgent={focusedTab === undefined ? undefined : chrome?.useAgent}
-						/>
-					</div>
-				</header>
-
-				<main className="relative min-h-0 flex-1">
-					{/* hidden rather than gone while settings stands in for it, so esc finds the tab exactly as it was; by
-					    opacity, since the panes set their own visibility */}
-					<div className={cn("h-full", settingsOpen && "opacity-0")} inert={settingsOpen}>
-						{focusedTab === undefined ? (
-							<Home
-								projects={projects.filter(
-									(project) =>
-										!forgetting.has(project.root) &&
-										(project.team === undefined || !teamHome.teams.has(project.team.team)),
-								)}
-								loading={!projectsLoaded}
-								onStart={() => {
-									setPickingTeam(undefined);
-									setPicking("new");
-								}}
-								onFolder={() => setPicking("folder")}
-								onSettings={openSettings}
-								onImport={transfer.importProject}
-								onExportProject={transfer.exportProject}
-								onChangeIcon={icons.change}
-								onRemoveIcon={icons.remove}
-								onRemoveThumbnail={icons.removeThumbnail}
-								onOpenProject={(project) => openTab(project)}
-								onForgetProject={(project) => void forgetProject(project)}
-								onTrashProject={setTrashRequest}
-								onRenameProject={(project) => void requestRename(project)}
-								onMoveToTeam={moveToTeam}
-								switcher={teamHome.switcher}
-								notice={
-									moveNote === null ? (
-										teamHome.notice
-									) : (
-										<>
-											<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
-											{teamHome.notice}
-										</>
-									)
+						{settingsOpen && (
+							<SettingsPage
+								project={focusedTab}
+								onClose={closeSettings}
+								onMoveToTeam={
+									moveToTeam && focusedSolo
+										? () => {
+												closeSettings();
+												moveToTeam(focusedSolo);
+											}
+										: undefined
 								}
-								team={teamHome.team}
-								account={
-									<AccountFoot
-										account={account}
-										onSignIn={() => {
-											setAccount({ state: "signing-in" });
-											void signInCloudAccount();
-										}}
-										onReopen={() => void reopenCloudSignIn()}
-										onCancel={() => void cancelCloudSignIn()}
-										onSignOut={() => void signOutCloudAccount().finally(readAccount)}
-									/>
-								}
-							/>
-						) : (
-							<ProjectCanvas
-								key={focusedTab.root}
-								project={focusedTab.name}
-								root={focusedTab.root}
-								onChrome={setChrome}
-								onFolder={() => setPicking("folder")}
-								onRename={(name) => requestRename(focusedTab, name)}
 							/>
 						)}
-					</div>
-					{settingsOpen && (
-						<SettingsPage
-							project={focusedTab}
-							onClose={closeSettings}
-							onMoveToTeam={
-								moveToTeam && focusedSolo
-									? () => {
-											closeSettings();
-											moveToTeam(focusedSolo);
-										}
-									: undefined
-							}
+					</main>
+
+					{transfer.surface}
+					{icons.surface}
+					{toast !== null && (
+						<UpdateToastPill
+							toast={toast}
+							aboveCanvasTools={focusedTab !== undefined && chrome !== null}
+							onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
+							onDismiss={dismissToast}
 						/>
 					)}
-				</main>
 
-				{transfer.surface}
-				{icons.surface}
-				{toast !== null && (
-					<UpdateToastPill
-						toast={toast}
-						aboveCanvasTools={focusedTab !== undefined && chrome !== null}
-						onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
-						onDismiss={dismissToast}
-					/>
-				)}
+					{picking === "new" && (
+						<ProjectPicker
+							initial="start"
+							location={
+								pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`
+							}
+							team={pickingTeam}
+							onOpened={(project) => {
+								setPicking(false);
+								setPickingTeam(undefined);
+								openTab(project);
+							}}
+							onClose={() => {
+								setPicking(false);
+								setPickingTeam(undefined);
+							}}
+						/>
+					)}
+					{picking === "folder" && (
+						<ProjectPicker
+							onOpened={(project) => {
+								setPicking(false);
+								openTab(project);
+							}}
+							onClose={() => setPicking(false)}
+						/>
+					)}
 
-				{picking === "new" && (
-					<ProjectPicker
-						initial="start"
-						location={
-							pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`
-						}
-						team={pickingTeam}
-						onOpened={(project) => {
-							setPicking(false);
-							setPickingTeam(undefined);
-							openTab(project);
-						}}
-						onClose={() => {
-							setPicking(false);
-							setPickingTeam(undefined);
-						}}
-					/>
-				)}
-				{picking === "folder" && (
-					<ProjectPicker
-						onOpened={(project) => {
-							setPicking(false);
-							openTab(project);
-						}}
-						onClose={() => setPicking(false)}
-					/>
-				)}
+					{renameRequest !== null && (
+						<RenameProjectDialog
+							project={renameRequest.project}
+							initialName={renameRequest.initialName}
+							onRename={async (name) => {
+								const renamed = await renameProject(renameRequest.project.root, name);
+								remapProject(renameRequest.project.root, renamed);
+								renameRequest.resolve(renamed.name);
+								void refetch();
+							}}
+							onClose={() => {
+								renameRequest.resolve(null);
+								setRenameRequest(null);
+							}}
+						/>
+					)}
 
-				{renameRequest !== null && (
-					<RenameProjectDialog
-						project={renameRequest.project}
-						initialName={renameRequest.initialName}
-						onRename={async (name) => {
-							const renamed = await renameProject(renameRequest.project.root, name);
-							remapProject(renameRequest.project.root, renamed);
-							renameRequest.resolve(renamed.name);
-							void refetch();
-						}}
-						onClose={() => {
-							renameRequest.resolve(null);
-							setRenameRequest(null);
-						}}
-					/>
-				)}
+					{trashRequest !== null && (
+						<TrashProjectDialog
+							project={trashRequest}
+							onTrash={async () => {
+								await trashProject(trashRequest.root);
+								projectRevision.current += 1;
+								setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
+								setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
+								if (focused === trashRequest.root) focusProject(null);
+								void refetch();
+							}}
+							onClose={() => setTrashRequest(null)}
+						/>
+					)}
 
-				{trashRequest !== null && (
-					<TrashProjectDialog
-						project={trashRequest}
-						onTrash={async () => {
-							await trashProject(trashRequest.root);
-							projectRevision.current += 1;
-							setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
-							setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
-							if (focused === trashRequest.root) focusProject(null);
-							void refetch();
-						}}
-						onClose={() => setTrashRequest(null)}
-					/>
-				)}
-
-				{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
-				{moving !== null && (
-					<MoveToTeamDialog
-						project={moving}
-						teams={teamHome.editing}
-						onMoved={(outcome, team) => {
-							setMoveNote(moveCommitNote(outcome, team) ?? null);
-							void refetch();
-						}}
-						onClose={() => setMoving(null)}
-					/>
-				)}
-			</div>
+					{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
+					{moving !== null && (
+						<MoveToTeamDialog
+							project={moving}
+							teams={teamHome.editing}
+							onMoved={(outcome, team) => {
+								setMoveNote(moveCommitNote(outcome, team) ?? null);
+								void refetch();
+							}}
+							onClose={() => setMoving(null)}
+						/>
+					)}
+				</div>
+			</WindowEdgeContext.Provider>
 		</ProjectTeams.Provider>
 	);
 }
