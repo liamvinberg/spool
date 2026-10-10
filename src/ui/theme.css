@@ -92,7 +92,10 @@
 	--color-state-hover-raised: color-mix(in srgb, var(--theme-text) 6%, transparent);
 	--color-state-pressed: light-dark(color-mix(in srgb, var(--theme-text) 6%, transparent), var(--theme-raised));
 	--color-state-selected: var(--theme-surface);
-	--color-state-selected-strong: light-dark(color-mix(in srgb, var(--theme-text) 6%, transparent), var(--theme-raised));
+	--color-state-selected-strong: light-dark(
+		color-mix(in srgb, var(--theme-text) 6%, transparent),
+		var(--theme-raised)
+	);
 	--color-accent-subtle: color-mix(in srgb, var(--theme-thread) 10%, transparent);
 	--color-line-focus: var(--theme-thread);
 
