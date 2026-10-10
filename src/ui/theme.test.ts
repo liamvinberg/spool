@@ -49,7 +49,7 @@ describe("the theme", () => {
 	});
 
 	it("draws every role from the ten theme colours, so a custom palette reaches all of them", () => {
-		const roles = CSS.slice(CSS.indexOf("@theme {"), CSS.indexOf("--breakpoint-app"));
+		const roles = CSS.slice(CSS.indexOf("@theme {"), CSS.indexOf("--color-danger:"));
 		expect(roles).not.toMatch(/#(?!000000|ffffff|f5391a)[0-9a-f]{6}/);
 	});
 
