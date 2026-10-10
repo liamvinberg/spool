@@ -18,6 +18,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { HerePill } from "./home";
 import { HOME_ACTION } from "./home-actions";
 import { ProjectPicker } from "./picker";
+import { RadioCard, RadioGroup } from "./primitives/selection";
 
 /**
  * Getting a team project onto this Mac, and moving a project into a team (DEV-190). The daemon does the work; these
@@ -137,27 +138,19 @@ export function GetItDialog({
 		);
 	/** One place; `detail` is a path, said as the machine says it, unless it is a sentence. */
 	const choice = (key: string, selected: boolean, select: () => void, title: string, detail: string, path = true) => (
-		<label
+		<RadioCard
 			key={key}
-			className={cn(
-				"flex cursor-pointer items-start gap-[12px] rounded-[7px] border px-[13px] py-[11px]",
-				selected ? "border-secondary bg-surface-control" : "border-line-strong hover:bg-surface-control",
-			)}
-		>
-			<input
-				type="radio"
-				name="get-it-place"
-				className="mt-[3px] accent-[var(--color-accent)]"
-				checked={selected}
-				onChange={select}
-			/>
-			<span className="flex min-w-0 flex-col gap-[3px]">
-				<span className="type-control">{title}</span>
-				<span className={cn("truncate text-secondary", path ? "type-detail" : "type-label")} title={detail}>
+			name="get-it-place"
+			value={key}
+			checked={selected}
+			onSelect={select}
+			label={title}
+			description={
+				<span className={cn("block truncate", path && "type-detail")} title={detail}>
 					{detail}
 				</span>
-			</span>
-		</label>
+			}
+		/>
 	);
 	return (
 		<ConfirmDialog
@@ -174,7 +167,7 @@ export function GetItDialog({
 			}}
 			onClose={onClose}
 		>
-			<div className="mb-[16px] flex flex-col gap-[8px]" role="radiogroup" aria-label="Where it goes">
+			<RadioGroup label="Where it goes" className="mb-4">
 				{project.checkouts.map((path) =>
 					choice(
 						path,
@@ -200,7 +193,7 @@ export function GetItDialog({
 					"Just on this Mac",
 					tilde(project.home),
 				)}
-			</div>
+			</RadioGroup>
 			{project.clone !== null && (
 				<div className="mb-[8px] flex flex-col gap-[6px]">
 					<span className="text-secondary type-label">
