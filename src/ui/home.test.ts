@@ -666,7 +666,7 @@ it("confirms trashing the whole folder, supports cancellation and retries failur
 	expect(host.querySelector("dialog")?.textContent).toContain("entire project folder and everything inside it");
 	expect(host.querySelector("dialog code")?.textContent).toBe(coffee.root);
 	expect(document.activeElement?.textContent).toBe("Cancel");
-	expect(button(host, "Move to Trash").classList.contains("home-action-danger")).toBe(true);
+	expect(button(host, "Move to Trash").classList.contains("bg-danger")).toBe(true);
 	act(() => button(host, "Cancel").click());
 	expect(host.querySelector("dialog")).toBeNull();
 	expect(document.activeElement?.getAttribute("aria-label")).toBe("Manage coffee");

@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { cn } from "./cn";
-import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
+import { Button, ButtonGroup } from "./primitives/actions";
 
 /** A modal confirmation that waits for the action and keeps failures retryable. */
 export function ConfirmDialog({
@@ -99,23 +98,14 @@ export function ConfirmDialog({
 							{notice}
 						</p>
 					)}
-					<div className="confirm-dialog-actions flex justify-end gap-[8px] mt-[24px]">
-						<button type="button" className={cn("home-action", HOME_ACTION)} onClick={onClose}>
+					<ButtonGroup align="end" className="confirm-dialog-actions mt-[24px]">
+						<Button size="lg" onClick={onClose}>
 							Cancel
-						</button>
-						<button
-							type="submit"
-							className={cn(
-								"home-action home-action-primary",
-								HOME_ACTION_PRIMARY,
-								danger &&
-									"home-action-danger [&.home-action-danger]:bg-[#c52a18] [&.home-action-danger]:text-[#ffffff]",
-							)}
-							disabled={disabled}
-						>
+						</Button>
+						<Button type="submit" size="lg" variant={danger ? "danger" : "primary"} disabled={disabled}>
 							{busy ? "Working…" : confirmLabel}
-						</button>
-					</div>
+						</Button>
+					</ButtonGroup>
 				</fieldset>
 			</form>
 		</dialog>

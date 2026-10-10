@@ -15,8 +15,8 @@ import {
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
-import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { CheckIcon, ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
+import { Button } from "./primitives/actions";
 
 /**
  * Home's teams: the switcher at the top of the sidebar, the invite line above the covers, and a team's
@@ -279,17 +279,12 @@ export function InviteLine({
 							: `You’d join as ${invite.role === "admin" ? "an admin" : "an editor"}.`)}
 				</span>
 			</span>
-			<button
-				type="button"
-				className="px-[10px] text-secondary type-control hover:text-primary"
-				disabled={busy}
-				onClick={() => run(onDecline)}
-			>
+			<Button variant="ghost" disabled={busy} onClick={() => run(onDecline)}>
 				Decline
-			</button>
-			<button type="button" className={cn(HOME_ACTION, "min-h-[30px]")} disabled={busy} onClick={() => run(onJoin)}>
+			</Button>
+			<Button disabled={busy} onClick={() => run(onJoin)}>
 				Join {invite.team.name}
-			</button>
+			</Button>
 		</div>
 	);
 }
@@ -341,14 +336,9 @@ export function TeamProjects({
 			<header className="pj-heading mb-[31px] flex h-[35px] items-center justify-between gap-[25px]">
 				<h1 className="type-page font-medium">Projects</h1>
 				{onNewProject && (
-					<button
-						type="button"
-						className={cn("home-action home-action-primary h-[35px]", HOME_ACTION_PRIMARY)}
-						onClick={onNewProject}
-					>
-						<PlusIcon />
+					<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onNewProject}>
 						New project…
-					</button>
+					</Button>
 				)}
 			</header>
 			{notice}
@@ -516,11 +506,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 							<>
 								<span className="w-[86px] shrink-0 text-secondary type-control">{ROLE_LABEL[person.role]}</span>
 								<span className="w-[80px] shrink-0 text-right">
-									{person.you && (
-										<button type="button" className={HOME_ACTION} onClick={() => remove(person)}>
-											Leave
-										</button>
-									)}
+									{person.you && <Button onClick={() => remove(person)}>Leave</Button>}
 								</span>
 							</>
 						)}
@@ -549,9 +535,8 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 								</span>
 								{(admin || invite.role === "viewer") && (
 									<>
-										<button
-											type="button"
-											className="h-[28px] rounded-[6px] px-[8px] text-secondary type-control hover:bg-surface-raised hover:text-primary"
+										<Button
+											variant="ghost"
 											onClick={() =>
 												void act(
 													() => teamActions.resendInvite(team.address, invite.id),
@@ -560,14 +545,13 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 											}
 										>
 											Resend
-										</button>
-										<button
-											type="button"
-											className="h-[28px] rounded-[6px] px-[8px] text-secondary type-control hover:bg-surface-raised hover:text-primary"
+										</Button>
+										<Button
+											variant="ghost"
 											onClick={() => void act(() => teamActions.cancelInvite(team.address, invite.id))}
 										>
 											Cancel
-										</button>
+										</Button>
 									</>
 								)}
 							</li>
@@ -659,9 +643,9 @@ function InviteForm({
 					</option>
 				))}
 			</select>
-			<button type="submit" className={cn(HOME_ACTION_PRIMARY, "h-[38px]")} disabled={busy}>
+			<Button type="submit" size="lg" variant="primary" disabled={busy}>
 				Invite
-			</button>
+			</Button>
 		</form>
 	);
 }
@@ -739,17 +723,12 @@ export function TeamSettingsPage({
 							if (chosen) void act(async () => teamActions.setLogo(team.address, await base64(chosen)));
 						}}
 					/>
-					<button type="button" className={cn(HOME_ACTION, "ml-[8px]")} onClick={() => file.current?.click()}>
+					<Button className="ml-[8px]" onClick={() => file.current?.click()}>
 						Upload…
-					</button>
-					<button
-						type="button"
-						className={HOME_ACTION}
-						disabled={!team.logo}
-						onClick={() => void act(() => teamActions.removeLogo(team.address))}
-					>
+					</Button>
+					<Button disabled={!team.logo} onClick={() => void act(() => teamActions.removeLogo(team.address))}>
 						Remove
-					</button>
+					</Button>
 				</>,
 				false,
 			)}
@@ -770,9 +749,9 @@ export function TeamSettingsPage({
 						aria-label="Name"
 						onChange={(event) => setName(event.target.value)}
 					/>
-					<button type="submit" className={HOME_ACTION} disabled={name.trim() === team.name}>
+					<Button type="submit" disabled={name.trim() === team.name}>
 						Save
-					</button>
+					</Button>
 				</form>,
 			)}
 			{row(
@@ -795,21 +774,17 @@ export function TeamSettingsPage({
 							onChange={(event) => setAddress(event.target.value.toLowerCase())}
 						/>
 					</span>
-					<button type="submit" className={HOME_ACTION} disabled={address === team.address}>
+					<Button type="submit" disabled={address === team.address}>
 						Save
-					</button>
+					</Button>
 				</form>,
 			)}
 			{row(
 				"Delete team",
 				"Everyone loses access at once. Gone for good after 30 days.",
-				<button
-					type="button"
-					className="inline-flex h-[34px] items-center rounded-[7px] border border-accent/50 px-[13px] text-accent type-control hover:bg-accent/10"
-					onClick={() => setDeleting(true)}
-				>
+				<Button variant="danger" onClick={() => setDeleting(true)}>
 					Delete {team.name}…
-				</button>,
+				</Button>,
 			)}
 			{deleting && (
 				<ConfirmDialog

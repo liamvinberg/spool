@@ -7,8 +7,8 @@ import {
 	type SetAsideCompare,
 	type ShownSetAside,
 } from "../api";
-import { HOME_ACTION } from "../home-actions";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
+import { Button } from "../primitives/actions";
 
 /**
  * Set-aside marks on a team project's canvas.
@@ -215,15 +215,15 @@ function SetAsideNote({ mark, acts, compact = false }: { mark: ShownSetAside; ac
 				</button>
 			</div>
 			<div className="flex flex-wrap gap-1.5">
-				<button type="button" className={HOME_ACTION} onClick={() => acts.compare(mark)}>
+				<Button size="sm" onClick={() => acts.compare(mark)}>
 					Compare
-				</button>
-				<button type="button" className={HOME_ACTION} onClick={() => acts.putBack(mark)}>
+				</Button>
+				<Button size="sm" onClick={() => acts.putBack(mark)}>
 					Put mine back
-				</button>
-				<button type="button" className={HOME_ACTION} onClick={() => acts.hand(mark)}>
+				</Button>
+				<Button size="sm" onClick={() => acts.hand(mark)}>
 					Hand to agent
-				</button>
+				</Button>
 			</div>
 		</div>
 	);
@@ -295,9 +295,7 @@ function SetAsideCompareDialog({
 				<h2 id={`${id}-title`} className="text-primary type-control">
 					Compare <span className="text-secondary type-value">{mark.path}</span>
 				</h2>
-				<button type="button" className={HOME_ACTION} onClick={onClose}>
-					Close
-				</button>
+				<Button onClick={onClose}>Close</Button>
 			</div>
 			<div className="grid min-h-0 flex-1 grid-cols-2 gap-4">
 				<CompareSide title="Yours, set aside" side={sides.mine} />

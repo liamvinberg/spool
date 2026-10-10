@@ -2,7 +2,6 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { type HerePerson, type ProjectCard, thumbnailUrl } from "./api";
 import { cn } from "./cn";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
-import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import {
@@ -16,6 +15,7 @@ import {
 	RibbonMark,
 	SearchIcon,
 } from "./icons";
+import { Button, ButtonGroup, IconButton } from "./primitives/actions";
 import { Kbd } from "./primitives/display";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
@@ -216,20 +216,17 @@ export function Home({
 										<Kbd>/</Kbd>
 									)}
 								</label>
-								<button type="button" className={cn("home-action h-[35px]", HOME_ACTION)} onClick={onImport}>
-									Import…
-								</button>
-								<button type="button" className={cn("home-action h-[35px]", HOME_ACTION)} onClick={onFolder}>
-									Open…
-								</button>
-								<button
-									type="button"
-									className={cn("home-action home-action-primary h-[35px]", HOME_ACTION_PRIMARY)}
-									onClick={onStart}
-								>
-									<PlusIcon />
-									New project…
-								</button>
+								<ButtonGroup>
+									<Button size="lg" onClick={onImport}>
+										Import…
+									</Button>
+									<Button size="lg" onClick={onFolder}>
+										Open…
+									</Button>
+									<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onStart}>
+										New project…
+									</Button>
+								</ButtonGroup>
 							</div>
 						</header>
 						{notice}
@@ -257,13 +254,9 @@ export function Home({
 								title={`Nothing matches “${query}”`}
 								description="Try a project name or part of its path."
 								actions={
-									<button
-										type="button"
-										className={cn("home-action", HOME_ACTION)}
-										onClick={() => setQuery("")}
-									>
+									<Button size="lg" onClick={() => setQuery("")}>
 										Clear search
-									</button>
+									</Button>
 								}
 							/>
 						) : (
@@ -548,18 +541,16 @@ function ProjectTile({
 					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
 				</span>
 			</button>
-			<button
-				type="button"
+			<IconButton
 				ref={manageRef}
+				icon={<DotsIcon />}
+				label={`Manage ${project.name}`}
 				className={cn(
-					"pj-manage absolute right-[-4px] bottom-[23px] flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[5px] text-secondary opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100 hover:bg-surface-panel hover:text-primary",
+					"pj-manage absolute right-[-4px] bottom-[23px] opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
 					menuOpen ? "is-open" : "",
 				)}
-				aria-label={`Manage ${project.name}`}
 				onClick={onToggleMenu}
-			>
-				<DotsIcon />
-			</button>
+			/>
 			{menuOpen && (
 				<div
 					ref={menuRef}
