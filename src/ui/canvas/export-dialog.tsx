@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
-import { cn } from "../cn";
+import { RadioCard, RadioGroup } from "../primitives/selection";
 import { Thumbnail } from "../thumbnail";
 
 export type ExportFormat = "png" | "pdf";
@@ -106,22 +106,26 @@ export function ExportDialog({
 					</div>
 				</div>
 
-				<div className="flex flex-col gap-1 px-3 py-3" role="radiogroup" aria-label="Export format">
-					<FormatOption
+				<RadioGroup label="Export format" className="px-3 py-3">
+					<RadioCard
+						name="export-format"
+						value="png"
 						checked={format === "png"}
-						description={`${count} separate image files`}
+						onSelect={() => setFormat("png")}
 						disabled={exporting}
 						label="PNG images"
-						onClick={() => setFormat("png")}
+						description={`${count} separate image files`}
 					/>
-					<FormatOption
+					<RadioCard
+						name="export-format"
+						value="pdf"
 						checked={format === "pdf"}
-						description={`One document with ${count} pages`}
+						onSelect={() => setFormat("pdf")}
 						disabled={exporting}
 						label="PDF document"
-						onClick={() => setFormat("pdf")}
+						description={`One document with ${count} pages`}
 					/>
-				</div>
+				</RadioGroup>
 
 				{error === undefined ? null : (
 					<p role="alert" className="px-5 pb-3 text-accent-strong type-control">
@@ -150,50 +154,5 @@ export function ExportDialog({
 				</div>
 			</div>
 		</div>
-	);
-}
-
-function FormatOption({
-	checked,
-	description,
-	disabled,
-	label,
-	onClick,
-}: {
-	checked: boolean;
-	description: string;
-	disabled: boolean;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<label
-			className={cn(
-				"flex items-center gap-3 rounded-md border px-3 py-2.5 text-left",
-				checked ? "border-accent bg-surface-panel" : "border-transparent",
-				disabled ? "cursor-default opacity-60" : "cursor-pointer",
-			)}
-		>
-			<input
-				type="radio"
-				name="export-format"
-				checked={checked}
-				disabled={disabled}
-				className="sr-only"
-				onChange={onClick}
-			/>
-			<span
-				className={cn(
-					"flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-					checked ? "border-accent" : "border-secondary",
-				)}
-			>
-				{checked ? <span className="h-2 w-2 rounded-full bg-accent" /> : null}
-			</span>
-			<span className="flex min-w-0 flex-1 flex-col">
-				<span className="type-control">{label}</span>
-				<span className="text-secondary type-label">{description}</span>
-			</span>
-		</label>
 	);
 }
