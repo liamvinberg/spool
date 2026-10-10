@@ -75,7 +75,7 @@ export function ThreadTitle({
 			{/* the plate under the pane's tab: the tab already says Agent, so this names the chat */}
 			<div
 				data-agent-plate=""
-				className="relative z-20 flex h-11 shrink-0 items-center border-line-default border-b bg-surface-window px-2"
+				className="relative z-20 flex h-bar shrink-0 items-center border-line-default border-b bg-surface-window px-2"
 			>
 				<button
 					ref={title}

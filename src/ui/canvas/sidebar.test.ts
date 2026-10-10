@@ -135,7 +135,8 @@ describe("page tree", () => {
 	it("makes room under a frame's row for its element tree, and folds it without losing a row (#342)", async () => {
 		const tree = createElement("p", { id: "element-tree" }, "<main>");
 		const shopTop = (host: HTMLElement) =>
-			host.querySelector('button[aria-label="shop page"]')?.closest<HTMLElement>(".absolute")?.style.transform;
+			host.querySelector('button[aria-label="shop page"]')?.closest<HTMLElement>('[role="presentation"]')?.style
+				.transform;
 		const { host, rerender } = await render({
 			under: { frame: "shop/checkout", height: 72, open: true, held: false, content: tree },
 		});
@@ -165,15 +166,15 @@ describe("page tree", () => {
 		const { host, rerender } = await render({
 			under: { frame: "home", height: 72, open: true, held: false, content: tree },
 		});
-		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface-panel")).toBe(false);
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-state-selected")).toBe(false);
 
 		await rerender({ under: { frame: "home", height: 72, open: true, held: true, content: tree } });
-		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface-panel")).toBe(true);
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-state-selected")).toBe(true);
 		expect(row(host)?.getAttribute("aria-pressed")).toBe("false");
 
 		// folding with Edit put down, the row goes back to how Select draws it
 		await rerender({ under: { frame: "home", height: 72, open: false, held: true, content: tree } });
-		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface-panel")).toBe(false);
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-state-selected")).toBe(false);
 	});
 
 	it("shuts a page the tree opened once the tree has folded away, so Edit on and off leaves the rail as it was (#342)", async () => {
@@ -1014,8 +1015,6 @@ describe("pages inside pages", () => {
 		const top = host.querySelector<HTMLElement>('button[aria-label="explorations page"]')?.parentElement;
 		expect(nested?.getAttribute("aria-level")).toBe("2");
 		expect(top?.getAttribute("aria-level")).toBe("1");
-		expect(nested?.style.paddingLeft).toBe("10px");
-		expect(top?.style.paddingLeft).toBe("0px");
 	});
 
 	/**

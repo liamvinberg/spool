@@ -96,7 +96,7 @@ async function scrub() {
 		onScrubCancel = vi.fn();
 	const props = { name: "w", onScrub, onScrubEnd, onScrubCancel, children: "990px" };
 	const mounted = await mount(createElement(Row, props));
-	const label = mounted.host.querySelector("span");
+	const label = mounted.host.querySelector<HTMLElement>("[data-scrub]");
 	if (!label) throw new Error("missing scrub label");
 	// Sandboxed or synthetic pointers may reject capture; document events still complete or cancel.
 	Object.defineProperty(label, "setPointerCapture", {

@@ -9,17 +9,17 @@ import {
 } from "react";
 import { cn } from "../cn";
 import { NumberField } from "../primitives/inputs";
+import { PropertyRow } from "../primitives/structure";
 
 /**
- * The rail's controls (#258): a section, a row, and a number box, which is
+ * The rail's controls (#258): a scrubbing row and a number box, which is
  * all the frame's own geometry needs.
  *
  * A field is chrome-less until the pointer is on it, so the rail reads as a
  * list of values rather than as a wall of boxes.
  */
 
-/** Shared app roles for the rail's labels, values and asides */
-export const LABEL = "type-detail";
+/** Shared app roles for the rail's values and asides */
 export const VALUE = "type-value";
 export const FAINT = "text-secondary type-detail";
 
@@ -52,30 +52,9 @@ export function scrubStep(carried: number, movement: number, coarse: boolean): {
  */
 const RowScrub = createContext<((event: ReactPointerEvent<HTMLElement>) => void) | null>(null);
 
-/* ---------- the section and the row ---------- */
+/* ---------- the row ---------- */
 
-export function Section({
-	name,
-	reason,
-	children,
-}: {
-	name: string;
-	/** why this section's rows refuse, said once rather than on every row */
-	reason?: string | undefined;
-	children: ReactNode;
-}) {
-	return (
-		<div className="border-line-strong border-t">
-			<div className="flex h-6 items-center gap-2 px-2.5">
-				<span className={cn("shrink-0 text-secondary", LABEL)}>{name}</span>
-				{reason === undefined ? null : <span className={cn("ml-auto min-w-0 truncate", FAINT)}>{reason}</span>}
-			</div>
-			{children}
-		</div>
-	);
-}
-
-/** the name on the left, one control on the right, a hairline under each */
+/** a property row whose label scrubs its number */
 export function Row({
 	name,
 	onScrub,
@@ -241,24 +220,20 @@ export function Row({
 		}
 	};
 	return (
-		<div
+		<PropertyRow
 			data-properties-row={name}
-			className="grid h-7 grid-cols-[92px_1fr] items-center gap-2 border-line-default/80 border-b px-2.5"
+			label={
+				<span
+					data-scrub=""
+					onPointerDown={down}
+					className={cn("block truncate select-none", scrubbable && "cursor-ew-resize hover:text-primary")}
+				>
+					{name}
+				</span>
+			}
 		>
-			<span
-				onPointerDown={down}
-				className={cn(
-					"truncate select-none text-secondary",
-					LABEL,
-					scrubbable && "cursor-ew-resize hover:text-primary",
-				)}
-			>
-				{name}
-			</span>
-			<div className="flex min-w-0 items-center gap-1">
-				<RowScrub.Provider value={scrubbable ? down : null}>{children}</RowScrub.Provider>
-			</div>
-		</div>
+			<RowScrub.Provider value={scrubbable ? down : null}>{children}</RowScrub.Provider>
+		</PropertyRow>
 	);
 }
 

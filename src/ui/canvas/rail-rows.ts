@@ -20,24 +20,19 @@
 
 import { pageDepth, pageParent, pageSegments, pageWithin, ROOT_PAGE } from "../../page-path";
 
-/** The shipped rail's own metrics: a page row, a frame row, and the list's py-2. */
-export const PAGE_ROW = 32;
+/** The rail's metrics: every row is a TreeRow, row tall, and the list's py-2. */
+export const PAGE_ROW = 28;
 export const FRAME_ROW = 28;
 export const LIST_PAD = 8;
 
-/** One depth step. 10px reproduces the shipped rail's page-to-frame offset exactly. */
-export const INDENT = 10;
+/** One depth step: TreeRow's space-3. */
+export const INDENT = 12;
 /** How far sideways one nesting step is, while a drop is ambiguous. */
 export const DEPTH_BAND = 20;
 
-/** Where a depth's guide line and insertion line start — the frame spine's own x. */
+/** Where a depth's guide line and insertion line start: TreeRow's spine, past the parent's chevron column. */
 export function guideX(depth: number): number {
-	return (depth - 1) * INDENT + 18;
-}
-
-/** Where a row's icon sits; pages and frames at one depth share it. */
-export function contentX(depth: number): number {
-	return depth * INDENT + 24;
+	return (depth - 1) * INDENT + 26;
 }
 
 /**
