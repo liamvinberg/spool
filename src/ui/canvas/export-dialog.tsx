@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
+import { coverUrl } from "../api";
 import { cn } from "../cn";
-import { Thumbnail } from "../thumbnail";
+import { Thumbnail } from "../primitives/display";
 
 export type ExportFormat = "png" | "pdf";
 
@@ -79,26 +80,23 @@ export function ExportDialog({
 
 				<div className="flex gap-2 border-line-strong border-b px-5 py-4">
 					{visiblePreviews.map((frame, index) => (
-						<div
+						<Thumbnail
 							key={frame.name}
-							className="relative h-[70px] w-[40px] shrink-0 overflow-hidden rounded-xs border border-line-strong bg-surface-panel"
-						>
-							{frame.thumbnail === undefined ? (
-								<span className="absolute inset-0 flex items-center justify-center text-secondary type-preview">
-									{frame.name}
-								</span>
-							) : (
-								<Thumbnail {...frame.thumbnail} alt="" className="h-full w-full object-cover object-top" />
-							)}
-							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-surface-window/75 px-0.5 text-primary type-preview">
-								{index + 1}
-							</span>
-						</div>
+							src={
+								frame.thumbnail === undefined
+									? undefined
+									: coverUrl(frame.thumbnail.project, frame.thumbnail.frame, frame.thumbnail.cover.hash)
+							}
+							count={index + 1}
+							className="h-[70px] w-[40px]"
+						/>
 					))}
 					{count > visiblePreviews.length ? (
-						<div className="flex h-[70px] w-[40px] shrink-0 items-center justify-center rounded-xs border border-line-strong bg-surface-panel text-secondary type-value">
-							+{count - visiblePreviews.length}
-						</div>
+						<Thumbnail className="h-[70px] w-[40px]">
+							<span className="flex size-full items-center justify-center text-secondary type-value">
+								+{count - visiblePreviews.length}
+							</span>
+						</Thumbnail>
 					) : null}
 					<div className="ml-2 flex min-w-0 flex-1 flex-col justify-center">
 						<span className="truncate type-control">{frames.map((frame) => frame.name).join(", ")}</span>
