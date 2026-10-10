@@ -6,6 +6,7 @@ import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon } from "../icons";
+import { Button, IconButton } from "../primitives/actions";
 import { type Chip as ChipWords, contextOf, type Strip, WHOLE_SELECTION } from "./agent-chips";
 import { Fade, RailMenu } from "./agent-float";
 import { AgentMenu } from "./agent-menu";
@@ -474,15 +475,7 @@ export function Composer({
 					    how full the window is and the send on the right (#364) */}
 					<div className="-mx-1 flex h-7 min-w-0 items-center justify-between gap-2">
 						<div data-agent-foot="start" className="flex min-w-0 flex-1 items-center gap-0.5">
-							<button
-								type="button"
-								aria-label="Attach an image"
-								title="Attach an image"
-								onClick={() => file.current?.click()}
-								className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary"
-							>
-								<ClipIcon />
-							</button>
+							<IconButton icon={<ClipIcon />} label="Attach an image" onClick={() => file.current?.click()} />
 							<input
 								ref={file}
 								type="file"
@@ -546,7 +539,7 @@ export function Composer({
 										data-agent-send=""
 										disabled={draft.trim() === ""}
 										onClick={() => submit(field.current)}
-										className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-surface-window transition-opacity duration-150 hover:opacity-90 disabled:bg-surface-raised disabled:text-secondary"
+										className={ROUND_INK}
 									>
 										<SendIcon />
 									</button>
@@ -599,19 +592,18 @@ function ContextRing({
 				className="absolute right-0 bottom-full z-30 mb-2 w-[288px] max-w-full"
 				panel={{ "data-agent-context-note": "" }}
 				trigger={(props) => (
-					<button
-						type="button"
+					<IconButton
 						{...props}
-						aria-label={said}
-						title={said}
+						icon={
+							<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
+								<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
+								<path d={wedge} fill="currentColor" />
+							</svg>
+						}
+						label={said}
 						data-agent-context-ring={Math.round(share * 100)}
-						className="relative z-30 flex h-7 w-7 items-center justify-center rounded-sm text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary"
-					>
-						<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
-							<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
-							<path d={wedge} fill="currentColor" />
-						</svg>
-					</button>
+						className="z-30"
+					/>
 				)}
 			>
 				<div className="flex flex-row items-center gap-4 py-3 pr-3 pl-4">
@@ -619,16 +611,14 @@ function ContextRing({
 						<span className="text-primary type-control tabular-nums">{said}</span>
 						<span className="text-secondary type-label">A new chat starts fresh.</span>
 					</span>
-					<button
-						type="button"
+					<Button
 						onClick={() => {
 							onOpen(false);
 							onNewThread();
 						}}
-						className="h-7 shrink-0 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
 					>
 						New chat
-					</button>
+					</Button>
 				</div>
 			</RailMenu>
 		</span>
@@ -670,16 +660,14 @@ function SendIcon() {
  * the turn is a process (#364). Stopping requires this button; Escape only dismisses or
  * leaves UI surfaces.
  */
+/** Send and Stop trade places in one cell, so they are one round ink shape */
+const ROUND_INK =
+	"focus-ring flex size-control-md shrink-0 items-center justify-center rounded-full bg-surface-inverse text-on-inverse transition-[opacity,transform] duration-fast ease-out enabled:active:scale-90 disabled:opacity-40 motion-reduce:transition-none";
+
 function StopButton({ onStop }: { onStop: () => void }) {
 	return (
-		<button
-			type="button"
-			aria-label="Stop"
-			data-agent-stop=""
-			onClick={onStop}
-			className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary transition-opacity duration-150 hover:opacity-90"
-		>
-			<span className="h-2 w-2 rounded-[1.5px] bg-surface-window" />
+		<button type="button" aria-label="Stop" data-agent-stop="" onClick={onStop} className={ROUND_INK}>
+			<span className="h-2 w-2 rounded-[1.5px] bg-on-inverse" />
 		</button>
 	);
 }
