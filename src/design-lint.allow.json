@@ -15,7 +15,7 @@
 		"ad-hoc-motion": 5
 	},
 	"src/ui/canvas/agent-menu.tsx": {
-		"ad-hoc-motion": 11
+		"ad-hoc-motion": 10
 	},
 	"src/ui/canvas/agent-permissions.tsx": {
 		"ad-hoc-motion": 2
@@ -73,7 +73,7 @@
 	},
 	"src/ui/settings-sheet.tsx": {
 		"raw-colour": 6,
-		"ad-hoc-motion": 13
+		"ad-hoc-motion": 10
 	},
 	"src/ui/tab-strip.tsx": {
 		"raw-colour": 6

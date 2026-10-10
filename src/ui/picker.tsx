@@ -15,6 +15,7 @@ import { type DirectoryRequest, desktopWindow } from "./desktop-window";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
 import { crumbsOf, shortPath } from "./picker-model";
+import { Checkbox } from "./primitives/selection";
 import { useWriteSetting } from "./settings";
 import { useFolderBrowser } from "./use-folder-browser";
 
@@ -284,14 +285,12 @@ export function ProjectPicker({
 					</button>
 				</div>
 				{nativeChoose && chosenLocation !== null && (
-					<label className="picker-default flex items-center gap-[6px] mt-[4px] text-secondary [font:var(--type-label)] [&_input]:size-[12px] [&_input]:accent-accent picker-native-default [&]:mt-0 mx-[20px] mb-[18px]">
-						<input
-							type="checkbox"
-							checked={useAsDefault}
-							onChange={(event) => setUseAsDefault(event.target.checked)}
-						/>
-						Use for future projects
-					</label>
+					<Checkbox
+						className="mx-5 mb-4.5"
+						checked={useAsDefault}
+						onCheckedChange={setUseAsDefault}
+						label="Use for future projects"
+					/>
 				)}
 				{name.trim() !== "" && !isSafeName(name.trim()) && (
 					<p className="picker-error m-0 pt-[10px] px-[20px] pb-[16px] text-accent [font:var(--type-label)]">
@@ -473,7 +472,7 @@ export function ProjectPicker({
 							</p>
 						)}
 					</div>
-					<div className="picker-footer border-t border-line-strong py-[12px] px-[16px] flex items-center justify-between gap-[16px] [font:var(--type-control)] [&>div]:flex [&>div]:flex-col [&>div]:min-w-0 [&>div]:gap-[5px] [&_code]:truncate [&_code]:[font:var(--type-detail)] [&_span]:text-secondary [&_span]:[font:var(--type-label)] [&_.picker-path>span]:text-primary [&_.picker-path>span]:[font:var(--type-detail)] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:[&>div]:basis-full [@media(max-width:480px)]:[&>button]:ml-auto">
+					<div className="picker-footer border-t border-line-strong py-[12px] px-[16px] flex items-center justify-between gap-[16px] [font:var(--type-control)] [&>div]:flex [&>div]:flex-col [&>div]:min-w-0 [&>div]:gap-[5px] [&_code]:truncate [&_code]:[font:var(--type-detail)] [&>div>span]:text-secondary [&>div>span]:[font:var(--type-label)] [&_.picker-path>span]:text-primary [&_.picker-path>span]:[font:var(--type-detail)] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:[&>div]:basis-full [@media(max-width:480px)]:[&>button]:ml-auto">
 						<div>
 							<code title={target?.path}>
 								{target ? <PickerPath path={display(target.path)} /> : "Choose a folder"}
@@ -490,15 +489,13 @@ export function ProjectPicker({
 											: "Adds a design folder here."}
 							</span>
 							{step === "location" && !onLocation && (
-								<label className="picker-default flex items-center gap-[6px] mt-[4px] text-secondary [font:var(--type-label)] [&_input]:size-[12px] [&_input]:accent-accent">
-									<input
-										type="checkbox"
-										checked={useAsDefault}
-										disabled={busy}
-										onChange={(event) => setUseAsDefault(event.target.checked)}
-									/>
-									Use for future projects
-								</label>
+								<Checkbox
+									className="mt-1"
+									checked={useAsDefault}
+									disabled={busy}
+									onCheckedChange={setUseAsDefault}
+									label="Use for future projects"
+								/>
 							)}
 						</div>
 						<button

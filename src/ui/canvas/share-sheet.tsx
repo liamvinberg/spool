@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pageName, pageParent, ROOT_PAGE } from "../../page-path";
 import { type ShareKind, type ShareRequest, type ShareView, sharedPageName } from "../../share-view";
-import { cn } from "../cn";
+import { Checkbox, RadioCard, RadioGroup } from "../primitives/selection";
 import { KindGlyph, refusalSaid } from "../shares";
 
 /** A walk the flow map knows: from one frame to another. */
@@ -114,25 +114,23 @@ export function ShareSheet({
 				</div>
 				{made === null ? (
 					<>
-						<div className="flex gap-2 border-line-strong border-b px-5 py-3">
+						<RadioGroup label="Who can see it" className="border-line-strong border-b px-3 py-3">
 							{(["people", "link"] as const).map((each) => (
-								<button
+								<RadioCard
 									key={each}
-									type="button"
-									aria-pressed={kind === each}
-									onClick={() => setKind(each)}
-									className={cn(
-										"flex h-8 flex-1 items-center justify-center gap-2 rounded-sm border type-control",
-										kind === each
-											? "border-accent bg-surface-panel text-primary"
-											: "border-line-strong text-secondary",
-									)}
-								>
-									<KindGlyph kind={each} />
-									{each === "people" ? "Named people" : "Anyone with the link"}
-								</button>
+									name="share-kind"
+									value={each}
+									checked={kind === each}
+									onSelect={() => setKind(each)}
+									label={
+										<span className="flex items-center gap-2">
+											<KindGlyph kind={each} />
+											{each === "people" ? "Named people" : "Anyone with the link"}
+										</span>
+									}
+								/>
 							))}
-						</div>
+						</RadioGroup>
 						{kind === "people" && (
 							<label className="flex flex-col gap-1.5 border-line-strong border-b px-5 py-3">
 								<span className="text-secondary type-label">
@@ -151,20 +149,17 @@ export function ShareSheet({
 						<fieldset className="min-h-0 overflow-y-auto border-line-strong border-b px-5 py-3">
 							<legend className="sr-only">Pages</legend>
 							{[ROOT_PAGE, ...pages].map((each) => (
-								<label key={each} className="flex h-7 cursor-pointer items-center gap-2 type-detail">
-									<input
-										type="checkbox"
+								<div
+									key={each}
+									className="flex h-row items-center"
+									style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
+								>
+									<Checkbox
 										checked={chosen.has(each)}
-										onChange={() => toggle(each)}
-										className="accent-accent"
+										onCheckedChange={() => toggle(each)}
+										label={sharedPageName(each)}
 									/>
-									<span
-										className={chosen.has(each) ? "text-primary" : "text-secondary"}
-										style={{ paddingLeft: Math.max(0, each.split("/").length - 1) * 12 }}
-									>
-										{sharedPageName(each)}
-									</span>
-								</label>
+								</div>
 							))}
 						</fieldset>
 						{leaving.length > 0 && (

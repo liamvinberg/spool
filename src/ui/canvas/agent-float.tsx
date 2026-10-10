@@ -62,7 +62,7 @@ export interface RailMenuTrigger {
 }
 
 /** what a keyboard can reach in an open menu: never a control on its way out */
-const REACHABLE = "button:not(:disabled):not([inert] *), input:not([inert] *)";
+const REACHABLE = "button:not(:disabled):not([inert] *), input:not(:disabled):not([inert] *)";
 
 /**
  * A popover off a control in the rail (#364): the trigger, a backdrop that closes it on a
@@ -110,7 +110,8 @@ export function RailMenu({
 		if (open && !before) {
 			const box = body.current;
 			const target =
-				box?.querySelector<HTMLInputElement>("input:not([inert] *)") ??
+				// a field, not a choice's radio
+				box?.querySelector<HTMLInputElement>('input:not([type="radio"]):not([inert] *)') ??
 				box?.querySelector<HTMLButtonElement>('[aria-checked="true"]:not([inert] *)') ??
 				box?.querySelector<HTMLButtonElement>("button:not([inert] *)");
 			target?.focus({ preventScroll: true });
