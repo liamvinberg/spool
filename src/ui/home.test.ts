@@ -62,14 +62,12 @@ it("sorts real projects, opens a selected root, and retains removal actions", ()
 	const host = mount(createElement(Home, { projects: [alpha, beta], ...callbacks }));
 	const cards = () => Array.from(host.querySelectorAll(".pj-cover-caption strong")).map((node) => node.textContent);
 	expect(cards()).toEqual(["beta", "alpha"]);
-	const sort = host.querySelector<HTMLSelectElement>('select[aria-label="Sort projects"]');
-	act(() => {
-		if (sort) {
-			sort.value = "Name";
-			sort.dispatchEvent(new Event("change", { bubbles: true }));
-		}
-	});
+	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Sort projects: Last opened"]')?.click());
+	expect(host.querySelector('[role="menuitemcheckbox"][aria-checked="true"]')?.textContent).toBe("Last opened");
+	act(() => button(host, "A to Z").click());
 	expect(cards()).toEqual(["alpha", "beta"]);
+	expect(host.querySelector('[role="menu"]')).toBeNull();
+	expect(host.querySelector('[aria-label="Sort projects: A to Z"]')).not.toBeNull();
 	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open alpha"]')?.click());
 	expect(callbacks.onOpenProject).toHaveBeenCalledWith(alpha);
 	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage beta"]')?.click());
@@ -108,9 +106,77 @@ it("shows a team project once however many local copies this Mac holds, opening 
 	const cards = () => Array.from(host.querySelectorAll(".pj-cover-caption strong")).map((node) => node.textContent);
 	expect(cards()).toEqual(["lane", "solo"]);
 	expect(host.querySelector(".pj-cover-button")?.textContent).toContain("2 copies on this Mac");
-	expect(host.textContent).toContain("2 projects");
+	expect(host.querySelector('[aria-label="2 projects"]')?.textContent).toBe("2");
 	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open lane"]')?.click());
 	expect(callbacks.onOpenProject).toHaveBeenCalledWith(lane);
+});
+
+describe("a card's quiet line", () => {
+	const line = (host: HTMLElement, which: "when" | "where", name: string) =>
+		host.querySelector(`[aria-label="Open ${name}"] [data-line="${which}"]`);
+
+	it("says when at rest, and where it lives and how big under the pointer or focus", () => {
+		const shop = { ...project("shop", new Date().toISOString()), root: "/Users/ada/shop", frameCount: 3 };
+		const host = mount(createElement(Home, { projects: [shop], ...actions() }));
+		expect(line(host, "when", "shop")?.textContent).toBe("today");
+		expect(line(host, "when", "shop")?.classList).toContain("group-hover/project:opacity-0");
+		expect(line(host, "when", "shop")?.classList).toContain("group-focus-within/project:opacity-0");
+		const where = line(host, "where", "shop");
+		expect(where?.textContent).toBe("~/shop · 3 frames");
+		expect(where?.classList).toContain("opacity-0");
+		expect(where?.classList).toContain("group-hover/project:opacity-100");
+		expect(where?.classList).toContain("group-focus-within/project:opacity-100");
+	});
+
+	it("holds where it lives while the card's menu is open", () => {
+		const host = mount(createElement(Home, { projects: [project("shop", "2026-09-01T00:00:00Z")], ...actions() }));
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage shop"]')?.click());
+		expect(line(host, "where", "shop")?.classList).toContain("opacity-100");
+		expect(line(host, "when", "shop")?.classList).toContain("opacity-0");
+	});
+
+	it("shows where it lives on a card a search finds only by its path", () => {
+		const host = mount(
+			createElement(Home, {
+				projects: [project("shop", "2026-09-02T00:00:00Z"), project("tmpfile", "2026-09-01T00:00:00Z")],
+				...actions(),
+			}),
+		);
+		act(() => type(host.querySelector('input[type="search"]'), "tmp"));
+		expect(line(host, "where", "shop")?.classList).toContain("opacity-100");
+		expect(line(host, "where", "tmpfile")?.classList).not.toContain("opacity-100");
+		expect(host.querySelector('[aria-label="2 of 2 projects"]')).not.toBeNull();
+	});
+
+	it("names a team copy's team at rest, and says when its sync is paused", () => {
+		const team = { url: "https://spool.page/devosurf/checkout", team: "devosurf", project: "checkout" };
+		const paused = { ...project("checkout", new Date().toISOString()), team, syncPaused: "limit" };
+		const host = mount(createElement(Home, { projects: [paused], ...actions() }));
+		expect(line(host, "when", "checkout")?.textContent).toBe("devosurf · sync paused · today");
+	});
+});
+
+describe("the primary's menu", () => {
+	it("starts a project from the primary, and opens or imports one from its menu", () => {
+		const callbacks = { ...actions(), onImport: vi.fn() };
+		const host = mount(createElement(Home, { projects: [project("shop", "2026-09-01T00:00:00Z")], ...callbacks }));
+		act(() => button(host, "New project…").click());
+		expect(callbacks.onStart).toHaveBeenCalledOnce();
+		const more = () => host.querySelector<HTMLButtonElement>('[aria-label="More ways to start"]');
+		expect(more()?.getAttribute("aria-expanded")).toBe("false");
+		act(() => more()?.click());
+		expect(more()?.getAttribute("aria-expanded")).toBe("true");
+		act(() => menuItem(host, "Open folder…").click());
+		expect(callbacks.onFolder).toHaveBeenCalledOnce();
+		expect(host.querySelector('[aria-label="Start a project"]')).toBeNull();
+		act(() => more()?.click());
+		act(() => menuItem(host, "Import .spool file…").click());
+		expect(callbacks.onImport).toHaveBeenCalledOnce();
+		expect(callbacks.onStart).toHaveBeenCalledOnce();
+		act(() => more()?.click());
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Close menu"]')?.click());
+		expect(host.querySelector('[aria-label="Start a project"]')).toBeNull();
+	});
 });
 
 describe("a project's picture on its cover", () => {
@@ -235,6 +301,15 @@ describe("the account at the foot of Home's sidebar", () => {
 function button(host: HTMLElement, label: string): HTMLButtonElement {
 	const found = Array.from(host.querySelectorAll("button")).find((node) => node.textContent === label);
 	if (!found) throw new Error(`Missing button: ${label}`);
+	return found;
+}
+
+/** a menu item by its label, whatever key it wears beside it */
+function menuItem(host: HTMLElement, label: string): HTMLButtonElement {
+	const found = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(
+		(node) => node.querySelector("span")?.textContent === label,
+	);
+	if (!found) throw new Error(`Missing menu item: ${label}`);
 	return found;
 }
 
