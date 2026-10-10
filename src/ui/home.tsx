@@ -7,6 +7,7 @@ import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, Rib
 import { Button, ButtonGroup, IconButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
+import { NavItem } from "./primitives/navigation";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -98,20 +99,24 @@ export function Home({
 						{team ? (
 							team.nav
 						) : (
-							<NavigationButton icon={<FrameIcon />} active onClick={() => setQuery("")}>
-								Projects
-							</NavigationButton>
+							<NavItem
+								icon={<FrameIcon />}
+								label="Projects"
+								current
+								className={NARROW_NAV}
+								onClick={() => setQuery("")}
+							/>
 						)}
 					</nav>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
 						<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
-							<NavigationButton
+							<NavItem
 								icon={<CogIcon />}
+								label="Settings"
+								className={NARROW_NAV}
 								onClick={onSettings}
 								title={`Settings ${hotkeyKey("app.settings")}`}
-							>
-								Settings
-							</NavigationButton>
+							/>
 						</nav>
 						{account ?? <span>On this Mac</span>}
 					</div>
@@ -656,32 +661,9 @@ export function menuPlace(tile: DOMRect, manage: DOMRect, height: number): MenuP
 	};
 }
 
-function NavigationButton({
-	icon,
-	children,
-	onClick,
-	active = false,
-	title,
-}: {
-	icon: ReactNode;
-	children: ReactNode;
-	onClick: () => void;
-	active?: boolean;
-	title?: string;
-}) {
-	return (
-		<button
-			type="button"
-			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-secondary type-control [&:hover]:bg-surface-panel [&:hover]:text-primary aria-[current=page]:bg-surface-panel aria-[current=page]:text-primary [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0 [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:[&>span]:hidden"
-			aria-current={active ? "page" : undefined}
-			onClick={onClick}
-			title={title}
-		>
-			{icon}
-			<span>{children}</span>
-		</button>
-	);
-}
+/** a narrow window keeps the sidebar's icons and drops their words */
+const NARROW_NAV =
+	"[@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden";
 
 function MenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
 	return (

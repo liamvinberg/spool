@@ -18,6 +18,7 @@ import { CheckIcon, ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from
 import { Button } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
+import { NavItem } from "./primitives/navigation";
 
 /**
  * Home's teams: the switcher at the top of the sidebar, the invite line above the covers, and a team's
@@ -293,16 +294,7 @@ export function InviteLine({
 /** A team's nav under the switcher: Projects, People, and Settings for admins. */
 export function TeamNav({ team, page, onPage }: { team: CloudTeam; page: TeamPage; onPage: (page: TeamPage) => void }) {
 	const item = (to: TeamPage, icon: ReactNode, label: string, count?: number) => (
-		<button
-			type="button"
-			className="pj-navigation-item flex h-[38px] w-full items-center gap-[12px] rounded-[7px] px-[12px] text-left text-secondary type-control [&:hover]:bg-surface-panel [&:hover]:text-primary aria-[current=page]:bg-surface-panel aria-[current=page]:text-primary [&>svg]:h-[16px] [&>svg]:w-[16px] [&>svg]:shrink-0"
-			aria-current={page === to ? "page" : undefined}
-			onClick={() => onPage(to)}
-		>
-			{icon}
-			<span className="flex-1">{label}</span>
-			{count !== undefined && <span className="text-secondary type-detail">{count}</span>}
-		</button>
+		<NavItem icon={icon} label={label} meta={count} current={page === to} onClick={() => onPage(to)} />
 	);
 	return (
 		<>
