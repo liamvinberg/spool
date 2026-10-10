@@ -891,6 +891,9 @@ function Sheet({ target, home }: { target: SheetTarget; home: boolean }) {
  * starting under it, a scroll or a resize wakes it, and it sleeps once it has held
  * still. Returns the wake.
  */
+/** The properties whose transitions move a tab, so the sheet over it. */
+const MOVES = new Set(["max-width", "min-width", "width", "transform", "translate"]);
+
 function useSheet({
 	layer,
 	strip,
@@ -923,6 +926,7 @@ function useSheet({
 		let from: { left: number; right: number } | null = null;
 		let start = 0;
 		let span = 0;
+		let syncing = false;
 		let last = "";
 		let still = 0;
 		const boxOf = (name: string) => {
@@ -953,7 +957,25 @@ function useSheet({
 			key = name;
 			start = Number(document.timeline?.currentTime ?? performance.now());
 			span = ms;
+			syncing = from !== null;
 			wake.current();
+		};
+		// The browser starts the transitions a commit sets a frame or more after the commit, and on the
+		// steep curve a travel that starts sooner pulls the sheet off a target sliding on the same curve.
+		// So the travel waits for them and starts on their clock.
+		const syncStart = (now: number) => {
+			const moves = element
+				.getAnimations({ subtree: true })
+				.filter((animation) => animation instanceof CSSTransition && MOVES.has(animation.transitionProperty));
+			if (moves.some((animation) => animation.pending)) {
+				start = now;
+				return;
+			}
+			syncing = false;
+			for (const animation of moves) {
+				const began = Number(animation.startTime ?? start);
+				if (began > start) start = began;
+			}
 		};
 		const tick = (now: number) => {
 			request = 0;
@@ -962,6 +984,7 @@ function useSheet({
 			let next = box;
 			let moving = false;
 			if (box !== null && from !== null) {
+				if (syncing) syncStart(now);
 				const t = Math.min(1, Math.max(0, now - start) / span);
 				if (t < 1) {
 					const rest = 1 - ease(t);
