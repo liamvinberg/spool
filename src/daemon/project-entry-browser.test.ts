@@ -95,7 +95,8 @@ it("walks all three project jobs through the compact picker with one explicit co
 	expect(readFileSync(join(codebase, "src", "index.ts"), "utf8")).toBe("export const keep = true;\n");
 
 	await page.getByRole("button", { name: "Home", exact: true }).click();
-	await page.getByRole("button", { name: "Open…", exact: true }).click();
+	await page.getByRole("button", { name: "More ways to start", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Open folder…" }).click();
 	await search.fill(shared);
 	await picker.getByRole("button", { name: "Open project", exact: true }).waitFor();
 	await search.press("Enter");
@@ -104,7 +105,8 @@ it("walks all three project jobs through the compact picker with one explicit co
 	expect(readFileSync(join(shared, "design", "canvas.json"), "utf8")).toBe(sharedCanvas);
 
 	await page.getByRole("button", { name: "Home", exact: true }).click();
-	await page.getByRole("button", { name: "Open…", exact: true }).click();
+	await page.getByRole("button", { name: "More ways to start", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Open folder…" }).click();
 	await search.fill(parent);
 	await picker.getByRole("button", { name: `Browse ${parent.split("/").at(-1)}` }).click();
 	await picker.getByRole("button", { name: "Browse existing-codebase", exact: true }).click();

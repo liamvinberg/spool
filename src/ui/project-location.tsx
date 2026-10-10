@@ -1,3 +1,5 @@
+import { tilde } from "./paths";
+
 export function ProjectLocation({
 	path,
 	onChange,
@@ -26,8 +28,7 @@ export function ProjectLocation({
 }
 
 export function displayProjectPath(path: string): string {
-	return path
-		.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~")
+	return tilde(path)
 		.replace(/^~(?=\/|$)/, "Home")
 		.split("/")
 		.join(" / ");

@@ -189,9 +189,9 @@ describe("a cover at Home", () => {
 		);
 	}
 
-	it("draws the icon ahead of the name, and its menu changes it", async () => {
+	it("draws the icon on a cover with nothing to picture yet, and its menu changes it", async () => {
 		const host = await grid([card("kvitt", FILE)], "/w/kvitt");
-		expect(host.querySelector(".pj-cover-caption img")?.getAttribute("src")).toBe(`/icons/kvitt/${FILE.hash}`);
+		expect(host.querySelector(".pj-cover-art img")?.getAttribute("src")).toBe(`/icons/kvitt/${FILE.hash}`);
 		const labels = [...host.querySelectorAll("article button")].map((button) => button.textContent);
 		expect(labels.slice(labels.indexOf("Open"), labels.indexOf("Open") + 3)).toEqual([
 			"Open",

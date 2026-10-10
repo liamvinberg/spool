@@ -1,5 +1,5 @@
-// Action primitives: Button, IconButton, ToggleButton, and the two trays they
-// sit in, ButtonGroup and ToolGroup.
+// Action primitives: Button, IconButton, ToggleButton, SplitButton, and the two
+// trays they sit in, ButtonGroup and ToolGroup.
 //
 // Interaction states pair the real pseudo-class with `data-state="hover|active|focus"`
 // so a sheet can force one; app states ride `aria-pressed`, `disabled` and
@@ -9,8 +9,9 @@
 // Heights are the control scale: sm 24, md 28, lg 32. The radius follows the
 // height (xs at 24, sm at 28 and 32) and drops one tier inside a tray.
 
-import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, HTMLAttributes, MouseEvent, ReactNode } from "react";
 import { cn } from "../cn";
+import { ChevronIcon } from "../icons";
 import { SpinRing } from "./display";
 
 /** a forced interaction state, for a sheet; the live thing uses the pseudo-class */
@@ -253,6 +254,53 @@ export function ToggleButton({
 		>
 			{children}
 		</button>
+	);
+}
+
+/* --------------------------------------------------------- SplitButton -- */
+
+export interface SplitButtonProps extends ButtonProps {
+	/** what the chevron reads aloud: the menu of the other ways to do it */
+	menuLabel: string;
+	/** its menu is showing: the chevron turns over */
+	menuOpen?: boolean | undefined;
+	onMenu?: ((event: MouseEvent<HTMLButtonElement>) => void) | undefined;
+}
+
+/**
+ * One act and its kin: the act on the left, a chevron on the right that opens
+ * a menu of the rest. Both halves are Buttons of one variant and size, joined
+ * by a hairline; the menu itself is the caller's.
+ */
+export function SplitButton({
+	menuLabel,
+	menuOpen = false,
+	onMenu,
+	variant = "primary",
+	size = "md",
+	className,
+	...rest
+}: SplitButtonProps) {
+	return (
+		<div className={cn("inline-flex items-stretch", className)}>
+			<Button variant={variant} size={size} {...rest} className="rounded-r-none" />
+			<span aria-hidden="true" className={cn("w-px", variant === "secondary" ? "bg-line-strong" : "bg-tertiary")} />
+			<Button
+				variant={variant}
+				size={size}
+				aria-label={menuLabel}
+				title={menuLabel}
+				aria-haspopup="menu"
+				aria-expanded={menuOpen}
+				onClick={onMenu}
+				className={cn("group/split rounded-l-none px-2", variant === "secondary" && "border-l-0")}
+			>
+				{/* the house chevron points right; the menu opens downward */}
+				<span className="flex size-3 rotate-90 transition-transform duration-fast ease-out group-aria-expanded/split:-rotate-90 motion-reduce:transition-none [&>svg]:size-full">
+					<ChevronIcon />
+				</span>
+			</Button>
+		</div>
 	);
 }
 

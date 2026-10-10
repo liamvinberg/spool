@@ -4,16 +4,17 @@ import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
-import { Button, ButtonGroup, IconButton } from "./primitives/actions";
+import { tilde } from "./paths";
+import { Button, IconButton, SplitButton } from "./primitives/actions";
+import { Count } from "./primitives/display";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
-import { SearchField } from "./primitives/inputs";
+import { SearchField, SelectTrigger } from "./primitives/inputs";
 import { NavItem } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
-import { ProjectMark } from "./project-icon";
+import { ProjectIconView, useMarkTeam } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
 import { useWindowEdge } from "./window-edge";
-import "./home.css";
 
 export function Home({
 	projects,
@@ -65,13 +66,15 @@ export function Home({
 	team?: { nav: ReactNode; main: ReactNode } | undefined;
 }) {
 	const [query, setQuery] = useState("");
-	const [sort, setSort] = useState("Recent");
+	const [sort, setSort] = useState<Sort>("Recent");
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
+	const [headMenu, setHeadMenu] = useState<"sort" | "start" | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const sidebar = useRef<HTMLElement>(null);
 	useWindowEdge(sidebar);
 	const needle = query.trim().toLowerCase();
-	const visible = coversOf(projects)
+	const covers = coversOf(projects);
+	const visible = covers
 		.filter((project) => project.name.toLowerCase().includes(needle) || project.root.toLowerCase().includes(needle))
 		.sort((a, b) =>
 			sort === "Name" ? a.name.localeCompare(b.name) : Date.parse(b.openedAt) - Date.parse(a.openedAt),
@@ -81,7 +84,10 @@ export function Home({
 			attachHotkeyLayer({
 				scope: "home",
 				handlers: {
-					"home.close-menu": () => setMenuRoot(null),
+					"home.close-menu": () => {
+						setMenuRoot(null);
+						setHeadMenu(null);
+					},
 					"home.search": (event) => {
 						event?.preventDefault();
 						searchRef.current?.focus();
@@ -198,8 +204,44 @@ export function Home({
 				) : (
 					<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
 						<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
-							<h1 className="type-page font-medium">Projects</h1>
-							<div className="flex items-center gap-[13px] [@media(max-width:720px)]:flex-wrap">
+							<div className="flex items-baseline gap-3">
+								<h1 className="type-page font-medium">Projects</h1>
+								<Count
+									aria-label={
+										needle === ""
+											? `${covers.length} ${covers.length === 1 ? "project" : "projects"}`
+											: `${visible.length} of ${covers.length} projects`
+									}
+									value={needle === "" ? covers.length : `${visible.length} of ${covers.length}`}
+								/>
+							</div>
+							<div className="flex items-center gap-2 [@media(max-width:720px)]:flex-wrap">
+								<div className="relative">
+									<SelectTrigger
+										// the trigger's own face is a toolbar's; in the head it matches the search beside it
+										value={<span className="type-control">{SORT_LABEL[sort]}</span>}
+										open={headMenu === "sort"}
+										aria-haspopup="menu"
+										aria-label={`Sort projects: ${SORT_LABEL[sort]}`}
+										className="h-control-lg px-2"
+										onClick={() => setHeadMenu(headMenu === "sort" ? null : "sort")}
+									/>
+									{headMenu === "sort" && (
+										<Menu aria-label="Sort projects" className="absolute top-full left-0 z-20 mt-1">
+											{SORTS.map((choice) => (
+												<MenuItem
+													key={choice}
+													label={SORT_LABEL[choice]}
+													checked={sort === choice}
+													onClick={() => {
+														setSort(choice);
+														setHeadMenu(null);
+													}}
+												/>
+											))}
+										</Menu>
+									)}
+								</div>
 								<SearchField
 									className="w-menu"
 									value={query}
@@ -207,37 +249,52 @@ export function Home({
 									placeholder="Search projects"
 									inputProps={{ ref: searchRef }}
 								/>
-								<ButtonGroup>
-									<Button size="lg" onClick={onImport}>
-										Import…
-									</Button>
-									<Button size="lg" onClick={onFolder}>
-										Open…
-									</Button>
-									<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onStart}>
+								<div className="relative">
+									<SplitButton
+										size="lg"
+										icon={<PlusIcon />}
+										onClick={onStart}
+										menuLabel="More ways to start"
+										menuOpen={headMenu === "start"}
+										onMenu={() => setHeadMenu(headMenu === "start" ? null : "start")}
+									>
 										New project…
-									</Button>
-								</ButtonGroup>
+									</SplitButton>
+									{headMenu === "start" && (
+										<Menu aria-label="Start a project" className="absolute top-full right-0 z-20 mt-1">
+											<MenuItem
+												label="New project…"
+												shortcut={hotkeyKey("app.new-project")}
+												onClick={() => {
+													setHeadMenu(null);
+													onStart();
+												}}
+											/>
+											<MenuSeparator />
+											<MenuItem
+												label="Open folder…"
+												shortcut={hotkeyKey("app.open-project")}
+												onClick={() => {
+													setHeadMenu(null);
+													onFolder();
+												}}
+											/>
+											{onImport && (
+												<MenuItem
+													label="Import .spool file…"
+													onClick={() => {
+														setHeadMenu(null);
+														onImport();
+													}}
+												/>
+											)}
+										</Menu>
+									)}
+								</div>
 							</div>
+							{headMenu !== null && <MenuBackdrop onClose={() => setHeadMenu(null)} />}
 						</header>
-						{notice}
-						<div className="pj-toolbar mb-[24px] flex h-[23px] items-center justify-between text-secondary type-caption">
-							<span className="type-detail">
-								{visible.length} {visible.length === 1 ? "project" : "projects"}
-							</span>
-							<label className="flex items-center gap-[4px]">
-								Sort by
-								<select
-									className="cursor-pointer bg-transparent pt-[3px] pr-[2px] pb-[3px] pl-[5px] text-primary type-caption"
-									aria-label="Sort projects"
-									value={sort}
-									onChange={(event) => setSort(event.target.value)}
-								>
-									<option className="bg-surface-panel">Recent</option>
-									<option className="bg-surface-panel">Name</option>
-								</select>
-							</label>
-						</div>
+						{notice && <div className="mb-[24px]">{notice}</div>}
 						{visible.length === 0 ? (
 							<EmptyState
 								className="min-h-[420px] justify-center p-[35px]"
@@ -253,6 +310,7 @@ export function Home({
 						) : (
 							<ProjectGrid
 								projects={visible}
+								query={needle}
 								menu={menuRoot}
 								onMenu={setMenuRoot}
 								onOpenProject={onOpenProject}
@@ -338,6 +396,7 @@ const HERE_FACES = 4;
 /** The covers, three across, each with its menu: `menu` is the root whose menu is open. */
 export function ProjectGrid({
 	projects,
+	query = "",
 	menu,
 	onMenu,
 	onOpenProject,
@@ -352,6 +411,8 @@ export function ProjectGrid({
 	here,
 }: {
 	projects: readonly ProjectCover[];
+	/** The search, lowercase: a cover it finds only by its path shows the path. */
+	query?: string;
 	menu: string | null;
 	onMenu: (root: string | null) => void;
 	onOpenProject: (project: { root: string; name: string }) => void;
@@ -375,6 +436,7 @@ export function ProjectGrid({
 						key={project.root}
 						project={project}
 						copies={copies}
+						pathHit={query !== "" && !project.name.toLowerCase().includes(query)}
 						here={project.team === undefined ? undefined : here?.get(project.team.project)}
 						menuOpen={menu === project.root}
 						onToggleMenu={() => onMenu(menu === project.root ? null : project.root)}
@@ -397,14 +459,7 @@ export function ProjectGrid({
 					/>
 				))}
 			</div>
-			{menu !== null && (
-				<button
-					type="button"
-					className="fixed inset-0 z-10 cursor-default"
-					aria-label="Close menu"
-					onClick={() => onMenu(null)}
-				/>
-			)}
+			{menu !== null && <MenuBackdrop onClose={() => onMenu(null)} />}
 		</>
 	);
 }
@@ -412,6 +467,7 @@ export function ProjectGrid({
 function ProjectTile({
 	project,
 	copies,
+	pathHit,
 	here,
 	menuOpen,
 	onToggleMenu,
@@ -428,6 +484,7 @@ function ProjectTile({
 }: {
 	project: ProjectCard;
 	copies: number;
+	pathHit: boolean;
 	here: readonly HerePerson[] | undefined;
 	menuOpen: boolean;
 	onToggleMenu: () => void;
@@ -478,11 +535,11 @@ function ProjectTile({
 		>
 			<button
 				type="button"
-				className="pj-cover-button group/cover block w-full text-left"
+				className="pj-cover-button focus-ring block w-full rounded-[8px] text-left"
 				aria-label={`Open ${project.name}`}
 				onClick={onOpen}
 			>
-				<div className="pj-cover-art relative aspect-[1.82] overflow-hidden rounded-[8px] bg-surface-canvas">
+				<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
 					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
 					{project.thumbnail !== undefined ? (
 						<img
@@ -491,54 +548,48 @@ function ProjectTile({
 							draggable={false}
 							className="h-full w-full object-contain"
 						/>
+					) : cover ? (
+						<Thumbnail
+							project={project.name}
+							frame={cover.frame}
+							cover={cover.cover}
+							alt={cover.frame}
+							draggable={false}
+							className="h-full w-full object-contain"
+						/>
 					) : (
-						cover && (
-							<Thumbnail
-								project={project.name}
-								frame={cover.frame}
-								cover={cover.cover}
-								alt={cover.frame}
-								draggable={false}
-								className="h-full w-full object-contain"
-							/>
-						)
+						// nothing to picture yet: its own mark, so an empty project still reads as itself
+						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
 					)}
 					<HerePill people={here} />
-					<span className="pj-cover-enter absolute right-[12px] bottom-[12px] grid h-[30px] w-[30px] place-items-center rounded-[6px] border border-line-strong bg-surface-window text-primary opacity-0 [transform:translateX(-3px)] group-focus-visible/cover:opacity-100 group-focus-visible/cover:[transform:none] group-hover/cover:opacity-100 group-hover/cover:[transform:none] motion-reduce:transition-none">
-						<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-					</span>
+					{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
+					<span
+						aria-hidden="true"
+						className={cn(
+							"pointer-events-none absolute inset-0 rounded-[inherit] border transition-colors duration-fast ease-out motion-reduce:transition-none",
+							menuOpen
+								? "border-line-strong"
+								: "border-line-subtle group-focus-within/project:border-line-strong group-hover/project:border-line-strong",
+						)}
+					/>
 				</div>
-				<div className="pj-cover-caption flex items-center justify-between gap-[9px] pt-[15px] pr-[32px]">
-					<span className="flex min-w-0 items-center gap-[10px]">
-						<ProjectMark
-							project={project.name}
-							name={project.name}
-							icon={project.icon}
-							team={project.team?.team}
-							paused={project.syncPaused !== undefined}
-							size="md"
-						/>
-						<strong className="truncate type-title font-[500]">{project.name}</strong>
-					</span>
-					<span className="shrink-0 text-secondary type-detail">
-						{project.frameCount
-							? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}`
-							: "no frames yet"}
-					</span>
+				<div className="pj-cover-caption pt-[15px] pr-[32px]">
+					<strong className="block truncate type-title font-[500]">{project.name}</strong>
+					<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />
 				</div>
-				<span className="pj-opened-time mt-[7px] block pl-[30px] text-secondary type-detail">
-					{relativeTime(project.openedAt)}
-					{copies > 1 && ` · ${copies} copies on this Mac`}
-					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
-				</span>
 			</button>
 			<IconButton
 				ref={manageRef}
 				icon={<DotsIcon />}
 				label={`Manage ${project.name}`}
+				pressed={menuOpen}
+				aria-haspopup="menu"
+				aria-expanded={menuOpen}
 				className={cn(
-					"pj-manage absolute right-[-4px] bottom-[23px] opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
-					menuOpen ? "is-open" : "",
+					"pj-manage absolute right-[-4px] bottom-[6px] transition-[background-color,color,opacity,transform]",
+					menuOpen
+						? "opacity-100"
+						: "opacity-0 focus-visible:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
 				)}
 				onClick={onToggleMenu}
 			/>
@@ -645,6 +696,63 @@ function ProjectTile({
 	);
 }
 
+/**
+ * A card's one quiet line. At rest: when it was opened, with the team it is shared in or the team it no longer syncs
+ * with. Under the pointer, on focus, with its menu open, or when a search hits only its path, the line turns to where
+ * the project lives, how many frames it has and how many copies of it this Mac holds.
+ */
+function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: number; detail: boolean }) {
+	const team = useMarkTeam(project.team?.team);
+	const when = [
+		team?.name,
+		project.syncPaused !== undefined && "sync paused",
+		relativeTime(project.openedAt),
+		project.ended !== undefined && `no longer synced with ${project.ended}`,
+	];
+	const where = [
+		tilde(project.root),
+		project.frameCount ? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}` : "no frames yet",
+		copies > 1 && `${copies} copies on this Mac`,
+	];
+	const swap =
+		"col-start-1 row-start-1 truncate transition-opacity duration-fast ease-out motion-reduce:transition-none";
+	return (
+		<span className="mt-[5px] grid min-w-0 text-secondary type-detail">
+			<span
+				data-line="when"
+				className={cn(
+					swap,
+					detail ? "opacity-0" : "group-focus-within/project:opacity-0 group-hover/project:opacity-0",
+				)}
+			>
+				{when.filter(Boolean).join(" · ")}
+			</span>
+			<span
+				data-line="where"
+				className={cn(
+					swap,
+					detail
+						? "opacity-100"
+						: "opacity-0 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
+				)}
+			>
+				{where.filter(Boolean).join(" · ")}
+			</span>
+		</span>
+	);
+}
+
+/** Clicking anywhere off an open menu closes it. */
+function MenuBackdrop({ onClose }: { onClose: () => void }) {
+	return (
+		<button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Close menu" onClick={onClose} />
+	);
+}
+
+type Sort = "Recent" | "Name";
+const SORTS: readonly Sort[] = ["Recent", "Name"];
+const SORT_LABEL: Record<Sort, string> = { Recent: "Last opened", Name: "A to Z" };
+
 /** How close to the window's edge a cover's menu may sit before it opens upwards. */
 const MENU_MARGIN = 8;
 const MENU_WIDTH = 200;
@@ -674,7 +782,7 @@ const NARROW_NAV =
 
 /**
  * A removal reflows every card after it. Where the browser can morph that (view
- * transitions), it does; where it cannot, the grid just snaps — the state change
+ * transitions), it does; where it cannot, the grid just snaps: the state change
  * is the same either way.
  */
 function withViewTransition(mutate: () => void): void {

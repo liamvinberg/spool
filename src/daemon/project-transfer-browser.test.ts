@@ -85,7 +85,8 @@ it("round-trips whole projects from Home and an inactive tab without replacing e
 	expect(await page.getByRole("dialog").count()).toBe(0);
 
 	const picked = page.waitForEvent("filechooser");
-	await page.getByRole("button", { name: /^Import/ }).click();
+	await page.getByRole("button", { name: "More ways to start", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Import .spool file…" }).click();
 	await (await picked).setFiles({ name: `${project.name}.spool`, mimeType: "application/zip", buffer: bytes });
 	await expect.poll(() => readRegistry(project.spoolDir).projects.length).toBe(2);
 	const imported = readRegistry(project.spoolDir).projects.find((entry) => entry.root !== project.root);

@@ -16,6 +16,7 @@ import {
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
 import { HerePill } from "./home";
+import { tilde } from "./paths";
 import { ProjectPicker } from "./picker";
 import { Button } from "./primitives/actions";
 import { RadioCard, RadioGroup } from "./primitives/selection";
@@ -24,11 +25,6 @@ import { RadioCard, RadioGroup } from "./primitives/selection";
  * Getting a team project onto this Mac, and moving a project into a team (DEV-190). The daemon does the work; these
  * are the dimmed covers of what the team has that this Mac doesn't, the "Get it" sheet, and the "Move to team…" one.
  */
-
-/** A path as a person reads it: the home folder as `~`. */
-export function tilde(path: string): string {
-	return path.replace(/^\/Users\/[^/]+(?=\/|$)/u, "~");
-}
 
 /**
  * The team's projects not yet on this Mac, dimmed, each with "Get it". Read once when it mounts: Home mounts it
