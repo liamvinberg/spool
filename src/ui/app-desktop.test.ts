@@ -56,9 +56,9 @@ describe("native app commands", () => {
 		expect(host.querySelector('dialog[aria-label="Choose a project folder"]')).not.toBeNull();
 		await act(async () => command?.("app.settings"));
 		expect(host.querySelector('dialog[aria-label="Choose a project folder"]')).toBeNull();
-		expect(host.querySelector('[role="dialog"][aria-label="Settings"]')).not.toBeNull();
+		expect(host.querySelector('section[aria-label="Settings"]')).not.toBeNull();
 		await act(async () => command?.("app.help"));
-		expect(host.querySelector('[role="dialog"][aria-label="Settings"]')).toBeNull();
+		expect(host.querySelector('section[aria-label="Settings"]')).toBeNull();
 		expect(host.querySelector('[role="dialog"][aria-label="Shortcuts"]')).not.toBeNull();
 
 		await act(async () => root.unmount());

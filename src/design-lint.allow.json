@@ -59,10 +59,6 @@
 	"src/ui/project-icon.tsx": {
 		"raw-colour": 7
 	},
-	"src/ui/settings-sheet.tsx": {
-		"ad-hoc-motion": 6,
-		"raw-colour": 6
-	},
 	"src/ui/tab-strip.tsx": {
 		"raw-colour": 6
 	},

@@ -137,7 +137,7 @@ it("uses the engine footer in the served canvas, saves modes at once and leaves 
 	await stop.click();
 	await expect.poll(() => stop.count()).toBe(0);
 	await page.keyboard.press("Meta+,");
-	const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+	const settings = page.getByRole("region", { name: "Settings", exact: true });
 	await settings.waitFor();
 	expect(await settings.textContent()).not.toContain("Agent permissions");
 	expect(await settings.textContent()).toContain("Default project location");
