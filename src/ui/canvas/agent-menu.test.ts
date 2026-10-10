@@ -252,8 +252,8 @@ describe("the model menu", () => {
 			"xhigh",
 			"max",
 		]);
-		expect(effortPill(canvas.host, "high")?.getAttribute("aria-pressed")).toBe("true");
-		expect(effortPill(canvas.host, "low")?.getAttribute("aria-pressed")).toBe("false");
+		expect(effortPill(canvas.host, "high")?.checked).toBe(true);
+		expect(effortPill(canvas.host, "low")?.checked).toBe(false);
 		// and the models are still the list it opened under
 		expect(modelRows(canvas.host)).toContain("Sonnet");
 		expect(modelMenu(canvas.host)?.textContent).not.toContain("Change effort");
@@ -462,7 +462,7 @@ describe("the model menu", () => {
 		// the level alone, set in place: the model above it is not sent again
 		expect(canvas.offered.chose).toEqual([{ thread: canvas.offered.asked[0], effort: "xhigh" }]);
 		expect(modelMenu(canvas.host)).not.toBeNull();
-		expect(effortPill(canvas.host, "xhigh")?.getAttribute("aria-pressed")).toBe("true");
+		expect(effortPill(canvas.host, "xhigh")?.checked).toBe(true);
 		expect(effortToggle(canvas.host)?.getAttribute("aria-label")).toBe("Effort, xhigh");
 		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context)");
 	});
