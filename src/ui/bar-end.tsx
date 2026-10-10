@@ -1,13 +1,10 @@
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MenuItem } from "./canvas/context-menu";
-import { cn } from "./cn";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { hotkeyKey } from "./hotkeys";
 import { CogIcon } from "./icons";
-
-const BUTTON =
-	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface-panel active:scale-90 motion-reduce:transition-none";
+import { IconButton } from "./primitives/actions";
 
 /**
  * What stands at the window bar's right end, on Home and on every canvas alike: help and
@@ -26,16 +23,13 @@ export function BarEnd({
 	return (
 		<>
 			<BarHelp onShortcuts={onShortcuts} onUseAgent={onUseAgent} />
-			<button
-				type="button"
+			<IconButton
 				data-bar-end="settings"
-				aria-label="Settings"
+				icon={<CogIcon />}
+				label="Settings"
 				title={`Settings ${hotkeyKey("app.settings")}`}
 				onClick={onSettings}
-				className={cn(BUTTON, "text-secondary/70 hover:text-primary")}
-			>
-				<CogIcon />
-			</button>
+			/>
 		</>
 	);
 }
@@ -91,25 +85,21 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 
 	return (
 		<>
-			<button
+			<IconButton
 				ref={button}
-				type="button"
 				data-bar-end="help"
-				aria-label="Help"
-				title="Help"
+				icon={
+					<span aria-hidden="true" className="type-control">
+						?
+					</span>
+				}
+				label="Help"
 				aria-haspopup="menu"
 				aria-expanded={open}
 				aria-controls={open ? id : undefined}
 				onClick={() => (open ? setOpen(false) : show())}
 				onKeyDown={onKeyDown}
-				className={cn(
-					BUTTON,
-					"text-[15px]",
-					open ? "bg-surface-panel text-primary" : "text-secondary/70 hover:text-primary",
-				)}
-			>
-				<span aria-hidden="true">?</span>
-			</button>
+			/>
 			{/* out of the bar's own layer, so the sides below it never cover it */}
 			{open &&
 				at !== null &&
