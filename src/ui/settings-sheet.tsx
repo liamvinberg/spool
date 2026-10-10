@@ -24,6 +24,7 @@ import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
 import { ProjectPicker } from "./picker";
 import { Divider } from "./primitives/display";
+import { ColourField, Textarea } from "./primitives/inputs";
 import { Segment, SegmentedControl, Switch } from "./primitives/selection";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
@@ -425,7 +426,7 @@ function AppearanceTab({
 							</span>
 							<span className="shrink-0 text-secondary type-detail">follows thread</span>
 							<Swatch value={tokens.thread} />
-							<span className="w-[92px] shrink-0 pl-2.5 text-secondary type-value">{tokens.thread}</span>
+							<span className="shrink-0 px-[9px] text-secondary type-value">{tokens.thread}</span>
 						</div>
 					</div>
 				) : null}
@@ -601,20 +602,23 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 			</TextButton>
 			{pasting ? (
 				<span className="absolute top-8 right-0 z-20 flex w-[360px] animate-menu-in flex-col gap-2 rounded-md border border-line-strong bg-surface-raised p-2">
-					<textarea
-						aria-label="Theme to paste"
+					<Textarea
+						label="Theme to paste"
+						mono
 						value={draft}
-						spellCheck={false}
 						placeholder={'{ "name": "…", "appearance": "dark", "tokens": { … } }'}
-						onChange={(event) => setDraft(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key === "Escape") {
-								event.stopPropagation();
-								setPasting(false);
-							}
-							if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit();
+						onValueChange={setDraft}
+						error={reason !== undefined}
+						textareaProps={{
+							className: "h-[120px]",
+							onKeyDown: (event) => {
+								if (event.key === "Escape") {
+									event.stopPropagation();
+									setPasting(false);
+								}
+								if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit();
+							},
 						}}
-						className="h-[120px] w-full resize-none rounded-sm border border-line-default bg-surface-canvas px-2.5 py-2 text-primary outline-none placeholder:text-secondary focus:border-line-strong type-value"
 					/>
 					{reason === undefined ? null : <Reason className="pt-0">{reason}</Reason>}
 					<span className="flex items-center justify-between">
@@ -829,15 +833,12 @@ function ColourControl({
 	/** a hex the registry would refuse never reaches the daemon; the reason is the registry's own */
 	onRefuse?: ((reason: string) => void) | undefined;
 }) {
-	const [draft, setDraft] = useState<string | null>(null);
 	const [refused, setRefused] = useState(false);
 	const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	useEffect(() => () => clearTimeout(timer.current), []);
 
-	const commit = () => {
-		if (draft === null) return;
-		const parsed = parseSetting(settingKey, draft);
-		setDraft(null);
+	const commit = (typed: string) => {
+		const parsed = parseSetting(settingKey, typed);
 		if (!parsed.ok) {
 			setRefused(true);
 			onRefuse?.(parsed.reason);
@@ -848,66 +849,27 @@ function ColourControl({
 	};
 
 	return (
-		<span className="flex shrink-0 items-center gap-2">
-			<Swatch value={value} lit={lit}>
-				<input
-					type="color"
-					aria-label={`${label} picker`}
-					value={value}
-					onChange={(event) => {
-						const next = event.target.value.toLowerCase();
-						clearTimeout(timer.current);
-						timer.current = setTimeout(() => onChange(next), 100);
-					}}
-					className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-				/>
-			</Swatch>
-			<span
-				className={cn(
-					"flex h-7 w-[92px] shrink-0 items-center rounded-sm border bg-surface-canvas px-2.5 transition-colors duration-150",
-					refused
-						? "border-accent"
-						: "border-line-default focus-within:border-line-strong hover:border-line-strong",
-				)}
-			>
-				<input
-					type="text"
-					aria-label={label}
-					aria-invalid={refused || undefined}
-					value={draft ?? value}
-					spellCheck={false}
-					onFocus={() => setRefused(false)}
-					onChange={(event) => setDraft(event.target.value)}
-					onBlur={commit}
-					onKeyDown={(event) => {
-						if (event.key === "Enter") {
-							event.preventDefault();
-							event.currentTarget.blur();
-						} else if (event.key === "Escape") {
-							event.preventDefault();
-							event.stopPropagation();
-							setDraft(null);
-							event.currentTarget.blur();
-						}
-					}}
-					className="w-full bg-transparent text-primary outline-none type-value"
-				/>
-			</span>
-		</span>
+		<ColourField
+			value={value}
+			label={label}
+			lit={lit}
+			error={refused}
+			onPick={(next) => {
+				clearTimeout(timer.current);
+				timer.current = setTimeout(() => onChange(next), 100);
+			}}
+			onType={commit}
+			onTypeStart={() => setRefused(false)}
+		/>
 	);
 }
 
-function Swatch({ value, lit = false, children }: { value: string; lit?: boolean; children?: ReactNode }) {
+function Swatch({ value }: { value: string }) {
 	return (
 		<span
-			className={cn(
-				"relative flex h-5 w-5 shrink-0 overflow-hidden rounded-xs border transition-colors duration-150",
-				lit ? "border-primary/60" : "border-line-strong",
-			)}
+			className="relative flex size-control-xs shrink-0 overflow-hidden rounded-xs border border-line-strong"
 			style={{ background: value }}
-		>
-			{children}
-		</span>
+		/>
 	);
 }
 
