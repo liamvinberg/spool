@@ -3,6 +3,7 @@ import type { CloudAccountState } from "./api";
 import { ChevronIcon } from "./icons";
 import { Button, ButtonGroup } from "./primitives/actions";
 import { Dot } from "./primitives/display";
+import { Menu, MenuItem, MenuSeparator, Popover } from "./primitives/overlays";
 
 /**
  * The foot of Home's sidebar, where this Mac's account lives: Sign in, the wait while the
@@ -34,19 +35,16 @@ export function AccountFoot({
 	if (account.state === "signing-in")
 		return (
 			<div className="pj-account relative [@media(max-width:720px)]:hidden">
-				<div
-					role="status"
-					className="absolute bottom-[calc(100%+12px)] left-0 z-30 w-[300px] animate-menu-in rounded-[9px] border border-line-strong bg-surface-raised p-[16px]"
-				>
+				<Popover role="status" className="absolute bottom-[calc(100%+12px)] left-0 z-30 w-panel gap-2">
 					<p className="type-title">Finish in your browser</p>
-					<p className="mt-[6px] text-secondary type-control">
+					<p className="text-secondary type-control">
 						spool.page is open in your browser. This comes back by itself once you’re in.
 					</p>
-					<ButtonGroup className="mt-[14px]">
+					<ButtonGroup className="mt-2">
 						<Button onClick={onReopen}>Open it again</Button>
 						<Button onClick={onCancel}>Cancel</Button>
 					</ButtonGroup>
-				</div>
+				</Popover>
 				<Button className="w-full justify-start" onClick={onReopen}>
 					<Dot tone="secondary" size="md" className="motion-safe:animate-pulse!" />
 					Waiting for the browser
@@ -64,31 +62,26 @@ export function AccountFoot({
 						aria-label="Close menu"
 						onClick={() => setMenuOpen(false)}
 					/>
-					<div className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex w-[260px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit">
-						<p className="truncate px-3 pt-[8px] pb-[9px] text-primary type-control">{account.email}</p>
-						<div className="mx-2 my-unit h-px bg-line-strong" />
-						<a
+					<Menu aria-label={account.email} className="absolute bottom-[calc(100%+8px)] left-0 z-30">
+						<p className="flex h-row items-center truncate px-3 text-primary type-control">{account.email}</p>
+						<MenuSeparator />
+						<MenuItem
 							href={account.accountUrl}
 							target="_blank"
 							rel="noreferrer"
-							className="flex h-[30px] items-center justify-between gap-[12px] rounded-sm px-3 text-primary type-control hover:bg-surface-panel"
+							label="Passkeys and Macs"
+							meta="spool.page ↗"
 							onClick={() => setMenuOpen(false)}
-						>
-							Passkeys and Macs
-							<span className="text-secondary type-detail">spool.page ↗</span>
-						</a>
-						<div className="mx-2 my-unit h-px bg-line-strong" />
-						<button
-							type="button"
-							className="flex h-[30px] items-center rounded-sm px-3 text-left text-primary type-control hover:bg-surface-panel"
+						/>
+						<MenuSeparator />
+						<MenuItem
+							label="Sign out of this Mac"
 							onClick={() => {
 								setMenuOpen(false);
 								onSignOut();
 							}}
-						>
-							Sign out of this Mac
-						</button>
-					</div>
+						/>
+					</Menu>
 				</>
 			)}
 			<button

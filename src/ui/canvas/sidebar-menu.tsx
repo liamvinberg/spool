@@ -11,13 +11,14 @@
 
 import { useEffect } from "react";
 import { hotkeyKey } from "../hotkeys";
-import { MenuItem, MenuRule } from "./context-menu";
+import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
 import { pageLabel } from "./pages";
 
 const MENU_WIDTH = 200;
-const ITEM_HEIGHT = 30;
+const ITEM_HEIGHT = 28;
 const RULE_HEIGHT = 9;
-const MENU_PAD = 8;
+/** the 4px inset and the hairline, top and bottom */
+const MENU_PAD = 10;
 /** how close to the window's own edge the menu may sit before it flips */
 const SCREEN_MARGIN = 8;
 
@@ -180,10 +181,9 @@ export function RailMenu({
 				: "the pages";
 
 	return (
-		<div
-			role="menu"
+		<Menu
 			aria-label={`${named} menu`}
-			className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
+			className="fixed z-50"
 			style={{
 				left: flipX ? menu.x - MENU_WIDTH : menu.x,
 				top: flipY ? menu.y - height : menu.y,
@@ -195,12 +195,12 @@ export function RailMenu({
 			{entries.map((entry, index) =>
 				entry.rule === true ? (
 					// biome-ignore lint/suspicious/noArrayIndexKey: a rule has no identity of its own
-					<MenuRule key={`rule-${index}`} />
+					<MenuSeparator key={`rule-${index}`} />
 				) : (
 					<MenuItem
 						key={entry.label}
 						label={entry.label}
-						{...(entry.keys === undefined ? {} : { keys: entry.keys })}
+						shortcut={entry.keys}
 						disabled={entry.off === true}
 						onClick={() => {
 							onClose();
@@ -209,6 +209,6 @@ export function RailMenu({
 					/>
 				),
 			)}
-		</div>
+		</Menu>
 	);
 }

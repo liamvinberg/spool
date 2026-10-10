@@ -5,9 +5,9 @@ import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { DotsIcon } from "../icons";
 import { IconButton } from "../primitives/actions";
 import { Dot, SpinRing } from "../primitives/display";
+import { Menu, MenuItem } from "../primitives/overlays";
 import { WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
-import { MenuItem } from "./context-menu";
 import type { SideId } from "./pane-layout";
 
 /**
@@ -138,18 +138,17 @@ export function PaneMore({ label, items }: { label: string; items: readonly Pane
 			/>
 			{open
 				? createPortal(
-						<div
+						<Menu
 							ref={menu}
-							role="menu"
 							aria-label={label}
-							className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit [&>button:focus-visible]:bg-surface-panel"
+							className="fixed z-50"
 							style={at === null ? { visibility: "hidden" } : { left: at.left, top: at.top }}
 						>
 							{items.map((item) => (
 								<MenuItem
 									key={item.label}
 									label={item.label}
-									{...(item.keys === undefined ? {} : { keys: item.keys })}
+									shortcut={item.keys}
 									disabled={item.disabled === true}
 									onClick={() => {
 										setOpen(false);
@@ -157,7 +156,7 @@ export function PaneMore({ label, items }: { label: string; items: readonly Pane
 									}}
 								/>
 							))}
-						</div>,
+						</Menu>,
 						document.body,
 					)
 				: null}

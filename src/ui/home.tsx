@@ -7,6 +7,7 @@ import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, Rib
 import { Button, ButtonGroup, IconButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { SearchField } from "./primitives/inputs";
+import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -531,9 +532,9 @@ function ProjectTile({
 				onClick={onToggleMenu}
 			/>
 			{menuOpen && (
-				<div
+				<Menu
 					ref={menuRef}
-					className="fixed z-20 flex w-[196px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
+					className="fixed z-20"
 					style={
 						menuAt === null
 							? { visibility: "hidden", top: 0, left: 0 }
@@ -610,7 +611,7 @@ function ProjectTile({
 							void navigator.clipboard?.writeText(project.root);
 						}}
 					/>
-					<div className="mx-2 my-unit h-px bg-line-strong" />
+					<MenuSeparator />
 					<MenuItem
 						label="Hide from Spool"
 						onClick={() => {
@@ -620,14 +621,14 @@ function ProjectTile({
 					/>
 					<MenuItem
 						label={`Move to ${systemTrashName()}…`}
-						danger
+						destructive
 						onClick={() => {
 							manageRef.current?.focus();
 							onCloseMenu();
 							onTrash();
 						}}
 					/>
-				</div>
+				</Menu>
 			)}
 		</article>
 	);
@@ -635,7 +636,7 @@ function ProjectTile({
 
 /** How close to the window's edge a cover's menu may sit before it opens upwards. */
 const MENU_MARGIN = 8;
-const MENU_WIDTH = 196;
+const MENU_WIDTH = 200;
 
 interface MenuPlace {
 	top: number;
@@ -679,21 +680,6 @@ function NavigationButton({
 		>
 			{icon}
 			<span>{children}</span>
-		</button>
-	);
-}
-
-function MenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
-	return (
-		<button
-			type="button"
-			className={cn(
-				"flex h-[30px] items-center rounded-sm px-3 text-left hover:bg-surface-panel type-control",
-				danger ? "text-[light-dark(#bb2614,#ff604b)]" : "text-primary",
-			)}
-			onClick={onClick}
-		>
-			{label}
 		</button>
 	);
 }
