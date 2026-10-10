@@ -80,7 +80,7 @@ it("closes a side to its rail of icons, and an icon opens it again on that pane"
 	const { page } = await openCanvas();
 	const rail = page.locator('[data-side-rail="right"]');
 	await page.locator('[data-side-close="right"]').click();
-	await expect.poll(() => sideWidth(page, "right")).toBe(40);
+	await expect.poll(() => sideWidth(page, "right")).toBe(44);
 	await expect.poll(() => rail.isVisible()).toBe(true);
 	expect(await rail.locator("[data-rail-icon]").evaluateAll(railNames)).toEqual(["properties", "agent"]);
 	expect(await page.locator("[data-properties-rail]").isVisible()).toBe(false);
@@ -94,13 +94,13 @@ it("closes a side to its rail of icons, and an icon opens it again on that pane"
 	// ⌘B closes the left side the same way, and a side closed stays closed across a reload
 	await page.locator("[data-canvas-camera]").click({ position: { x: 5, y: 5 }, force: true });
 	await page.keyboard.press("ControlOrMeta+b");
-	await expect.poll(() => sideWidth(page, "left")).toBe(40);
+	await expect.poll(() => sideWidth(page, "left")).toBe(44);
 	await expect
 		.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("spool.panes.layout") ?? "null")?.left?.open))
 		.toBe(false);
 	await page.reload();
 	await page.locator("[data-frame-label]").first().waitFor();
-	expect(await sideWidth(page, "left")).toBe(40);
+	expect(await sideWidth(page, "left")).toBe(44);
 	expect(await page.locator('[data-side-rail="left"] [data-rail-icon]').evaluateAll(railNames)).toEqual(["pages"]);
 });
 

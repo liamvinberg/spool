@@ -5,6 +5,7 @@ import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
 import { IconButton } from "../primitives/actions";
+import { IconRail, IconRailItem, Tab, Tabs } from "../primitives/navigation";
 import { useRemembered } from "../remembered";
 import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
@@ -88,9 +89,8 @@ const DROP_MS = 200;
 const GLIDE_MS = 150;
 /** a press travels this far before it is a drag */
 const SLOP = 4;
-/** a side's header, and a split group's own smaller tab row */
-const HEAD_H = 36;
-const ROW_H = 32;
+/** a group's tab row, as tall as its tabs */
+const ROW_H = 36;
 /** the drop line between tabs */
 const CARET_H = 20;
 
@@ -542,8 +542,17 @@ export function PaneWindow({
 			return { box: edge === undefined ? { x: 0, y: 0, w: 0, h: 0 } : inset(edge.box, 4), line: false };
 		}
 		const at = row.tabs[target.index];
+		const before = row.tabs[target.index - 1];
 		const last = row.tabs[row.tabs.length - 1];
-		const x = at !== undefined ? at.x - 1 : last !== undefined ? last.x + last.w + 1 : row.box.x + 12;
+		// between two tabs the line stands in the middle of the gap they keep
+		const x =
+			at !== undefined
+				? before !== undefined
+					? (before.x + before.w + at.x) / 2
+					: at.x - 1
+				: last !== undefined
+					? last.x + last.w + 1
+					: row.box.x + 12;
 		return { box: { x: x - 1, y: row.box.y + (row.box.h - CARET_H) / 2, w: 2, h: CARET_H }, line: true };
 	};
 
@@ -900,33 +909,26 @@ export function PaneWindow({
 	const fadeTo = (shown: boolean, still: boolean) =>
 		still ? "none" : `opacity ${FADE_MS}ms ${EASE}, visibility 0s linear ${shown ? 0 : FADE_MS}ms`;
 
-	const renderTab = (pane: string, lit: boolean, many: boolean) => {
+	const renderTab = (pane: string, lit: boolean) => {
 		const def = byId.get(pane);
 		if (def === undefined) return null;
 		const seen = visible.includes(pane);
 		const kind = markOf(def, seen);
 		return (
-			<button
+			<Tab
 				key={pane}
-				type="button"
-				role="tab"
 				data-pane-tab={pane}
-				aria-selected={lit}
+				selected={lit}
 				aria-label={labelOf(def, kind)}
 				title={`${def.title} ${hotkeyKey(def.hotkey)}`}
 				onPointerDown={(event) => press(pane, event)}
 				onClick={() => picked(() => showPane(pane, false))}
 				onContextMenu={openMenu(pane)}
-				className={cn(
-					"relative flex h-6 shrink-0 cursor-default touch-none items-center gap-1.5 rounded-sm px-2 outline-none type-label transition-[background-color,color,opacity] duration-150 ease-out focus-visible:[outline:2px_solid_var(--color-secondary)] focus-visible:outline-offset-[-2px] motion-reduce:transition-none",
-					lit ? "text-primary" : "text-secondary hover:text-primary",
-					lit && many && "bg-surface-panel",
-					carried === pane && "opacity-40",
-				)}
+				className={cn("shrink-0 cursor-default touch-none", carried === pane && "opacity-40")}
 			>
 				<span className="whitespace-nowrap">{def.title}</span>
 				<PaneMark kind={kind} placed="inline" />
-			</button>
+			</Tab>
 		);
 	};
 
@@ -960,11 +962,10 @@ export function PaneWindow({
 		/** where each pane's slot stands: its group's body */
 		const slotOf = new Map<string, { top: number; height: number; lit: boolean }>();
 		side.groups.forEach((group, g) => {
-			const head = g === 0 ? HEAD_H : ROW_H;
 			for (const pane of group.tabs)
 				slotOf.set(pane, {
-					top: (tops[g] ?? 0) + head,
-					height: Math.max(0, (heights[g] ?? 0) - head),
+					top: (tops[g] ?? 0) + ROW_H,
+					height: Math.max(0, (heights[g] ?? 0) - ROW_H),
 					lit: pane === group.active,
 				});
 		});
@@ -1025,21 +1026,17 @@ export function PaneWindow({
 							/>
 						);
 					})}
-					{side.groups.map((group, g) => {
-						const head = g === 0 ? HEAD_H : ROW_H;
-						return (
-							<div
-								key={`body-${group.tabs[0]}`}
-								data-drop-body={`${id}:${g}`}
-								aria-hidden="true"
-								className="pointer-events-none absolute inset-x-0"
-								style={{ top: (tops[g] ?? 0) + head, height: Math.max(0, (heights[g] ?? 0) - head) }}
-							/>
-						);
-					})}
+					{side.groups.map((group, g) => (
+						<div
+							key={`body-${group.tabs[0]}`}
+							data-drop-body={`${id}:${g}`}
+							aria-hidden="true"
+							className="pointer-events-none absolute inset-x-0"
+							style={{ top: (tops[g] ?? 0) + ROW_H, height: Math.max(0, (heights[g] ?? 0) - ROW_H) }}
+						/>
+					))}
 					{side.groups.map((group, g) => {
 						const head = g === 0;
-						const many = group.tabs.length > 1;
 						return (
 							<div
 								key={`row-${group.tabs[0]}`}
@@ -1048,19 +1045,21 @@ export function PaneWindow({
 								data-drop-row={`${id}:${g}`}
 								className={cn(
 									"group/row absolute inset-x-0 flex select-none items-center bg-surface-window",
-									head ? "px-1.5" : "border-line-default border-t pr-1.5 pl-1",
-									head && id === "right" && "pl-1",
+									// the row draws its tabs' hairline, so it runs under the verbs and the close too
+									"before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-line-default",
+									head && id === "left" ? "px-1.5" : "pr-1.5 pl-3",
+									!head && "after:absolute after:inset-x-0 after:top-0 after:h-px after:bg-line-default",
 								)}
-								style={{ top: tops[g] ?? 0, height: head ? HEAD_H : ROW_H, transition: glide }}
+								style={{ top: tops[g] ?? 0, height: ROW_H, transition: glide }}
 							>
 								{head && id === "left" ? renderClose("left") : null}
-								<div
-									role="tablist"
+								<Tabs
+									rule={false}
 									aria-label={head ? `${SIDE_NAME[id]} side` : `${SIDE_NAME[id]} side, split ${g}`}
-									className={cn("flex min-w-0 items-center overflow-hidden", head && id === "left" && "ml-1")}
+									className={cn("min-w-0", head && id === "left" && "ml-2")}
 								>
-									{group.tabs.map((pane) => renderTab(pane, pane === group.active, many))}
-								</div>
+									{group.tabs.map((pane) => renderTab(pane, pane === group.active))}
+								</Tabs>
 								<div className="ml-auto flex shrink-0 items-center opacity-0 transition-opacity duration-150 ease-out group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 has-[[aria-expanded=true]]:opacity-100 motion-reduce:transition-none">
 									{group.tabs.map((pane) => (
 										<div
@@ -1090,14 +1089,15 @@ export function PaneWindow({
 				</div>
 				{/* the rail: only while the side is closed, its panes' icons bare at the edge, the first where the close was */}
 				{empty && carried === null ? null : (
-					<div
+					<IconRail
+						side="none"
+						aria-label={`${SIDE_NAME[id]} side`}
 						data-side-rail={empty ? undefined : id}
 						data-drop-edge={open && !empty ? undefined : id}
 						inert={open && !empty}
 						aria-hidden={open && !empty}
-						className={cn("absolute inset-y-0 flex flex-col items-center gap-0.5 pt-1", outerEdge)}
+						className={cn("absolute inset-y-0", outerEdge)}
 						style={{
-							width: RAIL_WIDTH,
 							opacity: open && !empty ? 0 : 1,
 							visibility: open && !empty ? "hidden" : "visible",
 							transition: fadeTo(!(open && !empty), still),
@@ -1108,7 +1108,7 @@ export function PaneWindow({
 							if (def === undefined) return null;
 							const kind = markOf(def, visible.includes(pane));
 							return (
-								<IconButton
+								<IconRailItem
 									key={pane}
 									data-rail-icon={pane}
 									icon={def.icon}
@@ -1118,10 +1118,10 @@ export function PaneWindow({
 									onContextMenu={openMenu(pane)}
 								>
 									<PaneMark kind={kind} placed="corner" />
-								</IconButton>
+								</IconRailItem>
 							);
 						})}
-					</div>
+					</IconRail>
 				)}
 				{/* the one hairline, on the edge that faces the canvas, over whatever a pane draws to its edge */}
 				<span

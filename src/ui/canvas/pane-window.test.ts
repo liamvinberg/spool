@@ -99,11 +99,11 @@ describe("the tabs", () => {
 });
 
 describe("closing a side", () => {
-	it("leaves a 40px rail of its panes' icons, and an icon opens the side on that pane", async () => {
+	it("leaves a 44px rail of its panes' icons, and an icon opens the side on that pane", async () => {
 		const { host } = await mount();
 		await click(host.querySelector('[data-side-close="right"]'));
 		expect(side(host, "right")?.hasAttribute("data-side-open")).toBe(false);
-		expect(side(host, "right")?.style.width).toBe("40px");
+		expect(side(host, "right")?.style.width).toBe("44px");
 		const rail = host.querySelector<HTMLElement>('[data-side-rail="right"]');
 		expect(
 			[...(rail?.querySelectorAll<HTMLElement>("[data-rail-icon]") ?? [])].map((item) => item.dataset.railIcon),
@@ -168,7 +168,7 @@ describe("the side's edge", () => {
 			grip?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, pointerId: 2 }));
 			grip?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, pointerId: 2 }));
 		});
-		expect(side(host, "left")?.style.width).toBe("40px");
+		expect(side(host, "left")?.style.width).toBe("44px");
 		expect(railIcon(host, "pages")).not.toBeNull();
 	});
 });
@@ -177,9 +177,9 @@ describe("the keys", () => {
 	it("closes and opens the left side with ⌘B and the right with ⌘⌥B", async () => {
 		const { host } = await mount();
 		await key({ key: "b", code: "KeyB", metaKey: true });
-		expect(side(host, "left")?.style.width).toBe("40px");
+		expect(side(host, "left")?.style.width).toBe("44px");
 		await key({ key: "∫", code: "KeyB", metaKey: true, altKey: true });
-		expect(side(host, "right")?.style.width).toBe("40px");
+		expect(side(host, "right")?.style.width).toBe("44px");
 		await key({ key: "b", code: "KeyB", metaKey: true });
 		expect(side(host, "left")?.hasAttribute("data-side-open")).toBe(true);
 	});
