@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { HOTKEY_GROUPS, type HotkeyEntry, type HotkeyIdFor, hotkeyChips, listedHotkeys } from "./hotkeys";
 import { Kbd } from "./primitives/display";
+import { Scrim, Sheet } from "./primitives/overlays";
 
 /**
  * The shortcut sheet: press `?` and the whole register is told, grouped and
@@ -28,43 +29,29 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
-				<button
-					type="button"
-					aria-label="Close the shortcut sheet"
-					tabIndex={-1}
-					className="absolute inset-0 cursor-default"
-					onMouseDown={onClose}
-				/>
-			</div>
+			<Scrim label="Close the shortcut sheet" onMouseDown={onClose} />
 			<div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center px-8">
-				<div
-					role="dialog"
-					aria-modal="true"
+				<Sheet
 					aria-label="Shortcuts"
-					className="pointer-events-auto flex max-h-[calc(100%-128px)] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-line-strong bg-surface-panel"
+					title="Shortcuts"
+					hint="esc closes"
+					className="pointer-events-auto max-h-[calc(100%-128px)]"
 				>
-					<header className="flex h-12 shrink-0 items-center justify-between border-line-default border-b px-6">
-						<span className="font-semibold text-primary tracking-tight type-title">Shortcuts</span>
-						<span className="text-secondary type-detail">esc closes</span>
-					</header>
-					<div className="overflow-y-auto px-6 py-5">
-						<div className="columns-2 gap-x-12">
-							{HOTKEY_GROUPS.map((group) => {
-								const rows = listedHotkeys(group);
-								if (rows.length === 0) return null;
-								return (
-									<section key={group} className="mb-5 break-inside-avoid">
-										<h3 className="mb-1.5 text-secondary type-label">{group}</h3>
-										{rows.map((entry) => (
-											<Row key={entry.id} entry={entry} />
-										))}
-									</section>
-								);
-							})}
-						</div>
+					<div className="columns-2 gap-x-12">
+						{HOTKEY_GROUPS.map((group) => {
+							const rows = listedHotkeys(group);
+							if (rows.length === 0) return null;
+							return (
+								<section key={group} className="mb-5 break-inside-avoid">
+									<h3 className="mb-1.5 text-secondary type-label">{group}</h3>
+									{rows.map((entry) => (
+										<Row key={entry.id} entry={entry} />
+									))}
+								</section>
+							);
+						})}
 					</div>
-				</div>
+				</Sheet>
 			</div>
 		</>
 	);

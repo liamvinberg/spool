@@ -26,7 +26,7 @@ import { ProjectPicker } from "./picker";
 import { Button, ToggleButton } from "./primitives/actions";
 import { Divider } from "./primitives/display";
 import { ColourField, Textarea } from "./primitives/inputs";
-import { Popover } from "./primitives/overlays";
+import { Popover, Scrim } from "./primitives/overlays";
 import { Segment, SegmentedControl, Switch } from "./primitives/selection";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
@@ -79,15 +79,7 @@ export function SettingsSheet({
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
-				<button
-					type="button"
-					aria-label="Close settings"
-					tabIndex={-1}
-					className="absolute inset-0 cursor-default"
-					onMouseDown={onClose}
-				/>
-			</div>
+			<Scrim label="Close settings" onMouseDown={onClose} />
 			<div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center px-8">
 				<div
 					role="dialog"
