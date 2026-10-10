@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AGENT_PRIMARY } from "./agent-dialog";
 import { EmptyState } from "./empty-state";
 import { ArrowRightIcon, RibbonMark } from "./icons";
+import { Button } from "./primitives/actions";
 
 /** The empty project's name belongs to its folder; only a successful rename changes it. */
 export function ProjectEmpty({
@@ -72,15 +72,16 @@ export function ProjectEmpty({
 				root === undefined ? undefined : (
 					<>
 						{onUseAgent && (
-							<button
-								type="button"
+							<Button
+								size="lg"
+								variant="primary"
 								disabled={renaming}
-								className={`${AGENT_PRIMARY} pointer-events-auto mb-3`}
+								className="pointer-events-auto mb-3"
 								onPointerDown={(event) => event.stopPropagation()}
 								onClick={onUseAgent}
 							>
 								Use my agent <ArrowRightIcon className="h-4 w-4 shrink-0" />
-							</button>
+							</Button>
 						)}
 						<code onPointerDown={(event) => event.stopPropagation()}>{root}</code>
 						<button
