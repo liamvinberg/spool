@@ -17,6 +17,9 @@ import { FrameIcon } from "../icons";
  * tertiary ink inside a hairline box at radius xs, with no fill, so it reads
  * the same on a window, a panel, a menu and a tooltip.
  */
+/** Mono has no ⇧ or ⌫, and its fallback draws them as smudges, so the key symbols take the UI face. */
+const SYMBOL = /([⇧⌘⌥⌃⌫⌦↵⏎])/;
+
 export function Kbd({ className, children, ...rest }: ComponentProps<"kbd">) {
 	return (
 		<kbd
@@ -26,7 +29,18 @@ export function Kbd({ className, children, ...rest }: ComponentProps<"kbd">) {
 			)}
 			{...rest}
 		>
-			{children}
+			{typeof children === "string"
+				? children.split(SYMBOL).map((part, at) =>
+						at % 2 === 1 ? (
+							// biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed string
+							<span key={at} className="font-sans">
+								{part}
+							</span>
+						) : (
+							part
+						),
+					)
+				: children}
 		</kbd>
 	);
 }
