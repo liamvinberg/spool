@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
+import { Popover } from "../primitives/overlays";
 
 /**
  * Set-aside marks on a team project's canvas.
@@ -178,10 +179,9 @@ function SetAsideMark({ marks, acts }: { marks: readonly ShownSetAside[]; acts: 
 				set aside
 			</button>
 			{open && (
-				<div
-					role="dialog"
+				<Popover
 					aria-label="Set aside"
-					className="absolute top-full left-0 z-10 mt-1 flex w-[380px] flex-col gap-3 whitespace-normal rounded-md border border-line-strong bg-surface-raised p-3"
+					className="absolute top-full left-0 z-10 mt-1 w-toast gap-3 whitespace-normal"
 					onPointerDown={(event) => event.stopPropagation()}
 					onDoubleClick={(event) => event.stopPropagation()}
 					onWheel={(event) => event.stopPropagation()}
@@ -192,7 +192,7 @@ function SetAsideMark({ marks, acts }: { marks: readonly ShownSetAside[]; acts: 
 					{marks.map((mark) => (
 						<SetAsideNote key={mark.id} mark={mark} acts={answered} />
 					))}
-				</div>
+				</Popover>
 			)}
 		</>
 	);
@@ -233,10 +233,11 @@ function SetAsideNote({ mark, acts, compact = false }: { mark: ShownSetAside; ac
 function SetAsideSummary({ marks, acts }: { marks: readonly ShownSetAside[]; acts: Acts }) {
 	const count = marks.length === 1 ? "1 of your changes was" : `${marks.length} of your changes were`;
 	return (
-		<section
+		<Popover
+			role="region"
 			aria-label="Set aside"
 			data-set-aside-summary=""
-			className="-translate-x-1/2 absolute top-4 left-1/2 z-30 flex max-h-[60vh] w-[440px] flex-col gap-3 overflow-auto rounded-md border border-line-strong bg-surface-raised p-3.5"
+			className="-translate-x-1/2 absolute top-4 left-1/2 z-30 max-h-[60vh] w-dialog gap-3 overflow-auto"
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
@@ -255,7 +256,7 @@ function SetAsideSummary({ marks, acts }: { marks: readonly ShownSetAside[]; act
 			{marks.map((mark) => (
 				<SetAsideNote key={mark.id} mark={mark} acts={acts} compact />
 			))}
-		</section>
+		</Popover>
 	);
 }
 
