@@ -125,8 +125,8 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 					>
 						{onUseAgent === undefined ? null : (
 							<MenuItem
-								label="Open in your agent"
-								keys="↗"
+								// the arrow says it leaves spool; a key face would read as a shortcut
+								label="Open in your agent ↗"
 								onClick={() => {
 									close();
 									onUseAgent();
