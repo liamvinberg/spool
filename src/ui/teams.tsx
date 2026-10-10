@@ -17,6 +17,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { CheckIcon, ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
+import { Field, TextField } from "./primitives/inputs";
 
 /**
  * Home's teams: the switcher at the top of the sidebar, the invite line above the covers, and a team's
@@ -638,14 +639,14 @@ function InviteForm({
 				});
 			}}
 		>
-			<input
-				type="email"
-				required
+			<TextField
+				size="lg"
+				className="flex-1"
 				value={email}
-				onChange={(event) => setEmail(event.target.value)}
+				onValueChange={setEmail}
 				placeholder="Email address"
-				aria-label="Email address"
-				className="h-[38px] min-w-0 flex-1 rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none type-control placeholder:text-secondary focus:border-secondary"
+				label="Email address"
+				inputProps={{ type: "email", required: true }}
 			/>
 			<select
 				value={role}
@@ -710,8 +711,6 @@ export function TeamSettingsPage({
 			<span className="flex shrink-0 items-center gap-[8px]">{control}</span>
 		</div>
 	);
-	const field =
-		"h-[34px] rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none type-control focus:border-secondary";
 	return (
 		<div className="pj-team-settings max-w-[720px]">
 			<header className="pj-heading mb-[28px] flex h-[35px] items-center">
@@ -763,12 +762,13 @@ export function TeamSettingsPage({
 						void act(() => teamActions.update(team.address, { name }));
 					}}
 				>
-					<input
-						className={cn(field, "w-[240px]")}
+					<TextField
+						size="lg"
+						className="w-[240px]"
 						value={name}
-						maxLength={64}
-						aria-label="Name"
-						onChange={(event) => setName(event.target.value)}
+						onValueChange={setName}
+						label="Name"
+						inputProps={{ maxLength: 64 }}
 					/>
 					<button type="submit" className={HOME_ACTION} disabled={name.trim() === team.name}>
 						Save
@@ -785,16 +785,16 @@ export function TeamSettingsPage({
 						void act(async () => onMoved((await teamActions.update(team.address, { address })).address));
 					}}
 				>
-					<span className={cn(field, "flex w-[260px] items-center")}>
-						<span className="text-secondary type-value">{new URL(origin).host}/</span>
-						<input
-							className="min-w-0 flex-1 bg-transparent text-primary outline-none type-value"
-							value={address}
-							maxLength={40}
-							aria-label="Address"
-							onChange={(event) => setAddress(event.target.value.toLowerCase())}
-						/>
-					</span>
+					<TextField
+						size="lg"
+						mono
+						className="w-[260px]"
+						prefix={`${new URL(origin).host}/`}
+						value={address}
+						onValueChange={(next) => setAddress(next.toLowerCase())}
+						label="Address"
+						inputProps={{ maxLength: 40 }}
+					/>
 					<button type="submit" className={HOME_ACTION} disabled={address === team.address}>
 						Save
 					</button>
@@ -875,15 +875,9 @@ export function NewTeamDialog({
 			}}
 			onClose={onClose}
 		>
-			<label className="mb-[4px] flex flex-col gap-[8px] type-control">
-				Name
-				<input
-					value={name}
-					maxLength={64}
-					onChange={(event) => setName(event.target.value)}
-					className="h-[38px] rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none focus:border-secondary"
-				/>
-			</label>
+			<Field label="Name" className="mb-1">
+				{(id) => <TextField size="lg" value={name} onValueChange={setName} inputProps={{ id, maxLength: 64 }} />}
+			</Field>
 		</ConfirmDialog>
 	);
 }
