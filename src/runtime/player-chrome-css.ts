@@ -230,7 +230,7 @@ body { margin: 0; background: #0e0e0e; }
 .spool-bar-switcher[data-instant=true] .spool-picker { transition: none; }
 .spool-bar-sharing { display: flex; align-items: center; gap: 8px; }
 .spool-top button:focus-visible {
-	outline: 2px solid var(--color-thread);
+	outline: 2px solid var(--color-accent);
 	outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {

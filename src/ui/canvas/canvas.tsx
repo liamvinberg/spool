@@ -5780,7 +5780,7 @@ export function ProjectCanvas({
 					// the browser reveal it by scrolling this box, which carries the canvas
 					// chrome away and offsets every pointer coordinate from the camera's.
 					// The camera owns where the canvas sits; nothing else may move it.
-					className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
+					className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-surface-canvas outline-none"
 					style={{ cursor }}
 					onPointerDown={onPointerDown}
 					// the second half of the double-click that opened an edit must not
@@ -6174,8 +6174,8 @@ export function ProjectCanvas({
 							data-page-empty={activePage}
 							className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 pb-20"
 						>
-							<p className="text-muted type-value">no frames yet</p>
-							<p className="text-muted type-detail">
+							<p className="text-secondary type-value">no frames yet</p>
+							<p className="text-secondary type-detail">
 								an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx
 							</p>
 						</div>

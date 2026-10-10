@@ -8,13 +8,13 @@ export function ProjectLocation({
 	disabled?: boolean;
 }) {
 	return (
-		<div className="pj-project-location mt-[24px] flex items-center gap-[10px] text-muted type-label [@media(max-width:720px)]:flex-wrap">
+		<div className="pj-project-location mt-[24px] flex items-center gap-[10px] text-secondary type-label [@media(max-width:720px)]:flex-wrap">
 			<span className="shrink-0 whitespace-nowrap">Save in</span>
-			<span className="pj-location-path min-w-0 truncate text-text" title={path}>
+			<span className="pj-location-path min-w-0 truncate text-primary" title={path}>
 				{displayProjectPath(path)}
 			</span>
 			<button
-				className="ml-[4px] shrink-0 whitespace-nowrap text-muted underline underline-offset-[3px] [&:hover]:text-text"
+				className="ml-[4px] shrink-0 whitespace-nowrap text-secondary underline underline-offset-[3px] [&:hover]:text-primary"
 				type="button"
 				disabled={disabled}
 				onClick={onChange}

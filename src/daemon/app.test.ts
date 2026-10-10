@@ -17,7 +17,7 @@ const helloTsx = `import { useState } from "react";
 export default function Hello() {
 	const [count, setCount] = useState(0);
 	return (
-		<button className="p-4 bg-thread" onClick={() => setCount(count + 1)}>
+		<button className="p-4 bg-accent" onClick={() => setCount(count + 1)}>
 			hello from spool {count}
 		</button>
 	);
@@ -179,7 +179,7 @@ describe("frame documents", () => {
 	it("injects preflight, tokens-driven utilities, fonts and import map in document order", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-thread: #f5391a;\n}\n");
+		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-accent: #f5391a;\n}\n");
 		writeDesignFile(root, "shared/fonts.css", '@font-face {\n\tfont-family: "Familjen Grotesk";\n}\n');
 		writeFrame(root, "hello", helloTsx);
 		const app = makeApp(spoolDir);
@@ -189,8 +189,8 @@ describe("frame documents", () => {
 		// preflight zeroes the document (#15: frame and product start from the identical zero)
 		expect(doc).toContain("box-sizing: border-box");
 		// tokens.css feeds the compile: the @theme token exists as a var and powers the used utility
-		expect(doc).toContain("--color-thread: #f5391a");
-		expect(doc).toMatch(/\.bg-thread\s*\{[^}]*var\(--color-thread\)/);
+		expect(doc).toContain("--color-accent: #f5391a");
+		expect(doc).toMatch(/\.bg-accent\s*\{[^}]*var\(--color-accent\)/);
 		// unused utilities stay out
 		expect(doc).not.toContain(".bg-red-500");
 		// fonts.css rides along verbatim
@@ -272,7 +272,7 @@ describe("frame documents", () => {
 		expect(second.headers.get("x-spool-cache")).toBe("miss");
 		expect(await second.text()).toContain("second label");
 
-		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-thread: #00ff00;\n}\n");
+		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-accent: #00ff00;\n}\n");
 		const third = await app.request(`/p/${name}/frames/hello`);
 		expect(third.headers.get("x-spool-cache")).toBe("miss");
 	});
@@ -281,14 +281,14 @@ describe("frame documents", () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeDesignFile(root, "shared/tokens.css", '@import "./palette.css";\n');
-		writeDesignFile(root, "shared/palette.css", "@theme {\n\t--color-thread: #f5391a;\n}\n");
+		writeDesignFile(root, "shared/palette.css", "@theme {\n\t--color-accent: #f5391a;\n}\n");
 		writeFrame(root, "hello", helloTsx);
 		const app = makeApp(spoolDir);
 
 		const first = await (await app.request(`/p/${name}/frames/hello`)).text();
 		expect(first).toContain("#f5391a");
 
-		writeDesignFile(root, "shared/palette.css", "@theme {\n\t--color-thread: #00aa55;\n}\n");
+		writeDesignFile(root, "shared/palette.css", "@theme {\n\t--color-accent: #00aa55;\n}\n");
 		const second = await app.request(`/p/${name}/frames/hello`);
 		expect(second.headers.get("x-spool-cache")).toBe("miss");
 		expect(await second.text()).toContain("#00aa55");
@@ -425,7 +425,7 @@ describe("settings (#281)", () => {
 		// the theme rides the canvas document ahead of first paint, and never a frame's
 		const index = await app.request("/");
 		expect(await index.text()).toContain(
-			'<html data-appearance="dark" style="--color-thread:light-dark(#f5391a,#2f6fe0)">',
+			'<html data-appearance="dark" style="--theme-thread:light-dark(#f5391a,#2f6fe0)">',
 		);
 
 		// several at once: every one checked before any lands, and one event for the lot
@@ -542,7 +542,7 @@ describe("change events", () => {
 
 		// a stylesheet is nobody's import: it can stale every document, so it
 		// still wakes the whole project
-		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-thread: #222222;\n}\n");
+		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-accent: #222222;\n}\n");
 		await nextMatching({ event: "change", data: { kind: "shared" } });
 
 		// a shared component the link graph has read names its own readers (#109)

@@ -19,7 +19,7 @@ export function UnseenMark({ mark, className }: { mark: Unseen; className?: stri
 			<span
 				className={cn(
 					"block animate-unseen-in rounded-full",
-					mark === "new" ? "h-[5px] w-[5px] bg-text/85" : "h-[7px] w-[7px] border-[1.5px] border-text/70",
+					mark === "new" ? "h-[5px] w-[5px] bg-primary/85" : "h-[7px] w-[7px] border-[1.5px] border-primary/70",
 				)}
 			/>
 		</span>

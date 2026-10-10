@@ -32,9 +32,9 @@ import { UnseenMark } from "./unseen-mark";
  */
 
 const TONE: Record<Weight, string> = {
-	runup: "text-muted/40",
-	hit: "text-thread-strong",
-	plain: "text-text",
+	runup: "text-secondary/40",
+	hit: "text-accent-strong",
+	plain: "text-primary",
 };
 
 /** a project whose record says nothing shows no marks and keeps no gutter */
@@ -146,7 +146,7 @@ export function FindPalette({
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-bg/48 backdrop-blur-[2px]">
+			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
 				{/* the scrim is a door out, the way the picker's backdrop is */}
 				<button
 					type="button"
@@ -169,11 +169,11 @@ export function FindPalette({
 						if (event.target !== inputRef.current) event.preventDefault();
 						inputRef.current?.focus();
 					}}
-					className="pointer-events-auto flex h-fit w-[560px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
+					className="pointer-events-auto flex h-fit w-[560px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-line-strong bg-surface-panel"
 				>
-					<label className="flex h-12 shrink-0 items-center gap-3 border-border border-b px-4">
+					<label className="flex h-12 shrink-0 items-center gap-3 border-line-default border-b px-4">
 						{/* the summon key, left as the prompt: the field says which key opened it */}
-						<span className="shrink-0 text-muted type-code-input">/</span>
+						<span className="shrink-0 text-secondary type-code-input">/</span>
 						<input
 							ref={inputRef}
 							value={query}
@@ -200,17 +200,17 @@ export function FindPalette({
 									onClose();
 								}
 							}}
-							className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted type-code-input"
+							className="min-w-0 flex-1 bg-transparent text-primary caret-accent outline-none placeholder:text-secondary type-code-input"
 							aria-label="Find a frame"
 						/>
 						<span className="flex shrink-0 items-center gap-2 type-detail">
 							{unseen.size === 0 ? null : (
-								<span className="flex items-center gap-1 text-text">
+								<span className="flex items-center gap-1 text-primary">
 									<UnseenMark mark="new" className="-mr-1" />
 									{unseen.size} unseen
 								</span>
 							)}
-							<span className="text-muted">
+							<span className="text-secondary">
 								{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
 							</span>
 						</span>
@@ -228,7 +228,7 @@ export function FindPalette({
 							}}
 						>
 							{rows === 0 ? (
-								<div className="flex h-[30px] items-center px-4 text-muted type-value">
+								<div className="flex h-[30px] items-center px-4 text-secondary type-value">
 									nothing answers to that
 								</div>
 							) : (
@@ -261,11 +261,11 @@ export function FindPalette({
 							))}
 						</div>
 						{more ? (
-							<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/85 to-transparent" />
+							<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface-panel via-surface-panel/85 to-transparent" />
 						) : null}
 					</div>
 
-					<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 text-muted type-detail">
+					<div className="flex h-9 shrink-0 items-center gap-5 border-line-default border-t px-4 text-secondary type-detail">
 						<span>{"↑↓ moves"}</span>
 						<span>{"↵ lands there"}</span>
 						<span>esc closes</span>
@@ -311,11 +311,11 @@ function FindRow({
 			onClick={onLand}
 			className={cn(
 				"relative flex w-full items-center gap-5 px-4 text-left transition-colors duration-100",
-				picked && "bg-control",
+				picked && "bg-surface-control",
 			)}
 			style={{ height: ROW }}
 		>
-			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-thread" /> : null}
+			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-accent" /> : null}
 			{gutter ? (
 				mark === undefined ? (
 					<span aria-hidden="true" className="-ml-1.5 h-3.5 w-3.5 shrink-0" />
@@ -333,10 +333,10 @@ function FindRow({
 			</span>
 			{/* what the row is, then where it is: two different questions, so two groups */}
 			<span className="flex shrink-0 items-center gap-3">
-				{age === undefined ? null : <span className="w-[26px] text-right text-muted type-detail">{age}</span>}
+				{age === undefined ? null : <span className="w-[26px] text-right text-secondary type-detail">{age}</span>}
 				<span className="flex w-[74px] items-center gap-1.5">
-					<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-					<span className="truncate text-muted type-detail">{page}</span>
+					<FolderIcon className="h-3 w-3 shrink-0 text-secondary/30" />
+					<span className="truncate text-secondary type-detail">{page}</span>
 				</span>
 			</span>
 		</button>
@@ -370,11 +370,11 @@ function CommandRow({
 			onClick={onRun}
 			className={cn(
 				"relative flex w-full items-center gap-5 px-4 text-left transition-colors duration-100",
-				picked && "bg-control",
+				picked && "bg-surface-control",
 			)}
 			style={{ height: ROW }}
 		>
-			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-thread" /> : null}
+			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-accent" /> : null}
 			<span className={cn("min-w-0 flex-1 truncate type-value", refused && "opacity-50")}>
 				{runsIn(command.label, weights).map((run) => (
 					<span key={run.at} className={TONE[run.weight]}>
@@ -382,7 +382,7 @@ function CommandRow({
 					</span>
 				))}
 			</span>
-			<span className="shrink-0 text-muted type-detail">{command.refused ?? command.keys ?? ""}</span>
+			<span className="shrink-0 text-secondary type-detail">{command.refused ?? command.keys ?? ""}</span>
 		</button>
 	);
 }

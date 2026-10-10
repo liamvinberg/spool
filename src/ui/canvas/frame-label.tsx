@@ -107,7 +107,7 @@ export function FrameLabel({
 			>
 				{entered ? (
 					<div className="flex items-center pb-2.5">
-						<span className="rounded-xs bg-thread-strong px-2 py-[3px] text-on-thread type-detail">
+						<span className="rounded-xs bg-accent-strong px-2 py-[3px] text-on-accent type-detail">
 							live · esc exits
 						</span>
 					</div>
@@ -116,7 +116,11 @@ export function FrameLabel({
 						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 						<span
 							className={`min-w-0 truncate type-value ${
-								selected ? "text-thread-strong" : hovered || unseen !== undefined ? "text-text" : "text-muted"
+								selected
+									? "text-accent-strong"
+									: hovered || unseen !== undefined
+										? "text-primary"
+										: "text-secondary"
 							}`}
 						>
 							{leaf}
@@ -130,7 +134,7 @@ export function FrameLabel({
 							<button
 								type="button"
 								aria-label={`Play ${leaf}`}
-								className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-muted transition-colors hover:text-thread-strong type-detail"
+								className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-colors hover:text-accent-strong type-detail"
 								onPointerDown={(event) => {
 									event.stopPropagation();
 									onPlay();

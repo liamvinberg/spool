@@ -21,7 +21,7 @@ import { fetchSettings, putSetting, putSettings } from "./api";
  *
  * A theme lands on `:root` as the custom properties the stylesheet already
  * declares, which is the whole reason the chrome is built on those tokens:
- * setting `--color-thread` recolours every thread without a class changing
+ * setting `--color-accent` recolours every thread without a class changing
  * hands. The daemon writes the same properties ahead of first paint, so this
  * side only has to keep them current.
  */

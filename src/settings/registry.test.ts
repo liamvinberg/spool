@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 import { DARK_TOKENS, LIGHT_TOKENS, parseSetting, SETTINGS, themeInline } from "./registry";
 
 describe("settings registry", () => {
-	it("mirrors the chrome's colour tokens in ui.css, value for value", () => {
-		const css = readFileSync(join(__dirname, "..", "ui", "ui.css"), "utf8");
+	it("mirrors the chrome's colour tokens in theme.css, value for value", () => {
+		const css = readFileSync(join(__dirname, "..", "ui", "theme.css"), "utf8");
 		for (const [token, dark] of Object.entries(DARK_TOKENS)) {
 			const light = LIGHT_TOKENS[token as keyof typeof DARK_TOKENS];
-			expect(css, `--color-${token}`).toContain(`--color-${token}: light-dark(${light}, ${dark});`);
+			expect(css, `--theme-${token}`).toContain(`--theme-${token}: light-dark(${light}, ${dark});`);
 		}
 	});
 
@@ -45,9 +45,9 @@ describe("settings registry", () => {
 		// a token moved in one look keeps the stylesheet's value in the other
 		expect(
 			themeInline([entry("theme.dark.bg", "#0e0e0e", "default"), entry("theme.dark.thread", "#2f6fe0", "file")]),
-		).toBe("--color-thread:light-dark(#f5391a,#2f6fe0)");
+		).toBe("--theme-thread:light-dark(#f5391a,#2f6fe0)");
 		expect(
 			themeInline([entry("theme.dark.thread", "#2f6fe0", "file"), entry("theme.light.thread", "#8839ef", "file")]),
-		).toBe("--color-thread:light-dark(#8839ef,#2f6fe0)");
+		).toBe("--theme-thread:light-dark(#8839ef,#2f6fe0)");
 	});
 });

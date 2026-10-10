@@ -136,7 +136,7 @@ describe("the turn's grid, drawn", () => {
 		expect(classes.join(" ")).not.toMatch(/mix-blend|#fff|white|accent/);
 		for (const colour of classes.join(" ").match(/\b(?:bg|border|text)-[a-z-]+(?=\s|$)/g) ?? [])
 			expect(colour).toMatch(
-				/^(?:bg|border|text)-(?:text|bg|surface|muted|border(?:-raised)?|\[[\d.]+px\]|t|b|l|r|x|y)$/,
+				/^(?:bg|border|text)-(?:primary|secondary|surface-(?:window|panel)|line-(?:default|strong)|\[[\d.]+px\]|t|b|l|r|x|y)$/,
 			);
 	});
 });

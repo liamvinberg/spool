@@ -59,20 +59,20 @@ export function TeamProjectsAway({
 	if (away.length === 0) return null;
 	return (
 		<section className="pj-away mt-[44px]" aria-label="Not on this Mac">
-			<h2 className="mb-[18px] text-muted type-caption">Not on this Mac</h2>
+			<h2 className="mb-[18px] text-secondary type-caption">Not on this Mac</h2>
 			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
 				{away.map((project) => (
 					<article key={project.url} className="pj-away-cover min-w-0">
 						<div className="relative">
-							<div className="grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-border-raised bg-canvas opacity-60">
-								<span className="px-[18px] text-center text-muted type-detail">
+							<div className="grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-line-strong bg-surface-canvas opacity-60">
+								<span className="px-[18px] text-center text-secondary type-detail">
 									{project.repo ?? "no repo linked"}
 								</span>
 							</div>
 							<HerePill people={here?.get(project.name)} />
 						</div>
 						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
-							<strong className="truncate text-muted type-title font-[500]">{project.name}</strong>
+							<strong className="truncate text-secondary type-title font-[500]">{project.name}</strong>
 							<button
 								type="button"
 								className={cn("h-[30px]", HOME_ACTION)}
@@ -141,19 +141,19 @@ export function GetItDialog({
 			key={key}
 			className={cn(
 				"flex cursor-pointer items-start gap-[12px] rounded-[7px] border px-[13px] py-[11px]",
-				selected ? "border-muted bg-control" : "border-border-raised hover:bg-control",
+				selected ? "border-secondary bg-surface-control" : "border-line-strong hover:bg-surface-control",
 			)}
 		>
 			<input
 				type="radio"
 				name="get-it-place"
-				className="mt-[3px] accent-[var(--color-thread)]"
+				className="mt-[3px] accent-[var(--color-accent)]"
 				checked={selected}
 				onChange={select}
 			/>
 			<span className="flex min-w-0 flex-col gap-[3px]">
 				<span className="type-control">{title}</span>
-				<span className={cn("truncate text-muted", path ? "type-detail" : "type-label")} title={detail}>
+				<span className={cn("truncate text-secondary", path ? "type-detail" : "type-label")} title={detail}>
 					{detail}
 				</span>
 			</span>
@@ -203,10 +203,10 @@ export function GetItDialog({
 			</div>
 			{project.clone !== null && (
 				<div className="mb-[8px] flex flex-col gap-[6px]">
-					<span className="text-muted type-label">
+					<span className="text-secondary type-label">
 						Not cloned yet? Clone {project.repo} yourself, then Get it there:
 					</span>
-					<code className="select-all overflow-x-auto rounded-[6px] border border-border-raised bg-bg px-[10px] py-[8px] type-detail">
+					<code className="select-all overflow-x-auto rounded-[6px] border border-line-strong bg-surface-window px-[10px] py-[8px] type-detail">
 						{project.clone}
 					</code>
 				</div>
@@ -271,7 +271,7 @@ export function MoveToTeamDialog({
 					<select
 						value={address}
 						onChange={(event) => setAddress(event.target.value)}
-						className="h-[38px] rounded-[7px] border border-border-raised bg-bg px-[11px] text-text outline-none focus:border-muted"
+						className="h-[38px] rounded-[7px] border border-line-strong bg-surface-window px-[11px] text-primary outline-none focus:border-secondary"
 					>
 						{teams.map((team) => (
 							<option key={team.address} value={team.address}>
@@ -281,18 +281,18 @@ export function MoveToTeamDialog({
 					</select>
 				</label>
 			)}
-			<p className="mb-[8px] text-muted type-label">History before the move stays in git.</p>
+			<p className="mb-[8px] text-secondary type-label">History before the move stays in git.</p>
 			{stays.length > 0 && (
 				<div className="mb-[8px] flex flex-col gap-[4px]" data-move-stays="">
-					<p className="text-muted type-label">
+					<p className="text-secondary type-label">
 						{stays.length === 1
 							? "This file stays on this Mac and in git. It doesn't go to the team:"
 							: `These ${stays.length} files stay on this Mac and in git. They don't go to the team:`}
 					</p>
 					<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
 						{stays.map(({ path, why }) => (
-							<li key={path} className="text-muted type-detail">
-								<span className="font-mono text-text">design/{path}</span> {why}
+							<li key={path} className="text-secondary type-detail">
+								<span className="font-mono text-primary">design/{path}</span> {why}
 							</li>
 						))}
 					</ul>
@@ -303,7 +303,7 @@ export function MoveToTeamDialog({
 				<MoveProgressLine progress={move.progress} team={moving ? undefined : (move.found ?? undefined)} />
 			)}
 			{move.stopped !== null && (
-				<p className="mb-[8px] text-thread-strong type-label" role="alert">
+				<p className="mb-[8px] text-accent-strong type-label" role="alert">
 					{move.stopped}
 				</p>
 			)}
@@ -399,7 +399,7 @@ function MoveProgressLine({ progress, team }: { progress: MoveProgress | null; t
 				{progress.up.toLocaleString("en")} of {progress.total.toLocaleString("en")} files up
 			</p>
 			{progress.paused !== null && (
-				<p className="text-muted type-label">
+				<p className="text-secondary type-label">
 					Paused: {progress.paused.why}. Carrying on in {seconds} {seconds === 1 ? "second" : "seconds"}.
 				</p>
 			)}
@@ -427,21 +427,21 @@ function MoveBranches({ root }: { root: string }) {
 		<div className="mb-[8px] flex flex-col gap-[4px]" data-move-branches="">
 			{branches.length > 0 && (
 				<>
-					<p className="text-muted type-label">
+					<p className="text-secondary type-label">
 						{branches.length === 1
 							? "This branch still changes design/. Merge it first, or it'll conflict after the move:"
 							: `These ${branches.length} branches still change design/. Merge them first, or they'll conflict after the move:`}
 					</p>
 					<ul className="flex max-h-[120px] flex-col gap-[2px] overflow-auto">
 						{branches.map((branch) => (
-							<li key={branch} className="font-mono text-text type-detail">
+							<li key={branch} className="font-mono text-primary type-detail">
 								{branch}
 							</li>
 						))}
 					</ul>
 				</>
 			)}
-			{checkedOnly !== null && <p className="text-muted type-label">{partlyChecked(checkedOnly)}</p>}
+			{checkedOnly !== null && <p className="text-secondary type-label">{partlyChecked(checkedOnly)}</p>}
 		</div>
 	);
 }
@@ -472,7 +472,7 @@ export function MoveCommitLine({ note, onDismiss }: { note: string; onDismiss: (
 	return (
 		<div
 			role="status"
-			className="pj-move-commit mb-[22px] flex min-h-[48px] items-center gap-[12px] border-border border-y py-[8px]"
+			className="pj-move-commit mb-[22px] flex min-h-[48px] items-center gap-[12px] border-line-default border-y py-[8px]"
 		>
 			<span className="min-w-0 flex-1 type-control">{note}</span>
 			<button type="button" className={cn("home-action", HOME_ACTION)} onClick={onDismiss}>

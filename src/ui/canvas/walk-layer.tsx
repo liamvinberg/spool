@@ -65,7 +65,7 @@ const NUB_LEN = 10;
 export const TAG_HEIGHT = 18;
 
 /** The hairline's one strength — the leader is coaching-layer ink, never the accent. */
-const HAIRLINE = "color-mix(in srgb, var(--color-text) 30%, transparent)";
+const HAIRLINE = "color-mix(in srgb, var(--color-primary) 30%, transparent)";
 
 /** One walk, from its frame's coordinates into the canvas's. */
 export interface PlacedWalk {
@@ -224,7 +224,7 @@ function EdgeMark({ certain }: { certain: boolean }) {
 	return (
 		<svg
 			viewBox="0 0 10 8"
-			className={`h-2 w-2.5 shrink-0 ${certain ? "text-muted/80" : "text-muted/45"}`}
+			className={`h-2 w-2.5 shrink-0 ${certain ? "text-secondary/80" : "text-secondary/45"}`}
 			fill="none"
 			aria-hidden="true"
 		>
@@ -242,7 +242,7 @@ function EdgeMark({ certain }: { certain: boolean }) {
  * that scale, so the words centre on the leader's end at every zoom rather
  * than drifting off it as the camera moves.
  *
- * `bg-canvas` rather than nothing, so a tag that lands over a neighbour on a
+ * `bg-surface-canvas` rather than nothing, so a tag that lands over a neighbour on a
  * page somebody packed tighter than this one stays readable instead of
  * becoming two fonts on top of each other. On open canvas it is invisible.
  */
@@ -279,13 +279,13 @@ function WalkTag({
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 			onClick={() => onOpen(walk.target)}
-			className="absolute flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xs bg-canvas px-1.5 transition-colors duration-150 hover:bg-surface type-detail"
+			className="absolute flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xs bg-surface-canvas px-1.5 transition-colors duration-150 hover:bg-surface-panel type-detail"
 			style={{ transformOrigin: "0 0", height: TAG_HEIGHT }}
 		>
 			<EdgeMark certain={walk.certainty === "will"} />
-			<span className="text-text">{target}</span>
-			<span className="text-muted">·</span>
-			<span className="text-muted">{walk.page}</span>
+			<span className="text-primary">{target}</span>
+			<span className="text-secondary">·</span>
+			<span className="text-secondary">{walk.page}</span>
 		</button>
 	);
 }
@@ -381,7 +381,7 @@ export function WalkLayer({
 							fill="none"
 						>
 							<path stroke={HAIRLINE} strokeLinecap="round" strokeLinejoin="round" />
-							<circle fill="var(--color-muted)" />
+							<circle fill="var(--color-secondary)" />
 						</g>
 					);
 				})}

@@ -32,9 +32,9 @@ function CheckAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 			type="button"
 			data-agent-check=""
 			onClick={onClick}
-			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 text-text transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
+			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 text-primary transition-colors duration-150 hover:bg-surface-panel hover:text-primary type-detail"
 		>
-			{busy ? <Spinner className="h-3 w-3 text-muted/60" /> : null}
+			{busy ? <Spinner className="h-3 w-3 text-secondary/60" /> : null}
 			{busy ? "looking" : "check again"}
 		</button>
 	);
@@ -54,8 +54,8 @@ export function InstallWall({ install }: { install: InstallDeck }) {
 	return (
 		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
 			<div className="animate-agent-entry flex flex-col gap-3">
-				<p className="text-text type-body">No agent is installed</p>
-				<p className="text-muted type-body">
+				<p className="text-primary type-body">No agent is installed</p>
+				<p className="text-secondary type-body">
 					Spool works with the agent you already use. Install one in a terminal, then check again.
 				</p>
 				<div className="flex flex-col gap-2.5 pt-1">
@@ -67,7 +67,7 @@ export function InstallWall({ install }: { install: InstallDeck }) {
 					{/* the check is allowed to fail forever, and a press that leaves no mark reads
 					    as a broken button — so it leaves one line, in the composer's own mono */}
 					{install.foundNothing ? (
-						<span data-agent-looked="" className="animate-agent-entry text-muted type-detail">
+						<span data-agent-looked="" className="animate-agent-entry text-secondary type-detail">
 							still nothing on your PATH
 						</span>
 					) : (
@@ -83,9 +83,9 @@ export function InstallWall({ install }: { install: InstallDeck }) {
 /** the composer at rest and switched off, so the rail still shows what it is for */
 export function DeadComposer() {
 	return (
-		<div data-agent-dead="" className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
-			<div className="flex flex-col rounded-md border border-border/70 bg-surface/40 px-3 py-2.5">
-				<span className="text-muted type-body" style={{ height: MIN_H }}>
+		<div data-agent-dead="" className="flex shrink-0 flex-col gap-2.5 border-line-default border-t p-3.5">
+			<div className="flex flex-col rounded-md border border-line-default/70 bg-surface-panel/40 px-3 py-2.5">
+				<span className="text-secondary type-body" style={{ height: MIN_H }}>
 					Say what to change
 				</span>
 			</div>
@@ -112,8 +112,8 @@ export function DeadComposer() {
  */
 export function LoginStrip({ login }: { login: LoginDeck }) {
 	return (
-		<div data-agent-login="" className="flex h-[34px] shrink-0 items-center border-border border-b px-3.5">
-			<span className="min-w-0 flex-1 truncate text-muted type-value">signed out</span>
+		<div data-agent-login="" className="flex h-[34px] shrink-0 items-center border-line-default border-b px-3.5">
+			<span className="min-w-0 flex-1 truncate text-secondary type-value">signed out</span>
 			<CheckAgain busy={login.checking} onClick={login.check} />
 		</div>
 	);
@@ -134,13 +134,13 @@ export function RecoveryView({
 }) {
 	const recovery = login.recovery;
 	const engine = model.engine;
-	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
+	const action = "font-mono text-2xs leading-3 text-secondary hover:text-primary disabled:opacity-50";
 	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
 	if (engine !== undefined && (install.missing || login.out || recovery?.kind === "login")) {
 		const { name, login: signIn } = ENGINES[engine];
 		return (
 			<div data-recovery={engine} className="flex flex-col gap-3">
-				<p className="text-base text-text leading-base">
+				<p className="text-base text-primary leading-base">
 					{!install.missing
 						? `Sign in to ${name} to continue.`
 						: install.outdated
@@ -151,7 +151,7 @@ export function RecoveryView({
 					<InstallLine engine={engine} outdated={install.outdated} />
 				) : (
 					// each agent signs in in its own terminal flow: spool holds no login of its own
-					<p className="text-base text-muted leading-base">
+					<p className="text-base text-secondary leading-base">
 						Run <code className="font-mono text-xs">{signIn.command}</code> in a terminal
 						{signIn.inside === undefined ? null : (
 							<>
@@ -176,7 +176,7 @@ export function RecoveryView({
 					</button>
 				</div>
 				{install.foundNothing ? (
-					<p data-agent-looked="" className="font-mono text-2xs text-muted">
+					<p data-agent-looked="" className="font-mono text-2xs text-secondary">
 						{install.outdated ? `${name} still needs updating.` : `${name} is still not installed.`}
 					</p>
 				) : null}
@@ -202,8 +202,8 @@ export function RecoveryView({
 				});
 	return (
 		<div data-recovery="limit" className="flex flex-col gap-3">
-			<p className="text-base text-text leading-base">{recovery.account} rate limit reached.</p>
-			{reset === null ? null : <p className="text-base text-muted leading-base">Try again at {reset}.</p>}
+			<p className="text-base text-primary leading-base">{recovery.account} rate limit reached.</p>
+			{reset === null ? null : <p className="text-base text-secondary leading-base">Try again at {reset}.</p>}
 			<div className="flex items-center gap-3">
 				<button type="button" className={action} onClick={login.retry}>
 					retry

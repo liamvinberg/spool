@@ -353,7 +353,7 @@ export function AgentRail({
 			<div
 				data-agent-rail=""
 				data-agent-rail-engine={model.engine}
-				className="flex h-full min-w-[200px] flex-col overflow-hidden bg-bg"
+				className="flex h-full min-w-[200px] flex-col overflow-hidden bg-surface-window"
 			>
 				{install.none ? (
 					/*
@@ -398,7 +398,7 @@ export function AgentRail({
 								entries={entries}
 								afterLog={
 									legacy ? (
-										<p data-agent-legacy="" className="text-muted type-detail">
+										<p data-agent-legacy="" className="text-secondary type-detail">
 											This chat ran on spool’s built-in agent, which is gone. It can’t be continued; what you
 											send starts a new chat.
 										</p>
@@ -536,35 +536,35 @@ export function AgentRail({
 function PlanStrip({ plan }: { plan: AgentPlan }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div data-agent-plan="" className="flex shrink-0 flex-col border-border border-b">
+		<div data-agent-plan="" className="flex shrink-0 flex-col border-line-default border-b">
 			<button
 				type="button"
 				aria-label="plan"
 				aria-expanded={open}
 				onClick={() => setOpen(!open)}
-				className="flex h-[34px] w-full shrink-0 items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
+				className="flex h-[34px] w-full shrink-0 items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface-panel"
 			>
-				<span className="shrink-0 text-muted type-value">plan</span>
-				<span className="shrink-0 text-muted tabular-nums type-value">
+				<span className="shrink-0 text-secondary type-value">plan</span>
+				<span className="shrink-0 text-secondary tabular-nums type-value">
 					{plan.done}/{plan.total}
 				</span>
 				{/* nothing is running between a task landing and the agent saying which is next,
 				    and the strip says nothing rather than holding the last thing it said */}
 				{plan.running === null ? null : (
-					<span className="min-w-0 flex-1 truncate text-text type-value">{plan.running}</span>
+					<span className="min-w-0 flex-1 truncate text-primary type-value">{plan.running}</span>
 				)}
-				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
+				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-secondary/35" />
 			</button>
 			{open ? (
 				<Arrive gap={0}>
 					<div className="relative flex shrink-0 flex-col pb-2 pl-[18px]">
 						{/* the rule stands where the list hangs from, a little in from the strip's own
 						    left edge, so the tasks read as belonging to the line above them */}
-						<span className="absolute top-1 bottom-3 left-[18px] w-px bg-border-raised" />
+						<span className="absolute top-1 bottom-3 left-[18px] w-px bg-line-strong" />
 						{plan.tasks.map((task) => (
 							<span key={task.key} className="flex h-[22px] items-center gap-2 pl-2.5">
 								<StateMark state={task.state} className="h-3 w-3" />
-								<span className="truncate text-muted type-detail">{task.name}</span>
+								<span className="truncate text-secondary type-detail">{task.name}</span>
 							</span>
 						))}
 					</div>
@@ -838,7 +838,7 @@ function Transcript({
 					</div>
 				</div>
 			</div>
-			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
+			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-surface-window to-transparent" />
 			{/* the way back, drawn only while there is log below the reader. It names what
 			    is below — live while the turn is writing, latest once it settles — and
 			    pressing it returns to the end and follows from there. */}
@@ -853,7 +853,7 @@ function Transcript({
 						setFollow(true);
 						carry(box, aim(box));
 					}}
-					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-bg px-2.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
+					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line-default bg-surface-window px-2.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary type-detail"
 				>
 					<span aria-hidden="true">↓</span>
 					{live ? "live" : "latest"}
@@ -1024,8 +1024,8 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 		 */
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
-				<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-				<p className="whitespace-pre-wrap text-text type-body">{entry.text}</p>
+				<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-line-strong" />
+				<p className="whitespace-pre-wrap text-primary type-body">{entry.text}</p>
 				{/* the same 120px thumbnail a call's own picture gets, because it is the same
 				    act of looking: a picture in the log, at a size that says what it is */}
 				{entry.attached.map((image, index) => (
@@ -1033,7 +1033,7 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 					<Shot key={index} shot={image} of={null} quiet={true} />
 				))}
 				{entry.context === null ? null : (
-					<span data-agent-context="" className="truncate text-muted type-detail">
+					<span data-agent-context="" className="truncate text-secondary type-detail">
 						{entry.context}
 					</span>
 				)}
@@ -1046,11 +1046,11 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 		if (entry.rule !== false) {
 			return (
 				<div className="flex items-center gap-2.5 py-0.5">
-					<span className="h-px flex-1 bg-border" />
+					<span className="h-px flex-1 bg-line-default" />
 					{/* min-w-0, because a label that refuses to shrink pushes the row past the
 					    rail and the log must never scroll sideways */}
-					<span className="min-w-0 truncate text-muted type-detail">{entry.text}</span>
-					<span className="h-px flex-1 bg-border" />
+					<span className="min-w-0 truncate text-secondary type-detail">{entry.text}</span>
+					<span className="h-px flex-1 bg-line-default" />
 				</div>
 			);
 		}
@@ -1059,8 +1059,8 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 		// do, and under it the sentence you need once (#201)
 		return (
 			<div data-agent-aside="" className="flex flex-col gap-0.5">
-				{entry.said === undefined ? null : <p className="text-text type-detail">{entry.said}</p>}
-				<p className="whitespace-pre-wrap text-muted type-detail">{entry.text}</p>
+				{entry.said === undefined ? null : <p className="text-primary type-detail">{entry.said}</p>}
+				<p className="whitespace-pre-wrap text-secondary type-detail">{entry.text}</p>
 			</div>
 		);
 	}
@@ -1149,10 +1149,10 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 					"min-w-0 truncate type-value",
 					// struck through and dimmed, in the words the canvas already uses for a name
 					// nothing answers to
-					gone ? "text-muted line-through" : "text-text",
+					gone ? "text-secondary line-through" : "text-primary",
 					// the only mark the name carries, and only while the cursor is on its row: a
 					// dotted rule is the lightest thing that says this word is a place
-					goes && over && "underline decoration-dotted decoration-thread/60 underline-offset-[3px]",
+					goes && over && "underline decoration-dotted decoration-accent/60 underline-offset-[3px]",
 				)}
 			>
 				{entry.subject}
@@ -1162,7 +1162,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 		<>
 			<StateMark state={entry.state} />
 			<span className="flex min-w-0 items-baseline gap-1.5">
-				<span className="shrink-0 text-muted type-value">{entry.verb}</span>
+				<span className="shrink-0 text-secondary type-value">{entry.verb}</span>
 				{goes ? (
 					// biome-ignore lint/a11y/useSemanticElements: this row is the disclosure's button, and a button cannot contain an anchor
 					<span
@@ -1189,7 +1189,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 					name
 				)}
 				{entry.count > 1 ? (
-					<span className={cn("shrink-0 tabular-nums type-detail", gone ? "text-muted" : "text-text")}>
+					<span className={cn("shrink-0 tabular-nums type-detail", gone ? "text-secondary" : "text-primary")}>
 						×{entry.count}
 					</span>
 				) : null}
@@ -1214,10 +1214,10 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 				aria-label={said}
 				aria-expanded={open}
 				onClick={() => setClicked(!open)}
-				className={cn(row, "hover:bg-surface")}
+				className={cn(row, "hover:bg-surface-panel")}
 			>
 				{line}
-				<ChevronIcon open={open} className="ml-0.5 h-2.5 w-2.5 shrink-0 text-muted/35" />
+				<ChevronIcon open={open} className="ml-0.5 h-2.5 w-2.5 shrink-0 text-secondary/35" />
 			</button>
 			<Step text={entry.step} />
 			{open ? (
@@ -1237,7 +1237,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 						))}
 						{shot === null && entry.detail !== null ? (
 							// a group of reads keeps one path or command a line (#365)
-							<span data-agent-detail="" className="block text-muted type-detail">
+							<span data-agent-detail="" className="block text-secondary type-detail">
 								{entry.detail.split("\n").map((line, at) => (
 									// biome-ignore lint/suspicious/noArrayIndexKey: the same path read twice is two lines
 									<span key={at} className="block truncate">
@@ -1294,7 +1294,7 @@ function Step({ text }: { text: string | null }) {
 	// the padding is on the words rather than on the box they sit in, because the ones
 	// leaving are laid over the ones arriving and two boxes only line up if they are made
 	// the same way
-	const words = "block truncate pt-0.5 pb-1 text-muted type-detail";
+	const words = "block truncate pt-0.5 pb-1 text-secondary type-detail";
 	return (
 		<div
 			className="grid animate-agent-step transition-[grid-template-rows] duration-[170ms] ease-out motion-reduce:transition-none"
@@ -1363,11 +1363,11 @@ function Wait({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "wait" }>
 	return (
 		<div data-agent-wait={entry.state} className="-mx-1.5 flex h-[26px] w-fit items-center gap-2.5 rounded-sm px-1.5">
 			<StateMark state={entry.state} />
-			<span className="shrink-0 text-muted type-value">thinking</span>
+			<span className="shrink-0 text-secondary type-value">thinking</span>
 			{took === "" ? null : (
 				// `tabular-nums` so a tenth ticking over changes no width, which is what keeps
 				// the one moving thing in the log from moving anything else
-				<span className="shrink-0 text-muted tabular-nums type-value">{took}</span>
+				<span className="shrink-0 text-secondary tabular-nums type-value">{took}</span>
 			)}
 		</div>
 	);
@@ -1433,8 +1433,8 @@ function Ask({
 function Answered({ words }: { words: string | null }) {
 	return (
 		<div className="relative flex flex-col gap-1.5 pl-3.5">
-			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="whitespace-pre-wrap text-text type-body">{words}</p>
+			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-line-strong" />
+			<p className="whitespace-pre-wrap text-primary type-body">{words}</p>
 		</div>
 	);
 }
@@ -1508,9 +1508,17 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 					ringed ? "opacity-100" : "scale-[0.62] opacity-0",
 				)}
 			>
-				<Spinner turning={turning} className={cn(turning ? "text-text/60" : "text-text/35", "h-full w-full")} />
+				<Spinner
+					turning={turning}
+					className={cn(turning ? "text-primary/60" : "text-primary/35", "h-full w-full")}
+				/>
 			</span>
-			<svg viewBox="0 0 14 14" className="absolute inset-0 h-full w-full text-muted" fill="none" aria-hidden="true">
+			<svg
+				viewBox="0 0 14 14"
+				className="absolute inset-0 h-full w-full text-secondary"
+				fill="none"
+				aria-hidden="true"
+			>
 				{strokes.map((stroke) => (
 					// `pathLength` normalises the stroke to 1 unit, so the dash offset draws it
 					// without anything having to measure the geometry first
@@ -1600,13 +1608,13 @@ function QueuedAsk({
 		>
 			{/* the ask's own anatomy, its rail dashed and its words faint: it becomes that ask
 			    in the same place when it goes out, rather than jumping to it */}
-			<span className="absolute top-[3px] bottom-[31px] left-0 w-0 border-border-raised border-l-2 border-dashed" />
-			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
+			<span className="absolute top-[3px] bottom-[31px] left-0 w-0 border-line-strong border-l-2 border-dashed" />
+			<p className="whitespace-pre-wrap text-secondary type-body">{message.text}</p>
 			<button
 				type="button"
 				onClick={onTakeBack}
 				aria-label={`take back ${message.text}`}
-				className="-ml-1.5 h-7 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-control"
+				className="-ml-1.5 h-7 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary type-control"
 			>
 				Take back
 			</button>

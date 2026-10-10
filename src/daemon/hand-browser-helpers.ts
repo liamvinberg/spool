@@ -170,7 +170,7 @@ export default function Veil() {
     <header className="nav"><a className="brand" href="#top">veil®</a><nav aria-label="Main"><a className="optional" href="#details">Our approach</a><Link className="bordered" href="#work">Explore the studio</Link></nav></header>
     <section className="veil-intro"><h1 className="text-[40px]">Make something<br/><span className="serif"><i>worth feeling.</i></span></h1><p>Independent design and digital experiences.<br/>Made with instinct.<br/>Built with intention.</p></section>
     <div className="veil-art w-[990px]"></div>
-    <div id="voice" className={cn("flex flex-col gap-3 px-5 py-4", tone === "right" && "border-border border-l")}>Voice</div>
+    <div id="voice" className={cn("flex flex-col gap-3 px-5 py-4", tone === "right" && "border-line-default border-l")}>Voice</div>
     <span id="mono" className={MONO}>canvas-chrome.tsx</span>
     <div id="marks" className="flex gap-4"><span className="mark">01</span><span className="mark">02</span></div>
     <a id="cta" className="rounded-md bg-[#c96a3c] p-3 text-white" href="#work">Explore</a>

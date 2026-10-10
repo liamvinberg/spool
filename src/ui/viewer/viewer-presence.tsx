@@ -54,7 +54,7 @@ export function PartFaces({ room, part }: { room: PresenceRoom; part: (mate: Tea
 				</span>
 			))}
 			{here.length > shown.length && (
-				<span className="ml-1 text-muted tabular-nums type-detail">+{here.length - shown.length}</span>
+				<span className="ml-1 text-secondary tabular-nums type-detail">+{here.length - shown.length}</span>
 			)}
 		</span>
 	);

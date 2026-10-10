@@ -70,20 +70,20 @@ export function MenuItem({
 			role="menuitem"
 			disabled={disabled}
 			className={`flex h-[30px] shrink-0 items-center justify-between gap-3 rounded-sm px-3 text-left type-control ${
-				disabled ? "text-muted/40" : "text-text hover:bg-surface"
+				disabled ? "text-secondary/40" : "text-primary hover:bg-surface-panel"
 			}`}
 			onClick={onClick}
 		>
 			<span className="truncate">{label}</span>
 			{/* the UI face, not the mono the tooltips wear: it has no ⇧ or ⌫, and
 			    the fallback draws them at metrics that read as smudges */}
-			{keys === undefined ? null : <span className="shrink-0 type-label text-muted">{keys}</span>}
+			{keys === undefined ? null : <span className="shrink-0 type-label text-secondary">{keys}</span>}
 		</button>
 	);
 }
 
 export function MenuRule() {
-	return <div className="mx-auto h-px w-[176px] shrink-0 bg-border-raised" />;
+	return <div className="mx-auto h-px w-[176px] shrink-0 bg-line-strong" />;
 }
 
 export function ContextMenu({
@@ -113,7 +113,7 @@ export function ContextMenu({
 	return (
 		<div
 			role="menu"
-			className="absolute z-30 flex w-[200px] flex-col rounded-md border border-border-raised bg-raised p-unit"
+			className="absolute z-30 flex w-[200px] flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 			style={{ left: at.x, top: at.y }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onContextMenu={(event) => event.preventDefault()}

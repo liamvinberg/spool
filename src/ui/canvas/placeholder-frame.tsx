@@ -110,31 +110,33 @@ export function PlaceholderFrame({
 				ref={edge}
 				className={cn(
 					"absolute inset-0 rounded-[2px] border-dashed transition-colors duration-150",
-					pointed ? "border-text" : "border-border-raised",
+					pointed ? "border-primary" : "border-line-strong",
 				)}
 				style={tint === undefined || pointed ? undefined : { borderColor: tint }}
 			/>
 			<div ref={words} className="absolute top-0 left-0 origin-top-left">
-				<div className="absolute bottom-full left-0 max-w-full truncate pb-2.5 text-muted type-value">{leaf}</div>
+				<div className="absolute bottom-full left-0 max-w-full truncate pb-2.5 text-secondary type-value">
+					{leaf}
+				</div>
 				<div className="flex size-full flex-col gap-2 overflow-hidden p-4">
 					{placeholder.title === undefined ? null : (
-						<div className="line-clamp-2 text-text type-control">{placeholder.title}</div>
+						<div className="line-clamp-2 text-primary type-control">{placeholder.title}</div>
 					)}
 					{placeholder.brief === undefined ? null : (
-						<div className="line-clamp-6 whitespace-pre-line text-muted type-detail">{placeholder.brief}</div>
+						<div className="line-clamp-6 whitespace-pre-line text-secondary type-detail">{placeholder.brief}</div>
 					)}
 					<div className="mt-auto flex min-w-0 items-center gap-2 type-detail">
 						{work === null ? (
 							owner === undefined ? (
-								<span className="text-muted">A designer is drawing this frame</span>
+								<span className="text-secondary">A designer is drawing this frame</span>
 							) : (
 								<>
 									<span
 										data-placeholder-mark=""
-										className="size-1.5 shrink-0 bg-muted"
+										className="size-1.5 shrink-0 bg-secondary"
 										style={{ borderRadius: 1.8, ...(tint === undefined ? {} : { background: tint }) }}
 									/>
-									<span className="min-w-0 truncate text-muted">
+									<span className="min-w-0 truncate text-secondary">
 										{owner.name}'s designer is drawing this frame
 									</span>
 								</>
@@ -143,15 +145,15 @@ export function PlaceholderFrame({
 							<>
 								<span
 									data-placeholder-live=""
-									className="size-1.5 shrink-0 animate-agent-newest bg-text"
+									className="size-1.5 shrink-0 animate-agent-newest bg-primary"
 									style={{ borderRadius: 1.8, ...(tint === undefined ? {} : { background: tint }) }}
 								/>
 								{owner === undefined ? null : (
-									<span className="shrink-0 text-muted">{owner.name}'s designer</span>
+									<span className="shrink-0 text-secondary">{owner.name}'s designer</span>
 								)}
-								<span className="agent-shimmer shrink-0 animate-agent-shimmer text-text">{work.phase}</span>
+								<span className="agent-shimmer shrink-0 animate-agent-shimmer text-primary">{work.phase}</span>
 								{work.detail === null ? null : (
-									<span className="min-w-0 truncate text-muted">{work.detail}</span>
+									<span className="min-w-0 truncate text-secondary">{work.detail}</span>
 								)}
 							</>
 						)}

@@ -27,14 +27,14 @@ export function RenameProjectDialog({
 			<label className="flex flex-col gap-[8px] [font:var(--type-control)]">
 				Project name
 				<input
-					className="min-w-0 py-[9px] px-[10px] border border-border-raised rounded-[4px] bg-bg focus-visible:[outline:1px_solid_var(--color-thread)] focus-visible:outline-offset-[1px]"
+					className="min-w-0 py-[9px] px-[10px] border border-line-strong rounded-[4px] bg-surface-window focus-visible:[outline:1px_solid_var(--color-accent)] focus-visible:outline-offset-[1px]"
 					value={draft}
 					onChange={(event) => setDraft(event.target.value)}
 					spellCheck={false}
 					autoComplete="off"
 				/>
 			</label>
-			<code className="block [margin:12px_0_20px] [overflow-wrap:anywhere] text-muted [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">{`${parent}/${name || project.name}`}</code>
+			<code className="block [margin:12px_0_20px] [overflow-wrap:anywhere] text-secondary [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">{`${parent}/${name || project.name}`}</code>
 		</ConfirmDialog>
 	);
 }

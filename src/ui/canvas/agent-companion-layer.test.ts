@@ -172,7 +172,9 @@ describe("the agent's companions on the canvas", () => {
 			classes.match(/(?<=^|\s)(?:bg|border)-(?!\[|\d|t\b|b\b|l\b|r\b|dashed|solid)[a-z-]+(?:\/\d+)?/g) ?? [];
 		expect(colours.length).toBeGreaterThan(0);
 		for (const colour of colours)
-			expect(colour).toMatch(/^(?:bg|border)-(?:text|muted|canvas|raised|surface|bg)(?:\/\d+)?$/);
+			expect(colour).toMatch(
+				/^(?:bg|border)-(?:primary|secondary|surface-(?:canvas|raised|panel|window))(?:\/\d+)?$/,
+			);
 	});
 
 	it("gathers a deleted frame into the square where it last stood", () => {
@@ -214,12 +216,12 @@ describe("the agent's companions on the canvas", () => {
 		const square = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-companion-square]");
 		const { host, again } = layer({ companions: [companion({ act: "idle" })] });
 		expect(square(host)?.getAttribute("data-companion-square")).toBe("docked");
-		expect(square(host)?.className).toContain("bg-muted");
+		expect(square(host)?.className).toContain("bg-secondary");
 		expect(square(host)?.style.boxShadow).toBe("none");
 		expect(square(host)?.style.transform).toMatch(/scale\(0\.7\)/);
 		again({ companions: [companion({ act: "read", beat: 2 })] });
 		expect(square(host)?.getAttribute("data-companion-square")).toBe("");
-		expect(square(host)?.className).toContain("bg-text");
+		expect(square(host)?.className).toContain("bg-primary");
 		expect(square(host)?.style.boxShadow).not.toBe("none");
 	});
 

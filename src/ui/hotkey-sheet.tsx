@@ -27,7 +27,7 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-bg/48 backdrop-blur-[2px]">
+			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
 				<button
 					type="button"
 					aria-label="Close the shortcut sheet"
@@ -41,11 +41,11 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 					role="dialog"
 					aria-modal="true"
 					aria-label="Shortcuts"
-					className="pointer-events-auto flex max-h-[calc(100%-128px)] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
+					className="pointer-events-auto flex max-h-[calc(100%-128px)] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-line-strong bg-surface-panel"
 				>
-					<header className="flex h-12 shrink-0 items-center justify-between border-border border-b px-6">
-						<span className="font-semibold text-text tracking-tight type-title">Shortcuts</span>
-						<span className="text-muted type-detail">esc closes</span>
+					<header className="flex h-12 shrink-0 items-center justify-between border-line-default border-b px-6">
+						<span className="font-semibold text-primary tracking-tight type-title">Shortcuts</span>
+						<span className="text-secondary type-detail">esc closes</span>
 					</header>
 					<div className="overflow-y-auto px-6 py-5">
 						<div className="columns-2 gap-x-12">
@@ -54,7 +54,7 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 								if (rows.length === 0) return null;
 								return (
 									<section key={group} className="mb-5 break-inside-avoid">
-										<h3 className="mb-1.5 text-muted type-label">{group}</h3>
+										<h3 className="mb-1.5 text-secondary type-label">{group}</h3>
 										{rows.map((entry) => (
 											<Row key={entry.id} entry={entry} />
 										))}
@@ -73,17 +73,17 @@ function Row({ entry }: { entry: HotkeyEntry }) {
 	const { keys, gesture } = hotkeyChips(entry);
 	return (
 		<div className="flex h-7 items-center justify-between gap-4">
-			<span className="truncate text-text type-control">{entry.label}</span>
+			<span className="truncate text-primary type-control">{entry.label}</span>
 			<span className="flex shrink-0 items-center gap-1.5">
 				{keys.map((face) => (
 					<kbd
 						key={face}
-						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-border-raised bg-raised px-1.5 text-muted type-detail"
+						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-line-strong bg-surface-raised px-1.5 text-secondary type-detail"
 					>
 						{face}
 					</kbd>
 				))}
-				{gesture === undefined ? null : <span className="text-muted type-detail">{gesture}</span>}
+				{gesture === undefined ? null : <span className="text-secondary type-detail">{gesture}</span>}
 			</span>
 		</div>
 	);

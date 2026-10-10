@@ -7,7 +7,7 @@ import { FADE_OUT_MS, useLeaving } from "./agent-motion";
  * What floats over the rail (#364): one step up from the window the rail is drawn in, on
  * a hairline and a soft shadow. Never the raised grey, and never the accent.
  */
-export const FLOAT = "rounded-md border border-border bg-surface shadow-agent-float";
+export const FLOAT = "rounded-md border border-line-default bg-surface-panel shadow-agent-float";
 
 /**
  * A float that comes and goes: it rises off the composer (`up`) or drops from the header
@@ -309,7 +309,7 @@ export function Versioned({
 			) : (
 				<>
 					{runs.slice(0, first).map(drawn)}
-					<mark className="rounded-[2px] bg-raised text-text">
+					<mark className="rounded-[2px] bg-surface-raised text-primary">
 						{runs.slice(first, last + 1).map((run, at) => drawn(run, first + at))}
 					</mark>
 					{runs.slice(last + 1).map((run, at) => drawn(run, last + 1 + at))}
@@ -330,9 +330,9 @@ export function CommandLine({ command, label }: { command: string; label?: strin
 		<div className="flex flex-col gap-1">
 			<div
 				data-agent-command={command}
-				className="flex min-h-7 min-w-0 items-center gap-2 rounded-sm border border-border bg-bg pr-1 pl-2"
+				className="flex min-h-7 min-w-0 items-center gap-2 rounded-sm border border-line-default bg-surface-window pr-1 pl-2"
 			>
-				<code className="min-w-0 flex-1 select-all break-all py-1 text-text type-detail">{command}</code>
+				<code className="min-w-0 flex-1 select-all break-all py-1 text-primary type-detail">{command}</code>
 				<button
 					type="button"
 					aria-label={copied === "copied" ? "Copied" : (label ?? `Copy ${command}`)}
@@ -344,13 +344,13 @@ export function CommandLine({ command, label }: { command: string; label?: strin
 							() => setCopied("failed"),
 						);
 					}}
-					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-raised hover:text-text type-caption"
+					className="flex h-6 shrink-0 items-center rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-primary type-caption"
 				>
 					{copied === "copied" ? <CheckIcon className="h-3 w-3" /> : "Copy"}
 				</button>
 			</div>
 			{copied === "failed" ? (
-				<span role="alert" className="text-muted type-caption">
+				<span role="alert" className="text-secondary type-caption">
 					Could not copy. Select the line and copy it.
 				</span>
 			) : null}

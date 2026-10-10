@@ -167,7 +167,7 @@ function SetAsideMark({ marks, acts }: { marks: readonly ShownSetAside[]; acts: 
 				type="button"
 				data-set-aside-mark=""
 				aria-expanded={open}
-				className="shrink-0 rounded-xs border border-border-raised bg-raised px-1.5 text-text type-detail hover:bg-control"
+				className="shrink-0 rounded-xs border border-line-strong bg-surface-raised px-1.5 text-primary type-detail hover:bg-surface-control"
 				onPointerDown={(event) => event.stopPropagation()}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onClick={(event) => {
@@ -181,7 +181,7 @@ function SetAsideMark({ marks, acts }: { marks: readonly ShownSetAside[]; acts: 
 				<div
 					role="dialog"
 					aria-label="Set aside"
-					className="absolute top-full left-0 z-10 mt-1 flex w-[380px] flex-col gap-3 whitespace-normal rounded-md border border-border-raised bg-raised p-3"
+					className="absolute top-full left-0 z-10 mt-1 flex w-[380px] flex-col gap-3 whitespace-normal rounded-md border border-line-strong bg-surface-raised p-3"
 					onPointerDown={(event) => event.stopPropagation()}
 					onDoubleClick={(event) => event.stopPropagation()}
 					onWheel={(event) => event.stopPropagation()}
@@ -202,13 +202,13 @@ function SetAsideMark({ marks, acts }: { marks: readonly ShownSetAside[]; acts: 
 function SetAsideNote({ mark, acts, compact = false }: { mark: ShownSetAside; acts: Acts; compact?: boolean }) {
 	return (
 		<div data-set-aside={mark.path} className="flex flex-col gap-2">
-			{!compact && <p className="text-text type-control">{setAsideSays(mark)}</p>}
+			{!compact && <p className="text-primary type-control">{setAsideSays(mark)}</p>}
 			<div className="flex items-baseline justify-between gap-2">
-				<span className="min-w-0 truncate text-muted type-value">{mark.path}</span>
+				<span className="min-w-0 truncate text-secondary type-value">{mark.path}</span>
 				<button
 					type="button"
 					aria-label={`Dismiss ${mark.path}`}
-					className="shrink-0 text-muted type-detail hover:text-text"
+					className="shrink-0 text-secondary type-detail hover:text-primary"
 					onClick={() => acts.dismiss(mark)}
 				>
 					Dismiss
@@ -236,15 +236,15 @@ function SetAsideSummary({ marks, acts }: { marks: readonly ShownSetAside[]; act
 		<section
 			aria-label="Set aside"
 			data-set-aside-summary=""
-			className="-translate-x-1/2 absolute top-4 left-1/2 z-30 flex max-h-[60vh] w-[440px] flex-col gap-3 overflow-auto rounded-md border border-border-raised bg-raised p-3.5"
+			className="-translate-x-1/2 absolute top-4 left-1/2 z-30 flex max-h-[60vh] w-[440px] flex-col gap-3 overflow-auto rounded-md border border-line-strong bg-surface-raised p-3.5"
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
 			<div className="flex items-baseline justify-between gap-3">
-				<p className="text-text type-control">{count} set aside: teammates' saves reached the team first.</p>
+				<p className="text-primary type-control">{count} set aside: teammates' saves reached the team first.</p>
 				<button
 					type="button"
-					className="shrink-0 text-muted type-detail hover:text-text"
+					className="shrink-0 text-secondary type-detail hover:text-primary"
 					onClick={() => {
 						for (const mark of marks) acts.dismiss(mark);
 					}}
@@ -285,15 +285,15 @@ function SetAsideCompareDialog({
 		<dialog
 			ref={dialogRef}
 			aria-labelledby={`${id}-title`}
-			className="m-auto flex max-h-[calc(100dvh-64px)] w-[min(1100px,calc(100vw-64px))] flex-col gap-4 rounded-[8px] border border-border-raised bg-surface p-6 text-text backdrop:[background:color-mix(in_srgb,var(--color-bg)_70%,transparent)]"
+			className="m-auto flex max-h-[calc(100dvh-64px)] w-[min(1100px,calc(100vw-64px))] flex-col gap-4 rounded-[8px] border border-line-strong bg-surface-panel p-6 text-primary backdrop:[background:color-mix(in_srgb,var(--color-surface-window)_70%,transparent)]"
 			onCancel={(event) => {
 				event.preventDefault();
 				onClose();
 			}}
 		>
 			<div className="flex items-baseline justify-between gap-4">
-				<h2 id={`${id}-title`} className="text-text type-control">
-					Compare <span className="text-muted type-value">{mark.path}</span>
+				<h2 id={`${id}-title`} className="text-primary type-control">
+					Compare <span className="text-secondary type-value">{mark.path}</span>
 				</h2>
 				<button type="button" className={HOME_ACTION} onClick={onClose}>
 					Close
@@ -310,8 +310,8 @@ function SetAsideCompareDialog({
 function CompareSide({ title, side }: { title: string; side: SetAsideCompare["mine"] }) {
 	return (
 		<section aria-label={title} className="flex min-h-0 flex-col gap-2">
-			<h3 className="text-muted type-detail">{title}</h3>
-			<pre className="min-h-[120px] flex-1 overflow-auto rounded-md border border-border-raised bg-bg p-3 text-text type-value whitespace-pre">
+			<h3 className="text-secondary type-detail">{title}</h3>
+			<pre className="min-h-[120px] flex-1 overflow-auto rounded-md border border-line-strong bg-surface-window p-3 text-primary type-value whitespace-pre">
 				{side === null ? "deleted" : (side.text ?? `${side.size} bytes, not text`)}
 			</pre>
 		</section>

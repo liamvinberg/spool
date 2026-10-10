@@ -21,9 +21,9 @@ import { cn } from "../cn";
 /** Shared app roles for the rail's labels, values and asides */
 export const LABEL = "type-detail";
 export const VALUE = "type-value";
-export const FAINT = "text-muted type-detail";
+export const FAINT = "text-secondary type-detail";
 export const BOX =
-	"rounded-xs border border-transparent hover:border-border hover:bg-surface focus-within:border-border-raised focus-within:bg-surface";
+	"rounded-xs border border-transparent hover:border-line-default hover:bg-surface-panel focus-within:border-line-strong focus-within:bg-surface-panel";
 
 /** How far the pointer travels for one step of a scrub. */
 export const SCRUB_PX = 4;
@@ -67,9 +67,9 @@ export function Section({
 	children: ReactNode;
 }) {
 	return (
-		<div className="border-border-raised border-t">
+		<div className="border-line-strong border-t">
 			<div className="flex h-6 items-center gap-2 px-2.5">
-				<span className={cn("shrink-0 text-muted", LABEL)}>{name}</span>
+				<span className={cn("shrink-0 text-secondary", LABEL)}>{name}</span>
 				{reason === undefined ? null : <span className={cn("ml-auto min-w-0 truncate", FAINT)}>{reason}</span>}
 			</div>
 			{children}
@@ -245,11 +245,15 @@ export function Row({
 	return (
 		<div
 			data-properties-row={name}
-			className="grid h-7 grid-cols-[92px_1fr] items-center gap-2 border-border/80 border-b px-2.5"
+			className="grid h-7 grid-cols-[92px_1fr] items-center gap-2 border-line-default/80 border-b px-2.5"
 		>
 			<span
 				onPointerDown={down}
-				className={cn("truncate select-none text-muted", LABEL, scrubbable && "cursor-ew-resize hover:text-text")}
+				className={cn(
+					"truncate select-none text-secondary",
+					LABEL,
+					scrubbable && "cursor-ew-resize hover:text-primary",
+				)}
 			>
 				{name}
 			</span>
@@ -331,7 +335,7 @@ export function NumField({
 						onStep((event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1));
 					}
 				}}
-				className={cn("min-w-0 flex-1 bg-transparent text-text outline-none", VALUE)}
+				className={cn("min-w-0 flex-1 bg-transparent text-primary outline-none", VALUE)}
 			/>
 			{readout === undefined ? null : <span className={cn("shrink-0", FAINT)}>{readout}</span>}
 		</label>

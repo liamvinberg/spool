@@ -63,7 +63,7 @@ export function InstallLine({ engine, outdated = false }: { engine: AgentEngineI
 			data-agent-outdated={outdated ? "" : undefined}
 			className="flex flex-col gap-1.5"
 		>
-			<span className="text-muted type-label">{outdated ? `${name} needs updating` : name}</span>
+			<span className="text-secondary type-label">{outdated ? `${name} needs updating` : name}</span>
 			<CommandLine
 				command={outdated ? updateLine(engine) : install}
 				label={outdated ? `Copy the ${name} update line` : `Copy the ${name} install line`}
@@ -284,10 +284,10 @@ export function AgentMenu({
 						role="presentation"
 						className={cn(
 							"flex h-8 shrink-0 items-center justify-between gap-2 pr-2 pl-7",
-							findable && "sticky top-0 z-[1] bg-surface",
+							findable && "sticky top-0 z-[1] bg-surface-panel",
 						)}
 					>
-						<span className="text-muted type-label">{engineName(engine)}</span>
+						<span className="text-secondary type-label">{engineName(engine)}</span>
 						{old ? (
 							<Quiet>needs updating</Quiet>
 						) : signedOut ? (
@@ -299,13 +299,13 @@ export function AgentMenu({
 						) : null}
 					</div>
 					{mine && usage !== null ? (
-						<p data-agent-usage="" className="truncate pr-2 pb-1.5 pl-7 text-muted type-detail">
+						<p data-agent-usage="" className="truncate pr-2 pb-1.5 pl-7 text-secondary type-detail">
 							{usage}
 						</p>
 					) : null}
 					{old ? (
 						<div data-agent-outdated={engine} className="flex flex-col gap-2 pt-0.5 pr-2 pb-2 pl-7">
-							<p className="text-muted type-label">
+							<p className="text-secondary type-label">
 								{engineName(engine)} needs updating. Update it from a terminal and its models show up here.
 							</p>
 							<CommandLine command={updateLine(engine)} label={`Copy the ${engineName(engine)} update line`} />
@@ -313,7 +313,7 @@ export function AgentMenu({
 								<button
 									type="button"
 									onClick={() => setLooks((count) => count + 1)}
-									className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+									className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
 								>
 									Check again
 								</button>
@@ -321,12 +321,12 @@ export function AgentMenu({
 						</div>
 					) : signedOut ? (
 						<div data-agent-signed-out={engine} className="flex flex-col gap-2 pt-0.5 pr-2 pb-2 pl-7">
-							<p className="text-muted type-label">
+							<p className="text-secondary type-label">
 								{engineName(engine)} is signed out. Sign in from a terminal and its models show up here.
 							</p>
 							<CommandLine command={signIn.command} />
 							{signIn.inside === undefined ? null : (
-								<p className="text-muted type-label">
+								<p className="text-secondary type-label">
 									then <span className="type-detail">{signIn.inside}</span>
 								</p>
 							)}
@@ -334,7 +334,7 @@ export function AgentMenu({
 								<button
 									type="button"
 									onClick={() => (mine ? login?.check() : setLooks((count) => count + 1))}
-									className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+									className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
 								>
 									Check again
 								</button>
@@ -349,8 +349,8 @@ export function AgentMenu({
 									<div
 										data-active={waiting || undefined}
 										className={cn(
-											"group flex h-8 shrink-0 items-center rounded-sm transition-colors duration-150 hover:bg-raised",
-											waiting && "bg-raised",
+											"group flex h-8 shrink-0 items-center rounded-sm transition-colors duration-150 hover:bg-surface-raised",
+											waiting && "bg-surface-raised",
 										)}
 									>
 										<button
@@ -362,15 +362,15 @@ export function AgentMenu({
 											data-agent-model-engine={engine}
 											title={entry.description || undefined}
 											onClick={() => pick(engine, entry)}
-											className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm pl-2 text-left outline-none focus-visible:bg-raised"
+											className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm pl-2 text-left outline-none focus-visible:bg-surface-raised"
 										>
 											<span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-												{chosen ? <CheckIcon className="h-3.5 w-3.5 text-text" /> : null}
+												{chosen ? <CheckIcon className="h-3.5 w-3.5 text-primary" /> : null}
 											</span>
 											<ModelName name={entry.displayName} hit={query} />
 											{/* a model that runs on this machine says so, quietly, after its name (#363) */}
 											{entry.local ? (
-												<span data-agent-model-local="" className="shrink-0 text-muted type-caption">
+												<span data-agent-model-local="" className="shrink-0 text-secondary type-caption">
 													local
 												</span>
 											) : null}
@@ -382,7 +382,7 @@ export function AgentMenu({
 												aria-expanded={effortOpen}
 												data-agent-effort-toggle=""
 												onClick={() => setEffortOpen((was) => !was)}
-												className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:text-text type-value"
+												className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:text-primary type-value"
 											>
 												{effort}
 												<Chevron open={effortOpen} />
@@ -409,8 +409,8 @@ export function AgentMenu({
 															className={cn(
 																"flex h-6 items-center rounded-sm px-2 transition-colors duration-150 type-value disabled:opacity-40",
 																offer.current.effort === level
-																	? "bg-raised text-text"
-																	: "text-muted hover:text-text",
+																	? "bg-surface-raised text-primary"
+																	: "text-secondary hover:text-primary",
 															)}
 														>
 															{level}
@@ -418,13 +418,13 @@ export function AgentMenu({
 													))}
 												</div>
 												{pin !== null ? (
-													<p role="status" className="pl-2 text-muted type-caption">
+													<p role="status" className="pl-2 text-secondary type-caption">
 														{`CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment.`}
 													</p>
 												) : offer.current.effort !== null && EFFORT_SAYS[offer.current.effort] ? (
 													<p
 														key={offer.current.effort}
-														className="animate-agent-fade-in pl-2 text-muted type-label"
+														className="animate-agent-fade-in pl-2 text-secondary type-label"
 													>
 														{EFFORT_SAYS[offer.current.effort]}
 													</p>
@@ -459,8 +459,8 @@ export function AgentMenu({
 									: void switchTo(engine, null, false)
 							}
 							className={cn(
-								"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-text outline-none transition-colors duration-150 hover:bg-raised focus-visible:bg-raised type-control",
-								pending?.engine === engine && "bg-raised",
+								"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-primary outline-none transition-colors duration-150 hover:bg-surface-raised focus-visible:bg-surface-raised type-control",
+								pending?.engine === engine && "bg-surface-raised",
 							)}
 						>
 							<span className="h-3.5 w-3.5 shrink-0" />
@@ -473,7 +473,7 @@ export function AgentMenu({
 						</Reveal>
 					) : null}
 					{mine && !old && !signedOut && models.length === 0 && query.trim() === "" ? (
-						<p className="px-7 py-2 text-muted type-label">
+						<p className="px-7 py-2 text-secondary type-label">
 							{model.loading ? "Loading models…" : "No models offered."}
 						</p>
 					) : null}
@@ -504,20 +504,20 @@ export function AgentMenu({
 						{...props}
 						aria-label="Choose model"
 						title={[engineName(own), name, effort].filter(Boolean).join(" · ")}
-						className="relative z-30 flex h-7 min-w-0 max-w-[200px] items-center gap-1.5 rounded-sm px-1.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text type-control"
+						className="relative z-30 flex h-7 min-w-0 max-w-[200px] items-center gap-1.5 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary type-control"
 					>
 						{usage !== null ? (
 							<span
 								data-agent-limit-dot=""
 								aria-hidden="true"
-								className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted"
+								className="h-1.5 w-1.5 shrink-0 rounded-full bg-secondary"
 							/>
 						) : null}
 						<span className="min-w-0 truncate">
 							{unusual ? (
 								<>
 									<span data-agent-trigger-engine="">{engineName(own)}</span>
-									<span className="px-1 text-muted/60">·</span>
+									<span className="px-1 text-secondary/60">·</span>
 								</>
 							) : null}
 							{machineWord(name) ? <span className="type-value">{name}</span> : <Versioned name={name} />}
@@ -527,8 +527,8 @@ export function AgentMenu({
 				)}
 			>
 				<Fade fold open={findable}>
-					<label className="flex h-10 shrink-0 items-center gap-2 border-border border-b px-3">
-						<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+					<label className="flex h-10 shrink-0 items-center gap-2 border-line-default border-b px-3">
+						<SearchIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 						<input
 							type="search"
 							value={query}
@@ -537,7 +537,7 @@ export function AgentMenu({
 							aria-label="Find a model"
 							spellCheck={false}
 							autoComplete="off"
-							className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted type-control [&::-webkit-search-cancel-button]:hidden"
+							className="min-w-0 flex-1 bg-transparent text-primary outline-none placeholder:text-secondary type-control [&::-webkit-search-cancel-button]:hidden"
 						/>
 					</label>
 				</Fade>
@@ -545,20 +545,20 @@ export function AgentMenu({
 					className={cn("pages-scrollbar overflow-y-auto p-1", findable ? "max-h-[360px] pt-0" : "max-h-[420px]")}
 				>
 					{shown}
-					{nothingFound ? <p className="px-7 py-3 text-muted type-label">No models match “{query}”.</p> : null}
+					{nothingFound ? <p className="px-7 py-3 text-secondary type-label">No models match “{query}”.</p> : null}
 					{switching?.failed ? (
-						<p role="status" data-agent-switch-failed="" className="px-7 py-2 text-muted type-label">
+						<p role="status" data-agent-switch-failed="" className="px-7 py-2 text-secondary type-label">
 							Spool could not save {engineName(switching.engine)} as your agent. Try again.
 						</p>
 					) : null}
 				</div>
 				{lacking.length === 0 ? null : (
-					<div className="flex flex-col border-border border-t p-1">
+					<div className="flex flex-col border-line-default border-t p-1">
 						<button
 							type="button"
 							aria-expanded={more}
 							onClick={() => setMore((was) => !was)}
-							className="group flex h-8 items-center gap-2 rounded-sm px-2 text-left text-muted transition-colors duration-150 hover:bg-raised hover:text-text"
+							className="group flex h-8 items-center gap-2 rounded-sm px-2 text-left text-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-primary"
 						>
 							<span className="flex h-3.5 w-3.5 items-center justify-center transition-transform duration-[160ms] group-aria-expanded:rotate-45 motion-reduce:transition-none">
 								<PlusIcon />
@@ -574,7 +574,7 @@ export function AgentMenu({
 									<button
 										type="button"
 										onClick={() => setLooks((count) => count + 1)}
-										className="h-7 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+										className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
 									>
 										Check again
 									</button>
@@ -602,13 +602,13 @@ function usageOf(limit: AgentLimit | null, login: LoginDeck | undefined): string
 function NewThreadNote({ engine, onAccept }: { engine: string; onAccept: () => void }) {
 	return (
 		<div data-agent-new-thread={engine} className="flex items-center gap-3 pt-1 pr-1 pb-2 pl-7">
-			<p className="min-w-0 flex-1 text-muted type-label">
+			<p className="min-w-0 flex-1 text-secondary type-label">
 				Starts a new chat on {engineName(engine)}. This one stays in your chats.
 			</p>
 			<button
 				type="button"
 				onClick={onAccept}
-				className="h-7 shrink-0 rounded-sm bg-text px-2.5 text-bg transition-opacity duration-150 hover:opacity-90 type-control"
+				className="h-7 shrink-0 rounded-sm bg-primary px-2.5 text-surface-window transition-opacity duration-150 hover:opacity-90 type-control"
 			>
 				New chat
 			</button>
@@ -617,13 +617,13 @@ function NewThreadNote({ engine, onAccept }: { engine: string; onAccept: () => v
 }
 
 function Quiet({ children }: { children: ReactNode }) {
-	return <span className="whitespace-nowrap pr-1 text-muted/70 type-label">{children}</span>;
+	return <span className="whitespace-nowrap pr-1 text-secondary/70 type-label">{children}</span>;
 }
 
 /** a model as its agent names it: a machine id in mono, a name with its version kept legible */
 function ModelName({ name, hit }: { name: string; hit: string }) {
 	return (
-		<span className={cn("min-w-0 truncate text-text", machineWord(name) ? "type-value" : "type-control")}>
+		<span className={cn("min-w-0 truncate text-primary", machineWord(name) ? "type-value" : "type-control")}>
 			{machineWord(name) ? <Marked text={name} hit={hit} /> : <Versioned name={name} hit={hit} />}
 		</span>
 	);
@@ -637,7 +637,7 @@ function Marked({ text, hit }: { text: string; hit: string }) {
 	return (
 		<>
 			{text.slice(0, at)}
-			<mark className="rounded-[2px] bg-raised text-text">{text.slice(at, at + q.length)}</mark>
+			<mark className="rounded-[2px] bg-surface-raised text-primary">{text.slice(at, at + q.length)}</mark>
 			{text.slice(at + q.length)}
 		</>
 	);

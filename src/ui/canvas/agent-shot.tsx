@@ -68,13 +68,13 @@ export function Shot({
 			<button type="button" onClick={() => setBig(true)} className="w-fit cursor-zoom-in">
 				{/* the picture's own edge, so a frame in the rail is bounded the way one on the
 				    canvas is */}
-				<span className="block w-fit overflow-hidden rounded-xs border border-border-raised bg-bg">
+				<span className="block w-fit overflow-hidden rounded-xs border border-line-strong bg-surface-window">
 					<img src={src} alt={of ?? "screenshot"} width={SHOT_W} className="block h-auto" />
 				</span>
 			</button>
 			{/* which frame, and that is one word: `image/png` is a fact about a file and the
 			    row above already said `look` */}
-			{quiet || of === null ? null : <span className="truncate text-muted type-detail">{of}</span>}
+			{quiet || of === null ? null : <span className="truncate text-secondary type-detail">{of}</span>}
 			<Lightbox open={big} onClose={() => setBig(false)} caption={of}>
 				<img src={src} alt={of ?? "screenshot"} width={BIG_W} className="block h-auto max-w-full" />
 			</Lightbox>
@@ -129,7 +129,7 @@ export function Lightbox({
 	return (
 		<div
 			data-agent-lightbox=""
-			className="fixed inset-0 z-50 flex animate-find-in flex-col items-center justify-center gap-3 bg-bg/90 p-10"
+			className="fixed inset-0 z-50 flex animate-find-in flex-col items-center justify-center gap-3 bg-surface-window/90 p-10"
 		>
 			{/* the rest of the screen, which is a press that puts the picture down — behind the
 			    picture rather than around it, so the press that lands on the picture is not it */}
@@ -144,13 +144,13 @@ export function Lightbox({
 				role="dialog"
 				aria-modal="true"
 				aria-label={caption ?? "screenshot"}
-				className="relative flex min-h-0 max-w-full items-center justify-center overflow-auto rounded-sm border border-border-raised bg-bg"
+				className="relative flex min-h-0 max-w-full items-center justify-center overflow-auto rounded-sm border border-line-strong bg-surface-window"
 			>
 				{children}
 			</div>
 			<span className="relative flex shrink-0 items-center gap-2.5 type-detail">
-				{caption === null ? null : <span className="truncate text-muted">{caption}</span>}
-				<span className="text-muted">esc</span>
+				{caption === null ? null : <span className="truncate text-secondary">{caption}</span>}
+				<span className="text-secondary">esc</span>
 			</span>
 		</div>
 	);

@@ -205,7 +205,7 @@ describe("FrameShell documents", () => {
 		const { host, root } = await render({ state: "picture" });
 		const still = host.querySelector("img");
 		expect(still?.className).toContain("object-contain");
-		expect(still?.className).toContain("bg-surface");
+		expect(still?.className).toContain("bg-surface-panel");
 		expect(still?.className).not.toContain("object-cover");
 		act(() => root.unmount());
 	});

@@ -182,7 +182,7 @@ describe("a page holding only pages", () => {
 		expect(pageObject(host, "explore/agent")?.style.transform).toBe(before);
 		expect(written).toEqual([]);
 		// it is still taken by the press: the ring is on it
-		expect(pageObject(host, "explore/agent")?.querySelector("span.border-thread")).not.toBeNull();
+		expect(pageObject(host, "explore/agent")?.querySelector("span.border-accent")).not.toBeNull();
 	});
 });
 

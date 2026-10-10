@@ -115,7 +115,7 @@ describe("the chip strip", () => {
 
 		await clickHome(canvas.host);
 		await until(() => chips(canvas.host).includes("home"));
-		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread-strong')).not.toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="home"] .text-accent-strong')).not.toBeNull();
 
 		const drop = chipDrop(canvas.host, "home");
 		expect(drop).not.toBeNull();
@@ -123,7 +123,7 @@ describe("the chip strip", () => {
 
 		// the strip and the canvas never disagree: the ring goes with the chip, and
 		// what the daemon is told goes with both
-		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread-strong')).toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="home"] .text-accent-strong')).toBeNull();
 		await until(() => chips(canvas.host).length === 0);
 		await until(() => canvas.pointed.puts.at(-1)?.frames?.length === 0);
 	});
@@ -138,8 +138,8 @@ describe("the chip strip", () => {
 		// same accent, same word, same weight as one you picked — entering is the most
 		// specific act the canvas has, and the only way out of it is a mode change
 		const chip = canvas.host.querySelector('[data-agent-chip="home"]');
-		expect(chip?.className).toContain("bg-raised");
-		expect(chip?.className).not.toContain("bg-surface");
+		expect(chip?.className).toContain("bg-surface-raised");
+		expect(chip?.className).not.toContain("bg-surface-panel");
 		expect(chipDrop(canvas.host, "home")).toBeNull();
 	});
 
@@ -905,7 +905,7 @@ describe("the stroke on the composer's border", () => {
  * reachable from a mounted element, so this reads the file.
  */
 describe("the stylesheet the stroke lives in", () => {
-	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
+	const CSS = readFileSync(join(process.cwd(), "src/ui/theme.css"), "utf8");
 	const block = (open: string): string => {
 		const at = CSS.indexOf(open);
 		if (at === -1) throw new Error(`no ${open}`);

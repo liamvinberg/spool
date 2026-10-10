@@ -87,7 +87,7 @@ const MAX_H = 160;
  * spool's; a break is static, which is correct for a thing that has stopped, and nothing
  * else in this rail is a discontinuous line.
  *
- * The animation is `ui.css`'s, keyframes on one element's `translateX` and `scaleX`. Its
+ * The animation is `theme.css`'s, keyframes on one element's `translateX` and `scaleX`. Its
  * cost is stated rather than hidden: 420px of peripheral travel every 1.6s at 0.26px/ms,
  * the largest moving thing in the rail. What it buys is that the transcript gives up
  * nothing at all.
@@ -134,7 +134,7 @@ function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
 	 * — and it leaves the travel exactly where it was.
 	 *
 	 * It is opacity on the colour the stroke already had rather than a colour of its own.
-	 * This palette has one accent and `--color-thread` means the human's own thread: on
+	 * This palette has one accent and `--color-accent` means the human's own thread: on
 	 * the human's words, on the chip's rule, on a hot meter. Spending it here would give
 	 * it a second meaning that has nothing to do with the first. Red would be worse still,
 	 * because a long thought is the product working rather than a fault.
@@ -156,7 +156,7 @@ function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
 					// keyframes take the transform over for as long as they are running.
 					// `transform` rather than Tailwind's `scale-x-0`, which compiles to the
 					// `scale` property and would multiply the animation's own scale by zero
-					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text [transform:scaleX(0)]",
+					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-primary [transform:scaleX(0)]",
 					// 400ms, so the ramp is a drift rather than a per-tick step: the rail
 					// re-renders on the pace's own clock and an untransitioned opacity would
 					// change sixty times a second
@@ -171,7 +171,7 @@ function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
 				aria-hidden="true"
 				data-agent-wind-break=""
 				className={cn(
-					"pointer-events-none absolute -top-px left-1/2 block h-px w-[18px] -translate-x-1/2 bg-bg transition-opacity duration-200 motion-reduce:transition-none",
+					"pointer-events-none absolute -top-px left-1/2 block h-px w-[18px] -translate-x-1/2 bg-surface-window transition-opacity duration-200 motion-reduce:transition-none",
 					parked ? "opacity-100" : "opacity-0",
 				)}
 			/>
@@ -407,7 +407,7 @@ export function Composer({
 			}}
 		>
 			{permissions?.reason ? (
-				<p role="status" className="px-1 text-muted type-caption">
+				<p role="status" className="px-1 text-secondary type-caption">
 					{permissions.reason}
 				</p>
 			) : null}
@@ -420,7 +420,7 @@ export function Composer({
 				</span>
 				<div
 					data-agent-composer=""
-					className="flex min-h-0 flex-col gap-2 rounded-lg border border-border bg-bg px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-muted/45"
+					className="flex min-h-0 flex-col gap-2 rounded-lg border border-line-default bg-surface-window px-3 pt-3 pb-2 transition-colors duration-150 focus-within:border-secondary/45"
 				>
 					{attached.length > 0 && (
 						<div className="flex flex-wrap gap-2">
@@ -467,7 +467,7 @@ export function Composer({
 							event.preventDefault();
 							submit(event.currentTarget);
 						}}
-						className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted type-body"
+						className="w-full resize-none bg-transparent text-primary outline-none placeholder:text-secondary type-body"
 						style={{ height: MIN_H }}
 					/>
 					{/* the foot: small grey controls, who answers and what it may do on the left,
@@ -479,7 +479,7 @@ export function Composer({
 								aria-label="Attach an image"
 								title="Attach an image"
 								onClick={() => file.current?.click()}
-								className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+								className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary"
 							>
 								<ClipIcon />
 							</button>
@@ -546,7 +546,7 @@ export function Composer({
 										data-agent-send=""
 										disabled={draft.trim() === ""}
 										onClick={() => submit(field.current)}
-										className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text text-bg transition-opacity duration-150 hover:opacity-90 disabled:bg-raised disabled:text-muted"
+										className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-surface-window transition-opacity duration-150 hover:opacity-90 disabled:bg-surface-raised disabled:text-secondary"
 									>
 										<SendIcon />
 									</button>
@@ -605,7 +605,7 @@ function ContextRing({
 						aria-label={said}
 						title={said}
 						data-agent-context-ring={Math.round(share * 100)}
-						className="relative z-30 flex h-7 w-7 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text aria-expanded:bg-surface aria-expanded:text-text"
+						className="relative z-30 flex h-7 w-7 items-center justify-center rounded-sm text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary"
 					>
 						<svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true">
 							<circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.25" />
@@ -616,8 +616,8 @@ function ContextRing({
 			>
 				<div className="flex flex-row items-center gap-4 py-3 pr-3 pl-4">
 					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-						<span className="text-text type-control tabular-nums">{said}</span>
-						<span className="text-muted type-label">A new chat starts fresh.</span>
+						<span className="text-primary type-control tabular-nums">{said}</span>
+						<span className="text-secondary type-label">A new chat starts fresh.</span>
 					</span>
 					<button
 						type="button"
@@ -625,7 +625,7 @@ function ContextRing({
 							onOpen(false);
 							onNewThread();
 						}}
-						className="h-7 shrink-0 rounded-sm border border-border px-2.5 text-text transition-colors duration-150 hover:bg-raised type-control"
+						className="h-7 shrink-0 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
 					>
 						New chat
 					</button>
@@ -677,9 +677,9 @@ function StopButton({ onStop }: { onStop: () => void }) {
 			aria-label="Stop"
 			data-agent-stop=""
 			onClick={onStop}
-			className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text transition-opacity duration-150 hover:opacity-90"
+			className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary transition-opacity duration-150 hover:opacity-90"
 		>
-			<span className="h-2 w-2 rounded-[1.5px] bg-bg" />
+			<span className="h-2 w-2 rounded-[1.5px] bg-surface-window" />
 		</button>
 	);
 }
@@ -730,7 +730,7 @@ function Attached({ attached, onDrop }: { attached: Attachment; onDrop: () => vo
 		<>
 			<span
 				data-agent-attached=""
-				className="group relative flex w-fit shrink-0 overflow-hidden rounded-xs border border-border-raised bg-bg"
+				className="group relative flex w-fit shrink-0 overflow-hidden rounded-xs border border-line-strong bg-surface-window"
 				style={{ width: ATTACHED_W, height: ATTACHED_W }}
 			>
 				{/* the picture is its own label: `image/png` is a fact about a file and this is a
@@ -742,7 +742,7 @@ function Attached({ attached, onDrop }: { attached: Attachment; onDrop: () => vo
 					type="button"
 					onClick={onDrop}
 					aria-label="drop the attached image"
-					className="absolute top-0 right-0 flex h-4 w-4 items-center justify-center rounded-bl-xs bg-bg/0 text-muted/0 transition-colors duration-150 hover:text-text group-hover:bg-bg/70 group-hover:text-muted/70"
+					className="absolute top-0 right-0 flex h-4 w-4 items-center justify-center rounded-bl-xs bg-surface-window/0 text-secondary/0 transition-colors duration-150 hover:text-primary group-hover:bg-surface-window/70 group-hover:text-secondary/70"
 				>
 					<CloseIcon />
 				</button>
@@ -869,24 +869,24 @@ function SelectionStrip({ strip, pointing }: { strip: Strip; pointing: Pointing 
 								onClick={() => pointing.onDrop(chip.id)}
 								className={cn(
 									"group flex h-[26px] shrink-0 items-center gap-2 rounded-xs px-1 text-left",
-									pointing.lit === chip.id && "bg-surface",
+									pointing.lit === chip.id && "bg-surface-panel",
 								)}
 							>
 								<span
 									className={cn(
 										"h-2.5 w-[2px] shrink-0 rounded-full",
-										pointing.lit === chip.id ? "bg-thread" : "bg-thread/40",
+										pointing.lit === chip.id ? "bg-accent" : "bg-accent/40",
 									)}
 								/>
-								<span className="min-w-0 flex-1 truncate text-text type-value">{chip.label}</span>
-								<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted">
+								<span className="min-w-0 flex-1 truncate text-primary type-value">{chip.label}</span>
+								<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-secondary/0 group-hover:text-secondary">
 									<CloseIcon />
 								</span>
 							</button>
 						))}
 					</span>
 					{strip.chips.length > ROWS_SHOWN ? (
-						<span className="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-surface to-transparent" />
+						<span className="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-surface-panel to-transparent" />
 					) : null}
 				</span>
 			) : null}
@@ -912,10 +912,10 @@ function Chip({
 }) {
 	const body = (
 		<>
-			<span className={cn("h-3 w-[2px] shrink-0 rounded-full", lit ? "bg-thread" : "bg-thread/55")} />
-			<span className="min-w-0 truncate text-text type-value">{words.label}</span>
+			<span className={cn("h-3 w-[2px] shrink-0 rounded-full", lit ? "bg-accent" : "bg-accent/55")} />
+			<span className="min-w-0 truncate text-primary type-value">{words.label}</span>
 			{onOpen === undefined ? null : (
-				<ChevronIcon open={open ?? false} className="h-2.5 w-2.5 shrink-0 text-muted/40" />
+				<ChevronIcon open={open ?? false} className="h-2.5 w-2.5 shrink-0 text-secondary/40" />
 			)}
 		</>
 	);
@@ -924,10 +924,10 @@ function Chip({
 		<span
 			data-agent-chip={words.label}
 			className={cn(
-				"flex h-6 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-sm border bg-raised pl-2 transition-colors duration-150",
+				"flex h-6 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-sm border bg-surface-raised pl-2 transition-colors duration-150",
 				// the ✕'s own padding goes with it, or the chip keeps a gap it no longer uses
 				onDrop === undefined ? "pr-2.5" : "pr-1",
-				lit ? "border-thread/45" : "border-border-raised",
+				lit ? "border-accent/45" : "border-line-strong",
 			)}
 			onMouseEnter={() => onLight(words.id)}
 			onMouseLeave={() => onLight(null)}
@@ -949,7 +949,7 @@ function Chip({
 					type="button"
 					onClick={onDrop}
 					aria-label={`drop ${words.label}`}
-					className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors duration-150 hover:bg-surface hover:text-text"
+					className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-secondary/50 transition-colors duration-150 hover:bg-surface-panel hover:text-primary"
 				>
 					<CloseIcon />
 				</button>

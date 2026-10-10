@@ -118,7 +118,7 @@ export function Navigator({
 	return (
 		<div
 			data-navigator=""
-			className="fixed inset-0 flex select-none flex-col bg-bg text-text"
+			className="fixed inset-0 flex select-none flex-col bg-surface-window text-primary"
 			style={{ paddingTop: "env(safe-area-inset-top)" }}
 		>
 			<header className="flex h-12 shrink-0 items-center gap-2.5 px-4">
@@ -126,18 +126,18 @@ export function Navigator({
 				<span className="min-w-0 truncate type-control">{project.project}</span>
 				<span className="ml-auto flex shrink-0 items-center gap-2.5">
 					{room !== undefined && <PartFaces room={room} part={() => true} />}
-					{!edits(project.role) && <span className="text-muted type-detail">view only</span>}
+					{!edits(project.role) && <span className="text-secondary type-detail">view only</span>}
 				</span>
 			</header>
-			<label className="mx-3 mb-1 flex h-10 shrink-0 items-center gap-2 rounded-md bg-surface px-3">
-				<SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+			<label className="mx-3 mb-1 flex h-10 shrink-0 items-center gap-2 rounded-md bg-surface-panel px-3">
+				<SearchIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
 				<input
 					type="search"
 					value={query}
 					onChange={(event) => setQuery(event.target.value)}
 					placeholder={`find in ${project.project}`}
 					aria-label="Find a page or a frame"
-					className="h-full min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted type-value"
+					className="h-full min-w-0 flex-1 bg-transparent text-primary outline-none placeholder:text-secondary type-value"
 					// sixteen pixels or more, or iOS zooms the page in on focus
 					style={{ fontSize: 16 }}
 				/>
@@ -174,7 +174,7 @@ export function Navigator({
 												<span className="truncate">{pageName(each.frame)}</span>
 												{marks.has(each.frame) && <UnseenMark mark={marks.get(each.frame) ?? "changed"} />}
 											</span>
-											<span className="truncate text-muted type-detail">
+											<span className="truncate text-secondary type-detail">
 												{each.by} · {saidAgo(each.at)}
 												{pageParent(each.frame) !== ROOT_PAGE && ` · ${pageParent(each.frame)}`}
 											</span>
@@ -189,19 +189,19 @@ export function Navigator({
 								key={page}
 								label={pageName(page)}
 								onClick={() => open(page)}
-								icon={<FolderIcon className="h-4 w-4 text-muted" />}
+								icon={<FolderIcon className="h-4 w-4 text-secondary" />}
 							>
 								<span className="min-w-0 flex-1 truncate type-value">{pageName(page)}</span>
 								{room !== undefined && <PartFaces room={room} part={(mate) => under(mate.state.page, page)} />}
-								<span className="text-muted type-detail">{totals.get(page) ?? 0}</span>
-								<span className="flex h-2.5 w-2.5 shrink-0 text-muted">
+								<span className="text-secondary type-detail">{totals.get(page) ?? 0}</span>
+								<span className="flex h-2.5 w-2.5 shrink-0 text-secondary">
 									<ChevronIcon />
 								</span>
 							</Row>
 						))}
 						<Covers frames={framesOf(level)} covers={covers} marks={marks} room={room} onPlay={play} />
 						{(tree.get(level) ?? []).length === 0 && framesOf(level).length === 0 && (
-							<div className="px-4 py-3 text-muted type-detail">nothing on this page yet</div>
+							<div className="px-4 py-3 text-secondary type-detail">nothing on this page yet</div>
 						)}
 					</>
 				)}
@@ -212,12 +212,12 @@ export function Navigator({
 					className="fixed inset-x-0 z-20 flex justify-center px-3"
 					style={{ bottom: "calc(14px + env(safe-area-inset-bottom))" }}
 				>
-					<span className="flex h-10 max-w-full animate-[viewer-page-in_160ms_ease-out] items-center gap-2 rounded-md border border-border-raised bg-raised pr-1.5 pl-3 shadow-[0_16px_48px_rgba(0,0,0,0.55)] type-detail">
+					<span className="flex h-10 max-w-full animate-[viewer-page-in_160ms_ease-out] items-center gap-2 rounded-md border border-line-strong bg-surface-raised pr-1.5 pl-3 shadow-[0_16px_48px_rgba(0,0,0,0.55)] type-detail">
 						<span className="min-w-0 truncate">{toast.message}</span>
 						{toast.frame !== null && frameOf(toast.frame) !== undefined && (
 							<button
 								type="button"
-								className="shrink-0 cursor-pointer rounded-xs bg-thread/15 px-1.5 py-0.5 text-thread"
+								className="shrink-0 cursor-pointer rounded-xs bg-accent/15 px-1.5 py-0.5 text-accent"
 								onClick={() => toast.frame !== null && play(toast.frame)}
 							>
 								show
@@ -268,18 +268,18 @@ function Crumbs({ project, level, onLevel }: { project: string; level: string; o
 		<nav aria-label="Where" className="flex min-w-0 flex-wrap items-center gap-x-1 px-4 pt-4 pb-1 type-detail">
 			<button
 				type="button"
-				className={cn("cursor-pointer", chain.length === 0 ? "text-text" : "text-muted")}
+				className={cn("cursor-pointer", chain.length === 0 ? "text-primary" : "text-secondary")}
 				onClick={() => onLevel(ROOT_PAGE)}
 			>
 				{project}
 			</button>
 			{chain.map((page, index) => (
 				<span key={page} className="flex items-center gap-x-1">
-					<span className="text-border-raised">/</span>
+					<span className="text-line-strong">/</span>
 					<button
 						type="button"
 						aria-current={index === chain.length - 1 ? "page" : undefined}
-						className={cn("cursor-pointer", index === chain.length - 1 ? "text-text" : "text-muted")}
+						className={cn("cursor-pointer", index === chain.length - 1 ? "text-primary" : "text-secondary")}
 						onClick={() => onLevel(page)}
 					>
 						{pageName(page)}
@@ -320,7 +320,7 @@ function Covers({
 				>
 					<span
 						data-navigator-cover={frame.name}
-						className="relative block w-full overflow-hidden rounded-sm border border-border bg-surface"
+						className="relative block w-full overflow-hidden rounded-sm border border-line-default bg-surface-panel"
 						style={{ aspectRatio: `${frame.w} / ${Math.min(frame.h, frame.w * 2)}` }}
 					>
 						{covers[frame.name] !== undefined ? (
@@ -331,7 +331,7 @@ function Covers({
 								className="absolute inset-0 h-full w-full object-cover object-top"
 							/>
 						) : (
-							<span className="absolute inset-0 grid place-items-center text-muted type-detail">
+							<span className="absolute inset-0 grid place-items-center text-secondary type-detail">
 								{frame.w} × {frame.h}
 							</span>
 						)}
@@ -374,7 +374,7 @@ function Found({
 		.filter((frame) => pageName(frame.name).toLowerCase().includes(query))
 		.slice(0, FOUND.frames);
 	if (pageHits.length + frameHits.length === 0)
-		return <div className="px-4 py-3 text-muted type-detail">nothing matches {query}</div>;
+		return <div className="px-4 py-3 text-secondary type-detail">nothing matches {query}</div>;
 	return (
 		<>
 			{pageHits.map((page) => (
@@ -382,13 +382,13 @@ function Found({
 					key={page}
 					label={page}
 					onClick={() => onPage(page)}
-					icon={<FolderIcon className="h-4 w-4 text-muted" />}
+					icon={<FolderIcon className="h-4 w-4 text-secondary" />}
 				>
 					<span className="min-w-0 flex-1 truncate type-value">
-						<span className="text-muted">{pageParent(page) === ROOT_PAGE ? "" : `${pageParent(page)}/`}</span>
+						<span className="text-secondary">{pageParent(page) === ROOT_PAGE ? "" : `${pageParent(page)}/`}</span>
 						{pageName(page)}
 					</span>
-					<span className="text-muted type-detail">{totals.get(page) ?? 0}</span>
+					<span className="text-secondary type-detail">{totals.get(page) ?? 0}</span>
 				</Row>
 			))}
 			{frameHits.map((frame) => (
@@ -400,7 +400,7 @@ function Found({
 				>
 					<span className="flex min-w-0 flex-1 flex-col">
 						<span className="truncate type-value">{pageName(frame.name)}</span>
-						<span className="truncate text-muted type-detail">{pageParent(frame.name) || "top level"}</span>
+						<span className="truncate text-secondary type-detail">{pageParent(frame.name) || "top level"}</span>
 					</span>
 				</Row>
 			))}
@@ -409,7 +409,7 @@ function Found({
 }
 
 function Section({ children }: { children: ReactNode }) {
-	return <div className="px-4 pt-3 pb-1 text-muted type-detail">{children}</div>;
+	return <div className="px-4 pt-3 pb-1 text-secondary type-detail">{children}</div>;
 }
 
 function Row({
@@ -428,7 +428,7 @@ function Row({
 			type="button"
 			aria-label={label}
 			onClick={onClick}
-			className="flex min-h-12 w-full min-w-0 cursor-pointer items-center gap-3 py-1.5 pr-4 pl-4 text-left active:bg-surface"
+			className="flex min-h-12 w-full min-w-0 cursor-pointer items-center gap-3 py-1.5 pr-4 pl-4 text-left active:bg-surface-panel"
 		>
 			<span className="flex w-9 shrink-0 justify-center">{icon}</span>
 			{children}
@@ -438,14 +438,14 @@ function Row({
 
 /** A frame's cover, small, at its own shape: wide for a desktop frame, tall for a phone one. */
 function Thumb({ frame, cover }: { frame: DesignFrame | undefined; cover: string | undefined }) {
-	if (frame === undefined) return <FrameIcon className="h-4 w-4 text-muted" />;
+	if (frame === undefined) return <FrameIcon className="h-4 w-4 text-secondary" />;
 	const wide = frame.w > frame.h;
 	const w = wide ? 36 : 20;
 	const h = Math.min(36, (w * frame.h) / frame.w);
 	return (
 		<span
 			data-navigator-cover={frame.name}
-			className="block overflow-hidden rounded-[3px] bg-surface"
+			className="block overflow-hidden rounded-[3px] bg-surface-panel"
 			style={{ width: w, height: h }}
 		>
 			{cover !== undefined && (

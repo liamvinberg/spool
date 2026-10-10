@@ -16,7 +16,7 @@ import type { SideId } from "./pane-layout";
 
 /** a pane's verb in its tab row; the press feel is the house's */
 export const PANE_VERB =
-	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none";
+	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-secondary/60 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface-panel hover:text-primary active:scale-90 motion-reduce:transition-none";
 
 export type PaneMarkKind = "waiting" | "working" | "unread" | "elsewhere";
 
@@ -36,8 +36,8 @@ export function PaneMark({ kind, placed }: { kind: PaneMarkKind | null; placed: 
 					data-pane-mark="waiting"
 					data-pane-mark-state={state}
 					className={cn(
-						"h-3 w-3 rounded-full text-text",
-						corner && "-top-0.5 -right-0.5 absolute bg-bg",
+						"h-3 w-3 rounded-full text-primary",
+						corner && "-top-0.5 -right-0.5 absolute bg-surface-window",
 						leaving ? "animate-agent-fade-out" : "animate-agent-arrive",
 					)}
 				/>
@@ -49,7 +49,7 @@ export function PaneMark({ kind, placed }: { kind: PaneMarkKind | null; placed: 
 					data-pane-mark="working"
 					data-pane-mark-state={state}
 					className={cn(
-						"text-text/60",
+						"text-primary/60",
 						corner ? "-top-0.5 -right-0.5 absolute h-3 w-3" : "h-2.5 w-2.5",
 						leaving && "animate-agent-fade-out",
 					)}
@@ -66,7 +66,7 @@ export function PaneMark({ kind, placed }: { kind: PaneMarkKind | null; placed: 
 					data-pane-mark-state={state}
 					className={cn(
 						"h-1.5 w-1.5 rounded-full",
-						mark === "unread" ? "bg-thread" : "bg-text/85",
+						mark === "unread" ? "bg-accent" : "bg-primary/85",
 						corner && "absolute top-1 right-1",
 						leaving
 							? "animate-agent-fade-out"
@@ -143,7 +143,7 @@ export function PaneMore({ label, items }: { label: string; items: readonly Pane
 				aria-haspopup="menu"
 				aria-expanded={open}
 				onClick={() => setOpen(!open)}
-				className={cn(PANE_VERB, open && "bg-surface text-text")}
+				className={cn(PANE_VERB, open && "bg-surface-panel text-primary")}
 			>
 				<DotsIcon />
 			</button>
@@ -153,7 +153,7 @@ export function PaneMore({ label, items }: { label: string; items: readonly Pane
 							ref={menu}
 							role="menu"
 							aria-label={label}
-							className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit [&>button:focus-visible]:bg-surface"
+							className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit [&>button:focus-visible]:bg-surface-panel"
 							style={at === null ? { visibility: "hidden" } : { left: at.left, top: at.top }}
 						>
 							{items.map((item) => (

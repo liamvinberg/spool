@@ -304,14 +304,14 @@ export function playerChromeCss(fontBase = "/vendor/fonts/"): string {
 
 const CHROME_CSS = `:root {
 	color-scheme: dark;
-	--color-bg: #0e0e0e;
-	--color-surface: #1c1c1c;
-	--color-raised: #282828;
-	--color-border: #262626;
-	--color-border-raised: #363636;
-	--color-text: #f0efed;
-	--color-muted: #94918d;
-	--color-thread: #f5391a;
+	--color-surface-window: #0e0e0e;
+	--color-surface-panel: #1c1c1c;
+	--color-surface-raised: #282828;
+	--color-line-default: #262626;
+	--color-line-strong: #363636;
+	--color-primary: #f0efed;
+	--color-secondary: #94918d;
+	--color-accent: #f5391a;
 	--radius-sm: 6px;
 	--radius-lg: 12px;
 }

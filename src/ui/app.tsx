@@ -602,13 +602,13 @@ export function App() {
 
 	return (
 		<ProjectTeams.Provider value={markTeams}>
-			<div className="flex h-full flex-col bg-bg">
-				<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-border after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-muted)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
+			<div className="flex h-full flex-col bg-surface-window">
+				<header className="app-header after:content-[''] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-line-default after:pointer-events-none [&_button:focus-visible]:[outline:2px_solid_var(--color-secondary)] [&_button:focus-visible]:outline-offset-[-2px] relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-surface-window px-4">
 					<div className="flex h-full min-w-0 flex-1 items-center">
-						<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-border-raised">
+						<div className="app-home-zone relative flex items-center shrink-0 h-full mr-[12px] pr-[16px] after:content-[''] after:absolute after:right-0 after:w-px after:h-[18px] after:bg-line-strong">
 							<button
 								type="button"
-								className="app-home flex items-center gap-[9px] h-[32px] [padding:0_4px_0_6px] [font:var(--type-control)] [color:var(--color-muted)] cursor-pointer [&:is(:hover,[aria-current])]:text-text active:[transform:translateY(1px)] motion-reduce:active:transform-none"
+								className="app-home flex items-center gap-[9px] h-[32px] [padding:0_4px_0_6px] [font:var(--type-control)] [color:var(--color-secondary)] cursor-pointer [&:is(:hover,[aria-current])]:text-primary active:[transform:translateY(1px)] motion-reduce:active:transform-none"
 								onClick={() => focusProject(null)}
 								aria-current={focusedTab === undefined ? "page" : undefined}
 								title="Home"

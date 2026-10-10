@@ -25,14 +25,14 @@ export function EmptyState({
 	return (
 		<div
 			className={cn(
-				"spool-empty flex flex-col justify-center [&>svg]:mb-[36px] [&>svg]:h-[32px] [&>svg]:w-[32px] [&>svg]:text-muted",
+				"spool-empty flex flex-col justify-center [&>svg]:mb-[36px] [&>svg]:h-[32px] [&>svg]:w-[32px] [&>svg]:text-secondary",
 				align === "start" ? "spool-empty-start items-start text-left" : "items-center text-center",
 				className,
 			)}
 		>
 			{icon}
 			<Heading className="[font:var(--type-page)] [&]:font-medium tracking-tight">{title}</Heading>
-			{description && <p className="mt-[13px] [font:var(--type-control)] text-muted">{description}</p>}
+			{description && <p className="mt-[13px] [font:var(--type-control)] text-secondary">{description}</p>}
 			{actions && (
 				<div className="spool-empty-actions flex items-center justify-center flex-wrap gap-[12px] mt-[25px]">
 					{actions}
@@ -46,9 +46,9 @@ export function EmptyState({
 export function EmptyFramesIcon() {
 	return (
 		<div className="spool-empty-frames relative w-[87px] h-[70px] mb-[36px]" aria-hidden="true">
-			<i className="absolute inset-0 grid place-items-center border border-border-raised rounded-[8px] bg-bg [transform:rotate(-10deg)_translate(-13px,-2px)]" />
-			<i className="absolute inset-0 grid place-items-center border border-border-raised rounded-[8px] bg-bg [transform:rotate(10deg)_translate(13px,0)]" />
-			<span className="absolute inset-0 grid place-items-center border border-border-raised rounded-[8px] bg-bg text-muted [font:var(--type-page)]">
+			<i className="absolute inset-0 grid place-items-center border border-line-strong rounded-[8px] bg-surface-window [transform:rotate(-10deg)_translate(-13px,-2px)]" />
+			<i className="absolute inset-0 grid place-items-center border border-line-strong rounded-[8px] bg-surface-window [transform:rotate(10deg)_translate(13px,0)]" />
+			<span className="absolute inset-0 grid place-items-center border border-line-strong rounded-[8px] bg-surface-window text-secondary [font:var(--type-page)]">
 				+
 			</span>
 		</div>

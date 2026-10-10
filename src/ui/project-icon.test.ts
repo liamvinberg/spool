@@ -56,14 +56,14 @@ describe("a project's icon", () => {
 				name: "checkout",
 				icon: FAVICON,
 				team: "devosurf",
-				cut: "var(--color-canvas)",
+				cut: "var(--color-surface-canvas)",
 			}),
 		);
 		const badge = host.querySelector<HTMLElement>("[data-team-mark]");
 		expect(badge?.dataset.teamMark).toBe("filled");
 		expect(badge?.textContent).toBe("D");
 		expect(badge?.style.width).toBe("10px");
-		expect(badge?.style.boxShadow).toContain("var(--color-canvas)");
+		expect(badge?.style.boxShadow).toContain("var(--color-surface-canvas)");
 		// set out past the icon's corner by about a third of itself
 		expect(badge?.parentElement?.style.right).toBe("-4px");
 	});
@@ -74,8 +74,8 @@ describe("a project's icon", () => {
 		);
 		const badge = host.querySelector<HTMLElement>("[data-team-mark]");
 		expect(badge?.dataset.teamMark).toBe("hollow");
-		expect(badge?.style.boxShadow).toContain("inset 0 0 0 1.25px var(--color-muted)");
-		expect(badge?.classList.contains("text-muted")).toBe(true);
+		expect(badge?.style.boxShadow).toContain("inset 0 0 0 1.25px var(--color-secondary)");
+		expect(badge?.classList.contains("text-secondary")).toBe(true);
 	});
 
 	it("draws a team this Mac can't see right now from its address", async () => {
@@ -125,7 +125,9 @@ describe("a tab", () => {
 		expect(labels[0]?.lastElementChild?.textContent).toBe("kvitt");
 		expect(labels[1]?.querySelector<HTMLElement>("[data-team-mark]")?.dataset.teamMark).toBe("hollow");
 		// the inactive tab sits on the bar, so its badge's gap is the bar's colour
-		expect(labels[1]?.querySelector<HTMLElement>("[data-team-mark]")?.style.background).toBe("var(--color-bg)");
+		expect(labels[1]?.querySelector<HTMLElement>("[data-team-mark]")?.style.background).toBe(
+			"var(--color-surface-window)",
+		);
 		expect(labels[2]?.querySelector('[data-project-icon="letter"]')?.textContent).toBe("n");
 	});
 

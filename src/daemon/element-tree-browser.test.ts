@@ -102,7 +102,7 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 
 	// hovering a row outlines its element and takes nothing
 	await row("main > h1").hover();
-	await expect.poll(() => page.locator(".border-thread.opacity-50").count()).toBe(1);
+	await expect.poll(() => page.locator(".border-accent.opacity-50").count()).toBe(1);
 	expect(await held()).toBe("main > div > button:nth-of-type(2)");
 
 	// a row click selects; the keyboard stays the canvas's, so the keys walk from it
@@ -227,6 +227,6 @@ it("keeps a long tree to its own scroll, and scrolls the held row into view insi
 		)
 		.toBe(true);
 	// and the frame's row is lit while one of its elements is held
-	expect(await frameRow.getAttribute("class")).toContain("bg-surface");
+	expect(await frameRow.getAttribute("class")).toContain("bg-surface-panel");
 	expect(await rail.locator('button[aria-label="grid frame"]').getAttribute("aria-pressed")).toBe("false");
 });

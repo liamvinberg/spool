@@ -94,7 +94,7 @@ export function ProjectMark({
 	team,
 	paused = false,
 	size = 16,
-	cut = "var(--color-bg)",
+	cut = "var(--color-surface-window)",
 }: {
 	project: string;
 	name: string;

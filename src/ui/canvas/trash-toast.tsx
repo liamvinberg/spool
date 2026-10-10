@@ -25,14 +25,14 @@ export function TrashToast({
 }) {
 	return (
 		<div
-			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30 flex items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5"
+			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30 flex items-center gap-4 rounded-md border border-line-strong bg-surface-raised px-3.5 py-2.5"
 			onPointerDown={(event) => event.stopPropagation()}
 		>
-			<span className="text-text type-control">Moved {subjectOf(frames, page)} to Trash</span>
-			<button type="button" className="font-medium text-thread-strong type-control" onClick={onUndo}>
+			<span className="text-primary type-control">Moved {subjectOf(frames, page)} to Trash</span>
+			<button type="button" className="font-medium text-accent-strong type-control" onClick={onUndo}>
 				Undo
 			</button>
-			<span className="text-muted type-value">{UNDO_CHORD}</span>
+			<span className="text-secondary type-value">{UNDO_CHORD}</span>
 		</div>
 	);
 }

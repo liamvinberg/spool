@@ -256,20 +256,20 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 							startExport(request);
 						}}
 					>
-						<div className="project-transfer-summary rounded-md border border-border-raised px-4 py-3">
-							<p className="m-0 text-text type-control">Entire project</p>
-							<p className="m-0 mt-[4px] text-muted type-detail">{counts ?? "All pages and frames"}</p>
+						<div className="project-transfer-summary rounded-md border border-line-strong px-4 py-3">
+							<p className="m-0 text-primary type-control">Entire project</p>
+							<p className="m-0 mt-[4px] text-secondary type-detail">{counts ?? "All pages and frames"}</p>
 						</div>
-						<p className="project-transfer-description m-0 mt-[20px] text-muted [font:var(--type-control)]">
+						<p className="project-transfer-description m-0 mt-[20px] text-secondary [font:var(--type-control)]">
 							Includes frames, layout, flows and local assets.
 						</p>
 					</ConfirmDialog>
 				)}
 				{dragging && (
-					<div className="project-transfer-drop is-project fixed inset-[8px] z-[60] pointer-events-none border border-thread rounded-[6px] [background:color-mix(in_srgb,var(--color-bg)_75%,transparent)]">
+					<div className="project-transfer-drop is-project fixed inset-[8px] z-[60] pointer-events-none border border-accent rounded-[6px] [background:color-mix(in_srgb,var(--color-surface-window)_75%,transparent)]">
 						<div className="absolute top-1/2 left-1/2 [transform:translate(-50%,-50%)] text-center">
 							<p className="type-heading">Drop to open a project</p>
-							<p className="mt-2 text-muted type-control">It opens in a new tab and appears in Home.</p>
+							<p className="mt-2 text-secondary type-control">It opens in a new tab and appears in Home.</p>
 							<p className="mt-5 type-value">.spool</p>
 						</div>
 					</div>
@@ -277,16 +277,20 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 				{busy && (
 					<div
 						role="status"
-						className="project-transfer-progress fixed bottom-20 left-1/2 z-50 w-[360px] -translate-x-1/2 overflow-hidden rounded-md border border-border-raised bg-raised"
+						className="project-transfer-progress fixed bottom-20 left-1/2 z-50 w-[360px] -translate-x-1/2 overflow-hidden rounded-md border border-line-strong bg-surface-raised"
 					>
 						<div className="flex items-center justify-between px-4 py-3">
 							<p className="type-control">{busy.label}</p>
-							<button type="button" className="text-muted type-control hover:text-text" onClick={busy.cancel}>
+							<button
+								type="button"
+								className="text-secondary type-control hover:text-primary"
+								onClick={busy.cancel}
+							>
 								Cancel
 							</button>
 						</div>
-						<div className="h-px bg-border-raised">
-							<div className="project-transfer-indicator h-px w-1/3 bg-thread" />
+						<div className="h-px bg-line-strong">
+							<div className="project-transfer-indicator h-px w-1/3 bg-accent" />
 						</div>
 					</div>
 				)}

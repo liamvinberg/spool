@@ -160,12 +160,12 @@ describe("canvas keyboard navigation", () => {
 			);
 		});
 		expect(document.activeElement).toBe(canvas);
-		expect(labelClass(host, "origin")).toContain("text-thread");
+		expect(labelClass(host, "origin")).toContain("text-accent");
 
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true }));
 		});
-		expect(labelClass(host, "right")).toContain("text-thread");
+		expect(labelClass(host, "right")).toContain("text-accent");
 
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));

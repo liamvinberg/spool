@@ -139,8 +139,8 @@ export function PictureCanvas({
 		<canvas
 			ref={element}
 			data-picture-layer=""
-			// `text-surface` is not drawn: it is where the surface colour is read from
-			className="pointer-events-none absolute inset-0 block h-full w-full text-surface"
+			// `text-surface-panel` is not drawn: it is where the surface colour is read from
+			className="pointer-events-none absolute inset-0 block h-full w-full text-surface-panel"
 		/>
 	);
 }

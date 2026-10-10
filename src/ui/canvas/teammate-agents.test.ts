@@ -164,7 +164,7 @@ describe("a teammate's agent at work (#378)", () => {
 		const frames = [{ name: "home", x: 0, y: 0, w: 400, h: 800 } as ProjectedFrame];
 		act(() => root.render(createElement(TeammateCompanions, { room, camera, frames })));
 		const theirs = host.querySelector<HTMLElement>('[data-teammate-companions="acct-ada"]');
-		expect(theirs?.style.getPropertyValue("--color-text")).toBe("#eaa94a");
+		expect(theirs?.style.getPropertyValue("--color-primary")).toBe("#eaa94a");
 		expect(theirs?.querySelector('[data-agent-companion="acct-ada:home"]')).not.toBeNull();
 		// their turn over, their squares go
 		act(() => room.hear({ type: "presence", person: { ...ada, color: "#eaa94a" }, state: here, still: 0 }));

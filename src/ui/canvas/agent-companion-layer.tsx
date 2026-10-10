@@ -561,12 +561,12 @@ function Companion({
 	const id = companion.key === "" ? "main" : companion.key;
 	return (
 		<div data-agent-companion={id} data-act={act} data-frame={companion.frame ?? ""}>
-			{drawing ? <span ref={cover} data-companion-cover="" className="absolute block bg-canvas" /> : null}
+			{drawing ? <span ref={cover} data-companion-cover="" className="absolute block bg-surface-canvas" /> : null}
 			{reading !== null ? (
 				<span
 					ref={trail}
 					data-companion-trail={reading}
-					className="absolute block w-px bg-muted transition-opacity duration-[1000ms] ease-[cubic-bezier(0.65,0,0.35,1)]"
+					className="absolute block w-px bg-secondary transition-opacity duration-[1000ms] ease-[cubic-bezier(0.65,0,0.35,1)]"
 					style={{ opacity: reading === "down" ? 0.6 : 0 }}
 					onTransitionEnd={() => setReading((was) => (was === "off" ? null : was))}
 				/>
@@ -575,18 +575,18 @@ function Companion({
 				<span
 					ref={flash}
 					data-companion-flash=""
-					className="absolute block animate-agent-flash bg-raised"
+					className="absolute block animate-agent-flash bg-surface-raised"
 					style={{ animationDelay: `${MOTION.cornersOut}ms` }}
 				/>
 			) : null}
 			{gathering ? (
 				<span ref={ghost} data-companion-ghost="" className="absolute block" style={{ borderRadius: 4 }}>
 					<span
-						className="absolute inset-0 block animate-agent-gather rounded-[inherit] border border-muted/50 bg-text/10"
+						className="absolute inset-0 block animate-agent-gather rounded-[inherit] border border-secondary/50 bg-primary/10"
 						style={{ transformOrigin: "100% 0" }}
 					/>
 					<span
-						className="absolute inset-0 block rounded-[inherit] border border-muted/60 border-dashed"
+						className="absolute inset-0 block rounded-[inherit] border border-secondary/60 border-dashed"
 						style={
 							still
 								? undefined
@@ -599,7 +599,7 @@ function Companion({
 				<span
 					ref={ring}
 					data-companion-ring=""
-					className="absolute block animate-agent-ring rounded-[3px] border-[1.5px] border-text"
+					className="absolute block animate-agent-ring rounded-[3px] border-[1.5px] border-primary"
 					style={{ opacity: 0.6 }}
 				/>
 			) : null}
@@ -611,7 +611,7 @@ function Companion({
 								corners.current[index] = element;
 							}}
 							data-companion-corner={corner}
-							className={`absolute block border-text ${shooting === "out" ? "animate-agent-corners-out" : "animate-agent-corners-in"}`}
+							className={`absolute block border-primary ${shooting === "out" ? "animate-agent-corners-out" : "animate-agent-corners-in"}`}
 							style={cornerStyle(corner)}
 						/>
 					))
@@ -625,7 +625,7 @@ function Companion({
 					{name === null ? null : (
 						<span
 							data-companion-name={name}
-							className={`absolute top-1/2 right-full mr-1.5 -translate-y-1/2 whitespace-nowrap text-muted type-detail ${name === "leaving" ? "animate-agent-fade-out" : "animate-agent-fade-in"}`}
+							className={`absolute top-1/2 right-full mr-1.5 -translate-y-1/2 whitespace-nowrap text-secondary type-detail ${name === "leaving" ? "animate-agent-fade-out" : "animate-agent-fade-in"}`}
 						>
 							{heldName}
 						</span>
@@ -637,7 +637,7 @@ function Companion({
 							fill="none"
 							aria-hidden="true"
 							data-companion-waiting=""
-							className="-top-[2px] -left-[2px] absolute block animate-agent-arrive rounded-full bg-canvas text-text"
+							className="-top-[2px] -left-[2px] absolute block animate-agent-arrive rounded-full bg-surface-canvas text-primary"
 							style={{ width: SIDE + 4, height: SIDE + 4 }}
 						>
 							<circle
@@ -653,10 +653,10 @@ function Companion({
 					) : (
 						<span
 							data-companion-square={docked ? "docked" : ""}
-							className={`block size-full transition-[opacity,transform,background-color] duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] ${docked ? "bg-muted" : "bg-text"}`}
+							className={`block size-full transition-[opacity,transform,background-color] duration-[400ms] ease-[cubic-bezier(0.22,0.61,0.36,1)] ${docked ? "bg-secondary" : "bg-primary"}`}
 							style={{
 								borderRadius: SIDE * 0.3,
-								boxShadow: docked ? "none" : `0 0 0 ${HALO}px var(--color-canvas)`,
+								boxShadow: docked ? "none" : `0 0 0 ${HALO}px var(--color-surface-canvas)`,
 								transform: docked ? `scale(${DOCKED_SCALE})` : undefined,
 								opacity: dim ? 0.45 : 1,
 							}}

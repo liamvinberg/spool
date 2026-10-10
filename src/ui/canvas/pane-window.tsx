@@ -917,9 +917,9 @@ export function PaneWindow({
 				onClick={() => picked(() => showPane(pane, false))}
 				onContextMenu={openMenu(pane)}
 				className={cn(
-					"relative flex h-6 shrink-0 cursor-default touch-none items-center gap-1.5 rounded-sm px-2 outline-none type-label transition-[background-color,color,opacity] duration-150 ease-out focus-visible:[outline:2px_solid_var(--color-muted)] focus-visible:outline-offset-[-2px] motion-reduce:transition-none",
-					lit ? "text-text" : "text-muted hover:text-text",
-					lit && many && "bg-surface",
+					"relative flex h-6 shrink-0 cursor-default touch-none items-center gap-1.5 rounded-sm px-2 outline-none type-label transition-[background-color,color,opacity] duration-150 ease-out focus-visible:[outline:2px_solid_var(--color-secondary)] focus-visible:outline-offset-[-2px] motion-reduce:transition-none",
+					lit ? "text-primary" : "text-secondary hover:text-primary",
+					lit && many && "bg-surface-panel",
 					carried === pane && "opacity-40",
 				)}
 			>
@@ -981,7 +981,7 @@ export function PaneWindow({
 					event.preventDefault();
 					event.stopPropagation();
 				}}
-				className="relative z-20 h-full shrink-0 overflow-hidden bg-bg"
+				className="relative z-20 h-full shrink-0 overflow-hidden bg-surface-window"
 				style={{ width: outer, transition: still ? "none" : `width ${WIDEN_MS}ms ${EASE}` }}
 			>
 				{/* laid out at its settled width against the window's edge, so opening uncovers it rather than squashing it */}
@@ -1049,8 +1049,8 @@ export function PaneWindow({
 								data-pane-group-key={group.tabs[0]}
 								data-drop-row={`${id}:${g}`}
 								className={cn(
-									"group/row absolute inset-x-0 flex select-none items-center bg-bg",
-									head ? "px-1.5" : "border-border border-t pr-1.5 pl-1",
+									"group/row absolute inset-x-0 flex select-none items-center bg-surface-window",
+									head ? "px-1.5" : "border-line-default border-t pr-1.5 pl-1",
 									head && id === "right" && "pl-1",
 								)}
 								style={{ top: tops[g] ?? 0, height: head ? HEAD_H : ROW_H, transition: glide }}
@@ -1086,7 +1086,7 @@ export function PaneWindow({
 							className="group/split absolute inset-x-0 z-10 h-2 -translate-y-1/2 cursor-row-resize touch-none"
 							style={{ top: tops[i + 1], transition: glide === "none" ? "none" : `top ${DROP_MS}ms ${EASE}` }}
 						>
-							<span className="absolute inset-x-0 top-1/2 h-px bg-transparent group-hover/split:bg-thread" />
+							<span className="absolute inset-x-0 top-1/2 h-px bg-transparent group-hover/split:bg-accent" />
 						</button>
 					))}
 				</div>
@@ -1118,7 +1118,7 @@ export function PaneWindow({
 									title={`${def.title} ${hotkeyKey(def.hotkey)}`}
 									onClick={() => showPane(pane, false)}
 									onContextMenu={openMenu(pane)}
-									className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/60 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none"
+									className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-secondary/60 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface-panel hover:text-primary active:scale-90 motion-reduce:transition-none"
 								>
 									<span className="flex h-4 w-4 items-center justify-center">{def.icon}</span>
 									<PaneMark kind={kind} placed="corner" />
@@ -1131,7 +1131,7 @@ export function PaneWindow({
 				<span
 					aria-hidden="true"
 					className={cn(
-						"pointer-events-none absolute inset-y-0 z-40 w-px bg-border",
+						"pointer-events-none absolute inset-y-0 z-40 w-px bg-line-default",
 						id === "left" ? "right-0" : "left-0",
 					)}
 				/>
@@ -1147,7 +1147,7 @@ export function PaneWindow({
 					>
 						<span
 							className={cn(
-								"absolute inset-y-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread",
+								"absolute inset-y-0 w-px bg-transparent group-hover:bg-accent group-focus-visible:bg-accent",
 								id === "left" ? "right-0" : "left-0",
 							)}
 						/>
@@ -1201,9 +1201,9 @@ export function PaneWindow({
 					aria-hidden="true"
 					data-pane-drop=""
 					className={cn(
-						"group/mark pointer-events-none fixed z-50 flex items-center justify-center rounded-sm bg-thread/[0.07] outline outline-1 outline-thread/35",
-						"data-[line]:rounded-full data-[line]:bg-thread data-[line]:outline-0",
-						"data-[refused]:border data-[refused]:border-border-raised data-[refused]:border-dashed data-[refused]:bg-bg/60 data-[refused]:outline-0",
+						"group/mark pointer-events-none fixed z-50 flex items-center justify-center rounded-sm bg-accent/[0.07] outline outline-1 outline-accent/35",
+						"data-[line]:rounded-full data-[line]:bg-accent data-[line]:outline-0",
+						"data-[refused]:border data-[refused]:border-line-strong data-[refused]:border-dashed data-[refused]:bg-surface-window/60 data-[refused]:outline-0",
 					)}
 					style={{
 						opacity: 0,
@@ -1216,13 +1216,13 @@ export function PaneWindow({
 				>
 					<span
 						ref={markWords}
-						className="mx-2 hidden rounded-xs bg-raised px-2 py-1 text-center text-muted type-detail group-data-[refused]/mark:block"
+						className="mx-2 hidden rounded-xs bg-surface-raised px-2 py-1 text-center text-secondary type-detail group-data-[refused]/mark:block"
 					/>
 				</div>
 
 				{carried === null || carriedDef === undefined ? null : (
 					<div ref={ghost} aria-hidden="true" className="pointer-events-none fixed top-0 left-0 z-[60]">
-						<div className="flex h-6 items-center whitespace-nowrap rounded-sm border border-border-raised bg-raised px-2 text-text type-label">
+						<div className="flex h-6 items-center whitespace-nowrap rounded-sm border border-line-strong bg-surface-raised px-2 text-primary type-label">
 							{carriedDef.title}
 						</div>
 					</div>
@@ -1233,7 +1233,7 @@ export function PaneWindow({
 						data-pane-tab-menu=""
 						role="menu"
 						aria-label={menuDef.title}
-						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit"
 						style={{ top: menu.y + 4, left: Math.min(menu.x, window.innerWidth - 228) }}
 					>
 						{menuItems.map((item) => (
@@ -1295,7 +1295,7 @@ function PaneSection({
 			data-pane={def.id}
 			aria-label={def.title}
 			onPointerDownCapture={onTouch}
-			className="flex h-full min-h-0 flex-col overflow-hidden bg-bg"
+			className="flex h-full min-h-0 flex-col overflow-hidden bg-surface-window"
 		>
 			<div data-pane-body={def.id} className="relative min-h-0 flex-1 overflow-hidden">
 				<PaneSlot.Provider value={verbs}>{def.render(context)}</PaneSlot.Provider>

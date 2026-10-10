@@ -146,7 +146,7 @@ export function TeammateCompanions({
 						data-teammate-companions={mate.person.accountId}
 						className="pointer-events-none absolute inset-0"
 						// the squares are drawn in ink, and theirs is their colour
-						style={{ "--color-text": mate.person.color } as CSSProperties}
+						style={{ "--color-primary": mate.person.color } as CSSProperties}
 					>
 						<AgentCompanionLayer
 							camera={camera}

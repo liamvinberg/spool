@@ -75,7 +75,7 @@ export function ThreadTitle({
 			{/* the plate under the pane's tab: the tab already says Agent, so this names the chat */}
 			<div
 				data-agent-plate=""
-				className="relative z-20 flex h-11 shrink-0 items-center border-border border-b bg-bg px-2"
+				className="relative z-20 flex h-11 shrink-0 items-center border-line-default border-b bg-surface-window px-2"
 			>
 				<button
 					ref={title}
@@ -85,16 +85,21 @@ export function ThreadTitle({
 					aria-expanded={listed}
 					title="Switch chat"
 					onClick={() => onList(listed ? null : Date.now())}
-					className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface aria-expanded:bg-surface"
+					className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface-panel aria-expanded:bg-surface-panel"
 				>
-					<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
+					<span
+						className={cn(
+							"min-w-0 flex-1 truncate type-label",
+							name === UNSAID ? "text-secondary" : "text-primary",
+						)}
+					>
 						{name === UNSAID ? "New chat" : name}
 					</span>
 					{/* a caret that turns down while the list hangs from it */}
 					<svg
 						viewBox="0 0 12 12"
 						className={cn(
-							"h-2.5 w-2.5 shrink-0 origin-center text-muted/45 transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+							"h-2.5 w-2.5 shrink-0 origin-center text-secondary/45 transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
 							listed && "rotate-90",
 						)}
 						fill="none"
@@ -222,20 +227,20 @@ function ThreadRow({
 				onClick={onPick}
 				className={cn(
 					"relative flex h-9 min-w-0 flex-1 items-center gap-3 rounded-sm pr-2 pl-2.5 text-left transition-colors duration-150",
-					on ? "bg-raised" : "hover:bg-raised/60",
+					on ? "bg-surface-raised" : "hover:bg-surface-raised/60",
 				)}
 			>
-				<span className="agent-thread-ask min-w-0 flex-1 truncate text-text type-control">
+				<span className="agent-thread-ask min-w-0 flex-1 truncate text-primary type-control">
 					{thread.name === UNSAID ? "New chat" : thread.name}
 					{named ? (
-						<span data-agent-thread-engine={thread.engine} className="pl-2 text-muted type-label">
+						<span data-agent-thread-engine={thread.engine} className="pl-2 text-secondary type-label">
 							{engineName(thread.engine)}
 						</span>
 					) : null}
 				</span>
 				<span className="flex shrink-0 items-center gap-1.5 transition-opacity duration-[180ms] group-focus-within:opacity-0 group-hover:opacity-0">
 					{marked ? <ThreadMark life={thread.life} /> : null}
-					<span className="text-muted type-label tabular-nums">{ageOf(thread.at, now)}</span>
+					<span className="text-secondary type-label tabular-nums">{ageOf(thread.at, now)}</span>
 				</span>
 			</button>
 			{/* a close is a tidy rather than a delete: neither the agent's own session nor
@@ -246,7 +251,7 @@ function ThreadRow({
 					data-agent-thread-close={thread.name}
 					aria-label={`close ${thread.name}`}
 					onClick={onClose}
-					className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:text-text"
+					className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-secondary transition-colors duration-150 hover:text-primary"
 				>
 					<CloseIcon />
 				</button>
@@ -285,18 +290,18 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
 	return (
 		<span data-agent-mark={life} className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center", className)}>
 			{turning ? (
-				<Spinner className="h-3.5 w-3.5 text-text/60" />
+				<Spinner className="h-3.5 w-3.5 text-primary/60" />
 			) : life === "waiting" ? (
 				// the same ring working turns, at rest and dimmed so the disc reads as the thing
 				// in it rather than as a second object beside it
-				<svg viewBox="0 0 14 14" className="h-3.5 w-3.5 text-text/85" fill="none" aria-hidden="true">
+				<svg viewBox="0 0 14 14" className="h-3.5 w-3.5 text-primary/85" fill="none" aria-hidden="true">
 					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
 					<circle cx="7" cy="7" r="2.2" fill="currentColor" />
 				</svg>
 			) : life === "unread" ? (
-				<span className="h-[5px] w-[5px] rounded-full bg-text/85" />
+				<span className="h-[5px] w-[5px] rounded-full bg-primary/85" />
 			) : life === "read" ? (
-				<span className="h-[5px] w-[5px] rounded-full border border-muted/45" />
+				<span className="h-[5px] w-[5px] rounded-full border border-secondary/45" />
 			) : null}
 		</span>
 	);

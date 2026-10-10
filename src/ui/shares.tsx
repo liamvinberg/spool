@@ -84,10 +84,10 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 					setAt({ top: button.bottom + 6, right: window.innerWidth - button.right });
 					setOpen((was) => !was);
 				}}
-				className="flex h-7 items-center gap-2 rounded-sm border border-border-raised bg-bg px-2.5 text-text transition-colors hover:bg-surface type-control"
+				className="flex h-7 items-center gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 text-primary transition-colors hover:bg-surface-panel type-control"
 			>
 				Shared
-				<span className="text-muted type-detail">{shares.shares.length}</span>
+				<span className="text-secondary type-detail">{shares.shares.length}</span>
 			</button>
 			{open &&
 				at !== null &&
@@ -96,7 +96,7 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 						ref={popover}
 						role="dialog"
 						aria-label="Shared"
-						className="fixed z-50 w-[344px] animate-menu-in overflow-hidden rounded-md border border-border-raised bg-raised py-1"
+						className="fixed z-50 w-[344px] animate-menu-in overflow-hidden rounded-md border border-line-strong bg-surface-raised py-1"
 						style={at}
 					>
 						{shares.shares.map((share) =>
@@ -120,7 +120,7 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 								/>
 							),
 						)}
-						{said !== null && <p className="px-3.5 pt-1 pb-2 text-thread type-caption">{said}</p>}
+						{said !== null && <p className="px-3.5 pt-1 pb-2 text-accent type-caption">{said}</p>}
 					</section>,
 					document.body,
 				)}
@@ -136,16 +136,16 @@ function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean
 			onClick={onOpen}
 			className={cn(
 				"flex h-10 w-full items-center gap-2.5 px-3.5 text-left",
-				manage && "cursor-pointer hover:bg-surface/60",
+				manage && "cursor-pointer hover:bg-surface-panel/60",
 			)}
 		>
-			<KindGlyph kind={share.kind} className="shrink-0 text-muted" />
-			<span className="shrink-0 text-text type-label">{shareWho(share)}</span>
-			<span className="min-w-0 flex-1 truncate text-muted type-detail">
+			<KindGlyph kind={share.kind} className="shrink-0 text-secondary" />
+			<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
+			<span className="min-w-0 flex-1 truncate text-secondary type-detail">
 				{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
 			</span>
 			{manage && (
-				<span className="h-2.5 w-2.5 shrink-0 text-muted">
+				<span className="h-2.5 w-2.5 shrink-0 text-secondary">
 					<ChevronIcon />
 				</span>
 			)}
@@ -178,18 +178,18 @@ function OpenedShare({
 		onChanged(refused);
 	};
 	return (
-		<div className="bg-surface/60" data-share-opened={share.id}>
+		<div className="bg-surface-panel/60" data-share-opened={share.id}>
 			<button
 				type="button"
 				onClick={onClose}
 				className="flex h-10 w-full cursor-pointer items-center gap-2.5 px-3.5 text-left"
 			>
-				<KindGlyph kind={share.kind} className="shrink-0 text-text" />
-				<span className="shrink-0 text-text type-label">{shareWho(share)}</span>
-				<span className="min-w-0 flex-1 truncate text-muted type-detail">
+				<KindGlyph kind={share.kind} className="shrink-0 text-primary" />
+				<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
+				<span className="min-w-0 flex-1 truncate text-secondary type-detail">
 					{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
 				</span>
-				<span className="h-2.5 w-2.5 shrink-0 rotate-90 text-muted">
+				<span className="h-2.5 w-2.5 shrink-0 rotate-90 text-secondary">
 					<ChevronIcon />
 				</span>
 			</button>
@@ -197,13 +197,13 @@ function OpenedShare({
 				<>
 					<ul className="flex flex-col px-3.5">
 						{share.people.map((email) => (
-							<li key={email} className="flex h-7 items-center gap-2 text-text type-detail">
+							<li key={email} className="flex h-7 items-center gap-2 text-primary type-detail">
 								<Initial email={email} />
 								<span className="min-w-0 flex-1 truncate">{email}</span>
 								<button
 									type="button"
 									aria-label={`Remove ${email}`}
-									className="cursor-pointer px-1 text-muted hover:text-text"
+									className="cursor-pointer px-1 text-secondary hover:text-primary"
 									onClick={async () => onChanged(await source.change(share.id, { remove: [email] }))}
 								>
 									×
@@ -223,12 +223,12 @@ function OpenedShare({
 							placeholder="Add someone by email"
 							value={adding}
 							onChange={(event) => setAdding(event.target.value)}
-							className="h-7 w-full rounded-sm border border-muted bg-bg px-2 text-text outline-none type-detail placeholder:text-muted focus:border-text"
+							className="h-7 w-full rounded-sm border border-secondary bg-surface-window px-2 text-primary outline-none type-detail placeholder:text-secondary focus:border-primary"
 						/>
 					</form>
 				</>
 			)}
-			<p className="truncate border-border-raised border-t px-3.5 pt-2 text-muted type-detail">
+			<p className="truncate border-line-strong border-t px-3.5 pt-2 text-secondary type-detail">
 				{personName(share.by)} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
 			</p>
 			<div className="flex h-8 items-center justify-between px-3.5">
@@ -237,7 +237,7 @@ function OpenedShare({
 				) : (
 					<button
 						type="button"
-						className="cursor-pointer text-muted transition-colors hover:text-text type-label"
+						className="cursor-pointer text-secondary transition-colors hover:text-primary type-label"
 						onClick={() => {
 							void navigator.clipboard?.writeText(share.link ?? "").then(() => setCopied(true));
 						}}
@@ -247,7 +247,7 @@ function OpenedShare({
 				)}
 				<button
 					type="button"
-					className="cursor-pointer text-muted transition-colors hover:text-thread type-label"
+					className="cursor-pointer text-secondary transition-colors hover:text-accent type-label"
 					onClick={async () => {
 						onClose();
 						onChanged(await source.stop(share.id));
@@ -256,7 +256,7 @@ function OpenedShare({
 					Stop sharing
 				</button>
 			</div>
-			<p className="px-3.5 pb-2.5 text-muted type-caption">Their access stops at once.</p>
+			<p className="px-3.5 pb-2.5 text-secondary type-caption">Their access stops at once.</p>
 		</div>
 	);
 }
@@ -281,7 +281,7 @@ export function refusalSaid(code: string): string {
 
 function Initial({ email }: { email: string }) {
 	return (
-		<span className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border border-border-raised bg-surface text-[8px] text-muted">
+		<span className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[8px] text-secondary">
 			{email[0]?.toUpperCase()}
 		</span>
 	);

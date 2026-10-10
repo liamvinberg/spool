@@ -74,7 +74,7 @@ export function SettingsSheet({
 
 	return (
 		<>
-			<div className="absolute inset-0 z-30 animate-find-in bg-bg/48 backdrop-blur-[2px]">
+			<div className="absolute inset-0 z-30 animate-find-in bg-surface-window/48 backdrop-blur-[2px]">
 				<button
 					type="button"
 					aria-label="Close settings"
@@ -88,11 +88,11 @@ export function SettingsSheet({
 					role="dialog"
 					aria-modal="true"
 					aria-label="Settings"
-					className="pointer-events-auto flex max-h-[calc(100%-128px)] min-h-[560px] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
+					className="pointer-events-auto flex max-h-[calc(100%-128px)] min-h-[560px] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-line-strong bg-surface-panel"
 				>
-					<header className="flex h-12 shrink-0 items-center justify-between border-border border-b px-6">
-						<span className="font-semibold text-text tracking-tight type-title">Settings</span>
-						<span className="text-muted type-detail">esc closes</span>
+					<header className="flex h-12 shrink-0 items-center justify-between border-line-default border-b px-6">
+						<span className="font-semibold text-primary tracking-tight type-title">Settings</span>
+						<span className="text-secondary type-detail">esc closes</span>
 					</header>
 					<TabRow tab={tab} onTab={setTab} />
 					<div className="min-h-0 flex-1 overflow-y-auto px-6 pt-5 pb-8">
@@ -117,7 +117,7 @@ function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) =>
 		{ id: "appearance", name: "Appearance" },
 	];
 	return (
-		<div className="flex h-10 shrink-0 items-stretch gap-6 border-border border-b px-6">
+		<div className="flex h-10 shrink-0 items-stretch gap-6 border-line-default border-b px-6">
 			{tabs.map((candidate) => (
 				<button
 					key={candidate.id}
@@ -127,11 +127,11 @@ function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) =>
 					onClick={() => onTab(candidate.id)}
 					className={cn(
 						"relative flex items-center transition-colors duration-150 type-control",
-						tab === candidate.id ? "text-text" : "text-muted hover:text-text",
+						tab === candidate.id ? "text-primary" : "text-secondary hover:text-primary",
 					)}
 				>
 					{candidate.name}
-					{tab === candidate.id ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-thread" /> : null}
+					{tab === candidate.id ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-accent" /> : null}
 				</button>
 			))}
 		</div>
@@ -172,7 +172,7 @@ function General({
 						file={band.file}
 						aside={
 							band.scope === "project" && project !== undefined ? (
-								<span className="text-muted type-value">{project}</span>
+								<span className="text-secondary type-value">{project}</span>
 							) : undefined
 						}
 					>
@@ -186,7 +186,7 @@ function General({
 							>
 								<button
 									type="button"
-									className="rounded-md border border-border-raised px-3 py-2 type-value"
+									className="rounded-md border border-line-strong px-3 py-2 type-value"
 									onClick={moving}
 								>
 									Move to team…
@@ -196,7 +196,7 @@ function General({
 					</Band>
 				);
 			})}
-			<p className="border-border border-t pt-5 text-muted type-label">
+			<p className="border-line-default border-t pt-5 text-secondary type-label">
 				spool writes a file when something here moves, only the key that moved. Every other key in it is left the
 				way you typed it.
 			</p>
@@ -218,7 +218,7 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 				<>
 					<button
 						type="button"
-						className="max-w-64 truncate rounded-md border border-border-raised px-3 py-2 type-value"
+						className="max-w-64 truncate rounded-md border border-line-strong px-3 py-2 type-value"
 						onClick={() => setPicking(true)}
 						title={String(entry.value)}
 					>
@@ -330,7 +330,7 @@ function AppearanceTab({
 					))}
 				</div>
 				{reason === undefined ? null : <Reason>{reason}</Reason>}
-				<p className="pt-4 text-muted type-label">
+				<p className="pt-4 text-secondary type-label">
 					{appearance?.says}
 					{look === "system" ? ` The system is ${systemLook} now.` : ""}
 				</p>
@@ -367,7 +367,7 @@ function AppearanceTab({
 						<PresetCard theme={{ name: "Custom", appearance: editLook, tokens }} selected onPick={() => {}} />
 					) : null}
 				</div>
-				<p className="pt-4 text-muted type-label">
+				<p className="pt-4 text-secondary type-label">
 					A theme is ten colours for one look. Pick one, or paste one somebody copied out of their spool.
 				</p>
 			</Band>
@@ -387,8 +387,8 @@ function AppearanceTab({
 						className="flex items-center gap-2 text-left"
 					>
 						<Chevron open={customize} />
-						<span className="font-medium text-text type-title">Customize</span>
-						<span className="text-muted type-detail">
+						<span className="font-medium text-primary type-title">Customize</span>
+						<span className="text-secondary type-detail">
 							{editLook} · {THEME_TOKEN_NAMES.length + 1} tokens
 							{movedHere.length === 0 ? "" : ` · ${movedHere.length} moved`}
 						</span>
@@ -399,13 +399,13 @@ function AppearanceTab({
 						onClick={() => void reset()}
 						className={cn(
 							"shrink-0 transition-colors duration-150 type-label",
-							moved.length === 0 ? "text-muted/40" : "text-thread-strong hover:text-text",
+							moved.length === 0 ? "text-secondary/40" : "text-accent-strong hover:text-primary",
 						)}
 					>
 						Reset to spool’s
 					</button>
 				</div>
-				<p className="max-w-[460px] pt-1.5 pl-[18px] text-muted type-label">
+				<p className="max-w-[460px] pt-1.5 pl-[18px] text-secondary type-label">
 					The interface’s own colours for the {editLook} look. The chrome is built on these, so they are the whole
 					of what a theme can move.
 				</p>
@@ -416,18 +416,20 @@ function AppearanceTab({
 							.map((entry) => (
 								<TokenRow key={entry.key} entry={entry} write={write} />
 							))}
-						<div className="flex h-10 items-center gap-4 border-border border-t">
-							<span className="w-[112px] shrink-0 text-text type-value">mark</span>
-							<span className="min-w-0 flex-1 truncate text-muted type-label">The ribbon in the corner.</span>
-							<span className="shrink-0 text-muted type-detail">follows thread</span>
+						<div className="flex h-10 items-center gap-4 border-line-default border-t">
+							<span className="w-[112px] shrink-0 text-primary type-value">mark</span>
+							<span className="min-w-0 flex-1 truncate text-secondary type-label">
+								The ribbon in the corner.
+							</span>
+							<span className="shrink-0 text-secondary type-detail">follows thread</span>
 							<Swatch value={tokens.thread} />
-							<span className="w-[92px] shrink-0 pl-2.5 text-muted type-value">{tokens.thread}</span>
+							<span className="w-[92px] shrink-0 pl-2.5 text-secondary type-value">{tokens.thread}</span>
 						</div>
 					</div>
 				) : null}
 			</section>
 
-			<p className="border-border border-t pt-5 text-muted type-label">
+			<p className="border-line-default border-t pt-5 text-secondary type-label">
 				A theme dresses spool’s chrome. Your frames render in documents of their own, on their own tokens.css, and
 				nothing chosen here reaches inside one.
 			</p>
@@ -461,10 +463,10 @@ function LookCard({
 			onClick={onPick}
 			className={cn(
 				"flex min-w-0 flex-1 flex-col gap-2.5 rounded-md border p-2.5 text-left transition-colors duration-150",
-				selected ? "border-thread" : "border-border hover:border-border-raised",
+				selected ? "border-accent" : "border-line-default hover:border-line-strong",
 			)}
 		>
-			<span className="relative block h-[84px] w-full overflow-hidden rounded-sm border border-border">
+			<span className="relative block h-[84px] w-full overflow-hidden rounded-sm border border-line-default">
 				<Thumb tokens={look === "light" ? light : dark} />
 				{look === "system" ? (
 					<span className="absolute inset-0" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }}>
@@ -473,8 +475,8 @@ function LookCard({
 				) : null}
 			</span>
 			<span className="flex items-center justify-between px-0.5">
-				<span className="text-text type-control">{name}</span>
-				{selected ? <span className="h-1.5 w-1.5 rounded-full bg-thread" /> : null}
+				<span className="text-primary type-control">{name}</span>
+				{selected ? <span className="h-1.5 w-1.5 rounded-full bg-accent" /> : null}
 			</span>
 		</button>
 	);
@@ -489,15 +491,15 @@ function PresetCard({ theme, selected, onPick }: { theme: ThemeSpec; selected: b
 			onClick={onPick}
 			className={cn(
 				"flex min-w-0 flex-col gap-2 rounded-md border p-1.5 text-left transition-colors duration-150",
-				selected ? "border-thread" : "border-border hover:border-border-raised",
+				selected ? "border-accent" : "border-line-default hover:border-line-strong",
 			)}
 		>
-			<span className="relative block h-[48px] w-full overflow-hidden rounded-xs border border-border">
+			<span className="relative block h-[48px] w-full overflow-hidden rounded-xs border border-line-default">
 				<Thumb tokens={theme.tokens} small />
 			</span>
 			<span className="flex items-center justify-between gap-2 px-1 pb-0.5">
-				<span className="truncate text-text type-label">{theme.name}</span>
-				{selected ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-thread" /> : null}
+				<span className="truncate text-primary type-label">{theme.name}</span>
+				{selected ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" /> : null}
 			</span>
 		</button>
 	);
@@ -596,7 +598,7 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 				Paste
 			</TextButton>
 			{pasting ? (
-				<span className="absolute top-8 right-0 z-20 flex w-[360px] animate-menu-in flex-col gap-2 rounded-md border border-border-raised bg-raised p-2">
+				<span className="absolute top-8 right-0 z-20 flex w-[360px] animate-menu-in flex-col gap-2 rounded-md border border-line-strong bg-surface-raised p-2">
 					<textarea
 						aria-label="Theme to paste"
 						value={draft}
@@ -610,11 +612,11 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 							}
 							if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit();
 						}}
-						className="h-[120px] w-full resize-none rounded-sm border border-border bg-canvas px-2.5 py-2 text-text outline-none placeholder:text-muted focus:border-border-raised type-value"
+						className="h-[120px] w-full resize-none rounded-sm border border-line-default bg-surface-canvas px-2.5 py-2 text-primary outline-none placeholder:text-secondary focus:border-line-strong type-value"
 					/>
 					{reason === undefined ? null : <Reason className="pt-0">{reason}</Reason>}
 					<span className="flex items-center justify-between">
-						<span className="text-muted type-detail">{accelLabel().replace(/\+$/, "")}↵ applies</span>
+						<span className="text-secondary type-detail">{accelLabel().replace(/\+$/, "")}↵ applies</span>
 						<TextButton lit onClick={submit}>
 							Apply
 						</TextButton>
@@ -633,8 +635,8 @@ function TextButton({ children, lit = false, onClick }: { children: ReactNode; l
 			className={cn(
 				"flex h-6 items-center rounded-sm border px-2 transition-colors duration-150 type-label",
 				lit
-					? "border-border-raised bg-control text-text"
-					: "border-border text-muted hover:border-border-raised hover:text-text",
+					? "border-line-strong bg-surface-control text-primary"
+					: "border-line-default text-secondary hover:border-line-strong hover:text-primary",
 			)}
 		>
 			{children}
@@ -679,14 +681,14 @@ function AccentRow({ entry, write }: { entry: SettingReading & { value: string }
 							onClick={() => void move(accent.hex === entry.fallback ? null : accent.hex)}
 							className={cn(
 								"flex h-6 w-6 items-center justify-center rounded-full border transition-[border-color,transform] duration-150 active:scale-90",
-								lit ? "border-text" : "border-transparent hover:border-border-raised",
+								lit ? "border-primary" : "border-transparent hover:border-line-strong",
 							)}
 						>
 							<span className="h-4 w-4 rounded-full" style={{ background: accent.hex }} />
 						</button>
 					);
 				})}
-				<span className="mx-1 h-4 w-px bg-border" />
+				<span className="mx-1 h-4 w-px bg-line-default" />
 				<ColourControl
 					settingKey={entry.key}
 					value={entry.value}
@@ -708,15 +710,15 @@ function TokenRow({ entry, write }: { entry: SettingReading & { value: string };
 	};
 	const moved = entry.source === "file";
 	return (
-		<div data-token={entry.key} className="flex flex-col border-border border-t">
+		<div data-token={entry.key} className="flex flex-col border-line-default border-t">
 			<div className="group flex h-10 items-center gap-4">
-				<span className="w-[112px] shrink-0 text-text type-value">{entry.label}</span>
-				<span className="min-w-0 flex-1 truncate text-muted type-label">{entry.says}</span>
+				<span className="w-[112px] shrink-0 text-primary type-value">{entry.label}</span>
+				<span className="min-w-0 flex-1 truncate text-secondary type-label">{entry.says}</span>
 				{moved ? (
 					<button
 						type="button"
 						onClick={() => void move(null)}
-						className="shrink-0 text-muted opacity-0 transition-opacity duration-150 hover:text-text group-hover:opacity-100 focus-visible:opacity-100 type-detail"
+						className="shrink-0 text-secondary opacity-0 transition-opacity duration-150 hover:text-primary group-hover:opacity-100 focus-visible:opacity-100 type-detail"
 					>
 						reset
 					</button>
@@ -747,13 +749,13 @@ function Switch({ on, label, onChange }: { on: boolean; label: string; onChange:
 			onClick={() => onChange(!on)}
 			className={cn(
 				"flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors duration-150",
-				on ? "border-thread bg-thread" : "border-border-raised bg-raised hover:border-muted/50",
+				on ? "border-accent bg-accent" : "border-line-strong bg-surface-raised hover:border-secondary/50",
 			)}
 		>
 			<span
 				className={cn(
 					"h-2.5 w-2.5 rounded-full transition-[translate,background-color] duration-150 ease-out",
-					on ? "translate-x-[14px] bg-on-thread" : "translate-x-[2px] bg-muted",
+					on ? "translate-x-[14px] bg-on-accent" : "translate-x-[2px] bg-secondary",
 				)}
 			/>
 		</button>
@@ -815,7 +817,7 @@ function Segmented({
 	name?: (choice: string) => string;
 }) {
 	return (
-		<span className="flex h-7 items-stretch rounded-sm border border-border p-px">
+		<span className="flex h-7 items-stretch rounded-sm border border-line-default p-px">
 			{choices.map((choice) => {
 				const lit = choice === value;
 				return (
@@ -827,7 +829,7 @@ function Segmented({
 						onClick={() => onChange(choice)}
 						className={cn(
 							"flex items-center rounded-[5px] px-2.5 transition-colors duration-150 type-value",
-							lit ? "bg-control text-text" : "text-muted hover:text-text",
+							lit ? "bg-surface-control text-primary" : "text-secondary hover:text-primary",
 						)}
 					>
 						{name(choice)}
@@ -896,8 +898,10 @@ function ColourControl({
 			</Swatch>
 			<span
 				className={cn(
-					"flex h-7 w-[92px] shrink-0 items-center rounded-sm border bg-canvas px-2.5 transition-colors duration-150",
-					refused ? "border-thread" : "border-border focus-within:border-border-raised hover:border-border-raised",
+					"flex h-7 w-[92px] shrink-0 items-center rounded-sm border bg-surface-canvas px-2.5 transition-colors duration-150",
+					refused
+						? "border-accent"
+						: "border-line-default focus-within:border-line-strong hover:border-line-strong",
 				)}
 			>
 				<input
@@ -920,7 +924,7 @@ function ColourControl({
 							event.currentTarget.blur();
 						}
 					}}
-					className="w-full bg-transparent text-text outline-none type-value"
+					className="w-full bg-transparent text-primary outline-none type-value"
 				/>
 			</span>
 		</span>
@@ -932,7 +936,7 @@ function Swatch({ value, lit = false, children }: { value: string; lit?: boolean
 		<span
 			className={cn(
 				"relative flex h-5 w-5 shrink-0 overflow-hidden rounded-xs border transition-colors duration-150",
-				lit ? "border-text/60" : "border-border-raised",
+				lit ? "border-primary/60" : "border-line-strong",
 			)}
 			style={{ background: value }}
 		>
@@ -958,8 +962,8 @@ function Band({
 		<section className="flex flex-col">
 			<div className="flex h-6 items-center justify-between gap-6">
 				<span className="flex items-baseline gap-2.5">
-					<span className="font-medium text-text type-title">{name}</span>
-					<span className="text-muted type-detail">{file}</span>
+					<span className="font-medium text-primary type-title">{name}</span>
+					<span className="text-secondary type-detail">{file}</span>
 				</span>
 				{aside}
 			</div>
@@ -980,11 +984,11 @@ function Row({
 	children: ReactNode;
 }) {
 	return (
-		<div className="flex flex-col border-border border-t py-3.5">
+		<div className="flex flex-col border-line-default border-t py-3.5">
 			<div className="flex items-start justify-between gap-10">
 				<span className="flex min-w-0 flex-col gap-1">
-					<span className="text-text type-control">{label}</span>
-					<span className="max-w-[440px] text-muted type-label">{says}</span>
+					<span className="text-primary type-control">{label}</span>
+					<span className="max-w-[440px] text-secondary type-label">{says}</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2 pt-0.5">{children}</span>
 			</div>
@@ -996,7 +1000,7 @@ function Row({
 /** The daemon's refusal, in its own words, under the row that asked. */
 function Reason({ children, className }: { children: ReactNode; className?: string }) {
 	return (
-		<span role="alert" className={cn("pt-2 text-thread-strong type-detail", className)}>
+		<span role="alert" className={cn("pt-2 text-accent-strong type-detail", className)}>
 			{children}
 		</span>
 	);
@@ -1008,7 +1012,10 @@ function Chevron({ open }: { open: boolean }) {
 			viewBox="0 0 12 12"
 			aria-hidden="true"
 			fill="none"
-			className={cn("h-2.5 w-2.5 shrink-0 text-muted transition-transform duration-150", open ? "rotate-90" : "")}
+			className={cn(
+				"h-2.5 w-2.5 shrink-0 text-secondary transition-transform duration-150",
+				open ? "rotate-90" : "",
+			)}
 		>
 			<path
 				d="M4.5 2.5 8 6l-3.5 3.5"

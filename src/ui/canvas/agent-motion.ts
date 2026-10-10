@@ -3,7 +3,7 @@ import { useStillness } from "./stillness";
 
 /**
  * How long a float or a fade takes to leave, matching `--animate-agent-float-out`,
- * `--animate-agent-drop-out`, `--animate-agent-fade-out` and `--animate-agent-step-out` in `ui.css` (#364).
+ * `--animate-agent-drop-out`, `--animate-agent-fade-out` and `--animate-agent-step-out` in `theme.css` (#364).
  */
 export const FLOAT_OUT_MS = 120;
 export const FADE_OUT_MS = 160;
@@ -50,7 +50,7 @@ export function useHeld<T>(value: T | null | undefined): T | null {
 /**
  * The agent on the canvas, in motion (#366): the numbers `design/frames/explore/agent-rail/marks/legend`
  * settled, for the parts the layer drives itself. The keyframed parts read the same numbers off
- * `ui.css`, whose `--animate-agent-arrive` and the rest carry them.
+ * `theme.css`, whose `--animate-agent-arrive` and the rest carry them.
  */
 export const MOTION = {
 	/** grows from 40% where the agent first acts */

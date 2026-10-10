@@ -165,15 +165,15 @@ describe("page tree", () => {
 		const { host, rerender } = await render({
 			under: { frame: "home", height: 72, open: true, held: false, content: tree },
 		});
-		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface")).toBe(false);
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface-panel")).toBe(false);
 
 		await rerender({ under: { frame: "home", height: 72, open: true, held: true, content: tree } });
-		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface")).toBe(true);
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface-panel")).toBe(true);
 		expect(row(host)?.getAttribute("aria-pressed")).toBe("false");
 
 		// folding with Edit put down, the row goes back to how Select draws it
 		await rerender({ under: { frame: "home", height: 72, open: false, held: true, content: tree } });
-		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface")).toBe(false);
+		expect(row(host)?.closest('[role="treeitem"]')?.classList.contains("bg-surface-panel")).toBe(false);
 	});
 
 	it("shuts a page the tree opened once the tree has folded away, so Edit on and off leaves the rail as it was (#342)", async () => {
@@ -1123,7 +1123,7 @@ describe("the root page has no row", () => {
 		// above it for a spine to hang off
 		const row = rowOf(host, "home frame");
 		expect(row?.getAttribute("aria-level")).toBe("1");
-		expect(row?.querySelectorAll(".bg-border-raised").length).toBe(0);
+		expect(row?.querySelectorAll(".bg-line-strong").length).toBe(0);
 	});
 
 	it("keeps a frame inside a page one level in, on the spine of the row holding it", async () => {
@@ -1133,7 +1133,7 @@ describe("the root page has no row", () => {
 		});
 		const row = rowOf(host, "checkout frame");
 		expect(row?.getAttribute("aria-level")).toBe("2");
-		expect(row?.querySelectorAll(".bg-border-raised").length).toBe(2);
+		expect(row?.querySelectorAll(".bg-line-strong").length).toBe(2);
 	});
 
 	it("lights no page row while the root page is the one on the canvas", async () => {

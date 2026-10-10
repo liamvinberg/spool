@@ -7,7 +7,7 @@ import { hotkeyKey } from "./hotkeys";
 import { CogIcon } from "./icons";
 
 const BUTTON =
-	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface active:scale-90 motion-reduce:transition-none";
+	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface-panel active:scale-90 motion-reduce:transition-none";
 
 /**
  * What stands at the window bar's right end, on Home and on every canvas alike: help and
@@ -32,7 +32,7 @@ export function BarEnd({
 				aria-label="Settings"
 				title={`Settings ${hotkeyKey("app.settings")}`}
 				onClick={onSettings}
-				className={cn(BUTTON, "text-muted/70 hover:text-text")}
+				className={cn(BUTTON, "text-secondary/70 hover:text-primary")}
 			>
 				<CogIcon />
 			</button>
@@ -102,7 +102,11 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 				aria-controls={open ? id : undefined}
 				onClick={() => (open ? setOpen(false) : show())}
 				onKeyDown={onKeyDown}
-				className={cn(BUTTON, "text-[15px]", open ? "bg-surface text-text" : "text-muted/70 hover:text-text")}
+				className={cn(
+					BUTTON,
+					"text-[15px]",
+					open ? "bg-surface-panel text-primary" : "text-secondary/70 hover:text-primary",
+				)}
 			>
 				<span aria-hidden="true">?</span>
 			</button>
@@ -116,7 +120,7 @@ function BarHelp({ onShortcuts, onUseAgent }: { onShortcuts: () => void; onUseAg
 						role="menu"
 						aria-label="Help"
 						onKeyDown={onKeyDown}
-						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit [&>button:focus-visible]:bg-surface"
+						className="fixed z-50 flex w-[220px] animate-menu-in flex-col rounded-md border border-line-strong bg-surface-raised p-unit [&>button:focus-visible]:bg-surface-panel"
 						style={{ right: at.right, top: at.top }}
 					>
 						{onUseAgent === undefined ? null : (

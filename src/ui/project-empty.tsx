@@ -63,7 +63,7 @@ export function ProjectEmpty({
 	};
 	return (
 		<EmptyState
-			className="project-empty relative h-full w-full [padding:40px_30px_95px] [&.project-empty>svg]:w-[30px] [&.project-empty>svg]:h-[38px] [&.project-empty>svg]:text-thread [&.project-empty>svg]:mb-[24px] [&.project-empty>svg]:opacity-[0.85] [&>p]:[font:var(--type-body)] [&>p]:max-w-[410px] [&>h1]:[font:var(--type-heading)] [&>.spool-empty-actions]:flex-col [&>.spool-empty-actions]:flex-nowrap [&>.spool-empty-actions]:max-w-full [&>.spool-empty-actions]:mt-[26px] [&>.spool-empty-actions]:gap-[12px] [&>.spool-empty-actions>code]:max-w-full [&>.spool-empty-actions>code]:text-muted [&>.spool-empty-actions>code]:[font:var(--type-detail)] [&>.spool-empty-actions>code]:[font-feature-settings:var(--font-mono--font-feature-settings)] [&>.spool-empty-actions>code]:[overflow-wrap:anywhere] [&>.spool-empty-actions>code]:select-text [&>.spool-empty-actions>code]:pointer-events-auto [&_button:focus-visible]:[outline:2px_solid_var(--color-thread)] [&_button:focus-visible]:outline-offset-[4px]"
+			className="project-empty relative h-full w-full [padding:40px_30px_95px] [&.project-empty>svg]:w-[30px] [&.project-empty>svg]:h-[38px] [&.project-empty>svg]:text-accent [&.project-empty>svg]:mb-[24px] [&.project-empty>svg]:opacity-[0.85] [&>p]:[font:var(--type-body)] [&>p]:max-w-[410px] [&>h1]:[font:var(--type-heading)] [&>.spool-empty-actions]:flex-col [&>.spool-empty-actions]:flex-nowrap [&>.spool-empty-actions]:max-w-full [&>.spool-empty-actions]:mt-[26px] [&>.spool-empty-actions]:gap-[12px] [&>.spool-empty-actions>code]:max-w-full [&>.spool-empty-actions>code]:text-secondary [&>.spool-empty-actions>code]:[font:var(--type-detail)] [&>.spool-empty-actions>code]:[font-feature-settings:var(--font-mono--font-feature-settings)] [&>.spool-empty-actions>code]:[overflow-wrap:anywhere] [&>.spool-empty-actions>code]:select-text [&>.spool-empty-actions>code]:pointer-events-auto [&_button:focus-visible]:[outline:2px_solid_var(--color-accent)] [&_button:focus-visible]:outline-offset-[4px]"
 			heading="h1"
 			icon={<RibbonMark />}
 			title="Your canvas is ready."
@@ -86,7 +86,7 @@ export function ProjectEmpty({
 						<button
 							type="button"
 							disabled={renaming}
-							className="project-empty-copy inline-flex items-center justify-center gap-[9px] rounded-[4px] text-muted [&:hover]:text-text [font:var(--type-control)] pointer-events-auto [&>svg]:w-[14px] [&>svg]:h-[14px]"
+							className="project-empty-copy inline-flex items-center justify-center gap-[9px] rounded-[4px] text-secondary [&:hover]:text-primary [font:var(--type-control)] pointer-events-auto [&>svg]:w-[14px] [&>svg]:h-[14px]"
 							onPointerDown={(event) => event.stopPropagation()}
 							onClick={() => {
 								void Promise.resolve()
@@ -101,7 +101,7 @@ export function ProjectEmpty({
 							{copied ? "Copied" : "Copy project path"}
 						</button>
 						{copyFailed && (
-							<span role="alert" className="text-muted type-label">
+							<span role="alert" className="text-secondary type-label">
 								Could not copy. Select the path and copy it manually.
 							</span>
 						)}
@@ -109,7 +109,7 @@ export function ProjectEmpty({
 				)
 			}
 		>
-			<div className="project-empty-title absolute top-[21px] left-[27px] right-[27px] flex flex-col items-start gap-[7px] text-left [&>input]:w-[210px] [&>input]:max-w-full [&>input]:text-text [&>input]:bg-transparent [&>input]:[outline:none] [&>input]:[font:var(--type-body)] [&>input]:p-[3px] [&>input]:ml-[-3px] [&>input]:rounded-[3px] [&>input]:pointer-events-auto [&>input:focus]:bg-control [&>span]:text-muted [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [&>p]:max-w-[360px] [&>p]:text-text [&>p]:[font:var(--type-label)]">
+			<div className="project-empty-title absolute top-[21px] left-[27px] right-[27px] flex flex-col items-start gap-[7px] text-left [&>input]:w-[210px] [&>input]:max-w-full [&>input]:text-primary [&>input]:bg-transparent [&>input]:[outline:none] [&>input]:[font:var(--type-body)] [&>input]:p-[3px] [&>input]:ml-[-3px] [&>input]:rounded-[3px] [&>input]:pointer-events-auto [&>input:focus]:bg-surface-control [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [&>p]:max-w-[360px] [&>p]:text-primary [&>p]:[font:var(--type-label)]">
 				<input
 					ref={inputRef}
 					aria-label="Rename project"
@@ -151,7 +151,7 @@ export function ProjectEmpty({
 			{onFolder && (
 				<button
 					type="button"
-					className="project-empty-folder absolute bottom-[91px] text-muted [font:var(--type-label)] pointer-events-auto [&:hover]:text-text"
+					className="project-empty-folder absolute bottom-[91px] text-secondary [font:var(--type-label)] pointer-events-auto [&:hover]:text-primary"
 					onPointerDown={(event) => event.stopPropagation()}
 					onClick={onFolder}
 				>
