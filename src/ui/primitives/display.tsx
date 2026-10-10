@@ -64,7 +64,7 @@ export function Count({
 	);
 }
 
-/* -------------------------------------------------------- Dot, SpinRing -- */
+/* -------------------------------------------- Dot, SpinRing, StatusMark -- */
 
 export type DotTone = "primary" | "secondary" | "accent";
 export type DotSize = "sm" | "md";
@@ -113,6 +113,54 @@ export function SpinRing({ className, ...rest }: ComponentProps<"svg">) {
 			<path d="M6 1.75A4.25 4.25 0 0 1 10.25 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
+}
+
+export type Status = "unseen" | "moved" | "working" | "waiting";
+
+/**
+ * What a frame or a thread is doing, in a 12px box so a name never moves when
+ * a mark appears. State is shape before colour: the one accent belongs to the
+ * selection.
+ *
+ * unseen: a disc, nobody has looked · moved: a hollow ring, seen and changed
+ * since · working: the ring turning · waiting: the ring held still with the
+ * disc in it, stopped on a question.
+ */
+export function StatusMark({ status, className, ...rest }: ComponentProps<"span"> & { status: Status }) {
+	return (
+		<span
+			role="img"
+			aria-label={status}
+			className={cn("flex size-3 shrink-0 items-center justify-center", className)}
+			{...rest}
+		>
+			<StatusGlyph status={status} />
+		</span>
+	);
+}
+
+const POP = "animate-unseen-in motion-reduce:animate-none";
+
+function StatusGlyph({ status }: { status: Status }) {
+	switch (status) {
+		case "unseen":
+			return <Dot tone="primary" />;
+		case "moved":
+			return (
+				<svg viewBox="0 0 12 12" fill="none" aria-hidden="true" className={cn("size-full text-secondary", POP)}>
+					<circle cx="6" cy="6" r="3" stroke="currentColor" strokeWidth="1.5" />
+				</svg>
+			);
+		case "working":
+			return <SpinRing className="size-full text-secondary" />;
+		case "waiting":
+			return (
+				<svg viewBox="0 0 12 12" fill="none" aria-hidden="true" className={cn("size-full text-primary", POP)}>
+					<circle cx="6" cy="6" r="4.25" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
+					<circle cx="6" cy="6" r="2" fill="currentColor" />
+				</svg>
+			);
+	}
 }
 
 /* ------------------------------------------------------------- LetterMark -- */
