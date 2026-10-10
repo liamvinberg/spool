@@ -5,18 +5,8 @@ import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import {
-	ArrowRightIcon,
-	CloseIcon,
-	CogIcon,
-	DotsIcon,
-	FolderIcon,
-	FrameIcon,
-	PlusIcon,
-	RibbonMark,
-	SearchIcon,
-} from "./icons";
-import { Kbd } from "./primitives/display";
+import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
+import { SearchField } from "./primitives/inputs";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -198,24 +188,13 @@ export function Home({
 						<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
 							<h1 className="type-page font-medium">Projects</h1>
 							<div className="flex items-center gap-[13px] [@media(max-width:720px)]:flex-wrap">
-								<label className="home-search flex h-[35px] w-[212px] items-center gap-[10px] rounded-[7px] border border-line-default bg-transparent px-[11px] text-secondary focus-within:border-secondary">
-									<SearchIcon />
-									<input
-										className="w-full min-w-0 bg-transparent text-primary outline-none type-control placeholder:text-secondary"
-										ref={searchRef}
-										value={query}
-										onChange={(event) => setQuery(event.target.value)}
-										placeholder="Search projects"
-										aria-label="Search projects"
-									/>
-									{query ? (
-										<button type="button" className="flex" title="Clear search" onClick={() => setQuery("")}>
-											<CloseIcon />
-										</button>
-									) : (
-										<Kbd>/</Kbd>
-									)}
-								</label>
+								<SearchField
+									className="w-menu"
+									value={query}
+									onValueChange={setQuery}
+									placeholder="Search projects"
+									inputProps={{ ref: searchRef }}
+								/>
 								<button type="button" className={cn("home-action h-[35px]", HOME_ACTION)} onClick={onImport}>
 									Import…
 								</button>
