@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.36.0
+
+### Minor Changes
+
+- 1b4b2cc: Home is tidier. Its head is one row: the project count, a sort menu, the search and New project, with Open and Import in New project's menu. Each card shows its picture, its name and when you last opened it; point at it or tab to it to see where it lives and how many frames it has. A team project says its team on that line.
+- 74422bf: Settings is now a page instead of a sheet over the canvas. It opens in place of the tab you are on, from the gear, from Settings on Home or with ⌘, (ctrl , elsewhere), and esc or Back takes you to exactly where you were. Its sections are the open project, This Mac, Appearance and Colours, each naming the file it writes. Appearance shows a large preview of the window that wears whichever theme you point at before you pick it.
+- 098b061: The window's tabs start where the left side ends, and follow it as you resize or close it. The open tab is one sheet that slides from tab to tab and flows into the canvas below it. When the bar fills up, tabs shrink down to their icon instead of scrolling away, and the open tab keeps its name. After you close a tab with the pointer, the others keep their width until the pointer leaves the bar, so you can close several in a row from the same spot.
+
 ## 0.35.0
 
 ### Minor Changes
