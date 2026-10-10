@@ -163,7 +163,7 @@ export function PermissionMenu({
 							onOpen(false);
 							permissions.choose(choice);
 						}}
-						className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-surface-raised focus-visible:bg-surface-raised"
+						className="flex w-full items-start gap-2 rounded-sm py-2 pr-2 pl-3 text-left outline-none transition-colors duration-150 hover:bg-state-hover-raised focus-visible:bg-state-hover-raised"
 					>
 						<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 							<span className="text-primary type-control">{MODE_NAMES[choice]}</span>

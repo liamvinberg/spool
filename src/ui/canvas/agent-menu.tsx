@@ -288,7 +288,7 @@ export function AgentMenu({
 						role="presentation"
 						className={cn(
 							"flex h-8 shrink-0 items-center justify-between gap-2 pr-2 pl-7",
-							findable && "sticky top-0 z-[1] bg-surface-panel",
+							findable && "sticky top-0 z-[1] bg-surface-raised",
 						)}
 					>
 						<span className="text-secondary type-label">{engineName(engine)}</span>
@@ -317,7 +317,7 @@ export function AgentMenu({
 								<button
 									type="button"
 									onClick={() => setLooks((count) => count + 1)}
-									className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
+									className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-state-hover-raised type-control"
 								>
 									Check again
 								</button>
@@ -338,7 +338,7 @@ export function AgentMenu({
 								<button
 									type="button"
 									onClick={() => (mine ? login?.check() : setLooks((count) => count + 1))}
-									className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
+									className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-state-hover-raised type-control"
 								>
 									Check again
 								</button>
@@ -353,8 +353,8 @@ export function AgentMenu({
 									<div
 										data-active={waiting || undefined}
 										className={cn(
-											"group flex h-8 shrink-0 items-center rounded-sm transition-colors duration-150 hover:bg-surface-raised",
-											waiting && "bg-surface-raised",
+											"group flex h-8 shrink-0 items-center rounded-sm transition-colors duration-150 hover:bg-state-hover-raised",
+											waiting && "bg-state-hover-raised",
 										)}
 									>
 										<button
@@ -366,7 +366,7 @@ export function AgentMenu({
 											data-agent-model-engine={engine}
 											title={entry.description || undefined}
 											onClick={() => pick(engine, entry)}
-											className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm pl-2 text-left outline-none focus-visible:bg-surface-raised"
+											className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm pl-2 text-left outline-none focus-visible:bg-state-hover-raised"
 										>
 											<span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
 												{chosen ? <CheckIcon className="h-3.5 w-3.5 text-primary" /> : null}
@@ -386,7 +386,7 @@ export function AgentMenu({
 												aria-expanded={effortOpen}
 												data-agent-effort-toggle=""
 												onClick={() => setEffortOpen((was) => !was)}
-												className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:text-primary type-value"
+												className="mr-1 flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-state-hover-raised hover:text-primary aria-expanded:text-primary type-value"
 											>
 												{effort}
 												<Chevron open={effortOpen} />
@@ -457,8 +457,8 @@ export function AgentMenu({
 									: void switchTo(engine, null, false)
 							}
 							className={cn(
-								"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-primary outline-none transition-colors duration-150 hover:bg-surface-raised focus-visible:bg-surface-raised type-control",
-								pending?.engine === engine && "bg-surface-raised",
+								"flex h-8 shrink-0 items-center gap-2 rounded-sm pl-2 text-left text-primary outline-none transition-colors duration-150 hover:bg-state-hover-raised focus-visible:bg-state-hover-raised type-control",
+								pending?.engine === engine && "bg-state-hover-raised",
 							)}
 						>
 							<span className="h-3.5 w-3.5 shrink-0" />
@@ -542,7 +542,7 @@ export function AgentMenu({
 							type="button"
 							aria-expanded={more}
 							onClick={() => setMore((was) => !was)}
-							className="group flex h-8 items-center gap-2 rounded-sm px-2 text-left text-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-primary"
+							className="group flex h-8 items-center gap-2 rounded-sm px-2 text-left text-secondary transition-colors duration-150 hover:bg-state-hover-raised hover:text-primary"
 						>
 							<span className="flex h-3.5 w-3.5 items-center justify-center transition-transform duration-[160ms] group-aria-expanded:rotate-45 motion-reduce:transition-none">
 								<PlusIcon />
@@ -558,7 +558,7 @@ export function AgentMenu({
 									<button
 										type="button"
 										onClick={() => setLooks((count) => count + 1)}
-										className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-surface-raised type-control"
+										className="h-7 rounded-sm border border-line-default px-2.5 text-primary transition-colors duration-150 hover:bg-state-hover-raised type-control"
 									>
 										Check again
 									</button>
@@ -617,7 +617,7 @@ function Marked({ text, hit }: { text: string; hit: string }) {
 	return (
 		<>
 			{text.slice(0, at)}
-			<mark className="rounded-[2px] bg-surface-raised text-primary">{text.slice(at, at + q.length)}</mark>
+			<mark className="rounded-[2px] bg-state-selected-strong text-primary">{text.slice(at, at + q.length)}</mark>
 			{text.slice(at + q.length)}
 		</>
 	);
