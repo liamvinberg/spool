@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AGENT_PRIMARY } from "./agent-dialog";
-import { EmptyState } from "./empty-state";
 import { ArrowRightIcon, RibbonMark } from "./icons";
+import { Button } from "./primitives/actions";
+import { EmptyState } from "./primitives/feedback";
 
 /** The empty project's name belongs to its folder; only a successful rename changes it. */
 export function ProjectEmpty({
@@ -62,53 +62,60 @@ export function ProjectEmpty({
 		}
 	};
 	return (
-		<EmptyState
-			className="project-empty relative h-full w-full [padding:40px_30px_95px] [&.project-empty>svg]:w-[30px] [&.project-empty>svg]:h-[38px] [&.project-empty>svg]:text-accent [&.project-empty>svg]:mb-[24px] [&.project-empty>svg]:opacity-[0.85] [&>p]:[font:var(--type-body)] [&>p]:max-w-[410px] [&>h1]:[font:var(--type-heading)] [&>.spool-empty-actions]:flex-col [&>.spool-empty-actions]:flex-nowrap [&>.spool-empty-actions]:max-w-full [&>.spool-empty-actions]:mt-[26px] [&>.spool-empty-actions]:gap-[12px] [&>.spool-empty-actions>code]:max-w-full [&>.spool-empty-actions>code]:text-secondary [&>.spool-empty-actions>code]:[font:var(--type-detail)] [&>.spool-empty-actions>code]:[font-feature-settings:var(--font-mono--font-feature-settings)] [&>.spool-empty-actions>code]:[overflow-wrap:anywhere] [&>.spool-empty-actions>code]:select-text [&>.spool-empty-actions>code]:pointer-events-auto [&_button:focus-visible]:[outline:2px_solid_var(--color-accent)] [&_button:focus-visible]:outline-offset-[4px]"
-			heading="h1"
-			icon={<RibbonMark />}
-			title="Your canvas is ready."
-			description="Open this project in your agent. Edits appear here as you work."
-			actions={
-				root === undefined ? undefined : (
-					<>
-						{onUseAgent && (
+		<div className="project-empty relative h-full w-full">
+			<EmptyState
+				className="h-full w-full justify-center px-[30px] pt-10 pb-[95px]"
+				heading="h1"
+				art={<RibbonMark className="h-[38px] w-[30px] opacity-85" />}
+				title="Your canvas is ready."
+				description="Open this project in your agent. Edits appear here as you work."
+				actions={
+					root === undefined ? undefined : (
+						<div className="flex max-w-full flex-col items-center gap-3">
+							{onUseAgent && (
+								<Button
+									size="lg"
+									variant="primary"
+									disabled={renaming}
+									className="pointer-events-auto mb-3"
+									onPointerDown={(event) => event.stopPropagation()}
+									onClick={onUseAgent}
+								>
+									Use my agent <ArrowRightIcon className="h-4 w-4 shrink-0" />
+								</Button>
+							)}
+							<code
+								className="pointer-events-auto max-w-full select-text text-secondary [overflow-wrap:anywhere] type-detail"
+								onPointerDown={(event) => event.stopPropagation()}
+							>
+								{root}
+							</code>
 							<button
 								type="button"
 								disabled={renaming}
-								className={`${AGENT_PRIMARY} pointer-events-auto mb-3`}
+								className="project-empty-copy pointer-events-auto inline-flex items-center justify-center rounded-xs text-secondary focus-ring type-control hover:text-primary"
 								onPointerDown={(event) => event.stopPropagation()}
-								onClick={onUseAgent}
+								onClick={() => {
+									void Promise.resolve()
+										.then(() => navigator.clipboard.writeText(root))
+										.then(() => {
+											setCopied(true);
+											setCopyFailed(false);
+										})
+										.catch(() => setCopyFailed(true));
+								}}
 							>
-								Use my agent <ArrowRightIcon className="h-4 w-4 shrink-0" />
+								{copied ? "Copied" : "Copy project path"}
 							</button>
-						)}
-						<code onPointerDown={(event) => event.stopPropagation()}>{root}</code>
-						<button
-							type="button"
-							disabled={renaming}
-							className="project-empty-copy inline-flex items-center justify-center gap-[9px] rounded-[4px] text-secondary [&:hover]:text-primary [font:var(--type-control)] pointer-events-auto [&>svg]:w-[14px] [&>svg]:h-[14px]"
-							onPointerDown={(event) => event.stopPropagation()}
-							onClick={() => {
-								void Promise.resolve()
-									.then(() => navigator.clipboard.writeText(root))
-									.then(() => {
-										setCopied(true);
-										setCopyFailed(false);
-									})
-									.catch(() => setCopyFailed(true));
-							}}
-						>
-							{copied ? "Copied" : "Copy project path"}
-						</button>
-						{copyFailed && (
-							<span role="alert" className="text-secondary type-label">
-								Could not copy. Select the path and copy it manually.
-							</span>
-						)}
-					</>
-				)
-			}
-		>
+							{copyFailed && (
+								<span role="alert" className="text-secondary type-label">
+									Could not copy. Select the path and copy it manually.
+								</span>
+							)}
+						</div>
+					)
+				}
+			/>
 			<div className="project-empty-title absolute top-[21px] left-[27px] right-[27px] flex flex-col items-start gap-[7px] text-left [&>input]:w-[210px] [&>input]:max-w-full [&>input]:text-primary [&>input]:bg-transparent [&>input]:[outline:none] [&>input]:[font:var(--type-body)] [&>input]:p-[3px] [&>input]:ml-[-3px] [&>input]:rounded-[3px] [&>input]:pointer-events-auto [&>input:focus]:bg-surface-control [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [&>p]:max-w-[360px] [&>p]:text-primary [&>p]:[font:var(--type-label)]">
 				<input
 					ref={inputRef}
@@ -151,13 +158,13 @@ export function ProjectEmpty({
 			{onFolder && (
 				<button
 					type="button"
-					className="project-empty-folder absolute bottom-[91px] text-secondary [font:var(--type-label)] pointer-events-auto [&:hover]:text-primary"
+					className="project-empty-folder -translate-x-1/2 pointer-events-auto absolute bottom-[91px] left-1/2 rounded-xs text-secondary focus-ring type-label hover:text-primary"
 					onPointerDown={(event) => event.stopPropagation()}
 					onClick={onFolder}
 				>
 					Open an existing project folder
 				</button>
 			)}
-		</EmptyState>
+		</div>
 	);
 }

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AppLogo } from "./agent-app-logo";
-import { AGENT_PRIMARY, AGENT_QUIET, AGENT_SECONDARY, AgentDialog } from "./agent-dialog";
+import { AgentDialog } from "./agent-dialog";
 import { fetchAgentAppAvailable, openAgentApp } from "./api";
 import { cn } from "./cn";
 import { FolderIcon } from "./icons";
+import { Button } from "./primitives/actions";
 
 // Setup paths checked against the vendors' desktop quickstarts on 2026-09-13.
 const APPS = [
@@ -23,9 +24,9 @@ function CopyButton({ text, label, primary = false }: { text: string; label: str
 	const state = result?.text === text ? result.kind : "idle";
 	return (
 		<span className="inline-flex flex-col items-start gap-2">
-			<button
-				type="button"
-				className={primary ? AGENT_PRIMARY : AGENT_SECONDARY}
+			<Button
+				size="lg"
+				variant={primary ? "primary" : "secondary"}
 				onClick={() => {
 					void (async () => {
 						try {
@@ -38,7 +39,7 @@ function CopyButton({ text, label, primary = false }: { text: string; label: str
 				}}
 			>
 				{state === "copied" ? "Copied" : label}
-			</button>
+			</Button>
 			{state === "failed" && (
 				<span role="alert" className="text-secondary type-label">
 					Could not copy. Select the text and copy it manually.
@@ -112,9 +113,9 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 							</div>
 							<div className="mt-4 flex flex-wrap items-start gap-3">
 								{app === "chatgpt" && available && (
-									<button
-										type="button"
-										className={AGENT_PRIMARY}
+									<Button
+										size="lg"
+										variant="primary"
 										disabled={opening}
 										onClick={() => {
 											if (busy.current) return;
@@ -135,7 +136,7 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 										}}
 									>
 										{opening ? "Opening…" : "Open project"} <span aria-hidden="true">↗</span>
-									</button>
+									</Button>
 								)}
 								<CopyButton primary={app !== "chatgpt" || !available} text={root} label="Copy project path" />
 							</div>
@@ -178,9 +179,9 @@ export function AgentHandoff({ project, root, onClose }: { project: string; root
 						</div>
 					</div>
 					<footer className="flex justify-end border-line-strong border-t px-7 py-4">
-						<button type="button" className={AGENT_QUIET} onClick={onClose}>
+						<Button variant="ghost" onClick={onClose}>
 							Back to canvas
-						</button>
+						</Button>
 					</footer>
 				</>
 			)}

@@ -38,7 +38,7 @@ async function key(field: EventTarget, key: string, shiftKey = false) {
 async function number() {
 	const onCommit = vi.fn(),
 		onStep = vi.fn();
-	const mounted = await mount(createElement(NumField, { value: "990", readout: "px", onCommit, onStep }));
+	const mounted = await mount(createElement(NumField, { value: 990, readout: "px", onCommit, onStep }));
 	const field = mounted.host.querySelector("input");
 	if (!field) throw new Error("missing numeric field");
 	return { ...mounted, field, onCommit, onStep };
@@ -49,7 +49,7 @@ it("commits what was typed once across Enter and blur", async () => {
 	await type(f.field, "-12");
 	await key(f.field, "Enter");
 	expect(document.activeElement).not.toBe(f.field);
-	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith("-12");
+	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith(-12);
 	await act(() => f.field.blur());
 	expect(f.onCommit).toHaveBeenCalledTimes(1);
 });
@@ -68,7 +68,7 @@ it("commits a normal blur once, and nothing for a value it already has", async (
 	const f = await number();
 	await type(f.field, "640");
 	await act(() => f.field.blur());
-	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith("640");
+	expect(f.onCommit).toHaveBeenCalledExactlyOnceWith(640);
 	await type(f.field, "990");
 	await act(() => f.field.blur());
 	expect(f.onCommit).toHaveBeenCalledTimes(1);
@@ -96,7 +96,7 @@ async function scrub() {
 		onScrubCancel = vi.fn();
 	const props = { name: "w", onScrub, onScrubEnd, onScrubCancel, children: "990px" };
 	const mounted = await mount(createElement(Row, props));
-	const label = mounted.host.querySelector("span");
+	const label = mounted.host.querySelector<HTMLElement>("[data-scrub]");
 	if (!label) throw new Error("missing scrub label");
 	// Sandboxed or synthetic pointers may reject capture; document events still complete or cancel.
 	Object.defineProperty(label, "setPointerCapture", {
@@ -127,7 +127,7 @@ it("scrubs the row's value from the number field itself, leaving the press to fo
 		name: "w",
 		onScrub,
 		onScrubEnd,
-		children: createElement(NumField, { value: "990", onCommit: vi.fn() }),
+		children: createElement(NumField, { value: 990, onCommit: vi.fn(), onStep: vi.fn() }),
 	};
 	const mounted = await mount(createElement(Row, props));
 	const field = mounted.host.querySelector("input");

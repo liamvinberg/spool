@@ -351,9 +351,27 @@ describe("the read-only canvas", () => {
 		// the mark on the frame's label and on its row in the rail: changed for menu, new for about
 		await page.locator('[data-viewer-frame="about"]').waitFor();
 		const rail = page.getByRole("navigation", { name: "Pages" });
-		expect(await rail.getByRole("button", { name: "menu frame" }).locator(".animate-unseen-in").count()).toBe(1);
-		expect(await rail.getByRole("button", { name: "about frame" }).locator(".animate-unseen-in").count()).toBe(1);
-		expect(await rail.getByRole("button", { name: "home frame" }).locator(".animate-unseen-in").count()).toBe(0);
+		expect(
+			await rail
+				.getByRole("button", { name: "menu frame" })
+				.locator("xpath=..")
+				.locator(".animate-unseen-in")
+				.count(),
+		).toBe(1);
+		expect(
+			await rail
+				.getByRole("button", { name: "about frame" })
+				.locator("xpath=..")
+				.locator(".animate-unseen-in")
+				.count(),
+		).toBe(1);
+		expect(
+			await rail
+				.getByRole("button", { name: "home frame" })
+				.locator("xpath=..")
+				.locator(".animate-unseen-in")
+				.count(),
+		).toBe(0);
 		// the document was made again where it stands: one of it, never a blank one in between
 		expect(await page.locator('iframe[title="menu"]').count()).toBe(1);
 		await page.getByRole("status").waitFor({ state: "detached", timeout: 10_000 });
@@ -363,7 +381,13 @@ describe("the read-only canvas", () => {
 		await page.locator("[data-viewer-player]").waitFor();
 		await page.keyboard.press("Escape");
 		await page.locator("[data-viewer-player]").waitFor({ state: "detached" });
-		expect(await rail.getByRole("button", { name: "menu frame" }).locator(".animate-unseen-in").count()).toBe(0);
+		expect(
+			await rail
+				.getByRole("button", { name: "menu frame" })
+				.locator("xpath=..")
+				.locator(".animate-unseen-in")
+				.count(),
+		).toBe(0);
 		expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
 	});
 

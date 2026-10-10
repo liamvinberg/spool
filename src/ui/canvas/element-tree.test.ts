@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ancestorsOf, frameOpening, TREE_PAD, TREE_ROW, treeHeight, treeIndent, treeRows } from "./element-tree";
+import { ancestorsOf, frameOpening, TREE_PAD, TREE_ROW, treeDepth, treeHeight, treeRows } from "./element-tree";
 import type { ElementNode } from "./protocol";
 
 /** A read of a small landing: a hero in one file, and a list of two finishes a map renders. */
@@ -86,9 +86,9 @@ describe("treeRows", () => {
 	});
 
 	it("stops stepping in at 14 levels", () => {
-		expect(treeIndent(0)).toBe(6);
-		expect(treeIndent(14)).toBe(146);
-		expect(treeIndent(23)).toBe(146);
+		expect(treeDepth(0)).toBe(0);
+		expect(treeDepth(14)).toBe(14);
+		expect(treeDepth(23)).toBe(14);
 	});
 });
 

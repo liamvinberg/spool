@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "../hotkeys";
+import { IconButton } from "../primitives/actions";
 import { useRemembered } from "../remembered";
 import { MenuItem } from "./context-menu";
 import type { PaletteCommand } from "./find-palette";
@@ -29,7 +30,7 @@ import {
 	type Verdict,
 	whereIs,
 } from "./pane-layout";
-import { PANE_VERB, PaneMark, type PaneMarkKind, SidebarIcon } from "./pane-tabs";
+import { PaneMark, type PaneMarkKind, SidebarIcon } from "./pane-tabs";
 import { STRIP_WIDTH, useRailDrag } from "./rail-width";
 
 /**
@@ -930,16 +931,13 @@ export function PaneWindow({
 	};
 
 	const renderClose = (id: SideId) => (
-		<button
-			type="button"
+		<IconButton
 			data-side-close={id}
-			aria-label={`Close the ${id} side`}
+			icon={<SidebarIcon side={id} className="h-4 w-4" />}
+			label={`Close the ${id} side`}
 			title={`Close the ${id} side ${hotkeyKey(id === "left" ? "panes.left" : "panes.right")}`}
 			onClick={() => apply({ type: "open", side: id, open: false })}
-			className={PANE_VERB}
-		>
-			<SidebarIcon side={id} className="h-4 w-4" />
-		</button>
+		/>
 	);
 
 	const renderSide = (id: SideId) => {
@@ -1110,19 +1108,17 @@ export function PaneWindow({
 							if (def === undefined) return null;
 							const kind = markOf(def, visible.includes(pane));
 							return (
-								<button
+								<IconButton
 									key={pane}
-									type="button"
 									data-rail-icon={pane}
-									aria-label={labelOf(def, kind)}
+									icon={def.icon}
+									label={labelOf(def, kind)}
 									title={`${def.title} ${hotkeyKey(def.hotkey)}`}
 									onClick={() => showPane(pane, false)}
 									onContextMenu={openMenu(pane)}
-									className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-secondary/60 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface-panel hover:text-primary active:scale-90 motion-reduce:transition-none"
 								>
-									<span className="flex h-4 w-4 items-center justify-center">{def.icon}</span>
 									<PaneMark kind={kind} placed="corner" />
-								</button>
+								</IconButton>
 							);
 						})}
 					</div>

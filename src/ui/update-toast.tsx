@@ -1,9 +1,11 @@
+import type { ComponentProps } from "react";
+import { cn } from "./cn";
 import { type AppUpdate, DOWNLOAD_URL } from "./desktop-bridge";
-import { CloseIcon } from "./icons";
+import { TextAction, Toast } from "./primitives/feedback";
 
 /**
  * The update toast (#30), on the Trash-toast pattern (#13): raised pill,
- * bottom center, thread only on the one action. Three states — offer, updating,
+ * bottom center, thread only on the one action. Three states: offer, updating,
  * failed. Success needs no state: the page reloads itself onto the new daemon.
  *
  * Updating carries a stage because the two halves of an upgrade feel different
@@ -51,119 +53,60 @@ export function UpdateToastPill({
 	onDismiss: () => void;
 }) {
 	return (
-		<div
-			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 overflow-hidden rounded-md border border-line-strong bg-surface-raised px-3.5 py-2.5 ${
-				aboveCanvasTools ? "bottom-[120px]" : "bottom-6"
-			}`}
-		>
-			{toast.kind === "offer" && (
-				<>
-					<span className="text-primary type-control">Update available — v{toast.latest}</span>
-					<button type="button" className="font-medium text-accent-strong type-control" onClick={onUpdate}>
-						Update
-					</button>
-				</>
-			)}
-			{toast.kind === "updating" && (
-				<>
-					<span className="text-secondary type-control">
-						{toast.stage === "installing" ? "Installing update…" : "Restarting…"}
-					</span>
-					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-accent" />
-				</>
-			)}
-			{toast.kind === "failed" && (
-				<>
-					<span className="text-primary type-control">{toast.message ?? "Update failed"}</span>
-					<span className="h-4 w-px bg-line-strong" />
-					<span className="text-secondary type-value">spool upgrade</span>
-				</>
-			)}
-			{toast.kind === "app" && <AppUpdateBody update={toast.update} onUpdate={onUpdate} />}
-			{!updateToastBusy(toast) && (
-				<button
-					type="button"
-					className="flex items-center text-secondary hover:text-primary"
-					onClick={onDismiss}
-					title="Dismiss"
-				>
-					<CloseIcon />
-				</button>
-			)}
+		<div className={cn("-translate-x-1/2 fixed left-1/2 z-20", aboveCanvasTools ? "bottom-[120px]" : "bottom-6")}>
+			<Toast {...said(toast, onUpdate)} onDismiss={updateToastBusy(toast) ? undefined : onDismiss} />
 		</div>
 	);
 }
 
-function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () => void }) {
+type Said = Pick<ComponentProps<typeof Toast>, "message" | "detail" | "action" | "tone" | "progress">;
+
+function said(toast: UpdateToast, onUpdate: () => void): Said {
+	switch (toast.kind) {
+		case "offer":
+			return {
+				message: `Update available: v${toast.latest}`,
+				action: <TextAction onClick={onUpdate}>Update</TextAction>,
+			};
+		case "updating":
+			return { message: toast.stage === "installing" ? "Installing update…" : "Restarting…", progress: true };
+		case "failed":
+			return { message: toast.message ?? "Update failed", detail: "spool upgrade", tone: "error" };
+		case "app":
+			return appSaid(toast.update, onUpdate);
+	}
+}
+
+function appSaid(update: AppUpdate, onUpdate: () => void): Said {
 	switch (update.kind) {
 		case "ready":
-			return (
-				<>
-					<span className="text-primary type-control">Spool is ready to update.</span>
-					<button type="button" className="font-medium text-accent-strong type-control" onClick={onUpdate}>
-						Restart to update
-					</button>
-				</>
-			);
+			return {
+				message: "Spool is ready to update.",
+				action: <TextAction onClick={onUpdate}>Restart to update</TextAction>,
+			};
 		case "offer":
-			return (
-				<>
-					<span className="text-primary type-control">Spool {update.version} is out</span>
-					<button type="button" className="font-medium text-accent-strong type-control" onClick={onUpdate}>
-						Update
-					</button>
-				</>
-			);
+			return {
+				message: `Spool ${update.version} is out`,
+				action: <TextAction onClick={onUpdate}>Update</TextAction>,
+			};
 		case "downloading":
-			return (
-				<>
-					<span className="text-secondary type-control">
-						Downloading Spool {update.version} · {update.percent}%
-					</span>
-					<span
-						className="absolute bottom-0 left-0 h-px bg-accent transition-[width] duration-300"
-						style={{ width: `${update.percent}%` }}
-					/>
-				</>
-			);
-		case "restarting":
+			return { message: `Downloading Spool ${update.version} · ${update.percent}%`, progress: update.percent / 100 };
 		case "checking":
+			return { message: "Checking for updates…", progress: true };
 		case "preparing":
-			return (
-				<>
-					<span className="text-secondary type-control">
-						{update.kind === "checking"
-							? "Checking for updates…"
-							: update.kind === "preparing"
-								? `Preparing Spool ${update.version}…`
-								: `Restarting into Spool ${update.version}…`}
-					</span>
-					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-accent" />
-				</>
-			);
+			return { message: `Preparing Spool ${update.version}…`, progress: true };
+		case "restarting":
+			return { message: `Restarting into Spool ${update.version}…`, progress: true };
 		case "failed":
-			return (
-				<>
-					<span className="max-w-[56ch] text-primary type-control">{update.message}</span>
-					<span className="h-4 w-px bg-line-strong" />
-					{update.retryable && (
-						<button
-							type="button"
-							className="whitespace-nowrap font-medium text-accent-strong type-control"
-							onClick={onUpdate}
-						>
-							Retry
-						</button>
-					)}
-					<a
-						href={DOWNLOAD_URL}
-						target="_blank"
-						rel="noreferrer"
-						className="whitespace-nowrap font-medium text-accent-strong type-control"
-					>
-						Download Spool.dmg
-					</a>
-				</>
-			);
+			return {
+				message: update.message,
+				tone: "error",
+				action: (
+					<>
+						{update.retryable && <TextAction onClick={onUpdate}>Retry</TextAction>}
+						<TextAction href={DOWNLOAD_URL}>Download Spool.dmg</TextAction>
+					</>
+				),
+			};
 	}
 }

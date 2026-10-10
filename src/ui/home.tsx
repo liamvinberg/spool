@@ -1,22 +1,12 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HerePerson, type ProjectCard, thumbnailUrl } from "./api";
 import { cn } from "./cn";
-import { EmptyFramesIcon, EmptyState } from "./empty-state";
-import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import {
-	ArrowRightIcon,
-	CloseIcon,
-	CogIcon,
-	DotsIcon,
-	FolderIcon,
-	FrameIcon,
-	PlusIcon,
-	RibbonMark,
-	SearchIcon,
-} from "./icons";
-import { Kbd } from "./primitives/display";
+import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
+import { Button, ButtonGroup, IconButton } from "./primitives/actions";
+import { EmptyFrames, EmptyState } from "./primitives/feedback";
+import { SearchField } from "./primitives/inputs";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -136,13 +126,13 @@ export function Home({
 					<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
 						{notice && <div className="w-[650px] max-w-full">{notice}</div>}
 						<EmptyState
-							className="pj-welcome mt-[-50px] w-[650px] [&>p]:mt-[14px] [&>p]:[font:var(--type-body)] [&>p]:text-secondary [&>.spool-empty-actions]:grid [&>.spool-empty-actions]:w-full [&>.spool-empty-actions]:grid-cols-2 [&>.spool-empty-actions]:gap-[22px] [&>.spool-empty-actions]:mt-[44px] [&>.spool-empty-actions]:text-left [@media(max-width:720px)]:m-0 [@media(max-width:720px)]:[&>.spool-empty-actions]:grid-cols-1"
+							className="pj-welcome mt-[-50px] w-[650px] max-w-full [@media(max-width:720px)]:m-0"
 							heading="h1"
 							align="start"
 							title="Start with an idea."
 							description="Your next project can start here, or in a folder you already have."
 							actions={
-								<>
+								<div className="grid w-[650px] max-w-full grid-cols-2 gap-[22px] text-left [@media(max-width:720px)]:grid-cols-1">
 									<button
 										type="button"
 										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
@@ -189,7 +179,7 @@ export function Home({
 											Open a .spool project file.
 										</small>
 									</button>
-								</>
+								</div>
 							}
 						/>
 					</main>
@@ -198,38 +188,24 @@ export function Home({
 						<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
 							<h1 className="type-page font-medium">Projects</h1>
 							<div className="flex items-center gap-[13px] [@media(max-width:720px)]:flex-wrap">
-								<label className="home-search flex h-[35px] w-[212px] items-center gap-[10px] rounded-[7px] border border-line-default bg-transparent px-[11px] text-secondary focus-within:border-secondary">
-									<SearchIcon />
-									<input
-										className="w-full min-w-0 bg-transparent text-primary outline-none type-control placeholder:text-secondary"
-										ref={searchRef}
-										value={query}
-										onChange={(event) => setQuery(event.target.value)}
-										placeholder="Search projects"
-										aria-label="Search projects"
-									/>
-									{query ? (
-										<button type="button" className="flex" title="Clear search" onClick={() => setQuery("")}>
-											<CloseIcon />
-										</button>
-									) : (
-										<Kbd>/</Kbd>
-									)}
-								</label>
-								<button type="button" className={cn("home-action h-[35px]", HOME_ACTION)} onClick={onImport}>
-									Import…
-								</button>
-								<button type="button" className={cn("home-action h-[35px]", HOME_ACTION)} onClick={onFolder}>
-									Open…
-								</button>
-								<button
-									type="button"
-									className={cn("home-action home-action-primary h-[35px]", HOME_ACTION_PRIMARY)}
-									onClick={onStart}
-								>
-									<PlusIcon />
-									New project…
-								</button>
+								<SearchField
+									className="w-menu"
+									value={query}
+									onValueChange={setQuery}
+									placeholder="Search projects"
+									inputProps={{ ref: searchRef }}
+								/>
+								<ButtonGroup>
+									<Button size="lg" onClick={onImport}>
+										Import…
+									</Button>
+									<Button size="lg" onClick={onFolder}>
+										Open…
+									</Button>
+									<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onStart}>
+										New project…
+									</Button>
+								</ButtonGroup>
 							</div>
 						</header>
 						{notice}
@@ -252,18 +228,14 @@ export function Home({
 						</div>
 						{visible.length === 0 ? (
 							<EmptyState
-								className="pj-empty min-h-[420px] p-[35px] [&>p]:mt-0"
-								icon={<EmptyFramesIcon />}
+								className="min-h-[420px] justify-center p-[35px]"
+								art={<EmptyFrames />}
 								title={`Nothing matches “${query}”`}
 								description="Try a project name or part of its path."
 								actions={
-									<button
-										type="button"
-										className={cn("home-action", HOME_ACTION)}
-										onClick={() => setQuery("")}
-									>
+									<Button size="lg" onClick={() => setQuery("")}>
 										Clear search
-									</button>
+									</Button>
 								}
 							/>
 						) : (
@@ -548,18 +520,16 @@ function ProjectTile({
 					{project.ended !== undefined && ` · no longer synced with ${project.ended}`}
 				</span>
 			</button>
-			<button
-				type="button"
+			<IconButton
 				ref={manageRef}
+				icon={<DotsIcon />}
+				label={`Manage ${project.name}`}
 				className={cn(
-					"pj-manage absolute right-[-4px] bottom-[23px] flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[5px] text-secondary opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100 hover:bg-surface-panel hover:text-primary",
+					"pj-manage absolute right-[-4px] bottom-[23px] opacity-0 focus-visible:opacity-100 [&.is-open]:opacity-100 group-focus-within/project:opacity-100 group-hover/project:opacity-100",
 					menuOpen ? "is-open" : "",
 				)}
-				aria-label={`Manage ${project.name}`}
 				onClick={onToggleMenu}
-			>
-				<DotsIcon />
-			</button>
+			/>
 			{menuOpen && (
 				<div
 					ref={menuRef}

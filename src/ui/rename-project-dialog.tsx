@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ConfirmDialog } from "./confirm-dialog";
+import { Field, TextField } from "./primitives/inputs";
 
 export function RenameProjectDialog({
 	project,
@@ -24,16 +25,11 @@ export function RenameProjectDialog({
 			onConfirm={() => onRename(name)}
 			onClose={onClose}
 		>
-			<label className="flex flex-col gap-[8px] [font:var(--type-control)]">
-				Project name
-				<input
-					className="min-w-0 py-[9px] px-[10px] border border-line-strong rounded-[4px] bg-surface-window focus-visible:[outline:1px_solid_var(--color-accent)] focus-visible:outline-offset-[1px]"
-					value={draft}
-					onChange={(event) => setDraft(event.target.value)}
-					spellCheck={false}
-					autoComplete="off"
-				/>
-			</label>
+			<Field label="Project name">
+				{(id) => (
+					<TextField size="lg" value={draft} onValueChange={setDraft} inputProps={{ id, autoComplete: "off" }} />
+				)}
+			</Field>
 			<code className="block [margin:12px_0_20px] [overflow-wrap:anywhere] text-secondary [font:var(--type-detail)] [font-feature-settings:var(--font-mono--font-feature-settings)]">{`${parent}/${name || project.name}`}</code>
 		</ConfirmDialog>
 	);

@@ -1,7 +1,9 @@
+import { Toast as Said } from "../primitives/feedback";
+
 /**
  * The canvas's one line of confirmation: what just happened, said once and
  * gone. It is a status rather than a dialog because nothing here needs
- * answering — an export that landed, a path on the clipboard, a capture that
+ * answering: an export that landed, a path on the clipboard, a capture that
  * threw.
  */
 
@@ -12,11 +14,12 @@ export interface Notice {
 
 export function Toast({ notice }: { notice: Notice }) {
 	return (
-		<div
-			role={notice.kind === "error" ? "alert" : "status"}
-			className="absolute bottom-[120px] left-1/2 z-30 -translate-x-1/2 rounded-md border border-line-strong bg-surface-raised px-3.5 py-2.5 type-control"
-		>
-			<span className={notice.kind === "error" ? "text-accent-strong" : "text-primary"}>{notice.message}</span>
+		<div className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30">
+			<Said
+				message={notice.message}
+				tone={notice.kind === "error" ? "error" : "default"}
+				progress={notice.kind === "progress" ? true : undefined}
+			/>
 		</div>
 	);
 }

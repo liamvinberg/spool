@@ -1,8 +1,7 @@
 import { useState } from "react";
 import type { CloudAccountState } from "./api";
-import { cn } from "./cn";
-import { HOME_ACTION } from "./home-actions";
 import { ChevronIcon } from "./icons";
+import { Button, ButtonGroup } from "./primitives/actions";
 import { Dot } from "./primitives/display";
 
 /**
@@ -27,9 +26,9 @@ export function AccountFoot({
 		return (
 			<div className="pj-account flex flex-col gap-[10px] [@media(max-width:720px)]:hidden">
 				<p className="pl-[2px] text-secondary type-label">Sign in to share links and join a team.</p>
-				<button type="button" className={cn(HOME_ACTION, "w-full justify-start")} onClick={onSignIn}>
+				<Button className="w-full justify-start" onClick={onSignIn}>
 					Sign in
-				</button>
+				</Button>
 			</div>
 		);
 	if (account.state === "signing-in")
@@ -43,23 +42,15 @@ export function AccountFoot({
 					<p className="mt-[6px] text-secondary type-control">
 						spool.page is open in your browser. This comes back by itself once you’re in.
 					</p>
-					<div className="mt-[14px] flex gap-[8px]">
-						<button type="button" className={HOME_ACTION} onClick={onReopen}>
-							Open it again
-						</button>
-						<button type="button" className={HOME_ACTION} onClick={onCancel}>
-							Cancel
-						</button>
-					</div>
+					<ButtonGroup className="mt-[14px]">
+						<Button onClick={onReopen}>Open it again</Button>
+						<Button onClick={onCancel}>Cancel</Button>
+					</ButtonGroup>
 				</div>
-				<button
-					type="button"
-					className={cn(HOME_ACTION, "w-full justify-start bg-surface-raised")}
-					onClick={onReopen}
-				>
+				<Button className="w-full justify-start" onClick={onReopen}>
 					<Dot tone="secondary" size="md" className="motion-safe:animate-pulse!" />
 					Waiting for the browser
-				</button>
+				</Button>
 			</div>
 		);
 	if (account.state !== "signed-in") return null;

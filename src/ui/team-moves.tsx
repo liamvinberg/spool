@@ -16,8 +16,8 @@ import {
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
 import { HerePill } from "./home";
-import { HOME_ACTION } from "./home-actions";
 import { ProjectPicker } from "./picker";
+import { Button } from "./primitives/actions";
 import { RadioCard, RadioGroup } from "./primitives/selection";
 
 /**
@@ -74,14 +74,9 @@ export function TeamProjectsAway({
 						</div>
 						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
 							<strong className="truncate text-secondary type-title font-[500]">{project.name}</strong>
-							<button
-								type="button"
-								className={cn("h-[30px]", HOME_ACTION)}
-								aria-label={`Get ${project.name}`}
-								onClick={() => setGetting(project)}
-							>
+							<Button aria-label={`Get ${project.name}`} onClick={() => setGetting(project)}>
 								Get it
-							</button>
+							</Button>
 						</div>
 					</article>
 				))}
@@ -468,9 +463,7 @@ export function MoveCommitLine({ note, onDismiss }: { note: string; onDismiss: (
 			className="pj-move-commit mb-[22px] flex min-h-[48px] items-center gap-[12px] border-line-default border-y py-[8px]"
 		>
 			<span className="min-w-0 flex-1 type-control">{note}</span>
-			<button type="button" className={cn("home-action", HOME_ACTION)} onClick={onDismiss}>
-				Dismiss
-			</button>
+			<Button onClick={onDismiss}>Dismiss</Button>
 		</div>
 	);
 }

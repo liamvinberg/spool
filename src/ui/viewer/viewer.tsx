@@ -25,13 +25,14 @@ import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
 import { createPresenceRoom } from "../canvas/presence";
 import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
 import { PresenceLayer } from "../canvas/presence-layer";
-import { contentX, guideX, railRows } from "../canvas/rail-rows";
-import { UnseenMark } from "../canvas/unseen-mark";
+import { railRows } from "../canvas/rail-rows";
 import { useFollow, usePresenceSender } from "../canvas/use-presence";
 import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon } from "../icons";
 import { Divider } from "../primitives/display";
+import { Toast } from "../primitives/feedback";
+import { Bar, ListRow, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { Navigator, type NavigatorToast } from "./navigator";
@@ -496,11 +497,8 @@ function ViewerCanvas({
 					)}
 				</div>
 				{toast !== null && (
-					<div
-						role="status"
-						className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[viewer-page-in_160ms_ease-out] rounded-sm border border-line-strong bg-surface-raised px-3 py-2 text-primary type-detail"
-					>
-						{toast}
+					<div className="-translate-x-1/2 pointer-events-none absolute bottom-4 left-1/2">
+						<Toast message={toast} />
 					</div>
 				)}
 				<div className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-line-default bg-surface-window px-1">
@@ -801,114 +799,86 @@ function PagesRail({
 		[tree, framesByPage, page],
 	);
 	return (
-		<aside className="flex w-[232px] shrink-0 flex-col border-line-default border-r bg-surface-window">
-			<div className="flex h-11 shrink-0 items-center gap-2 border-line-default border-b pr-2 pl-3.5">
-				{project.team !== null && <TeamMark team={project.team} size={18} />}
-				<span className="truncate type-control">{project.project}</span>
-				{!edits(project.role) && project.shared === undefined && (
-					<span className="ml-auto shrink-0 text-secondary type-detail">view only</span>
-				)}
-			</div>
-			<nav aria-label="Pages" className="min-h-0 flex-1 overflow-y-auto py-2">
+		<Panel side="start" width="rail">
+			<Bar
+				icon={project.team === null ? undefined : <TeamMark team={project.team} size={18} />}
+				title={project.project}
+				actions={
+					!edits(project.role) && project.shared === undefined ? (
+						<span className="pr-2 text-secondary type-detail">view only</span>
+					) : undefined
+				}
+			/>
+			<ScrollArea role="navigation" aria-label="Pages" className="flex-1 py-2">
 				{rows.map((row) =>
 					row.kind === "page" ? (
-						<button
+						<ListRow
 							key={`page:${row.page}`}
-							type="button"
-							aria-current={row.page === page ? "page" : undefined}
+							as="button"
+							current={row.page === page}
 							onClick={() => onPage(row.page)}
-							className={cn(
-								"relative flex h-8 w-full items-center pr-3 text-left transition-colors hover:bg-surface-panel/60",
-								row.page === page && "bg-surface-panel",
-							)}
-							style={{ paddingLeft: contentX(row.depth) - 18 }}
-						>
-							<span
-								className={cn(
-									"flex h-8 w-4 shrink-0 items-center justify-center text-secondary",
-									row.open && "rotate-90",
-								)}
-							>
-								<span className="h-2.5 w-2.5">
-									<ChevronIcon />
+							lead={
+								<span className="flex h-full shrink-0 items-center">
+									<span aria-hidden="true" style={{ width: `calc(${row.depth} * var(--spacing) * 3)` }} />
+									<span className="flex w-control-sm items-center justify-center text-tertiary">
+										<span className={cn("size-3 [&>svg]:size-full", row.open && "rotate-90")}>
+											<ChevronIcon />
+										</span>
+									</span>
 								</span>
-							</span>
-							<FolderIcon
-								className={cn(
-									"mr-2 ml-0.5 h-3.5 w-3.5 shrink-0",
-									row.page === page ? "text-accent" : "text-secondary",
-								)}
-							/>
-							<span
-								className={cn(
-									"min-w-0 flex-1 truncate type-value",
-									row.page === page ? "text-primary" : "text-secondary",
-								)}
-							>
-								{pageName(row.page)}
-							</span>
-							{!row.open && <span className="text-secondary type-detail">{row.count}</span>}
-						</button>
+							}
+							icon={FolderIcon}
+							label={pageName(row.page)}
+							mono
+							meta={row.open ? undefined : row.count}
+						/>
 					) : row.kind === "frame" ? (
-						<div
+						<TreeRow
 							key={`frame:${row.name}`}
-							className="group relative flex h-7 w-full items-center pr-2 hover:bg-surface-panel"
-						>
-							{row.page !== ROOT_PAGE && (
-								<>
-									<span
-										className="absolute w-px bg-line-strong"
-										style={{
-											left: guideX(row.depth),
-											top: 0,
-											height: row.last ? row.height - 6 : row.height,
-										}}
-									/>
-									<span
-										className="absolute h-px w-2.5 bg-line-strong"
-										style={{ left: guideX(row.depth), top: row.height / 2 }}
-									/>
-								</>
-							)}
-							<button
-								type="button"
-								aria-label={`${pageName(row.name)} frame`}
-								onClick={() => (row.page === page ? onFrame(row.name) : onPage(row.page))}
-								className="flex h-7 min-w-0 flex-1 items-center gap-2 text-left"
-								style={{ paddingLeft: contentX(row.depth) }}
-							>
-								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-secondary" />
-								<span
-									className={cn(
-										"min-w-0 flex-1 truncate type-value",
-										marks.has(row.name) ? "text-primary" : "text-secondary",
-									)}
+							depth={row.depth}
+							{...(row.page === ROOT_PAGE ? {} : { guide: row.last ? "last" : "mid" })}
+							// a list of places to go rather than a tree to walk
+							role="none"
+							icon={FrameIcon}
+							label={pageName(row.name)}
+							mono
+							unseen={marks.has(row.name) ? (marks.get(row.name) === "new" ? true : "moved") : undefined}
+							// the row takes the click; its button is there for the keyboard and a reader
+							onClick={() => (row.page === page ? onFrame(row.name) : onPage(row.page))}
+							decor={
+								<button
+									type="button"
+									aria-label={`${pageName(row.name)} frame`}
+									className="absolute inset-0 z-1 focus-ring-inset"
+								/>
+							}
+							reveal
+							trailing={
+								<button
+									type="button"
+									onClick={(event) => {
+										event.stopPropagation();
+										onPlay(row.name);
+									}}
+									aria-label={`Play ${pageName(row.name)}`}
+									className="flex h-5 items-center gap-1 rounded-xs px-1 text-secondary hover:text-accent-strong type-detail"
 								>
-									{pageName(row.name)}
-								</span>
-								{marks.has(row.name) && <UnseenMark mark={marks.get(row.name) ?? "changed"} />}
-							</button>
-							<button
-								type="button"
-								onClick={() => onPlay(row.name)}
-								aria-label={`Play ${pageName(row.name)}`}
-								className="ml-1 hidden h-5 items-center gap-1 rounded-xs px-1 text-secondary hover:text-accent group-hover:flex type-detail"
-							>
-								<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
-									<path d="M2 1.2 8.4 5 2 8.8Z" />
-								</svg>
-								play
-							</button>
-						</div>
+									<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
+										<path d="M2 1.2 8.4 5 2 8.8Z" />
+									</svg>
+									play
+								</button>
+							}
+						/>
 					) : null,
 				)}
-			</nav>
+			</ScrollArea>
 			{project.account !== null && (
-				<div className="truncate border-line-default border-t px-3.5 py-3 text-secondary type-detail">
-					{project.account}
-				</div>
+				<StatusLine>
+					<span className="truncate">{project.account}</span>
+				</StatusLine>
 			)}
-		</aside>
+		</Panel>
 	);
 }
 

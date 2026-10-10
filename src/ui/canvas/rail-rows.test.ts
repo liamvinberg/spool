@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ROOT_PAGE } from "../../page-path";
 import {
-	contentX,
 	FRAME_ROW,
 	frameLanding,
 	guideX,
@@ -158,9 +157,8 @@ describe("depth", () => {
 		expect(deep.map((row) => row.depth)).toEqual([0, 0, 1, 1, 2, 0]);
 	});
 
-	it("steps one INDENT per level, landing the shipped rail's own metrics at depth one", () => {
-		expect(guideX(1)).toBe(18);
-		expect(contentX(1)).toBe(34);
+	it("steps one INDENT per level, landing on TreeRow's spine at depth one", () => {
+		expect(guideX(1)).toBe(26);
 		expect(guideX(2) - guideX(1)).toBe(INDENT);
 	});
 

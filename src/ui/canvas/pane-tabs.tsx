@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { DotsIcon } from "../icons";
+import { IconButton } from "../primitives/actions";
 import { Dot, SpinRing } from "../primitives/display";
 import { WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
@@ -14,10 +15,6 @@ import type { SideId } from "./pane-layout";
  * the side's close glyph, and the button and menu a pane's own verbs are made of.
  * The window that places them is `pane-window.tsx`.
  */
-
-/** a pane's verb in its tab row; the press feel is the house's */
-export const PANE_VERB =
-	"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-secondary/60 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface-panel hover:text-primary active:scale-90 motion-reduce:transition-none";
 
 export type PaneMarkKind = "waiting" | "working" | "unread" | "elsewhere";
 
@@ -131,18 +128,14 @@ export function PaneMore({ label, items }: { label: string; items: readonly Pane
 	}, [open]);
 	return (
 		<>
-			<button
+			<IconButton
 				ref={button}
-				type="button"
-				aria-label={label}
-				title={label}
+				icon={<DotsIcon />}
+				label={label}
 				aria-haspopup="menu"
 				aria-expanded={open}
 				onClick={() => setOpen(!open)}
-				className={cn(PANE_VERB, open && "bg-surface-panel text-primary")}
-			>
-				<DotsIcon />
-			</button>
+			/>
 			{open
 				? createPortal(
 						<div

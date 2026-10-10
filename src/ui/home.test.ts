@@ -42,9 +42,9 @@ const actions = () => ({
 it("opens the two first-launch actions without a separate location choice", () => {
 	const callbacks = actions();
 	const host = mount(createElement(Home, { projects: [], ...callbacks }));
-	expect(host.querySelector(".spool-empty h1")?.textContent).toBe("Start with an idea.");
+	expect(host.querySelector(".pj-welcome h1")?.textContent).toBe("Start with an idea.");
 	expect(host.textContent).not.toContain("Save projects in");
-	const buttons = host.querySelectorAll<HTMLButtonElement>(".spool-empty-actions button");
+	const buttons = host.querySelectorAll<HTMLButtonElement>(".pj-welcome button");
 	act(() => {
 		buttons[0]?.click();
 		buttons[1]?.click();
@@ -536,7 +536,7 @@ it("opens the same creation form from Home and the tab strip without creating on
 	const { App } = await import("./app");
 	const host = mount(createElement(App));
 	await act(async () => {});
-	act(() => host.querySelector<HTMLButtonElement>(".spool-empty-actions button")?.click());
+	act(() => host.querySelector<HTMLButtonElement>(".pj-welcome button")?.click());
 	expect(host.querySelector("dialog")?.getAttribute("aria-label")).toBe("New project");
 	expect(document.activeElement?.getAttribute("placeholder")).toBe("Project name (optional)");
 	act(() => host.querySelector("dialog")?.dispatchEvent(new Event("cancel", { cancelable: true })));
@@ -666,7 +666,7 @@ it("confirms trashing the whole folder, supports cancellation and retries failur
 	expect(host.querySelector("dialog")?.textContent).toContain("entire project folder and everything inside it");
 	expect(host.querySelector("dialog code")?.textContent).toBe(coffee.root);
 	expect(document.activeElement?.textContent).toBe("Cancel");
-	expect(button(host, "Move to Trash").classList.contains("home-action-danger")).toBe(true);
+	expect(button(host, "Move to Trash").classList.contains("bg-danger")).toBe(true);
 	act(() => button(host, "Cancel").click());
 	expect(host.querySelector("dialog")).toBeNull();
 	expect(document.activeElement?.getAttribute("aria-label")).toBe("Manage coffee");

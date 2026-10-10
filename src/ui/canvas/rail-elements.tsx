@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../cn";
-import { ancestorsOf, frameOpening, TREE_MOST, type TreeRow, treeHeight, treeIndent, treeRows } from "./element-tree";
+import { TreeRow } from "../primitives/structure";
+import {
+	ancestorsOf,
+	type TreeRow as ElementRow,
+	frameOpening,
+	TREE_MOST,
+	treeDepth,
+	treeHeight,
+	treeRows,
+} from "./element-tree";
 import { type ElementNode, elementsMessage } from "./protocol";
 import type { RailUnder } from "./sidebar";
 
@@ -202,7 +211,7 @@ function TreeRows({
 	onSelect,
 	onHover,
 }: {
-	rows: readonly TreeRow[];
+	rows: readonly ElementRow[];
 	held: ReadonlySet<string>;
 	reveal: string | null;
 	onRevealed: () => void;
@@ -210,47 +219,78 @@ function TreeRows({
 	onSelect: (selector: string) => void;
 	onHover: (selector: string | null) => void;
 }) {
-	const revealed = useRef<HTMLDivElement | null>(null);
+	const tree = useRef<HTMLDivElement | null>(null);
 	useLayoutEffect(() => {
-		if (reveal === null || revealed.current === null) return;
-		intoRail(revealed.current);
+		if (reveal === null) return;
+		const row = tree.current?.querySelector<HTMLElement>(`[data-element-row="${CSS.escape(reveal)}"]`);
+		if (row === null || row === undefined) return;
+		intoRail(row);
 		onRevealed();
 	}, [reveal, onRevealed]);
 
 	return (
-		<div data-element-tree="" className="pages-scrollbar overflow-y-auto py-1" style={{ maxHeight: TREE_MOST }}>
+		<div
+			ref={tree}
+			data-element-tree=""
+			className="pages-scrollbar overflow-y-auto py-1"
+			style={{ maxHeight: TREE_MOST }}
+		>
 			{rows.map((row) => {
 				if (row.kind === "map") {
 					return (
-						<div
+						<TreeRow
 							key={row.key}
-							className="flex h-6 items-center gap-1 pr-2.5 text-secondary type-detail"
-							style={{ paddingLeft: 15 + treeIndent(row.depth) }}
-						>
-							<span className="text-primary/80">.map</span>
-							<span>×{row.count}</span>
-						</div>
+							role="none"
+							depth={treeDepth(row.depth)}
+							mono
+							label={
+								<>
+									<span className="text-primary">.map</span> ×{row.count}
+								</>
+							}
+						/>
 					);
 				}
 				const { node } = row;
-				const current = held.has(node.selector);
 				const label = node.component ?? node.tag;
 				return (
-					<div
+					<TreeRow
 						key={node.selector}
-						ref={node.selector === reveal ? revealed : undefined}
-						role="treeitem"
 						// the rail's roving stop is the list's own; a row is reached by pointer
 						tabIndex={-1}
 						data-element-row={node.selector}
-						aria-selected={current}
-						aria-expanded={row.hasChildren ? row.open : undefined}
-						className={cn(
-							"flex h-6 items-center gap-1 pr-2.5",
-							current ? "bg-accent/15 text-primary" : "text-secondary hover:bg-surface-panel hover:text-primary",
-						)}
-						style={{ paddingLeft: treeIndent(row.depth) }}
-						onPointerDown={keepFocus}
+						depth={treeDepth(row.depth)}
+						{...(row.hasChildren ? { branch: { open: row.open, onToggle: () => onToggle(node.selector) } } : {})}
+						selected={held.has(node.selector)}
+						mono
+						label={
+							<>
+								{row.number === null ? null : (
+									<>
+										<span className="text-tertiary type-detail">{row.number}</span>{" "}
+									</>
+								)}
+								<span className={cn(node.component !== null && "text-primary")}>{`<${label}>`}</span>
+								{node.words === null ? null : (
+									<>
+										{" "}
+										<span className="text-secondary type-detail">{node.words}</span>
+									</>
+								)}
+							</>
+						}
+						meta={row.file ?? undefined}
+						decor={
+							<button
+								type="button"
+								tabIndex={-1}
+								aria-label={`<${label}>`}
+								onClick={() => onSelect(node.selector)}
+								className="absolute inset-0 z-1 cursor-default"
+							/>
+						}
+						// in the capture, so the chevron's own press keeps the keyboard where it was too
+						onPointerDownCapture={keepFocus}
 						onPointerEnter={() => onHover(node.selector)}
 						onPointerLeave={() => onHover(null)}
 						// the rail's menu is about pages and frames, and this is neither
@@ -258,48 +298,7 @@ function TreeRows({
 							event.preventDefault();
 							event.stopPropagation();
 						}}
-					>
-						<button
-							type="button"
-							tabIndex={-1}
-							aria-label={row.open ? "Collapse" : "Expand"}
-							onClick={() => onToggle(node.selector)}
-							className={cn(
-								"flex h-4 w-3 shrink-0 items-center justify-center",
-								!row.hasChildren && "invisible",
-							)}
-						>
-							<svg
-								viewBox="0 0 8 8"
-								className={cn(
-									"h-2 w-2 transition-transform motion-reduce:transition-none",
-									row.open && "rotate-90",
-								)}
-								aria-hidden="true"
-							>
-								<path d="M2.5 1.5 5.5 4l-3 2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
-							</svg>
-						</button>
-						<button
-							type="button"
-							tabIndex={-1}
-							onClick={() => onSelect(node.selector)}
-							className="flex h-full min-w-0 flex-1 cursor-default items-center gap-1 text-left"
-						>
-							{row.number === null ? null : (
-								<span className="shrink-0 text-secondary/70 type-detail">{row.number}</span>
-							)}
-							<span
-								className={cn("shrink-0 type-value", node.component !== null && "text-primary")}
-							>{`<${label}>`}</span>
-							{node.words === null ? null : (
-								<span className="min-w-0 truncate text-primary/80 type-detail">{node.words}</span>
-							)}
-							{row.file === null ? null : (
-								<span className="ml-auto shrink-0 pl-2 text-secondary/70 type-detail">{row.file}</span>
-							)}
-						</button>
-					</div>
+					/>
 				);
 			})}
 		</div>

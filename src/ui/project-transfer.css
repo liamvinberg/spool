@@ -3,11 +3,3 @@ iframe[data-project-drop-shield] {
 	/* biome-ignore lint/complexity/noImportantStyles: override live-frame inline pointer events during an external file drag */
 	pointer-events: none !important;
 }
-.project-transfer-indicator {
-	animation: toast-sweep 1.2s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-	.project-transfer-indicator {
-		animation: none;
-	}
-}

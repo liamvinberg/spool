@@ -6,24 +6,22 @@ import {
 	useEffect,
 	useLayoutEffect,
 	useRef,
-	useState,
 } from "react";
 import { cn } from "../cn";
+import { NumberField } from "../primitives/inputs";
+import { PropertyRow } from "../primitives/structure";
 
 /**
- * The rail's controls (#258): a section, a row, and a number box, which is
+ * The rail's controls (#258): a scrubbing row and a number box, which is
  * all the frame's own geometry needs.
  *
  * A field is chrome-less until the pointer is on it, so the rail reads as a
  * list of values rather than as a wall of boxes.
  */
 
-/** Shared app roles for the rail's labels, values and asides */
-export const LABEL = "type-detail";
+/** Shared app roles for the rail's values and asides */
 export const VALUE = "type-value";
 export const FAINT = "text-secondary type-detail";
-export const BOX =
-	"rounded-xs border border-transparent hover:border-line-default hover:bg-surface-panel focus-within:border-line-strong focus-within:bg-surface-panel";
 
 /** How far the pointer travels for one step of a scrub. */
 export const SCRUB_PX = 4;
@@ -54,30 +52,9 @@ export function scrubStep(carried: number, movement: number, coarse: boolean): {
  */
 const RowScrub = createContext<((event: ReactPointerEvent<HTMLElement>) => void) | null>(null);
 
-/* ---------- the section and the row ---------- */
+/* ---------- the row ---------- */
 
-export function Section({
-	name,
-	reason,
-	children,
-}: {
-	name: string;
-	/** why this section's rows refuse, said once rather than on every row */
-	reason?: string | undefined;
-	children: ReactNode;
-}) {
-	return (
-		<div className="border-line-strong border-t">
-			<div className="flex h-6 items-center gap-2 px-2.5">
-				<span className={cn("shrink-0 text-secondary", LABEL)}>{name}</span>
-				{reason === undefined ? null : <span className={cn("ml-auto min-w-0 truncate", FAINT)}>{reason}</span>}
-			</div>
-			{children}
-		</div>
-	);
-}
-
-/** the name on the left, one control on the right, a hairline under each */
+/** a property row whose label scrubs its number */
 export function Row({
 	name,
 	onScrub,
@@ -243,36 +220,28 @@ export function Row({
 		}
 	};
 	return (
-		<div
+		<PropertyRow
 			data-properties-row={name}
-			className="grid h-7 grid-cols-[92px_1fr] items-center gap-2 border-line-default/80 border-b px-2.5"
+			label={
+				<span
+					data-scrub=""
+					onPointerDown={down}
+					className={cn("block truncate select-none", scrubbable && "cursor-ew-resize hover:text-primary")}
+				>
+					{name}
+				</span>
+			}
 		>
-			<span
-				onPointerDown={down}
-				className={cn(
-					"truncate select-none text-secondary",
-					LABEL,
-					scrubbable && "cursor-ew-resize hover:text-primary",
-				)}
-			>
-				{name}
-			</span>
-			<div className="flex min-w-0 items-center gap-1">
-				<RowScrub.Provider value={scrubbable ? down : null}>{children}</RowScrub.Provider>
-			</div>
-		</div>
+			<RowScrub.Provider value={scrubbable ? down : null}>{children}</RowScrub.Provider>
+		</PropertyRow>
 	);
 }
 
 /* ---------- a number the frame's own file holds ---------- */
 
 /**
- * The number in the box, what it measures faint beside it.
- *
- * Arrows step one unit and shift steps ten, which is the same gesture the
- * row's scrub makes with the pointer. The draft is the field's own until it is
- * committed, so a half-typed number is never written: Enter and blur commit
- * it, and Escape puts back what the file says.
+ * The properties panel's number: the system's quiet NumberField, which a row
+ * can scrub. Arrows step the way the row's scrub does with the pointer.
  */
 export function NumField({
 	value,
@@ -280,65 +249,33 @@ export function NumField({
 	onCommit,
 	onStep,
 }: {
-	value: string;
+	value: number;
 	/** what the number measures: `px` */
 	readout?: string | undefined;
-	onCommit: (typed: string) => void;
+	onCommit: (typed: number) => void;
 	/** whole units, signed: arrows send 1, shift sends 10 */
-	onStep?: ((units: number) => void) | undefined;
+	onStep: (units: number) => void;
 }) {
-	const [draft, setDraft] = useState<string | null>(null);
 	const scrub = useContext(RowScrub);
-	/** the draft as the handlers read it, which is a render ahead of the state */
-	const typed = useRef<string | null>(null);
-	const finish = (commit: boolean) => {
-		const held = typed.current;
-		typed.current = null;
-		setDraft(null);
-		if (commit && held !== null && held !== value) onCommit(held);
-	};
 	return (
-		<label className={cn("flex min-w-0 flex-1 items-center gap-1 px-1", BOX)}>
-			<input
-				value={draft ?? value}
-				spellCheck={false}
+		<NumberField
+			className="flex-1"
+			value={value}
+			unit={readout}
+			onValueChange={onCommit}
+			onStep={onStep}
+			inputProps={{
 				// the number is the thing a hand reaches for: a press on it scrubs
 				// the row's own value the moment the pointer travels (#321)
-				{...(scrub === null ? {} : { onPointerDown: scrub })}
-				onDragStart={(event) => {
+				...(scrub === null ? {} : { onPointerDown: scrub }),
+				onDragStart: (event) => {
 					// Native dragging of the selected number cancels the scrub's pointer on Linux.
 					if (scrub !== null) event.preventDefault();
-				}}
-				onChange={(event) => {
-					typed.current = event.target.value;
-					setDraft(event.target.value);
-				}}
-				// Focus alone selects the number to type over.
-				onFocus={(event) => event.target.select()}
-				onBlur={() => finish(true)}
-				onKeyDown={(event) => {
-					event.stopPropagation();
-					if (event.nativeEvent.isComposing) return;
-					if (event.key === "Enter") {
-						event.preventDefault();
-						finish(true);
-						event.currentTarget.blur();
-					}
-					if (event.key === "Escape") {
-						event.preventDefault();
-						finish(false);
-						event.currentTarget.blur();
-					}
-					if ((event.key === "ArrowUp" || event.key === "ArrowDown") && onStep !== undefined) {
-						event.preventDefault();
-						finish(false);
-						onStep((event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1));
-					}
-				}}
-				className={cn("min-w-0 flex-1 bg-transparent text-primary outline-none", VALUE)}
-			/>
-			{readout === undefined ? null : <span className={cn("shrink-0", FAINT)}>{readout}</span>}
-		</label>
+				},
+				// the canvas's own keys stay out of a number being typed
+				onKeyDown: (event) => event.stopPropagation(),
+			}}
+		/>
 	);
 }
 

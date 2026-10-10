@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
 import { coverUrl } from "../api";
+import { Button, ButtonGroup } from "../primitives/actions";
 import { Thumbnail } from "../primitives/display";
 import { RadioCard, RadioGroup } from "../primitives/selection";
 
@@ -131,25 +132,21 @@ export function ExportDialog({
 					</p>
 				)}
 
-				<div className="flex items-center justify-end gap-2 border-line-strong border-t px-4 py-3">
-					<button
-						type="button"
-						disabled={exporting}
-						className="flex h-8 items-center rounded-sm px-3 text-secondary disabled:opacity-50 type-control"
-						onClick={onCancel}
-					>
+				<ButtonGroup align="end" className="border-line-strong border-t px-4 py-3">
+					<Button size="lg" variant="ghost" disabled={exporting} onClick={onCancel}>
 						Cancel
-					</button>
-					<button
+					</Button>
+					<Button
 						ref={primaryRef}
-						type="button"
+						size="lg"
+						variant="primary"
 						disabled={exporting}
-						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-accent-strong px-4 font-medium text-on-accent disabled:opacity-70 type-control"
+						loading={exporting}
 						onClick={() => onExport(format)}
 					>
 						{exporting ? "Exporting…" : "Export"}
-					</button>
-				</div>
+					</Button>
+				</ButtonGroup>
 			</div>
 		</div>
 	);

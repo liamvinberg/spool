@@ -106,7 +106,7 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 	expect(await held()).toBe("main > div > button:nth-of-type(2)");
 
 	// a row click selects; the keyboard stays the canvas's, so the keys walk from it
-	await row("main > h1").locator("button").nth(1).click();
+	await row("main > h1").locator("button").first().click();
 	await expect.poll(held).toBe("main > h1");
 	await page.keyboard.press("Tab");
 	await expect.poll(held).toBe("main > div");
@@ -117,7 +117,7 @@ it("opens the frame's elements under its row in Edit, and reads as one selection
 	// measured against the file as the selection read it; the tree reads the
 	// frame again and the row goes with it
 	const read = page.waitForResponse((response) => response.url().endsWith("/rungs"));
-	await row("main > p").locator("button").nth(1).click();
+	await row("main > p").locator("button").first().click();
 	await expect.poll(held).toBe("main > p");
 	await read;
 	await page.keyboard.press("Backspace");
@@ -227,6 +227,6 @@ it("keeps a long tree to its own scroll, and scrolls the held row into view insi
 		)
 		.toBe(true);
 	// and the frame's row is lit while one of its elements is held
-	expect(await frameRow.getAttribute("class")).toContain("bg-surface-panel");
+	expect(await frameRow.getAttribute("class")).toContain("bg-state-selected");
 	expect(await rail.locator('button[aria-label="grid frame"]').getAttribute("aria-pressed")).toBe("false");
 });

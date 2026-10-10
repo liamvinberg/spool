@@ -4,6 +4,7 @@ import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
+import { Button } from "../primitives/actions";
 import { SpinRing } from "../primitives/display";
 import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
 import { composerWidth, stripOf } from "./agent-chips";
@@ -1613,14 +1614,9 @@ function QueuedAsk({
 			    in the same place when it goes out, rather than jumping to it */}
 			<span className="absolute top-[3px] bottom-[31px] left-0 w-0 border-line-strong border-l-2 border-dashed" />
 			<p className="whitespace-pre-wrap text-secondary type-body">{message.text}</p>
-			<button
-				type="button"
-				onClick={onTakeBack}
-				aria-label={`take back ${message.text}`}
-				className="-ml-1.5 h-7 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary type-control"
-			>
+			<Button variant="ghost" className="-ml-3" onClick={onTakeBack} aria-label={`take back ${message.text}`}>
 				Take back
-			</button>
+			</Button>
 		</div>
 	);
 }

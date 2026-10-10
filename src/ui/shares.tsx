@@ -12,6 +12,7 @@ import {
 } from "../share-view";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
+import { TextField } from "./primitives/inputs";
 
 /** Said on the window whenever this tab changed a project's shares, so every Shared control reads them again. */
 export const SHARES_CHANGED = "spool-shares-change";
@@ -218,12 +219,11 @@ function OpenedShare({
 							void add();
 						}}
 					>
-						<input
-							aria-label="Add someone by email"
+						<TextField
+							label="Add someone by email"
 							placeholder="Add someone by email"
 							value={adding}
-							onChange={(event) => setAdding(event.target.value)}
-							className="h-7 w-full rounded-sm border border-secondary bg-surface-window px-2 text-primary outline-none type-detail placeholder:text-secondary focus:border-primary"
+							onValueChange={setAdding}
 						/>
 					</form>
 				</>

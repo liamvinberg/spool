@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { cancelProjectTransfer, exportProject, fetchProjection, importProject } from "./api";
-import { type Notice, Toast } from "./canvas/toast";
+import { type Notice, Toast as NoticeToast } from "./canvas/toast";
 import { ConfirmDialog } from "./confirm-dialog";
 import { desktopWindow } from "./desktop-window";
+import { TextAction, Toast } from "./primitives/feedback";
 import type { TabProject } from "./tab-strip";
 import "./project-transfer.css";
 
@@ -275,26 +276,16 @@ export function useProjectTransfer(onImported: (project: TabProject) => Promise<
 					</div>
 				)}
 				{busy && (
-					<div
-						role="status"
-						className="project-transfer-progress fixed bottom-20 left-1/2 z-50 w-[360px] -translate-x-1/2 overflow-hidden rounded-md border border-line-strong bg-surface-raised"
-					>
-						<div className="flex items-center justify-between px-4 py-3">
-							<p className="type-control">{busy.label}</p>
-							<button
-								type="button"
-								className="text-secondary type-control hover:text-primary"
-								onClick={busy.cancel}
-							>
-								Cancel
-							</button>
-						</div>
-						<div className="h-px bg-line-strong">
-							<div className="project-transfer-indicator h-px w-1/3 bg-accent" />
-						</div>
+					<div className="-translate-x-1/2 fixed bottom-20 left-1/2 z-50">
+						<Toast
+							className="w-toast"
+							message={busy.label}
+							action={<TextAction onClick={busy.cancel}>Cancel</TextAction>}
+							progress
+						/>
 					</div>
 				)}
-				{notice && <Toast notice={notice} />}
+				{notice && <NoticeToast notice={notice} />}
 			</>
 		),
 	};
