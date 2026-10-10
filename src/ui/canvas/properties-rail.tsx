@@ -3,9 +3,10 @@ import { pageName } from "../../page-path";
 import type { Geometry, RungRead } from "../api";
 import { readRungs } from "../api";
 import { cn } from "../cn";
+import { Bar, PropertyValue, ScrollArea, Section } from "../primitives/structure";
 import { MenuItem } from "./context-menu";
 import type { PickedHit } from "./protocol";
-import { NumField, popoverAt, Row, Section, useCloseOnPressAway, VALUE } from "./rail-fields";
+import { NumField, popoverAt, Row, useCloseOnPressAway, VALUE } from "./rail-fields";
 
 /**
  * The properties rail (#256): the right column, holding one thing.
@@ -86,9 +87,9 @@ export function PropertiesRail({
 	return (
 		<div data-properties-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-surface-window">
 			<Head held={held} acts={acts} />
-			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
+			<ScrollArea className="flex-1 [&>section:first-child]:border-t-0">
 				<Body held={held} acts={acts} />
-			</div>
+			</ScrollArea>
 			{recovery}
 		</div>
 	);
@@ -225,14 +226,11 @@ function Head({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 	// the pane's own header already says what this is; with no frame held there is nothing to add
 	if (frame === null && !(acts.onAsk && held)) return null;
 	return (
-		<div className="shrink-0 border-line-default border-b">
-			<div className="flex h-9 items-center gap-2 px-2.5">
-				<span data-properties-head="" className={cn("min-w-0 flex-1 truncate", VALUE)}>
-					{frame === null ? null : pageName(frame)}
-				</span>
-				{acts.onAsk && held ? <Actions onAsk={acts.onAsk} /> : null}
-			</div>
-		</div>
+		<Bar
+			face="mono"
+			title={<span data-properties-head="">{frame === null ? null : pageName(frame)}</span>}
+			actions={acts.onAsk && held ? <Actions onAsk={acts.onAsk} /> : undefined}
+		/>
 	);
 }
 
@@ -333,7 +331,7 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 	return (
 		<>
 			{(["position", "size"] as const).map((section) => (
-				<Section key={section} name={section} reason="frame.json">
+				<Section key={section} title={section} meta="frame.json">
 					{AXES.filter((axis) => axis.of === section).map((axis) => (
 						<Row
 							key={axis.key}
@@ -375,10 +373,10 @@ function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
 		["frames", String(held.count)],
 	];
 	return (
-		<Section name="page" reason="design/frames">
+		<Section title="page" meta="design/frames">
 			{rows.map(([name, value]) => (
 				<Row key={name} name={name}>
-					<span className={cn("min-w-0 truncate", VALUE)}>{value}</span>
+					<PropertyValue value={value} />
 				</Row>
 			))}
 		</Section>
