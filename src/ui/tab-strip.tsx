@@ -3,32 +3,44 @@ import {
 	cancelFrame,
 	cubicBezier,
 	frame,
-	LayoutGroup,
 	MotionConfig,
 	motion,
-	useIsPresent,
+	usePresence,
 	useReducedMotion,
 } from "motion/react";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ProjectIcon } from "./api";
 import { cn } from "./cn";
+import { CloseIcon, HomeIcon, PlusIcon } from "./icons";
+import { IconButton } from "./primitives/actions";
 import { ProjectMark } from "./project-icon";
 import { ProjectTabMenu } from "./project-tab-menu";
+import { WindowEdgeContext } from "./window-edge";
 
 /**
- * The open projects, as tabs you can arrange.
+ * Home and the open projects, as tabs you can arrange.
+ *
+ * The focused tab is the sheet: one shape, the page below reaching up into the
+ * bar, that travels from tab to tab and pours into what is under it through
+ * flared feet. It is the canvas under a project and the window under Home. The
+ * tabs start at the window's left side (`window-edge.ts`), so a project's sheet
+ * lands on the canvas; Home keeps the column above that side.
+ *
+ * A full strip compresses, as a browser's does: every tab gives up width alike
+ * down to its mark, the focused one keeps its name, and after a close by the
+ * pointer the widths hold until the pointer leaves the strip, so the next close
+ * button lands under it. Past that the strip scrolls.
  *
  * A tab is a place rather than a list entry, so the order is the person's: drag
  * one sideways and the others step aside for it, exactly as a browser's do. The
- * arrangement is machine state — the same session file the tabs are read from —
+ * arrangement is machine state (the same session file the tabs are read from),
  * so it survives the reload it would otherwise be lost on.
  *
  * Opening and closing are the slot's own width: a new tab grows from nothing in
  * its place and a closed one shrinks to nothing in its place, staying in the row
  * the whole way, so the tabs after it are carried by the layout itself rather
- * than by a second animation chasing the first. The spacing between tabs lives
- * inside each slot for the same reason: a slot at zero width leaves no gap behind.
+ * than by a second animation chasing the first.
  *
  * A drag is arithmetic over the slots' boxes: the tab under the pointer is
  * translated to wherever keeps it under the pointer, and the tabs it has passed
@@ -51,14 +63,46 @@ export interface TabProject {
 
 /** how far a press travels before it is a drag rather than a click */
 const SLOP = 4;
-/** the house curve, which every other transition in the app already wears */
-const CURVE = "cubic-bezier(0.23,1,0.32,1)";
-const EASE = [0.23, 1, 0.32, 1] as const;
-const easing = cubicBezier(...EASE);
-/** how long a tab takes to open, close or step aside, and the dropped one takes to land */
-const SETTLE_MS = 200;
-/** how long the strip takes to scroll the focused tab into view */
-const REVEAL_MS = 260;
+/** the sheet's corners and its feet, radius-md */
+const FOOT = 8;
+/** the sheet stands from this far under the bar's top to its floor */
+const SHEET_TOP = 4;
+/** the sheet's target when Home is focused */
+const HOME = "home";
+/** below this a tab is too narrow for its name, and a tab not focused drops its close */
+const NARROW = 88;
+
+/**
+ * Between 88 and 56 wide the name fades out and the mark eases to the middle; at 56
+ * and under it is centred. Continuous at both ends, so a tab compressing or opening
+ * never jumps. Both read the slot's width, which `--tw` carries unitless.
+ */
+const FACE_PAD =
+	"clamp(var(--spacing) * 3, min((var(--tw, 200) * 1px - var(--spacing) * 4) / 2, var(--spacing) * 3 + (88px - var(--tw, 200) * 1px) / 4), var(--spacing) * 5)";
+const NAME_SHOWN = "pow(clamp(0, (var(--tw, 200) - 56) / 32, 1), 3)";
+const NAME_FADE = "linear-gradient(to right, black calc(100% - var(--spacing) * 3), transparent)";
+
+/** Shipped values of the motion scale, for a page that carries no theme (a unit test's). */
+const UNTHEMED = { base: 180, slow: 260, snap: [0.32, 0.72, 0, 1] };
+
+/**
+ * The motion scale as the page has it, so the script moves on the same tokens as
+ * the styles and reduced motion, which zeroes the scale, stills both.
+ */
+function motionScale(element: Element) {
+	const style = getComputedStyle(element);
+	const ms = (name: "base" | "slow") => {
+		const value = style.getPropertyValue(`--transition-duration-${name}`).trim();
+		if (value === "") return UNTHEMED[name];
+		return Number.parseFloat(value) * (value.endsWith("ms") ? 1 : 1000);
+	};
+	const snap = style
+		.getPropertyValue("--ease-snap")
+		.match(/-?[\d.]+/g)
+		?.map(Number);
+	const curve = (snap?.length === 4 ? snap : UNTHEMED.snap) as [number, number, number, number];
+	return { base: ms("base"), slow: ms("slow"), curve };
+}
 
 interface TabBox {
 	readonly left: number;
@@ -101,6 +145,7 @@ interface Landing {
 export function TabStrip({
 	tabs,
 	focused,
+	onHome,
 	onFocus,
 	onClose,
 	onReorder,
@@ -110,7 +155,9 @@ export function TabStrip({
 	onRemoveIcon,
 }: {
 	tabs: readonly TabProject[];
+	/** the focused project's root; null is Home */
 	focused: string | null;
+	onHome: () => void;
 	onFocus: (root: string) => void;
 	onClose: (root: string) => void;
 	/** the roots in the order they were dragged into */
@@ -124,10 +171,13 @@ export function TabStrip({
 	onRemoveIcon?: (project: TabProject) => void;
 }) {
 	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
+	const nav = useRef<HTMLElement | null>(null);
+	const column = useRef<HTMLDivElement | null>(null);
 	const strip = useRef<HTMLDivElement | null>(null);
-	const layoutId = useId();
 	const reduced = useReducedMotion() === true;
-	const duration = reduced ? 0 : SETTLE_MS / 1000;
+	const scale = useMemo(() => motionScale(document.documentElement), []);
+	const settleMs = reduced ? 0 : scale.base;
+	const easing = useMemo(() => cubicBezier(...scale.curve), [scale]);
 	/** the last input was a key, so a switch of tab is a jump rather than a slide */
 	const [keyboard, setKeyboard] = useState(true);
 	const live = useRef<DragLive | null>(null);
@@ -143,15 +193,19 @@ export function TabStrip({
 	const mounted = useRef(false);
 	/** the scroll carrying the focused tab into view */
 	const reveal = useRef<{ stop: () => void } | null>(null);
+	/** each tab's width when one was closed under the pointer, held until the pointer leaves */
+	const [held, setHeld] = useState<ReadonlyMap<string, number> | null>(null);
+	// a tab opened since is a new row, and nothing in it is waiting under the pointer
+	const holding = held !== null && tabs.every((tab) => held.has(tab.root)) ? held : null;
 
 	const tabsRef = useRef(tabs);
 	tabsRef.current = tabs;
 	const focusedRef = useRef(focused);
 	focusedRef.current = focused;
 
-	// The highlight slides when a click moves it and jumps when a key does, as a
-	// switch should feel under each. A focus handed on because its tab closed
-	// slides either way: the tab it leaves is still visibly going.
+	// The sheet slides when a click moves it and jumps when a key does, as a switch
+	// should feel under each. A focus handed on because its tab closed slides either
+	// way: the tab it leaves is still visibly going.
 	const lastFocus = useRef(focused);
 	const handedOn =
 		lastFocus.current !== focused &&
@@ -160,7 +214,23 @@ export function TabStrip({
 	useEffect(() => {
 		lastFocus.current = focused;
 	});
-	const selectionDuration = drag !== null || quiet || (keyboard && !handedOn) ? 0 : duration;
+	const travel = drag !== null || quiet || (keyboard && !handedOn) ? 0 : scale.slow;
+
+	const sheet = useSheet({ layer: nav, strip, target: focused ?? HOME, travel, curve: scale.curve });
+
+	// The tabs start where the window's left side ends, and follow it as it moves.
+	const edge = useContext(WindowEdgeContext);
+	useLayoutEffect(() => {
+		const element = column.current;
+		if (edge === null || element === null) return;
+		return edge.follow((at, moved) => {
+			const width = at - (nav.current?.getBoundingClientRect().left ?? 0);
+			// no side at all leaves Home its own width
+			element.style.width = width <= 0 ? "" : `${width}px`;
+			element.style.transition = moved && !reduced ? `width ${scale.slow}ms ${cubicCss(scale.curve)}` : "none";
+			sheet();
+		});
+	}, [edge, reduced, scale, sheet]);
 
 	useEffect(() => {
 		mounted.current = true;
@@ -193,13 +263,13 @@ export function TabStrip({
 		const start = performance.now();
 		// after motion has written the frame's widths, so the growing tab is read as painted
 		const tick = () => {
-			const progress = Math.min(1, (performance.now() - start) / REVEAL_MS);
+			const progress = scale.slow <= 0 ? 1 : Math.min(1, (performance.now() - start) / scale.slow);
 			step(easing(progress));
 			if (progress === 1) stopReveal();
 		};
 		frame.postRender(tick, true);
 		reveal.current = { stop: () => cancelFrame(tick) };
-	}, [focused, reduced, stopReveal]);
+	}, [focused, reduced, stopReveal, scale, easing]);
 
 	useEffect(() => stopReveal, [stopReveal]);
 
@@ -224,7 +294,7 @@ export function TabStrip({
 	 * it, held there by a transform. So the swap has to be invisible: the order
 	 * changes and the transforms drop to zero in one commit, with transitions off
 	 * for that frame. Leave them on and each tab animates from its offset back to
-	 * zero while the layout under it has already jumped — the same distance
+	 * zero while the layout under it has already jumped: the same distance
 	 * travelled twice, which is the shudder this replaced.
 	 */
 	const land = useCallback(
@@ -242,9 +312,9 @@ export function TabStrip({
 				},
 			};
 			landing.current = pending;
-			settle.current = setTimeout(pending.run, reduced ? 0 : SETTLE_MS);
+			settle.current = setTimeout(pending.run, settleMs);
 		},
-		[reduced],
+		[settleMs],
 	);
 
 	const stopDrag = useCallback(
@@ -262,7 +332,7 @@ export function TabStrip({
 				return;
 			}
 			// the tab stops being carried and travels the rest of the way itself, to the
-			// exact left edge its slot has — a drop is a hand letting go, not a cut
+			// exact left edge its slot has: a drop is a hand letting go, not a cut
 			const element = strip.current;
 			const boxes = element === null ? null : measure(element, current.roots)?.boxes;
 			const rest = boxes == null ? shown.dx : resting(boxes, shown.from, shown.to);
@@ -415,51 +485,67 @@ export function TabStrip({
 		};
 	}
 
+	/** Closed under the pointer: every tab keeps its width, so the next close lands where this one was. */
+	const closeHolding = (root: string) => {
+		const element = strip.current;
+		if (element !== null) {
+			const widths = new Map<string, number>();
+			for (const slot of element.querySelectorAll<HTMLElement>("[data-tab-slot]")) {
+				if (slot.dataset.tabSlot !== undefined)
+					widths.set(slot.dataset.tabSlot, slot.getBoundingClientRect().width);
+			}
+			setHeld(widths);
+		}
+		onClose(root);
+	};
+
+	const home = focused === null;
 	return (
-		<MotionConfig reducedMotion="user" transition={{ duration, ease: EASE }}>
-			<LayoutGroup id={layoutId}>
-				<nav aria-label="Open projects" className="project-tabs flex items-center min-w-0 h-full">
-					<motion.div
-						ref={strip}
-						layoutScroll
-						className="project-tabs-scroll relative z-[1] flex items-center min-w-0 h-full px-[1px] py-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none]"
-					>
-						<AnimatePresence initial={false}>
-							{tabs.map((tab, index) => (
-								<Tab
-									key={tab.root}
-									tab={tab}
-									active={focused === tab.root}
-									shift={shiftOf(drag, tab.root)}
-									lifted={drag?.root === tab.root}
-									carried={drag?.root === tab.root && !drag.settling}
-									layout={drag === null && !quiet}
-									still={quiet || reduced}
-									opening={mounted.current && !reduced}
-									selectionDuration={selectionDuration}
-									onPress={(event) => pressTab(event, tab.root, index)}
-									onPick={() => {
-										if (!justDragged.current) onFocus(tab.root);
-									}}
-									onClose={() => onClose(tab.root)}
-									onMenu={(x, y, anchor) => setMenu({ project: tab, x, y, anchor })}
-								/>
-							))}
-						</AnimatePresence>
-					</motion.div>
-					<button
-						type="button"
-						className="project-tabs-plus relative flex items-center justify-center shrink-0 w-[32px] h-[30px] ml-[6px] rounded-[6px] [color:var(--color-secondary)] cursor-pointer before:content-[''] before:absolute before:[inset:3px_4px] before:rounded-[5px] before:pointer-events-none [&_svg]:relative [&:hover]:before:[background:light-dark(#00000006,#ffffff06)] [&:hover]:text-primary"
-						onClick={onPick}
-						title="New project"
-						aria-label="New project"
-					>
-						<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-							<path d="M6 1.5v9M1.5 6h9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-						</svg>
-					</button>
-				</nav>
-			</LayoutGroup>
+		<MotionConfig reducedMotion="user" transition={{ duration: settleMs / 1000, ease: scale.curve }}>
+			<nav
+				ref={nav}
+				aria-label="Open projects"
+				className="project-tabs relative flex h-full min-w-0 items-stretch"
+				onPointerLeave={() => setHeld(null)}
+			>
+				<Sheet target={sheet} home={home} />
+				{/* Home stands over the window's left side, whatever its width */}
+				<div ref={column} className="relative z-[1] flex h-full shrink-0 pl-2">
+					<HomeTab home={home} onHome={onHome} />
+				</div>
+				<motion.div
+					ref={strip}
+					layoutScroll
+					className="project-tabs-scroll relative z-[1] flex h-full min-w-0 overflow-x-auto overflow-y-hidden pl-2 [scrollbar-width:none]"
+				>
+					<AnimatePresence initial={false}>
+						{tabs.map((tab, index) => (
+							<Tab
+								key={tab.root}
+								tab={tab}
+								active={focused === tab.root}
+								hold={holding?.get(tab.root)}
+								shift={shiftOf(drag, tab.root)}
+								lifted={drag?.root === tab.root}
+								carried={drag?.root === tab.root && !drag.settling}
+								layout={drag === null && !quiet}
+								still={quiet || reduced}
+								opening={mounted.current && !reduced}
+								closeMs={reduced ? 0 : scale.slow}
+								onPress={(event) => pressTab(event, tab.root, index)}
+								onPick={() => {
+									if (!justDragged.current) onFocus(tab.root);
+								}}
+								onClose={(byPointer) => (byPointer ? closeHolding(tab.root) : onClose(tab.root))}
+								onMenu={(x, y, anchor) => setMenu({ project: tab, x, y, anchor })}
+							/>
+						))}
+					</AnimatePresence>
+				</motion.div>
+				<div className="relative z-[1] flex shrink-0 items-center pt-1 pl-1">
+					<IconButton icon={<PlusIcon />} label="New project" onClick={onPick} />
+				</div>
+			</nav>
 			{menu && (
 				<ProjectTabMenu
 					{...menu}
@@ -476,24 +562,93 @@ export function TabStrip({
 	);
 }
 
+const cubicCss = (curve: readonly number[]) => `cubic-bezier(${curve.join(",")})`;
+
+/** a tab's label: the whole face is the hit area, the name and its mark inside */
+const LABEL =
+	"relative flex h-full min-w-0 flex-1 items-center gap-2 pt-1 type-control text-secondary transition-colors duration-fast ease-out group-hover/tab:text-primary aria-[current=page]:text-primary";
+
+function HomeTab({ home, onHome }: { home: boolean; onHome: () => void }) {
+	const face = useRef<HTMLDivElement>(null);
+	useWidth(face);
+	return (
+		<div ref={face} data-sheet-target={HOME} className="group/tab relative flex h-full min-w-0">
+			<Wash lit={home} />
+			<button
+				type="button"
+				className={cn(LABEL, "app-home pr-3")}
+				style={{ paddingLeft: FACE_PAD }}
+				onClick={onHome}
+				aria-current={home ? "page" : undefined}
+				title="Home"
+			>
+				<span className="flex size-4 shrink-0 items-center justify-center">
+					<HomeIcon />
+				</span>
+				<Name>Home</Name>
+			</button>
+		</div>
+	);
+}
+
+/** The wash under the pointer, inset from every edge so it never reads as the sheet. */
+function Wash({ lit }: { lit: boolean }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				"pointer-events-none absolute inset-x-0.5 top-2 bottom-1 rounded-sm bg-state-hover-raised opacity-0 transition-opacity duration-fast ease-out",
+				!lit && "group-hover/tab:opacity-100",
+			)}
+		/>
+	);
+}
+
+function Name({ children }: { children: React.ReactNode }) {
+	return (
+		<span
+			className="project-tab-name min-w-0 flex-1 overflow-hidden whitespace-nowrap pr-3 text-left"
+			style={{ maskImage: NAME_FADE, WebkitMaskImage: NAME_FADE, opacity: NAME_SHOWN }}
+		>
+			{children}
+		</span>
+	);
+}
+
+/** Carry an element's width as `--tw`, which its face lays itself out against, and say when it is narrow. */
+function useWidth(ref: RefObject<HTMLElement | null>) {
+	useLayoutEffect(() => {
+		const element = ref.current;
+		if (element === null || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(([entry]) => {
+			const width = entry?.borderBoxSize?.[0]?.inlineSize ?? entry?.contentRect.width ?? 0;
+			element.style.setProperty("--tw", width.toFixed(1));
+			element.toggleAttribute("data-narrow", width < NARROW);
+		});
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [ref]);
+}
+
 /**
  * One tab in its slot.
  *
- * The slot is what opens and closes: its width runs between nothing and the
- * tab's own, clipped sideways while it does so the tab is uncovered rather than
- * squeezed. A closing tab is already gone as far as anything but the eye is
- * concerned — not a target, not focusable, not a box a drag measures.
+ * The slot is what opens, closes and compresses: its width runs between nothing
+ * and its share of the strip, clipped sideways so the tab is uncovered rather
+ * than squeezed. A closing tab is already gone as far as anything but the eye is
+ * concerned: not a target, not focusable, not a box a drag measures.
  */
 function Tab({
 	tab,
 	active,
+	hold,
 	shift,
 	lifted,
 	carried,
 	layout,
 	still,
 	opening,
-	selectionDuration,
+	closeMs,
 	onPress,
 	onPick,
 	onClose,
@@ -501,75 +656,110 @@ function Tab({
 }: {
 	tab: TabProject;
 	active: boolean;
+	/** the width it keeps after a close under the pointer */
+	hold: number | undefined;
 	shift: number;
 	lifted: boolean;
 	carried: boolean;
 	layout: boolean;
 	still: boolean;
 	opening: boolean;
-	selectionDuration: number;
+	closeMs: number;
 	onPress: (event: React.PointerEvent<HTMLElement>) => void;
 	onPick: () => void;
-	onClose: () => void;
+	onClose: (byPointer: boolean) => void;
 	onMenu: (x: number, y: number, anchor: HTMLElement) => void;
 }) {
-	const present = useIsPresent();
-	const [growing, setGrowing] = useState(opening);
-	// a tab reopened while it was still closing grows back from where it got to
-	const [wasPresent, setWasPresent] = useState(present);
-	if (present !== wasPresent) {
-		setWasPresent(present);
-		if (present && opening) setGrowing(true);
-	}
+	const [present, safeToRemove] = usePresence();
 	const slot = useRef<HTMLDivElement | null>(null);
-	// A close shrinks from the width the tab has on screen, named in pixels. Left to
-	// find it from "auto", motion lays the row out once at the end width to measure
-	// it, and a scrolled strip snaps its scroll to that shorter row before a single
-	// frame has moved.
-	const closingFrom = useRef<number | null>(null);
+	useWidth(slot);
 	/** the keyboard was in this tab when it closed, and goes on to a neighbour */
 	const hadFocus = useRef(false);
+	/** the width it had on screen when it closed, read before the close restyles it */
+	const closingFrom = useRef<number | null>(null);
 	if (present) closingFrom.current = null;
 	else if (closingFrom.current === null) {
 		closingFrom.current = slot.current?.getBoundingClientRect().width ?? 0;
 		hadFocus.current = slot.current?.contains(document.activeElement) ?? false;
 	}
+
+	// open from nothing, once: the clamp it grows to is the slot's own, so a full strip's share is where it stops
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a tab opens once
+	useLayoutEffect(() => {
+		const element = slot.current;
+		if (element === null || !opening) return;
+		element.style.transition = "none";
+		element.style.maxWidth = "0px";
+		element.style.minWidth = "0px";
+		element.style.opacity = "0";
+		void element.offsetWidth;
+		element.style.transition = "";
+		element.style.maxWidth = "";
+		element.style.minWidth = "";
+		element.style.opacity = "";
+	}, []);
+
+	// held after a close under the pointer, and let go to the strip's clamp; reopened, from wherever it got to
+	useLayoutEffect(() => {
+		const element = slot.current;
+		if (element === null || !present) return;
+		element.style.maxWidth = hold === undefined ? "" : `${hold}px`;
+		element.style.minWidth =
+			hold === undefined ? "" : `min(${hold}px, var(--spacing-tab-${active ? "min" : "compact"}))`;
+		element.style.opacity = "";
+	}, [present, hold, active]);
+
+	// close from the width it has on screen to nothing
+	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed on presence alone
+	useLayoutEffect(() => {
+		const element = slot.current;
+		if (element === null || present) return;
+		element.style.transition = "none";
+		element.style.maxWidth = `${closingFrom.current ?? 0}px`;
+		element.style.minWidth = "0px";
+		void element.offsetWidth;
+		element.style.transition = "";
+		element.style.maxWidth = "0px";
+		element.style.opacity = "0";
+		const gone = setTimeout(() => safeToRemove?.(), closeMs);
+		return () => clearTimeout(gone);
+	}, [present]);
+
 	useLayoutEffect(() => {
 		if (present || !hadFocus.current) return;
 		hadFocus.current = false;
 		const next = neighbour(slot.current, "nextElementSibling") ?? neighbour(slot.current, "previousElementSibling");
 		next?.querySelector<HTMLElement>(".project-tab-label")?.focus();
 	}, [present]);
+
 	return (
 		<motion.div
 			ref={slot}
 			data-tab-slot={present ? tab.root : undefined}
 			className={cn(
-				"project-tab-slot relative shrink-0 h-[36px]",
+				"project-tab-slot group/slot relative flex h-full w-tab-max max-w-tab-max overflow-x-clip",
+				"transition-[max-width,min-width,opacity] duration-slow ease-snap",
+				active && present ? "min-w-tab-min" : "min-w-tab-compact",
 				lifted && "z-10",
-				(growing || !present) && "overflow-x-clip",
-				!present && "pointer-events-none",
+				// a closing tab gives up its width by its own clock, not to the strip's squeeze
+				present ? "shrink" : "pointer-events-none shrink-0",
 			)}
 			layout={layout && present ? "position" : false}
-			initial={{ width: 0, opacity: 0 }}
-			animate={{ width: "auto", opacity: 1 }}
-			exit={{ width: closingFrom.current === null ? 0 : [closingFrom.current, 0], opacity: 0 }}
-			onAnimationComplete={() => setGrowing(false)}
 		>
 			{/* The slot opens, closes and carries layout moves; the measured drag owns
 			 * only this inner box's transform. */}
 			<div
 				data-tab={present ? tab.root : undefined}
+				data-sheet-target={present ? tab.root : undefined}
 				inert={!present}
 				aria-hidden={present ? undefined : true}
 				className={cn(
-					"project-tab relative flex items-center w-max min-w-[112px] max-w-[228px] h-full mx-[1px] [border-radius:8px_8px_0_0] touch-none select-none [&.is-active_.project-tab-label]:text-primary [&.is-dragging_.project-tab-label]:cursor-grabbing [&:is(:hover,:focus-within,.is-active)_.project-tab-close]:opacity-100 [&:not(.is-active):hover]:[background:light-dark(#00000004,#ffffff04)]",
-					active && present && "is-active",
-					lifted && "is-dragging",
+					"project-tab group/tab relative flex h-full w-full min-w-0 touch-none select-none",
+					lifted && "is-dragging [&_.project-tab-label]:cursor-grabbing",
 				)}
 				style={{
 					transform: `translateX(${shift}px)`,
-					transition: still || carried ? "none" : `transform ${SETTLE_MS}ms ${CURVE}`,
+					transition: still || carried ? "none" : "transform var(--transition-duration-base) var(--ease-snap)",
 				}}
 				onPointerDown={onPress}
 				// the middle button closes a tab, as it does in a browser, and must not
@@ -580,21 +770,14 @@ function Tab({
 				onAuxClick={(event) => {
 					if (event.button !== 1) return;
 					event.preventDefault();
-					onClose();
+					onClose(true);
 				}}
 			>
-				{/* a tab still opening is clipped to its growing slot, which would hide a
-				 * selection sliding in from elsewhere: it opens already selected instead */}
-				{active && present && (
-					<motion.div
-						layoutId="selection"
-						className="project-tab-selection absolute [inset:0_0_-4px] [border-width:1px_1px_0] border-solid border-line-default [border-radius:8px_8px_0_0] bg-surface-canvas pointer-events-none"
-						transition={{ duration: growing ? 0 : selectionDuration, ease: EASE }}
-					/>
-				)}
+				<Wash lit={active} />
 				<button
 					type="button"
-					className="project-tab-label relative flex items-center gap-[10px] flex-auto min-w-0 h-full [padding:0_38px_0_10px] [font:var(--type-control)] [color:var(--color-secondary)] cursor-default after:content-[''] after:absolute after:[inset:0_0_-4px]"
+					className={cn(LABEL, "project-tab-label cursor-default pr-8")}
+					style={{ paddingLeft: FACE_PAD }}
 					onContextMenu={(event) => {
 						event.preventDefault();
 						onMenu(event.clientX, event.clientY, event.currentTarget);
@@ -610,34 +793,235 @@ function Tab({
 					onClick={onPick}
 					title={tab.root}
 				>
-					<ProjectMark
-						project={tab.name}
-						name={tab.name}
-						icon={tab.icon}
-						team={tab.teamAddress}
-						paused={tab.paused}
-						// the gap round the badge is the colour the tab is drawn on
-						cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
-					/>
-					<span className="project-tab-name min-w-0 overflow-hidden whitespace-nowrap text-ellipsis">
-						{tab.name}
+					<span className="flex size-4 shrink-0 items-center justify-center">
+						<ProjectMark
+							project={tab.name}
+							name={tab.name}
+							icon={tab.icon}
+							team={tab.teamAddress}
+							paused={tab.paused}
+							// the gap round the badge is the colour the tab is drawn on
+							cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
+						/>
 					</span>
+					<Name>{tab.name}</Name>
 				</button>
-				<button
-					type="button"
-					className="project-tab-close absolute right-[4px] flex items-center justify-center shrink-0 w-[24px] h-[24px] rounded-[5px] [color:var(--color-secondary)] opacity-0 cursor-pointer [&:hover]:[background:light-dark(#00000012,#ffffff12)] [&:hover]:text-primary"
-					onPointerDown={(event) => event.stopPropagation()}
-					onClick={onClose}
-					aria-label={`Close ${tab.name}`}
-					title="Close tab"
+				<span
+					className={cn(
+						"absolute top-1/2 right-1.5 mt-0.5 flex -translate-y-1/2 opacity-0 transition-opacity duration-fast ease-out has-focus-visible:opacity-100 group-hover/tab:opacity-100",
+						active
+							? "opacity-100"
+							: "group-data-[narrow]/slot:pointer-events-none group-data-[narrow]/slot:opacity-0",
+					)}
 				>
-					<svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-						<path d="m3 3 6 6m0-6L3 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-					</svg>
-				</button>
+					<IconButton
+						icon={<CloseIcon />}
+						label={`Close ${tab.name}`}
+						title="Close tab"
+						size="sm"
+						className="project-tab-close"
+						onPointerDown={(event) => event.stopPropagation()}
+						// a click the pointer made holds the row for the next one; a key's does not
+						onClick={(event) => onClose(event.detail > 0)}
+					/>
+				</span>
 			</div>
 		</motion.div>
 	);
+}
+
+/* ── the sheet ──────────────────────────────────────────────────────── */
+
+/** The sheet's outline: rounded shoulders, and feet that curve out into the floor line. */
+function sheetPath(width: number, height: number, closed: boolean): string {
+	const w = Math.max(width, FOOT * 2);
+	const x0 = FOOT + 0.5;
+	const x1 = FOOT + w - 0.5;
+	const bottom = closed ? height : height - 0.5;
+	const top = 0.5;
+	const path = [
+		`M 0 ${bottom}`,
+		`A ${FOOT} ${FOOT} 0 0 0 ${x0} ${bottom - FOOT}`,
+		`L ${x0} ${top + FOOT}`,
+		`A ${FOOT} ${FOOT} 0 0 1 ${x0 + FOOT} ${top}`,
+		`L ${x1 - FOOT} ${top}`,
+		`A ${FOOT} ${FOOT} 0 0 1 ${x1} ${top + FOOT}`,
+		`L ${x1} ${bottom - FOOT}`,
+		`A ${FOOT} ${FOOT} 0 0 0 ${x1 + FOOT} ${bottom}`,
+	].join(" ");
+	return closed ? `${path} Z` : path;
+}
+
+interface SheetTarget {
+	(): void;
+	svg: RefObject<SVGSVGElement | null>;
+	fill: RefObject<SVGPathElement | null>;
+	line: RefObject<SVGPathElement | null>;
+}
+
+/** The one sheet, drawn wherever `useSheet` puts it, filled with what is under it. */
+function Sheet({ target, home }: { target: SheetTarget; home: boolean }) {
+	return (
+		<svg
+			ref={target.svg}
+			aria-hidden="true"
+			className="project-tab-sheet pointer-events-none absolute left-0 z-[1] overflow-visible opacity-0"
+			style={{ top: SHEET_TOP }}
+		>
+			<path
+				ref={target.fill}
+				className={cn(
+					"transition-[fill] duration-base ease-out",
+					home ? "fill-surface-window" : "fill-surface-canvas",
+				)}
+			/>
+			<path ref={target.line} fill="none" strokeWidth={1} className="stroke-line-default" />
+		</svg>
+	);
+}
+
+/**
+ * Stand the sheet on the focused tab, and carry it there when focus moves.
+ *
+ * Between two tabs it travels for `travel` ms on `curve`; the travel is an offset
+ * from the target that runs out, rather than a path between two fixed boxes, so a
+ * target that is itself moving (sliding into the place of a closed tab, growing,
+ * dragged, scrolled) carries the sheet with it and nothing chases anything. It is
+ * drawn by frames only while something might be moving: a render, a transition
+ * starting under it, a scroll or a resize wakes it, and it sleeps once it has held
+ * still. Returns the wake.
+ */
+function useSheet({
+	layer,
+	strip,
+	target,
+	travel,
+	curve,
+}: {
+	layer: RefObject<HTMLElement | null>;
+	strip: RefObject<HTMLElement | null>;
+	target: string;
+	travel: number;
+	curve: [number, number, number, number];
+}): SheetTarget {
+	const svg = useRef<SVGSVGElement | null>(null);
+	const fill = useRef<SVGPathElement | null>(null);
+	const line = useRef<SVGPathElement | null>(null);
+	const want = useRef({ target, travel });
+	want.current = { target, travel };
+	const wake = useRef(() => {});
+	const retarget = useRef(() => {});
+
+	useLayoutEffect(() => {
+		const element = layer.current;
+		const scroller = strip.current;
+		if (element === null || scroller === null) return;
+		const ease = cubicBezier(...curve);
+		let request = 0;
+		let key: string | undefined;
+		let shown: { left: number; right: number } | null = null;
+		let from: { left: number; right: number } | null = null;
+		let start = 0;
+		let span = 0;
+		let last = "";
+		let still = 0;
+		const boxOf = (name: string) => {
+			const node = element.querySelector<HTMLElement>(`[data-sheet-target="${CSS.escape(name)}"]`);
+			if (node === null) return null;
+			const outer = element.getBoundingClientRect();
+			const box = node.getBoundingClientRect();
+			let left = box.left;
+			let right = box.right;
+			// a tab is shown only as far as the strip shows it
+			if (name !== HOME) {
+				const view = scroller.getBoundingClientRect();
+				left = Math.max(left, view.left);
+				right = Math.min(right, view.right);
+			}
+			return { left: left - outer.left, right: Math.max(left, right) - outer.left };
+		};
+		retarget.current = () => {
+			const { target: name, travel: ms } = want.current;
+			if (name === key) return;
+			// measured as the commit leaves it, on the clock the transitions it set began on, so
+			// a target starting to slide is read where it starts
+			const box = boxOf(name);
+			from =
+				key !== undefined && shown !== null && box !== null && ms > 0
+					? { left: shown.left - box.left, right: shown.right - box.right }
+					: null;
+			key = name;
+			start = Number(document.timeline?.currentTime ?? performance.now());
+			span = ms;
+			wake.current();
+		};
+		const tick = (now: number) => {
+			request = 0;
+			retarget.current();
+			const box = boxOf(want.current.target);
+			let next = box;
+			let moving = false;
+			if (box !== null && from !== null) {
+				const t = Math.min(1, Math.max(0, now - start) / span);
+				if (t < 1) {
+					const rest = 1 - ease(t);
+					next = { left: box.left + from.left * rest, right: box.right + from.right * rest };
+					moving = true;
+				} else from = null;
+			}
+			shown = next;
+			const height = element.clientHeight - SHEET_TOP;
+			const signature = next === null ? "none" : `${next.left.toFixed(2)}|${next.right.toFixed(2)}|${height}`;
+			if (signature === last) still += 1;
+			else {
+				still = 0;
+				last = signature;
+				draw(next, height);
+			}
+			if (moving || still < 6) request = requestAnimationFrame(tick);
+		};
+		const draw = (box: { left: number; right: number } | null, height: number) => {
+			const sheet = svg.current;
+			if (sheet === null || fill.current === null || line.current === null) return;
+			if (box === null) {
+				sheet.style.opacity = "0";
+				return;
+			}
+			const width = box.right - box.left;
+			sheet.style.opacity = "1";
+			sheet.style.left = `${box.left - FOOT}px`;
+			sheet.setAttribute("width", String(width + FOOT * 2));
+			sheet.setAttribute("height", String(height));
+			fill.current.setAttribute("d", sheetPath(width, height, true));
+			line.current.setAttribute("d", sheetPath(width, height, false));
+		};
+		wake.current = () => {
+			still = 0;
+			if (request === 0) request = requestAnimationFrame(tick);
+		};
+		const onWake = () => wake.current();
+		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onWake);
+		observer?.observe(element);
+		element.addEventListener("transitionrun", onWake);
+		scroller.addEventListener("scroll", onWake);
+		wake.current();
+		return () => {
+			cancelAnimationFrame(request);
+			observer?.disconnect();
+			element.removeEventListener("transitionrun", onWake);
+			scroller.removeEventListener("scroll", onWake);
+			wake.current = () => {};
+			retarget.current = () => {};
+		};
+	}, [layer, strip, curve]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new target is what moves the sheet
+	useLayoutEffect(() => retarget.current(), [target]);
+
+	// every render can move something under it
+	useLayoutEffect(() => wake.current());
+
+	return useMemo(() => Object.assign(() => wake.current(), { svg, fill, line }), []);
 }
 
 /**

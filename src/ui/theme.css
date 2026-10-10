@@ -113,6 +113,10 @@
 	--spacing-row: 28px;
 	--spacing-row-roomy: 36px;
 	--spacing-bar: 44px;
+	/* a window tab: as wide as it may be, the focused one's floor, and the mark alone */
+	--spacing-tab-max: 200px;
+	--spacing-tab-min: 112px;
+	--spacing-tab-compact: 40px;
 	--spacing-menu: 200px;
 	--spacing-rail: 248px;
 	--spacing-panel: 300px;
