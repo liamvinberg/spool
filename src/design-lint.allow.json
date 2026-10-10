@@ -81,9 +81,6 @@
 	"src/ui/teams.tsx": {
 		"raw-colour": 6
 	},
-	"src/ui/update-toast.tsx": {
-		"ad-hoc-motion": 1
-	},
 	"src/ui/viewer/phone-play.tsx": {
 		"raw-colour": 10
 	},

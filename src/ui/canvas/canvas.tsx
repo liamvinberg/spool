@@ -6145,7 +6145,14 @@ export function ProjectCanvas({
 					{notice !== null ? <Toast notice={notice} /> : null}
 
 					{pendingTrash !== null && (
-						<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />
+						<TrashToast
+							// a new entry is a new undo window, so its drain starts again
+							key={`${pendingTrash.page}\n${pendingTrash.frames.join("\n")}`}
+							frames={pendingTrash.frames}
+							page={pendingTrash.page}
+							undoMs={TRASH_UNDO_MS}
+							onUndo={undoTrash}
+						/>
 					)}
 					{/* The agent rail stays available beside an empty canvas. The path also
 				    lets somebody use an agent in their own terminal. */}

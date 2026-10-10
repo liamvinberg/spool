@@ -1,8 +1,9 @@
 /**
- * The Trash toast (#23), matching screens v1: raised pill, message, Undo in
- * thread (red binds the destructive action, #13), ⌘Z in muted mono. While it
- * stands, the disk move is deferred — Undo restores the canvas and nothing
- * ever left the folder (#7: ⌘Z answers the toast ahead of the geometry undo).
+ * The Trash toast (#23): what went, Undo in thread (red binds the destructive
+ * action, #13), the chord that does the same, and the undo window draining
+ * along its foot. While it stands, the disk move is deferred: Undo restores the
+ * canvas and nothing ever left the folder (#7: ⌘Z answers the toast ahead of
+ * the geometry undo).
  *
  * A page deleted from the rail is one entry rather than one per frame inside
  * it (#229), and it says how many frames went with it, because a folder is the
@@ -10,29 +11,34 @@
  */
 
 import { accelLabel } from "../../runtime/platform-keys";
+import { TextAction, Toast } from "../primitives/feedback";
 
 const UNDO_CHORD = `${accelLabel()}Z`;
 
 export function TrashToast({
 	frames,
 	page = null,
+	undoMs,
 	onUndo,
 }: {
 	frames: readonly string[];
 	/** The page this entry is about, when a whole folder went. */
 	page?: string | null;
+	/** ms the undo stands for */
+	undoMs: number;
 	onUndo: () => void;
 }) {
 	return (
 		<div
-			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30 flex items-center gap-4 rounded-md border border-line-strong bg-surface-raised px-3.5 py-2.5"
+			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30"
 			onPointerDown={(event) => event.stopPropagation()}
 		>
-			<span className="text-primary type-control">Moved {subjectOf(frames, page)} to Trash</span>
-			<button type="button" className="font-medium text-accent-strong type-control" onClick={onUndo}>
-				Undo
-			</button>
-			<span className="text-secondary type-value">{UNDO_CHORD}</span>
+			<Toast
+				message={`Moved ${subjectOf(frames, page)} to Trash`}
+				action={<TextAction onClick={onUndo}>Undo</TextAction>}
+				keys={UNDO_CHORD}
+				drain={undoMs}
+			/>
 		</div>
 	);
 }

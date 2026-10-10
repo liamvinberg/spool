@@ -32,6 +32,7 @@ import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon } from "../icons";
 import { Divider } from "../primitives/display";
+import { Toast } from "../primitives/feedback";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { Navigator, type NavigatorToast } from "./navigator";
@@ -496,11 +497,8 @@ function ViewerCanvas({
 					)}
 				</div>
 				{toast !== null && (
-					<div
-						role="status"
-						className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 animate-[viewer-page-in_160ms_ease-out] rounded-sm border border-line-strong bg-surface-raised px-3 py-2 text-primary type-detail"
-					>
-						{toast}
+					<div className="-translate-x-1/2 pointer-events-none absolute bottom-4 left-1/2">
+						<Toast message={toast} />
 					</div>
 				)}
 				<div className="absolute right-3 bottom-3 flex h-8 items-center gap-1 rounded-sm border border-line-default bg-surface-window px-1">

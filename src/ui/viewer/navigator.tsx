@@ -9,6 +9,7 @@ import type { PresenceRoom } from "../canvas/presence";
 import { UnseenMark } from "../canvas/unseen-mark";
 import { cn } from "../cn";
 import { ChevronIcon, FolderIcon, FrameIcon, SearchIcon } from "../icons";
+import { TextAction, Toast } from "../primitives/feedback";
 import { TeamMark } from "../teams";
 import { isDesktop } from "./phone";
 import { PhonePlay } from "./phone-play";
@@ -208,22 +209,17 @@ export function Navigator({
 			</nav>
 			{toast !== null && played === null && (
 				<div
-					role="status"
 					className="fixed inset-x-0 z-20 flex justify-center px-3"
 					style={{ bottom: "calc(14px + env(safe-area-inset-bottom))" }}
 				>
-					<span className="flex h-10 max-w-full animate-[viewer-page-in_160ms_ease-out] items-center gap-2 rounded-md border border-line-strong bg-surface-raised pr-1.5 pl-3 shadow-[0_16px_48px_rgba(0,0,0,0.55)] type-detail">
-						<span className="min-w-0 truncate">{toast.message}</span>
-						{toast.frame !== null && frameOf(toast.frame) !== undefined && (
-							<button
-								type="button"
-								className="shrink-0 cursor-pointer rounded-xs bg-accent/15 px-1.5 py-0.5 text-accent"
-								onClick={() => toast.frame !== null && play(toast.frame)}
-							>
-								show
-							</button>
-						)}
-					</span>
+					<Toast
+						message={<span className="block truncate">{toast.message}</span>}
+						action={
+							toast.frame !== null && frameOf(toast.frame) !== undefined ? (
+								<TextAction onClick={() => toast.frame !== null && play(toast.frame)}>show</TextAction>
+							) : undefined
+						}
+					/>
 				</div>
 			)}
 			{played !== null && (
