@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pageName, pageParent, ROOT_PAGE } from "../../page-path";
 import { type ShareKind, type ShareRequest, type ShareView, sharedPageName } from "../../share-view";
+import { CloseIcon } from "../icons";
+import { Button, IconButton } from "../primitives/actions";
 import { Checkbox, RadioCard, RadioGroup } from "../primitives/selection";
 import { KindGlyph, refusalSaid } from "../shares";
 
@@ -108,9 +110,7 @@ export function ShareSheet({
 					<h2 id="share-sheet-title" className="font-medium type-title">
 						Share {[...chosen].sort().map(sharedPageName).join(", ") || "pages"}
 					</h2>
-					<button type="button" aria-label="Close" className="text-secondary hover:text-primary" onClick={onClose}>
-						×
-					</button>
+					<IconButton icon={<CloseIcon />} label="Close" className="-mr-1.5" onClick={onClose} />
 				</div>
 				{made === null ? (
 					<>
@@ -190,17 +190,12 @@ export function ShareSheet({
 						)}
 						<div className="flex items-center justify-end gap-3 px-5 py-3">
 							{error !== null && <span className="min-w-0 flex-1 text-accent type-label">{error}</span>}
-							<button type="button" className="text-secondary hover:text-primary type-control" onClick={onClose}>
+							<Button size="lg" variant="ghost" onClick={onClose}>
 								Cancel
-							</button>
-							<button
-								type="button"
-								disabled={!ready}
-								onClick={() => void share()}
-								className="h-8 rounded-sm bg-primary px-3 text-surface-window disabled:opacity-40 type-control"
-							>
+							</Button>
+							<Button size="lg" variant="primary" disabled={!ready} onClick={() => void share()}>
 								{busy ? "Sharing…" : "Share"}
-							</button>
+							</Button>
 						</div>
 					</>
 				) : (
@@ -217,21 +212,17 @@ export function ShareSheet({
 								value={made.link ?? ""}
 								className="h-8 min-w-0 flex-1 rounded-sm border border-line-strong bg-surface-window px-2 text-primary type-detail"
 							/>
-							<button
-								type="button"
-								className="h-8 rounded-sm bg-primary px-3 text-surface-window type-control"
+							<Button
+								size="lg"
+								variant="primary"
 								onClick={() => void navigator.clipboard?.writeText(made.link ?? "").then(() => setCopied(true))}
 							>
 								{copied ? "Copied" : "Copy link"}
-							</button>
+							</Button>
 						</div>
-						<button
-							type="button"
-							className="self-end text-secondary hover:text-primary type-control"
-							onClick={onClose}
-						>
+						<Button size="lg" variant="ghost" className="self-end" onClick={onClose}>
 							Done
-						</button>
+						</Button>
 					</div>
 				)}
 			</div>
