@@ -2,8 +2,8 @@ import { useEffect, useRef } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
+import { StatusMark } from "../primitives/display";
 import { Float } from "./agent-float";
-import { Spinner } from "./agent-marks";
 import { engineName } from "./agent-menu";
 import { useHeld } from "./agent-motion";
 import { type Life, type Thread, UNSAID } from "./agent-threads";
@@ -290,16 +290,11 @@ function ThreadMark({ life, className }: { life: Life; className?: string }) {
 	return (
 		<span data-agent-mark={life} className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center", className)}>
 			{turning ? (
-				<Spinner className="h-3.5 w-3.5 text-primary/60" />
+				<StatusMark status="working" aria-hidden="true" />
 			) : life === "waiting" ? (
-				// the same ring working turns, at rest and dimmed so the disc reads as the thing
-				// in it rather than as a second object beside it
-				<svg viewBox="0 0 14 14" className="h-3.5 w-3.5 text-primary/85" fill="none" aria-hidden="true">
-					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
-					<circle cx="7" cy="7" r="2.2" fill="currentColor" />
-				</svg>
+				<StatusMark status="waiting" aria-hidden="true" />
 			) : life === "unread" ? (
-				<span className="h-[5px] w-[5px] rounded-full bg-primary/85" />
+				<StatusMark status="unseen" aria-hidden="true" />
 			) : life === "read" ? (
 				<span className="h-[5px] w-[5px] rounded-full border border-secondary/45" />
 			) : null}

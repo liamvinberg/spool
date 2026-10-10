@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
-import { cn } from "../cn";
-import { Thumbnail } from "../thumbnail";
+import { coverUrl } from "../api";
+import { Thumbnail } from "../primitives/display";
+import { RadioCard, RadioGroup } from "../primitives/selection";
 
 export type ExportFormat = "png" | "pdf";
 
@@ -79,26 +80,23 @@ export function ExportDialog({
 
 				<div className="flex gap-2 border-line-strong border-b px-5 py-4">
 					{visiblePreviews.map((frame, index) => (
-						<div
+						<Thumbnail
 							key={frame.name}
-							className="relative h-[70px] w-[40px] shrink-0 overflow-hidden rounded-xs border border-line-strong bg-surface-panel"
-						>
-							{frame.thumbnail === undefined ? (
-								<span className="absolute inset-0 flex items-center justify-center text-secondary type-preview">
-									{frame.name}
-								</span>
-							) : (
-								<Thumbnail {...frame.thumbnail} alt="" className="h-full w-full object-cover object-top" />
-							)}
-							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-surface-window/75 px-0.5 text-primary type-preview">
-								{index + 1}
-							</span>
-						</div>
+							src={
+								frame.thumbnail === undefined
+									? undefined
+									: coverUrl(frame.thumbnail.project, frame.thumbnail.frame, frame.thumbnail.cover.hash)
+							}
+							count={index + 1}
+							className="h-[70px] w-[40px]"
+						/>
 					))}
 					{count > visiblePreviews.length ? (
-						<div className="flex h-[70px] w-[40px] shrink-0 items-center justify-center rounded-xs border border-line-strong bg-surface-panel text-secondary type-value">
-							+{count - visiblePreviews.length}
-						</div>
+						<Thumbnail className="h-[70px] w-[40px]">
+							<span className="flex size-full items-center justify-center text-secondary type-value">
+								+{count - visiblePreviews.length}
+							</span>
+						</Thumbnail>
 					) : null}
 					<div className="ml-2 flex min-w-0 flex-1 flex-col justify-center">
 						<span className="truncate type-control">{frames.map((frame) => frame.name).join(", ")}</span>
@@ -106,22 +104,26 @@ export function ExportDialog({
 					</div>
 				</div>
 
-				<div className="flex flex-col gap-1 px-3 py-3" role="radiogroup" aria-label="Export format">
-					<FormatOption
+				<RadioGroup label="Export format" className="px-3 py-3">
+					<RadioCard
+						name="export-format"
+						value="png"
 						checked={format === "png"}
-						description={`${count} separate image files`}
+						onSelect={() => setFormat("png")}
 						disabled={exporting}
 						label="PNG images"
-						onClick={() => setFormat("png")}
+						description={`${count} separate image files`}
 					/>
-					<FormatOption
+					<RadioCard
+						name="export-format"
+						value="pdf"
 						checked={format === "pdf"}
-						description={`One document with ${count} pages`}
+						onSelect={() => setFormat("pdf")}
 						disabled={exporting}
 						label="PDF document"
-						onClick={() => setFormat("pdf")}
+						description={`One document with ${count} pages`}
 					/>
-				</div>
+				</RadioGroup>
 
 				{error === undefined ? null : (
 					<p role="alert" className="px-5 pb-3 text-accent-strong type-control">
@@ -150,50 +152,5 @@ export function ExportDialog({
 				</div>
 			</div>
 		</div>
-	);
-}
-
-function FormatOption({
-	checked,
-	description,
-	disabled,
-	label,
-	onClick,
-}: {
-	checked: boolean;
-	description: string;
-	disabled: boolean;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<label
-			className={cn(
-				"flex items-center gap-3 rounded-md border px-3 py-2.5 text-left",
-				checked ? "border-accent bg-surface-panel" : "border-transparent",
-				disabled ? "cursor-default opacity-60" : "cursor-pointer",
-			)}
-		>
-			<input
-				type="radio"
-				name="export-format"
-				checked={checked}
-				disabled={disabled}
-				className="sr-only"
-				onChange={onClick}
-			/>
-			<span
-				className={cn(
-					"flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-					checked ? "border-accent" : "border-secondary",
-				)}
-			>
-				{checked ? <span className="h-2 w-2 rounded-full bg-accent" /> : null}
-			</span>
-			<span className="flex min-w-0 flex-1 flex-col">
-				<span className="type-control">{label}</span>
-				<span className="text-secondary type-label">{description}</span>
-			</span>
-		</label>
 	);
 }

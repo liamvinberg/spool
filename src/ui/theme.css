@@ -81,11 +81,45 @@
 
 	/* a delete or a loss is red whatever the accent is: the shipped thread, fixed */
 	--color-danger: #f5391a;
+	--color-danger-hover: light-dark(#9e2213, #dd3017);
+	--color-danger-strong: light-dark(#c52a18, #ff604b);
+
+	--color-surface-inverse: var(--theme-text);
+	--color-on-inverse: var(--theme-bg);
+	--color-scrim: color-mix(in srgb, var(--theme-bg) 48%, transparent);
+
+	--color-state-hover: var(--theme-surface);
+	--color-state-hover-raised: color-mix(in srgb, var(--theme-text) 6%, transparent);
+	--color-state-pressed: light-dark(color-mix(in srgb, var(--theme-text) 6%, transparent), var(--theme-raised));
+	--color-state-selected: var(--theme-surface);
+	--color-state-selected-strong: light-dark(
+		color-mix(in srgb, var(--theme-text) 6%, transparent),
+		var(--theme-raised)
+	);
+	--color-accent-subtle: color-mix(in srgb, var(--theme-thread) 10%, transparent);
+	--color-line-focus: var(--theme-thread);
+
+	--shadow-float: 0 8px 24px light-dark(rgb(26 25 23 / 0.08), rgb(0 0 0 / 0.32));
+	--shadow-modal: 0 16px 48px light-dark(rgb(26 25 23 / 0.14), rgb(0 0 0 / 0.55));
 
 	--breakpoint-app: 1280px;
 	--container-artboard: 1360px;
 
 	--spacing-unit: 4px;
+	--spacing-control-xs: 20px;
+	--spacing-control-sm: 24px;
+	--spacing-control-md: 28px;
+	--spacing-control-lg: 32px;
+	--spacing-row: 28px;
+	--spacing-row-roomy: 36px;
+	--spacing-bar: 44px;
+	--spacing-menu: 200px;
+	--spacing-rail: 248px;
+	--spacing-panel: 300px;
+	--spacing-toast: 380px;
+	--spacing-agent: 420px;
+	--spacing-dialog: 440px;
+	--spacing-sheet: 760px;
 
 	--radius-xs: 4px;
 	--radius-sm: 6px;
@@ -677,6 +711,19 @@
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
+}
+
+@utility focus-ring {
+	&:focus-visible {
+		outline: 2px solid var(--color-line-focus);
+		outline-offset: 2px;
+	}
+}
+@utility focus-ring-inset {
+	&:focus-visible {
+		outline: 2px solid var(--color-line-focus);
+		outline-offset: -2px;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {

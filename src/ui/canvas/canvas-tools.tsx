@@ -1,6 +1,7 @@
 import { cn } from "../cn";
 import { hotkeyChips, hotkeyEntry, hotkeyKey } from "../hotkeys";
 import { EditIcon, HandIcon, SelectIcon } from "../icons";
+import { Kbd } from "../primitives/display";
 
 export type CanvasTool = "select" | "edit" | "hand";
 
@@ -74,13 +75,5 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 				})}
 			</div>
 		</div>
-	);
-}
-
-function Kbd({ children }: { children: React.ReactNode }) {
-	return (
-		<span className="flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-line-strong bg-surface-panel px-1 text-secondary type-detail">
-			{children}
-		</span>
 	);
 }

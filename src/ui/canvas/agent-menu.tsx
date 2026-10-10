@@ -11,6 +11,8 @@ import {
 } from "../api";
 import { cn } from "../cn";
 import { CheckIcon, PlusIcon, SearchIcon } from "../icons";
+import { Dot } from "../primitives/display";
+import { Segment, SegmentedControl } from "../primitives/selection";
 import { Chevron, CommandLine, Fade, RailMenu, Reveal, Versioned } from "./agent-float";
 import { limitReadout, resetsIn } from "./agent-limit";
 import { type AgentModelDeck, offerOf } from "./agent-model";
@@ -392,31 +394,25 @@ export function AgentMenu({
 									{chosen && levels.length > 0 ? (
 										<Reveal open={effortOpen}>
 											<div className="flex flex-col gap-1 pt-0.5 pr-2 pb-2 pl-6">
-												<div
-													role="radiogroup"
-													aria-label="Effort levels"
-													className="flex flex-wrap items-center gap-0.5"
+												<SegmentedControl
+													label="Effort levels"
+													size="sm"
+													value={offer.current.effort ?? ""}
+													onValueChange={(level) => model.choose({ effort: level })}
+													className="self-start"
 												>
 													{levels.map((level) => (
-														<button
+														<Segment
 															key={level}
-															type="button"
-															aria-pressed={offer.current.effort === level}
+															value={level}
 															data-agent-effort={level}
 															title={EFFORT_SAYS[level]}
 															disabled={pin !== null && pin !== level}
-															onClick={() => model.choose({ effort: level })}
-															className={cn(
-																"flex h-6 items-center rounded-sm px-2 transition-colors duration-150 type-value disabled:opacity-40",
-																offer.current.effort === level
-																	? "bg-surface-raised text-primary"
-																	: "text-secondary hover:text-primary",
-															)}
 														>
 															{level}
-														</button>
+														</Segment>
 													))}
-												</div>
+												</SegmentedControl>
 												{pin !== null ? (
 													<p role="status" className="pl-2 text-secondary type-caption">
 														{`CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment.`}
@@ -506,13 +502,7 @@ export function AgentMenu({
 						title={[engineName(own), name, effort].filter(Boolean).join(" · ")}
 						className="relative z-30 flex h-7 min-w-0 max-w-[200px] items-center gap-1.5 rounded-sm px-1.5 text-secondary transition-colors duration-150 hover:bg-surface-panel hover:text-primary aria-expanded:bg-surface-panel aria-expanded:text-primary type-control"
 					>
-						{usage !== null ? (
-							<span
-								data-agent-limit-dot=""
-								aria-hidden="true"
-								className="h-1.5 w-1.5 shrink-0 rounded-full bg-secondary"
-							/>
-						) : null}
+						{usage !== null ? <Dot tone="secondary" data-agent-limit-dot="" /> : null}
 						<span className="min-w-0 truncate">
 							{unusual ? (
 								<>

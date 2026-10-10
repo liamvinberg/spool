@@ -739,10 +739,11 @@ export const effortToggle = (host: HTMLElement) =>
 	live<HTMLButtonElement>(host, "[data-agent-effort-toggle]")[0] ?? null;
 
 /** the levels, while they are open: shut, they are in the menu and inert */
-export const effortPills = (host: HTMLElement) => live<HTMLButtonElement>(host, "[data-agent-effort]");
+export const effortPills = (host: HTMLElement) => live<HTMLLabelElement>(host, "[data-agent-effort]");
 
+/** a level's radio */
 export const effortPill = (host: HTMLElement, level: string) =>
-	live<HTMLButtonElement>(host, `[data-agent-effort="${level}"]`)[0] ?? null;
+	live<HTMLInputElement>(host, `[data-agent-effort="${level}"] input`)[0] ?? null;
 
 export const usageLine = (host: HTMLElement) =>
 	host.querySelector<HTMLElement>("[data-agent-usage]")?.textContent ?? null;

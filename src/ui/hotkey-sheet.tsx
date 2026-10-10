@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { HOTKEY_GROUPS, type HotkeyEntry, type HotkeyIdFor, hotkeyChips, listedHotkeys } from "./hotkeys";
+import { Kbd } from "./primitives/display";
 
 /**
  * The shortcut sheet: press `?` and the whole register is told, grouped and
@@ -76,12 +77,7 @@ function Row({ entry }: { entry: HotkeyEntry }) {
 			<span className="truncate text-primary type-control">{entry.label}</span>
 			<span className="flex shrink-0 items-center gap-1.5">
 				{keys.map((face) => (
-					<kbd
-						key={face}
-						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-line-strong bg-surface-raised px-1.5 text-secondary type-detail"
-					>
-						{face}
-					</kbd>
+					<Kbd key={face}>{face}</Kbd>
 				))}
 				{gesture === undefined ? null : <span className="text-secondary type-detail">{gesture}</span>}
 			</span>

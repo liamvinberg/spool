@@ -1,50 +1,14 @@
 import { cn } from "../cn";
 
 /**
- * The agent's small marks (#161, #364, #366), drawn once: the ring that turns while something
- * works, the ring with a disc in it while something waits on a person, and the stroke a
- * turn ends on. Colourless, because state in the rail is motion and the accent is the
- * selection's; the colour and the size are the caller's.
+ * The agent's small marks (#161, #364, #366), drawn once: the ring with a disc in it while
+ * something waits on a person, and the stroke a turn ends on (the ring that turns is the
+ * system's SpinRing). Colourless, because state in the rail is motion and the accent is
+ * the selection's; the colour and the size are the caller's.
  */
 
-/**
- * A colourless ring turning, on the 14 grid. `turning` false leaves the track at rest, for a
- * mark that is about to turn or has just stopped.
- */
 /** a mark's own data attributes, for the surface that wears it */
 type Marked = Readonly<Record<`data-${string}`, string | undefined>>;
-
-export function Spinner({
-	className,
-	turning = true,
-	strokeWidth = 1.5,
-	...data
-}: {
-	className?: string | undefined;
-	turning?: boolean;
-	strokeWidth?: number;
-} & Marked) {
-	return (
-		<svg
-			viewBox="0 0 14 14"
-			fill="none"
-			aria-hidden="true"
-			data-agent-spinner=""
-			{...data}
-			className={cn("shrink-0", turning && "animate-agent-spin", className)}
-		>
-			<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth={strokeWidth} strokeOpacity="0.26" />
-			{turning ? (
-				<path
-					d="M7 2.4A4.6 4.6 0 0 1 11.6 7"
-					stroke="currentColor"
-					strokeWidth={strokeWidth}
-					strokeLinecap="round"
-				/>
-			) : null}
-		</svg>
-	);
-}
 
 /** waiting on a person: the ring at rest, breathing, with a disc held in it; a className replaces its size and ink */
 export function WaitingMark({ className, ...data }: { className?: string | undefined } & Marked) {

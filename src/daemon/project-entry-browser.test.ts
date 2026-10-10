@@ -140,7 +140,8 @@ it("walks all three project jobs through the compact picker with one explicit co
 	await directory.getByLabel("Folder name").press("Enter");
 	await expect.poll(() => location.locator(".picker-footer code").getAttribute("title")).toBe(join(parent, "ideas"));
 	expect(readdirSync(join(parent, "ideas"))).toEqual([]);
-	await location.getByLabel("Use for future projects").check();
+	await location.getByText("Use for future projects", { exact: true }).click();
+	expect(await location.getByLabel("Use for future projects").isChecked()).toBe(true);
 	if (evidence) await page.screenshot({ path: join(evidence, "save-location.png") });
 	await location.getByRole("button", { name: "Choose location", exact: true }).click();
 	await expect

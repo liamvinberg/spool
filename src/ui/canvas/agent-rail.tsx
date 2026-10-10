@@ -4,11 +4,11 @@ import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
+import { SpinRing } from "../primitives/display";
 import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
 import { composerWidth, stripOf } from "./agent-chips";
 import type { Pointing } from "./agent-composer";
 import { Composer } from "./agent-composer";
-import { Spinner } from "./agent-marks";
 import type { AgentModelDeck } from "./agent-model";
 import { FADE_OUT_MS, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
@@ -1508,10 +1508,13 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 					ringed ? "opacity-100" : "scale-[0.62] opacity-0",
 				)}
 			>
-				<Spinner
-					turning={turning}
-					className={cn(turning ? "text-primary/60" : "text-primary/35", "h-full w-full")}
-				/>
+				{turning ? (
+					<SpinRing className="size-full text-primary/60" />
+				) : (
+					<svg viewBox="0 0 12 12" fill="none" aria-hidden="true" className="size-full text-primary/35">
+						<circle cx="6" cy="6" r="4.25" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
+					</svg>
+				)}
 			</span>
 			<svg
 				viewBox="0 0 14 14"

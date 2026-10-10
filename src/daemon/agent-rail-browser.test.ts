@@ -369,7 +369,7 @@ describe("the agent rail in a browser", () => {
 		await toggle.click();
 		await menu.locator('[data-agent-effort="low"]').click();
 		await expect.poll(() => toggle.getAttribute("aria-label")).toBe("Effort, low");
-		expect(await menu.locator('[data-agent-effort="low"]').getAttribute("aria-pressed")).toBe("true");
+		expect(await menu.locator('[data-agent-effort="low"] input').isChecked()).toBe(true);
 		expect(await menu.count()).toBe(1);
 		expect(claude.state.effort).toBe("low");
 

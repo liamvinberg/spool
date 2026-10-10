@@ -23,6 +23,8 @@ import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
 import { ProjectPicker } from "./picker";
+import { Divider } from "./primitives/display";
+import { Segment, SegmentedControl, Switch } from "./primitives/selection";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
 /**
@@ -235,7 +237,7 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 					)}
 				</>
 			) : entry.shape.kind === "boolean" ? (
-				<Switch on={Boolean(entry.value)} label={entry.label} onChange={move} />
+				<Switch checked={Boolean(entry.value)} aria-label={entry.label} onCheckedChange={move} />
 			) : entry.shape.kind === "choice" ? (
 				<Segmented choices={entry.shape.choices} value={String(entry.value)} label={entry.label} onChange={move} />
 			) : entry.shape.kind === "destination" ? (
@@ -688,7 +690,7 @@ function AccentRow({ entry, write }: { entry: SettingReading & { value: string }
 						</button>
 					);
 				})}
-				<span className="mx-1 h-4 w-px bg-line-default" />
+				<Divider className="mx-1" />
 				<ColourControl
 					settingKey={entry.key}
 					value={entry.value}
@@ -738,29 +740,6 @@ function TokenRow({ entry, write }: { entry: SettingReading & { value: string };
 }
 
 /* ---------------------------------------------------------------- controls -- */
-
-function Switch({ on, label, onChange }: { on: boolean; label: string; onChange: (next: boolean) => void }) {
-	return (
-		<button
-			type="button"
-			role="switch"
-			aria-checked={on}
-			aria-label={label}
-			onClick={() => onChange(!on)}
-			className={cn(
-				"flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors duration-150",
-				on ? "border-accent bg-accent" : "border-line-strong bg-surface-raised hover:border-secondary/50",
-			)}
-		>
-			<span
-				className={cn(
-					"h-2.5 w-2.5 rounded-full transition-[translate,background-color] duration-150 ease-out",
-					on ? "translate-x-[14px] bg-on-accent" : "translate-x-[2px] bg-secondary",
-				)}
-			/>
-		</button>
-	);
-}
 
 /**
  * "New projects go to": ask, only this Mac, or one of the teams this Mac's account edits in. A team that isn't
@@ -817,26 +796,13 @@ function Segmented({
 	name?: (choice: string) => string;
 }) {
 	return (
-		<span className="flex h-7 items-stretch rounded-sm border border-line-default p-px">
-			{choices.map((choice) => {
-				const lit = choice === value;
-				return (
-					<button
-						key={choice}
-						type="button"
-						aria-label={`${label}: ${name(choice)}`}
-						aria-pressed={lit}
-						onClick={() => onChange(choice)}
-						className={cn(
-							"flex items-center rounded-[5px] px-2.5 transition-colors duration-150 type-value",
-							lit ? "bg-surface-control text-primary" : "text-secondary hover:text-primary",
-						)}
-					>
-						{name(choice)}
-					</button>
-				);
-			})}
-		</span>
+		<SegmentedControl label={label} value={value} onValueChange={onChange}>
+			{choices.map((choice) => (
+				<Segment key={choice} value={choice}>
+					{name(choice)}
+				</Segment>
+			))}
+		</SegmentedControl>
 	);
 }
 
