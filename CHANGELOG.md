@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.36.1
+
+### Patch Changes
+
+- b15b3ae: Closing the open tab no longer makes the tab sheet jump before it settles on the next one.
+
 ## 0.36.0
 
 ### Minor Changes
