@@ -79,7 +79,7 @@ const NARROW = 88;
  */
 const FACE_PAD =
 	"clamp(var(--spacing) * 3, min((var(--tw, 200) * 1px - var(--spacing) * 4) / 2, var(--spacing) * 3 + (88px - var(--tw, 200) * 1px) / 4), var(--spacing) * 5)";
-const NAME_SHOWN = "clamp(0, (var(--tw, 200) - 56) / 32, 1)";
+const NAME_SHOWN = "pow(clamp(0, (var(--tw, 200) - 56) / 32, 1), 3)";
 const NAME_FADE = "linear-gradient(to right, black calc(100% - var(--spacing) * 3), transparent)";
 
 /** Shipped values of the motion scale, for a page that carries no theme (a unit test's). */
