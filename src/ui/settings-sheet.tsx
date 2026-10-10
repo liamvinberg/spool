@@ -23,6 +23,7 @@ import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
 import { ProjectPicker } from "./picker";
+import { Divider } from "./primitives/display";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
 /**
@@ -688,7 +689,7 @@ function AccentRow({ entry, write }: { entry: SettingReading & { value: string }
 						</button>
 					);
 				})}
-				<span className="mx-1 h-4 w-px bg-line-default" />
+				<Divider className="mx-1" />
 				<ColourControl
 					settingKey={entry.key}
 					value={entry.value}

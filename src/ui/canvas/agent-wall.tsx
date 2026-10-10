@@ -1,6 +1,6 @@
 import { AGENT_ENGINE_IDS } from "../../daemon/agent-engine";
+import { SpinRing } from "../primitives/display";
 import { MIN_H } from "./agent-composer";
-import { Spinner } from "./agent-marks";
 import { ENGINES, InstallLine } from "./agent-menu";
 import type { AgentModelDeck } from "./agent-model";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
@@ -34,7 +34,7 @@ function CheckAgain({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 			onClick={onClick}
 			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 text-primary transition-colors duration-150 hover:bg-surface-panel hover:text-primary type-detail"
 		>
-			{busy ? <Spinner className="h-3 w-3 text-secondary/60" /> : null}
+			{busy ? <SpinRing className="size-3 text-secondary/60" /> : null}
 			{busy ? "looking" : "check again"}
 		</button>
 	);

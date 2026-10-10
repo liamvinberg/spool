@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PresenceState } from "../../team-sync-protocol";
 import { createPresenceRoom, idle, type PresenceRoom, type Teammate } from "../canvas/presence";
 import { Face, useRoomDrawn } from "../canvas/presence-faces";
+import { Count } from "../primitives/display";
 import { joinPresence, type PresenceLink } from "./source";
 
 /**
@@ -53,9 +54,7 @@ export function PartFaces({ room, part }: { room: PresenceRoom; part: (mate: Tea
 					<Face mate={mate} away={false} resting={idle(mate, now)} followed={false} size={18} />
 				</span>
 			))}
-			{here.length > shown.length && (
-				<span className="ml-1 text-secondary tabular-nums type-detail">+{here.length - shown.length}</span>
-			)}
+			{here.length > shown.length && <Count value={`+${here.length - shown.length}`} className="ml-1" />}
 		</span>
 	);
 }

@@ -30,6 +30,7 @@ import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { DotsIcon, FolderIcon } from "../icons";
+import { Count } from "../primitives/display";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
 	flatPages,
@@ -1714,11 +1715,7 @@ export function CanvasSidebar({
 									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
 								)}
 								<span className="min-w-0 truncate text-primary type-value">{kit.label}</span>
-								{kit.names.length > 1 ? (
-									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-accent-strong px-1 text-on-accent type-detail">
-										{kit.names.length}
-									</span>
-								) : null}
+								{kit.names.length > 1 ? <Count tone="accent" value={kit.names.length} /> : null}
 							</div>
 						</div>,
 						document.body,

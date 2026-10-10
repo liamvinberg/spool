@@ -15,6 +15,7 @@
  */
 
 import { hotkeyKey } from "../hotkeys";
+import { Kbd } from "../primitives/display";
 
 export interface MenuPlacement {
 	x: number;
@@ -75,9 +76,7 @@ export function MenuItem({
 			onClick={onClick}
 		>
 			<span className="truncate">{label}</span>
-			{/* the UI face, not the mono the tooltips wear: it has no ⇧ or ⌫, and
-			    the fallback draws them at metrics that read as smudges */}
-			{keys === undefined ? null : <span className="shrink-0 type-label text-secondary">{keys}</span>}
+			{keys === undefined ? null : <Kbd>{keys}</Kbd>}
 		</button>
 	);
 }

@@ -31,6 +31,7 @@ import { useFollow, usePresenceSender } from "../canvas/use-presence";
 import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
 import { ChevronIcon, FolderIcon, FrameIcon } from "../icons";
+import { Divider } from "../primitives/display";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { Navigator, type NavigatorToast } from "./navigator";
@@ -520,7 +521,7 @@ function ViewerCanvas({
 					>
 						+
 					</button>
-					<span className="h-3.5 w-px bg-line-strong" />
+					<Divider tone="strong" />
 					<button
 						type="button"
 						className="rounded-xs px-2 py-1 text-secondary transition-colors hover:text-primary type-value"

@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
 import { cn } from "../cn";
+import { SpinRing } from "../primitives/display";
 import {
 	ApprovalBody,
 	AskCard,
@@ -14,7 +15,7 @@ import {
 	useAsk,
 	WaitingRow,
 } from "./agent-ask-view";
-import { EndMark, Spinner, WaitingMark } from "./agent-marks";
+import { EndMark, WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
 import { workOf } from "./placeholder-frame";
@@ -417,7 +418,7 @@ function TurnLine({
 
 /** a check once done, a square once stopped, a cross once failed, and a turning ring while live */
 function TurnMark({ over, ending }: { over: boolean; ending: AgentTurnFoot["ending"] }) {
-	return over ? <EndMark ending={ending ?? "done"} /> : <Spinner className="h-3.5 w-3.5 text-secondary" />;
+	return over ? <EndMark ending={ending ?? "done"} /> : <SpinRing className="size-3.5 text-secondary" />;
 }
 
 /** two to a row while the turn runs, three once it settles and gives the chat back its height */

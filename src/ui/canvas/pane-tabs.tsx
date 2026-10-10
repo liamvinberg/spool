@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { cn } from "../cn";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { DotsIcon } from "../icons";
-import { Spinner, WaitingMark } from "./agent-marks";
+import { Dot, SpinRing } from "../primitives/display";
+import { WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { MenuItem } from "./context-menu";
 import type { SideId } from "./pane-layout";
@@ -54,25 +55,20 @@ export function PaneMark({ kind, placed }: { kind: PaneMarkKind | null; placed: 
 						leaving && "animate-agent-fade-out",
 					)}
 				>
-					<Spinner strokeWidth={corner ? 1.6 : 1.8} className="h-full w-full" />
+					<SpinRing className="size-full" />
 				</span>
 			);
 		case "unread":
 		case "elsewhere":
 			return (
-				<span
-					aria-hidden="true"
+				<Dot
+					tone={mark === "unread" ? "accent" : "primary"}
 					data-pane-mark={mark}
 					data-pane-mark-state={state}
 					className={cn(
-						"h-1.5 w-1.5 rounded-full",
-						mark === "unread" ? "bg-accent" : "bg-primary/85",
 						corner && "absolute top-1 right-1",
-						leaving
-							? "animate-agent-fade-out"
-							: mark === "unread"
-								? "animate-unseen-in"
-								: "animate-agent-fade-in",
+						// the dot pops in on its own; what leaves fades as the agent's marks do
+						leaving && "animate-agent-fade-out!",
 					)}
 				/>
 			);

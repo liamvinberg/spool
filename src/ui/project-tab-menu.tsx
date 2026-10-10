@@ -87,7 +87,7 @@ export function ProjectTabMenu({
 					icon={project.icon}
 					team={project.teamAddress}
 					paused={project.paused}
-					size={24}
+					size="md"
 					cut="var(--color-surface-raised)"
 				/>
 				<div className="flex min-w-0 flex-col gap-[1px]">
