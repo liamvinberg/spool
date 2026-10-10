@@ -24,6 +24,7 @@ import {
 import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { PresenceFaces } from "./canvas/presence-faces";
+import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
 import { handedOver } from "./handover";
@@ -38,7 +39,7 @@ import { useIconChange } from "./project-icon-change";
 import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
-import { SettingsSheet } from "./settings-sheet";
+import { SettingsPage } from "./settings-page/page";
 import { SharedControl, useShares } from "./shares";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
@@ -401,6 +402,8 @@ export function App() {
 	}, [focusedTab]);
 
 	const focusProject = useCallback((root: string | null) => {
+		// settings stands in for the tab it was opened from, so moving to a tab is leaving it
+		setSettingsOpen(false);
 		setFocused(root);
 		const path = root === null ? "/" : `/p/${encodeURIComponent(basename(root))}`;
 		window.history.replaceState(null, "", path);
@@ -472,8 +475,9 @@ export function App() {
 		[refetch],
 	);
 
-	// ? opens the shortcut sheet and ⌘, the settings sheet over whatever the
-	// shell is showing; one of the two at a time, so each puts the other away
+	// ? opens the shortcut sheet over whatever the shell is showing and ⌘, the
+	// settings page in place of the tab's content; one of the two at a time, so
+	// each puts the other away
 	const openSettings = useCallback(() => {
 		setKeysOpen(false);
 		setSettingsOpen(true);
@@ -653,7 +657,8 @@ export function App() {
 					{/* the same on Home and on every canvas, so nothing in the bar moves on the way between them */}
 					<div data-bar-end-group="" className="flex h-full shrink-0 items-center gap-0.5">
 						<BarEnd
-							onSettings={openSettings}
+							settingsOpen={settingsOpen}
+							onSettings={settingsOpen ? closeSettings : openSettings}
 							onShortcuts={() => {
 								setSettingsOpen(false);
 								setKeysOpen(true);
@@ -663,64 +668,82 @@ export function App() {
 					</div>
 				</header>
 
-				<main className="min-h-0 flex-1">
-					{focusedTab === undefined ? (
-						<Home
-							projects={projects.filter(
-								(project) =>
-									!forgetting.has(project.root) &&
-									(project.team === undefined || !teamHome.teams.has(project.team.team)),
-							)}
-							loading={!projectsLoaded}
-							onStart={() => {
-								setPickingTeam(undefined);
-								setPicking("new");
-							}}
-							onFolder={() => setPicking("folder")}
-							onSettings={openSettings}
-							onImport={transfer.importProject}
-							onExportProject={transfer.exportProject}
-							onChangeIcon={icons.change}
-							onRemoveIcon={icons.remove}
-							onRemoveThumbnail={icons.removeThumbnail}
-							onOpenProject={(project) => openTab(project)}
-							onForgetProject={(project) => void forgetProject(project)}
-							onTrashProject={setTrashRequest}
-							onRenameProject={(project) => void requestRename(project)}
-							onMoveToTeam={moveToTeam}
-							switcher={teamHome.switcher}
-							notice={
-								moveNote === null ? (
-									teamHome.notice
-								) : (
-									<>
-										<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
-										{teamHome.notice}
-									</>
-								)
+				<main className="relative min-h-0 flex-1">
+					{/* hidden rather than gone while settings stands in for it, so esc finds the tab exactly as it was; by
+					    opacity, since the panes set their own visibility */}
+					<div className={cn("h-full", settingsOpen && "opacity-0")} inert={settingsOpen}>
+						{focusedTab === undefined ? (
+							<Home
+								projects={projects.filter(
+									(project) =>
+										!forgetting.has(project.root) &&
+										(project.team === undefined || !teamHome.teams.has(project.team.team)),
+								)}
+								loading={!projectsLoaded}
+								onStart={() => {
+									setPickingTeam(undefined);
+									setPicking("new");
+								}}
+								onFolder={() => setPicking("folder")}
+								onSettings={openSettings}
+								onImport={transfer.importProject}
+								onExportProject={transfer.exportProject}
+								onChangeIcon={icons.change}
+								onRemoveIcon={icons.remove}
+								onRemoveThumbnail={icons.removeThumbnail}
+								onOpenProject={(project) => openTab(project)}
+								onForgetProject={(project) => void forgetProject(project)}
+								onTrashProject={setTrashRequest}
+								onRenameProject={(project) => void requestRename(project)}
+								onMoveToTeam={moveToTeam}
+								switcher={teamHome.switcher}
+								notice={
+									moveNote === null ? (
+										teamHome.notice
+									) : (
+										<>
+											<MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />
+											{teamHome.notice}
+										</>
+									)
+								}
+								team={teamHome.team}
+								account={
+									<AccountFoot
+										account={account}
+										onSignIn={() => {
+											setAccount({ state: "signing-in" });
+											void signInCloudAccount();
+										}}
+										onReopen={() => void reopenCloudSignIn()}
+										onCancel={() => void cancelCloudSignIn()}
+										onSignOut={() => void signOutCloudAccount().finally(readAccount)}
+									/>
+								}
+							/>
+						) : (
+							<ProjectCanvas
+								key={focusedTab.root}
+								project={focusedTab.name}
+								root={focusedTab.root}
+								onChrome={setChrome}
+								onFolder={() => setPicking("folder")}
+								onRename={(name) => requestRename(focusedTab, name)}
+							/>
+						)}
+					</div>
+					{settingsOpen && (
+						<SettingsPage
+							project={focusedTab}
+							onClose={closeSettings}
+							onMoveToTeam={
+								moveToTeam && focusedSolo
+									? () => {
+											closeSettings();
+											moveToTeam(focusedSolo);
+										}
+									: undefined
 							}
-							team={teamHome.team}
-							account={
-								<AccountFoot
-									account={account}
-									onSignIn={() => {
-										setAccount({ state: "signing-in" });
-										void signInCloudAccount();
-									}}
-									onReopen={() => void reopenCloudSignIn()}
-									onCancel={() => void cancelCloudSignIn()}
-									onSignOut={() => void signOutCloudAccount().finally(readAccount)}
-								/>
-							}
-						/>
-					) : (
-						<ProjectCanvas
-							key={focusedTab.root}
-							project={focusedTab.name}
-							root={focusedTab.root}
-							onChrome={setChrome}
-							onFolder={() => setPicking("folder")}
-							onRename={(name) => requestRename(focusedTab, name)}
 						/>
 					)}
 				</main>
@@ -797,20 +820,6 @@ export function App() {
 				)}
 
 				{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
-				{settingsOpen && (
-					<SettingsSheet
-						project={focusedTab?.name}
-						onClose={closeSettings}
-						onMoveToTeam={
-							moveToTeam && focusedSolo
-								? () => {
-										closeSettings();
-										moveToTeam(focusedSolo);
-									}
-								: undefined
-						}
-					/>
-				)}
 				{moving !== null && (
 					<MoveToTeamDialog
 						project={moving}

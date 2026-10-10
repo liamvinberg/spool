@@ -524,7 +524,14 @@ export const HOTKEYS = [
 
 	// --- Settings ---------------------------------------------------------------
 	{ id: "app.settings", scope: "app", group: "Settings", label: "Open settings", keys: ["accel+comma"] },
-	{ id: "settings.close", scope: "settings", group: "Settings", label: "", keys: ["escape"], listed: false },
+	{
+		id: "settings.close",
+		scope: "settings",
+		group: "Settings",
+		label: "",
+		keys: ["escape", "accel+comma"],
+		listed: false,
+	},
 
 	// --- Help -------------------------------------------------------------------
 	{ id: "app.help", scope: "app", group: "Help", label: "Show this sheet", keys: ["question"] },

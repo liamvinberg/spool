@@ -7,7 +7,17 @@
 // `data-state="hover|active|focus"` on the root so a sheet can force one.
 // `disabled` goes to the input.
 
-import { type ComponentProps, createContext, type ReactNode, useContext, useId } from "react";
+import {
+	type ComponentProps,
+	createContext,
+	type ReactNode,
+	useContext,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { cn } from "../cn";
 
 /** label and description beside a mark, the mark centred on the label's first line */
@@ -273,6 +283,10 @@ const SEGMENTED_SIZE: Record<SegmentedSize, { root: string; segment: string }> =
  * segment is mono value text at radius-xs, one tier in. The chosen one takes
  * state-selected-strong and primary ink; the others are secondary until
  * hovered. sm 24, md 28. Segments are `Segment` children.
+ *
+ * The chosen fill is one mark that slides to the segment picked (base, snap),
+ * so the eye follows the choice rather than seeing one fill go out and another
+ * come on. Until the mark has measured, the chosen segment fills itself.
  */
 export function SegmentedControl({
 	label,
@@ -290,22 +304,73 @@ export function SegmentedControl({
 	onValueChange: (value: string) => void;
 }) {
 	const name = useId();
+	const { root, box, ready } = useChosenBox(value);
 	return (
 		<Segmented.Provider value={{ name, size, value, onValueChange }}>
 			<div
+				ref={root}
 				role="radiogroup"
 				aria-label={label}
+				data-sliding={box === null ? undefined : ""}
 				className={cn(
-					"inline-flex shrink-0 items-stretch rounded-sm border border-line-default p-px",
+					"group/segmented relative inline-flex shrink-0 items-stretch rounded-sm border border-line-default p-px",
 					SEGMENTED_SIZE[size].root,
 					className,
 				)}
 				{...rest}
 			>
+				{box === null ? null : (
+					<span
+						aria-hidden="true"
+						className={cn(
+							"pointer-events-none absolute top-0 left-0 rounded-xs bg-state-selected-strong",
+							ready && "transition-[translate,width] duration-base ease-snap motion-reduce:transition-none",
+						)}
+						style={{ width: box.w, height: box.h, translate: `${box.x}px ${box.y}px` }}
+					/>
+				)}
 				{children}
 			</div>
 		</Segmented.Provider>
 	);
+}
+
+/**
+ * Where the chosen segment sits inside `root`, kept in step as it resizes. `ready`
+ * comes a frame after the first measure, so the mark appears in place and only
+ * slides from then on. Nothing laid out (a test's DOM) measures as no box.
+ */
+function useChosenBox(value: string) {
+	const root = useRef<HTMLDivElement>(null);
+	const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+	const [ready, setReady] = useState(false);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: measure again when the choice moves
+	useLayoutEffect(() => {
+		const element = root.current;
+		if (element === null) return;
+		const measure = () => {
+			const chosen = element.querySelector<HTMLElement>("input:checked")?.closest("label");
+			if (chosen === null || chosen === undefined || chosen.offsetWidth === 0) {
+				setBox(null);
+				return;
+			}
+			const next = { x: chosen.offsetLeft, y: chosen.offsetTop, w: chosen.offsetWidth, h: chosen.offsetHeight };
+			setBox((was) =>
+				was !== null && was.x === next.x && was.y === next.y && was.w === next.w && was.h === next.h ? was : next,
+			);
+		};
+		measure();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(measure);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [value]);
+	useEffect(() => {
+		if (box === null || ready) return;
+		const frame = requestAnimationFrame(() => setReady(true));
+		return () => cancelAnimationFrame(frame);
+	}, [box, ready]);
+	return { root, box, ready };
 }
 
 export function Segment({
@@ -324,7 +389,7 @@ export function Segment({
 				"transition-[background-color,color] duration-fast ease-out",
 				"hover:text-primary data-[state=hover]:text-primary",
 				"active:bg-state-pressed data-[state=active]:bg-state-pressed",
-				"has-checked:bg-state-selected-strong has-checked:text-primary",
+				"relative has-checked:bg-state-selected-strong has-checked:text-primary group-data-sliding/segmented:has-checked:bg-transparent",
 				"has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-line-focus has-focus-visible:outline-solid",
 				"data-[state=focus]:outline-2 data-[state=focus]:-outline-offset-2 data-[state=focus]:outline-line-focus data-[state=focus]:outline-solid",
 				"has-disabled:cursor-default has-disabled:opacity-40 has-disabled:hover:text-secondary",

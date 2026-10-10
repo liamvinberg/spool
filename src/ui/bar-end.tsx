@@ -11,10 +11,13 @@ import { Menu, MenuItem } from "./primitives/overlays";
  * the settings cog, doors out of whatever is open rather than parts of it (#282, #359).
  */
 export function BarEnd({
+	settingsOpen = false,
 	onSettings,
 	onShortcuts,
 	onUseAgent,
 }: {
+	/** while the settings page is up, the gear is pressed and puts it away */
+	settingsOpen?: boolean | undefined;
 	onSettings?: (() => void) | undefined;
 	onShortcuts: () => void;
 	/** on a canvas with a project folder: hand the project to an agent of one's own */
@@ -27,6 +30,7 @@ export function BarEnd({
 				data-bar-end="settings"
 				icon={<CogIcon />}
 				label="Settings"
+				pressed={settingsOpen}
 				title={`Settings ${hotkeyKey("app.settings")}`}
 				onClick={onSettings}
 			/>

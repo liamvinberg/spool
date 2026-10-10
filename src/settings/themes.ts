@@ -325,3 +325,17 @@ export const PRESETS: readonly ThemeSpec[] = [
 		"#ffffff",
 	]),
 ];
+
+/**
+ * The accent alone, the one colour most people mean when they say they want
+ * spool in their colour: a few known to read on both looks, spool's own first.
+ */
+export const ACCENTS: readonly { name: string; hex: string }[] = [
+	{ name: "spool", hex: DARK_TOKENS.thread },
+	{ name: "blue", hex: "#2f6fe0" },
+	{ name: "violet", hex: "#7c5cff" },
+	{ name: "pink", hex: "#e0409a" },
+	{ name: "amber", hex: "#e8a317" },
+	{ name: "green", hex: "#2fa864" },
+	{ name: "teal", hex: "#1fa3a3" },
+];
