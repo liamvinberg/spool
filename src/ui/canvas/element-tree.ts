@@ -13,18 +13,19 @@ import type { ElementNode } from "./protocol";
  * the rail's own rows are placed without anything measuring the DOM.
  */
 
-export const TREE_ROW = 24;
+/** a TreeRow, row tall like every row in the rail */
+export const TREE_ROW = 28;
 /** the space above the first row and below the last */
 export const TREE_PAD = 4;
-/** one level in; the step stops at DEEPEST so a row 23 levels down keeps its name */
-export const TREE_STEP = 10;
-export const DEEPEST = 14;
+/** the deepest a row steps in, so a row 23 levels down keeps its name */
+const DEEPEST = 14;
+/** How far in a row is drawn, in TreeRow levels. */
+export function treeDepth(depth: number): number {
+	return Math.min(depth, DEEPEST);
+}
+
 /** the tallest the tree stands in the rail; a longer one scrolls inside that */
 export const TREE_MOST = 600;
-
-export function treeIndent(depth: number): number {
-	return 6 + Math.min(depth, DEEPEST) * TREE_STEP;
-}
 
 export type TreeRow =
 	| {
