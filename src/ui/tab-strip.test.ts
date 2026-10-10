@@ -47,7 +47,7 @@ describe("the tab strip", () => {
 		// let go and the tab travels the last of the way itself, onto the exact left
 		// edge of the slot it took: the order is not written until it has arrived
 		expect(tabOf(host, 0)?.style.transform).toBe("translateX(110px)");
-		expect(tabOf(host, 0)?.style.transition).toContain("200ms");
+		expect(tabOf(host, 0)?.style.transition).toContain("var(--transition-duration-base)");
 		expect(onReorder).not.toHaveBeenCalled();
 
 		await act(async () => {
@@ -57,14 +57,14 @@ describe("the tab strip", () => {
 
 		// the press that became a drag is not also a click on the tab it left
 		await act(async () => {
-			host.querySelectorAll("button")[0]?.click();
+			host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[0]?.click();
 		});
 		expect(onFocus).not.toHaveBeenCalled();
 
 		// Keyboard activation remains available after a pointer drag.
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
-			host.querySelectorAll("button")[0]?.click();
+			host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[0]?.click();
 		});
 		expect(onFocus).toHaveBeenCalledWith("/w/alpha");
 	});
@@ -105,7 +105,7 @@ describe("the tab strip", () => {
 		// alpha and beta, the tabs still open, travel back rather than snapping
 		for (const index of [0, 1]) {
 			expect(tabOf(host, index)?.style.transform).toBe("translateX(0px)");
-			expect(tabOf(host, index)?.style.transition).toContain("200ms");
+			expect(tabOf(host, index)?.style.transition).toContain("var(--transition-duration-base)");
 		}
 		await act(async () => {
 			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 6, clientX: 170 }));
@@ -192,7 +192,7 @@ describe("the tab strip", () => {
 		await act(async () => {
 			alpha?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 3, clientX: 50 }));
 			window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 3, clientX: 50 }));
-			host.querySelectorAll("button")[0]?.click();
+			host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[0]?.click();
 		});
 		expect(onFocus).toHaveBeenCalledWith("/w/alpha");
 	});
@@ -231,6 +231,7 @@ async function render(props: Partial<Parameters<typeof TabStrip>[0]> = {}) {
 					onClose: () => {},
 					onReorder: () => {},
 					onPick: () => {},
+					onHome: () => {},
 					...props,
 					...next,
 				}),

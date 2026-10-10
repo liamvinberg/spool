@@ -59,9 +59,6 @@
 	"src/ui/project-icon.tsx": {
 		"raw-colour": 7
 	},
-	"src/ui/tab-strip.tsx": {
-		"raw-colour": 6
-	},
 	"src/ui/teams.tsx": {
 		"raw-colour": 6
 	},

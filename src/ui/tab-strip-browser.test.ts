@@ -15,7 +15,7 @@ it("focuses projects across the tab surface while keeping close and drag separat
 				import { TabStrip } from "./src/ui/tab-strip";
 				function App() {
 					const [focused, setFocused] = useState("/w/alpha");
-					return createElement(TabStrip, {
+					return createElement("header", { style: { display: "flex", height: "44px" } }, createElement(TabStrip, {
 						tabs: [
 							{ root: "/w/alpha", name: "alpha" },
 							{ root: "/w/spool", name: "spool" },
@@ -28,7 +28,8 @@ it("focuses projects across the tab surface while keeping close and drag separat
 						onClose: (root) => { document.body.dataset.closed = root; },
 						onReorder: () => {},
 						onPick: () => {},
-					});
+						onHome: () => {},
+					}));
 				}
 				createRoot(document.getElementById("root")).render(createElement(App));
 			`,
@@ -47,7 +48,6 @@ it("focuses projects across the tab surface while keeping close and drag separat
 		* { box-sizing: border-box; }
 		body { margin: 0; font-family: sans-serif; }
 		button { padding: 0; border: 0; background: transparent; font: inherit; }
-		#root { height: 44px; }
 	</style><div id="root"></div>`);
 	// The tabs use the same compiled utilities as the app. esbuild alone only
 	// bundles JavaScript and cannot supply their layout or hit areas.
@@ -61,6 +61,8 @@ it("focuses projects across the tab surface while keeping close and drag separat
 	}
 	const tab = page.locator('[data-tab="/w/spool"]');
 	await tab.waitFor();
+	// Home's name in the strip's own font, so nothing moves under the points below
+	await page.evaluate(() => document.fonts.ready);
 	const box = await tab.boundingBox();
 	if (box === null) throw new Error("missing tab box");
 	const focuses = () => page.locator("body").getAttribute("data-focuses");
@@ -70,7 +72,7 @@ it("focuses projects across the tab surface while keeping close and drag separat
 		{ name: "above close", x: box.width - 16, y: 3 },
 		{ name: "below close", x: box.width - 16, y: box.height - 3 },
 		{ name: "right edge", x: box.width - 2, y: 18 },
-		{ name: "bottom edge", x: box.width / 2, y: box.height + 2 },
+		{ name: "bottom edge", x: box.width / 2, y: box.height - 1 },
 	];
 	let count = 0;
 	for (const point of points) {
@@ -99,6 +101,9 @@ it("focuses projects across the tab surface while keeping close and drag separat
 	expect(await focuses()).toBe(String(count + 1));
 });
 
+/** more tabs than a narrow strip can compress to their marks, so it scrolls */
+const CROWD = ["alpha", "beta", "gamma-delta", "epsilon", "eta", "theta", "iota", "kappa"];
+
 interface Sample {
 	readonly t: number;
 	readonly [key: string]: number | null;
@@ -110,13 +115,16 @@ interface Sample {
  * would, and closing the focused tab hands focus to its right-hand neighbour,
  * or its left one when it was last.
  */
-async function strip({ width = 900, reduced = false, names = ["alpha", "beta", "gamma-delta", "epsilon"] } = {}) {
+async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", "gamma-delta", "epsilon"] } = {}) {
 	const bundle = await build({
 		stdin: {
 			contents: `
 				import { createElement, useState } from "react";
 				import { createRoot } from "react-dom/client";
 				import { TabStrip } from "./src/ui/tab-strip";
+				import { WindowEdgeContext, windowEdge } from "./src/ui/window-edge";
+				const edge = windowEdge();
+				window.edge = edge;
 				const initial = ${JSON.stringify(names)}.map((name) => ({ root: "/w/" + name, name }));
 				function App() {
 					const [tabs, setTabs] = useState(initial);
@@ -140,7 +148,7 @@ async function strip({ width = 900, reduced = false, names = ["alpha", "beta", "
 						focus: setFocused,
 						roots: () => [...document.querySelectorAll("[data-tab]")].map((tab) => tab.dataset.tab),
 					};
-					return createElement("header", { style: { display: "flex", height: "44px", width: "${width}px" } },
+					return createElement(WindowEdgeContext.Provider, { value: edge }, createElement("header", { style: { display: "flex", height: "44px", width: "${width}px" } },
 						createElement("div", { style: { display: "flex", minWidth: 0, flex: "1 1 auto", height: "100%" } },
 							createElement(TabStrip, {
 								tabs,
@@ -149,7 +157,8 @@ async function strip({ width = 900, reduced = false, names = ["alpha", "beta", "
 								onClose: close,
 								onReorder: window.strip.order,
 								onPick: () => {},
-							})));
+								onHome: () => {},
+							}))));
 				}
 				createRoot(document.getElementById("root")).render(createElement(App));
 			`,
@@ -171,6 +180,8 @@ async function strip({ width = 900, reduced = false, names = ["alpha", "beta", "
 	}
 	for (const file of bundle.outputFiles) await page.addScriptTag({ content: file.text });
 	await page.locator("[data-tab]").first().waitFor();
+	await page.evaluate(() => document.fonts.ready);
+	await atRest(page);
 	return page;
 }
 
@@ -258,7 +269,7 @@ function expectGlide(samples: readonly Sample[], key: string, from: number, to: 
 async function atRest(page: Page): Promise<void> {
 	await page.evaluate(async () => {
 		const read = () => {
-			const parts = [...document.querySelectorAll(".project-tab-slot, [data-tab], .project-tab-selection")].map(
+			const parts = [...document.querySelectorAll(".project-tab-slot, [data-tab], .project-tab-sheet")].map(
 				(element) => {
 					const box = element.getBoundingClientRect();
 					return `${box.left},${box.width},${getComputedStyle(element).opacity}`;
@@ -278,11 +289,16 @@ async function atRest(page: Page): Promise<void> {
 	});
 }
 
-/** Wait for the selection to come to rest over a tab, however long a loaded runner takes to paint its slide. */
-async function selectionRestsOn(page: Page, tab: string): Promise<{ x: number } | null> {
+/** where the sheet stands: its left wall, inside the foot that flares out of it */
+const SHEET = `(() => { const b = box(".project-tab-sheet"); return b === null ? null : b.left + 8; })()`;
+
+/** Wait for the sheet to come to rest over a tab, however long a loaded runner takes to paint its slide. */
+async function sheetRestsOn(page: Page, tab: string): Promise<{ x: number } | null> {
 	const box = await page.locator(`[data-tab="${tab}"]`).boundingBox();
 	await expect
-		.poll(() => page.evaluate(() => document.querySelector(".project-tab-selection")?.getBoundingClientRect().left))
+		.poll(() =>
+			page.evaluate(() => (document.querySelector(".project-tab-sheet")?.getBoundingClientRect().left ?? 0) + 8),
+		)
 		.toBeCloseTo(box?.x ?? 0, 0);
 	return box;
 }
@@ -325,8 +341,8 @@ it("closes a tab between others by shrinking it while the ones after slide into 
 	expect(await page.locator(".project-tab-slot").count()).toBe(3);
 });
 
-it("opens a tab by growing it in place, and scrolls a full strip along with it", async () => {
-	const page = await strip({ width: 420 });
+it("opens a tab by growing it in place, and scrolls a strip too full to compress along with it", async () => {
+	const page = await strip({ width: 420, names: CROWD });
 	const end = await page.evaluate(() => {
 		const scroller = document.querySelector(".project-tabs-scroll") as HTMLElement;
 		return scroller.scrollWidth > scroller.clientWidth;
@@ -340,7 +356,7 @@ it("opens a tab by growing it in place, and scrolls a full strip along with it",
 		return { width: slot?.width ?? null, scroll: scroller.scrollLeft, overhang: slot === null ? null : slot.right - view.right };`,
 	);
 	const full = samples[samples.length - 1]?.width ?? 0;
-	expect(full).toBeGreaterThan(112);
+	expect(full).toBeGreaterThanOrEqual(111.5);
 	expectGlide(samples, "width", 0, full);
 	const scrolls = samples.map((sample) => sample.scroll ?? 0);
 	const max = await page.evaluate(() => {
@@ -356,7 +372,7 @@ it("opens a tab by growing it in place, and scrolls a full strip along with it",
 });
 
 it("closes a tab in a strip scrolled to its end without the row jumping", async () => {
-	const page = await strip({ width: 420, names: ["alpha", "beta", "gamma-delta", "epsilon", "zeta"] });
+	const page = await strip({ width: 420, names: [...CROWD, "zeta"] });
 	// scrolled away from the focused first tab, to the far end
 	await atRest(page);
 	const end = await page.evaluate(() => {
@@ -413,25 +429,25 @@ it("keeps rapid closes and an open closed straight away free of ghosts and half 
 	await expect.poll(async () => (await read()).map((slot) => slot.root)).toEqual(["/w/alpha", "/w/eta", "/w/zeta"]);
 	await expect
 		.poll(async () =>
-			(await read()).every((slot) => Math.abs(slot.width - slot.inner - 2) < 0.05 && slot.opacity === "1"),
+			(await read()).every((slot) => Math.abs(slot.width - slot.inner) < 0.05 && slot.opacity === "1"),
 		)
 		.toBe(true);
 	const slots = await read();
 	expect(slots.map((slot) => slot.root)).toEqual(["/w/alpha", "/w/eta", "/w/zeta"]);
 	for (const slot of slots) {
-		expect(slot.width).toBeCloseTo(slot.inner + 2, 1);
+		expect(slot.width).toBeCloseTo(slot.inner, 1);
 		expect(slot.opacity).toBe("1");
 	}
 	await page.locator('[data-tab="/w/zeta"] .project-tab-label').click();
 	expect(await page.locator('[data-tab="/w/zeta"] .project-tab-label').getAttribute("aria-current")).toBe("page");
 });
 
-it("slides the selection on to the tab that takes over from a closed focused tab", async () => {
+it("slides the sheet on to the tab that takes over from a closed focused tab", async () => {
 	const page = await strip();
-	const selection = `return { x: box(".project-tab-selection")?.left ?? null };`;
-	// a tab between: its right-hand neighbour slides in under the selection, which stays put
+	const selection = `return { x: ${SHEET} };`;
+	// a tab between: its right-hand neighbour slides in under the sheet, which stays put
 	await page.locator('[data-tab="/w/beta"] .project-tab-label').click();
-	const beta = await selectionRestsOn(page, "/w/beta");
+	const beta = await sheetRestsOn(page, "/w/beta");
 	const between = await frames(
 		page,
 		`document.querySelector('[data-tab="/w/beta"] .project-tab-close').click();`,
@@ -442,9 +458,9 @@ it("slides the selection on to the tab that takes over from a closed focused tab
 	expect(await page.locator('[data-tab="/w/gamma-delta"] .project-tab-label').getAttribute("aria-current")).toBe(
 		"page",
 	);
-	// the last tab: the selection glides back to the tab on its left
+	// the last tab: the sheet glides back to the tab on its left
 	await page.locator('[data-tab="/w/epsilon"] .project-tab-label').click();
-	const epsilon = await selectionRestsOn(page, "/w/epsilon");
+	const epsilon = await sheetRestsOn(page, "/w/epsilon");
 	const gamma = await page.locator('[data-tab="/w/gamma-delta"]').boundingBox();
 	const last = await frames(
 		page,
@@ -518,7 +534,7 @@ it("drags a tab while another is still closing, keeping it under the pointer", a
 });
 
 it("closes a tab by the middle button, and scrolls a full strip by a vertical wheel", async () => {
-	const page = await strip({ width: 360 });
+	const page = await strip({ width: 360, names: CROWD });
 	const box = await page.locator('[data-tab="/w/beta"]').boundingBox();
 	if (box === null) throw new Error("missing beta");
 	await page.mouse.click(box.x + 30, box.y + 18, { button: "middle" });
@@ -566,4 +582,134 @@ it("animates a close from the keyboard too, and hands the keyboard on to the nex
 	expect(await page.evaluate(() => document.activeElement?.closest<HTMLElement>("[data-tab]")?.dataset.tab)).toBe(
 		"/w/gamma-delta",
 	);
+});
+
+it("compresses a full strip, every tab alike, down to its mark, the focused one keeping its name", async () => {
+	const read = (page: Page) =>
+		page.evaluate(() =>
+			[...document.querySelectorAll<HTMLElement>("[data-tab-slot]")].map((slot) => {
+				const name = slot.querySelector(".project-tab-name");
+				const mark = slot.querySelector(".project-tab-label > span")?.getBoundingClientRect();
+				const close = slot.querySelector(".project-tab-close")?.parentElement;
+				const box = slot.getBoundingClientRect();
+				return {
+					width: box.width,
+					focused: slot.querySelector("[aria-current]") !== null,
+					name: Number(getComputedStyle(name as Element).opacity),
+					markOff: mark === undefined ? 0 : mark.left + mark.width / 2 - (box.left + box.width / 2),
+					close: close === null || close === undefined ? 1 : Number(getComputedStyle(close).opacity),
+				};
+			}),
+		);
+	// room to spare: every tab stands at its widest
+	const roomy = await read(await strip({ width: 1400 }));
+	for (const tab of roomy) expect(tab.width).toBeCloseTo(200, 0);
+
+	// a full strip: the others give up width alike, the focused one keeps its floor and its name
+	const full = await read(await strip({ width: 700, names: CROWD }));
+	const others = full.filter((tab) => !tab.focused);
+	const focused = full.find((tab) => tab.focused);
+	expect(focused?.width).toBeGreaterThanOrEqual(111.5);
+	expect(focused?.name).toBe(1);
+	expect(focused?.close).toBe(1);
+	for (const tab of others) {
+		expect(tab.width).toBeCloseTo(others[0]?.width ?? 0, 1);
+		expect(tab.width).toBeLessThan(88);
+		expect(tab.width).toBeGreaterThan(56);
+		// between 88 and 56 the name is on its way out, and a tab too narrow for it drops its close
+		expect(tab.name).toBeGreaterThan(0);
+		expect(tab.name).toBeLessThan(1);
+		expect(tab.close).toBe(0);
+	}
+
+	// fuller still: the mark alone, at the tab's middle
+	const marks = await read(await strip({ width: 520, names: CROWD }));
+	for (const tab of marks.filter((each) => !each.focused)) {
+		expect(tab.width).toBeCloseTo(40, 0);
+		expect(tab.name).toBe(0);
+		expect(Math.abs(tab.markOff)).toBeLessThan(1);
+	}
+});
+
+it("holds the widths after a close by the pointer, so the next close is under it, until the pointer leaves", async () => {
+	const page = await strip({ width: 700, names: ["alpha", "beta", "gamma-delta", "epsilon", "zeta"] });
+	const widths = () =>
+		page.evaluate(() =>
+			Object.fromEntries(
+				[...document.querySelectorAll<HTMLElement>("[data-tab-slot]")].map((slot) => [
+					slot.dataset.tabSlot,
+					slot.getBoundingClientRect().width,
+				]),
+			),
+		);
+	const before = await widths();
+	expect(before["/w/beta"]).toBeLessThan(200);
+	await page.locator('[data-tab="/w/beta"]').hover();
+	const close = await page.locator('[data-tab="/w/beta"] .project-tab-close').boundingBox();
+	if (close === null) throw new Error("missing close");
+	const x = close.x + close.width / 2;
+	const y = close.y + close.height / 2;
+	await page.mouse.click(x, y);
+	await atRest(page);
+	// every tab keeps the width it had, and the next tab's close has come to stand under the pointer
+	const held = await widths();
+	for (const root of ["/w/alpha", "/w/gamma-delta", "/w/epsilon", "/w/zeta"])
+		expect(held[root]).toBeCloseTo(before[root] ?? 0, 0);
+	expect(
+		await page.evaluate(
+			({ x, y }) => document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-tab]")?.dataset.tab,
+			{ x, y },
+		),
+	).toBe("/w/gamma-delta");
+	// the pointer leaves the strip: the tabs take the room the close left
+	await page.mouse.move(x, 300);
+	await atRest(page);
+	const after = await widths();
+	expect(after["/w/gamma-delta"]).toBeGreaterThan((before["/w/gamma-delta"] ?? 0) + 4);
+});
+
+it("starts the tabs where the window's left side ends, and follows it", async () => {
+	const page = await strip();
+	const first = () =>
+		page.evaluate(() => ({
+			tab: document.querySelector("[data-tab-slot]")?.getBoundingClientRect().left ?? 0,
+			home: Number(getComputedStyle(document.querySelector(".app-home .project-tab-name") as Element).opacity),
+		}));
+	const report = (owner: string, at: number) =>
+		page.evaluate(
+			({ owner, at }) => {
+				const store = window as unknown as {
+					edge: { report: (by: object, at: number) => void };
+					owners?: Record<string, object>;
+				};
+				store.owners ??= {};
+				store.owners[owner] ??= {};
+				store.edge.report(store.owners[owner], at);
+			},
+			{ owner, at },
+		);
+	// a side open at 300: the run starts at its edge, the sheet's foot on the edge itself
+	await report("side", 300);
+	expect((await first()).tab).toBeCloseTo(308, 0);
+	// dragged: in step at once, with nothing to catch up
+	await report("side", 360);
+	expect((await first()).tab).toBeCloseTo(368, 0);
+	// closed to its rail: Home narrows to its mark above the rail
+	await report("side", 44);
+	expect((await first()).tab).toBe(52);
+	await expect.poll(async () => (await first()).home).toBe(0);
+	// no side at all: Home takes its own width again
+	await report("side", 0);
+	await expect.poll(async () => (await first()).home).toBe(1);
+	expect((await first()).tab).toBeGreaterThan(88);
+	// another page's edge (Home's sidebar after a canvas) is travelled to, not jumped to
+	await report("home", 208);
+	expect(
+		await page
+			.locator(".project-tabs > div")
+			.first()
+			.evaluate((column) => column.style.transition),
+	).toContain("width");
+	await atRest(page);
+	expect((await first()).tab).toBeCloseTo(216, 0);
 });
