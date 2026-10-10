@@ -14,9 +14,9 @@ import {
 } from "./api";
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
-import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { CheckIcon, ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
+import { EmptyFrames, EmptyState } from "./primitives/feedback";
 
 /**
  * Home's teams: the switcher at the top of the sidebar, the invite line above the covers, and a team's
@@ -355,8 +355,8 @@ export function TeamProjects({
 			{covers ??
 				(away ? null : (
 					<EmptyState
-						className="min-h-[420px] p-[35px] [&>p]:mt-0"
-						icon={<EmptyFramesIcon />}
+						className="min-h-[420px] justify-center p-[35px]"
+						art={<EmptyFrames />}
 						title={`${team.name} has no projects on this Mac yet`}
 					/>
 				))}

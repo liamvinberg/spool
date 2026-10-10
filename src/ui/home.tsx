@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type HerePerson, type ProjectCard, thumbnailUrl } from "./api";
 import { cn } from "./cn";
-import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { HOME_ACTION, HOME_ACTION_PRIMARY } from "./home-actions";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
@@ -17,6 +16,7 @@ import {
 	SearchIcon,
 } from "./icons";
 import { Kbd } from "./primitives/display";
+import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { ProjectMark } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
@@ -136,13 +136,13 @@ export function Home({
 					<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
 						{notice && <div className="w-[650px] max-w-full">{notice}</div>}
 						<EmptyState
-							className="pj-welcome mt-[-50px] w-[650px] [&>p]:mt-[14px] [&>p]:[font:var(--type-body)] [&>p]:text-secondary [&>.spool-empty-actions]:grid [&>.spool-empty-actions]:w-full [&>.spool-empty-actions]:grid-cols-2 [&>.spool-empty-actions]:gap-[22px] [&>.spool-empty-actions]:mt-[44px] [&>.spool-empty-actions]:text-left [@media(max-width:720px)]:m-0 [@media(max-width:720px)]:[&>.spool-empty-actions]:grid-cols-1"
+							className="pj-welcome mt-[-50px] w-[650px] max-w-full [@media(max-width:720px)]:m-0"
 							heading="h1"
 							align="start"
 							title="Start with an idea."
 							description="Your next project can start here, or in a folder you already have."
 							actions={
-								<>
+								<div className="grid w-[650px] max-w-full grid-cols-2 gap-[22px] text-left [@media(max-width:720px)]:grid-cols-1">
 									<button
 										type="button"
 										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
@@ -189,7 +189,7 @@ export function Home({
 											Open a .spool project file.
 										</small>
 									</button>
-								</>
+								</div>
 							}
 						/>
 					</main>
@@ -252,8 +252,8 @@ export function Home({
 						</div>
 						{visible.length === 0 ? (
 							<EmptyState
-								className="pj-empty min-h-[420px] p-[35px] [&>p]:mt-0"
-								icon={<EmptyFramesIcon />}
+								className="min-h-[420px] justify-center p-[35px]"
+								art={<EmptyFrames />}
 								title={`Nothing matches “${query}”`}
 								description="Try a project name or part of its path."
 								actions={
