@@ -4,6 +4,7 @@ import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
+import { tilde } from "./paths";
 import { Button, IconButton, SplitButton } from "./primitives/actions";
 import { Count } from "./primitives/display";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
@@ -12,7 +13,6 @@ import { NavItem } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { ProjectIconView, useMarkTeam } from "./project-icon";
 import { systemTrashName } from "./system-trash";
-import { tilde } from "./team-moves";
 import { Thumbnail } from "./thumbnail";
 import { useWindowEdge } from "./window-edge";
 
@@ -782,7 +782,7 @@ const NARROW_NAV =
 
 /**
  * A removal reflows every card after it. Where the browser can morph that (view
- * transitions), it does; where it cannot, the grid just snaps — the state change
+ * transitions), it does; where it cannot, the grid just snaps: the state change
  * is the same either way.
  */
 function withViewTransition(mutate: () => void): void {
