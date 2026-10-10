@@ -145,6 +145,21 @@ export function Section({ title, meta, children, className, ...rest }: SectionPr
 const GIVE_WAY =
 	"group-has-[:focus-visible]/row:opacity-0 group-hover/row:opacity-0 group-data-[state=hover]/row:opacity-0";
 
+export type RowTone = "window" | "raised";
+
+const ROW_TONE: Record<RowTone, string> = {
+	// on the window or a panel: hover is the panel step, as every rail ships
+	window: cn(
+		"hover:bg-state-hover data-[state=hover]:bg-state-hover",
+		"aria-selected:bg-state-selected aria-[current=page]:bg-state-selected",
+	),
+	// on a raised or overlay surface the panel step vanishes: it takes the wash
+	raised: cn(
+		"hover:bg-state-hover-raised data-[state=hover]:bg-state-hover-raised",
+		"aria-selected:bg-state-selected-strong aria-[current=page]:bg-state-selected-strong",
+	),
+};
+
 export interface ListRowProps extends Omit<HTMLAttributes<HTMLElement>, "children"> {
 	/** the element: a div by default, a button when the whole row is one action */
 	as?: "div" | "button" | "li" | undefined;
@@ -160,8 +175,13 @@ export interface ListRowProps extends Omit<HTMLAttributes<HTMLElement>, "childre
 	reveal?: boolean | undefined;
 	/** the label as a name the machine prints */
 	mono?: boolean | undefined;
+	/** md is row, every list; lg is row-roomy, Home's lists and the picker */
+	size?: "md" | "lg" | undefined;
+	tone?: RowTone | undefined;
 	selected?: boolean | undefined;
 	current?: boolean | undefined;
+	/** the thread's mark on the start edge without being current: a palette's cursor */
+	marked?: boolean | undefined;
 	/** the icon takes the accent without the mark: the frame chosen on the canvas */
 	lit?: boolean | undefined;
 	/** nobody has looked: a disc; `moved`, seen once and changed since: a ring */
@@ -188,8 +208,11 @@ export function ListRow({
 	trailing,
 	reveal = false,
 	mono = false,
+	size = "md",
+	tone = "window",
 	selected,
 	current,
+	marked,
 	lit,
 	unseen,
 	disabled,
@@ -207,16 +230,17 @@ export function ListRow({
 			"aria-current": current ? "page" : undefined,
 			"aria-disabled": disabled && !button ? true : undefined,
 			disabled: button ? disabled : undefined,
+			"data-marked": marked ? "" : undefined,
 			"data-lit": lit ? "" : undefined,
 			"data-unseen": unseen ? "" : undefined,
 			...rest,
 			className: cn(
-				"group/row relative flex h-row w-full min-w-0 shrink-0 items-center gap-2 pr-3 text-left text-secondary",
+				"group/row relative flex w-full min-w-0 shrink-0 items-center gap-2 pr-3 text-left text-secondary",
+				size === "md" ? "h-row" : "h-row-roomy",
 				FOCUS_INSET,
 				lead === undefined && "pl-3",
 				EASE_COLORS,
-				"hover:bg-state-hover data-[state=hover]:bg-state-hover",
-				"aria-selected:bg-state-selected aria-[current=page]:bg-state-selected",
+				ROW_TONE[tone],
 				"hover:text-primary data-[state=hover]:text-primary",
 				"active:bg-state-pressed data-[state=active]:bg-state-pressed",
 				"aria-selected:text-primary aria-[current=page]:text-primary data-[unseen]:text-primary",
@@ -228,7 +252,7 @@ export function ListRow({
 		<span
 			key="mark"
 			aria-hidden="true"
-			className="absolute top-1.5 bottom-1.5 left-0 hidden w-0.5 rounded-full bg-mark group-aria-[current=page]/row:block"
+			className="absolute top-1.5 bottom-1.5 left-0 hidden w-0.5 rounded-full bg-mark group-aria-[current=page]/row:block group-data-[marked]/row:block"
 		/>,
 		lead,
 		Glyph === undefined ? null : (
