@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ROOT_PAGE } from "../../page-path";
 import { cn } from "../cn";
+import { Divider } from "../primitives/display";
 import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
 
 /**
@@ -95,7 +96,7 @@ export function PresenceFaces({
 
 	return (
 		<div ref={faces} className="relative flex h-full items-center" data-presence-faces="">
-			<span className="mr-3 h-[18px] w-px bg-line-strong" />
+			<Divider orientation="vertical" tone="strong" className="mr-3" />
 			<span className="relative flex h-[30px] items-center">
 				{shown.map((mate, i) => (
 					<button
