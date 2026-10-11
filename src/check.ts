@@ -1,11 +1,11 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ParserPlugin, parse } from "@babel/parser";
 import { API, type Diagnostic } from "typescript/unstable/async";
 import { CheckerAliasAllocator } from "./check-alias";
-import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage } from "./check-budget";
+import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage, checkSourceLimits } from "./check-budget";
 import { BoundedFileTooLargeError, readBoundedRegularFile, UnsafeFileReadError } from "./check-file";
 import { ASSET_EXTENSIONS, TEXT_EXTENSIONS } from "./daemon/assets";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
@@ -168,39 +168,143 @@ class NonRegularDesignFileError extends Error {
 	}
 }
 
+/** What one `spool check` found: its diagnostics, or why it did not run, and what it covered. */
+export interface CheckReport {
+	diagnostics: CheckDiagnostic[];
+	/** Whether the typecheck ran; when it did not, the diagnostics say what stopped it. */
+	ran: boolean;
+	/** The frames it checked, by name (their path under frames/). */
+	frames: string[];
+	/** How many source files their import closure holds. */
+	sources: number;
+	/** Why nothing was checked, when the sources are over the offline limit. */
+	notChecked?: string;
+	/** Scope paths that name no frame; nothing is checked when there are any. */
+	unmatched: string[];
+	/** Design paths of `.tsx` files under frames/ that look meant as frames but are none. */
+	strays: string[];
+}
+
 /** Check every HTML frame without registering, compiling, or writing a project. */
 export async function checkDesign(root: string): Promise<CheckDiagnostic[]> {
+	const report = await checkProject(root);
+	if (report.notChecked === undefined) return report.diagnostics;
+	return [{ path: "design/frames", line: 1, column: 1, code: 5083, message: report.notChecked }];
+}
+
+/**
+ * Check the frames under `scope` (absolute paths of frame folders, their
+ * entries, or folders holding frames) and the closure of what they import, or
+ * every frame when there is no scope. The offline limit counts that closure,
+ * so one frame of a large canvas can be checked on its own.
+ */
+export async function checkProject(root: string, scope?: string[]): Promise<CheckReport> {
+	let designDir = join(root, "design");
+	let selection: FrameSelection = { entries: [], unmatched: [], strays: [], whole: true };
 	try {
-		return await runCheckDesign(root);
+		designDir = realDesignDir(root);
+		const discovery = discoverHtmlFrames(designDir);
+		selection = selectFrames(designDir, discovery, scope);
+		if (selection.unmatched.length > 0) return { ...report(designDir, selection, [], 0), ran: false };
+		const { diagnostics, sources, closure } = await runCheckDesign(designDir, selection.entries);
+		// a page-level source some frame imports is a part, not a frame meant
+		selection.strays = selection.strays.filter((file) => basename(file) === "frame.tsx" || !closure.has(file));
+		return report(designDir, selection, diagnostics, sources);
 	} catch (error) {
-		if (error instanceof NonRegularDesignFileError) {
-			return [{ path: error.path, line: 1, column: 1, code: 5083, message: nonRegularFileMessage }];
+		if (error instanceof CheckSourceLimitError && (error.limit === "files" || error.limit === "total-bytes")) {
+			const over = overBudget(designDir, selection.entries, scope !== undefined && !selection.whole);
+			if (over !== undefined) return { ...report(designDir, selection, [], 0), ran: false, notChecked: over };
 		}
-		if (error instanceof CheckSourceLimitError) {
-			return [
-				{
-					path: designPath(realDesignDir(root), error.file),
-					line: 1,
-					column: 1,
-					code: 5083,
-					message: checkSourceLimitMessage,
-				},
-			];
-		}
-		if (!(error instanceof DesignBoundaryError) && !isFilesystemError(error)) throw error;
-		const code = (error as NodeJS.ErrnoException).code;
-		const message =
-			code === undefined ? "Design boundary prevents checking this project" : `Filesystem read failed (${code})`;
-		return [{ path: "design/frames", line: 1, column: 1, code: 5083, message }];
+		return { ...report(designDir, selection, unrunnable(designDir, error), 0), ran: false };
 	}
 }
 
-async function runCheckDesign(root: string): Promise<CheckDiagnostic[]> {
-	const designDir = realDesignDir(root);
+function report(
+	designDir: string,
+	selection: FrameSelection,
+	diagnostics: CheckDiagnostic[],
+	sources: number,
+): CheckReport {
+	const framesDir = join(designDir, "frames");
+	return {
+		diagnostics,
+		ran: true,
+		frames: selection.entries.map((entry) => relative(framesDir, dirname(entry)).split(sep).join("/")),
+		sources,
+		unmatched: selection.unmatched,
+		strays: selection.strays.map((file) => designPath(designDir, file)),
+	};
+}
+
+/** The one diagnostic for a check that could not start, or the error itself when it is no such case. */
+function unrunnable(designDir: string, error: unknown): CheckDiagnostic[] {
+	if (error instanceof NonRegularDesignFileError) {
+		return [{ path: error.path, line: 1, column: 1, code: 5083, message: nonRegularFileMessage }];
+	}
+	if (error instanceof CheckSourceLimitError) {
+		return [
+			{
+				path: designPath(designDir, error.file),
+				line: 1,
+				column: 1,
+				code: 5083,
+				message: checkSourceLimitMessage,
+			},
+		];
+	}
+	if (!(error instanceof DesignBoundaryError) && !isFilesystemError(error)) throw error;
+	const code = (error as NodeJS.ErrnoException).code;
+	const message =
+		code === undefined ? "Design boundary prevents checking this project" : `Filesystem read failed (${code})`;
+	return [{ path: "design/frames", line: 1, column: 1, code: 5083, message }];
+}
+
+/**
+ * The line for a closure over the file-count or total-size limit: how far over
+ * it is, counted again without those two limits, so the author learns the
+ * size of the problem rather than which file it happened to stop on.
+ */
+function overBudget(designDir: string, entries: string[], scoped: boolean): string | undefined {
+	const counter = new CheckSourceBudget({
+		...checkSourceLimits,
+		maxFiles: Number.POSITIVE_INFINITY,
+		maxTotalBytes: Number.POSITIVE_INFINITY,
+	});
+	try {
+		readImportMap(designDir, counter);
+		readClosure(designDir, entries, counter);
+	} catch {
+		return undefined;
+	}
+	const { files, bytes } = counter.usage;
+	const fewer = scoped
+		? "name fewer frames to check fewer"
+		: "name frames or folders of frames to check fewer, as in spool check design/frames/<page>";
+	if (files > checkSourceLimits.maxFiles) {
+		return `not checked: ${files} source files, the limit is ${checkSourceLimits.maxFiles}; ${fewer}`;
+	}
+	const mb = (value: number): string => `${(value / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
+	return `not checked: ${mb(bytes)} of source, the limit is ${mb(checkSourceLimits.maxTotalBytes)}; ${fewer}`;
+}
+
+async function runCheckDesign(
+	designDir: string,
+	entries: string[],
+): Promise<{ diagnostics: CheckDiagnostic[]; sources: number; closure: Map<string, string> }> {
 	const sourceBudget = new CheckSourceBudget();
-	const entries = discoverHtmlFrames(designDir);
 	const importMap = readImportMap(designDir, sourceBudget);
 	const sourceClosure = readClosure(designDir, entries, sourceBudget);
+	const diagnostics = await typecheckClosure(designDir, entries, sourceBudget, importMap, sourceClosure);
+	return { diagnostics, sources: sourceClosure.sources.size, closure: sourceClosure.sources };
+}
+
+async function typecheckClosure(
+	designDir: string,
+	entries: string[],
+	sourceBudget: CheckSourceBudget,
+	importMap: Set<string>,
+	sourceClosure: SourceClosure,
+): Promise<CheckDiagnostic[]> {
 	const { sources: closure, inspections } = sourceClosure;
 	const uninspectableSources = new Set(
 		[...inspections].filter(([, inspection]) => !inspection.inspectable).map(([file]) => file),
@@ -486,7 +590,7 @@ async function runCheckDesign(root: string): Promise<CheckDiagnostic[]> {
 	}
 }
 
-function discoverHtmlFrames(designDir: string): string[] {
+function discoverHtmlFrames(designDir: string): FrameDiscovery {
 	const framesDir = resolveDesignPath(designDir, join(designDir, "frames"), "frames");
 	try {
 		if (!lstatSync(framesDir).isDirectory()) {
@@ -495,24 +599,90 @@ function discoverHtmlFrames(designDir: string): string[] {
 			throw error;
 		}
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { entries: [], strays: [] };
 		throw error;
 	}
 	const entries: string[] = [];
+	const strays: string[] = [];
 	// discovery's own walk: a folder holding an entry is a frame, and one holding
 	// none is a page whose own folders get the same question (#231)
 	const walk = (dir: string): void => {
+		strays.push(...looseSources(designDir, dir));
 		for (const entry of directories(designDir, dir)) {
 			const frame = join(dir, entry, "frame.tsx");
 			if (designFileExists(designDir, frame)) {
 				entries.push(frame);
+				strays.push(...nestedFrames(designDir, join(dir, entry)));
 				continue;
 			}
 			walk(join(dir, entry));
 		}
 	};
 	walk(framesDir);
-	return entries.sort((a, b) => compareCodeUnits(designPath(designDir, a), designPath(designDir, b)));
+	const byPath = (a: string, b: string): number =>
+		compareCodeUnits(designPath(designDir, a), designPath(designDir, b));
+	return { entries: entries.sort(byPath), strays: strays.sort(byPath) };
+}
+
+interface FrameDiscovery {
+	entries: string[];
+	/** `.tsx` files on a page that no frame folder holds, and frame entries inside another frame's folder. */
+	strays: string[];
+}
+
+interface FrameSelection {
+	entries: string[];
+	unmatched: string[];
+	strays: string[];
+	/** Whether the selection is every frame, scoped or not. */
+	whole: boolean;
+}
+
+/**
+ * The frames a scope names: every frame inside a named folder, or the frame a
+ * named entry or folder is. A scope at or above frames/ is all of them. A stray
+ * stays named only where it is in scope; whether something imports it is
+ * left to the caller, who has read the closure.
+ */
+function selectFrames(designDir: string, discovery: FrameDiscovery, scope: string[] | undefined): FrameSelection {
+	const framesDir = join(designDir, "frames");
+	if (scope === undefined || scope.some((path) => isWithin(path, framesDir))) {
+		return { ...discovery, unmatched: [], whole: true };
+	}
+	const inScope = (file: string): boolean => scope.some((path) => isWithin(path, file));
+	return {
+		entries: discovery.entries.filter(inScope),
+		strays: discovery.strays.filter(inScope),
+		unmatched: scope.filter((path) => !discovery.entries.some((entry) => isWithin(path, entry))),
+		whole: false,
+	};
+}
+
+/** The `.tsx` files sitting directly in a page folder, frames/ itself included, where only frame folders count. */
+function looseSources(designDir: string, dir: string): string[] {
+	try {
+		const canonical = resolveDesignPath(designDir, dir, designPath(designDir, dir));
+		return readdirSync(canonical, { withFileTypes: true })
+			.filter((entry) => entry.isFile() && isSafeName(entry.name) && extname(entry.name).toLowerCase() === ".tsx")
+			.map((entry) => join(dir, entry.name));
+	} catch (error) {
+		if (isMissing(error)) return [];
+		throw error;
+	}
+}
+
+/** Frame entries in folders below a frame's own: the canvas sees the outer frame only. */
+function nestedFrames(designDir: string, frameDir: string): string[] {
+	const found: string[] = [];
+	const walk = (dir: string): void => {
+		for (const entry of directories(designDir, dir)) {
+			const frame = join(dir, entry, "frame.tsx");
+			if (fileExists(frame)) found.push(frame);
+			walk(join(dir, entry));
+		}
+	};
+	walk(frameDir);
+	return found;
 }
 
 function directories(designDir: string, dir: string): string[] {
@@ -1367,7 +1537,7 @@ function readRegularDesignFile(
 		}).toString("utf8");
 	} catch (error) {
 		if (error instanceof UnsafeFileReadError) throw new NonRegularDesignFileError(displayPath);
-		if (error instanceof BoundedFileTooLargeError) throw new CheckSourceLimitError(file);
+		if (error instanceof BoundedFileTooLargeError) throw new CheckSourceLimitError(file, "file-bytes");
 		throw error;
 	}
 }
