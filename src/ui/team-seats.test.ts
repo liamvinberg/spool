@@ -120,7 +120,7 @@ it("names the invitee by their address's first name, up to a dot, underscore or 
 		["noor.k@tidemark.app", "Noor"],
 		["sam_li@tidemark.app", "Sam"],
 		["mira+work@tidemark.app", "Mira"],
-	]) {
+	] as const) {
 		type(host, email);
 		expect(costLine(host)).toBe(
 			`An editor is one more seat: $20 a month, added to the next invoice once ${name} joins.`,
