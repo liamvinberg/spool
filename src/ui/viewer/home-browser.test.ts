@@ -126,6 +126,12 @@ async function open(
 	return { page, asked, left };
 }
 
+/** A picture of the page in `SPOOL_TEST_SHOTS`, when it names a folder. */
+async function shoot(page: Page, name: string) {
+	const shots = process.env.SPOOL_TEST_SHOTS;
+	if (shots) await page.screenshot({ path: join(shots, name) });
+}
+
 describe("Home in a browser", () => {
 	it("draws the app's Home for the team: switcher, nav, covers and who is inside", { timeout: 60_000 }, async () => {
 		const { page } = await open("/devosurf");
@@ -178,7 +184,7 @@ describe("Home in a browser", () => {
 		expect(await page.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("false");
 		await page.getByText("sam@devosurf.com").waitFor();
 		expect(await page.locator("[data-billing-total]").textContent()).toBe("$384 a year");
-		if (process.env.SPOOL_BILLING_SHOT) await page.screenshot({ path: process.env.SPOOL_BILLING_SHOT });
+		await shoot(page, "billing.png");
 		await page.getByRole("button", { name: "Continue to payment" }).click();
 		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
 		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly"}');
@@ -212,7 +218,7 @@ describe("Home in a browser", () => {
 		await pay.getByText("This account has had its trial, so Devosurf starts paid.").waitFor();
 		await pay.getByText("sam@devosurf.com").waitFor();
 		expect(await pay.getByRole("radio", { name: "monthly · $20" }).isChecked()).toBe(true);
-		if (process.env.SPOOL_SETUP_SHOT) await page.screenshot({ path: process.env.SPOOL_SETUP_SHOT });
+		await shoot(page, "setup-list.png");
 		await pay.getByRole("button", { name: "Continue to payment" }).click();
 		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
 		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"monthly"}');
@@ -280,7 +286,7 @@ describe("Home in a browser", () => {
 			.waitFor();
 		// the team keeps working: its covers are still there beneath
 		await page.getByRole("link", { name: "Open checkout" }).waitFor();
-		if (process.env.SPOOL_FAILING_SHOT) await page.screenshot({ path: process.env.SPOOL_FAILING_SHOT });
+		await shoot(page, "billing-failing.png");
 		await line.getByRole("button", { name: "Manage billing" }).click();
 		await expect.poll(() => left).toEqual(["https://billing.stripe.test/p/1"]);
 		expect(asked).toContain("POST /api/teams/devosurf/billing/portal");
