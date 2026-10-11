@@ -1277,6 +1277,24 @@ describe("when a team lapses", () => {
 		writeFrame(ben.root, "after", "export default () => <h1>After</h1>;\n");
 		await until(() => same(ben.root, ana.root, "frames/after/frame.tsx"), 10_000);
 	}, 40_000);
+
+	it("asks again within the minute, not the hour, when spool.page couldn't be reached as the daemon started", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.lapse();
+		await until(() => said.ben.includes(GONE_LOCAL));
+		writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
+
+		// Ben's Mac starts offline, and the team pays while it is: the hourly ask is an hour away
+		await ben.daemon.close();
+		const reachable = cloud.unreachable();
+		makeApp(ben.state, { cloud: ben.machine.cloud, teamNotice: () => {}, goneLocalRetryMs: 100 });
+		await new Promise((wake) => setTimeout(wake, 1_000));
+		cloud.pay();
+		reachable();
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") !== undefined, 8_000);
+	}, 20_000);
 });
 
 describe("the sync socket", () => {

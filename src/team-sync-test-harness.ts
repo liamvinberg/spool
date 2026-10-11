@@ -79,6 +79,8 @@ export function fakeTeam(team = "devosurf") {
 	const projects = new Map<string, Project>();
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
+	/** While set, spool.page doesn't answer at all: every request fails as a network that is down does. */
+	let down = false;
 	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
 	let refusing: number | undefined;
 	/** The team has no paid time left: nobody syncs, and asking says `unpaid`. */
@@ -435,6 +437,7 @@ export function fakeTeam(team = "devosurf") {
 			const color = TEAM_COLORS[people.size % TEAM_COLORS.length] as string;
 			people.set(token, { accountId: name, device: `${name}'s Mac`, role, color });
 			const fetch: typeof globalThis.fetch = async (input, init) => {
+				if (down) throw new TypeError("fetch failed");
 				const request = new Request(input, init);
 				const presented = request.headers.get("authorization")?.replace(/^Bearer /u, "");
 				return answer(request, presented === token ? people.get(token) : undefined);
@@ -505,6 +508,13 @@ export function fakeTeam(team = "devosurf") {
 		/** The team pays again: sync is let back in. */
 		pay() {
 			lapsed = false;
+		},
+		/** spool.page can't be reached by anyone until the returned undo: its requests fail, as offline. */
+		unreachable() {
+			down = true;
+			return () => {
+				down = false;
+			};
 		},
 		/** How many times machines have asked where they stand in a project. */
 		standingAsked: () => asked,

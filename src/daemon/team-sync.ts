@@ -892,6 +892,8 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 
 /** How often a copy that has gone local asks again whether its team pays, besides at start. */
 const GONE_LOCAL_ASK_MS = 60 * 60_000;
+/** How soon a copy gone local asks again when spool.page couldn't be reached: doubling each time, up to the hour. */
+const GONE_LOCAL_RETRY_MS = 60_000;
 
 /** A copy's link, and the request that asks spool.page about it. */
 interface Linked {
@@ -921,12 +923,17 @@ export function createTeamSync(deps: {
 	onGoneLocal?: (root: string) => void;
 	/** How often a copy gone local asks again whether its team pays: an hour, unless a test can't wait that long. */
 	goneLocalAskMs?: number;
+	/** How soon it asks again when spool.page couldn't be reached, doubling up to `goneLocalAskMs`: a minute. */
+	goneLocalRetryMs?: number;
 }) {
 	const copies = new Map<string, LocalCopy>();
 	/** Copies gone local, by root, with the link each keeps. */
 	const stopped = new Map<string, ProjectLink>();
 	/** Stopped roots whose standing is being asked now. */
 	const pending = new Set<string>();
+	const askMs = deps.goneLocalAskMs ?? GONE_LOCAL_ASK_MS;
+	/** Stopped roots that couldn't reach spool.page when they asked, each with how long it waits to ask again. */
+	const retries = new Map<string, { timer: ReturnType<typeof setTimeout>; wait: number }>();
 	/** Who listens for presence on each root's canvas. */
 	const watchers = new Map<string, Set<(presence: Presence) => void>>();
 	let closed = false;
@@ -1023,6 +1030,21 @@ export function createTeamSync(deps: {
 		}
 	};
 
+	/** A stopped root asks again on the hour, with no sooner try pending. */
+	const settle = (root: string) => {
+		clearTimeout(retries.get(root)?.timer);
+		retries.delete(root);
+	};
+	/** spool.page couldn't be reached: asked again in a minute, then two, and so on up to the hour. */
+	const retry = (root: string) => {
+		const was = retries.get(root);
+		clearTimeout(was?.timer);
+		const wait = was === undefined ? (deps.goneLocalRetryMs ?? GONE_LOCAL_RETRY_MS) : Math.min(was.wait * 2, askMs);
+		const timer = setTimeout(() => void ask(root), wait);
+		timer.unref?.();
+		retries.set(root, { timer, wait });
+	};
+
 	/** Whether a stopped copy's team pays again: an editor's copy follows it again, and catches up. */
 	const ask = async (root: string) => {
 		const link = stopped.get(root);
@@ -1031,6 +1053,8 @@ export function createTeamSync(deps: {
 		try {
 			const now = await standing(linked(link))();
 			if (closed || stopped.get(root) !== link) return;
+			if (now === "unknown") return retry(root);
+			settle(root);
 			if (now === "editor") {
 				stopped.delete(root);
 				try {
@@ -1044,7 +1068,7 @@ export function createTeamSync(deps: {
 				stopped.delete(root);
 				end(root, link);
 			}
-			// still unpaid, signed out or unreachable: asked again on the hour
+			// still unpaid, or signed out: asked again on the hour
 		} catch (error) {
 			say(error instanceof Error ? error.message : String(error), root);
 		} finally {
@@ -1054,7 +1078,7 @@ export function createTeamSync(deps: {
 
 	const asking = setInterval(() => {
 		for (const root of stopped.keys()) void ask(root);
-	}, deps.goneLocalAskMs ?? GONE_LOCAL_ASK_MS);
+	}, askMs);
 	asking.unref?.();
 
 	return {
@@ -1068,7 +1092,11 @@ export function createTeamSync(deps: {
 				copy.close();
 				copies.delete(root);
 			}
-			for (const root of stopped.keys()) if (!wanted.includes(root)) stopped.delete(root);
+			for (const root of stopped.keys())
+				if (!wanted.includes(root)) {
+					stopped.delete(root);
+					settle(root);
+				}
 			for (const root of wanted) {
 				if (copies.has(root) || stopped.has(root)) continue;
 				const link = followedLink(root);
@@ -1101,6 +1129,7 @@ export function createTeamSync(deps: {
 		close(): void {
 			closed = true;
 			clearInterval(asking);
+			for (const root of retries.keys()) settle(root);
 			for (const copy of copies.values()) copy.close();
 			copies.clear();
 			stopped.clear();

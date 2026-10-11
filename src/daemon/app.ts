@@ -241,6 +241,8 @@ export interface DaemonOptions {
 	teamNotice?: (message: string, root?: string) => void;
 	/** How often a local copy gone local asks whether its team pays again: an hour, unless a test can't wait. */
 	goneLocalAskMs?: number;
+	/** How soon such a copy asks again when spool.page couldn't be reached, doubling up to the hour: a minute. */
+	goneLocalRetryMs?: number;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
@@ -505,6 +507,7 @@ export function createDaemonApp({
 	cloud,
 	teamNotice = (message) => console.error(`spool: ${message}`),
 	goneLocalAskMs,
+	goneLocalRetryMs,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
 }: DaemonOptions) {
@@ -962,6 +965,7 @@ export function createDaemonApp({
 			if (teamSync.state(root).goneLocal === null) hub.publish(root, { kind: "sync", message: "syncing again" });
 		},
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
+		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
 	});
 	/** What a copy's tab and cover show of its sync: a pause on a limit, or the copy gone local. */
 	const syncMarks = (root: string) => {
