@@ -18,7 +18,7 @@ import { SpoolError } from "./errors";
  */
 const spoolPackageJson = () => fileURLToPath(new URL("../package.json", import.meta.url));
 
-const overview = `spool — the live prototyping canvas. Frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
+const overview = () => `spool — the live prototyping canvas. Frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
 
 This skill is the complete contract: if it isn't here, spool doesn't do it.
 
@@ -301,7 +301,7 @@ A frame is its name, its source path and its size. An element is its frame, what
 
 /** The overview, one topic, or several topics in one text, each under its name; an unknown one refuses them all. */
 export function skillText(...asked: string[]): string {
-	if (asked.length === 0) return overview;
+	if (asked.length === 0) return overview();
 	const names = [...new Set(asked)];
 	const unknown = names.find((name) => !Object.hasOwn(topics, name));
 	if (unknown !== undefined) {
