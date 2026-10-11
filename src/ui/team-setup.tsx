@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { BillingCycle, CloudTeam, TeamSetup } from "./api";
+import type { BillingCycle, CloudTeam, PeopleBilling, TeamSetup } from "./api";
 import { cn } from "./cn";
 import { DOWNLOAD_URL } from "./desktop-bridge";
 import { handoverAddress, knock } from "./handover";
@@ -9,7 +9,7 @@ import { TextAction, Toast } from "./primitives/feedback";
 import { TextField } from "./primitives/inputs";
 import { Segment, SegmentedControl } from "./primitives/selection";
 import { PayChoice, useBilling } from "./team-billing";
-import { TeamsSourceContext, teamSays } from "./teams";
+import { seatCost, TeamsSourceContext, teamSays } from "./teams";
 
 /**
  * A new team's setup list, on its Projects page for admins: the same numbered list on spool.page and in the app, so
@@ -244,6 +244,19 @@ function InviteStep({
 	]);
 	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
+	// what one more seat costs, on a team that already pays, as People says it under its invite
+	const [billing, setBilling] = useState<PeopleBilling | undefined>();
+	useEffect(() => {
+		let current = true;
+		void source.people(team.address).then(
+			(people) => current && setBilling(people.billing),
+			// unread, the rows go without a cost line: the invite still goes, and spool.page still decides
+			() => {},
+		);
+		return () => {
+			current = false;
+		};
+	}, [source, team.address]);
 	const filled = rows.filter((row) => row.email.trim() !== "");
 	const change = (key: number, next: Partial<{ email: string; role: InviteRole }>) => {
 		const changed = rows.map((row) => (row.key === key ? { ...row, ...next } : row));
@@ -292,27 +305,31 @@ function InviteStep({
 		>
 			{rows.map((row, index) => {
 				const label = index === 0 ? "Email address" : "Another email address";
+				const cost = row.email.trim() === "" ? null : seatCost(billing, row.role, row.email);
 				return (
-					<div key={row.key} className="flex items-center gap-[8px]">
-						<TextField
-							size="lg"
-							className="flex-1"
-							value={row.email}
-							onValueChange={(email) => change(row.key, { email })}
-							placeholder={label}
-							label={label}
-							inputProps={{ type: "email" }}
-						/>
-						{row.email.trim() !== "" && (
-							<SegmentedControl
-								label={`Role of ${row.email.trim()}`}
-								value={row.role}
-								onValueChange={(role) => change(row.key, { role: role as InviteRole })}
-							>
-								<Segment value="editor">editor</Segment>
-								<Segment value="viewer">viewer</Segment>
-							</SegmentedControl>
-						)}
+					<div key={row.key} className="flex flex-col gap-[6px]">
+						<div className="flex items-center gap-[8px]">
+							<TextField
+								size="lg"
+								className="flex-1"
+								value={row.email}
+								onValueChange={(email) => change(row.key, { email })}
+								placeholder={label}
+								label={label}
+								inputProps={{ type: "email" }}
+							/>
+							{row.email.trim() !== "" && (
+								<SegmentedControl
+									label={`Role of ${row.email.trim()}`}
+									value={row.role}
+									onValueChange={(role) => change(row.key, { role: role as InviteRole })}
+								>
+									<Segment value="editor">editor</Segment>
+									<Segment value="viewer">viewer</Segment>
+								</SegmentedControl>
+							)}
+						</div>
+						{cost && <p className="pj-seat-cost text-secondary type-label">{cost}</p>}
 					</div>
 				);
 			})}

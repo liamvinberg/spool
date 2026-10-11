@@ -559,7 +559,7 @@ function headcount(people: TeamPeople, admin: boolean): string {
  * What inviting an editor or admin adds to a team with a subscription, said before the invite goes: a seat once
  * they join, charged at once for the year's days left or added to the next monthly invoice. Null when it adds none.
  */
-function seatCost(billing: PeopleBilling | undefined, role: TeamRole, email: string): string | null {
+export function seatCost(billing: PeopleBilling | undefined, role: TeamRole, email: string): string | null {
 	if (!billing || role === "viewer" || billing.cycle === null || billing.seatPrice === null) return null;
 	if (!BILLING_STATES[billing.state].paid) return null;
 	// the name before the address's first `.`, `_` or `+`: noor.k@ is Noor

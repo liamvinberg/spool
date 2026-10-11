@@ -198,6 +198,61 @@ describe("a new team's setup list", () => {
 		expect(said(step(host, "invited"))).toBe("Invite people1 editor and 1 viewer invited");
 	});
 
+	it("says under each editor's row what one more seat costs, on a team that already pays", async () => {
+		const paying: TeamPeople = {
+			...PEOPLE,
+			seats: 1,
+			billing: {
+				state: "paying",
+				cycle: "yearly",
+				seatPrice: 1600,
+				charged: "now",
+				trialEditorCap: null,
+				trialEditors: null,
+			},
+		};
+		const fake = fakeTeamsSource({ teams: [team()], setup: FRESH, people: paying });
+		const { host } = mount(fake);
+		await settle();
+		type(emails(host)[0] as HTMLInputElement, "noor.k@tidemark.app");
+		type(emails(host)[1] as HTMLInputElement, "lena@harbourbank.se");
+		const costs = () => Array.from(host.querySelectorAll(".pj-seat-cost")).map((line) => line.textContent);
+		expect(costs()).toEqual([
+			"An editor is one more seat: $16 a month, charged for the days left this year once Noor joins.",
+			"An editor is one more seat: $16 a month, charged for the days left this year once Lena joins.",
+		]);
+		act(() =>
+			host
+				.querySelector<HTMLInputElement>(
+					'[aria-label="Role of lena@harbourbank.se"] input[type="radio"][value="viewer"]',
+				)
+				?.click(),
+		);
+		expect(costs()).toEqual([
+			"An editor is one more seat: $16 a month, charged for the days left this year once Noor joins.",
+		]);
+	});
+
+	it("says no cost on a trial, where nothing is charged yet", async () => {
+		const trial: TeamPeople = {
+			...PEOPLE,
+			seats: 1,
+			billing: {
+				state: "trial",
+				cycle: null,
+				seatPrice: null,
+				charged: null,
+				trialEditorCap: 10,
+				trialEditors: 1,
+			},
+		};
+		const fake = fakeTeamsSource({ teams: [team()], setup: FRESH, people: trial });
+		const { host } = mount(fake);
+		await settle();
+		type(emails(host)[0] as HTMLInputElement, "noor@tidemark.app");
+		expect(host.querySelector(".pj-seat-cost")).toBeNull();
+	});
+
 	it("completes Invite people with Skip", async () => {
 		const fake = fakeTeamsSource({ teams: [team()], setup: FRESH });
 		const { host } = mount(fake);
