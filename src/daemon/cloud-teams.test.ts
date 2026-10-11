@@ -174,3 +174,25 @@ it("carries People's seat facts to an admin and the trial's editor cap back from
 		body: { error: "trial_editor_cap" },
 	});
 });
+
+it("carries the setup list to spool.page: its facts, Skip and done, each answering with the list", async () => {
+	const setup = {
+		done: false,
+		steps: { named: { address: "tidemark" }, pay: null, invited: "skipped", mac: null, moved: null },
+	};
+	const { api, asked } = harness({
+		token: TOKEN,
+		answer: (request) =>
+			new URL(request.url).pathname.endsWith("/done")
+				? Response.json({ error: "admin_required" }, { status: 403 })
+				: Response.json(setup),
+	});
+	expect(await api("/teams/tidemark/setup")).toEqual({ status: 200, body: setup });
+	expect(await api("/teams/tidemark/setup/skip-invites", "POST")).toEqual({ status: 200, body: setup });
+	expect(await api("/teams/tidemark/setup/done", "POST")).toEqual({ status: 403, body: { error: "admin_required" } });
+	expect(asked.map(({ method, path }) => `${method} ${path}`)).toEqual([
+		"GET /api/teams/tidemark/setup",
+		"POST /api/teams/tidemark/setup/skip-invites",
+		"POST /api/teams/tidemark/setup/done",
+	]);
+});

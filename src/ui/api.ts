@@ -9,6 +9,7 @@ import type {
 	PeopleBilling,
 	TeamPeople,
 	TeamRole,
+	TeamSetup,
 } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
@@ -95,6 +96,7 @@ export type {
 	ShownSetAside,
 	TeamPeople,
 	TeamRole,
+	TeamSetup,
 	ThreadPut,
 };
 

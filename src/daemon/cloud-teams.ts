@@ -173,6 +173,9 @@ export function cloudTeamRoutes(options: { spoolDir: string; cloud?: DaemonCloud
 				},
 			)
 			.post("/teams/:team/billing/portal", (c) => act(c, () => client().portal(c.req.param("team"))))
+			.get("/teams/:team/setup", (c) => act(c, () => client().setup(c.req.param("team"))))
+			.post("/teams/:team/setup/skip-invites", (c) => act(c, () => client().skipInvites(c.req.param("team"))))
+			.post("/teams/:team/setup/done", (c) => act(c, () => client().setupDone(c.req.param("team"))))
 			.post("/invites/:invite/accept", (c) => act(c, () => client().acceptInvite(c.req.param("invite"))))
 			.post("/invites/:invite/decline", (c) => act(c, () => client().declineInvite(c.req.param("invite"))))
 	);

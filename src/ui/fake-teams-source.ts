@@ -1,4 +1,4 @@
-import type { BillingSummary, CloudTeam, TeamPeople } from "../cloud-teams";
+import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../cloud-teams";
 import { TeamActionRefused, type TeamsSource } from "./team-source";
 
 /**
@@ -9,6 +9,7 @@ export function fakeTeamsSource(start: {
 	teams: CloudTeam[];
 	people?: TeamPeople;
 	billing?: BillingSummary;
+	setup?: TeamSetup;
 	origin?: string;
 }) {
 	const state = { ...start };
@@ -56,6 +57,16 @@ export function fakeTeamsSource(start: {
 			const trial = state.people?.billing;
 			if (role !== "viewer" && trial?.trialEditorCap != null && (trial.trialEditors ?? 0) >= trial.trialEditorCap)
 				throw new TeamActionRefused("trial_editor_cap");
+			// an invite sent is the setup list's fact, as spool.page counts it
+			if (state.setup) {
+				const was = state.setup.steps.invited;
+				const counts = was === null || was === "skipped" ? { editors: 0, viewers: 0 } : was;
+				const invited =
+					role === "viewer"
+						? { ...counts, viewers: counts.viewers + 1 }
+						: { ...counts, editors: counts.editors + 1 };
+				state.setup = { ...state.setup, steps: { ...state.setup.steps, invited } };
+			}
 			return { emailed: true };
 		},
 		resendInvite: async (address, invite) => {
@@ -88,6 +99,27 @@ export function fakeTeamsSource(start: {
 			if (state.billing?.state === "free" || state.billing?.plan == null)
 				throw new TeamActionRefused("no_subscription");
 			return { url: `https://billing.stripe.test/${address}` };
+		},
+		setup: async (address) => {
+			ask(`setup ${address}`);
+			admin(address);
+			if (!state.setup) throw new TeamActionRefused("not_found");
+			return state.setup;
+		},
+		skipInvites: async (address) => {
+			ask(`skip invites ${address}`);
+			admin(address);
+			if (!state.setup) throw new TeamActionRefused("not_found");
+			if (state.setup.steps.invited === null)
+				state.setup = { ...state.setup, steps: { ...state.setup.steps, invited: "skipped" } };
+			return state.setup;
+		},
+		setupDone: async (address) => {
+			ask(`setup done ${address}`);
+			admin(address);
+			if (!state.setup) throw new TeamActionRefused("not_found");
+			state.setup = { ...state.setup, done: true };
+			return state.setup;
 		},
 	};
 	return {

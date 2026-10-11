@@ -7,6 +7,7 @@ import type {
 	TeamPeople,
 	TeamProjectHere,
 	TeamRole,
+	TeamSetup,
 } from "../cloud-teams";
 import type { CloudTeamsState } from "../daemon/cloud-teams";
 
@@ -54,6 +55,12 @@ export interface TeamsSource {
 	checkout(address: string, editors: string[], cycle: BillingCycle): Promise<{ url: string }>;
 	/** Stripe's customer portal's address, for the card, invoices, plan and cancelling. */
 	portal(address: string): Promise<{ url: string }>;
+	/** A new team's setup list, read from its facts. Admins only. */
+	setup(address: string): Promise<TeamSetup>;
+	/** Invite people, skipped. */
+	skipInvites(address: string): Promise<TeamSetup>;
+	/** Every step is done: the list goes for good. */
+	setupDone(address: string): Promise<TeamSetup>;
 }
 
 /**
@@ -155,6 +162,9 @@ export function teamsAt(
 		billing: (address) => call("GET", `${team(address)}/billing`),
 		checkout: (address, editors, cycle) => call("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
 		portal: (address) => call("POST", `${team(address)}/billing/portal`),
+		setup: (address) => call("GET", `${team(address)}/setup`),
+		skipInvites: (address) => call("POST", `${team(address)}/setup/skip-invites`),
+		setupDone: (address) => call("POST", `${team(address)}/setup/done`),
 	};
 }
 

@@ -48,6 +48,27 @@ export interface BillingSummary {
 	lapsesAt: number | null;
 }
 
+/**
+ * A new team's setup list, for its admins, read from facts where they exist. Only Skip and done are stored; the rest
+ * is what spool.page sees: invites sent, a Mac signed in by a member, a team project.
+ */
+export interface TeamSetup {
+	/** Set up for good: the list never shows again. */
+	done: boolean;
+	steps: {
+		/** Always done: `spool.page/<address>`. */
+		named: { address: string };
+		/** Only for a team that started lapsed, its creator's trial used: "Pay for <team>" comes second. */
+		pay: null | { paid: boolean };
+		/** Invites ever sent, in any state, or skipped. */
+		invited: null | { editors: number; viewers: number } | "skipped";
+		/** The member whose Mac signed in first, once one has. */
+		mac: null | { email: string };
+		/** The team's first project, once it has one. */
+		moved: null | { project: string };
+	};
+}
+
 /** An open invite to this account's own address. */
 export interface CloudTeamInvite {
 	id: string;
@@ -185,6 +206,12 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
 		/** Stripe's customer portal for the team's card, invoices and plan. */
 		portal: (address: string) => call<{ url: string }>("POST", `${team(address)}/billing/portal`),
+		/** A new team's setup list, read from its facts. Admins only. */
+		setup: (address: string) => call<TeamSetup>("GET", `${team(address)}/setup`),
+		/** Invite people, skipped: setting the team up alone first. */
+		skipInvites: (address: string) => call<TeamSetup>("POST", `${team(address)}/setup/skip-invites`),
+		/** Every step done: the list is gone for good. */
+		setupDone: (address: string) => call<TeamSetup>("POST", `${team(address)}/setup/done`),
 		/** Starts a team project, named from what its folder is called. Editors and admins only. */
 		createProject: (address: string, name: string, repo?: string) =>
 			call<CloudTeamProject>("POST", `${team(address)}/projects`, { name, ...(repo === undefined ? {} : { repo }) }),
