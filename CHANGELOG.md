@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.38.0
+
+### Minor Changes
+
+- 8dcb40f: `spool skill` takes several topics at once (`spool skill frames styling verbs`), and its overview is shorter: history and team projects moved into their own topics, and it now carries a short Playwright driver for clicking or typing in a frame before a screenshot, on spool's own browser. `spool url --raw` points at that driver. `spool status` and the project verbs warn when the daemon runs from a checkout that was deleted, a long team fetch in `spool open` says how far it got, and the advice about `spool stop --force` now says to retry first. The daemon no longer logs a cover spool.page already has a newer one of, and a reader that stops early, like `| head`, no longer makes the CLI print a stack.
+- f8a331a: `spool check` takes the frames to check: name a frame, its folder, its frame.tsx or a page folder, and it type-checks just those and what they import, so one frame on a large canvas can be checked. With no names it checks every frame, as before. It ends with a line saying how many frames and files it checked and how many errors it found.
+
+  When the sources are over the offline limit, `spool check` now says so plainly, with the count and the limit, instead of a TS5083 error on whichever file it stopped at. A file the parser can't read shows the parser's own message and place instead of "Source syntax cannot be inspected safely". A `.tsx` file sitting on a page, or a frame inside another frame's folder, is named as not a frame.
+
+  Slow frames are spelled out only for frames you name; otherwise `spool check` sums them up in one line after the errors.
+
+  `spool check` no longer writes anything. A project that still names frames by folder is left as it is, with a note that `spool open` renames its walks.
+
+- 7f41b0a: People tells a team's admins how many seats it pays for and, on a paid team, what inviting an editor costs before the invite goes. Inviting past a trial's 10 editors says to pay for the team in Settings › Billing.
+- 6d3901e: Breaking: `spool shot` output is easier to use. Shots are saved under the frame's own path, like `.spool/verify/shop/checkout.png` instead of `shop%2Fcheckout.png`. One frame prints the same block as several: a head line with the content's real height and its console errors, then each file with the CSS rows it shows and its pixel scale. When the content is taller or shorter than the height it was shot at, the head line says both. `--at` takes a list like `0,1500,4000` and shoots each time in one boot, saved as `checkout@1500.png`. A page folder shoots every frame in it. A failed shot always ends by naming which frames failed, and `spool logs` no longer narrates its cache.
+- 6ba2379: `spool shot` and `spool logs` now tell you more about a frame that renders wrong. An uncaught error shows its stack pointing at your own .tsx files and lines. React errors come in words instead of a number, because the boot runs React's development build. A Tailwind class that no stylesheet built, such as `bg-white` after your tokens reset the colours, is listed in one line. So is a WebGL context that was lost, and WebGL that ran in software. `shot --at` now moves the frame's own clocks to that moment instead of waiting, so the same `--at` gives the same picture every time.
+- 0d17a18: A team's Settings has two tabs, General and Billing. Billing is for admins: it says when the trial ends and that paying during it charges nothing until then, chooses who to pay for (admins and editors are seats) and monthly or yearly, goes to Stripe Checkout, and once paid shows the plan, the next charge and the card with Manage billing, saying there is no charge until the trial ends when paid for during it. spool.page/<team>/settings/billing opens it. Deleting a team with paid time says its subscription is cancelled at once.
+- de0adaf: Settings › Billing now says where a failing, ending or lapsed team stands: when a failed card goes local, when a cancelled team ends and that undoing it is in Manage billing, and that a lapsed team's trial ended or it has gone local. A failing team's admins also get a warning line on Home, in the app and at spool.page, with Manage billing to fix the card.
+- 6462875: When a team has no paid time left, its local copies stop syncing without ending, and the folder, its link and git stay as they were. spool says once that the team has gone local, and the copy syncs again by itself within a minute of the team paying, sending what was made meanwhile as ordinary saves. On the team's Home, admins get one dialog to choose who stays an editor and pay, and everyone else a line saying the team has gone local, or that it isn't paid for yet when it never had time. New project in such a team says so before any form, taking admins to Settings › Billing, and moving a project in or sharing from it says that an admin can pay for it there.
+- b3b0eed: A new team's admins get a setup list on its Projects page, the same in the app and at spool.page/<team>: name the team, pay first when the account's trial was used, invite people or skip, get spool on your Mac, and move a project in or skip it. On a team that already pays, each editor's invite row says what one more seat costs. Once the last step is done the list goes for good with a toast, and a link from spool.page can hand a team alone over to spool on this Mac, offering the download when spool isn’t open there.
+
+### Patch Changes
+
+- ad5878a: A frame whose source was deleted no longer sits on the canvas saying a designer is drawing it. Only frames a designer is actually working on show that.
+
 ## 0.37.3
 
 ### Patch Changes
