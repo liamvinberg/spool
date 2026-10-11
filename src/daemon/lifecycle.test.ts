@@ -10,6 +10,7 @@ import { makeTempDir } from "../test-helpers";
 import {
 	configuredPort,
 	ensureDaemon,
+	goneSourceWarning,
 	readDaemonState,
 	renderOrigin,
 	resolveServeConfig,
@@ -258,6 +259,7 @@ describe("serveDaemon", () => {
 			version: "0.0.0-test",
 			startedAt: expect.any(String),
 			controlToken: expect.any(String),
+			source: fileURLToPath(new URL("./server.ts", import.meta.url)),
 		});
 		expect(state?.controlToken.length).toBeGreaterThanOrEqual(32);
 		expect(statSync(join(spoolDir, "daemon.json")).mode & 0o777).toBe(0o600);
@@ -375,7 +377,19 @@ describe("statusDaemon", () => {
 			url: daemon.url,
 			pid: process.pid,
 			version: "0.0.0-test",
+			source: fileURLToPath(new URL("./server.ts", import.meta.url)),
 		});
+	});
+});
+
+describe("goneSourceWarning", () => {
+	it("warns of a daemon whose code was deleted under it, and of nothing else", () => {
+		const removed = join(makeTempDir(), "worktree", "src", "daemon", "server.ts");
+		expect(goneSourceWarning({ pid: 7, source: removed })).toContain(
+			`(pid 7) runs from ${removed}, which no longer exists`,
+		);
+		expect(goneSourceWarning({ pid: 7, source: fileURLToPath(import.meta.url) })).toBeUndefined();
+		expect(goneSourceWarning({ pid: 7 })).toBeUndefined();
 	});
 });
 

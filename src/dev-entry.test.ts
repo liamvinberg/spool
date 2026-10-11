@@ -21,6 +21,32 @@ afterEach(async () => {
 });
 
 describe("checkout development entry", () => {
+	it("says it is the checkout CLI on the bare skill only, not on topics", { timeout: 60_000 }, async () => {
+		const checkout = copyCheckout();
+		const env = { ...process.env, HOME: makeTempDir(), SPOOL_DIR: join(makeTempDir(), ".spool"), SPOOL_PORT: "0" };
+		const skill = async (...topics: string[]) => {
+			const child = spawn(
+				join(checkout, "node_modules", ".bin", "tsx"),
+				[join(checkout, "src", "dev.ts"), "skill", ...topics],
+				{
+					cwd: checkout,
+					env,
+				},
+			);
+			let stdout = "";
+			child.stdout.setEncoding("utf8");
+			child.stdout.on("data", (chunk: string) => {
+				stdout += chunk;
+			});
+			await exits(child);
+			return stdout;
+		};
+		const [bare, topics] = await Promise.all([skill(), skill("frames", "styling")]);
+		expect(bare.startsWith("You are on the checkout CLI")).toBe(true);
+		expect(topics).not.toContain("You are on the checkout CLI");
+		expect(topics.startsWith("--- frames ---")).toBe(true);
+	});
+
 	// a hang guard, not a budget: three tsx starts and two whole Vite builds take
 	// a minute on a starved machine
 	it("serves rebuilt UI assets and stands down without leaving another watcher", { timeout: 180_000 }, async () => {

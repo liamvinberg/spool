@@ -219,7 +219,49 @@ describe("skill", () => {
 
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
-		expect(() => skillText("vibes")).toThrowError(/frames, flows, sharing, scenarios, styling, shaders, verbs/);
+		expect(() => skillText("vibes")).toThrowError(
+			/frames, flows, sharing, team, history, scenarios, styling, shaders, verbs/,
+		);
+		expect(() => skillText("frames", "vibes")).toThrowError(/no skill topic "vibes"/);
+	});
+
+	it("prints several topics in one text, each named once", () => {
+		const text = skillText("frames", "styling", "frames");
+		expect(text.startsWith("--- frames ---\n\n")).toBe(true);
+		expect(text).toContain(`${skillText("frames")}\n\n--- styling ---\n\n${skillText("styling")}`);
+		expect(text.match(/--- frames ---/g)).toHaveLength(1);
+		expect(skillText("frames")).not.toContain("--- frames ---");
+	});
+
+	it("says which verbs fetch a team project's design/, and that skill doesn't", () => {
+		expect(skillText()).not.toContain("any verb");
+		expect(skillText()).toContain("skill never does");
+		expect(skillText("team")).toContain("so do check, build and the read verbs; skill doesn't");
+	});
+
+	it("puts a driver for interaction checks in the overview, on spool's own browser", () => {
+		const text = skillText();
+		expect(text).toMatch(/createRequire\(".*[/\\]package\.json"\)\("playwright-core"\)/);
+		expect(text).toContain('chromium.launch({ channel: "chromium-headless-shell" })');
+		expect(text).toContain('node drive.mjs "$(spool url --raw <frame>)"');
+		expect(skillText("verbs")).not.toContain("chromium.launch()");
+	});
+
+	it("keeps history and team detail in their topics, with a pointer and the rules a frame author needs", () => {
+		const text = skillText();
+		expect(text).toContain("never commit or stage design/ yourself (topic: history)");
+		expect(text).toContain("read it again before editing");
+		expect(text).toContain("Commit spool.json, never design/");
+		expect(text).not.toContain("~/.spool/config.json");
+		expect(text).not.toContain("?frame=<frame>");
+		expect(skillText("team")).toContain("?frame=<frame>");
+	});
+
+	it("says frames have no web storage, and that x and y are yours to write too", () => {
+		const frames = skillText("frames");
+		expect(frames).toContain("Frames have no localStorage or sessionStorage");
+		expect(frames).toContain("Writing x and y yourself is fine");
+		expect(frames).toContain("keep its x and y");
 	});
 
 	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
@@ -300,7 +342,7 @@ describe("skill", () => {
 	});
 
 	it("puts design history in the contract, switches included (#160)", () => {
-		const text = skillText();
+		const text = skillText("history");
 		expect(text).toContain("the daemon commits design/ for you");
 		expect(text).toContain("never commit design/ yourself and never stage it");
 		expect(text).toContain("spool never pushes");
@@ -310,7 +352,7 @@ describe("skill", () => {
 	});
 
 	it("indexes every topic as its own overview row", () => {
-		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "verbs"]) {
+		for (const topic of ["frames", "flows", "sharing", "team", "history", "scenarios", "styling", "verbs"]) {
 			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));
 		}
 	});

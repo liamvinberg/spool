@@ -91,4 +91,20 @@ describe("a team project's covers", () => {
 
 		expect(cloud.requests).toEqual([]);
 	});
+
+	it("say nothing when spool.page already holds a newer cover", async () => {
+		const lines: string[] = [];
+		const fetch: typeof globalThis.fetch = async (_input, init) => {
+			if ((init?.method ?? "GET") === "HEAD") return new Response(null, { status: 404 });
+			return Response.json({ error: "cover_stale" }, { status: 409 });
+		};
+		const mac = createTeamCovers({
+			spoolDir: makeTempDir(),
+			request: () => ({ origin: ORIGIN, vault: { read: async () => "device" }, fetch }),
+			log: (line) => lines.push(line),
+		});
+		mac.stored(project(`${ORIGIN}/devosurf/checkout`), "home", "a".repeat(64), JPEG);
+		await mac.settled();
+		expect(lines).toEqual([]);
+	});
 });

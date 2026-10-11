@@ -6,6 +6,7 @@ import {
 	type CompiledFrameDocument,
 	type CompileHost,
 	compileFrameDocument,
+	compileFrameSourceMap,
 	describeCompileError,
 	type FrameAuthority,
 	frameStamp,
@@ -17,12 +18,21 @@ import { contentDigest, readDesignBytes } from "./design-reads";
 import { diskDesignFiles } from "./disk-files";
 import { errorDocument } from "./document";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
+import type { BundleMap } from "./stack-map";
 import { inertWebfonts, type Webfonts } from "./webfonts";
 
 export type { FrameAuthority } from "./design-compile";
 
 export type FrameDocument =
-	| { kind: "ok"; document: string; etag: string; source: string; cache: "hit" | "miss" }
+	| {
+			kind: "ok";
+			document: string;
+			etag: string;
+			source: string;
+			/** Themed classes its sources name that its stylesheet never built. */
+			unstyled: string[];
+			cache: "hit" | "miss";
+	  }
 	| { kind: "error"; document: string; message: string }
 	| { kind: "missing"; message: string };
 
@@ -77,7 +87,8 @@ export function createFrameCompiler(
 				// meanwhile retires this document as surely as one before it
 				cached.fonts === webfonts.revision()
 			) {
-				return { kind: "ok", document: cached.document, etag: cached.etag, source: cached.source, cache: "hit" };
+				const { document, etag, source, unstyled } = cached;
+				return { kind: "ok", document, etag, source, unstyled, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
 				designDir,
@@ -91,7 +102,8 @@ export function createFrameCompiler(
 				if (entry.settled) cache.set(key, entry);
 				else cache.delete(key);
 			}
-			return { kind: "ok", document: entry.document, etag: entry.etag, source: entry.source, cache: "miss" };
+			const { document, etag, source, unstyled } = entry;
+			return { kind: "ok", document, etag, source, unstyled, cache: "miss" };
 		} catch (error) {
 			if (cache.get(key) === cached) cache.delete(key);
 			const message = await describeCompileError(host.esbuild, error);
@@ -109,7 +121,20 @@ export function createFrameCompiler(
 		for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key);
 	}
 
-	return { getDocument, forget };
+	/**
+	 * A frame's bundle with its source map, compiled on its own: what a boot that
+	 * threw reads its stack back with. Nothing when it no longer compiles.
+	 */
+	async function sourceMap(root: string, frame: string): Promise<BundleMap | undefined> {
+		if (!isFramePath(frame) || lookupFrame(root, frame).kind === "missing") return undefined;
+		try {
+			return await compileFrameSourceMap(host, realDesignDir(root), frame);
+		} catch {
+			return undefined;
+		}
+	}
+
+	return { getDocument, forget, sourceMap };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;
