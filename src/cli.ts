@@ -27,6 +27,7 @@ import {
 	readDaemonState,
 	resolveServeConfig,
 	resolveSpoolDir,
+	retryFirst,
 	selfCliPath,
 	spoolDaemonAt,
 	statusDaemon,
@@ -655,7 +656,7 @@ program
 					if (sibling !== undefined) {
 						await uiWatcher?.close();
 						throw new SpoolError(
-							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable — run \`spool stop --force\` to stop it (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token)`,
+							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token). ${retryFirst()}`,
 						);
 					}
 				}

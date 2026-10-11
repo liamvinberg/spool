@@ -14,6 +14,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { cliName } from "../cli-name";
 import { SpoolError } from "../errors";
 import { DEFAULT_HOST, DEFAULT_PORT, isLoopbackHost } from "./loopback";
 import { renderOriginFor } from "./security";
@@ -453,10 +454,18 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 	const orphan = await unrecordedDaemon(spoolDir, { ...process.env, ...options.env });
 	if (orphan !== undefined) {
 		throw new SpoolError(
-			`a spool daemon (v${orphan.version}, pid ${orphan.pid}) already serves ${orphan.url}, but its control credential is unavailable — run \`spool stop --force\` to stop it, then try again`,
+			`a spool daemon (v${orphan.version}, pid ${orphan.pid}) already serves ${orphan.url}, but its control credential is unavailable. ${retryFirst()}`,
 		);
 	}
 	throw new SpoolError(`spool daemon did not come up — see ${logFile}`);
+}
+
+/**
+ * What to do about a daemon nobody holds the credential of. It is often one still starting, and on a machine
+ * where agents share a daemon, stopping it takes it from all of them, so a retry comes first.
+ */
+export function retryFirst(): string {
+	return `Retry in a few seconds first: it may still be starting. If it keeps refusing and nobody else is using it, \`${cliName()} stop --force\` stops it.`;
 }
 
 /** The running cli entry, package-manager bin symlinks resolved away. */
