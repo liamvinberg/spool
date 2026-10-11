@@ -359,8 +359,16 @@ function InviteStep({
 	);
 }
 
-/** Open in spool hands the team alone to spool on this Mac, when it answers. */
-function OpenInSpool({ team, onNotice }: { team: CloudTeam; onNotice: (message: string | null) => void }) {
+/** Open in spool hands the team alone to spool on this Mac, when it answers; when it doesn't, offers the download. */
+function OpenInSpool({
+	team,
+	onOpen,
+	onNotice,
+}: {
+	team: CloudTeam;
+	onOpen: (url: string) => void;
+	onNotice: (message: ReactNode) => void;
+}) {
 	const [knocking, setKnocking] = useState(false);
 	return (
 		<Button
@@ -372,7 +380,16 @@ function OpenInSpool({ team, onNotice }: { team: CloudTeam; onNotice: (message: 
 				const answered = await knock();
 				setKnocking(false);
 				if (answered) window.location.assign(handoverAddress({ team: team.address }));
-				else onNotice("spool isn’t open on this Mac");
+				else
+					onNotice(
+						<>
+							spool isn’t open on this Mac. Open it, or{" "}
+							<TextAction className="px-0" onClick={() => onOpen(DOWNLOAD_URL)}>
+								download it
+							</TextAction>
+							.
+						</>,
+					);
 			}}
 		>
 			Open in spool
@@ -382,7 +399,7 @@ function OpenInSpool({ team, onNotice }: { team: CloudTeam; onNotice: (message: 
 
 /** From the web, the Mac: download spool or open it, and sign in there to carry on. */
 function MacStep({ team, host, next }: { team: CloudTeam; host: SetupHost; next: number }) {
-	const [notice, setNotice] = useState<string | null>(null);
+	const [notice, setNotice] = useState<ReactNode>(null);
 	if (host.on === "mac")
 		return (
 			<p className="text-secondary type-label">
@@ -396,7 +413,7 @@ function MacStep({ team, host, next }: { team: CloudTeam; host: SetupHost; next:
 				<Button size="lg" variant="primary" onClick={() => host.onOpen(DOWNLOAD_URL)}>
 					Download for Mac
 				</Button>
-				<OpenInSpool team={team} onNotice={setNotice} />
+				<OpenInSpool team={team} onOpen={host.onOpen} onNotice={setNotice} />
 			</div>
 			<p className="text-secondary type-label">
 				Sign in there{host.you === undefined ? "" : ` as ${host.you}`} and spool carries on with step {next}.
@@ -413,7 +430,7 @@ function MacStep({ team, host, next }: { team: CloudTeam; host: SetupHost; next:
 /** In the app, this Mac's own projects, each moving in through today's sheet; in a browser, a pointer to the app. */
 /** Move a project in, or Skip, to start with a new project or none yet. */
 function MoveStep({ team, host, onSkip }: { team: CloudTeam; host: SetupHost; onSkip: () => Promise<void> }) {
-	const [notice, setNotice] = useState<string | null>(null);
+	const [notice, setNotice] = useState<ReactNode>(null);
 	const [busy, setBusy] = useState(false);
 	const skip = (
 		<Button
@@ -443,7 +460,7 @@ function MoveStep({ team, host, onSkip }: { team: CloudTeam; host: SetupHost; on
 					Carry on in spool on your Mac: this step lists your own projects there, each with Move to {team.name}…
 				</p>
 				<div className="flex items-center gap-[8px]">
-					<OpenInSpool team={team} onNotice={setNotice} />
+					<OpenInSpool team={team} onOpen={host.onOpen} onNotice={setNotice} />
 					{skip}
 				</div>
 				{said}

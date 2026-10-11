@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../cloud-teams";
+import { DOWNLOAD_URL } from "./desktop-bridge";
 import { fakeTeamsSource } from "./fake-teams-source";
 import type { SetupHost } from "./team-setup";
 import { TeamProjects, TeamsSourceContext } from "./teams";
@@ -176,6 +177,21 @@ describe("a new team's setup list", () => {
 			"Carry on in spool on your Mac: this step lists your own projects there, each with Move to Tidemark…",
 		);
 		expect(setUp).toEqual([]);
+	});
+
+	it("offers the download when Open in spool finds spool isn't open on this Mac", async () => {
+		vi.stubGlobal("fetch", async () => {
+			throw new TypeError("Failed to fetch");
+		});
+		const fake = fakeTeamsSource({ teams: [team()], setup: steps({ invited: "skipped" }) });
+		const { host, opened } = mount(fake);
+		await settle();
+		const mac = step(host, "mac");
+		await act(async () => button(mac, "Open in spool").click());
+		await settle();
+		expect(said(mac)).toContain("spool isn’t open on this Mac. Open it, or download it.");
+		act(() => button(mac, "download it").click());
+		expect(opened).toEqual([DOWNLOAD_URL]);
 	});
 
 	it("sends one invite per email row, each an editor or a viewer", async () => {
