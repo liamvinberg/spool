@@ -333,6 +333,39 @@ it("gives editors and viewers no Billing tab, and never reads billing for them",
 		}
 });
 
+it("says deleting a team with paid time cancels its subscription, and says nothing of one without", async () => {
+	for (const [state, said] of [
+		["paying", true],
+		["failing", true],
+		["ending", true],
+		["trial", false],
+		["lapsed", false],
+	] as const) {
+		const fake = fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: { ...PAYING, state } });
+		const host = mount(
+			fake,
+			createElement(TeamSettingsPage, {
+				team: { ...team(), billing: { state } },
+				origin: "https://spool.page",
+				tab: "general",
+				onTab: vi.fn(),
+				onOpen: vi.fn(),
+				onChanged: vi.fn(),
+				onMoved: vi.fn(),
+				onDeleted: vi.fn(),
+			}),
+		);
+		await settle();
+		act(() => button(host, "Delete Tidemark…").click());
+		const description = "Everyone loses access at once. Gone for good after 30 days.";
+		expect(document.body.textContent).toContain(
+			said ? `${description} Its subscription is cancelled at once.` : description,
+		);
+		if (!said) expect(document.body.textContent).not.toContain("subscription");
+		act(() => button(document.body, "Cancel").click());
+	}
+});
+
 it("switches between General and Billing through its tabs", async () => {
 	const fake = fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: TRIAL });
 	const { host, tabs } = settings(fake);

@@ -843,7 +843,11 @@ function TeamGeneral({
 			{deleting && (
 				<ConfirmDialog
 					title={`Delete ${team.name}?`}
-					description="Everyone loses access at once. Gone for good after 30 days."
+					description={`Everyone loses access at once. Gone for good after 30 days.${
+						team.billing && BILLING_STATES[team.billing.state].paid
+							? " Its subscription is cancelled at once."
+							: ""
+					}`}
 					confirmLabel={`Delete ${team.name}`}
 					danger
 					onConfirm={async () => {
