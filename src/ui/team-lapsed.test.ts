@@ -264,3 +264,83 @@ it("says nothing on a team with paid time", async () => {
 			expect(fake.asked).toEqual(state === "failing" && role === "admin" ? ["billing tidemark"] : []);
 		}
 });
+
+/** Home's Projects page with New project, and Billing when the host can go there. */
+function withNewProject(fake: ReturnType<typeof fakeTeamsSource>, shown: CloudTeam, billing: boolean) {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	const started: string[] = [];
+	const went: string[] = [];
+	act(() =>
+		root.render(
+			createElement(
+				TeamsSourceContext.Provider,
+				{ value: fake.source },
+				createElement(TeamProjects, {
+					team: shown,
+					onOpen: vi.fn(),
+					onNewProject: () => started.push(shown.address),
+					onBilling: billing ? () => went.push("billing") : undefined,
+				}),
+			),
+		),
+	);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+	});
+	/** The New project dialog, once asked for. */
+	const refusal = () =>
+		Array.from(host.querySelectorAll("dialog")).find(
+			(each) => each.querySelector("h2")?.textContent === "New project",
+		);
+	return { host, started, went, refusal };
+}
+
+it("says up front that a lapsed team takes no new project, and sends an admin to Billing when the host can", async () => {
+	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
+	const admin = withNewProject(fake, team("admin"), true);
+	await settle();
+	act(() => button(admin.host, "New project…").click());
+	expect(admin.started).toEqual([]);
+	expect(admin.refusal()?.textContent).toContain(
+		"Tidemark has gone local. Pay for it in Settings › Billing to add projects.",
+	);
+	await act(async () => button(admin.refusal() as HTMLElement, "Go to Billing").click());
+	await settle();
+	expect(admin.went).toEqual(["billing"]);
+	expect(admin.refusal()).toBeUndefined();
+});
+
+it("gives an admin the sentence alone where the host can't go to Billing, and tells others an admin can pay", async () => {
+	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
+	const admin = withNewProject(fake, team("admin"), false);
+	await settle();
+	act(() => button(admin.host, "New project…").click());
+	expect(admin.refusal()?.textContent).toContain(
+		"Tidemark has gone local. Pay for it in Settings › Billing to add projects.",
+	);
+	expect(() => button(admin.refusal() as HTMLElement, "Go to Billing")).toThrow();
+
+	const editor = withNewProject(fake, team("editor"), true);
+	await settle();
+	act(() => button(editor.host, "New project…").click());
+	expect(editor.started).toEqual([]);
+	expect(editor.refusal()?.textContent).toContain("Tidemark has gone local. An admin can pay for it to add projects.");
+	expect(() => button(editor.refusal() as HTMLElement, "Go to Billing")).toThrow();
+	act(() => button(editor.refusal() as HTMLElement, "OK").click());
+	await settle();
+	expect(editor.refusal()).toBeUndefined();
+});
+
+it("starts a new project in a team with time as ever", async () => {
+	const fake = fakeTeamsSource({ teams: [team("editor", "paying")], people: PEOPLE, billing: LAPSED });
+	const editor = withNewProject(fake, team("editor", "paying"), true);
+	await settle();
+	act(() => button(editor.host, "New project…").click());
+	expect(editor.started).toEqual(["tidemark"]);
+	expect(editor.refusal()).toBeUndefined();
+});

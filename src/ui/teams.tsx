@@ -286,6 +286,7 @@ export function TeamProjects({
 	covers,
 	away,
 	onNewProject,
+	onBilling,
 	setup,
 	onOpen,
 	cycle,
@@ -307,20 +308,32 @@ export function TeamProjects({
 	/** The team's projects not on this Mac yet, dimmed with "Get it". */
 	away?: ReactNode;
 	onNewProject?: (() => void) | undefined;
+	/** Settings › Billing, where the host can go there: a lapsed team's New project points an admin to it. */
+	onBilling?: (() => void) | undefined;
 	/** Where the setup list is drawn, for a new team's admins; no list without it. */
 	setup?: SetupHost | undefined;
 }) {
 	const [listing, setListing] = useState(false);
+	const [refusing, setRefusing] = useState(false);
+	const lapsed = team.billing?.state === "lapsed";
 	return (
 		<>
 			<header className="pj-heading mb-[31px] flex h-[35px] items-center justify-between gap-[25px]">
 				<h1 className="type-page font-medium">Projects</h1>
 				{onNewProject && (
-					<Button size="lg" variant="primary" icon={<PlusIcon />} onClick={onNewProject}>
+					<Button
+						size="lg"
+						variant="primary"
+						icon={<PlusIcon />}
+						onClick={lapsed ? () => setRefusing(true) : onNewProject}
+					>
 						New project…
 					</Button>
 				)}
 			</header>
+			{refusing && lapsed && (
+				<LapsedNewProject team={team} onBilling={onBilling} onClose={() => setRefusing(false)} />
+			)}
 			<TeamLapsed team={team} onOpen={onOpen} cycle={cycle} />
 			<TeamFailing team={team} onOpen={onOpen} />
 			{notice}
@@ -331,6 +344,39 @@ export function TeamProjects({
 				))}
 			{away}
 		</>
+	);
+}
+
+/**
+ * New project in a team with no paid time: spool.page would refuse the project, so this says so before any form.
+ * An admin is pointed to Billing, with a way there when the host has one.
+ */
+function LapsedNewProject({
+	team,
+	onBilling,
+	onClose,
+}: {
+	team: CloudTeam;
+	onBilling?: (() => void) | undefined;
+	onClose: () => void;
+}) {
+	const admin = team.role === "admin";
+	const why = team.billing?.hadTime === false ? `${team.name} isn’t paid for yet.` : `${team.name} has gone local.`;
+	const go = admin && onBilling !== undefined;
+	return (
+		<ConfirmDialog
+			title="New project"
+			description={
+				admin
+					? `${why} Pay for it in Settings › Billing to add projects.`
+					: `${why} An admin can pay for it to add projects.`
+			}
+			confirmLabel={go ? "Go to Billing" : "OK"}
+			onConfirm={async () => {
+				if (go) onBilling();
+			}}
+			onClose={onClose}
+		/>
 	);
 }
 
@@ -1081,6 +1127,14 @@ export function useTeamHome(
 							covers={projects?.covers(current.address, here)}
 							away={projects?.away?.(current, here)}
 							onNewProject={projects && (() => projects.onNewProject(current))}
+							onBilling={
+								current.role === "admin"
+									? () => {
+											setPage("settings");
+											setSettingsTab("billing");
+										}
+									: undefined
+							}
 							setup={{
 								on: "mac",
 								you: signedIn ?? undefined,
