@@ -186,6 +186,7 @@ it("says nothing on a team with paid time", async () => {
 			await settle();
 			expect(dialog(host)).toBeNull();
 			expect(host.querySelector(".pj-gone-local")).toBeNull();
-			expect(fake.asked).toEqual([]);
+			// only a failing team's admins read billing, for the failing line
+			expect(fake.asked).toEqual(state === "failing" && role === "admin" ? ["billing tidemark"] : []);
 		}
 });

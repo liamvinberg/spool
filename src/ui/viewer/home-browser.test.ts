@@ -71,7 +71,8 @@ async function open(
 		const request = route.request();
 		const url = new URL(request.url());
 		if (url.origin !== APP) {
-			if (url.hostname === "checkout.stripe.test") left.push(url.toString());
+			if (url.hostname === "checkout.stripe.test" || url.hostname === "billing.stripe.test")
+				left.push(url.toString());
 			return route.abort();
 		}
 		if (url.pathname.startsWith("/_viewer/")) {
@@ -83,6 +84,8 @@ async function open(
 			asked.push(`${request.method()} ${url.pathname}${request.postData() ? ` ${request.postData()}` : ""}`);
 			if (url.pathname === "/api/teams/devosurf/billing/checkout")
 				return route.fulfill({ json: { url: "https://checkout.stripe.test/c/1" } });
+			if (url.pathname === "/api/teams/devosurf/billing/portal")
+				return route.fulfill({ json: { url: "https://billing.stripe.test/p/1" } });
 			if (url.pathname === "/api/teams/devosurf/setup" && given.setup) return route.fulfill({ json: given.setup });
 			if (url.pathname === "/api/teams/devosurf/setup/done" && given.setup)
 				return route.fulfill({ json: { ...given.setup, done: true } });
@@ -255,6 +258,37 @@ describe("Home in a browser", () => {
 		const viewer = await open("/client", { teams: lapsed });
 		await viewer.page.getByText("Client Co has gone local. Ask an admin to pay for it to sync again.").waitFor();
 		expect(await viewer.page.getByRole("dialog").count()).toBe(0);
+		expect(viewer.asked.filter((line) => line.includes("/billing"))).toEqual([]);
+	});
+	it("tells a failing team's admins on Home, and Manage billing opens Stripe's portal in the same tab", {
+		timeout: 60_000,
+	}, async () => {
+		const failing = TEAMS.map((team) => ({ ...team, billing: { state: "failing" as const } }));
+		const { page, asked, left } = await open("/devosurf", {
+			teams: failing,
+			billing: {
+				...BILLING,
+				state: "failing",
+				plan: { seats: 2, cycle: "monthly", amount: 4000 },
+				failingSince: Date.UTC(2026, 5, 17, 12) / 1000,
+				lapsesAt: Date.UTC(2026, 6, 1, 12) / 1000,
+			},
+		});
+		const line = page.locator(".pj-billing-failing");
+		await line
+			.getByText("Devosurf’s last payment failed. Update the card before July 1 to keep it syncing.")
+			.waitFor();
+		// the team keeps working: its covers are still there beneath
+		await page.getByRole("link", { name: "Open checkout" }).waitFor();
+		if (process.env.SPOOL_FAILING_SHOT) await page.screenshot({ path: process.env.SPOOL_FAILING_SHOT });
+		await line.getByRole("button", { name: "Manage billing" }).click();
+		await expect.poll(() => left).toEqual(["https://billing.stripe.test/p/1"]);
+		expect(asked).toContain("POST /api/teams/devosurf/billing/portal");
+
+		// a viewer of the same team hears nothing of it, and never reads billing
+		const viewer = await open("/client", { teams: failing });
+		await viewer.page.getByText("Client Co has no projects yet").waitFor();
+		expect(await viewer.page.locator(".pj-billing-failing").count()).toBe(0);
 		expect(viewer.asked.filter((line) => line.includes("/billing"))).toEqual([]);
 	});
 });
