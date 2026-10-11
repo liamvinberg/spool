@@ -6,7 +6,7 @@ import { App } from "./app";
 
 /**
  * Settings stands in for the tab's content and goes again without touching it:
- * the gear, Home's Settings and ⌘, open it, and esc, Back and the gear put the
+ * the gear and ⌘, open it, and esc, Back and the gear put the
  * tab back as it was.
  */
 it("opens settings in place of Home from every door, and esc gives Home back as it was", async () => {
@@ -59,10 +59,7 @@ it("opens settings in place of Home from every door, and esc gives Home back as 
 	expect(page()).toBeNull();
 	expect(behind()).toBeNull();
 
-	const sidebar = [...host.querySelectorAll<HTMLButtonElement>('nav[aria-label="Home actions"] button')].find(
-		(button) => button.textContent === "Settings",
-	);
-	await act(async () => sidebar?.click());
+	await act(async () => gear()?.click());
 	expect(page()).not.toBeNull();
 	await act(async () => page()?.querySelector<HTMLButtonElement>('button[aria-label="Back to Home"]')?.click());
 	expect(page()).toBeNull();

@@ -263,7 +263,6 @@ it("offers Move to team on a project's cover, never on a team project's", async 
 			onRenameProject: noop,
 			onStart: noop,
 			onFolder: noop,
-			onSettings: noop,
 			onMoveToTeam,
 		}),
 	);

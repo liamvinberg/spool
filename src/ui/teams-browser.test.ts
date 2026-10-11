@@ -45,7 +45,7 @@ async function home(): Promise<Page> {
 					return createElement(Home, {
 						projects: [{ root: "/w/kaffe", name: "kaffe", openedAt: new Date().toISOString(), frameCount: 3, covers: [] }],
 						onOpenProject() {}, onForgetProject() {}, onTrashProject() {}, onRenameProject() {},
-						onStart() {}, onFolder() {}, onSettings() {},
+						onStart() {}, onFolder() {},
 						switcher: createElement(TeamSwitcher, { teams, current, onSelect: setScope, onNewTeam: () => said("new") }),
 						notice,
 						team: current ? {

@@ -36,7 +36,6 @@ const actions = () => ({
 	onRenameProject: vi.fn(),
 	onStart: vi.fn(),
 	onFolder: vi.fn(),
-	onSettings: vi.fn(),
 });
 
 it("opens the two first-launch actions without a separate location choice", () => {
@@ -51,8 +50,8 @@ it("opens the two first-launch actions without a separate location choice", () =
 	});
 	expect(callbacks.onStart).toHaveBeenCalledOnce();
 	expect(callbacks.onFolder).toHaveBeenCalledOnce();
-	act(() => button(host, "Settings").click());
-	expect(callbacks.onSettings).toHaveBeenCalledOnce();
+	// settings opens from the window bar's gear; the sidebar keeps "Settings" for a team's own
+	expect(host.querySelector('nav[aria-label="Home actions"]')).toBeNull();
 });
 
 it("sorts real projects, opens a selected root, and retains removal actions", () => {

@@ -56,7 +56,7 @@ it("stands in for the tab and gives it back as it was", { timeout: 120_000 }, as
 	expect(new URL(page.url()).pathname).toBe(`/p/${encodeURIComponent(project.name)}`);
 
 	await page.getByRole("button", { name: "Home", exact: true }).click();
-	await page.getByRole("navigation", { name: "Home actions" }).getByRole("button", { name: "Settings" }).click();
+	await page.locator("header.app-header").getByRole("button", { name: "Settings", exact: true }).click();
 	await settings.waitFor();
 	expect(await sections()).toEqual(["machine", "appearance", "colours"]);
 	await settings.getByRole("button", { name: "Back to Home" }).click();
