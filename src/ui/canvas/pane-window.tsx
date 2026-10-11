@@ -1047,7 +1047,7 @@ export function PaneWindow({
 									"group/row absolute inset-x-0 flex select-none items-center bg-surface-window",
 									// the row draws its tabs' hairline, so it runs under the verbs and the close too
 									"before:absolute before:inset-x-0 before:bottom-0 before:h-px before:bg-line-default",
-									head && id === "left" ? "px-1.5" : "pr-1.5 pl-3",
+									head && id === "left" ? "px-1.5" : "pr-1.5 pl-1",
 									!head && "after:absolute after:inset-x-0 after:top-0 after:h-px after:bg-line-default",
 								)}
 								style={{ top: tops[g] ?? 0, height: ROW_H, transition: glide }}
@@ -1056,7 +1056,7 @@ export function PaneWindow({
 								<Tabs
 									rule={false}
 									aria-label={head ? `${SIDE_NAME[id]} side` : `${SIDE_NAME[id]} side, split ${g}`}
-									className={cn("min-w-0", head && id === "left" && "ml-2")}
+									className={cn("min-w-0", head && id === "left" && "ml-1")}
 								>
 									{group.tabs.map((pane) => renderTab(pane, pane === group.active))}
 								</Tabs>

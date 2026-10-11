@@ -1,5 +1,5 @@
 // Navigation primitives: the ways a person moves between places. Tabs are the
-// underlined switch inside a panel or a sheet, IconRail the vertical strip of
+// switch inside a panel or a sheet, IconRail the vertical strip of
 // glyphs a closed side shrinks to, NavItem a place in a sidebar.
 //
 // Interaction states answer to the real pseudo-class and to a forced
@@ -27,15 +27,15 @@ export interface TabsProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 /**
- * Underlined tabs: words on one line over a hairline, row-roomy tall, the
- * chosen one in primary ink with the thread's mark under it.
+ * Tabs: words on one line, the chosen one in primary ink on a quiet chip. A lone
+ * tab is a title, so it gets no chip.
  */
 export function Tabs({ rule = true, className, ...rest }: TabsProps) {
 	return (
 		<div
 			role="tablist"
 			className={cn(
-				"flex h-row-roomy shrink-0 items-stretch gap-6",
+				"flex h-row-roomy shrink-0 items-center gap-0.5",
 				rule && "border-line-default border-b",
 				className,
 			)}
@@ -56,21 +56,17 @@ export function Tab({ selected = false, className, children, ...rest }: TabProps
 			role="tab"
 			aria-selected={selected}
 			className={cn(
-				"group/t relative flex items-center gap-1.5 rounded-xs type-control text-secondary",
+				"relative flex h-control-sm items-center gap-1.5 rounded-sm px-2 type-label text-secondary",
 				FOCUS,
 				EASE_COLORS,
 				"hover:text-primary data-[state=hover]:text-primary",
 				"active:text-primary data-[state=active]:text-primary",
-				"aria-selected:text-primary",
+				"aria-selected:text-primary aria-selected:not-only:bg-state-selected",
 				className,
 			)}
 			{...rest}
 		>
 			{children}
-			<span
-				aria-hidden="true"
-				className="absolute inset-x-0 bottom-0 hidden h-0.5 bg-accent group-aria-selected/t:block"
-			/>
 		</button>
 	);
 }
