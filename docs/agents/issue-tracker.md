@@ -1,23 +1,24 @@
-# Issue tracker: GitHub
+# Issue tracker: Linear
 
-Issues and specs for this repo live as GitHub issues in `liamvinberg/spool`. Use the GitHub connector when available and the `gh` CLI for operations the connector does not cover.
+spool's work is tracked in Linear: workspace devosurf, team Devosurf, project Spool. Use the Linear connector.
 
 ## Conventions
 
-- Create a spec or ticket as a GitHub issue.
+- Create a spec or ticket as a Linear issue in project Spool, team Devosurf.
 - Read an issue with all comments and labels before acting on it.
 - Apply and remove labels without replacing unrelated labels.
-- Infer the repository from the local `origin` remote when using `gh`.
-- GitHub shares one number space across issues and pull requests, so resolve an ambiguous `#N` before mutating it.
+- Name issues by their Linear id (`DEV-280`).
 
-## Pull requests as a triage surface
+## GitHub issues
+
+GitHub Issues on `liamvinberg/spool` take reports from outside only. Triage one by moving what is still wanted into Linear and closing it on GitHub, with a comment that names no private detail.
 
 **PRs as a request surface: no.**
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue in `liamvinberg/spool`.
+Create a Linear issue in project Spool.
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the GitHub issue body, comments, and labels.
+Read the Linear issue's description, comments and labels.
