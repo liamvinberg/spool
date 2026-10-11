@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile, writeFrame, writePageFrame } from "../test-helpers";
 import { memoryDesignFiles } from "./design-files";
-import { projectDesign } from "./design-projection";
+import { coverFrame, projectDesign } from "./design-projection";
 import { listProjectFrames } from "./projection";
 
 /**
@@ -72,5 +72,32 @@ describe("the canvas read from a copy of design/", () => {
 			frames: [],
 			order: {},
 		});
+	});
+});
+
+describe("the frame a team project's cover pictures", () => {
+	it("is the root page's top-left frame, as Home's cover on a Mac", () => {
+		const root = makeTempDir();
+		writeFrame(root, "low", TSX);
+		writeDesignFile(root, "frames/low/frame.json", '{ "x": 0, "y": 400, "w": 390, "h": 844 }\n');
+		writeFrame(root, "right", TSX);
+		writeDesignFile(root, "frames/right/frame.json", '{ "x": 900, "y": 0, "w": 390, "h": 844 }\n');
+		writeFrame(root, "left", TSX);
+		writeDesignFile(root, "frames/left/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		writePageFrame(root, "shop", "cart", TSX);
+		writeDesignFile(root, "frames/shop/cart/frame.json", '{ "x": -900, "y": -900, "w": 390, "h": 844 }\n');
+		expect(coverFrame(projectDesign("/copy/design", memoryDesignFiles(files(root))))).toBe("left");
+	});
+
+	it("falls to the first page in rail order with frames, and is none with no frames", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "canvas.json", '{ "format": 2, "order": { "pages": ["shop", "about"] } }\n');
+		writePageFrame(root, "about", "team", TSX);
+		writePageFrame(root, "shop", "cart", TSX);
+		writeDesignFile(root, "frames/shop/cart/frame.json", '{ "x": 0, "y": 100, "w": 390, "h": 844 }\n');
+		writePageFrame(root, "shop", "pay", TSX);
+		writeDesignFile(root, "frames/shop/pay/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+		expect(coverFrame(projectDesign("/copy/design", memoryDesignFiles(files(root))))).toBe("shop/pay");
+		expect(coverFrame({ pages: [], places: {}, frames: [], order: {} })).toBeUndefined();
 	});
 });
