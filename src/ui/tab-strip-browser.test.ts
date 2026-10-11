@@ -122,9 +122,6 @@ async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", 
 				import { createElement, useState } from "react";
 				import { createRoot } from "react-dom/client";
 				import { TabStrip } from "./src/ui/tab-strip";
-				import { WindowEdgeContext, windowEdge } from "./src/ui/window-edge";
-				const edge = windowEdge();
-				window.edge = edge;
 				const initial = ${JSON.stringify(names)}.map((name) => ({ root: "/w/" + name, name }));
 				function App() {
 					const [tabs, setTabs] = useState(initial);
@@ -148,7 +145,7 @@ async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", 
 						focus: setFocused,
 						roots: () => [...document.querySelectorAll("[data-tab]")].map((tab) => tab.dataset.tab),
 					};
-					return createElement(WindowEdgeContext.Provider, { value: edge }, createElement("header", { style: { display: "flex", height: "44px", width: "${width}px" } },
+					return createElement("header", { style: { display: "flex", height: "44px", width: "${width}px" } },
 						createElement("div", { style: { display: "flex", minWidth: 0, flex: "1 1 auto", height: "100%" } },
 							createElement(TabStrip, {
 								tabs,
@@ -158,7 +155,7 @@ async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", 
 								onReorder: window.strip.order,
 								onPick: () => {},
 								onHome: () => {},
-							}))));
+							})));
 				}
 				createRoot(document.getElementById("root")).render(createElement(App));
 			`,
@@ -668,48 +665,12 @@ it("holds the widths after a close by the pointer, so the next close is under it
 	expect(after["/w/gamma-delta"]).toBeGreaterThan((before["/w/gamma-delta"] ?? 0) + 4);
 });
 
-it("starts the tabs where the window's left side ends, and follows it", async () => {
+it("starts the tabs right after Home", async () => {
 	const page = await strip();
-	const first = () =>
-		page.evaluate(() => ({
-			tab: document.querySelector("[data-tab-slot]")?.getBoundingClientRect().left ?? 0,
-			home: Number(getComputedStyle(document.querySelector(".app-home .project-tab-name") as Element).opacity),
-		}));
-	const report = (owner: string, at: number) =>
-		page.evaluate(
-			({ owner, at }) => {
-				const store = window as unknown as {
-					edge: { report: (by: object, at: number) => void };
-					owners?: Record<string, object>;
-				};
-				store.owners ??= {};
-				store.owners[owner] ??= {};
-				store.edge.report(store.owners[owner], at);
-			},
-			{ owner, at },
-		);
-	// a side open at 300: the run starts at its edge, the sheet's foot on the edge itself
-	await report("side", 300);
-	expect((await first()).tab).toBeCloseTo(308, 0);
-	// dragged: in step at once, with nothing to catch up
-	await report("side", 360);
-	expect((await first()).tab).toBeCloseTo(368, 0);
-	// closed to its rail: Home narrows to its mark above the rail
-	await report("side", 44);
-	expect((await first()).tab).toBe(52);
-	await expect.poll(async () => (await first()).home).toBe(0);
-	// no side at all: Home takes its own width again
-	await report("side", 0);
-	await expect.poll(async () => (await first()).home).toBe(1);
-	expect((await first()).tab).toBeGreaterThan(88);
-	// another page's edge (Home's sidebar after a canvas) is travelled to, not jumped to
-	await report("home", 208);
-	expect(
-		await page
-			.locator(".project-tabs > div")
-			.first()
-			.evaluate((column) => column.style.transition),
-	).toContain("width");
-	await atRest(page);
-	expect((await first()).tab).toBeCloseTo(216, 0);
+	const home = await page.locator(".project-tabs > div").first().boundingBox();
+	const tab = await page.locator("[data-tab-slot]").first().boundingBox();
+	expect(tab?.x).toBeCloseTo((home?.x ?? 0) + (home?.width ?? 0) + 8, 0);
+	expect(await page.locator(".app-home .project-tab-name").evaluate((name) => getComputedStyle(name).opacity)).toBe(
+		"1",
+	);
 });

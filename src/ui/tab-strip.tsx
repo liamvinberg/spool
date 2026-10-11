@@ -8,7 +8,7 @@ import {
 	usePresence,
 	useReducedMotion,
 } from "motion/react";
-import { type RefObject, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ProjectIcon } from "./api";
 import { cn } from "./cn";
@@ -16,16 +16,13 @@ import { CloseIcon, HomeIcon, PlusIcon } from "./icons";
 import { IconButton } from "./primitives/actions";
 import { ProjectMark } from "./project-icon";
 import { ProjectTabMenu } from "./project-tab-menu";
-import { WindowEdgeContext } from "./window-edge";
 
 /**
  * Home and the open projects, as tabs you can arrange.
  *
  * The focused tab is the sheet: one shape, the page below reaching up into the
  * bar, that travels from tab to tab and pours into what is under it through
- * flared feet. It is the canvas under a project and the window under Home. The
- * tabs start at the window's left side (`window-edge.ts`), so a project's sheet
- * lands on the canvas; Home keeps the column above that side.
+ * flared feet. It is the canvas under a project and the window under Home.
  *
  * A full strip compresses, as a browser's does: every tab gives up width alike
  * down to its mark, the focused one keeps its name, and after a close by the
@@ -172,7 +169,6 @@ export function TabStrip({
 }) {
 	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
 	const nav = useRef<HTMLElement | null>(null);
-	const column = useRef<HTMLDivElement | null>(null);
 	const strip = useRef<HTMLDivElement | null>(null);
 	const reduced = useReducedMotion() === true;
 	const scale = useMemo(() => motionScale(document.documentElement), []);
@@ -217,20 +213,6 @@ export function TabStrip({
 	const travel = drag !== null || quiet || (keyboard && !handedOn) ? 0 : scale.slow;
 
 	const sheet = useSheet({ layer: nav, strip, target: focused ?? HOME, travel, curve: scale.curve });
-
-	// The tabs start where the window's left side ends, and follow it as it moves.
-	const edge = useContext(WindowEdgeContext);
-	useLayoutEffect(() => {
-		const element = column.current;
-		if (edge === null || element === null) return;
-		return edge.follow((at, moved) => {
-			const width = at - (nav.current?.getBoundingClientRect().left ?? 0);
-			// no side at all leaves Home its own width
-			element.style.width = width <= 0 ? "" : `${width}px`;
-			element.style.transition = moved && !reduced ? `width ${scale.slow}ms ${cubicCss(scale.curve)}` : "none";
-			sheet();
-		});
-	}, [edge, reduced, scale, sheet]);
 
 	useEffect(() => {
 		mounted.current = true;
@@ -509,8 +491,7 @@ export function TabStrip({
 				onPointerLeave={() => setHeld(null)}
 			>
 				<Sheet target={sheet} home={home} />
-				{/* Home stands over the window's left side, whatever its width */}
-				<div ref={column} className="relative z-[1] flex h-full shrink-0 pl-2">
+				<div className="relative z-[1] flex h-full shrink-0 pl-2">
 					<HomeTab home={home} onHome={onHome} />
 				</div>
 				<motion.div
@@ -561,8 +542,6 @@ export function TabStrip({
 		</MotionConfig>
 	);
 }
-
-const cubicCss = (curve: readonly number[]) => `cubic-bezier(${curve.join(",")})`;
 
 /** a tab's label: the whole face is the hit area, the name and its mark inside */
 const LABEL =
