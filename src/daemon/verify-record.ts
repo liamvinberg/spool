@@ -2,7 +2,6 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import type { ColorScheme } from "../cover";
-import { frameSegment } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
@@ -26,9 +25,30 @@ export interface LogEntry {
  */
 export const SHOT_AT_MAX_MS = 30_000;
 
+/** The most times one `--at` may list: each is a full set of slices from the one boot. */
+export const SHOT_AT_MAX_COUNT = 20;
+
+/** One file of a shot: which slice of the frame it holds, in CSS px, and when it was taken. */
+export interface ShotFile {
+	file: string;
+	/** The slice's top and height in CSS px; the whole frame when it fits one image. */
+	y: number;
+	height: number;
+	/** Milliseconds after the first commit, when `--at` asked for a time. */
+	at?: number;
+}
+
 /** What one boot came to. */
 export type BootOutcome =
-	| { kind: "booted"; files: string[]; entries: LogEntry[]; errors: string[]; contentHeight: number }
+	| {
+			kind: "booted";
+			files: ShotFile[];
+			/** PNG px per CSS px (`planShot`). */
+			scale: number;
+			entries: LogEntry[];
+			errors: string[];
+			contentHeight: number;
+	  }
 	| { kind: "broken"; message: string }
 	| { kind: "missing"; message: string }
 	| { kind: "failed"; message: string };
@@ -40,13 +60,16 @@ export type BootOutcome =
  */
 export type BootLine = { beat: true } | { narrate: string } | { outcome: BootOutcome };
 
-export function shotFile(root: string, frame: string): string {
-	return verifyFile(root, frame, "png");
-}
-
-/** Slice n of a tiled shot, 1-based so the printed paths read top to bottom. */
-export function shotTileFile(root: string, frame: string, tile: number): string {
-	return verifyFile(root, frame, `${tile}.png`);
+/**
+ * Where a shot lands: the frame's own path under design/.spool/verify, so
+ * `shop/checkout` is `verify/shop/checkout.png`. A time asked of `--at` names
+ * its own file (`checkout@1500.png`), so a series never overwrites itself, and
+ * a frame too tall for one image is numbered slices (`checkout.1.png`, …).
+ */
+export function shotFile(root: string, frame: string, options: { at?: number; tile?: number } = {}): string {
+	const time = options.at === undefined ? "" : `@${options.at}`;
+	const tile = options.tile === undefined ? "" : `.${options.tile}`;
+	return verifyFile(root, frame, `${time}${tile}.png`);
 }
 
 /**
@@ -92,10 +115,12 @@ export function planShot(width: number, height: number): ShotPlan {
 }
 
 /**
- * Write what one boot left: the shot or its slices, and the console. Every
- * shot address this run did not write retires with it, because the files are
- * named outputs an agent reads back by path, and a five-slice shot followed by
- * a two-slice one must not leave slices three to five telling last week's truth.
+ * Write what one boot left: the shot or its slices at each time, and the
+ * console. Every file of the same times this run did not write retires with
+ * it, because the files are named outputs an agent reads back by path, and a
+ * five-slice shot followed by a two-slice one must not leave slices three to
+ * five telling last week's truth. A shot at other times is another variant, and
+ * stays.
  */
 export function recordBoot(
 	root: string,
@@ -104,19 +129,25 @@ export function recordBoot(
 		etag: string;
 		scenario: string;
 		scheme: ColorScheme;
-		pngs: readonly Buffer[];
+		tiles: ReadonlyArray<{ y: number; height: number }>;
+		shots: ReadonlyArray<{ at?: number; pngs: readonly Buffer[] }>;
 		entries: readonly LogEntry[];
 	},
-): string[] {
-	const files =
-		boot.pngs.length === 1
-			? [shotFile(root, frame)]
-			: boot.pngs.map((_, index) => shotTileFile(root, frame, index + 1));
-	for (const [index, file] of files.entries()) {
-		const png = boot.pngs[index];
-		if (png !== undefined) writeAtomic(file, png);
+): ShotFile[] {
+	const files: ShotFile[] = [];
+	for (const shot of boot.shots) {
+		const kept: string[] = [];
+		for (const [index, png] of shot.pngs.entries()) {
+			const at = shot.at === undefined ? {} : { at: shot.at };
+			const file = shotFile(root, frame, { ...at, ...(shot.pngs.length === 1 ? {} : { tile: index + 1 }) });
+			const tile = boot.tiles[index] ?? { y: 0, height: 0 };
+			writeAtomic(file, png);
+			kept.push(file);
+			files.push({ file, y: tile.y, height: tile.height, ...at });
+		}
+		sweepShotFiles(root, frame, shot.at, kept);
 	}
-	sweepShotFiles(root, frame, files);
+	sweepEncoded(root, frame);
 	const { etag, scenario, scheme, entries } = boot;
 	writeAtomic(
 		logsFile(root, frame),
@@ -156,8 +187,9 @@ export function readLogsCache(
 	return sound ? { etag, scenario, scheme: typeof scheme === "string" ? scheme : "", entries } : undefined;
 }
 
-function sweepShotFiles(root: string, frame: string, kept: string[]): void {
-	const dir = dirname(shotFile(root, frame));
+function sweepShotFiles(root: string, frame: string, at: number | undefined, kept: string[]): void {
+	const plain = shotFile(root, frame, at === undefined ? {} : { at });
+	const dir = dirname(plain);
 	const keep = new Set(kept.map((file) => file.slice(dir.length + 1)));
 	let names: string[];
 	try {
@@ -165,19 +197,41 @@ function sweepShotFiles(root: string, frame: string, kept: string[]): void {
 	} catch {
 		return;
 	}
-	const stem = frameSegment(frame);
+	const stem = plain.slice(dir.length + 1, -".png".length);
 	for (const name of names) {
 		if (!name.startsWith(`${stem}.`) || keep.has(name)) continue;
 		if (/^(\d+\.)?png$/.test(name.slice(stem.length + 1))) rmSync(join(dir, name), { force: true });
 	}
 }
 
-function logsFile(root: string, frame: string): string {
-	return verifyFile(root, frame, "logs.json");
+/**
+ * Shots and logs a frame on a page left under its old one-segment name
+ * (`shop%2Fcheckout.png`), from before the names mirrored the frame's path:
+ * they would otherwise sit beside the new ones looking current.
+ */
+function sweepEncoded(root: string, frame: string): void {
+	if (!frame.includes("/")) return;
+	const designDir = realDesignDir(root);
+	const dir = join(designDir, ".spool", "verify");
+	const stem = encodeURIComponent(frame);
+	let names: string[];
+	try {
+		names = readdirSync(dir);
+	} catch {
+		return;
+	}
+	for (const name of names) {
+		if (!name.startsWith(`${stem}.`)) continue;
+		if (/^((\d+\.)?png|logs\.json)$/.test(name.slice(stem.length + 1))) rmSync(join(dir, name), { force: true });
+	}
 }
 
-function verifyFile(root: string, frame: string, extension: string): string {
+function logsFile(root: string, frame: string): string {
+	return verifyFile(root, frame, ".logs.json");
+}
+
+function verifyFile(root: string, frame: string, suffix: string): string {
 	const designDir = realDesignDir(root);
-	const file = `${frameSegment(frame)}.${extension}`;
+	const file = `${frame}${suffix}`;
 	return resolveDesignPath(designDir, join(designDir, ".spool", "verify", file), `.spool/verify/${file}`);
 }

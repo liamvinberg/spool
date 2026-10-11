@@ -1,8 +1,8 @@
 # Triage labels
 
-The engineering skills use five canonical triage roles. This repo uses the same strings in GitHub.
+The engineering skills use five canonical triage roles. This repo uses the same strings as Linear labels.
 
-| Canonical role | GitHub label | Meaning |
+| Canonical role | Linear label | Meaning |
 | --- | --- | --- |
 | `needs-triage` | `needs-triage` | Maintainer needs to evaluate this issue |
 | `needs-info` | `needs-info` | Waiting on the reporter for more information |
@@ -10,4 +10,4 @@ The engineering skills use five canonical triage roles. This repo uses the same 
 | `ready-for-human` | `ready-for-human` | Requires human implementation |
 | `wontfix` | `wontfix` | Will not be actioned |
 
-When a skill names a canonical role, use the corresponding GitHub label.
+When a skill names a canonical role, use the corresponding Linear label.

@@ -8,6 +8,7 @@ import {
 	createBooth,
 	createBoothQueue,
 	followsColorScheme,
+	formatConsole,
 	type Sitting,
 	systemColorScheme,
 } from "./booth";
@@ -477,5 +478,20 @@ describe("a headless shell this machine cannot run", () => {
 		expect(missingLibrary("Protocol error (Browser.getVersion): Internal server error, session closed.")).toBe(
 			undefined,
 		);
+	});
+});
+
+describe("a shot's console line", () => {
+	it("reads as the browser's console prints it, its format filled in", () => {
+		expect(
+			formatConsole(
+				["%s\n\n%s\n", "An error occurred in the <Loop> component.", "Consider an error boundary."],
+				"unused",
+			),
+		).toBe("An error occurred in the <Loop> component.\n\nConsider an error boundary.");
+		expect(formatConsole(["%cstyled%c and %d%% done", "color: red", "", "40", "extra"], "unused")).toBe(
+			"styled and 40% done extra",
+		);
+		expect(formatConsole(["plain", "words"], "plain words")).toBe("plain words");
 	});
 });

@@ -144,7 +144,7 @@ syncBuiltinESMExports();
 		});
 		expect(JSON.parse(readFileSync(checkerExit, "utf8"))).toEqual({ signals: [], code: 0, signal: null });
 		expect(clipboardCheck.status).toBe(0);
-		expect(clipboardCheck.stdout).toBe("");
+		expect(clipboardCheck.stdout).toMatch(/^checked 1 frame \(\d+ source files?\), 0 errors\n$/);
 		expect(clipboardCheck.stderr).toBe("");
 
 		const project = makeTempDir();
@@ -159,7 +159,7 @@ syncBuiltinESMExports();
 		});
 		expect(JSON.parse(readFileSync(checkerExit, "utf8"))).toEqual({ signals: [], code: 0, signal: null });
 		expect(check.status).toBe(1);
-		expect(check.stdout).toBe("");
+		expect(check.stdout).toMatch(/^checked 1 frame \(\d+ source files\), 1 error\n$/);
 		expect(check.stderr).toBe(
 			"design/shared/dep.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.\n",
 		);

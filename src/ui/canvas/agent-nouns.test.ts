@@ -20,6 +20,8 @@ describe("frameOf", () => {
 	it("reads a verify shot's one segment back into the frame it stands for", () => {
 		expect(frameOf("/p/design/.spool/verify/home.png")).toBe("home");
 		expect(frameOf("/p/design/.spool/verify/shop%2Fcheckout.png")).toBe("shop/checkout");
+		expect(frameOf("/p/design/.spool/verify/shop/checkout.png")).toBe("shop/checkout");
+		expect(frameOf("/p/design/.spool/verify/shop/checkout@1500.2.png")).toBe("shop/checkout");
 		expect(frameOf("/p/design/.spool/verify/%E0%A4%A.png")).toBeNull();
 	});
 });

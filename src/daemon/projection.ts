@@ -380,11 +380,15 @@ function placeholdersOf(discovery: Discovery): ProjectedPlaceholder[] {
 		// a sidecar with no place yet is a write caught halfway: nothing to draw until it has one
 		const geometry = parseGeometry(value);
 		if (geometry === undefined) continue;
+		// only spool writes the record, for a designer it started: a bare sidecar is what a
+		// frame left behind when its source went, and no designer is drawing there
+		const note = parsePlaceholder(value);
+		if (note === undefined) continue;
 		found.push({
 			name: frame.name,
 			...(frame.page === undefined ? {} : { page: frame.page }),
 			...geometry,
-			...parsePlaceholder(value),
+			...note,
 		});
 	}
 	return found;

@@ -150,6 +150,7 @@ import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import type { PlaceholderAuthor } from "./sidecar";
+import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
 import { createTeamSync, endedWith, followedLink, goneLocalWith, type OpenSyncSocket } from "./team-sync";
@@ -165,16 +166,18 @@ import {
 	writePace,
 } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
+import { unstyledWarning } from "./unstyled-classes";
 import { createUpdateChecker } from "./update-check";
 import {
 	reactVersion,
 	type VendorModule,
 	vendorPlayerShellJs,
+	vendorReactDevJs,
 	vendorReactJs,
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
 } from "./vendor";
-import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_MS } from "./verify-record";
+import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./verify-record";
 import { createWebfonts, type Webfonts } from "./webfonts";
 
 export interface DaemonOptions {
@@ -296,7 +299,7 @@ const canvasView = z.strictObject({
 const bootRequest = z.strictObject({
 	width: z.number().int().positive(),
 	height: z.number().int().positive(),
-	at: z.number().int().nonnegative().max(SHOT_AT_MAX_MS).optional(),
+	at: z.array(z.number().int().nonnegative().max(SHOT_AT_MAX_MS)).min(1).max(SHOT_AT_MAX_COUNT).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 
@@ -1061,6 +1064,7 @@ export function createDaemonApp({
 		paced: (root, frame, pace) => {
 			if (frameExists(root, frame)) writePace(root, frame, pace);
 		},
+		reactDev: vendorReactDevJs,
 		// The booth compiles every frame of every registered project, where the
 		// canvas only ever compiled the page it showed, and a compiled document
 		// holds the frame's whole bundle and stylesheet. One of a page nobody has
@@ -3053,7 +3057,9 @@ export function createDaemonApp({
 			"/api/p/:project/boot/:frame",
 			validator("json", (value, c) => {
 				const parsed = bootRequest.safeParse(value);
-				return parsed.success ? parsed.data : c.text('a boot is { "width", "height", "at"?, "scenario"? }', 400);
+				return parsed.success
+					? parsed.data
+					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scenario"? }', 400);
 			}),
 			(c) => {
 				// shot and logs (#25): one boot of the served document in the photo
@@ -3077,7 +3083,16 @@ export function createDaemonApp({
 						const plan = planShot(width, height);
 						try {
 							const shot = await booth.shoot(
-								{ project: name, frame, width, height, scale: plan.scale, tiles: plan.tiles, at, scenario },
+								{
+									project: name,
+									frame,
+									width,
+									height,
+									scale: plan.scale,
+									tiles: plan.tiles,
+									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
+									scenario,
+								},
 								(line) => void write({ narrate: line }).catch(() => {}),
 							);
 							if (shot.kind === "unserved") {
@@ -3086,15 +3101,28 @@ export function createDaemonApp({
 								const message = again.kind === "error" ? again.message : `frame "${frame}" failed to serve`;
 								return { outcome: { kind: "broken", message } };
 							}
+							// an uncaught throw's stack, read back to the frame's own files
+							const { entries, errors } = await mapBootStacks(
+								shot,
+								doc.document,
+								`/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`,
+								() => compiler.sourceMap(project.root, frame),
+							);
+							// classes its stylesheet never built render unstyled with a clean console
+							const unstyled = unstyledWarning(doc.unstyled);
+							if (unstyled !== undefined) entries.unshift({ type: "spool", text: unstyled });
 							const files = recordBoot(project.root, frame, {
 								etag: doc.etag,
 								scenario: scenario ?? "default",
 								scheme: shot.scheme,
-								pngs: shot.pngs,
-								entries: shot.entries,
+								tiles: plan.tiles,
+								shots: shot.shots,
+								entries,
 							});
-							const { entries, errors, contentHeight } = shot;
-							return { outcome: { kind: "booted", files, entries, errors, contentHeight } };
+							const { contentHeight } = shot;
+							return {
+								outcome: { kind: "booted", files, scale: plan.scale, entries, errors, contentHeight },
+							};
 						} catch (error) {
 							return {
 								outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
