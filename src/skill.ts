@@ -35,7 +35,7 @@ Lifecycle (offline, take a path):
   spool check [path]    strictly type-check frames without starting spool; also names frames timed too slow to play smoothly
   spool build <frame> --out <directory> [--scenario <name>]    export a connected website offline
 
-For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source. In a team project a lane is one more local copy of the same live canvas: any verb there fetches its design/, its saves reach the team like any other, and \`spool remove <lane>\` forgets that copy without touching the team.
+For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source. In a team project a lane is one more local copy of the same live canvas: open, check, build and the read verbs there fetch its design/ (skill never does), its saves reach the team like any other, and \`spool remove <lane>\` forgets that copy without touching the team.
 
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at, as one <selection> block: frames and elements, paths and lines
@@ -43,18 +43,34 @@ Read verbs (work from any cwd inside a registered project, auto-start the daemon
   spool shot <frame>…   headless screenshot of each frame named, with its console errors when you name several
   spool logs <frame>    the same scenario boot's console, cached by compiled source
   spool url <frame>     mint a player URL; --raw mints the bare frame document
-  spool skill [topic]   this text (needs nothing)
+  spool skill [topic…]  this text, or the topics named (several at once); reads nothing, fetches nothing
+
+To click, type or reach a state before a shot, drive the bare frame with spool's own Playwright and Chromium: save this as drive.mjs anywhere and run \`node drive.mjs "$(spool url --raw <frame>)"\` (the same command you run spool with). *.spool.localhost needs no host rule.
+
+  import { createRequire } from "node:module";
+  const { chromium } = createRequire(${JSON.stringify(spoolPackageJson())})("playwright-core");
+  const browser = await chromium.launch({ channel: "chromium-headless-shell" }); // spool's pinned build
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); // the frame's size
+  await page.goto(process.argv[2], { waitUntil: "domcontentloaded" }); // never networkidle: live reload stays open
+  await page.locator("#root > *").first().waitFor(); // the frame has rendered
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.screenshot({ path: "after.png" });
+  await browser.close();
+
+A bare frame has no storage and walks out by real navigation; drive the player URL for walks and shared state (topic: verbs). A state you only need to open in is a scenario (topic: scenarios), not a driver.
 
 The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots frames in spool's own headless Chrome; it never reads the human's canvas.
 
-History: where a project's design/canvas.json says \`"history": true\`, the daemon commits design/ for you — everything that changed lands as one \`design: <counts>\` commit on the checked-out branch once the folder has been quiet for 45 seconds. So never commit design/ yourself and never stage it: the save is built from its own index, your staging area is left exactly as you found it, and spool never pushes. \`spool init\` leaves history off and says so (\`spool init --history\` starts a project with it on); a project with no key reads as off; \`"history": false\` in ~/.spool/config.json turns it off on that machine whatever a project asks for. A repository mid-merge, mid-rebase, on a detached HEAD, or with its index held waits for the next window.
+History: where design/canvas.json says \`"history": true\`, the daemon commits design/ for you, so never commit or stage design/ yourself (topic: history).
 
-Team projects: a spool.json beside design/ ({ "project": "https://spool.page/<team>/<project>" }) makes design/ a local copy of a team project. Every save in it reaches the team's other editors through spool.page within about a second, and theirs arrive here as real files, so write frames exactly as anywhere else; a file a teammate changed since you read it is theirs now, so read it again before editing. If your save reaches the team after a teammate's to the same file, yours is set aside and the file takes theirs; the person decides on the canvas whether to put yours back or hand it to you. Only canvas.json, AGENTS.md, CLAUDE.md, frames/** and shared/** travel; .spool/ and design/.gitignore stay on this machine. design/ is out of git there (its own .gitignore is \`*\`) and history never commits it: commit spool.json, never design/. Git never writes to the team's copy: whatever a checkout, pull, reset or merge puts in design/ is never sent, and the team's version comes back over what the team has, while a file the team never had stays as git left it, unsent, until someone edits it; a design/ that vanishes is refilled, not deleted for the team. A spool.json with no design/ beside it means run \`spool open\` there, which fetches it (any verb does). Moving an existing project into a team is the human's, in the app (Move to team…): it uploads design/ and makes the one commit \`design: moved to Spool Cloud\`, so never untrack design/ or write spool.json yourself. To show someone a frame of a team project, link it: the project's address with ?frame=<frame> (its full name, encoded: https://spool.page/devosurf/shop?frame=checkout%2Fcart) opens that frame played, in a browser, for anyone in the team.
+Team projects: a spool.json beside design/ makes design/ a live local copy of a team project on spool.page. Write frames exactly as anywhere else; a file a teammate changed since you read it is theirs now, so read it again before editing. Commit spool.json, never design/, and never write spool.json yourself. A spool.json with no design/ beside it means run \`spool open\` there, which fetches it (topic: team: conflicts, what travels, git, linking a frame).
 
-Topics — \`spool skill <topic>\`:
+Topics — \`spool skill <topic>…\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
   flows       data-go, ui.go/back/state/use, sessions, arrows
   sharing     protected Cloud links, invitations, updates and recovery
+  team        team projects: sync, conflicts, what travels, git, linking a frame
+  history     design/ committed for you, and its switches
   scenarios   named seeds: { state }
   styling     Tailwind, tokens.css, cn(), motion
   shaders     WebGL, WebGPU, Three.js, shader authoring and verification
@@ -66,7 +82,7 @@ const topics: Record<string, () => string> = {
 	frames: () => `Everything lives under design/:
 
   frames/<name>/frame.tsx    default-exports one React component: the frame
-  frames/<name>/frame.json   geometry sidecar: you write { w, h }, spool adds { x, y } (integers, px)
+  frames/<name>/frame.json   geometry sidecar { w, h, x, y } (integers, px): you write w and h, spool adds x and y unless you do
   frames/<name>/*            anything else the frame imports relatively
   frames/<page>/<name>/      a page: a folder grouping frames, its own canvas (below)
   frames/<page>/<page>/      pages hold pages, to any depth (below)
@@ -87,13 +103,13 @@ A frame is named by its path under frames/: checkout on the root page, shop/chec
 
 Pages group frames into journeys: a folder under frames/ without a frame.tsx is a page, and its subfolders are frames or pages of their own, to any depth. A page is named by its path under frames/ (explorations/chat); each page is its own canvas, and the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys, and nest them when one journey holds several. A page's own name only has to be free among the folders beside it, so explorations/chat and site/chat are two pages, and shop/buttons and vercel/buttons are two frames. Create a page by creating its folder. Rename or move frames and pages on the canvas: a frame's name is its path, so spool writes every data-go, ui.go and links literal that named a moved frame at its new name, in frames and shared/ alike. A frame or page renamed or moved outside spool leaves those literals naming the old path: \`spool flows\` marks them missing, and they are yours to rewrite. A destination spool cannot read (a constant, a lookup, a built string) is never rewritten, which is one more reason to keep targets literal. Import shared/ by its design-relative path — import { cn } from "shared/lib/utils" — which resolves from any frame at any depth, so a move never breaks it; a stylesheet writes the same form (@import "shared/tokens.css"). A \`../\` path into shared/ still compiles, but it counts folders and a move changes the count; spool re-aims such imports when it moves a folder, a folder moved outside spool is yours to re-aim. The canvas reflects either kind immediately. Walks cross pages freely: the player ignores pages entirely, and on the canvas a walk that lands on another page docks on the frame declaring it as a tag naming the target and its page — pressing it goes there. A walk that lands nowhere is not drawn at all: there is nowhere to press, so a name no frame answers to and a destination the parser cannot read are reported by \`spool flows\` and by this skill rather than on the canvas.
 
-frame.json is the one file both hands write, geometry only, and the split is fixed: you write the size, spool writes the position. State every new frame's size — write \`{ "w": 1440, "h": 900 }\` before its frame entry and the frame's first appearance is already that size, placed beside its own page's frames and never on top of them, spool completing the same file with x and y. Writing it afterwards costs only that first appearance: a frame whose size changes has its picture retaken, whichever hand changed it. Leave the size out and the frame is 1440×900, which is a size to choose rather than one to inherit — a phone is 390×844 and says so. Write all four numbers only to move something: a placement already on disk is never overwritten, and neither are bytes spool cannot read, so a sidecar caught mid-write is safe. The human's drags and resizes rewrite the file after that. shot and logs only read geometry and never create this file. Beyond that, the rail drives folder operations for the human: rename, move a frame between pages, move a page into or out of another, duplicate, new page, and delete to the OS Trash. Frame source the human edits only as span patches, and only three ways: an element's words, an element taken out, and an element moved before or after a sibling written beside it in the same parent. Each is one gated op spliced into the characters it names, the rest of the file byte-identical, refused outright where it could not be made honestly. Styling, layout, images, attributes, hiding, adding an element and moving one into another container are yours alone; a human who wants one of those changed asks you. Your side of the deal is what lets those hand edits land: use named components, write words as JSX text rather than computed strings, and write lists as literal arrays that a .map() renders, so a person can change words, delete a row and reorder rows by hand. Keep siblings a person may reorder as plain children of one parent rather than behind a condition or a spread. Expect a frame you authored to come back with words changed, an element gone or siblings in a new order, and its shape otherwise intact; you stay the author.
+frame.json is the one file both hands write, geometry only, and the split is fixed: you write the size, spool writes the position. State every new frame's size — write \`{ "w": 1440, "h": 900 }\` before its frame entry and the frame's first appearance is already that size, placed beside its own page's frames and never on top of them, spool completing the same file with x and y. Writing it afterwards costs only that first appearance: a frame whose size changes has its picture retaken, whichever hand changed it. Leave the size out and the frame is 1440×900, which is a size to choose rather than one to inherit — a phone is 390×844 and says so. Writing x and y yourself is fine, and is how you move or tidy frames. When you rewrite w or h of a frame already placed, keep its x and y: a file with only a size is placed afresh. A placement already on disk is never overwritten, and neither are bytes spool cannot read, so a sidecar caught mid-write is safe. The human's drags and resizes rewrite the file after that. shot and logs only read geometry and never create this file. Beyond that, the rail drives folder operations for the human: rename, move a frame between pages, move a page into or out of another, duplicate, new page, and delete to the OS Trash. Frame source the human edits only as span patches, and only three ways: an element's words, an element taken out, and an element moved before or after a sibling written beside it in the same parent. Each is one gated op spliced into the characters it names, the rest of the file byte-identical, refused outright where it could not be made honestly. Styling, layout, images, attributes, hiding, adding an element and moving one into another container are yours alone; a human who wants one of those changed asks you. Your side of the deal is what lets those hand edits land: use named components, write words as JSX text rather than computed strings, and write lists as literal arrays that a .map() renders, so a person can change words, delete a row and reorder rows by hand. Keep siblings a person may reorder as plain children of one parent rather than behind a condition or a spread. Expect a frame you authored to come back with words changed, an element gone or siblings in a new order, and its shape otherwise intact; you stay the author.
 
 The rail keeps a manual order for the pages a page holds and for the frames on it: the hands' arrangement, stored in canvas.json, which is app-owned and never yours to write. A frame you create arrives at its alphabetical spot, and a \`--\` variant arrives beside its base, so a well-named variant files itself. There is no order verb.
 
 The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Nested flex-fill chains need a definite h-full at each link; min-h-full does not give flex-1 a definite height. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
 
-Frames are https-only, on the canvas, in the player, in shot and logs and in an export alike. A frame's fetch, script and image may reach https:, data: and blob: URLs and spool's own libraries, and nothing over plain http: a call to http://localhost:3000 or to any plain-http address on your network is refused before it leaves, and the frame's console names the address it refused (\`spool logs\` shows it). Never point a frame at a local dev server. Fake the backend instead: seed what it would answer with a scenario (topic: scenarios), and write what it would do as a mock module beside the frame that reads and writes ui.state. A phone frame fills the whole screen, under the notch and the home bar, and pads itself with env(safe-area-inset-*).
+Frames are https-only, on the canvas, in the player, in shot and logs and in an export alike. A frame's fetch, script and image may reach https:, data: and blob: URLs and spool's own libraries, and nothing over plain http: a call to http://localhost:3000 or to any plain-http address on your network is refused before it leaves, and the frame's console names the address it refused (\`spool logs\` shows it). Never point a frame at a local dev server. Fake the backend instead: seed what it would answer with a scenario (topic: scenarios), and write what it would do as a mock module beside the frame that reads and writes ui.state. Frames have no localStorage or sessionStorage, anywhere they run: keep what must last a session in ui.state (topic: flows). A phone frame fills the whole screen, under the notch and the home bar, and pads itself with env(safe-area-inset-*).
 
 shared/ui components take props, never knowledge — importing "spool" there fails the compile. Flow and app state live in frames; a shared component receives values and callbacks. That boundary is what keeps shared/ui able to move into a product unchanged.
 
@@ -160,6 +176,12 @@ Repeat publish from the same checkout, entry and scenario to update its continui
 \`spool cloud list\` and \`spool cloud status <id>\` inspect remote state; status also compares available local source. Unavailable source is not proof that the link is up to date. \`spool cloud invite <id> <email>\`, \`spool cloud revoke <id> <email>\` and \`spool cloud stop <id>\` manage access. These commands return JSON on stdout; a failure exits nonzero and also says what went wrong in one line on stderr. An account not approved to publish still works in teams. Revocation blocks new protected requests but cannot recall bytes someone already received.
 
 The canvas and the local player share through the same publication and daemon-owned job: a frame's right-click menu copies its link, its label reports the link's state, and a popover beside it manages access, updates and stopping. Closing the canvas or the player leaves an upload running. Update link publishes the original journey, even after navigating elsewhere within it.`,
+
+	team: () =>
+		`A spool.json beside design/ ({ "project": "https://spool.page/<team>/<project>" }) makes design/ a local copy of a team project. Every save in it reaches the team's other editors through spool.page within about a second, and theirs arrive here as real files, so write frames exactly as anywhere else; a file a teammate changed since you read it is theirs now, so read it again before editing. If your save reaches the team after a teammate's to the same file, yours is set aside and the file takes theirs; the person decides on the canvas whether to put yours back or hand it to you. Only canvas.json, AGENTS.md, CLAUDE.md, frames/** and shared/** travel; .spool/ and design/.gitignore stay on this machine. design/ is out of git there (its own .gitignore is \`*\`) and history never commits it: commit spool.json, never design/. Git never writes to the team's copy: whatever a checkout, pull, reset or merge puts in design/ is never sent, and the team's version comes back over what the team has, while a file the team never had stays as git left it, unsent, until someone edits it; a design/ that vanishes is refilled, not deleted for the team. A spool.json with no design/ beside it means run \`spool open\` there, which fetches it (so do check, build and the read verbs; skill doesn't). Moving an existing project into a team is the human's, in the app (Move to team…): it uploads design/ and makes the one commit \`design: moved to Spool Cloud\`, so never untrack design/ or write spool.json yourself. To show someone a frame of a team project, link it: the project's address with ?frame=<frame> (its full name, encoded: https://spool.page/devosurf/shop?frame=checkout%2Fcart) opens that frame played, in a browser, for anyone in the team.`,
+
+	history: () =>
+		`Where a project's design/canvas.json says \`"history": true\`, the daemon commits design/ for you — everything that changed lands as one \`design: <counts>\` commit on the checked-out branch once the folder has been quiet for 45 seconds. So never commit design/ yourself and never stage it: the save is built from its own index, your staging area is left exactly as you found it, and spool never pushes. \`spool init\` leaves history off and says so (\`spool init --history\` starts a project with it on); a project with no key reads as off; \`"history": false\` in ~/.spool/config.json turns it off on that machine whatever a project asks for. A repository mid-merge, mid-rebase, on a detached HEAD, or with its index held waits for the next window.`,
 
 	scenarios:
 		() => `shared/scenarios/<name>.json = { "state": { ... } } — one named way the app can be. state seeds ui.state at session start. The key is optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
@@ -255,7 +277,7 @@ For Playwright, wait for DOMContentLoaded and then a meaningful selector from th
   const requireFromSpool = createRequire(${JSON.stringify(spoolPackageJson())});
   const { chromium } = requireFromSpool("playwright-core");
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ channel: "chromium-headless-shell" }); // spool's pinned build
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); // at least the frame's size
   await page.goto(playerUrl, { waitUntil: "domcontentloaded" });
   const frame = page.frameLocator("#spool-player"); // on a --raw URL, use page itself
@@ -277,11 +299,15 @@ A frame is its name, its source path and its size. An element is its frame, what
 \`spool flows\` prints { frames, edges, unreadable } — every edge { from, to, certainty: "will" | "might", sites: [{ path, line, conditional? }] }, "verified": true once a real session took it, "missing": true on targets no frame answers (typo'd ui.go literals included), and unreadable entries { frame, path, line } for navigation whose destination cannot be read: together, the todo list when wiring a flow. \`spool flows --entry <frame>\` prints the stricter publication-readiness result.`,
 };
 
-export function skillText(topic?: string): string {
-	if (topic === undefined) return overview;
-	const text = topics[topic];
-	if (text === undefined) {
-		throw new SpoolError(`no skill topic "${topic}" — topics: ${Object.keys(topics).join(", ")}`);
+/** The overview, one topic, or several topics in one text, each under its name; an unknown one refuses them all. */
+export function skillText(...asked: string[]): string {
+	if (asked.length === 0) return overview;
+	const names = [...new Set(asked)];
+	const unknown = names.find((name) => !Object.hasOwn(topics, name));
+	if (unknown !== undefined) {
+		throw new SpoolError(`no skill topic "${unknown}" — topics: ${Object.keys(topics).join(", ")}`);
 	}
-	return text();
+	const texts = names.map((name) => topics[name]?.() ?? "");
+	if (texts.length === 1) return texts[0] ?? "";
+	return names.map((name, at) => `--- ${name} ---\n\n${texts[at]}`).join("\n\n");
 }

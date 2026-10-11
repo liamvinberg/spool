@@ -9,6 +9,7 @@ import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
 import { describeSlowFrame, slowFrames } from "./check-pace";
+import { cliName } from "./cli-name";
 import { CloudNotApproved, CloudRequestFailure, CloudSignedOut, cloudOrigin, login, logout } from "./cloud-auth";
 import {
 	CloudPublicationFailure,
@@ -63,6 +64,12 @@ const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.
 
   design/ is a spool canvas: run \`spool skill\` before working there — it is the complete contract
 `;
+
+// a reader that stops early (`spool skill | head`) is no failure of the verb's: end quietly, without a stack
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+	if (error.code !== "EPIPE") throw error;
+	process.exit(0);
+});
 
 /** The bare verb's one opt-out, routed by hand below and declared here to be in `--help`. */
 const NO_OPEN = "--no-open";
@@ -589,6 +596,7 @@ program
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
+		if (options.raw === true) narrate(`to click or type before a shot, copy the driver in \`${cliName()} skill\``);
 		process.stdout.write(
 			`${
 				options.raw === true
@@ -601,9 +609,9 @@ program
 program
 	.command("skill")
 	.description("print the spool skill — how agents author for this canvas")
-	.argument("[topic]", "one topic instead of the overview")
-	.action((topic?: string) => {
-		process.stdout.write(`${skillText(topic)}\n`);
+	.argument("[topics...]", "topics instead of the overview, several in one go")
+	.action((topics: string[]) => {
+		process.stdout.write(`${skillText(...topics)}\n`);
 	});
 
 program
