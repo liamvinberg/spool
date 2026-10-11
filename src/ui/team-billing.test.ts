@@ -140,7 +140,7 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 	expect(host.textContent).toContain("monthly · $20");
 	expect(host.textContent).toContain("yearly · $16");
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$576 a year");
-	expect(host.textContent).toContain("3 editors × $16 a month");
+	expect(host.textContent).toContain("3 seats × $16 a month");
 	expect(host.textContent).toContain(
 		"Stripe takes the card. Add a company name and VAT number there if you have them.",
 	);
@@ -151,7 +151,7 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$384 a year");
 	act(() => host.querySelector<HTMLInputElement>('input[type="radio"][value="monthly"]')?.click());
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$40 a month");
-	expect(host.textContent).toContain("2 editors × $20 a month");
+	expect(host.textContent).toContain("2 seats × $20 a month");
 
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();

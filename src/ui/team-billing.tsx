@@ -274,7 +274,7 @@ export function PayChoice({
 						{per(seats * (cycle === "monthly" ? prices.monthly : prices.yearly), cycle)}
 					</span>
 					<span className="text-secondary type-detail">
-						{seats} {seats === 1 ? "editor" : "editors"} × {money(monthly)} a month
+						{seats} {seats === 1 ? "seat" : "seats"} × {money(monthly)} a month
 					</span>
 				</span>
 			</div>
