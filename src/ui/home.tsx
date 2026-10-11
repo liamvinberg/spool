@@ -3,7 +3,7 @@ import { type HerePerson, type ProjectCard, thumbnailUrl } from "./api";
 import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import { ArrowRightIcon, CogIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
+import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
 import { tilde } from "./paths";
 import { Button, IconButton, SplitButton } from "./primitives/actions";
 import { Count } from "./primitives/display";
@@ -24,7 +24,6 @@ export function Home({
 	onRenameProject,
 	onStart,
 	onFolder,
-	onSettings,
 	onImport,
 	onExportProject,
 	onMoveToTeam,
@@ -44,7 +43,6 @@ export function Home({
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
 	onFolder: () => void;
-	onSettings: () => void;
 	onImport?: () => void;
 	onExportProject?: (project: ProjectCard) => void;
 	/** "Move to team…" on a project's cover, while this account edits in a team. */
@@ -109,20 +107,7 @@ export function Home({
 					/>
 				)
 			}
-			foot={
-				<>
-					<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
-						<NavItem
-							icon={<CogIcon />}
-							label="Settings"
-							className={NARROW_NAV}
-							onClick={onSettings}
-							title={`Settings ${hotkeyKey("app.settings")}`}
-						/>
-					</nav>
-					{account ?? <span>On this Mac</span>}
-				</>
-			}
+			foot={<>{account ?? <span>On this Mac</span>}</>}
 		>
 			{team ? (
 				<main className={HOME_MAIN}>{team.main}</main>

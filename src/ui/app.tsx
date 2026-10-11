@@ -672,7 +672,6 @@ export function App() {
 									setPicking("new");
 								}}
 								onFolder={() => setPicking("folder")}
-								onSettings={openSettings}
 								onImport={transfer.importProject}
 								onExportProject={transfer.exportProject}
 								onChangeIcon={icons.change}
