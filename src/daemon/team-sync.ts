@@ -890,9 +890,12 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 	};
 }
 
-/** How often a copy that has gone local asks again whether its team pays, besides at start. */
-const GONE_LOCAL_ASK_MS = 60 * 60_000;
-/** How soon a copy gone local asks again when spool.page couldn't be reached: doubling each time, up to the hour. */
+/**
+ * How often a copy that has gone local asks again whether its team pays, besides at start: one GET a minute per
+ * stopped copy, so a team paid for from a browser syncs again within the minute.
+ */
+const GONE_LOCAL_ASK_MS = 60_000;
+/** How soon a copy gone local asks again when spool.page couldn't be reached: doubling each time, up to how often it asks. */
 const GONE_LOCAL_RETRY_MS = 60_000;
 
 /** A copy's link, and the request that asks spool.page about it. */
@@ -904,7 +907,7 @@ interface Linked {
 /**
  * Every team project the daemon has registered, followed for as long as it stays registered. A local copy
  * whose `design/` isn't there yet waits for a fetch to fill it, and one whose project ended is never followed. One
- * whose team went local is stopped, not ended: it keeps its link and its files, and asks at start and every hour
+ * whose team went local is stopped, not ended: it keeps its link and its files, and asks at start and every minute
  * whether the team pays again, when it follows the team once more and catches up as after any time offline.
  */
 export function createTeamSync(deps: {
@@ -921,7 +924,7 @@ export function createTeamSync(deps: {
 	onSyncChanged?: (root: string) => void;
 	/** A local copy went local, or follows its team again: `state(root).goneLocal` says which. */
 	onGoneLocal?: (root: string) => void;
-	/** How often a copy gone local asks again whether its team pays: an hour, unless a test can't wait that long. */
+	/** How often a copy gone local asks again whether its team pays: a minute, unless a test can't wait that long. */
 	goneLocalAskMs?: number;
 	/** How soon it asks again when spool.page couldn't be reached, doubling up to `goneLocalAskMs`: a minute. */
 	goneLocalRetryMs?: number;
@@ -1030,12 +1033,12 @@ export function createTeamSync(deps: {
 		}
 	};
 
-	/** A stopped root asks again on the hour, with no sooner try pending. */
+	/** A stopped root asks again on the minute, with no sooner try pending. */
 	const settle = (root: string) => {
 		clearTimeout(retries.get(root)?.timer);
 		retries.delete(root);
 	};
-	/** spool.page couldn't be reached: asked again in a minute, then two, and so on up to the hour. */
+	/** spool.page couldn't be reached: asked again in a minute, then two, and so on up to the ask's interval. */
 	const retry = (root: string) => {
 		const was = retries.get(root);
 		clearTimeout(was?.timer);
@@ -1068,7 +1071,7 @@ export function createTeamSync(deps: {
 				stopped.delete(root);
 				end(root, link);
 			}
-			// still unpaid, or signed out: asked again on the hour
+			// still unpaid, or signed out: asked again on the minute
 		} catch (error) {
 			say(error instanceof Error ? error.message : String(error), root);
 		} finally {

@@ -242,9 +242,9 @@ export interface DaemonOptions {
 	cloud?: DaemonCloud;
 	/** Where what team sync says about a project goes, besides its open canvases: the log, unless a test listens. */
 	teamNotice?: (message: string, root?: string) => void;
-	/** How often a local copy gone local asks whether its team pays again: an hour, unless a test can't wait. */
+	/** How often a local copy gone local asks whether its team pays again: a minute, unless a test can't wait. */
 	goneLocalAskMs?: number;
-	/** How soon such a copy asks again when spool.page couldn't be reached, doubling up to the hour: a minute. */
+	/** How soon such a copy asks again when spool.page couldn't be reached, doubling up to how often it asks: a minute. */
 	goneLocalRetryMs?: number;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;

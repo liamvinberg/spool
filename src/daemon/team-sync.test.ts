@@ -1189,7 +1189,7 @@ describe("when a team lapses", () => {
 		expect(card?.goneLocal).toBe("Devosurf");
 		expect(card?.team?.team).toBe("devosurf");
 
-		// stopped, not retrying: nobody asks again until the hour is up, and nothing Ben makes goes anywhere
+		// stopped, not retrying: nobody asks again until the minute is up, and nothing Ben makes goes anywhere
 		const asked = cloud.standingAsked();
 		writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
 		await new Promise((wake) => setTimeout(wake, 2_500));
@@ -1270,7 +1270,7 @@ describe("when a team lapses", () => {
 		expect(again).toEqual([]);
 
 		cloud.pay();
-		// asked again on the hour: both copies follow the team again, and catch up as after any time offline
+		// asked again on the minute: both copies follow the team again, and catch up as after any time offline
 		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") !== undefined, 10_000);
 		await until(() => cloud.file("checkout", "frames/home/frame.tsx")?.includes("Ana's home") === true, 10_000);
 		await until(() => same(ben.root, ana.root, "frames/mine/frame.tsx"), 10_000);
@@ -1287,7 +1287,7 @@ describe("when a team lapses", () => {
 		await until(() => same(ben.root, ana.root, "frames/after/frame.tsx"), 10_000);
 	}, 40_000);
 
-	it("asks again within the minute, not the hour, when spool.page couldn't be reached as the daemon started", async () => {
+	it("asks again sooner than the minute when spool.page couldn't be reached as the daemon started", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
 		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
@@ -1295,7 +1295,7 @@ describe("when a team lapses", () => {
 		await until(() => said.ben.includes(GONE_LOCAL));
 		writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
 
-		// Ben's Mac starts offline, and the team pays while it is: the hourly ask is an hour away
+		// Ben's Mac starts offline, and the team pays while it is: the next ask is a minute away
 		await ben.daemon.close();
 		const reachable = cloud.unreachable();
 		makeApp(ben.state, { cloud: ben.machine.cloud, teamNotice: () => {}, goneLocalRetryMs: 100 });
@@ -1305,7 +1305,7 @@ describe("when a team lapses", () => {
 		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") !== undefined, 8_000);
 	}, 20_000);
 
-	it("follows the team again as soon as Home reads it paid for, without waiting for the hour", async () => {
+	it("follows the team again as soon as Home reads it paid for, without waiting for the minute", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
 		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
