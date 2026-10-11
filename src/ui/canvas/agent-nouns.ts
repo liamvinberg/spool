@@ -289,14 +289,16 @@ export function readProse(input: CallInput, key: string): string | null {
  * the project's frame list, and `frameHolding` is where that is answered.
  *
  * A verify shot is the same frame from the other end. 18 of 18 images in both
- * parent captures came back from `.spool/verify/<frame>.png`, with the name
- * stored as one segment, so the rail never has to say `.png` either.
+ * parent captures came back from `.spool/verify/<frame>.png`, under the frame's
+ * own path, a time (`@1500`) or a slice (`.2`) after it, so the rail never has
+ * to say `.png` either. An older shot stored the path as one encoded segment
+ * (`shop%2Fcheckout.png`), and reads the same.
  */
 export function frameOf(path: string): string | null {
 	const trimmed = path.replace(/\/+$/, "");
 	const held = /(?:^|\/)frames\/(.+)\/[^/]*$/.exec(trimmed);
 	if (held?.[1] !== undefined) return held[1];
-	const shot = /(?:^|\/)\.spool\/verify\/([^/]+)\.png$/.exec(trimmed);
+	const shot = /(?:^|\/)\.spool\/verify\/(.+?)(?:@\d+)?(?:\.\d+)?\.png$/.exec(trimmed);
 	return shot?.[1] === undefined ? null : (segmentFrame(shot[1]) ?? null);
 }
 

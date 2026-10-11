@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CloudRequestOptions, CloudSignedOut } from "./cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "./cloud-teams";
@@ -30,7 +30,7 @@ export interface FetchOptions {
 	origin: string;
 	request?: CloudRequestOptions;
 	openSocket?: OpenSyncSocket;
-	/** Where to say that a fetch is under way: it can take a while. */
+	/** Where to say that a fetch is under way, and every so often how far it got: it can take minutes. */
 	progress?: (line: string) => void;
 	/** The environment a cloud agent is recognised by. */
 	env?: Record<string, string | undefined>;
@@ -80,10 +80,35 @@ export async function fetchLocalCopy(
 	const design = join(root, "design");
 	for (const dir of scaffoldDirs) mkdirSync(join(design, dir), { recursive: true });
 	if (!existsSync(join(design, ".gitignore"))) writeFileSync(join(design, ".gitignore"), TEAM_GITIGNORE);
-	await syncLocalCopy(root, spoolDir, options);
+	// a big canvas takes minutes to come down, and a silent verb that long reads as hung
+	const started = Date.now();
+	const ticker = setInterval(() => {
+		const seconds = Math.round((Date.now() - started) / 1000);
+		options.progress?.(`still fetching design/ from ${link.url}: ${filesIn(design)} files here after ${seconds}s`);
+	}, FETCH_TICK_MS);
+	ticker.unref();
+	try {
+		await syncLocalCopy(root, spoolDir, options);
+	} finally {
+		clearInterval(ticker);
+	}
 	if (!existsSync(join(design, "canvas.json"))) throw new SpoolError(`${link.url} has no files yet`);
 	registerProject(spoolDir, root);
 	return { root, fetched: true };
+}
+
+/** How often a fetch under way says how far it got. */
+const FETCH_TICK_MS = 15_000;
+
+/** The files a fetch has put in design/ so far, spool's own state aside. */
+function filesIn(design: string): number {
+	try {
+		return readdirSync(design, { recursive: true, withFileTypes: true }).filter(
+			(entry) => entry.isFile() && !join(entry.parentPath, entry.name).startsWith(join(design, ".spool")),
+		).length;
+	} catch {
+		return 0;
+	}
 }
 
 /**

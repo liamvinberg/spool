@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
-import { checkDesign } from "./check";
-import { describeSlowFrame, slowFrames } from "./check-pace";
+import { checkStart, runCheck } from "./check-command";
+import { cliName } from "./cli-name";
 import { CloudNotApproved, CloudRequestFailure, CloudSignedOut, cloudOrigin, login, logout } from "./cloud-auth";
 import {
 	CloudPublicationFailure,
@@ -18,26 +18,30 @@ import {
 	publishWebsite,
 	stopPublication,
 } from "./cloud-publication";
+import { readCanvasFields } from "./daemon/canvas-file";
 import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
 	ensureDaemon,
+	goneSourceWarning,
 	poll,
 	readDaemonState,
 	resolveServeConfig,
 	resolveSpoolDir,
+	retryFirst,
 	selfCliPath,
 	spoolDaemonAt,
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
-import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-names";
+import { describeMigration, FOLDER_NAMES_FORMAT, migrateFrameNames } from "./daemon/migrate-frame-names";
+import { discoverFrames } from "./daemon/projection";
 import { publicationReadiness } from "./daemon/publication-readiness";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { createSettingsStore } from "./daemon/settings";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
-import { SHOT_AT_MAX_MS } from "./daemon/verify-record";
+import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
@@ -51,7 +55,7 @@ import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
-import { batchShotFailed, formatBatchShot, logsFrame, shotFrame, shotFrames } from "./verify";
+import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = resolveSpoolDir(process.env);
@@ -63,6 +67,12 @@ const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.
 
   design/ is a spool canvas: run \`spool skill\` before working there — it is the complete contract
 `;
+
+// a reader that stops early (`spool skill | head`) is no failure of the verb's: end quietly, without a stack
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+	if (error.code !== "EPIPE") throw error;
+	process.exit(0);
+});
 
 /** The bare verb's one opt-out, routed by hand below and declared here to be in `--help`. */
 const NO_OPEN = "--no-open";
@@ -295,6 +305,7 @@ program
 		// daemon-less by design (#12); when one runs, the tab is already opening — say where
 		const status = await statusDaemon(spoolDir);
 		if (status.running) {
+			warnGoneSource(status.pid);
 			process.stdout.write(`canvas: ${status.url}/p/${encodeURIComponent(basename(root))}\n`);
 			// The raw URL is the truth and the thing agents use, so it stays first.
 			// The second line is the one a person can remember tomorrow.
@@ -315,7 +326,8 @@ program
 async function openCanvas(options: { noOpen: boolean }): Promise<void> {
 	await fetchFirst(process.cwd());
 	const { root } = openProject(process.cwd(), spoolDir);
-	const { url } = await ensureDaemon(spoolDir);
+	const { url, pid } = await ensureDaemon(spoolDir);
+	warnGoneSource(pid);
 	const canvas = `${url}/p/${encodeURIComponent(basename(root))}`;
 	process.stdout.write(`canvas: ${canvas}\n`);
 	if (shouldOpenBrowser({ noOpen: options.noOpen, stdin: process.stdin })) openInBrowser(canvas);
@@ -339,26 +351,25 @@ program
 
 program
 	.command("check")
-	.description("check frames or connected publication navigation offline")
-	.argument("[path]", "where the walk-up starts", ".")
+	.description("type-check frames, or connected publication navigation, offline; never writes")
+	.argument(
+		"[paths...]",
+		"frames to check, by folder, frame.tsx, folder of frames or frame name; all of them when none",
+	)
 	.option("--entry <frame>", "check navigation only, without typechecking", parseFrame)
-	.action(async (path: string, options: { entry?: string }) => {
-		const root = await offlineProject(path);
+	.action(async (paths: string[], options: { entry?: string }) => {
+		// read-only: a project due its frame-name migration is told so, not migrated
+		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
 		if (options.entry !== undefined) {
 			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
 			process.stdout.write(`${JSON.stringify(readiness)}\n`);
 			if (!readiness.ok) process.exitCode = 1;
 			return;
 		}
-		const diagnostics = await checkDesign(root);
-		for (const diagnostic of diagnostics) {
-			process.stderr.write(
-				`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}\n`,
-			);
-		}
-		// a slow frame is said, never failed: some are heavy on purpose
-		for (const frame of slowFrames(root)) process.stderr.write(`${describeSlowFrame(frame)}\n`);
-		if (diagnostics.length > 0) process.exitCode = 1;
+		const output = await runCheck(root, process.cwd(), paths);
+		for (const line of output.stderr) process.stderr.write(`${line}\n`);
+		for (const line of output.stdout) process.stdout.write(`${line}\n`);
+		if (!output.ok) process.exitCode = 1;
 	});
 
 program
@@ -418,7 +429,7 @@ const confirmOnTty = async (question: string): Promise<boolean> => {
 
 interface VerifyOptions {
 	viewport?: { width: number; height: number };
-	at?: number;
+	at?: number[];
 	scenario?: string;
 }
 
@@ -432,14 +443,23 @@ function parseViewport(value: string): { width: number; height: number } {
 	return { width, height };
 }
 
-function parseMilliseconds(value: string): number {
-	if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
-		throw new SpoolError(`--at must be whole milliseconds, got "${value}"`);
+/** `--at 1500` or `--at 0,1500,4000`: times after the first commit, ascending, each once. */
+function parseMilliseconds(value: string): number[] {
+	const times = value.split(",").map((each) => {
+		const time = each.trim();
+		if (!/^\d+$/.test(time) || !Number.isSafeInteger(Number(time))) {
+			throw new SpoolError(`--at takes whole milliseconds, one or a comma list like 0,1500,4000, got "${value}"`);
+		}
+		if (Number(time) > SHOT_AT_MAX_MS) {
+			throw new SpoolError(`--at waits at most ${SHOT_AT_MAX_MS} ms, got "${time}"`);
+		}
+		return Number(time);
+	});
+	const unique = [...new Set(times)].sort((a, b) => a - b);
+	if (unique.length > SHOT_AT_MAX_COUNT) {
+		throw new SpoolError(`--at lists at most ${SHOT_AT_MAX_COUNT} times, got ${unique.length}`);
 	}
-	if (Number(value) > SHOT_AT_MAX_MS) {
-		throw new SpoolError(`--at waits at most ${SHOT_AT_MAX_MS} ms, got "${value}"`);
-	}
-	return Number(value);
+	return unique;
 }
 
 /**
@@ -454,14 +474,23 @@ async function fetchFirst(start: string): Promise<void> {
 /**
  * The project a command that needs no daemon works on, read the way the daemon
  * reads one first: a project still naming frames by folder has its walks
- * renamed before anything reads them (#336). A team project's missing design/
+ * renamed before anything reads them (#336), unless the verb is read-only,
+ * which says the migration is due instead. A team project's missing design/
  * is fetched first.
  */
-async function offlineProject(start: string): Promise<string> {
+async function offlineProject(start: string, { migrate = true } = {}): Promise<string> {
 	await fetchFirst(start);
 	const root = resolveProjectRoot(start);
 	if (root === undefined) {
 		throw new SpoolError("not inside a spool project — no design/canvas.json here or above; `spool init` starts one");
+	}
+	if (!migrate) {
+		if (readCanvasFields(root).format === FOLDER_NAMES_FORMAT) {
+			process.stderr.write(
+				"spool: this project still names frames by folder (canvas.json format 1); `spool open` renames its walk targets; check only reads, so until then a walk to a frame on a page reads as missing\n",
+			);
+		}
+		return root;
 	}
 	const migrated = migrateFrameNames(root);
 	if (migrated !== undefined) process.stderr.write(`spool: ${describeMigration(root, migrated)}\n`);
@@ -477,6 +506,21 @@ function parseFrame(value: string): string {
 	return value;
 }
 
+/**
+ * The frames a shot names, each once in the order given: a frame by its path,
+ * and a page folder as every frame under it, at any depth. A name that is
+ * neither stays, for its block to say it is not found.
+ */
+function framesNamed(root: string, names: readonly string[]): string[] {
+	const known = (discoverFrames(root) ?? []).map((frame) => frame.name);
+	const frames = names.flatMap((name) => {
+		if (known.includes(name)) return [name];
+		const under = known.filter((frame) => frame.startsWith(`${name}/`)).sort();
+		return under.length > 0 ? under : [name];
+	});
+	return [...new Set(frames)];
+}
+
 function parseScenario(value: string): string {
 	if (!isSafeName(value)) {
 		throw new SpoolError(`--scenario must be a scenario name without a leading dot or slash, got "${value}"`);
@@ -484,11 +528,19 @@ function parseScenario(value: string): string {
 	return value;
 }
 
+/** Say so when the daemon this verb talks to runs from code since deleted (a removed worktree's). */
+function warnGoneSource(pid: number): void {
+	const state = readDaemonState(spoolDir);
+	const warning = state?.pid === pid ? goneSourceWarning(state) : undefined;
+	if (warning !== undefined) narrate(warning);
+}
+
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
 async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
 	await fetchFirst(process.cwd());
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
-	const { url, controlToken } = await ensureDaemon(spoolDir);
+	const { url, controlToken, pid } = await ensureDaemon(spoolDir);
+	warnGoneSource(pid);
 	return { root, name, daemonUrl: url, controlToken };
 }
 
@@ -519,39 +571,28 @@ program
 	.description("save a headless screenshot of each frame, several at once")
 	.argument(
 		"<frames...>",
-		"frame names, each its path under design/frames",
+		"frame names, each its path under design/frames; a page folder names every frame under it",
 		(value: string, previous: string[] | undefined) => [...(previous ?? []), parseFrame(value)],
 	)
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
-	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)
+	.option("--at <milliseconds>", "shoot at these times after the first commit, one or 0,1500,4000", parseMilliseconds)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
 	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
-		const names = [...new Set(frames)];
-		const [frame] = names;
-		if (names.length > 1 || frame === undefined) {
-			// one block per frame, in the order named, each with its console errors
-			let first = true;
-			for await (const shot of shotFrames({ daemonUrl, controlToken, root, name, narrate, ...options }, names)) {
-				process.stdout.write(`${first ? "" : "\n"}${formatBatchShot(shot)}\n`);
-				first = false;
-				if (batchShotFailed(shot)) process.exitCode = 1;
-			}
-			return;
+		const names = framesNamed(root, frames);
+		// one block per frame, in the order named, each with its console errors
+		const failures: string[] = [];
+		let first = true;
+		for await (const shot of shotFrames({ daemonUrl, controlToken, root, name, narrate, ...options }, names)) {
+			process.stdout.write(`${first ? "" : "\n"}${formatBatchShot(shot)}\n`);
+			first = false;
+			const failure = batchShotFailure(shot);
+			if (failure !== undefined) failures.push(`${shot.frame} ${failure}`);
 		}
-		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
-		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
-		if (outcome.kind === "broken") {
-			// the compile or boot error verbatim — nothing of spool's in the way
-			process.stderr.write(`${outcome.message}\n`);
-			process.exitCode = 1;
-			return;
-		}
-		process.stdout.write(`${outcome.files.join("\n")}\n`);
-		narrate(`"${frame}" content height: ${outcome.contentHeight}px`);
-		if (outcome.warnings.length > 0) process.stderr.write(`${outcome.warnings.join("\n")}\n`);
-		if (outcome.bootErrors.length > 0) {
-			process.stderr.write(`${outcome.bootErrors.join("\n")}\n`);
+		if (failures.length > 0) {
+			// the reasons are in the blocks above; the last line still says which,
+			// so a tail of the output never ends on a bare exit code
+			process.stderr.write(`spool: ${failures.join(", ")}\n`);
 			process.exitCode = 1;
 		}
 	});
@@ -570,7 +611,6 @@ program
 			process.exitCode = 1;
 			return;
 		}
-		if (outcome.replayed) narrate("replaying cached logs — cache matches current compiled source");
 		if (outcome.entries.length === 0) {
 			narrate("the boot logged nothing");
 		} else {
@@ -590,6 +630,7 @@ program
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
+		if (options.raw === true) narrate(`to click or type before a shot, copy the driver in \`${cliName()} skill\``);
 		process.stdout.write(
 			`${
 				options.raw === true
@@ -602,9 +643,9 @@ program
 program
 	.command("skill")
 	.description("print the spool skill — how agents author for this canvas")
-	.argument("[topic]", "one topic instead of the overview")
-	.action((topic?: string) => {
-		process.stdout.write(`${skillText(topic)}\n`);
+	.argument("[topics...]", "topics instead of the overview, several in one go")
+	.action((topics: string[]) => {
+		process.stdout.write(`${skillText(...topics)}\n`);
 	});
 
 program
@@ -648,7 +689,7 @@ program
 					if (sibling !== undefined) {
 						await uiWatcher?.close();
 						throw new SpoolError(
-							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable — run \`spool stop --force\` to stop it (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token)`,
+							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token). ${retryFirst()}`,
 						);
 					}
 				}
@@ -796,6 +837,8 @@ program
 		process.stdout.write(
 			`spool daemon running at ${status.url} (pid ${status.pid}, v${status.version})${skew}${available}\n`,
 		);
+		const gone = goneSourceWarning(status);
+		if (gone !== undefined) process.stdout.write(`warning: ${gone}\n`);
 	});
 
 program

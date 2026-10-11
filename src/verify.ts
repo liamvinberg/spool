@@ -1,7 +1,7 @@
 import { readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError } from "./daemon/thumbs";
-import { type BootLine, type BootOutcome, type LogEntry, planShot, readLogsCache } from "./daemon/verify-record";
-import { SpoolError } from "./errors";
+import { type BootLine, type BootOutcome, type LogEntry, readLogsCache, type ShotFile } from "./daemon/verify-record";
+import { RefusedError, SpoolError } from "./errors";
 import { refusalOf } from "./verbs";
 
 /**
@@ -29,8 +29,8 @@ export interface BootDeps {
 	frame: string;
 	narrate: (line: string) => void;
 	viewport?: { width: number; height: number };
-	/** A fixed wait after the first commit, in place of the settle every cover gets. */
-	at?: number;
+	/** Fixed times after the first commit, in place of the settle every cover gets: one set of files each. */
+	at?: number[];
 	scenario?: string;
 	/** How long the daemon may say nothing at all before the CLI stops waiting; a seam for tests. */
 	quietMs?: number;
@@ -52,7 +52,14 @@ export type ShotOutcome =
 	| { kind: "missing"; message: string }
 	| {
 			kind: "shot";
-			files: string[];
+			files: ShotFile[];
+			/** PNG px per CSS px. */
+			scale: number;
+			/** The CSS viewport the frame was shot at, and where it came from. */
+			width: number;
+			height: number;
+			sizedBy: FrameSize["by"];
+			/** Uncaught throws: a frame with any is a failed shot. */
 			bootErrors: string[];
 			/** Every console error and uncaught throw of the boot, as `[type] text` lines the way logs prints them. */
 			consoleErrors: string[];
@@ -73,11 +80,16 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
-	const boot = await bootFrame(deps);
+	const size = frameSize(deps);
+	const boot = await bootFrame(deps, size);
 	if (boot.kind !== "booted") return boot;
 	return {
 		kind: "shot",
 		files: boot.files,
+		scale: boot.scale,
+		width: size.w,
+		height: size.h,
+		sizedBy: size.by,
 		bootErrors: boot.errors,
 		consoleErrors: boot.entries
 			.filter((entry) => entry.type === "error" || entry.type === "pageerror")
@@ -111,24 +123,64 @@ export async function* shotFrames(deps: Omit<BootDeps, "frame">, frames: readonl
 		(frame): Promise<BatchShot> =>
 			shotFrame({ ...deps, frame, narrate }).then(
 				(outcome) => ({ frame, outcome }),
-				(error: unknown) => ({
-					frame,
-					outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
-				}),
+				(error: unknown) => {
+					// a daemon that refuses the key refuses every frame alike: the
+					// CLI's own boundary names the skew behind it (#155)
+					if (error instanceof RefusedError) throw error;
+					return {
+						frame,
+						outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
+					};
+				},
 			),
 	);
+	// every frame is asked at once; one that is refused must not leave the rest unhandled
+	for (const shot of pending) shot.catch(() => {});
 	for (const shot of pending) yield await shot;
 }
 
-/** Whether a batched frame's answer is one the batch exits 1 for. */
-export function batchShotFailed(shot: BatchShot): boolean {
-	return shot.outcome.kind !== "shot" || shot.outcome.bootErrors.length > 0;
+/** Why a batched frame's answer is one the batch exits 1 for, or nothing when it is not. */
+export function batchShotFailure(shot: BatchShot): string | undefined {
+	const { outcome } = shot;
+	switch (outcome.kind) {
+		case "shot":
+			return outcome.bootErrors.length === 0 ? undefined : uncaught(outcome.bootErrors.length);
+		case "broken":
+			return "does not compile";
+		case "missing":
+			return "not found";
+		case "failed":
+			return "failed";
+	}
+}
+
+function uncaught(count: number): string {
+	return count === 1 ? "1 uncaught error" : `${count} uncaught errors`;
+}
+
+/** PNG px per CSS px, as short as it reads: 2, 1.111. */
+function formatScale(scale: number): string {
+	return String(Math.round(scale * 1000) / 1000);
 }
 
 /**
- * One frame's block of a batched shot: a head line naming the frame and how it
- * went, then its files and its console errors, or the reason it has none,
- * indented under it. Everything an agent would have run `spool logs` for after
+ * What one file holds, beside its path: the CSS px of the frame it shows (the
+ * slice's y range on a tall frame) and the device scale, so stitching slices
+ * or mapping a pixel back to the layout needs no guessing.
+ */
+function formatShotFile(file: ShotFile, outcome: Extract<ShotOutcome, { kind: "shot" }>): string {
+	const scale = `scale ${formatScale(outcome.scale)}`;
+	const whole = outcome.files.filter((each) => each.at === file.at).length === 1;
+	const css = whole
+		? `css ${outcome.width}x${file.height}`
+		: `css y ${file.y}-${file.y + file.height} of ${outcome.height}`;
+	return `${file.file}  ${css}, ${scale}`;
+}
+
+/**
+ * One frame's block of a shot, one frame or many: a head line naming the frame
+ * and how it went, then its files and its console errors, or the reason it has
+ * none, indented under it. Everything an agent would have run `spool logs` for after
  * the shot is here, so the batch is the whole check.
  */
 export function formatBatchShot(shot: BatchShot): string {
@@ -141,8 +193,21 @@ export function formatBatchShot(shot: BatchShot): string {
 	switch (outcome.kind) {
 		case "shot": {
 			const errors = outcome.consoleErrors.length;
-			const head = `${frame}: shot, content ${outcome.contentHeight}px tall, ${errors === 0 ? "no console errors" : errors === 1 ? "1 console error" : `${errors} console errors`}`;
-			return [head, ...outcome.files, ...outcome.consoleErrors, ...outcome.warnings]
+			const said =
+				errors === 0 ? "no console errors" : errors === 1 ? "1 console error" : `${errors} console errors`;
+			const thrown = outcome.bootErrors.length === 0 ? "" : `, ${uncaught(outcome.bootErrors.length)}`;
+			// the shot is cut to the height it was taken at: say when the content runs otherwise
+			const height =
+				outcome.contentHeight === outcome.height
+					? `content ${outcome.contentHeight}px tall`
+					: `${outcome.sizedBy} h ${outcome.height}, content ${outcome.contentHeight}`;
+			const head = `${frame}: shot, ${height}, ${said}${thrown}`;
+			return [
+				head,
+				...outcome.files.map((file) => formatShotFile(file, outcome)),
+				...outcome.consoleErrors,
+				...outcome.warnings,
+			]
 				.map((line, i) => (i === 0 ? line : indent(line)))
 				.join("\n");
 		}
@@ -178,7 +243,7 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 			...(captureError === undefined ? {} : { captureError }),
 		};
 	}
-	const boot = await bootFrame(deps);
+	const boot = await bootFrame(deps, frameSize(deps));
 	if (boot.kind !== "booted") return boot;
 	return {
 		kind: "logs",
@@ -219,12 +284,7 @@ async function probeCompile(deps: BootDeps): Promise<Probe> {
 
 type Boot = Exclude<BootOutcome, { kind: "failed" }>;
 
-async function bootFrame(deps: BootDeps): Promise<Boot> {
-	const { w, h } = frameSize(deps);
-	const plan = planShot(w, h);
-	if (plan.tiles.length > 1) {
-		deps.narrate(`"${deps.frame}" is ${h}px tall — shooting ${plan.tiles.length} slices, top to bottom`);
-	}
+async function bootFrame(deps: BootDeps, { w, h }: FrameSize): Promise<Boot> {
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/boot/${encodeURIComponent(deps.frame)}`;
 	const quietMs = deps.quietMs ?? BOOT_QUIET_MS;
 	const stopped = new AbortController();
@@ -288,14 +348,21 @@ async function* bootLines(body: ReadableStream<Uint8Array>): AsyncGenerator<Boot
 	if (buffer.trim() !== "") yield JSON.parse(buffer) as BootLine;
 }
 
+interface FrameSize {
+	w: number;
+	h: number;
+	/** Where the size came from, as the shot's head line names it. */
+	by: "--viewport" | "frame.json" | "default";
+}
+
 /** An explicit viewport, else the sidecar footprint, else the narrated default. */
-function frameSize(deps: BootDeps): { w: number; h: number } {
-	if (deps.viewport !== undefined) return { w: deps.viewport.width, h: deps.viewport.height };
+function frameSize(deps: BootDeps): FrameSize {
+	if (deps.viewport !== undefined) return { w: deps.viewport.width, h: deps.viewport.height, by: "--viewport" };
 	const geometry = readFrameGeometry(deps.root, deps.frame);
 	if (!geometry.persisted) {
 		deps.narrate(`no valid frame.json for "${deps.frame}" — using the ${geometry.w}×${geometry.h} default viewport`);
 	}
-	return { w: Math.round(geometry.w), h: Math.round(geometry.h) };
+	return { w: Math.round(geometry.w), h: Math.round(geometry.h), by: geometry.persisted ? "frame.json" : "default" };
 }
 
 function scenarioName(deps: BootDeps): string {

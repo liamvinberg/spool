@@ -189,21 +189,28 @@ describe("design JavaScript bridges", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/shared/bridge.js:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([
+			'design/shared/bridge.js:1:21 TS1003: Syntax this file can\'t use here (it would need "recordAndTuple").',
+		]);
 		expect(result.join("\n")).not.toContain("broken.ts");
 		expect(result.join("\n")).not.toContain(root);
 	});
 
 	it.each([
-		["declarations", "export default 1;\nexport default 2;\n"],
+		["declarations", "export default 1;\nexport default 2;\n", "2:1"],
 		[
 			"specifiers",
 			"const first = 1;\nconst second = 2;\nexport { first as default };\nexport { second as default };\n",
+			"4:10",
 		],
-		["mixed declaration and specifier", "const second = 2;\nexport default 1;\nexport { second as default };\n"],
+		[
+			"mixed declaration and specifier",
+			"const second = 2;\nexport default 1;\nexport { second as default };\n",
+			"3:10",
+		],
 	] as const)(
 		"fails closed at recovered duplicate default $name before inspecting hidden imports",
-		async (_name, invalid) => {
+		async (_name, invalid, at) => {
 			const root = makeTempDir();
 			markProject(root);
 			const secret = "/private/recovered-javascript-secret.ts";
@@ -212,7 +219,7 @@ describe("design JavaScript bridges", () => {
 
 			const result = await messages(root);
 
-			expect(result).toEqual(["design/shared/bridge.js:1:1 TS1003: Source syntax cannot be inspected safely"]);
+			expect(result).toEqual([`design/shared/bridge.js:${at} TS1003: Only one default export allowed per module.`]);
 			expect(result.join("\n")).not.toContain(secret);
 			expect(result.join("\n")).not.toContain(root);
 		},
@@ -232,7 +239,7 @@ describe("design JavaScript bridges", () => {
 
 			const result = await messages(root);
 
-			expect(result).toEqual(["design/shared/bridge.js:1:1 TS1003: Source syntax cannot be inspected safely"]);
+			expect(result).toEqual(["design/shared/bridge.js:1:10 TS1003: Export 'missing' is not defined."]);
 			expect(result.join("\n")).not.toContain(secret);
 			expect(result.join("\n")).not.toContain(root);
 		},
@@ -271,23 +278,34 @@ describe("design JavaScript bridges", () => {
 	});
 
 	it.each([
-		["duplicate const binding", "js", "const duplicate = 1;\nconst duplicate = 2;\n"],
-		["duplicate private name", "jsx", "class Model { #value; #value; }\nexport default <runtime-only />;\n"],
-	] as const)("fails closed at a recovered $name in reachable .$extension", async (_name, extension, invalid) => {
-		const root = makeTempDir();
-		markProject(root);
-		const secret = `/private/recovered-${extension}-secret.ts`;
-		writeDesignFile(root, `shared/bridge.${extension}`, `${invalid}import ${JSON.stringify(secret)};\n`);
-		writeFrame(root, "home", `import "../../shared/bridge.${extension}";\n`);
+		[
+			"duplicate const binding",
+			"js",
+			"const duplicate = 1;\nconst duplicate = 2;\n",
+			"2:7 TS1003: Identifier 'duplicate' has already been declared.",
+		],
+		[
+			"duplicate private name",
+			"jsx",
+			"class Model { #value; #value; }\nexport default <runtime-only />;\n",
+			"1:23 TS1003: Duplicate private name #value.",
+		],
+	] as const)(
+		"fails closed at a recovered $name in reachable .$extension",
+		async (_name, extension, invalid, said) => {
+			const root = makeTempDir();
+			markProject(root);
+			const secret = `/private/recovered-${extension}-secret.ts`;
+			writeDesignFile(root, `shared/bridge.${extension}`, `${invalid}import ${JSON.stringify(secret)};\n`);
+			writeFrame(root, "home", `import "../../shared/bridge.${extension}";\n`);
 
-		const result = await messages(root);
+			const result = await messages(root);
 
-		expect(result).toEqual([
-			`design/shared/bridge.${extension}:1:1 TS1003: Source syntax cannot be inspected safely`,
-		]);
-		expect(result.join("\n")).not.toContain(secret);
-		expect(result.join("\n")).not.toContain(root);
-	});
+			expect(result).toEqual([`design/shared/bridge.${extension}:${said}`]);
+			expect(result.join("\n")).not.toContain(secret);
+			expect(result.join("\n")).not.toContain(root);
+		},
+	);
 
 	it("applies the offline source budget to a reachable JavaScript bridge", async () => {
 		const root = makeTempDir();
@@ -491,9 +509,7 @@ describe("design JavaScript bridges", () => {
 		writeDesignFile(root, "shared/module.ts", 'export const value = "lower";\n');
 		writeFrame(root, "home", `import "../../shared/${source}?raw";\n`);
 
-		expect(await messages(root)).toEqual([
-			`design/shared/${source}:1:1 TS1003: Source syntax cannot be inspected safely`,
-		]);
+		expect(await messages(root)).toEqual([`design/shared/${source}:1:19 TS1003: Unexpected token`]);
 	});
 
 	it.each([
@@ -508,7 +524,7 @@ describe("design JavaScript bridges", () => {
 		writeFrame(root, "home", `import "../../shared/${source}#preview";\n`);
 
 		expect(await messages(root)).toEqual([
-			`design/shared/${source}:1:1 TS1003: Source syntax cannot be inspected safely`,
+			`design/shared/${source}:1:16 TS1003: Syntax this file can't use here (it would need "jsx", "flow", "typescript").`,
 		]);
 	});
 

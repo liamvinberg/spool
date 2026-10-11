@@ -5,7 +5,7 @@ import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { writeCaptureError } from "./daemon/thumbs";
-import { planShot, SHOT_AT_MAX_MS } from "./daemon/verify-record";
+import { planShot, recordBoot, SHOT_AT_MAX_MS, type ShotFile } from "./daemon/verify-record";
 import { headlessShellArgs } from "./headless-shell";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BatchShot, type BootDeps, formatBatchShot, logsFrame, shotFrame, shotFrames } from "./verify";
@@ -98,7 +98,7 @@ describe("shot and logs, compile paths", () => {
 		expect(readdirSync(outside)).toEqual([]);
 	});
 
-	it("keeps a page frame's records under its whole name, one file segment (#336)", async () => {
+	it("keeps a page frame's records under its own path (#336)", async () => {
 		const { root, name, url, controlToken, deps } = await serveVerifyProject();
 		writeFrame(root, "checkout", "export default function Checkout() { return <main>root</main> }\n");
 		writeDesignFile(
@@ -113,7 +113,7 @@ describe("shot and logs, compile paths", () => {
 		const { etag, scheme } = (await verify.json()) as { etag: string; scheme: string };
 		writeDesignFile(
 			root,
-			".spool/verify/shop%2Fcheckout.logs.json",
+			".spool/verify/shop/checkout.logs.json",
 			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
 		writeCaptureError(root, "shop/checkout", "shop only");
@@ -200,13 +200,14 @@ describe("shot and logs, compile paths", () => {
 	it("refuses a fixed wait longer than any shot waits", async () => {
 		const { root, name, url, controlToken } = await serveVerifyProject();
 		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
-		const boot = (at: number) =>
+		const boot = (at: number[]) =>
 			fetch(`${url}/api/p/${name}/boot/quiet`, {
 				method: "POST",
 				headers: { "X-Spool-Control": controlToken, "content-type": "application/json" },
 				body: JSON.stringify({ width: 160, height: 120, at }),
 			});
-		expect((await boot(SHOT_AT_MAX_MS + 1)).status).toBe(400);
+		expect((await boot([0, SHOT_AT_MAX_MS + 1])).status).toBe(400);
+		expect((await boot([])).status).toBe(400);
 	});
 });
 
@@ -245,6 +246,85 @@ describe("a boot the daemon goes quiet on", () => {
 		await expect(shotFrame(deps)).rejects.toThrow(
 			'the daemon said nothing for 1 s while it booted "quiet" — `spool status` says whether it is still running',
 		);
+	});
+});
+
+describe("a shot's block", () => {
+	const shot = (overrides: Partial<Extract<BatchShot["outcome"], { kind: "shot" }>>): BatchShot => ({
+		frame: "explore/landing",
+		outcome: {
+			kind: "shot",
+			files: [],
+			scale: 1600 / 1440,
+			width: 1440,
+			height: 900,
+			sizedBy: "frame.json",
+			bootErrors: [],
+			consoleErrors: [],
+			warnings: [],
+			contentHeight: 900,
+			...overrides,
+		},
+	});
+
+	it("indents spool's warnings under the frame, after its console errors", () => {
+		const block = formatBatchShot(
+			shot({ consoleErrors: ["[error] boom"], warnings: ["[spool] classes with no CSS: bg-white"] }),
+		).split("\n");
+		expect(block.slice(1)).toEqual(["  [error] boom", "  [spool] classes with no CSS: bg-white"]);
+	});
+
+	it("says each file's CSS rows and the device scale", () => {
+		const tiles = planShot(1440, 3765).tiles;
+		const files = tiles.map((tile, index) => ({ file: `/v/explore/landing.${index + 1}.png`, ...tile }));
+		const block = formatBatchShot(shot({ files, height: 3765, contentHeight: 3765 })).split("\n");
+		expect(block[0]).toBe("explore/landing: shot, content 3765px tall, no console errors");
+		expect(block[1]).toBe(`  /v/explore/landing.1.png  css y 0-${tiles[0]?.height} of 3765, scale 1.111`);
+		expect(block.at(-1)).toBe(
+			`  /v/explore/landing.${tiles.length}.png  css y ${3765 - (tiles.at(-1)?.height ?? 0)}-3765 of 3765, scale 1.111`,
+		);
+	});
+
+	it("names the height the frame was shot at when the content runs otherwise", () => {
+		expect(formatBatchShot(shot({ height: 6400, contentHeight: 6967 })).split("\n")[0]).toBe(
+			"explore/landing: shot, frame.json h 6400, content 6967, no console errors",
+		);
+		expect(formatBatchShot(shot({ sizedBy: "--viewport", contentHeight: 412 })).split("\n")[0]).toBe(
+			"explore/landing: shot, --viewport h 900, content 412, no console errors",
+		);
+	});
+});
+
+describe("verify records", () => {
+	it("mirror the frame's path, keep other times, and retire the old encoded names", () => {
+		const root = makeTempDir();
+		writeFrame(root, "home", "export default function Home() { return <main /> }\n");
+		const verify = join(root, "design", ".spool", "verify");
+		writeDesignFile(root, ".spool/verify/shop%2Fcheckout.png", "old");
+		writeDesignFile(root, ".spool/verify/shop%2Fcheckout.logs.json", "{}");
+		writeDesignFile(root, ".spool/verify/shop/checkout.3.png", "stale slice");
+		const record = (shots: { at?: number; pngs: Buffer[] }[]) =>
+			recordBoot(root, "shop/checkout", {
+				etag: '"e"',
+				scenario: "default",
+				scheme: "light",
+				tiles: [{ y: 0, height: 900 }],
+				shots,
+				entries: [],
+			});
+
+		expect(record([{ at: 1500, pngs: [Buffer.from("a")] }]).map((each) => each.file)).toEqual([
+			join(verify, "shop", "checkout@1500.png"),
+		]);
+		expect(record([{ pngs: [Buffer.from("b")] }])).toEqual([
+			{ file: join(verify, "shop", "checkout.png"), y: 0, height: 900 },
+		]);
+		expect(readdirSync(join(verify, "shop")).sort()).toEqual([
+			"checkout.logs.json",
+			"checkout.png",
+			"checkout@1500.png",
+		]);
+		expect(readdirSync(verify).sort()).toEqual(["shop"]);
 	});
 });
 
@@ -320,8 +400,9 @@ document.fonts.add(font);
 font.load();
 export default function Tall() {
 	useLayoutEffect(() => {
-		console.log("before-font:" + document.documentElement.scrollHeight);
-		document.fonts.ready.then(() => console.log("after-font:" + document.documentElement.scrollHeight));
+		const bottom = () => Math.ceil(document.querySelector("main").getBoundingClientRect().bottom);
+		console.log("before-font:" + bottom());
+		document.fonts.ready.then(() => console.log("after-font:" + bottom()));
 	}, []);
 	return <main style={{ width: 100, fontFamily: '"Shot Test", Arial', fontSize: 40, lineHeight: 1, wordBreak: "break-all" }}>{"i".repeat(300)}</main>;
 }
@@ -340,7 +421,7 @@ export default function Tall() {
 		expect(shot.contentHeight).toBeGreaterThan(Number(before?.text.split(":")[1]));
 		expect(shot.contentHeight).toBeGreaterThan(120);
 		expect(shot.files).toHaveLength(1);
-		expect(readPngSize(shot.files[0] as string)).toEqual({ width: 320, height: 240 });
+		expect(readPngSize(shot.files[0]?.file as string)).toEqual({ width: 320, height: 240 });
 		expect(existsSync(join(root, "design", "frames", "tall", "frame.json"))).toBe(false);
 	});
 
@@ -363,19 +444,18 @@ export default function Noisy() {
 		const defaultNarrations: string[] = [];
 		await expect(
 			shotFrame(deps("defaulted", { narrate: (line) => defaultNarrations.push(line) })),
-		).resolves.toMatchObject({ kind: "shot", contentHeight: 900 });
+		).resolves.toMatchObject({ kind: "shot", height: 900, sizedBy: "default" });
 		expect(defaultNarrations).toEqual(['no valid frame.json for "defaulted" — using the 1440×900 default viewport']);
 		expect(existsSync(join(root, "design", "frames", "defaulted", "frame.json"))).toBe(false);
 
 		const shot = await shotFrame(
 			deps("noisy", {
 				viewport: { width: 160, height: 120 },
-				at: 17,
 				narrate: (line) => narrations.push(line),
 			}),
 		);
 		expect(shot.kind).toBe("shot");
-		const files = (shot as { files: string[] }).files;
+		const files = (shot as { files: ShotFile[] }).files.map((each) => each.file);
 		expect(files).toEqual([join(root, "design", ".spool", "verify", "noisy.png")]);
 		const file = files[0] as string;
 		expect(existsSync(file)).toBe(true);
@@ -420,14 +500,17 @@ export default function Noisy() {
 		// read back by path must never serve last shot's truth.
 		const tiled = await shotFrame(deps("noisy", { viewport: { width: 160, height: 2600 } }));
 		expect(tiled.kind).toBe("shot");
-		const tiles = (tiled as { files: string[] }).files;
+		const tiled_ = (tiled as { files: ShotFile[] }).files;
+		const tiles = tiled_.map((each) => each.file);
 		expect(tiles).toEqual([1, 2, 3].map((n) => join(root, "design", ".spool", "verify", `noisy.${n}.png`)));
+		// each slice says which CSS rows it holds, overlap and bottom anchor included
+		expect(tiled_.map(({ y, height }) => ({ y, height }))).toEqual(planShot(160, 2600).tiles);
 		expect(existsSync(file)).toBe(false);
 		for (const tile of tiles) expect(readPngSize(tile)).toEqual({ width: 320, height: 2000 });
 
 		// and back: one short shot retires the whole stack
 		const single = await shotFrame(deps("noisy", { viewport: { width: 160, height: 120 } }));
-		expect((single as { files: string[] }).files).toEqual([file]);
+		expect((single as { files: ShotFile[] }).files.map((each) => each.file)).toEqual([file]);
 		expect(tiles.some((tile) => existsSync(tile))).toBe(false);
 
 		// a frame that throws on boot: the shot lands, the errors mark it broken
@@ -470,8 +553,12 @@ export default function Loud() {
 
 		expect(shots.map((shot) => shot.frame)).toEqual(["calm", "loud", "broken"]);
 		const verify = join(root, "design", ".spool", "verify");
+		const calm = shots[0]?.outcome;
+		if (calm?.kind !== "shot") throw new Error("calm was not shot");
+		// one line of text runs as tall as its line, not as the viewport around it
+		expect(calm.contentHeight).toBeLessThan(120);
 		expect(formatBatchShot(shots[0] as BatchShot)).toBe(
-			`calm: shot, content 120px tall, no console errors\n  ${join(verify, "calm.png")}`,
+			`calm: shot, --viewport h 120, content ${calm.contentHeight}, no console errors\n  ${join(verify, "calm.png")}  css 160x120, scale 2`,
 		);
 		const loud = shots[1]?.outcome;
 		if (loud?.kind !== "shot") throw new Error("loud was not shot");
@@ -480,10 +567,14 @@ export default function Loud() {
 			loud.consoleErrors.some((line) => line.startsWith("[pageerror]") && line.includes("boom in a batch")),
 		).toBe(true);
 		expect(loud.consoleErrors.join("\n")).not.toContain("not an error");
+		// a frame that threw drew nothing of its own: it runs as tall as the document
+		expect(loud.contentHeight).toBe(120);
 		const block = formatBatchShot(shots[1] as BatchShot).split("\n");
-		expect(block[0]).toBe(`loud: shot, content 120px tall, ${loud.consoleErrors.length} console errors`);
+		expect(block[0]).toBe(
+			`loud: shot, content 120px tall, ${loud.consoleErrors.length} console errors, ${loud.bootErrors.length} uncaught error${loud.bootErrors.length === 1 ? "" : "s"}`,
+		);
 		expect(block.slice(1)).toEqual(
-			[join(verify, "loud.png"), ...loud.consoleErrors]
+			[`${join(verify, "loud.png")}  css 160x120, scale 2`, ...loud.consoleErrors]
 				.flatMap((line) => line.split("\n"))
 				.map((line) => `  ${line}`),
 		);
@@ -544,7 +635,7 @@ export default function Looping() {
 			"[spool] classes with no CSS: text-nonexistent (no token or utility builds them)",
 		);
 		const block = formatBatchShot(shots[0] as BatchShot).split("\n");
-		expect(block[0]).toBe("lost: shot, content 120px tall, no console errors");
+		expect(block[0]).toMatch(/^lost: shot, .*, no console errors$/);
 		expect(block).toContain("  [spool] WebGL context lost: the canvas shows nothing it drew after this");
 
 		// the stack names the frame's file and line rather than the document's
@@ -576,14 +667,20 @@ export default function Looping() {
 }
 `,
 		);
-		const shotAt = async (at: number) => {
+		const shotsAt = async (...at: number[]) => {
 			const shot = await shotFrame(deps("slide", { viewport: { width: 160, height: 60 }, at }));
 			if (shot.kind !== "shot") throw new Error("slide was not shot");
-			return readFileSync(shot.files[0] as string);
+			return shot.files.map(({ file }) => readFileSync(file));
 		};
+		const shotAt = async (at: number) => (await shotsAt(at))[0] as Buffer;
 		const half = await shotAt(500);
 		expect((await shotAt(500)).equals(half)).toBe(true);
-		expect((await shotAt(250)).equals(half)).toBe(false);
+		const quarter = await shotAt(250);
+		expect(quarter.equals(half)).toBe(false);
+		// a list runs one clock on from each time to the next, landing where each alone does
+		const [first, second] = await shotsAt(250, 500);
+		expect(first?.equals(quarter)).toBe(true);
+		expect(second?.equals(half)).toBe(true);
 
 		// the stopped clocks are the shot's alone, never a boot's beside it
 		writeFrame(
@@ -635,12 +732,16 @@ export default function Late() {
 		});
 		expect(await lines()).not.toContain("late");
 
-		// a fixed wait is the agent saying when, and the settle is not asked
-		await expect(shotFrame(deps("late", { viewport: { width: 160, height: 120 }, at: 3500 }))).resolves.toMatchObject(
-			{
-				kind: "shot",
-			},
-		);
+		// a fixed wait is the agent saying when, and the settle is not asked;
+		// several times are one boot, each time its own file beside the settled one
+		const timed = await shotFrame(deps("late", { viewport: { width: 160, height: 120 }, at: [0, 3500] }));
+		if (timed.kind !== "shot") throw new Error("the timed shot failed");
+		const verify = join(root, "design", ".spool", "verify");
+		expect(timed.files).toEqual([
+			{ file: join(verify, "late@0.png"), y: 0, height: 120, at: 0 },
+			{ file: join(verify, "late@3500.png"), y: 0, height: 120, at: 3500 },
+		]);
+		expect(existsSync(join(verify, "late.png"))).toBe(true);
 		expect(await lines()).toContain("late");
 	});
 

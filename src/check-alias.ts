@@ -31,12 +31,12 @@ export class CheckerAliasAllocator {
 	allocate(_consumer: CheckerAliasConsumer, file: string, length: number, form: CheckerAliasForm = "module"): string {
 		if (!Number.isInteger(length) || length < 1)
 			throw new Error("checker aliases must contain at least one code unit");
-		if (this.#allocated >= this.limit) throw new CheckSourceLimitError(file);
+		if (this.#allocated >= this.limit) throw new CheckSourceLimitError(file, "aliases");
 		const characters = form === "module" ? moduleAliasCharacters : identifierAliasCharacters;
 		let candidate = this.#next[form];
 		while (this.#reserved[form].has(characters[candidate] ?? "")) candidate += 1;
 		const head = characters[candidate];
-		if (head === undefined) throw new CheckSourceLimitError(file);
+		if (head === undefined) throw new CheckSourceLimitError(file, "aliases");
 		this.#next[form] = candidate + 1;
 		this.#allocated += 1;
 		return `${head}${characters[0]?.repeat(length - 1)}`;

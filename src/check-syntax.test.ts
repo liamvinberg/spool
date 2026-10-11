@@ -131,7 +131,7 @@ describe("design source inspection", () => {
 		writeFrame(root, "home", 'import defer * as deferred from "mapped";\ndeferred.runtimeOnly();\n');
 
 		expect(await messages(root)).toEqual([
-			"design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely",
+			'design/frames/home/frame.tsx:1:8 TS1003: Syntax this file can\'t use here (it would need "deferredImportEvaluation").',
 		]);
 	});
 
@@ -329,7 +329,9 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([
+			"design/frames/home/frame.tsx:34:6 TS1003: Leading decorators must be attached to a class declaration.",
+		]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
@@ -414,7 +416,9 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([
+			"design/frames/home/frame.tsx:2:6 TS1003: Leading decorators must be attached to a class declaration.",
+		]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
@@ -440,7 +444,7 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([expect.stringMatching(/^design\/frames\/home\/frame\.tsx:\d+:\d+ TS1003: /)]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
@@ -482,7 +486,7 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([expect.stringMatching(/^design\/frames\/home\/frame\.tsx:\d+:\d+ TS1003: /)]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
@@ -499,7 +503,7 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual(["design/frames/home/frame.tsx:3:8 TS1003: Unexpected token"]);
 		expect(result.join("\n")).not.toContain(secret);
 		expect(result.join("\n")).not.toContain(root);
 	});
@@ -532,7 +536,9 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([
+			'design/frames/home/frame.tsx:1:21 TS1003: Syntax this file can\'t use here (it would need "recordAndTuple").',
+		]);
 		expect(result.join("\n")).not.toContain(trusted);
 	});
 
@@ -592,7 +598,9 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([
+			'design/frames/home/frame.tsx:1:8 TS1003: Syntax this file can\'t use here (it would need "deferredImportEvaluation").',
+		]);
 		expect(result.join("\n")).not.toContain(trusted);
 		expect(result.join("\n")).not.toContain("notReal");
 		expect(result.join("\n")).not.toContain(root);
@@ -608,7 +616,9 @@ describe("design source inspection", () => {
 
 		const result = await messages(root);
 
-		expect(result).toEqual(["design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely"]);
+		expect(result).toEqual([
+			'design/frames/home/frame.tsx:1:8 TS1003: Syntax this file can\'t use here (it would need "deferredImportEvaluation").',
+		]);
 		expect(result.join("\n")).not.toContain(trusted);
 		expect(result.join("\n")).not.toContain("notReal");
 		expect(result.join("\n")).not.toContain(root);

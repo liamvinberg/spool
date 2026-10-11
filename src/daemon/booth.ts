@@ -9,7 +9,7 @@ import {
 	MissingHeadlessShellError,
 } from "../headless-shell";
 import { pageParent } from "../page-path";
-import { settleSource } from "./document";
+import { contentHeightSource, settleSource } from "./document";
 import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
 import { VENDOR_REACT_URL } from "./vendor-pins";
 import type { LogEntry } from "./verify-record";
@@ -534,15 +534,20 @@ interface ShotRequest {
 	scale: number;
 	/** Top-to-bottom slices in CSS pixels; one when the frame fits a single image. */
 	tiles: ReadonlyArray<{ y: number; height: number }>;
-	/** How far the frame's own clock is run past its first commit instead of the settle (`seek`). */
-	at?: number | undefined;
+	/**
+	 * Fixed times after the first commit, ascending, in place of the settle: the
+	 * frame's own clock is run to each (`seek`) and the slices taken there, in
+	 * one boot.
+	 */
+	at?: readonly number[] | undefined;
 	scenario?: string | undefined;
 }
 
 type ShotResult =
 	| {
 			kind: "booted";
-			pngs: Buffer[];
+			/** The slices, top to bottom, once per time asked for (once after the settle when none was). */
+			shots: Array<{ at?: number; pngs: Buffer[] }>;
 			entries: LogEntry[];
 			errors: string[];
 			contentHeight: number;
@@ -1233,7 +1238,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		if (origin === undefined) throw new Error("the daemon is not listening yet");
 		const { request } = pending;
 		// a shot that runs the frame's clocks fakes them for its whole context
-		const tab = await tabFor(slot, request.at !== undefined);
+		const tab = await tabFor(slot, (request.at?.length ?? 0) > 0);
 		// the console is a shot's to keep, and only a shot's: a frame logging every
 		// tick would otherwise cost every cover the serialization of every line
 		const onConsole = (message: ConsoleMessage) => {
@@ -1246,7 +1251,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		let watch: Disposable | undefined;
 		try {
 			const url = frameUrl(origin, request.project, request.frame, request.scenario);
-			const ms = timing.shotMs + (request.at ?? 0);
+			const ms = timing.shotMs + Math.max(0, ...(request.at ?? []));
 			const shot = (async () => {
 				watch = await shotOnly(tab);
 				return await sitShot(tab, url, request);
@@ -1300,11 +1305,11 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		await watch?.dispose();
 	}
 
-	/** One boot for an agent: the shot's slices, the console, and how tall the content ran. */
+	/** One boot for an agent: the shot's slices at each time, the console, and how tall the content ran. */
 	async function sitShot(tab: Tab, url: string, request: ShotRequest): Promise<ShotResult> {
 		const taken = await prepare(tab, { width: request.width, height: request.height, scale: request.scale });
 		const { at } = request;
-		if (at !== undefined) await stopClocks(tab);
+		if ((at?.length ?? 0) > 0) await stopClocks(tab);
 		const response = await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
 		if (response !== null && response.status() >= 500) return { kind: "unserved", status: response.status() };
 		const world = await isolatedWorld(tab);
@@ -1312,26 +1317,50 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		// is legitimate, so running this out still shoots what is there. A
 		// stopped clock is run alongside, for a frame whose first render waits on
 		// a timer, and stopped again the moment it commits
-		const step = at === undefined ? undefined : () => tab.page.clock.runFor(SEEK_STEP_MS);
+		const times = at ?? [];
+		const step = times.length === 0 ? undefined : () => tab.page.clock.runFor(SEEK_STEP_MS);
 		await booted(tab, world, SHOT_BOOT_MS, false, step);
-		if (at === undefined) await settled(tab, world);
-		else await seek(tab, world, at);
-		await within(evaluate(tab, world, "document.fonts.ready.then(() => true)"), SHOT_FONTS_MS, "loading fonts").catch(
-			() => {},
-		);
-		const contentHeight = Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
-		const pngs: Buffer[] = [];
-		for (const tile of request.tiles) {
-			pngs.push(
-				await screenshot(tab, {
-					format: "png",
-					clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
-				}),
-			);
+		const slices = async (): Promise<Buffer[]> => {
+			await within(
+				evaluate(tab, world, "document.fonts.ready.then(() => true)"),
+				SHOT_FONTS_MS,
+				"loading fonts",
+			).catch(() => {});
+			const pngs: Buffer[] = [];
+			for (const tile of request.tiles) {
+				pngs.push(
+					await screenshot(tab, {
+						format: "png",
+						clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
+					}),
+				);
+			}
+			return pngs;
+		};
+		const shots: Array<{ at?: number; pngs: Buffer[] }> = [];
+		if (times.length === 0) {
+			await settled(tab, world);
+			shots.push({ pngs: await slices() });
+		} else {
+			// each time is a place in the frame's own clock from its commit: the
+			// clock runs on from the last time to the next, and stands still while
+			// each is shot
+			await seekFrom(tab, world);
+			let ran = 0;
+			for (const time of times) {
+				await seek(tab, world, ran, time);
+				ran = Math.max(ran, time);
+				shots.push({ at: time, pngs: await slices() });
+			}
 		}
+		// the content's own bottom, as the canvas reads it; a viewport-sized app
+		// that does not scroll has none, and runs exactly as tall as the document
+		const own = Number(await evaluate(tab, world, `(${contentHeightSource()})()`));
+		const contentHeight =
+			own > 0 ? own : Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
 		return {
 			kind: "booted",
-			pngs,
+			shots,
 			entries: [...tab.entries],
 			errors: [...tab.errors],
 			contentHeight,
@@ -1404,14 +1433,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		await tab.cdp.send("Animation.setPlaybackRate", { playbackRate: 0 });
 	}
 
-	/**
-	 * Runs the frame's stopped clocks `at` ms past its first commit, a step at a
-	 * time, noting the step each animation first appeared at, then sets every
-	 * animation on the document timeline to its own age. The same frame shot at
-	 * the same `at` lands on the same picture, to within a step of its
-	 * JavaScript time, however slow the machine.
-	 */
-	async function seek(tab: Tab, world: number, at: number): Promise<void> {
+	/** Where a seek counts from: the frame just committed, its animations born at 0. */
+	async function seekFrom(tab: Tab, world: number): Promise<void> {
 		// the first commit's effects, which start the frame's own clocks, run first
 		await pause(SEEK_FLUSH_MS);
 		await evaluate(
@@ -1419,7 +1442,17 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			world,
 			`globalThis.spoolBorn = new WeakMap(); globalThis.spoolTag = (t) => { for (const a of document.getAnimations()) if (!spoolBorn.has(a)) spoolBorn.set(a, t); }; spoolTag(0)`,
 		);
-		for (let ran = 0; ran < at; ) {
+	}
+
+	/**
+	 * Runs the frame's stopped clocks on from `from` to `at` ms past its first
+	 * commit (`seekFrom`), a step at a time, noting the step each animation first
+	 * appeared at, then sets every animation on the document timeline to its own
+	 * age. The same frame shot at the same `at` lands on the same picture, to
+	 * within a step of its JavaScript time, however slow the machine.
+	 */
+	async function seek(tab: Tab, world: number, from: number, at: number): Promise<void> {
+		for (let ran = from; ran < at; ) {
 			const step = Math.min(SEEK_STEP_MS, at - ran);
 			await tab.page.clock.runFor(step);
 			ran += step;
