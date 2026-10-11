@@ -304,10 +304,17 @@ describe("the read-only canvas", () => {
 
 	it("follows the page and the played frame in the URL", { timeout: 60_000 }, async () => {
 		const { page } = await open();
-		await page.getByRole("navigation", { name: "Pages" }).getByRole("button", { name: "shop" }).click();
+		const rail = page.getByRole("navigation", { name: "Pages" });
+		await rail.getByRole("button", { name: "shop", exact: true }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/shop`);
 		await page.frameLocator('iframe[title="shop/cart"]').locator("h1").waitFor();
 		expect(await page.locator('[data-viewer-frame="home"]').count()).toBe(0);
+		// the open page folds away by its chevron, and opens again, as the app's rail does
+		await rail.getByRole("button", { name: "cart frame" }).waitFor();
+		await rail.getByRole("button", { name: "Collapse shop" }).click();
+		await rail.getByRole("button", { name: "cart frame" }).waitFor({ state: "detached" });
+		await rail.getByRole("button", { name: "Expand shop" }).click();
+		await rail.getByRole("button", { name: "cart frame" }).waitFor();
 
 		const played = await open(`${PATH}/shop?frame=shop%2Fcart`);
 		await played.page.locator("[data-viewer-player]").waitFor();
@@ -460,7 +467,7 @@ describe("the read-only canvas", () => {
 			.toBe("shop/cart");
 		await page.getByText("ana shared shop with you · updated 2 min ago").waitFor();
 		const rail = page.getByRole("navigation", { name: "Pages" });
-		expect(await rail.getByRole("button", { name: "shop" }).count()).toBe(1);
+		expect(await rail.getByRole("button", { name: "shop", exact: true }).count()).toBe(1);
 		for (const other of ["home", "menu"]) expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);
 		expect(await page.getByText("view only").count()).toBe(0);
 		for (const name of [/open in spool/i, /^shared/i])

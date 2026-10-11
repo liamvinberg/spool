@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { Unseen } from "../../daemon/seen";
-import { isFramePath, pageChain, pageName, pageUnder, ROOT_PAGE } from "../../page-path";
+import { isFramePath, pageChain, pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { saidAgo, saidList, sharedPageName } from "../../share-view";
 import type { Camera } from "../api";
 import {
@@ -27,12 +27,11 @@ import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
 import { PresenceLayer } from "../canvas/presence-layer";
 import { railRows } from "../canvas/rail-rows";
 import { useFollow, usePresenceSender } from "../canvas/use-presence";
-import { cn } from "../cn";
 import { handoverAddress, knock } from "../handover";
-import { ChevronIcon, FolderIcon, FrameIcon } from "../icons";
+import { FolderIcon, FrameIcon } from "../icons";
 import { Divider } from "../primitives/display";
 import { Toast } from "../primitives/feedback";
-import { Bar, ListRow, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
+import { Bar, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { Navigator, type NavigatorToast } from "./navigator";
@@ -768,6 +767,11 @@ function ProjectShared({ address, manage }: { address: string; manage: boolean }
 	return <SharedControl source={source} shares={shares} />;
 }
 
+/** A page and every page holding it: what going to it opens in the rail. */
+function holdingPages(page: string): string[] {
+	return page === ROOT_PAGE ? [] : pageChain(page);
+}
+
 /** The pages rail, as it ships, with nothing on it that changes anything. */
 function PagesRail({
 	project,
@@ -800,11 +804,21 @@ function PagesRail({
 		}
 		return byPage;
 	}, [canvas, tree]);
-	// the open page and every page holding it are drawn open
-	const rows = useMemo(
-		() => railRows(tree, framesByPage, new Set(page === ROOT_PAGE ? [] : pageChain(page))),
-		[tree, framesByPage, page],
-	);
+	// the chevron folds a page, as the app's rail does; going to a page opens it and every page holding it
+	const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(holdingPages(page)));
+	useEffect(() => {
+		const holding = holdingPages(page);
+		setExpanded((was) => (holding.every((each) => was.has(each)) ? was : new Set([...was, ...holding])));
+	}, [page]);
+	const fold = (folded: string, open: boolean, deep: boolean) =>
+		setExpanded((was) => {
+			const next = new Set(was);
+			for (const each of deep ? [folded, ...canvas.pages.filter((one) => pageWithin(folded, one))] : [folded])
+				if (open) next.add(each);
+				else next.delete(each);
+			return next;
+		});
+	const rows = useMemo(() => railRows(tree, framesByPage, expanded), [tree, framesByPage, expanded]);
 	return (
 		<Panel side="start" width="rail">
 			<Bar
@@ -819,20 +833,23 @@ function PagesRail({
 			<ScrollArea role="navigation" aria-label="Pages" className="flex-1 py-2">
 				{rows.map((row) =>
 					row.kind === "page" ? (
-						<ListRow
+						<TreeRow
 							key={`page:${row.page}`}
-							as="button"
+							depth={row.depth}
+							branch={{
+								open: row.open,
+								label: pageName(row.page),
+								onToggle: (deep) => fold(row.page, !row.open, deep),
+							}}
 							current={row.page === page}
+							// the row takes the click; its button is there for the keyboard and a reader
 							onClick={() => onPage(row.page)}
-							lead={
-								<span className="flex h-full shrink-0 items-center">
-									<span aria-hidden="true" style={{ width: `calc(${row.depth} * var(--spacing) * 3)` }} />
-									<span className="flex w-control-sm items-center justify-center text-tertiary">
-										<span className={cn("size-3 [&>svg]:size-full", row.open && "rotate-90")}>
-											<ChevronIcon />
-										</span>
-									</span>
-								</span>
+							decor={
+								<button
+									type="button"
+									aria-label={pageName(row.page)}
+									className="absolute inset-0 z-1 focus-ring-inset"
+								/>
 							}
 							icon={FolderIcon}
 							label={pageName(row.page)}
