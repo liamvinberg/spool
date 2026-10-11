@@ -46,4 +46,8 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 	// a project of the team's that isn't on this Mac yet leaves Home where it is, asking for nothing
 	await page.goto(local(handoverAddress({ team: "devosurf", project: "elsewhere" })));
 	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/`);
+
+	// the team alone, from its setup list's Open in spool: taken, so Home's address loses it, with no tab opened
+	await page.goto(local(handoverAddress({ team: "devosurf" })));
+	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/`);
 });

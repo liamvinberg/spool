@@ -426,13 +426,14 @@ export function App() {
 	);
 
 	// a team project handed over from its link at spool.page: this Mac's local copy opens, and with none here
-	// Home shows the team it is in
+	// Home shows the team it is in; a team handed over alone, from its setup list, is shown on Home
 	useEffect(() => {
 		if (handed === null || !booted || !projectsLoaded) return;
 		setHanded(null);
-		const copy = projects.find(
-			(project) => project.team?.team === handed.team && project.team.project === handed.project,
-		);
+		const copy =
+			handed.project === null
+				? undefined
+				: projects.find((project) => project.team?.team === handed.team && project.team.project === handed.project);
 		if (copy !== undefined) openTab(copy);
 		else window.history.replaceState(null, "", "/");
 	}, [handed, booted, projectsLoaded, projects, openTab]);

@@ -8,11 +8,18 @@ describe("a team project handed over from spool.page", () => {
 		expect(handedOver(new URL(address).search)).toEqual({ team: "devosurf", project: "checkout" });
 	});
 
-	it("names nothing that isn't a team and a project", () => {
+	it("goes to Home with the team alone, from its setup list", () => {
+		const address = handoverAddress({ team: "tidemark" });
+		expect(address).toBe("http://127.0.0.1:7766/?open=tidemark");
+		expect(handedOver(new URL(address).search)).toEqual({ team: "tidemark", project: null });
+	});
+
+	it("names nothing that isn't a team, or a team and a project", () => {
 		for (const search of [
 			"",
 			"?open=",
-			"?open=devosurf",
+			"?open=devosurf/",
+			"?open=d",
 			"?open=devosurf/checkout/home",
 			"?open=../etc",
 			"?open=A/b",
