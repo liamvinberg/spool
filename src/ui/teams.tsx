@@ -21,6 +21,7 @@ import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { money, TeamBilling } from "./team-billing";
+import { TeamLapsed } from "./team-lapsed";
 import { type OwnProject, SetUpToast, type SetupHost, TeamSetupList } from "./team-setup";
 import type { TeamsSource } from "./team-source";
 
@@ -313,9 +314,12 @@ export function TeamProjects({
 	away,
 	onNewProject,
 	setup,
+	onOpen,
 	empty = `${team.name} has no projects on this Mac yet`,
 }: {
 	team: CloudTeam;
+	/** Opens Stripe's Checkout from a lapsed team's dialog: this tab in a browser, the system browser from the Mac. */
+	onOpen: (url: string) => void;
 	/** What it says with no covers and nothing away. */
 	empty?: string;
 	notice?: ReactNode;
@@ -338,6 +342,7 @@ export function TeamProjects({
 					</Button>
 				)}
 			</header>
+			<TeamLapsed team={team} onOpen={onOpen} />
 			{notice}
 			{setup && <TeamSetupList team={team} host={setup} onShowing={setListing} />}
 			{covers ??
@@ -1097,6 +1102,7 @@ export function useTeamHome(
 								onSetUp: setSetUp,
 								revision: projects?.revision?.(current.address) ?? "",
 							}}
+							onOpen={open}
 						/>
 					),
 			}

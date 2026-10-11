@@ -60,8 +60,9 @@ afterAll(() => rmSync(built, { recursive: true, force: true }));
 
 async function open(
 	path: string,
-	answers: { setup?: TeamSetup; billing?: BillingSummary } = {},
+	given: { teams?: CloudTeam[]; billing?: BillingSummary; setup?: TeamSetup } = {},
 ): Promise<{ page: Page; asked: string[]; left: string[] }> {
+	const { teams = TEAMS, billing = BILLING } = given;
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const asked: string[] = [];
@@ -82,14 +83,13 @@ async function open(
 			asked.push(`${request.method()} ${url.pathname}${request.postData() ? ` ${request.postData()}` : ""}`);
 			if (url.pathname === "/api/teams/devosurf/billing/checkout")
 				return route.fulfill({ json: { url: "https://checkout.stripe.test/c/1" } });
-			if (url.pathname === "/api/teams/devosurf/setup" && answers.setup)
-				return route.fulfill({ json: answers.setup });
-			if (url.pathname === "/api/teams/devosurf/setup/done" && answers.setup)
-				return route.fulfill({ json: { ...answers.setup, done: true } });
+			if (url.pathname === "/api/teams/devosurf/setup" && given.setup) return route.fulfill({ json: given.setup });
+			if (url.pathname === "/api/teams/devosurf/setup/done" && given.setup)
+				return route.fulfill({ json: { ...given.setup, done: true } });
 			if (request.method() !== "GET") return route.fulfill({ json: {} });
-			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: answers.billing ?? BILLING });
+			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: billing });
 			if (url.pathname === "/api/teams")
-				return route.fulfill({ json: { teams: TEAMS, invites: [], mayCreateTeam: false } });
+				return route.fulfill({ json: { teams, invites: [], mayCreateTeam: false } });
 			if (url.pathname === "/api/teams/devosurf/projects")
 				return route.fulfill({
 					json: {
@@ -233,5 +233,28 @@ describe("Home in a browser", () => {
 		expect(await page.locator(".pj-team-setup").count()).toBe(0);
 		await page.getByRole("button", { name: "Invite more" }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
+	});
+
+	it("asks a lapsed team's admins to pay in one dialog, and tells everyone else in one line", {
+		timeout: 60_000,
+	}, async () => {
+		const lapsed = TEAMS.map((team) => ({ ...team, billing: { state: "lapsed" as const } }));
+		const { page, asked, left } = await open("/devosurf", {
+			teams: lapsed,
+			billing: { ...BILLING, state: "lapsed", paidBefore: true },
+		});
+		const dialog = page.getByRole("dialog", { name: "Devosurf has gone local" });
+		await dialog.waitFor();
+		expect(await dialog.textContent()).toContain("Anyone left out becomes a viewer.");
+		await dialog.getByRole("button", { name: "Continue to payment" }).click();
+		// Checkout leaves in this tab, as Billing's does
+		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
+		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly"}');
+
+		// a viewer of a lapsed team reaches its Home, and is told why nothing moves
+		const viewer = await open("/client", { teams: lapsed });
+		await viewer.page.getByText("Client Co has gone local. Ask an admin to pay for it to sync again.").waitFor();
+		expect(await viewer.page.getByRole("dialog").count()).toBe(0);
+		expect(viewer.asked.filter((line) => line.includes("/billing"))).toEqual([]);
 	});
 });

@@ -76,7 +76,7 @@ function mount(
 				createElement(
 					TeamsSourceContext.Provider,
 					{ value: fake.source },
-					createElement(TeamProjects, { team: team(role), setup: { ...shown, ...next } }),
+					createElement(TeamProjects, { team: team(role), onOpen: () => {}, setup: { ...shown, ...next } }),
 				),
 			),
 		);

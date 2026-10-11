@@ -146,7 +146,7 @@ it("lists the team's projects on this Mac and starts a new one in the team", () 
 		people: 3,
 	};
 	const onNewProject = vi.fn();
-	const empty = mount(createElement(TeamProjects, { team: devosurf, onNewProject }));
+	const empty = mount(createElement(TeamProjects, { team: devosurf, onNewProject, onOpen: vi.fn() }));
 	expect(empty.textContent).toContain("Devosurf has no projects on this Mac yet");
 	act(() =>
 		Array.from(empty.querySelectorAll("button"))
@@ -155,7 +155,12 @@ it("lists the team's projects on this Mac and starts a new one in the team", () 
 	);
 	expect(onNewProject).toHaveBeenCalledOnce();
 	const covers = mount(
-		createElement(TeamProjects, { team: devosurf, covers: createElement("p", null, "the covers"), onNewProject }),
+		createElement(TeamProjects, {
+			team: devosurf,
+			covers: createElement("p", null, "the covers"),
+			onNewProject,
+			onOpen: vi.fn(),
+		}),
 	);
 	expect(covers.textContent).toContain("the covers");
 	expect(covers.textContent).not.toContain("no projects");

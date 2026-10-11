@@ -262,6 +262,8 @@ function Projects({ team, notice, setup }: { team: CloudTeam; notice: ReactNode;
 			notice={notice}
 			setup={setup}
 			empty={`${team.name} has no projects yet`}
+			// Stripe's Checkout comes back to /<team>/settings/billing, so it opens in this tab
+			onOpen={(url) => location.assign(url)}
 			covers={
 				projects.length === 0 ? undefined : (
 					<CloudCovers team={team} projects={projects} here={here} menu={menu} onMenu={setMenu} />

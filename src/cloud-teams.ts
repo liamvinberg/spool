@@ -35,6 +35,8 @@ export interface BillingSummary {
 	trialEndsAt: number | null;
 	/** False for a team that started lapsed: it is paid for from the start, never "gone local". */
 	hadTime: boolean;
+	/** True once the team has had a paid invoice: a lapse is then "gone local", not the trial's end. Absent before DEV-276. */
+	paidBefore?: boolean;
 	/** A seat's price: monthly a month, yearly a year. */
 	prices: { currency: "usd"; monthly: number; yearly: number };
 	/** `amount` is per cycle, before VAT. */

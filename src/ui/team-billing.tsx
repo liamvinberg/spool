@@ -29,6 +29,11 @@ function checkoutPending(address: string): boolean {
 	}
 }
 
+/** This window sent the team to Checkout: Billing waits for Stripe to say it paid when it is opened. */
+export function checkoutStarted(address: string): void {
+	markCheckout(address, true);
+}
+
 /** Marks the team as gone to Checkout from this window, or no longer, so Billing waits for Stripe on its return. */
 export function markCheckout(address: string, pending: boolean) {
 	try {
