@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DesignFrame } from "../../daemon/design-projection";
 import type { PresenceState } from "../../team-sync-protocol";
 import { testBrowser } from "../../test-browser";
+import { buildEntry } from "./build-entry";
 import type { ViewerConfig, ViewerProject } from "./source";
 
 /**
@@ -135,13 +136,7 @@ beforeAll(async () => {
 		logLevel: "silent",
 		build: { outDir: built, emptyOutDir: true },
 	});
-	const manifest = JSON.parse(readFileSync(join(built, "manifest.json"), "utf8")) as Record<
-		string,
-		{ file: string; css?: string[] }
-	>;
-	const index = manifest["index.html"];
-	if (index === undefined) throw new Error("the viewer build has no entry");
-	entry = { file: index.file, css: index.css ?? [] };
+	entry = buildEntry(JSON.parse(readFileSync(join(built, "manifest.json"), "utf8")), "index.html");
 }, 120_000);
 
 afterAll(() => rmSync(built, { recursive: true, force: true }));

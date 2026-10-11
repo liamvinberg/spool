@@ -126,19 +126,22 @@ export function TeamMark({
 }
 
 /**
- * One team at a time: the switcher picks it, and your own projects are one more entry. A team you only
- * watch opens in the browser, since its projects never come to this Mac.
+ * One team at a time: the switcher picks it. On a Mac your own projects are one more entry, and a team you only
+ * watch opens in the browser, since its projects never come to this Mac. In a browser every team is a place.
  */
 export function TeamSwitcher({
 	teams,
 	current,
 	onSelect,
 	onNewTeam,
+	onMac = true,
 }: {
 	teams: ReadyTeams;
 	current: CloudTeam | null;
 	onSelect: (address: string | null) => void;
 	onNewTeam: () => void;
+	/** In the Mac app, beside the Mac's own projects; false at spool.page/<team>. */
+	onMac?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
 	const choose = (address: string | null) => {
@@ -170,7 +173,7 @@ export function TeamSwitcher({
 					/>
 					<Menu className="absolute top-[calc(100%+6px)] left-0 z-30">
 						{teams.teams.map((team) =>
-							team.role === "viewer" ? (
+							onMac && team.role === "viewer" ? (
 								<MenuItem
 									key={team.id}
 									href={`${teams.origin}/${team.address}`}
@@ -193,15 +196,19 @@ export function TeamSwitcher({
 								/>
 							),
 						)}
-						{teams.teams.length > 0 && <MenuSeparator />}
-						<MenuItem
-							icon={<FrameIcon className="size-4" />}
-							label="Your projects"
-							aria-current={!current || undefined}
-							className="aria-[current]:bg-state-selected-strong"
-							onClick={() => choose(null)}
-						/>
-						<MenuSeparator />
+						{onMac && (
+							<>
+								{teams.teams.length > 0 && <MenuSeparator />}
+								<MenuItem
+									icon={<FrameIcon className="size-4" />}
+									label="Your projects"
+									aria-current={!current || undefined}
+									className="aria-[current]:bg-state-selected-strong"
+									onClick={() => choose(null)}
+								/>
+							</>
+						)}
+						{(onMac || teams.teams.length > 0) && <MenuSeparator />}
 						<MenuItem
 							icon={<PlusIcon />}
 							label="New team…"
@@ -285,8 +292,8 @@ export function TeamNav({ team, page, onPage }: { team: CloudTeam; page: TeamPag
 }
 
 /**
- * A team's projects on this Mac: one cover per team project, however many local copies of it there are, and New
- * project to start another in the team.
+ * A team's projects: on a Mac one cover per team project, however many local copies of it there are, and New
+ * project to start another in the team; in a browser, every project the team has.
  */
 export function TeamProjects({
 	team,
@@ -294,8 +301,11 @@ export function TeamProjects({
 	covers,
 	away,
 	onNewProject,
+	empty = `${team.name} has no projects on this Mac yet`,
 }: {
 	team: CloudTeam;
+	/** What it says with no covers and nothing away. */
+	empty?: string;
 	notice?: ReactNode;
 	/** The covers of the team's projects on this Mac, if there are any. */
 	covers?: ReactNode;
@@ -316,11 +326,7 @@ export function TeamProjects({
 			{notice}
 			{covers ??
 				(away ? null : (
-					<EmptyState
-						className="min-h-[420px] justify-center p-[35px]"
-						art={<EmptyFrames />}
-						title={`${team.name} has no projects on this Mac yet`}
-					/>
+					<EmptyState className="min-h-[420px] justify-center p-[35px]" art={<EmptyFrames />} title={empty} />
 				))}
 			{away}
 		</>

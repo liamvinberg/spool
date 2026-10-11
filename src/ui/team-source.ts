@@ -1,4 +1,11 @@
-import type { CloudTeam, CloudTeamInvite, CloudTeamProject, TeamPeople, TeamProjectHere, TeamRole } from "../cloud-teams";
+import type {
+	CloudTeam,
+	CloudTeamInvite,
+	CloudTeamProject,
+	TeamPeople,
+	TeamProjectHere,
+	TeamRole,
+} from "../cloud-teams";
 import type { CloudTeamsState } from "../daemon/cloud-teams";
 
 /** Who is inside a team project right now, as its cover says it. */
@@ -58,7 +65,9 @@ export function teamsAt(
 		try {
 			response = await options.fetch(`${base}${path}`, {
 				method,
-				...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+				...(body === undefined
+					? {}
+					: { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
 			});
 		} catch {
 			throw new TeamActionRefused("unreachable");
@@ -90,7 +99,8 @@ export function teamsAt(
 				origin?: unknown;
 			} | null;
 			if (response.status === 401 || body?.state === "signed-out") return { state: "signed-out" };
-			if (!response.ok || !Array.isArray(body?.teams) || !Array.isArray(body.invites)) return { state: "unreachable" };
+			if (!response.ok || !Array.isArray(body?.teams) || !Array.isArray(body.invites))
+				return { state: "unreachable" };
 			return {
 				state: "ready",
 				teams: body.teams as CloudTeam[],
@@ -127,8 +137,7 @@ export function teamsAt(
 		},
 		removeLogo: (address) => call("DELETE", `${team(address)}/logo`),
 		invite: (address, email, role) => call("POST", `${team(address)}/invites`, { email, role }),
-		resendInvite: (address, invite) =>
-			call("POST", `${team(address)}/invites/${encodeURIComponent(invite)}/resend`),
+		resendInvite: (address, invite) => call("POST", `${team(address)}/invites/${encodeURIComponent(invite)}/resend`),
 		cancelInvite: (address, invite) => call("DELETE", `${team(address)}/invites/${encodeURIComponent(invite)}`),
 		setRole: (address, account, role) =>
 			call("PATCH", `${team(address)}/members/${encodeURIComponent(account)}`, { role }),

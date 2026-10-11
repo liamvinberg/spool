@@ -125,9 +125,7 @@ export function Home({
 			}
 		>
 			{team ? (
-				<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
-					{team.main}
-				</main>
+				<main className={HOME_MAIN}>{team.main}</main>
 			) : loading ? (
 				<main aria-busy="true" />
 			) : projects.length === 0 && needle === "" ? (
@@ -190,7 +188,7 @@ export function Home({
 					/>
 				</main>
 			) : (
-				<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
+				<main className={HOME_MAIN}>
 					<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
 						<div className="flex items-baseline gap-3">
 							<h1 className="type-page font-medium">Projects</h1>
@@ -317,6 +315,10 @@ export function Home({
 		</HomeShell>
 	);
 }
+
+/** Home's page beside the sidebar: its padding, which a narrow window tightens. */
+export const HOME_MAIN =
+	"pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]";
 
 /**
  * Home's frame: the sidebar with the wordmark, the team switcher, the nav and its foot, and the page beside it. In the
@@ -836,7 +838,7 @@ function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: 
 }
 
 /** Clicking anywhere off an open menu closes it. */
-function MenuBackdrop({ onClose }: { onClose: () => void }) {
+export function MenuBackdrop({ onClose }: { onClose: () => void }) {
 	return (
 		<button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Close menu" onClick={onClose} />
 	);

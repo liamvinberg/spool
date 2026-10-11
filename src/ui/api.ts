@@ -1736,9 +1736,8 @@ export const daemonTeams: TeamsSource = teamsAt("/api/cloud", {
 /** This Mac's teams and the invites to its address, as spool.page says through the daemon. */
 export const fetchCloudTeams = (): Promise<CloudTeamsState> => daemonTeams.list();
 
-export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
-
 export { type HerePerson, TeamActionRefused } from "./team-source";
+export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
 
 const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
 
