@@ -9,7 +9,7 @@ import { TextAction, Toast } from "./primitives/feedback";
 import { TextField } from "./primitives/inputs";
 import { Segment, SegmentedControl } from "./primitives/selection";
 import { PayChoice, useBilling } from "./team-billing";
-import { seatCost, TeamsSourceContext, teamSays } from "./teams";
+import { peopleSays, seatCost, TeamsSourceContext, teamSays } from "./teams";
 
 /**
  * A new team's setup list, on its Projects page for admins: the same numbered list on spool.page and in the app, so
@@ -291,7 +291,7 @@ function InviteStep({
 			}
 			if (refused !== undefined) {
 				setRows([...left, { key: made.current++, email: "", role: "editor" }]);
-				setNotice(teamSays(refused));
+				setNotice(peopleSays(refused, billing));
 			}
 			await onSent();
 		});

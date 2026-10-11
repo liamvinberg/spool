@@ -23,7 +23,7 @@ import { BILLING_STATES, money, TeamBilling } from "./team-billing";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
 import { type OwnProject, type SetupHost, TeamSetupList, useSetUpToast } from "./team-setup";
-import { type TeamsSource, teamSays } from "./team-source";
+import { TeamActionRefused, type TeamsSource, teamSays } from "./team-source";
 
 export { teamSays };
 
@@ -357,7 +357,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 			await action();
 			if (done) setNotice(done);
 		} catch (error) {
-			setNotice(teamSays(error));
+			setNotice(peopleSays(error, people?.billing));
 		}
 		await load();
 		onChanged();
@@ -553,6 +553,14 @@ function headcount(people: TeamPeople, admin: boolean): string {
 	const said = `${count} ${count === 1 ? "person" : "people"}`;
 	if (!admin || people.seats === undefined) return said;
 	return `${said} · ${people.seats} ${people.seats === 1 ? "seat" : "seats"}`;
+}
+
+/** A refused invite or role change in words: a trial's editor cap with the number spool.page gives for it. */
+export function peopleSays(error: unknown, billing: PeopleBilling | undefined): string {
+	const cap = billing?.trialEditorCap;
+	if (error instanceof TeamActionRefused && error.code === "trial_editor_cap" && cap != null)
+		return `A trial holds up to ${cap} editors. Pay for the team in Settings › Billing to add more.`;
+	return teamSays(error);
 }
 
 /**

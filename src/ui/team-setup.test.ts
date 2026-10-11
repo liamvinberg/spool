@@ -253,6 +253,30 @@ describe("a new team's setup list", () => {
 		expect(host.querySelector(".pj-seat-cost")).toBeNull();
 	});
 
+	it("says the trial's cap as spool.page gives it when an editor's invite is refused", async () => {
+		const full: TeamPeople = {
+			...PEOPLE,
+			seats: 1,
+			billing: {
+				state: "trial",
+				cycle: null,
+				seatPrice: null,
+				charged: null,
+				trialEditorCap: 2,
+				trialEditors: 2,
+			},
+		};
+		const fake = fakeTeamsSource({ teams: [team()], setup: FRESH, people: full });
+		const { host } = mount(fake);
+		await settle();
+		type(emails(host)[0] as HTMLInputElement, "noor@tidemark.app");
+		await act(async () => button(host, "Send invites").click());
+		await settle();
+		expect(step(host, "invited").querySelector('[role="status"]')?.textContent).toBe(
+			"A trial holds up to 2 editors. Pay for the team in Settings › Billing to add more.",
+		);
+	});
+
 	it("completes Invite people with Skip", async () => {
 		const fake = fakeTeamsSource({ teams: [team()], setup: FRESH });
 		const { host } = mount(fake);

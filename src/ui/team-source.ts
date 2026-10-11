@@ -42,7 +42,8 @@ const SAYS: Record<string, string> = {
 	already_paying: "This team is already paid for.",
 	invalid_billing: "Choose monthly or yearly and try again.",
 	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
-	trial_editor_cap: "A trial holds up to 10 editors. Pay for the team in Settings › Billing to add more.",
+	// with its number from People's billing where it is read: see `peopleSays`
+	trial_editor_cap: "The trial holds no more editors. Pay for the team in Settings › Billing to add more.",
 	unpaid: "This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
 };
 

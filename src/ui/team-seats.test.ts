@@ -173,3 +173,15 @@ it("refuses an eleventh editor on a trial with a sentence pointing to Billing, a
 	expect(host.querySelector('[role="status"]')?.textContent).toBe("Invite sent.");
 	expect(fake.asked).toEqual(["invite tidemark noor@tidemark.app editor", "invite tidemark lena@tidemark.app viewer"]);
 });
+
+it("says the trial's cap as spool.page gives it", async () => {
+	const fake = source("admin", { ...TRIAL, trialEditorCap: 5, trialEditors: 5 });
+	const host = mount(fake, "admin");
+	await settle();
+	type(host, "noor@tidemark.app");
+	await act(async () => host.querySelector("form")?.requestSubmit());
+	await settle();
+	expect(host.querySelector('[role="status"]')?.textContent).toBe(
+		"A trial holds up to 5 editors. Pay for the team in Settings › Billing to add more.",
+	);
+});
