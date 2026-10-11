@@ -3,7 +3,14 @@ import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { validator } from "hono/validator";
 import { CloudSignedOut, originOf } from "../cloud-auth";
-import { type CloudTeam, type CloudTeamInvite, CloudTeamRefused, cloudTeams, type TeamRole } from "../cloud-teams";
+import {
+	type BillingCycle,
+	type CloudTeam,
+	type CloudTeamInvite,
+	CloudTeamRefused,
+	cloudTeams,
+	type TeamRole,
+} from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { createTeamProject } from "../init";
 import type { DaemonCloud } from "./app";
@@ -147,6 +154,25 @@ export function cloudTeamRoutes(options: { spoolDir: string; cloud?: DaemonCloud
 					}
 				},
 			)
+			.get("/teams/:team/billing", (c) => act(c, () => client().billing(c.req.param("team"))))
+			.post(
+				"/teams/:team/billing/checkout",
+				validator("json", (value, c) => {
+					const { editors, cycle } = value as { editors?: unknown; cycle?: unknown };
+					if (
+						!Array.isArray(editors) ||
+						!editors.every((editor) => typeof editor === "string") ||
+						(cycle !== "monthly" && cycle !== "yearly")
+					)
+						return c.json({ error: "invalid_billing" }, 400);
+					return { editors: editors as string[], cycle: cycle as BillingCycle };
+				}),
+				(c) => {
+					const { editors, cycle } = c.req.valid("json");
+					return act(c, () => client().checkout(c.req.param("team"), editors, cycle));
+				},
+			)
+			.post("/teams/:team/billing/portal", (c) => act(c, () => client().portal(c.req.param("team"))))
 			.post("/invites/:invite/accept", (c) => act(c, () => client().acceptInvite(c.req.param("invite"))))
 			.post("/invites/:invite/decline", (c) => act(c, () => client().declineInvite(c.req.param("invite"))))
 	);

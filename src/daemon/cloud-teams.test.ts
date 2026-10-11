@@ -113,3 +113,36 @@ it("keeps the teams behind the control token", async () => {
 	const { daemon } = harness({ token: TOKEN });
 	expect((await daemon.app.request("http://localhost/api/cloud/teams")).status).toBe(401);
 });
+
+it("carries billing to spool.page: the summary, Checkout and the portal, each answering with its address", async () => {
+	const { api, asked } = harness({
+		token: TOKEN,
+		answer: (request) => {
+			const path = new URL(request.url).pathname;
+			if (path.endsWith("/billing")) return Response.json({ state: "trial", trialEndsAt: 1_761_393_600 });
+			if (path.endsWith("/checkout")) return Response.json({ url: "https://checkout.stripe.test/c/1" });
+			return Response.json({ error: "no_subscription" }, { status: 409 });
+		},
+	});
+	expect(await api("/teams/tidemark/billing")).toEqual({
+		status: 200,
+		body: { state: "trial", trialEndsAt: 1_761_393_600 },
+	});
+	expect(await api("/teams/tidemark/billing/checkout", "POST", { editors: ["sam"], cycle: "yearly" })).toEqual({
+		status: 200,
+		body: { url: "https://checkout.stripe.test/c/1" },
+	});
+	expect(await api("/teams/tidemark/billing/checkout", "POST", { editors: "sam", cycle: "weekly" })).toEqual({
+		status: 400,
+		body: { error: "invalid_billing" },
+	});
+	expect(await api("/teams/tidemark/billing/portal", "POST")).toEqual({
+		status: 409,
+		body: { error: "no_subscription" },
+	});
+	expect(asked.map(({ method, path, body }) => ({ method, path, body }))).toEqual([
+		{ method: "GET", path: "/api/teams/tidemark/billing", body: "" },
+		{ method: "POST", path: "/api/teams/tidemark/billing/checkout", body: '{"editors":["sam"],"cycle":"yearly"}' },
+		{ method: "POST", path: "/api/teams/tidemark/billing/portal", body: "" },
+	]);
+});

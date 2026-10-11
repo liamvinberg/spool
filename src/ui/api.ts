@@ -1,6 +1,14 @@
 import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
-import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamRole } from "../cloud-teams";
+import type {
+	BillingCycle,
+	BillingState,
+	BillingSummary,
+	CloudTeam,
+	CloudTeamInvite,
+	TeamPeople,
+	TeamRole,
+} from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import { AGENT_PERMISSIONS, type AgentEngineId, type AgentPermissions, isAgentEngineId } from "../daemon/agent-engine";
@@ -47,6 +55,9 @@ declare global {
 
 export type {
 	AgentEvent,
+	BillingCycle,
+	BillingState,
+	BillingSummary,
 	Camera,
 	CanvasOrder,
 	CanvasPlaces,

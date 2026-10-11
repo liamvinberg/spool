@@ -1,4 +1,6 @@
 import type {
+	BillingCycle,
+	BillingSummary,
 	CloudTeam,
 	CloudTeamInvite,
 	CloudTeamProject,
@@ -46,6 +48,12 @@ export interface TeamsSource {
 	removeMember(address: string, account: string): Promise<unknown>;
 	accept(invite: string): Promise<Pick<CloudTeam, "address" | "name" | "role">>;
 	decline(invite: string): Promise<unknown>;
+	/** What the team pays and when. Admins only. */
+	billing(address: string): Promise<BillingSummary>;
+	/** Stripe Checkout's address for paying for the team: `editors` stay editors, every other editor becomes a viewer. */
+	checkout(address: string, editors: string[], cycle: BillingCycle): Promise<{ url: string }>;
+	/** Stripe's customer portal's address, for the card, invoices, plan and cancelling. */
+	portal(address: string): Promise<{ url: string }>;
 }
 
 /**
@@ -144,6 +152,9 @@ export function teamsAt(
 		removeMember: (address, account) => call("DELETE", `${team(address)}/members/${encodeURIComponent(account)}`),
 		accept: (invite) => call("POST", `/invites/${encodeURIComponent(invite)}/accept`),
 		decline: (invite) => call("POST", `/invites/${encodeURIComponent(invite)}/decline`),
+		billing: (address) => call("GET", `${team(address)}/billing`),
+		checkout: (address, editors, cycle) => call("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
+		portal: (address) => call("POST", `${team(address)}/billing/portal`),
 	};
 }
 

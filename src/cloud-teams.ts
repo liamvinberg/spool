@@ -16,6 +16,36 @@ export interface CloudTeam {
 	role: TeamRole;
 	logo: string | null;
 	people: number;
+	/** Where the team stands with paying, said to every member. Absent from a spool.page that predates billing. */
+	billing?: { state: BillingState };
+}
+
+/**
+ * A team's billing state. `lapsed` is no paid time left: a trial ended unpaid, payments stopped, a cancel ran out,
+ * or a team started by an account whose trial was used.
+ */
+export type BillingState = "free" | "trial" | "paying" | "failing" | "ending" | "lapsed";
+
+export type BillingCycle = "monthly" | "yearly";
+
+/** What Billing shows an admin. Times are unix seconds, money integer cents. */
+export interface BillingSummary {
+	state: BillingState;
+	/** The trial's end, kept once the team pays within it. */
+	trialEndsAt: number | null;
+	/** False for a team that started lapsed: it is paid for from the start, never "gone local". */
+	hadTime: boolean;
+	/** A seat's price: monthly a month, yearly a year. */
+	prices: { currency: "usd"; monthly: number; yearly: number };
+	/** `amount` is per cycle, before VAT. */
+	plan: null | { seats: number; cycle: BillingCycle; amount: number };
+	nextCharge: null | { at: number; amount: number };
+	card: null | { brand: string; last4: string };
+	billingEmail: string | null;
+	periodEnd: number | null;
+	cancelAt: number | null;
+	failingSince: number | null;
+	lapsesAt: number | null;
 }
 
 /** An open invite to this account's own address. */
@@ -131,6 +161,13 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 				`invites/${encodeURIComponent(invite)}/accept`,
 			),
 		declineInvite: (invite: string) => call<null>("POST", `invites/${encodeURIComponent(invite)}/decline`),
+		/** What the team pays and when. Admins only. */
+		billing: (address: string) => call<BillingSummary>("GET", `${team(address)}/billing`),
+		/** Stripe Checkout for the team: `editors` are the editors kept as seats; the rest become viewers once it completes. */
+		checkout: (address: string, editors: string[], cycle: BillingCycle) =>
+			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
+		/** Stripe's customer portal for the team's card, invoices and plan. */
+		portal: (address: string) => call<{ url: string }>("POST", `${team(address)}/billing/portal`),
 		/** Starts a team project, named from what its folder is called. Editors and admins only. */
 		createProject: (address: string, name: string, repo?: string) =>
 			call<CloudTeamProject>("POST", `${team(address)}/projects`, { name, ...(repo === undefined ? {} : { repo }) }),
