@@ -32,7 +32,7 @@ Lifecycle (offline, take a path):
   spool init [path] --local          keep it on this machine only; an editor in a team must say which, and plain init then writes nothing and names the choice: relay it to the human
   spool open [path]     register an existing project by walk-up and open its tab
   spool remove [path]   forget one exact registered root without deleting its files
-  spool check [path]    strictly type-check frames without starting spool; also names frames timed too slow to play smoothly
+  spool check [frame…]  strictly type-check frames and what they import, without starting spool or writing anything; name frames, their folders or a page folder to check just those, none for all. Ends with "checked N frames (…), M errors"; a slow frame is spelled out only when named
   spool build <frame> --out <directory> [--scenario <name>]    export a connected website offline
 
 For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source. In a team project a lane is one more local copy of the same live canvas: any verb there fetches its design/, its saves reach the team like any other, and \`spool remove <lane>\` forgets that copy without touching the team.

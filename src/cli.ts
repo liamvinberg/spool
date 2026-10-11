@@ -7,8 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
-import { checkDesign } from "./check";
-import { describeSlowFrame, slowFrames } from "./check-pace";
+import { checkStart, runCheck } from "./check-command";
 import { CloudNotApproved, CloudRequestFailure, CloudSignedOut, cloudOrigin, login, logout } from "./cloud-auth";
 import {
 	CloudPublicationFailure,
@@ -18,6 +17,7 @@ import {
 	publishWebsite,
 	stopPublication,
 } from "./cloud-publication";
+import { readCanvasFields } from "./daemon/canvas-file";
 import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
@@ -31,7 +31,7 @@ import {
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
-import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-names";
+import { describeMigration, FOLDER_NAMES_FORMAT, migrateFrameNames } from "./daemon/migrate-frame-names";
 import { publicationReadiness } from "./daemon/publication-readiness";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
@@ -339,26 +339,25 @@ program
 
 program
 	.command("check")
-	.description("check frames or connected publication navigation offline")
-	.argument("[path]", "where the walk-up starts", ".")
+	.description("type-check frames, or connected publication navigation, offline; never writes")
+	.argument(
+		"[paths...]",
+		"frames to check, by folder, frame.tsx, folder of frames or frame name; all of them when none",
+	)
 	.option("--entry <frame>", "check navigation only, without typechecking", parseFrame)
-	.action(async (path: string, options: { entry?: string }) => {
-		const root = await offlineProject(path);
+	.action(async (paths: string[], options: { entry?: string }) => {
+		// read-only: a project due its frame-name migration is told so, not migrated
+		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
 		if (options.entry !== undefined) {
 			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
 			process.stdout.write(`${JSON.stringify(readiness)}\n`);
 			if (!readiness.ok) process.exitCode = 1;
 			return;
 		}
-		const diagnostics = await checkDesign(root);
-		for (const diagnostic of diagnostics) {
-			process.stderr.write(
-				`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}\n`,
-			);
-		}
-		// a slow frame is said, never failed: some are heavy on purpose
-		for (const frame of slowFrames(root)) process.stderr.write(`${describeSlowFrame(frame)}\n`);
-		if (diagnostics.length > 0) process.exitCode = 1;
+		const output = await runCheck(root, process.cwd(), paths);
+		for (const line of output.stderr) process.stderr.write(`${line}\n`);
+		for (const line of output.stdout) process.stdout.write(`${line}\n`);
+		if (!output.ok) process.exitCode = 1;
 	});
 
 program
@@ -454,14 +453,23 @@ async function fetchFirst(start: string): Promise<void> {
 /**
  * The project a command that needs no daemon works on, read the way the daemon
  * reads one first: a project still naming frames by folder has its walks
- * renamed before anything reads them (#336). A team project's missing design/
+ * renamed before anything reads them (#336), unless the verb is read-only,
+ * which says the migration is due instead. A team project's missing design/
  * is fetched first.
  */
-async function offlineProject(start: string): Promise<string> {
+async function offlineProject(start: string, { migrate = true } = {}): Promise<string> {
 	await fetchFirst(start);
 	const root = resolveProjectRoot(start);
 	if (root === undefined) {
 		throw new SpoolError("not inside a spool project — no design/canvas.json here or above; `spool init` starts one");
+	}
+	if (!migrate) {
+		if (readCanvasFields(root).format === FOLDER_NAMES_FORMAT) {
+			process.stderr.write(
+				"spool: this project still names frames by folder (canvas.json format 1); `spool open` renames its walk targets; check only reads, so until then a walk to a frame on a page reads as missing\n",
+			);
+		}
+		return root;
 	}
 	const migrated = migrateFrameNames(root);
 	if (migrated !== undefined) process.stderr.write(`spool: ${describeMigration(root, migrated)}\n`);

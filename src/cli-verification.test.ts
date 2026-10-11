@@ -30,7 +30,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		const result = spool(["check"], home, nested);
 
 		expect(result.status).toBe(0);
-		expect(result.stdout).toBe("");
+		expect(result.stdout).toBe("checked 2 frames (3 source files), 0 errors\n");
 		expect(result.stderr).toBe("");
 		expect(existsSync(join(home, ".spool"))).toBe(false);
 		expect(existsSync(join(root, "design", ".spool"))).toBe(false);
@@ -52,7 +52,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe(1);
-		expect(result.stdout).toBe("");
+		expect(result.stdout).toBe("not checked: 1 error stopped it\n");
 		expect(result.stderr).toBe(
 			"design/frames/home/frame.tsx:1:1 TS5083: Filesystem read refused (non-regular file)\n",
 		);
@@ -77,7 +77,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		const result = spool(["check", root], makeTempDir());
 
 		expect(result.status).toBe(1);
-		expect(result.stdout).toBe("");
+		expect(result.stdout).toBe("checked 2 frames (3 source files), 2 errors\n");
 		expect(result.stderr).toContain("design/frames/account/settings/frame.tsx:1:");
 		expect(result.stderr).toContain("TS2304: Cannot find name 'unknownName'.");
 		expect(result.stderr).toContain("design/shared/ui/broken.ts:1:");
@@ -119,7 +119,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 			const result = spool(["check", root], makeTempDir());
 
 			expect(result.status).toBe(1);
-			expect(result.stdout).toBe("");
+			expect(result.stdout).toBe("checked 1 frame (1 source file), 1 error\n");
 			expect(result.stderr).toContain("TS2307: Cannot find module '../../shared/\\u0000secret'");
 			expect(result.stderr).not.toContain("\0");
 			expect(result.stderr).not.toContain(root);
@@ -139,7 +139,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		const result = spool(["check", root], makeTempDir());
 
 		expect(result.status).toBe(1);
-		expect(result.stdout).toBe("");
+		expect(result.stdout).toBe("checked 1 frame (1 source file), 1 error\n");
 		expect(result.stderr).toBe("design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely\n");
 		expect(result.stderr).not.toContain(root);
 		expect(result.stderr).not.toContain(secret);
@@ -161,7 +161,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		const result = spool(["check", root], makeTempDir());
 
 		expect(result.status).toBe(1);
-		expect(result.stdout).toBe("");
+		expect(result.stdout).toBe("checked 1 frame (1 source file), 1 error\n");
 		expect(result.stderr).toBe("design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely\n");
 		expect(result.stderr).not.toContain(root);
 		expect(result.stderr).not.toContain(secret);
