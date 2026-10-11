@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.37.3
+
+### Patch Changes
+
+- 20ab24b: On spool.page, a page in the pages list folds and unfolds by its chevron, as it does in the app. Going to a page still opens it.
+- 16952fc: A frame's stylesheet that starts with `@import`, such as a Google Fonts link, now loads in the player and in published websites. Before, the import landed after other rules, so the browser ignored it and the font never loaded.
+
 ## 0.37.2
 
 ### Patch Changes
