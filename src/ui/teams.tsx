@@ -568,19 +568,14 @@ export function peopleSays(error: unknown, billing: PeopleBilling | undefined): 
 
 /**
  * What inviting an editor or admin adds to a team with a subscription, said before the invite goes: a seat once
- * they join, charged at once for the year's days left or added to the next monthly invoice. Null when it adds none.
+ * they join, charged at once for the billing year's days left or added to the next monthly invoice. Null when it adds none.
  */
-export function seatCost(billing: PeopleBilling | undefined, role: TeamRole, email: string): string | null {
+export function seatCost(billing: PeopleBilling | undefined, role: TeamRole): string | null {
 	if (!billing || role === "viewer" || billing.cycle === null || billing.seatPrice === null) return null;
 	if (!BILLING_STATES[billing.state].paid) return null;
-	// the name before the address's first `.`, `_` or `+`: noor.k@ is Noor
-	const local = email.trim().split("@")[0]?.split(/[._+]/u)[0] ?? "";
-	const who = local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "they";
 	const when =
-		billing.cycle === "yearly"
-			? `charged for the days left this billing year once ${who} ${local ? "joins" : "join"}`
-			: `added to the next invoice once ${who} ${local ? "joins" : "join"}`;
-	return `An ${role} is one more seat: ${money(billing.seatPrice)} a month, ${when}.`;
+		billing.cycle === "yearly" ? "charged for the days left this billing year" : "added to the next invoice";
+	return `An ${role} is one more seat: ${money(billing.seatPrice)} a month, ${when} once they join.`;
 }
 
 function daysLeft(expiresAt: number): string {
@@ -616,7 +611,7 @@ function InviteForm({
 	const [email, setEmail] = useState("");
 	const [role, setRole] = useState<TeamRole>(admin ? "editor" : "viewer");
 	const [busy, setBusy] = useState(false);
-	const cost = seatCost(billing, role, email);
+	const cost = seatCost(billing, role);
 	return (
 		<div className="mb-[22px]">
 			<form

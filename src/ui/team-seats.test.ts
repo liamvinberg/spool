@@ -103,36 +103,21 @@ it("tells an admin of a yearly team how many seats it pays for and what an edito
 	expect(host.textContent).toContain("4 people · 3 seats");
 	type(host, "noor@tidemark.app");
 	expect(costLine(host)).toBe(
-		"An editor is one more seat: $16 a month, charged for the days left this billing year once Noor joins.",
+		"An editor is one more seat: $16 a month, charged for the days left this billing year once they join.",
 	);
 	choose(host, "viewer");
 	expect(costLine(host)).toBeNull();
 	choose(host, "admin");
 	expect(costLine(host)).toBe(
-		"An admin is one more seat: $16 a month, charged for the days left this billing year once Noor joins.",
+		"An admin is one more seat: $16 a month, charged for the days left this billing year once they join.",
 	);
-});
-
-it("names the invitee by their address's first name, up to a dot, underscore or plus", async () => {
-	const host = mount(source("admin", MONTHLY), "admin");
-	await settle();
-	for (const [email, name] of [
-		["noor.k@tidemark.app", "Noor"],
-		["sam_li@tidemark.app", "Sam"],
-		["mira+work@tidemark.app", "Mira"],
-	] as const) {
-		type(host, email);
-		expect(costLine(host)).toBe(
-			`An editor is one more seat: $20 a month, added to the next invoice once ${name} joins.`,
-		);
-	}
 });
 
 it("says a monthly team's editor goes on the next invoice", async () => {
 	const host = mount(source("admin", MONTHLY), "admin");
 	await settle();
 	type(host, "noor@tidemark.app");
-	expect(costLine(host)).toBe("An editor is one more seat: $20 a month, added to the next invoice once Noor joins.");
+	expect(costLine(host)).toBe("An editor is one more seat: $20 a month, added to the next invoice once they join.");
 });
 
 it("says the seat count on a trial but no cost, as nothing is charged yet", async () => {

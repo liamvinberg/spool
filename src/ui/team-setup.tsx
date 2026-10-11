@@ -311,7 +311,7 @@ function InviteStep({
 		>
 			{rows.map((row, index) => {
 				const label = index === 0 ? "Email address" : "Another email address";
-				const cost = row.email.trim() === "" ? null : seatCost(billing, row.role, row.email);
+				const cost = row.email.trim() === "" ? null : seatCost(billing, row.role);
 				return (
 					<div key={row.key} className="flex flex-col gap-[6px]">
 						<div className="flex items-center gap-[8px]">
