@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.37.0
+
+### Minor Changes
+
+- b97426e: A team's page at spool.page is now the same Home as in the app: the team switcher, Projects with each project's cover and who is inside it, People and Settings. Every team is a place there, a viewer's too, and a project opens as its read-only canvas.
+
 ## 0.36.3
 
 ### Patch Changes
