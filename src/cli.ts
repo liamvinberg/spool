@@ -569,7 +569,6 @@ program
 			process.exitCode = 1;
 			return;
 		}
-		if (outcome.replayed) narrate("replaying cached logs — cache matches current compiled source");
 		if (outcome.entries.length === 0) {
 			narrate("the boot logged nothing");
 		} else {

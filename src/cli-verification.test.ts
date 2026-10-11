@@ -291,6 +291,6 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		const result = await spoolAsync(["logs", "quiet"], home, root);
 
 		expect(result.status).toBe(0);
-		expect(result.stderr).toContain("cache matches current compiled source");
+		expect(result.stderr).toBe("spool: the boot logged nothing\n");
 	});
 });
