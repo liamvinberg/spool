@@ -39,7 +39,8 @@ VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 RELEASE_BUILD="${SPOOL_RELEASE_BUILD:-0}"
 
 if [ "$RELEASE_BUILD" = 1 ]; then
-	REGISTRY_ATTEMPTS=60
+	# npm can take half an hour to serve a fresh publish: wait that long
+	REGISTRY_ATTEMPTS=180
 	REGISTRY_RETRY_SECONDS=10
 	# npm otherwise retries a failed fetch itself, outside the loop this script
 	# bounds. Limit each registry fetch so availability retries remain visible.
