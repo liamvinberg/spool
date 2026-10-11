@@ -567,6 +567,28 @@ describe("Move to team", () => {
 		expect(status(project.root)).toEqual([]);
 	});
 
+	it("says why a team gone local takes no project in, with spool.page's reason for the sheet to word", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		const before = git(project.root, "rev-parse", "HEAD");
+		const ana = makeApp(project.state, { cloud: cloud.machine("ana").cloud, teamNotice: () => {} });
+		cloud.lapse();
+		const refused = await ana.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toEqual({
+			error: "the team has gone local; an admin can pay for it at spool.page to sync again",
+			code: "unpaid",
+		});
+		expect(existsSync(join(project.root, "spool.json"))).toBe(false);
+		expect(git(project.root, "rev-parse", "HEAD")).toBe(before);
+	});
+
 	it("refills a teammate's folder when they pull the move commit, and it syncs from then on", {
 		timeout: 30_000,
 	}, async () => {

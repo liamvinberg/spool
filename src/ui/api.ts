@@ -44,7 +44,7 @@ import { createPlayerPublicationClient } from "../runtime/player-publication-cli
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
-import { base64Logo, type TeamsSource, teamsAt } from "./team-source";
+import { base64Logo, TeamActionRefused, type TeamsSource, teamSays, teamsAt } from "./team-source";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
 declare global {
@@ -281,10 +281,15 @@ export async function createTeamProjectAt(team: string, path: string, name: stri
 	} catch {
 		return { kind: "error", message: "spool could not be reached. Try again." };
 	}
-	const body = (await response.json().catch(() => null)) as { root?: string; name?: string; error?: string } | null;
+	const body = (await response.json().catch(() => null)) as {
+		root?: string;
+		name?: string;
+		error?: string;
+		code?: string;
+	} | null;
 	if (response.ok && typeof body?.root === "string" && typeof body.name === "string")
 		return { kind: "opened", root: body.root, name: body.name };
-	return { kind: "error", message: body?.error ?? "Could not start the project. Try again." };
+	return { kind: "error", message: refusedSays(body, "Could not start the project. Try again.") };
 }
 
 export async function renameProject(root: string, name: string): Promise<{ root: string; name: string }> {
@@ -1779,10 +1784,18 @@ async function teamProjectAction<T>(path: string, body: unknown): Promise<T> {
 	} catch {
 		throw new Error("spool could not be reached. Try again.");
 	}
-	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;
-	if (!response.ok || parsed === null)
-		throw new Error(typeof parsed?.error === "string" ? parsed.error : "Could not finish. Try again.");
+	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown; code?: unknown }) | null;
+	if (!response.ok || parsed === null) throw new Error(refusedSays(parsed, "Could not finish. Try again."));
 	return parsed;
+}
+
+/**
+ * What the daemon said stopped a team project's start or move: spool.page's reason in Home's words when it has
+ * some, such as a team gone local, else the daemon's own sentence.
+ */
+function refusedSays(body: { error?: unknown; code?: unknown } | null, otherwise: string): string {
+	const said = typeof body?.error === "string" ? body.error : otherwise;
+	return typeof body?.code === "string" ? teamSays(new TeamActionRefused(body.code), said) : said;
 }
 
 /** "Get it": a team project's local copy in a checkout, or just on this Mac. */
@@ -1805,7 +1818,12 @@ export async function fetchMoveProgress(path: string): Promise<MoveReading | und
 		const response = await controlFetch(`/api/cloud/move/progress?${new URLSearchParams({ path })}`);
 		const body = (response.ok ? await response.json() : null) as Partial<MoveReading> | null;
 		if (body === null) return undefined;
-		return { progress: body.progress ?? null, team: body.team ?? null, ended: body.ended ?? null };
+		const ended = body.ended ?? null;
+		return {
+			progress: body.progress ?? null,
+			team: body.team ?? null,
+			ended: ended !== null && "error" in ended ? { error: refusedSays(ended, ended.error) } : ended,
+		};
 	} catch {
 		return undefined;
 	}

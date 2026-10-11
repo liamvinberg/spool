@@ -14,6 +14,7 @@ import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
 import { TextField } from "./primitives/inputs";
 import { Popover } from "./primitives/overlays";
+import { TeamActionRefused, teamSays } from "./team-source";
 
 /** Said on the window whenever this tab changed a project's shares, so every Shared control reads them again. */
 export const SHARES_CHANGED = "spool-shares-change";
@@ -276,7 +277,8 @@ export function refusalSaid(code: string): string {
 		case "share_not_found":
 			return "That share was stopped meanwhile.";
 		default:
-			return "spool.page couldn't do that just now.";
+			// a team's own refusals, such as a team gone local, in Home's words
+			return teamSays(new TeamActionRefused(code), "spool.page couldn't do that just now.");
 	}
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { saidAgo, shareWho } from "../../share-view";
+import { refusalSaid } from "../shares";
 import { leavingLinks } from "./share-sheet";
 import { menuEntries } from "./sidebar-menu";
 
@@ -41,6 +42,14 @@ describe("sharing a page", () => {
 				(entry) => entry.rule !== true && entry.label === "Share…",
 			),
 		).toBe(false);
+	});
+
+	it("says why a share wasn't made in words, a team gone local's as Home says it", () => {
+		expect(refusalSaid("unpaid")).toBe(
+			"This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
+		);
+		expect(refusalSaid("editor_required")).toBe("Only editors and admins change shares.");
+		expect(refusalSaid("something_new")).toBe("spool.page couldn't do that just now.");
 	});
 
 	it("says whom a share is for and when, as people say it", () => {

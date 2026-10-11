@@ -21,6 +21,37 @@ export class TeamActionRefused extends Error {
 	}
 }
 
+/** spool.page's reasons, in Home's words. */
+const SAYS: Record<string, string> = {
+	last_admin: "You’re the only admin. Make someone else an admin first.",
+	admin_required: "Only admins can do that.",
+	already_member: "They’re already in the team.",
+	invalid_mailbox: "Check the address and try again.",
+	send_limit_reached: "Too many emails just now. Try again in a while.",
+	address_taken: "Another team has that address.",
+	address_reserved: "That address isn’t available.",
+	invalid_address: "Use 2 to 40 lower-case letters, digits and hyphens.",
+	invalid_name: "Give the team a name of up to 64 characters.",
+	invalid_logo: "Use a PNG, JPEG, WebP or GIF.",
+	logo_too_large: "Use an image under 100 KB.",
+	team_creation_closed: "Creating a team isn’t open yet.",
+	invite_expired: "That invite has run out. Ask for a new one.",
+	invite_closed: "That invite is no longer open.",
+	signed_out: "Sign in again to reach your teams.",
+	billing_free: "This team is free. There’s nothing to pay.",
+	already_paying: "This team is already paid for.",
+	invalid_billing: "Choose monthly or yearly and try again.",
+	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
+	trial_editor_cap: "A trial holds up to 10 editors. Pay for the team in Settings › Billing to add more.",
+	unpaid: "This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
+};
+
+/** What a refusal says to a person: in Home's words when it has some, else `otherwise`. */
+export function teamSays(error: unknown, otherwise = "spool.page can’t be reached just now. Try again."): string {
+	const code = error instanceof TeamActionRefused ? error.code : "unreachable";
+	return SAYS[code] ?? otherwise;
+}
+
 /** A team project as its team's Projects page lists it, whichever side lists it. */
 export type ListedTeamProject = Pick<CloudTeamProject, "name" | "url" | "repo">;
 

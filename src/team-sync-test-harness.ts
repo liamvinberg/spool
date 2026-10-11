@@ -187,6 +187,8 @@ export function fakeTeam(team = "devosurf") {
 		if (request.method === "POST" && match[2] === undefined)
 			return request.json().then((body: { name: string; repo?: string }) => {
 				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				// a lapsed team takes no new work that would sync
+				if (lapsed) return Response.json({ error: "unpaid" }, { status: 402 });
 				const name = body.name.toLowerCase();
 				if (projects.has(name)) return Response.json({ error: "project_taken" }, { status: 409 });
 				projects.set(name, {

@@ -184,7 +184,8 @@ export async function chosenTeam(teams: CloudTeamsClient, wanted: string): Promi
 class ProjectNameTaken extends SpoolError {}
 
 export function teamProjectRefusal(error: unknown, team: string, folder: string): unknown {
-	if (!(error instanceof CloudTeamRefused)) return error;
+	// the team's, not the project's: said as spool.page says it
+	if (!(error instanceof CloudTeamRefused) || error.code === "unpaid") return error;
 	if (error.code === "project_taken")
 		return new ProjectNameTaken(
 			`${team} already has a project called "${folder}"; start this one in a folder with another name`,

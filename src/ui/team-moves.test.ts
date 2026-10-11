@@ -384,6 +384,33 @@ it("says what stopped a move it picked up", async () => {
 	expect(button(host, "Move to Devosurf").disabled).toBe(false);
 });
 
+it("says a team gone local takes no project in, in Home's words", async () => {
+	daemon((url) =>
+		url.includes("/move/stays")
+			? Response.json({ stays: [] })
+			: Response.json(
+					{
+						error: "the team has gone local; an admin can pay for it at spool.page to sync again",
+						code: "unpaid",
+					},
+					{ status: 409 },
+				),
+	);
+	const host = mount(
+		createElement(MoveToTeamDialog, {
+			project: { root: "/Users/ana/chamfer", name: "chamfer" },
+			teams: [DEVOSURF],
+			onMoved: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	await act(async () => button(host, "Move to Devosurf").click());
+	await settle();
+	expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+		"This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
+	);
+});
+
 it("says what stopped a move", async () => {
 	daemon((url) =>
 		url.includes("/move/stays")

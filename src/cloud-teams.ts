@@ -144,7 +144,11 @@ export class CloudTeamRefused extends SpoolError {
 		readonly code: string,
 		readonly status: number,
 	) {
-		super(`spool.page refused: ${code}`);
+		super(
+			code === "unpaid"
+				? "the team has gone local; an admin can pay for it at spool.page to sync again"
+				: `spool.page refused: ${code}`,
+		);
 	}
 }
 

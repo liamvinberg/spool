@@ -155,6 +155,7 @@ export function cloudTeamRoutes(options: {
 						});
 						return c.json({ root, name: basename(root) });
 					} catch (error) {
+						if (error instanceof CloudTeamRefused) return c.json({ error: error.message, code: error.code }, 409);
 						if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
 						return c.json({ error: "spool.page could not be reached. Try again." }, 503);
 					}

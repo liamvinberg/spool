@@ -32,8 +32,8 @@ export interface TeamProjectOnMac {
 /** What a move came to, as Home says it. */
 export type MoveOutcome = { root: string; name: string; commit: MoveCommit["kind"] | "waiting" };
 
-/** How a move ended: what it came to, or what stopped it. */
-export type MoveEnded = { outcome: MoveOutcome } | { error: string };
+/** How a move ended: its outcome, or what stopped it, with spool.page's reason when it was spool.page's refusal. */
+export type MoveEnded = { outcome: MoveOutcome } | { error: string; code?: string };
 
 /**
  * What the move sheet asks of a project: the move under way and its team, or how one ended that no sheet heard,
@@ -70,8 +70,8 @@ export function teamProjectRoutes(options: {
 		...(options.cloud?.openSocket === undefined ? {} : { openSocket: options.cloud.openSocket }),
 	});
 	const refused = (c: Context, error: unknown) => {
-		const { error: said, status } = refusal(error);
-		return c.json({ error: said }, status);
+		const { status, ...said } = refusal(error);
+		return c.json(said, status);
 	};
 	/** Each move under way, by its project's root: the team it goes to and how far it has got, for the sheet. */
 	const moves = new Map<string, { team: string; progress: MoveProgress }>();
@@ -217,7 +217,8 @@ export function teamProjectRoutes(options: {
 						answer({ outcome });
 						return c.json(outcome);
 					} catch (error) {
-						answer({ error: refusal(error).error });
+						const { status: _, ...said } = refusal(error);
+						answer(said);
 						return refused(c, error);
 					} finally {
 						if (root !== undefined) moves.delete(root);
@@ -228,9 +229,9 @@ export function teamProjectRoutes(options: {
 }
 
 /** What the daemon answers a team-project request that failed, and with which status. */
-function refusal(error: unknown): { error: string; status: 401 | 409 | 503 } {
+function refusal(error: unknown): { error: string; code?: string; status: 401 | 409 | 503 } {
 	if (error instanceof CloudSignedOut) return { error: "Sign in to spool.page again.", status: 401 };
-	if (error instanceof CloudTeamRefused) return { error: `spool.page refused: ${error.code}`, status: 409 };
+	if (error instanceof CloudTeamRefused) return { error: error.message, code: error.code, status: 409 };
 	if (error instanceof SpoolError) return { error: error.message, status: 409 };
 	return { error: "spool.page could not be reached. Try again.", status: 503 };
 }
