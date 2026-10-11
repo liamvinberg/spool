@@ -2,6 +2,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { markCheckoutCli } from "./cli-name";
 import { configuredPort, readDaemonState, resolveSpoolDir } from "./daemon/lifecycle";
 import { appArgs, electronInstalled, openCheckoutApp, opensCheckoutApp } from "./dev-app";
 import { mirrorCaptures } from "./dev-captures";
@@ -27,7 +28,10 @@ if (process.env.SPOOL_PORT === undefined && configuredPort(resolveSpoolDir(proce
 // tracked outside it, so every checkout entry refreshes the mirror before serving
 mirrorCaptures(join(repoRoot, "fixtures", "captures"), join(repoRoot, "design", "shared", "captures"));
 
-if (process.argv[2] === "skill") {
+markCheckoutCli();
+
+// once, on the overview: a topic is read after it, and the banner again is only noise
+if (process.argv[2] === "skill" && process.argv.length === 3) {
 	process.stdout.write(
 		`You are on the checkout CLI — its own instance (state ${process.env.SPOOL_DIR}, port ${process.env.SPOOL_PORT}), not the installed spool. Run every verb exactly as you invoked skill: same command, different verb; a bare \`spool\` is a different instance on a different version.\n\n`,
 	);

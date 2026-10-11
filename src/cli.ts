@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkStart, runCheck } from "./check-command";
+import { cliName } from "./cli-name";
 import { CloudNotApproved, CloudRequestFailure, CloudSignedOut, cloudOrigin, login, logout } from "./cloud-auth";
 import {
 	CloudPublicationFailure,
@@ -22,10 +23,12 @@ import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
 	ensureDaemon,
+	goneSourceWarning,
 	poll,
 	readDaemonState,
 	resolveServeConfig,
 	resolveSpoolDir,
+	retryFirst,
 	selfCliPath,
 	spoolDaemonAt,
 	statusDaemon,
@@ -63,6 +66,12 @@ const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.
 
   design/ is a spool canvas: run \`spool skill\` before working there — it is the complete contract
 `;
+
+// a reader that stops early (`spool skill | head`) is no failure of the verb's: end quietly, without a stack
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+	if (error.code !== "EPIPE") throw error;
+	process.exit(0);
+});
 
 /** The bare verb's one opt-out, routed by hand below and declared here to be in `--help`. */
 const NO_OPEN = "--no-open";
@@ -295,6 +304,7 @@ program
 		// daemon-less by design (#12); when one runs, the tab is already opening — say where
 		const status = await statusDaemon(spoolDir);
 		if (status.running) {
+			warnGoneSource(status.pid);
 			process.stdout.write(`canvas: ${status.url}/p/${encodeURIComponent(basename(root))}\n`);
 			// The raw URL is the truth and the thing agents use, so it stays first.
 			// The second line is the one a person can remember tomorrow.
@@ -315,7 +325,8 @@ program
 async function openCanvas(options: { noOpen: boolean }): Promise<void> {
 	await fetchFirst(process.cwd());
 	const { root } = openProject(process.cwd(), spoolDir);
-	const { url } = await ensureDaemon(spoolDir);
+	const { url, pid } = await ensureDaemon(spoolDir);
+	warnGoneSource(pid);
 	const canvas = `${url}/p/${encodeURIComponent(basename(root))}`;
 	process.stdout.write(`canvas: ${canvas}\n`);
 	if (shouldOpenBrowser({ noOpen: options.noOpen, stdin: process.stdin })) openInBrowser(canvas);
@@ -492,11 +503,19 @@ function parseScenario(value: string): string {
 	return value;
 }
 
+/** Say so when the daemon this verb talks to runs from code since deleted (a removed worktree's). */
+function warnGoneSource(pid: number): void {
+	const state = readDaemonState(spoolDir);
+	const warning = state?.pid === pid ? goneSourceWarning(state) : undefined;
+	if (warning !== undefined) narrate(warning);
+}
+
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
 async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
 	await fetchFirst(process.cwd());
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
-	const { url, controlToken } = await ensureDaemon(spoolDir);
+	const { url, controlToken, pid } = await ensureDaemon(spoolDir);
+	warnGoneSource(pid);
 	return { root, name, daemonUrl: url, controlToken };
 }
 
@@ -597,6 +616,7 @@ program
 	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
+		if (options.raw === true) narrate(`to click or type before a shot, copy the driver in \`${cliName()} skill\``);
 		process.stdout.write(
 			`${
 				options.raw === true
@@ -609,9 +629,9 @@ program
 program
 	.command("skill")
 	.description("print the spool skill — how agents author for this canvas")
-	.argument("[topic]", "one topic instead of the overview")
-	.action((topic?: string) => {
-		process.stdout.write(`${skillText(topic)}\n`);
+	.argument("[topics...]", "topics instead of the overview, several in one go")
+	.action((topics: string[]) => {
+		process.stdout.write(`${skillText(...topics)}\n`);
 	});
 
 program
@@ -655,7 +675,7 @@ program
 					if (sibling !== undefined) {
 						await uiWatcher?.close();
 						throw new SpoolError(
-							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable — run \`spool stop --force\` to stop it (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token)`,
+							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token). ${retryFirst()}`,
 						);
 					}
 				}
@@ -803,6 +823,8 @@ program
 		process.stdout.write(
 			`spool daemon running at ${status.url} (pid ${status.pid}, v${status.version})${skew}${available}\n`,
 		);
+		const gone = goneSourceWarning(status);
+		if (gone !== undefined) process.stdout.write(`warning: ${gone}\n`);
 	});
 
 program

@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { PortBusyError, SpoolError } from "../errors";
 import type { AgentEngine } from "./agent-engine";
@@ -105,6 +106,7 @@ export function serveDaemon({
 				version,
 				startedAt: new Date().toISOString(),
 				controlToken: daemon.controlToken,
+				source: fileURLToPath(import.meta.url),
 			});
 			resolve({
 				url: daemonUrl(host, info.port),

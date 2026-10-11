@@ -77,6 +77,8 @@ describe("spool cli daemon", { timeout: 30_000 }, () => {
 
 		expect(result.status).toBe(1);
 		expect(result.stderr).toContain("control credential is unavailable");
+		expect(result.stderr).toContain("Retry in a few seconds first");
+		expect(result.stderr).toContain("nobody else is using it, `spool stop --force`");
 		expect(readDaemonState(spoolDir)).toBeUndefined();
 	});
 
