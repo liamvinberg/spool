@@ -249,7 +249,13 @@ function ViewerCanvas({
 	const opening = outsider
 		? (project.shared?.pages.find((each) => each === ROOT_PAGE || known.has(each)) ?? ROOT_PAGE)
 		: ROOT_PAGE;
-	const page = known.has(where.page) ? where.page : opening;
+	// a link naming only a frame (spool.page/<team>/<project>?frame=shop/cart) opens on that frame's own page
+	const linked =
+		where.page === ROOT_PAGE && where.frame !== null
+			? canvas.frames.find((frame) => frame.name === where.frame)?.page
+			: undefined;
+	const named = linked ?? where.page;
+	const page = known.has(named) ? named : opening;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
 	/** The frame the player has open: a save that renames or removes it never closes the player under anyone. */
 	const playing = useRef<string | null>(null);
@@ -537,6 +543,7 @@ function ViewerCanvas({
 					walksAnywhere={outsider}
 					start={played}
 					from={from.current}
+					coverOf={(frame) => project.covers?.[frame]}
 					onWalked={(frame) => {
 						onSeen(frame);
 						const spot = canvas.frames.find((each) => each.name === frame);

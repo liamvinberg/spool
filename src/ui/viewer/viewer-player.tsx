@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { DesignFrame } from "../../daemon/design-projection";
 import { isFramePath } from "../../page-path";
 import { fulfillClipboardCopy } from "../../runtime/clipboard-host";
@@ -13,18 +13,35 @@ import { parseFrameMessage, type SessionRecord, sessionReply } from "../canvas/p
 /** The glide a played frame grows out of its spot on, and shrinks back into it on. */
 export const GROW = { duration: FLIGHT_MS + 60, easing: "cubic-bezier(0.32, 0.72, 0, 1)" } as const;
 
-interface Played {
+/**
+ * How long a frame clicked on the canvas may take to draw before the player opens without it: one that draws in
+ * time grows out of the canvas whole, never as a blank page filling in.
+ */
+const DRAW_WAIT_MS = 300;
+/** A document that loaded but never said it drew (an error, a screen that isn't shared) shows this long after. */
+const DRAW_FALLBACK_MS = 150;
+
+interface Arrival {
 	frame: string;
 	arrival: number;
 	/** The document this arrival plays, fixed when it arrives: nothing but a walk loads another. */
 	src: string;
+}
+
+interface Played extends Arrival {
 	externalHref: string | null;
+	/** The last arrival that drew. */
+	drawn: number;
+	/** The screen walked from, kept on show until the next one has drawn: a walk never flashes a blank page. */
+	previous: Arrival | null;
 }
 
 /**
  * The player, in the same tab: the frame grows out of its own spot on the
  * canvas into the played page, wearing the shipped 30px bar (frame switcher,
- * size, eye, close), and close shrinks it back. The page it plays is the
+ * size, eye, close), and close shrinks it back while the canvas fades in
+ * behind it. It grows once its document has drawn, or standing on its cover,
+ * so what grows is the screen and never a blank page. The page it plays is the
  * frame's own document from the frames' origin, so a walk inside it is that
  * document asking to go, answered here the way the canvas answers it: the next
  * screen's document, handed the session the last one left.
@@ -39,6 +56,7 @@ export function ViewerPlayer({
 	walksAnywhere = false,
 	start,
 	from,
+	coverOf,
 	onWalked,
 	onClosed,
 }: {
@@ -54,12 +72,22 @@ export function ViewerPlayer({
 	start: string;
 	/** Where the frame stands on screen on the canvas, to grow from; null plays it at once. */
 	from: Box | null;
+	/** A frame's cover, standing in until its document has drawn. */
+	coverOf: (frame: string) => string | undefined;
 	onWalked: (frame: string) => void;
 	onClosed: () => void;
 }) {
 	const shell = useRef<HTMLDivElement | null>(null);
+	const backdrop = useRef<HTMLDivElement | null>(null);
 	const iframe = useRef<HTMLIFrameElement | null>(null);
-	const played = useRef<Played>({ frame: start, arrival: 0, src: documentOf(start), externalHref: null });
+	const played = useRef<Played>({
+		frame: start,
+		arrival: 0,
+		src: documentOf(start),
+		externalHref: null,
+		drawn: -1,
+		previous: null,
+	});
 	/** What the screen walked from left behind, for the next one to start from. */
 	const session = useRef<SessionRecord | null>(null);
 	const listeners = useRef(new Set<() => void>());
@@ -94,11 +122,14 @@ export function ViewerPlayer({
 			walk(frame) {
 				if (!walkable(latest.current.frames, reaches.current, frame)) return;
 				session.current = null;
+				const now = played.current;
 				set({
 					frame,
-					arrival: played.current.arrival + 1,
+					arrival: now.arrival + 1,
 					src: latest.current.documentOf(frame),
 					externalHref: null,
+					previous:
+						now.drawn === now.arrival ? { frame: now.frame, arrival: now.arrival, src: now.src } : now.previous,
 				});
 				latest.current.onWalked(frame);
 			},
@@ -112,6 +143,7 @@ export function ViewerPlayer({
 					latest.current.onClosed();
 					return;
 				}
+				backdrop.current?.animate([{ opacity: 1 }, { opacity: 0 }], { ...GROW, fill: "forwards" });
 				const leaving = el.animate(
 					back === null
 						? [{ opacity: 1 }, { opacity: 0 }]
@@ -132,19 +164,52 @@ export function ViewerPlayer({
 		if (played.current.frame !== start) controller.walk(start);
 	}, [start, controller]);
 
-	// it grows out of its spot on the canvas
+	useSyncExternalStore(controller.subscribe, controller.version);
+	const now = played.current;
+	const cover = coverOf(now.frame);
+	// a frame opened from the canvas waits, unseen, for its document to draw; one opened by its address shows at once
+	const [waited, setWaited] = useState(from === null || coverOf(start) !== undefined);
+	const shown = waited || now.drawn >= 0;
+	useEffect(() => {
+		if (waited) return;
+		const timer = setTimeout(() => setWaited(true), DRAW_WAIT_MS);
+		return () => clearTimeout(timer);
+	}, [waited]);
+
+	// once shown, it grows out of its spot on the canvas as the canvas dims behind it
+	const grown = useRef(false);
 	useLayoutEffect(() => {
 		const el = shell.current;
 		const { start, from } = opening.current;
+		if (!shown || grown.current) return;
+		grown.current = true;
 		if (el === null || from === null || reducedMotion()) return;
 		el.animate([{ transform: grownFrom(from, controller.geometry(start).w) }, { transform: "none" }], GROW);
-	}, [controller]);
+		backdrop.current?.animate([{ opacity: 0 }, { opacity: 1 }], GROW);
+	}, [shown, controller]);
+
+	const drew = useMemo(() => {
+		const draw = (arrival: number) => {
+			const now = played.current;
+			if (arrival !== now.arrival || now.drawn === arrival) return;
+			played.current = { ...now, drawn: arrival, previous: null };
+			version.current += 1;
+			for (const listener of listeners.current) listener();
+		};
+		return {
+			/** The document said it drew. */
+			now: () => draw(played.current.arrival),
+			/** It loaded: one that never says so is shown a beat later anyway. */
+			loaded: (arrival: number) => setTimeout(() => draw(arrival), DRAW_FALLBACK_MS),
+		};
+	}, []);
 
 	// the played document's side of the frame protocol: its session, its walks and its links out
 	usePlayedDocument(iframe, session, {
 		frame: () => played.current.frame,
 		walkable: (frame) => walkable(latest.current.frames, reaches.current, frame),
 		walk: (frame) => controller.walk(frame),
+		drew: drew.now,
 		external(href) {
 			played.current = { ...played.current, externalHref: href };
 			version.current += 1;
@@ -161,46 +226,89 @@ export function ViewerPlayer({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [controller]);
 
+	const waiting = now.drawn !== now.arrival && now.previous === null;
 	return (
-		<div className="fixed inset-0 z-30 overflow-auto bg-[#0e0e0e]" data-viewer-player="">
+		<div
+			className="fixed inset-0 z-30"
+			style={shown ? undefined : { opacity: 0, pointerEvents: "none" }}
+			data-viewer-player=""
+		>
 			<style>{PLAYER_CHROME_RULES}</style>
-			<div ref={shell} className="min-h-full origin-top-left">
-				<Player
-					project={project}
-					frames={{}}
-					controller={controller}
-					closeLabel="Back to the canvas"
-					host={<PlayedDocument iframe={iframe} controller={controller} played={played} />}
-				/>
+			<div ref={backdrop} className="absolute inset-0 bg-[#0e0e0e]" />
+			<div className="absolute inset-0 overflow-auto">
+				<div ref={shell} className="min-h-full origin-top-left">
+					<Player
+						project={project}
+						frames={{}}
+						controller={controller}
+						closeLabel="Back to the canvas"
+						loading={waiting && cover === undefined}
+						host={
+							<PlayedDocument
+								iframe={iframe}
+								played={now}
+								cover={waiting ? cover : undefined}
+								onLoad={drew.loaded}
+							/>
+						}
+					/>
+				</div>
 			</div>
 		</div>
 	);
 }
 
-/** The played frame's document, a fresh one for every arrival. */
+/**
+ * The played frame's document, a fresh one for every arrival, hidden until it draws: the screen walked from stays on
+ * top until then, or the frame's cover where there is no screen before it.
+ */
 function PlayedDocument({
 	iframe,
-	controller,
 	played,
+	cover,
+	onLoad,
 }: {
 	iframe: { current: HTMLIFrameElement | null };
-	controller: PlayerController;
-	played: { current: Played };
+	played: Played;
+	cover: string | undefined;
+	onLoad: (arrival: number) => void;
 }) {
-	useSyncExternalStore(controller.subscribe, controller.version);
-	const { frame, arrival, src } = played.current;
+	const { frame, arrival, src, drawn, previous } = played;
+	const documents = previous === null ? [{ frame, arrival, src }] : [{ frame, arrival, src }, previous];
 	return (
-		<iframe
-			key={arrival}
-			ref={(element) => {
-				iframe.current = element;
-			}}
-			src={src}
-			title={frame}
-			sandbox="allow-scripts"
-			className="block w-full border-0 bg-white"
-			style={{ height: `calc(100vh - ${DESK_BAR_PX}px)` }}
-		/>
+		<div className="relative bg-white" style={{ height: `calc(100vh - ${DESK_BAR_PX}px)` }}>
+			{cover !== undefined && (
+				<img
+					src={cover}
+					alt=""
+					draggable={false}
+					className="absolute inset-0 h-full w-full object-cover object-top"
+				/>
+			)}
+			{documents.map((document) => {
+				const current = document.arrival === arrival;
+				return (
+					<iframe
+						key={document.arrival}
+						ref={
+							current
+								? (element) => {
+										iframe.current = element;
+									}
+								: undefined
+						}
+						src={document.src}
+						title={current ? document.frame : `${document.frame}, before`}
+						sandbox="allow-scripts"
+						inert={!current}
+						className="absolute inset-0 block h-full w-full border-0 bg-white"
+						// hidden by opacity, never visibility, which would hold back the very drawing it waits for
+						style={{ opacity: !current || drawn === arrival ? 1 : 0 }}
+						onLoad={current ? () => onLoad(document.arrival) : undefined}
+					/>
+				);
+			})}
+		</div>
 	);
 }
 
@@ -211,6 +319,8 @@ export interface PlayedAnswers {
 	walkable: (frame: string) => boolean;
 	/** A walk the document asked for and was told goes ahead. */
 	walk: (frame: string) => void;
+	/** The document drew its first screen. */
+	drew?: () => void;
 	/** A link out of the prototype, to an address on the web. */
 	external: (href: string) => void;
 }
@@ -242,6 +352,9 @@ export function usePlayedDocument(
 					return;
 				case "external":
 					answer.external(message.href);
+					return;
+				case "loaded":
+					answer.drew?.();
 					return;
 				case "go":
 				case "back": {

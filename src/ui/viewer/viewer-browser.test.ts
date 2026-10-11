@@ -292,6 +292,9 @@ describe("the read-only canvas", () => {
 		await expect.poll(() => page.locator("#spool-switcher").textContent()).toContain("menu");
 		await player.frameLocator('iframe[title="menu"]').locator("h1").waitFor();
 		expect(new URL(page.url()).searchParams.get("frame")).toBe("menu");
+		// home stood in for menu until menu drew, and then left
+		await expect.poll(() => player.locator('iframe[title="home, before"]').count()).toBe(0);
+		expect(await player.locator('iframe[title="menu"]').evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
 
 		await page.getByRole("button", { name: "Back to the canvas" }).click();
 		await player.waitFor({ state: "detached" });
@@ -312,6 +315,13 @@ describe("the read-only canvas", () => {
 		await played.page.keyboard.press("Escape");
 		await played.page.locator("[data-viewer-player]").waitFor({ state: "detached" });
 		expect(new URL(played.page.url()).pathname).toBe(`${PATH}/shop`);
+
+		// a link naming only the frame, as an agent gives it, opens on the frame's own page
+		const linked = await open(`${PATH}?frame=shop%2Fcart`);
+		await linked.page.locator("[data-viewer-player]").waitFor();
+		await linked.page.keyboard.press("Escape");
+		await linked.page.locator("[data-viewer-player]").waitFor({ state: "detached" });
+		expect(new URL(linked.page.url()).pathname).toBe(`${PATH}/shop`);
 	});
 
 	it("shows a teammate's save in place, with the changed mark and a short toast", { timeout: 60_000 }, async () => {
