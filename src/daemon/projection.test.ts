@@ -71,6 +71,14 @@ describe("a frame on its way (#371)", () => {
 		expect(projection).toMatchObject({ pages: [], frames: [], placeholders: [] });
 	});
 
+	it("is never what a frame left behind: a sidecar whose source went holds no placeholder", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "site", "old", "frame.json"), '{ "x": 0, "y": 0, "w": 1440, "h": 900 }\n');
+
+		const projection = listProjectFrames(root);
+		expect(projection).toMatchObject({ frames: [], placeholders: [] });
+	});
+
 	it("is only a folder with no folders of its own: a page with a stray sidecar keeps its frames", async () => {
 		const root = makeTempDir();
 		writeDesignFile(root, join("frames", "shop", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
