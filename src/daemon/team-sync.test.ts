@@ -394,6 +394,15 @@ describe("New project in the app, while a team is chosen", () => {
 			error: 'Devosurf already has a project called "checkout"; start this one in a folder with another name',
 		});
 		expect(existsSync(join(elsewhere, "checkout"))).toBe(false);
+
+		// a team gone local takes no new project: said with spool.page's reason, for Home to word
+		cloud.lapse();
+		const lapsed = await start("billing", elsewhere);
+		expect(lapsed.status).toBe(409);
+		expect(await lapsed.json()).toEqual({
+			error: "the team has gone local; an admin can pay for it at spool.page to sync again",
+			code: "unpaid",
+		});
 	});
 });
 
