@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	closeSync,
+	existsSync,
 	mkdirSync,
 	openSync,
 	readFileSync,
@@ -195,6 +196,8 @@ export interface DaemonState {
 	startedAt: string;
 	/** Per-daemon credential for trusted UI and CLI control requests. */
 	controlToken: string;
+	/** The file the daemon's code was loaded from: a checkout removed under it leaves a daemon that half works. */
+	source?: string;
 }
 
 const STATE_FILE = "daemon.json";
@@ -233,6 +236,7 @@ export function readDaemonState(spoolDir: string): DaemonState | undefined {
 		version: state.version,
 		startedAt: state.startedAt,
 		controlToken: state.controlToken,
+		...(typeof state.source === "string" ? { source: state.source } : {}),
 	};
 }
 
@@ -349,7 +353,9 @@ async function liveDaemon(spoolDir: string): Promise<LiveDaemon | undefined> {
 	return probe.kind === "live" ? probe.daemon : undefined;
 }
 
-export type DaemonStatus = { running: true; url: string; pid: number; version: string } | { running: false };
+export type DaemonStatus =
+	| { running: true; url: string; pid: number; version: string; source?: string }
+	| { running: false };
 
 /** Drop a daemon.json whose recorded daemon is no longer the one answering. */
 function sweepStaleState(spoolDir: string, probe: RecordedProbe): void {
@@ -365,7 +371,23 @@ export async function statusDaemon(spoolDir: string): Promise<DaemonStatus> {
 		return { running: false };
 	}
 	const { state, url } = probe.daemon;
-	return { running: true, url, pid: state.pid, version: state.version };
+	return {
+		running: true,
+		url,
+		pid: state.pid,
+		version: state.version,
+		...(state.source === undefined ? {} : { source: state.source }),
+	};
+}
+
+/**
+ * The warning for a daemon whose own code is gone from disk, as when it was started from a worktree since
+ * removed: it keeps what it had loaded, so shots still work, while anything that loads more (the canvas, team
+ * sync) fails quietly. Nothing when its code is there, or when it never said where it came from.
+ */
+export function goneSourceWarning(daemon: { pid: number; source?: string }): string | undefined {
+	if (daemon.source === undefined || existsSync(daemon.source)) return undefined;
+	return `the spool daemon (pid ${daemon.pid}) runs from ${daemon.source}, which no longer exists: it can fail requests and stop syncing team projects while shots still work. Restart it from a checkout that exists (\`${cliName()} stop\`, then any verb), telling anyone else who uses it first.`;
 }
 
 /**
