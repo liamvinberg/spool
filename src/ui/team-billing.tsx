@@ -77,6 +77,8 @@ export function TeamBilling({
 		}
 	}, [source, team.address]);
 	useEffect(() => {
+		// billing is an admin's business: nobody else's screen asks for it
+		if (team.role !== "admin") return;
 		let current = true;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		// Back from Stripe: read again, and while a Checkout this window opened hasn't shown up, keep reading a while.
@@ -96,7 +98,7 @@ export function TeamBilling({
 			clearTimeout(timer);
 			window.removeEventListener("focus", back);
 		};
-	}, [load, pollMs, team.address]);
+	}, [load, pollMs, team.address, team.role]);
 	if (team.role !== "admin") return null;
 	const say = notice && (
 		<p role="status" className="mb-[14px] type-control">
@@ -136,18 +138,24 @@ export function TeamBilling({
 	);
 }
 
-/**
- * The one line Billing opens with. Failing, ending and a lapsed team that had time say theirs in a later ticket;
- * until then they say nothing above their summary or choice.
- */
+/** The one line Billing opens with, above the summary or the payment choice. */
 function stateLine(team: CloudTeam, summary: BillingSummary): ReactNode {
 	switch (summary.state) {
 		case "free":
 			return "Free team";
 		case "trial":
 			return summary.trialEndsAt === null ? null : `On trial until ${day(summary.trialEndsAt)}.`;
+		case "failing":
+			return summary.lapsesAt === null
+				? "The last payment failed. Update the card in Manage billing."
+				: `The last payment failed. Stripe tries the card again until ${day(summary.lapsesAt)}, then ${team.name} goes local. Update the card in Manage billing.`;
+		case "ending": {
+			const ends = summary.cancelAt ?? summary.periodEnd;
+			return `${ends === null ? "Ends when the paid period does." : `Ends on ${day(ends)}.`} Undo it in Manage billing to keep ${team.name}.`;
+		}
 		case "lapsed":
-			return summary.hadTime ? null : `Pay for ${team.name}`;
+			if (!summary.hadTime) return `Pay for ${team.name}`;
+			return `${summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.`;
 		default:
 			return null;
 	}
@@ -333,8 +341,8 @@ function per(cents: number, cycle: BillingCycle): string {
 	return `${money(cents)} ${cycle === "monthly" ? "a month" : "a year"}`;
 }
 
-/** "October 25", or "October 25, 2027" with its year. */
-function day(seconds: number, year = false): string {
+/** "October 25", or "October 25, 2027" with its year: US style, as spool.page's emails write dates. */
+export function day(seconds: number, year = false): string {
 	return new Date(seconds * 1000).toLocaleDateString("en-US", {
 		month: "long",
 		day: "numeric",

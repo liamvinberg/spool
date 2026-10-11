@@ -174,6 +174,59 @@ it("once paid shows the plan, the next charge and the card, and Manage billing o
 	expect(opened).toEqual(["https://billing.stripe.test/tidemark"]);
 });
 
+it("says a failing team's card is being tried again until it goes local, above the plan", async () => {
+	const fake = fakeTeamsSource({
+		teams: [team()],
+		people: PEOPLE,
+		billing: { ...PAYING, state: "failing", failingSince: at(2026, 6, 17), lapsesAt: at(2026, 7, 1) },
+	});
+	const { host, opened } = settings(fake);
+	await settle();
+	const text = host.querySelector(".pj-team-billing")?.textContent ?? "";
+	expect(text).toMatch(
+		/^The last payment failed\. Stripe tries the card again until July 1, then Tidemark goes local\. Update the card in Manage billing\.Plan3 seats/u,
+	);
+	expect(text).not.toContain("Continue to payment");
+	await act(async () => button(host, "Manage billing").click());
+	await settle();
+	expect(opened).toEqual(["https://billing.stripe.test/tidemark"]);
+});
+
+it("says when a cancelled team ends, and that undoing it is in Manage billing", async () => {
+	const fake = fakeTeamsSource({
+		teams: [team()],
+		people: PEOPLE,
+		billing: { ...PAYING, state: "ending", nextCharge: null, cancelAt: at(2026, 11, 30) },
+	});
+	const { host } = settings(fake);
+	await settle();
+	const text = host.querySelector(".pj-team-billing")?.textContent ?? "";
+	expect(text).toMatch(/^Ends on November 30\. Undo it in Manage billing to keep Tidemark\.Plan3 seats/u);
+	expect(text).not.toContain("Next charge");
+	button(host, "Manage billing");
+});
+
+it("says a lapsed team's trial has ended, or that it has gone local once it had paid, over the payment choice", async () => {
+	const lapsed: BillingSummary = { ...NONE, state: "lapsed", hadTime: true, trialEndsAt: at(2026, 10, 25) };
+	const ended = settings(fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: lapsed }));
+	await settle();
+	expect(ended.host.querySelector(".pj-team-billing p")?.textContent).toBe(
+		"Tidemark’s trial has ended. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.",
+	);
+	expect(rows(ended.host)).toHaveLength(4);
+	button(ended.host, "Continue to payment");
+	expect(ended.host.textContent).not.toContain("Manage billing");
+
+	const local = settings(
+		fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: { ...lapsed, paidBefore: true } }),
+	);
+	await settle();
+	expect(local.host.querySelector(".pj-team-billing p")?.textContent).toBe(
+		"Tidemark has gone local. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.",
+	);
+	button(local.host, "Continue to payment");
+});
+
 it("says a free team is free and never asks Stripe for anything", async () => {
 	const fake = fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: { ...NONE, state: "free" } });
 	const { host } = settings(fake);
@@ -208,16 +261,17 @@ it("says what spool.page refused when Checkout can't start", async () => {
 });
 
 it("gives editors and viewers no Billing tab, and never reads billing for them", async () => {
-	for (const role of ["editor", "viewer"] as const) {
-		const fake = fakeTeamsSource({ teams: [team(role)], people: PEOPLE, billing: PAYING });
-		const { host } = settings(fake, role);
-		await settle();
-		expect(host.querySelector('[role="tab"]')).toBeNull();
-		expect(host.textContent).not.toContain("Billing");
-		expect(host.textContent).not.toMatch(/seat|\$/u);
-		expect(host.textContent).toContain("Delete team");
-		expect(fake.asked.filter((line) => line.startsWith("billing"))).toEqual([]);
-	}
+	for (const role of ["editor", "viewer"] as const)
+		for (const state of ["paying", "failing", "ending", "lapsed"] as const) {
+			const fake = fakeTeamsSource({ teams: [team(role)], people: PEOPLE, billing: { ...PAYING, state } });
+			const { host } = settings(fake, role);
+			await settle();
+			expect(host.querySelector('[role="tab"]')).toBeNull();
+			expect(host.textContent).not.toContain("Billing");
+			expect(host.textContent).not.toMatch(/seat|\$/u);
+			expect(host.textContent).toContain("Delete team");
+			expect(fake.asked.filter((line) => line.startsWith("billing"))).toEqual([]);
+		}
 });
 
 it("switches between General and Billing through its tabs", async () => {
