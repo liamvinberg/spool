@@ -189,10 +189,12 @@ it("carries the setup list to spool.page: its facts, Skip and done, each answeri
 	});
 	expect(await api("/teams/tidemark/setup")).toEqual({ status: 200, body: setup });
 	expect(await api("/teams/tidemark/setup/skip-invites", "POST")).toEqual({ status: 200, body: setup });
+	expect(await api("/teams/tidemark/setup/skip-projects", "POST")).toEqual({ status: 200, body: setup });
 	expect(await api("/teams/tidemark/setup/done", "POST")).toEqual({ status: 403, body: { error: "admin_required" } });
 	expect(asked.map(({ method, path }) => `${method} ${path}`)).toEqual([
 		"GET /api/teams/tidemark/setup",
 		"POST /api/teams/tidemark/setup/skip-invites",
+		"POST /api/teams/tidemark/setup/skip-projects",
 		"POST /api/teams/tidemark/setup/done",
 	]);
 });

@@ -74,7 +74,7 @@ export function setupSteps(team: CloudTeam, setup: TeamSetup, host: Pick<SetupHo
 						? "Signed in on this Mac"
 						: `Signed in as ${mac.email}`,
 		},
-		{ id: "moved", title: "Move a project in", result: moved?.project ?? null },
+		{ id: "moved", title: "Move a project in", result: moved === "skipped" ? "Skipped" : (moved?.project ?? null) },
 	);
 	return steps;
 }
@@ -155,7 +155,13 @@ export function TeamSetupList({
 			case "mac":
 				return <MacStep team={team} host={host} next={number("moved")} />;
 			case "moved":
-				return <MoveStep team={team} host={host} />;
+				return (
+					<MoveStep
+						team={team}
+						host={host}
+						onSkip={async () => setSetup(await source.skipProjects(team.address))}
+					/>
+				);
 			default:
 				return null;
 		}
@@ -405,8 +411,31 @@ function MacStep({ team, host, next }: { team: CloudTeam; host: SetupHost; next:
 }
 
 /** In the app, this Mac's own projects, each moving in through today's sheet; in a browser, a pointer to the app. */
-function MoveStep({ team, host }: { team: CloudTeam; host: SetupHost }) {
+/** Move a project in, or Skip, to start with a new project or none yet. */
+function MoveStep({ team, host, onSkip }: { team: CloudTeam; host: SetupHost; onSkip: () => Promise<void> }) {
 	const [notice, setNotice] = useState<string | null>(null);
+	const [busy, setBusy] = useState(false);
+	const skip = (
+		<Button
+			size="lg"
+			variant="ghost"
+			disabled={busy}
+			onClick={() => {
+				setBusy(true);
+				onSkip().catch((error: unknown) => {
+					setBusy(false);
+					setNotice(teamSays(error));
+				});
+			}}
+		>
+			Skip
+		</Button>
+	);
+	const said = notice && (
+		<p role="status" className="type-control">
+			{notice}
+		</p>
+	);
 	if (host.on === "browser")
 		return (
 			<div className="flex flex-col gap-[12px]">
@@ -415,34 +444,39 @@ function MoveStep({ team, host }: { team: CloudTeam; host: SetupHost }) {
 				</p>
 				<div className="flex items-center gap-[8px]">
 					<OpenInSpool team={team} onNotice={setNotice} />
+					{skip}
 				</div>
-				{notice && (
-					<p role="status" className="type-control">
-						{notice}
-					</p>
-				)}
+				{said}
 			</div>
 		);
 	const own = host.own ?? [];
 	if (own.length === 0)
 		return (
-			<p className="text-secondary type-label">
-				No projects of your own on this Mac yet. New project… starts one in {team.name}.
-			</p>
+			<div className="flex flex-col gap-[12px]">
+				<p className="text-secondary type-label">
+					No projects of your own on this Mac yet. New project… starts one in {team.name}.
+				</p>
+				<div className="flex items-center gap-[8px]">{skip}</div>
+				{said}
+			</div>
 		);
 	return (
-		<ul className="flex flex-col border-line-default border-b">
-			{own.map((project) => (
-				<li key={project.root} className="flex h-[54px] items-center gap-[14px] border-line-default border-t">
-					<FrameIcon className="h-[16px] w-[16px] shrink-0 text-secondary" />
-					<span className="flex min-w-0 flex-1 flex-col">
-						<span className="truncate type-control">{project.name}</span>
-						<span className="truncate text-secondary type-detail">{project.root}</span>
-					</span>
-					<Button onClick={() => host.onMove?.(project)}>Move to {team.name}…</Button>
-				</li>
-			))}
-		</ul>
+		<div className="flex flex-col gap-[12px]">
+			<ul className="flex flex-col border-line-default border-b">
+				{own.map((project) => (
+					<li key={project.root} className="flex h-[54px] items-center gap-[14px] border-line-default border-t">
+						<FrameIcon className="h-[16px] w-[16px] shrink-0 text-secondary" />
+						<span className="flex min-w-0 flex-1 flex-col">
+							<span className="truncate type-control">{project.name}</span>
+							<span className="truncate text-secondary type-detail">{project.root}</span>
+						</span>
+						<Button onClick={() => host.onMove?.(project)}>Move to {team.name}…</Button>
+					</li>
+				))}
+			</ul>
+			<div className="flex items-center gap-[8px]">{skip}</div>
+			{said}
+		</div>
 	);
 }
 

@@ -91,6 +91,8 @@ export interface TeamsSource {
 	setup(address: string): Promise<TeamSetup>;
 	/** Invite people, skipped. */
 	skipInvites(address: string): Promise<TeamSetup>;
+	/** Move a project in, skipped. */
+	skipProjects(address: string): Promise<TeamSetup>;
 	/** Every step is done: the list goes for good. */
 	setupDone(address: string): Promise<TeamSetup>;
 }
@@ -196,6 +198,7 @@ export function teamsAt(
 		portal: (address) => call("POST", `${team(address)}/billing/portal`),
 		setup: (address) => call("GET", `${team(address)}/setup`),
 		skipInvites: (address) => call("POST", `${team(address)}/setup/skip-invites`),
+		skipProjects: (address) => call("POST", `${team(address)}/setup/skip-projects`),
 		setupDone: (address) => call("POST", `${team(address)}/setup/done`),
 	};
 }

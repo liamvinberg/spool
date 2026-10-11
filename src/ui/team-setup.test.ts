@@ -288,6 +288,21 @@ describe("a new team's setup list", () => {
 		expect(step(host, "mac").getAttribute("data-state")).toBe("current");
 	});
 
+	it("completes Move a project in with Skip, and the list ends", async () => {
+		const fake = fakeTeamsSource({
+			teams: [team()],
+			setup: steps({ invited: "skipped", mac: { email: "ada@tidemark.app" } }),
+		});
+		const { host, setUp } = mount(fake);
+		await settle();
+		expect(step(host, "moved").getAttribute("data-state")).toBe("current");
+		await act(async () => button(host, "Skip").click());
+		await settle();
+		expect(fake.asked).toContain("skip projects tidemark");
+		expect(fake.asked).toContain("setup done tidemark");
+		expect(setUp.length).toBe(1);
+	});
+
 	it("puts Pay for the team second when its creator's trial was used, and completes it once paid", async () => {
 		const fake = fakeTeamsSource({
 			teams: [team()],

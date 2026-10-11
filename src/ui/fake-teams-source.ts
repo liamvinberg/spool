@@ -114,6 +114,14 @@ export function fakeTeamsSource(start: {
 				state.setup = { ...state.setup, steps: { ...state.setup.steps, invited: "skipped" } };
 			return state.setup;
 		},
+		skipProjects: async (address) => {
+			ask(`skip projects ${address}`);
+			admin(address);
+			if (!state.setup) throw new TeamActionRefused("not_found");
+			if (state.setup.steps.moved === null)
+				state.setup = { ...state.setup, steps: { ...state.setup.steps, moved: "skipped" } };
+			return state.setup;
+		},
 		setupDone: async (address) => {
 			ask(`setup done ${address}`);
 			admin(address);

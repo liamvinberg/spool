@@ -70,8 +70,8 @@ export interface TeamSetup {
 		invited: null | { editors: number; viewers: number } | "skipped";
 		/** The member whose Mac signed in first, once one has. */
 		mac: null | { email: string };
-		/** The team's first project, once it has one. */
-		moved: null | { project: string };
+		/** The team's first project, once it has one; or skipped, to start with a new project or none yet. */
+		moved: null | { project: string } | "skipped";
 	};
 }
 
@@ -220,6 +220,8 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		setup: (address: string) => call<TeamSetup>("GET", `${team(address)}/setup`),
 		/** Invite people, skipped: setting the team up alone first. */
 		skipInvites: (address: string) => call<TeamSetup>("POST", `${team(address)}/setup/skip-invites`),
+		/** Move a project in, skipped: starting with a new project, or none yet. */
+		skipProjects: (address: string) => call<TeamSetup>("POST", `${team(address)}/setup/skip-projects`),
 		/** Every step done: the list is gone for good. */
 		setupDone: (address: string) => call<TeamSetup>("POST", `${team(address)}/setup/done`),
 		/** Starts a team project, named from what its folder is called. Editors and admins only. */
