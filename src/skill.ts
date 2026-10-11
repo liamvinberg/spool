@@ -40,7 +40,7 @@ For a disposable implementation lane, run \`spool open <lane>\` before verificat
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at, as one <selection> block: frames and elements, paths and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
-  spool shot <frame>…   headless screenshot of each frame named, with its console errors when you name several
+  spool shot <frame>…   headless screenshot of each frame or page named, with its console errors
   spool logs <frame>    the same scenario boot's console, cached by compiled source
   spool url <frame>     mint a player URL; --raw mints the bare frame document
   spool skill [topic]   this text (needs nothing)
@@ -225,23 +225,20 @@ Verify with spool url, shot and logs: wait for async initialization, inspect ren
 
 shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, the same browser that makes the canvas's pictures of frames, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900), in the colour scheme the canvas shows (this machine's light or dark setting until a canvas has said). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
 
-  spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
-                       Boots headless and writes design/.spool/verify/<frame>.png (a frame on a page is stored as shop%2Fcheckout.png), printing the path.
-                       Reports content height in CSS pixels on stderr after fonts load. For a tall page, use this to set frame.json's h; scroll height is at least the viewport height. Capture size stays the chosen viewport.
-                       A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png instead, one printed path per line, each slice legible on its own with a small overlap across cuts. Read every printed file — the layout's truth is the whole stack.
+  spool shot <frame>… [--viewport <width>x<height>] [--at <ms>[,<ms>…]] [--scenario <name>]
+                       Name every frame to check in one call, or a page folder for every frame under it: they boot in parallel in the same browser, the options applying to each. One block per frame on stdout, in the order named:
+                         shop/checkout: shot, content 3765px tall, no console errors
+                           <root>/design/.spool/verify/shop/checkout.1.png  css y 0-1800 of 3765, scale 1.111
+                       The head line says the content's own height after fonts load; when the frame was shot at another height it names both (\`frame.json h 6400, content 6967\`): set frame.json's h from it. It ends with the console error count and any uncaught throws, or reads \`does not compile\`, \`not found\` or \`failed\` with the reason indented under it. Then each file with the CSS pixels it holds and the PNG pixels per CSS pixel, then each console error as a [type] line.
+                       Files mirror the frame's path under design/.spool/verify. A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png that overlap a little, the last anchored to the bottom: each line's y range says where it sits. Read every file — the layout's truth is the whole stack.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.
-                       --at waits that many milliseconds (at most 30000) after the first commit instead of settling.
-                       Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
-                       Throws uncaught while booting: shot still written, errors on stderr, exit 1.
-                       Waits for #root to have children (up to 10s), then settles the way the canvas's picture of the frame does (fonts, finite entry animations, a quiet DOM, up to 900ms), waits for document.fonts.ready, then shoots; a frame that renders nothing still shoots.
-  spool shot <frame> <frame> … [same options]
-                       Several frames in one call, shot in parallel in the same browser, the options applying to each. Prints one block per frame on stdout in the order named: a head line (\`<frame>: shot, content <n>px tall, <k> console errors\`, or \`does not compile\`, \`not found\`, \`failed\`), then indented under it the frame's files and each console error as a [type] line, or the reason it has no shot. Exit 1 if any frame did not compile, was not found, or threw uncaught.
-                       To check several frames, name them all in one shot rather than a shot and a logs per frame: the batch is that whole check, and much faster. Reach for logs only for a frame's full console.
+                       --at shoots at each listed time after the first commit (at most 30000 ms) instead of settling, all in one boot, writing <frame>@<ms>.png; a shot at other times never overwrites it.
+                       Without --at, waits for #root to have children (up to 10s), then settles the way the canvas's picture of the frame does (fonts, finite entry animations, a quiet DOM, up to 900ms), waits for document.fonts.ready, then shoots; a frame that renders nothing still shoots.
+                       Exit 1 if any frame did not compile, was not found, or threw uncaught; the last line on stderr names which.
   spool logs <frame> [--scenario <name>]
-                       Prints the same scenario boot's console as [type] text lines, uncaught errors included.
+                       Prints the same scenario boot's full console as [type] text lines, uncaught errors included. shot already prints the errors: reach for logs only for the rest.
                        The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario JSON edit under the same name does not. A shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
-                       A replay says "cache matches current compiled source": it is the fresh boot that shot recorded, not evidence that a source edit was ignored.
-                       Scenario failures land here; read shot and logs together.
+                       Scenario failures are console errors, so shot prints them too.
 
 The first browser boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
 

@@ -172,7 +172,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 	it.each([
 		[["shot", "cart", "--viewport", "390-by-844"], "--viewport must be <width>x<height> with positive integers"],
 		[["shot", "cart", "--viewport", "0x844"], "--viewport must be <width>x<height> with positive integers"],
-		[["shot", "cart", "--at", "soon"], "--at must be whole milliseconds"],
+		[["shot", "cart", "--at", "soon"], "--at takes whole milliseconds"],
 		[["shot", "cart", "--scenario", "review/error"], "--scenario must be a scenario name"],
 		[["logs", "cart", "--scenario", ".private"], "--scenario must be a scenario name"],
 		[["shot", "cart", "../cart"], "a frame is named by its path under design/frames"],
@@ -221,7 +221,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		expect(result.stderr).toMatch(/spool upgrade|restart it to catch it up/);
 	});
 
-	it("prints only shot paths on stdout and content height on stderr", async () => {
+	it("prints one frame in the same block as many: head line, then each file and what it holds", async () => {
 		try {
 			const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 			await browser.close();
@@ -245,8 +245,10 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		});
 
 		expect(result.status).toBe(0);
-		expect(result.stdout).toBe(`${join(root, "design", ".spool", "verify", "tall.png")}\n`);
-		expect(result.stderr).toBe('spool: "tall" content height: 1800px\n');
+		expect(result.stdout).toBe(
+			`tall: shot, --viewport h 120, content 1800, no console errors\n  ${join(root, "design", ".spool", "verify", "tall.png")}  css 160x120, scale 2\n`,
+		);
+		expect(result.stderr).toBe("");
 	});
 
 	it("prints one block per frame for a batched shot and exits 1 when any frame fails", async () => {
@@ -267,10 +269,40 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		);
 		expect(blocks[1]).toMatch(/^broken: does not compile\n {2}/);
 		expect(blocks[1]).toContain("Unexpected end of file");
-		expect(result.stderr).toBe("");
+		// the last line says why the exit is 1, whatever cut the blocks off
+		expect(result.stderr).toBe("spool: nope not found, broken does not compile\n");
 	});
 
-	it("says a replayed cache matches current compiled source", async () => {
+	it("shoots every frame under a page folder named in place of a frame", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const { root } = makeProject(spoolDir);
+		const broken = "export default function Broken() { return <main>unclosed;\n}\n";
+		writeFrame(root, "shop/cart", broken);
+		writeFrame(root, "shop/deep/pay", broken);
+		writeFrame(root, "shopfront", broken);
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+
+		const result = await spoolAsync(["shot", "shop"], home, root);
+
+		expect(result.status).toBe(1);
+		expect(result.stdout.split("\n\n").map((block) => block.split("\n")[0])).toEqual([
+			"shop/cart: does not compile",
+			"shop/deep/pay: does not compile",
+		]);
+	});
+
+	it("refuses an --at list with anything but whole milliseconds", () => {
+		const result = spool(["shot", "home", "--at", "0,soon"], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain(
+			'--at takes whole milliseconds, one or a comma list like 0,1500,4000, got "0,soon"',
+		);
+	});
+
+	it("replays a cached boot without narrating the cache", async () => {
 		const home = makeTempDir();
 		const spoolDir = join(home, ".spool");
 		const { root, name } = makeProject(spoolDir);

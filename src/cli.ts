@@ -32,12 +32,13 @@ import {
 	stopDaemon,
 } from "./daemon/lifecycle";
 import { describeMigration, migrateFrameNames } from "./daemon/migrate-frame-names";
+import { discoverFrames } from "./daemon/projection";
 import { publicationReadiness } from "./daemon/publication-readiness";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { createSettingsStore } from "./daemon/settings";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
-import { SHOT_AT_MAX_MS } from "./daemon/verify-record";
+import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
@@ -51,7 +52,7 @@ import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
-import { batchShotFailed, formatBatchShot, logsFrame, shotFrame, shotFrames } from "./verify";
+import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = resolveSpoolDir(process.env);
@@ -418,7 +419,7 @@ const confirmOnTty = async (question: string): Promise<boolean> => {
 
 interface VerifyOptions {
 	viewport?: { width: number; height: number };
-	at?: number;
+	at?: number[];
 	scenario?: string;
 }
 
@@ -432,14 +433,23 @@ function parseViewport(value: string): { width: number; height: number } {
 	return { width, height };
 }
 
-function parseMilliseconds(value: string): number {
-	if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
-		throw new SpoolError(`--at must be whole milliseconds, got "${value}"`);
+/** `--at 1500` or `--at 0,1500,4000`: times after the first commit, ascending, each once. */
+function parseMilliseconds(value: string): number[] {
+	const times = value.split(",").map((each) => {
+		const time = each.trim();
+		if (!/^\d+$/.test(time) || !Number.isSafeInteger(Number(time))) {
+			throw new SpoolError(`--at takes whole milliseconds, one or a comma list like 0,1500,4000, got "${value}"`);
+		}
+		if (Number(time) > SHOT_AT_MAX_MS) {
+			throw new SpoolError(`--at waits at most ${SHOT_AT_MAX_MS} ms, got "${time}"`);
+		}
+		return Number(time);
+	});
+	const unique = [...new Set(times)].sort((a, b) => a - b);
+	if (unique.length > SHOT_AT_MAX_COUNT) {
+		throw new SpoolError(`--at lists at most ${SHOT_AT_MAX_COUNT} times, got ${unique.length}`);
 	}
-	if (Number(value) > SHOT_AT_MAX_MS) {
-		throw new SpoolError(`--at waits at most ${SHOT_AT_MAX_MS} ms, got "${value}"`);
-	}
-	return Number(value);
+	return unique;
 }
 
 /**
@@ -475,6 +485,21 @@ function parseFrame(value: string): string {
 		);
 	}
 	return value;
+}
+
+/**
+ * The frames a shot names, each once in the order given: a frame by its path,
+ * and a page folder as every frame under it, at any depth. A name that is
+ * neither stays, for its block to say it is not found.
+ */
+function framesNamed(root: string, names: readonly string[]): string[] {
+	const known = (discoverFrames(root) ?? []).map((frame) => frame.name);
+	const frames = names.flatMap((name) => {
+		if (known.includes(name)) return [name];
+		const under = known.filter((frame) => frame.startsWith(`${name}/`)).sort();
+		return under.length > 0 ? under : [name];
+	});
+	return [...new Set(frames)];
 }
 
 function parseScenario(value: string): string {
@@ -519,38 +544,28 @@ program
 	.description("save a headless screenshot of each frame, several at once")
 	.argument(
 		"<frames...>",
-		"frame names, each its path under design/frames",
+		"frame names, each its path under design/frames; a page folder names every frame under it",
 		(value: string, previous: string[] | undefined) => [...(previous ?? []), parseFrame(value)],
 	)
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
-	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)
+	.option("--at <milliseconds>", "shoot at these times after the first commit, one or 0,1500,4000", parseMilliseconds)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
 	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
-		const names = [...new Set(frames)];
-		const [frame] = names;
-		if (names.length > 1 || frame === undefined) {
-			// one block per frame, in the order named, each with its console errors
-			let first = true;
-			for await (const shot of shotFrames({ daemonUrl, controlToken, root, name, narrate, ...options }, names)) {
-				process.stdout.write(`${first ? "" : "\n"}${formatBatchShot(shot)}\n`);
-				first = false;
-				if (batchShotFailed(shot)) process.exitCode = 1;
-			}
-			return;
+		const names = framesNamed(root, frames);
+		// one block per frame, in the order named, each with its console errors
+		const failures: string[] = [];
+		let first = true;
+		for await (const shot of shotFrames({ daemonUrl, controlToken, root, name, narrate, ...options }, names)) {
+			process.stdout.write(`${first ? "" : "\n"}${formatBatchShot(shot)}\n`);
+			first = false;
+			const failure = batchShotFailure(shot);
+			if (failure !== undefined) failures.push(`${shot.frame} ${failure}`);
 		}
-		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
-		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
-		if (outcome.kind === "broken") {
-			// the compile or boot error verbatim — nothing of spool's in the way
-			process.stderr.write(`${outcome.message}\n`);
-			process.exitCode = 1;
-			return;
-		}
-		process.stdout.write(`${outcome.files.join("\n")}\n`);
-		narrate(`"${frame}" content height: ${outcome.contentHeight}px`);
-		if (outcome.bootErrors.length > 0) {
-			process.stderr.write(`${outcome.bootErrors.join("\n")}\n`);
+		if (failures.length > 0) {
+			// the reasons are in the blocks above; the last line still says which,
+			// so a tail of the output never ends on a bare exit code
+			process.stderr.write(`spool: ${failures.join(", ")}\n`);
 			process.exitCode = 1;
 		}
 	});

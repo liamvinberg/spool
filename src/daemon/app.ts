@@ -174,7 +174,7 @@ import {
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
 } from "./vendor";
-import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_MS } from "./verify-record";
+import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./verify-record";
 import { createWebfonts, type Webfonts } from "./webfonts";
 
 export interface DaemonOptions {
@@ -292,7 +292,7 @@ const canvasView = z.strictObject({
 const bootRequest = z.strictObject({
 	width: z.number().int().positive(),
 	height: z.number().int().positive(),
-	at: z.number().int().nonnegative().max(SHOT_AT_MAX_MS).optional(),
+	at: z.array(z.number().int().nonnegative().max(SHOT_AT_MAX_MS)).min(1).max(SHOT_AT_MAX_COUNT).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 
@@ -3033,7 +3033,9 @@ export function createDaemonApp({
 			"/api/p/:project/boot/:frame",
 			validator("json", (value, c) => {
 				const parsed = bootRequest.safeParse(value);
-				return parsed.success ? parsed.data : c.text('a boot is { "width", "height", "at"?, "scenario"? }', 400);
+				return parsed.success
+					? parsed.data
+					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scenario"? }', 400);
 			}),
 			(c) => {
 				// shot and logs (#25): one boot of the served document in the photo
@@ -3057,7 +3059,16 @@ export function createDaemonApp({
 						const plan = planShot(width, height);
 						try {
 							const shot = await booth.shoot(
-								{ project: name, frame, width, height, scale: plan.scale, tiles: plan.tiles, at, scenario },
+								{
+									project: name,
+									frame,
+									width,
+									height,
+									scale: plan.scale,
+									tiles: plan.tiles,
+									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
+									scenario,
+								},
 								(line) => void write({ narrate: line }).catch(() => {}),
 							);
 							if (shot.kind === "unserved") {
@@ -3070,11 +3081,14 @@ export function createDaemonApp({
 								etag: doc.etag,
 								scenario: scenario ?? "default",
 								scheme: shot.scheme,
-								pngs: shot.pngs,
+								tiles: plan.tiles,
+								shots: shot.shots,
 								entries: shot.entries,
 							});
 							const { entries, errors, contentHeight } = shot;
-							return { outcome: { kind: "booted", files, entries, errors, contentHeight } };
+							return {
+								outcome: { kind: "booted", files, scale: plan.scale, entries, errors, contentHeight },
+							};
 						} catch (error) {
 							return {
 								outcome: { kind: "failed", message: error instanceof Error ? error.message : String(error) },
