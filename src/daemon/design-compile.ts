@@ -18,9 +18,11 @@ import { DesignBoundaryError, designPathResolver, designRelativePath } from "./d
 import type { DesignFiles } from "./design-files";
 import { createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { type DesignResolution, designResolver, RESOLVE_EXTENSIONS } from "./design-resolve";
-import { assembleFrameDocument, mergeImportMap, shimHash } from "./document";
+import { assembleFrameDocument, escapeInlineScript, mergeImportMap, shimHash } from "./document";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
+import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
+import { unstyledClasses } from "./unstyled-classes";
 import { importMapPins } from "./vendor-pins";
 
 /**
@@ -81,6 +83,8 @@ export interface DesignBundle {
 	bootJs: string;
 	/** Extra stylesheet emitted by plain .css imports, when any. */
 	bundledCss?: string | undefined;
+	/** The bundle's source map, when asked for. */
+	map?: string;
 }
 
 export interface DesignEntryOptions {
@@ -108,6 +112,8 @@ export interface DesignEntryOptions {
 	 * player's context outlives the compile that hands them in.
 	 */
 	reads: () => DesignReads | undefined;
+	/** Also emit the bundle's source map, which changes nothing in the bundle itself. */
+	sourcemap?: true;
 }
 
 /**
@@ -177,6 +183,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		jsxDev: options.publication !== true,
 		jsxImportSource: options.publication === true ? "react" : "spool",
 		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
+		...(options.sourcemap === true ? { sourcemap: "external" as const, sourcesContent: false } : {}),
 		loader,
 		tsconfigRaw: PINNED_TSCONFIG,
 		// the order the shared/ plugin answers in too: one list, so the two never drift
@@ -234,7 +241,8 @@ export async function buildDesignEntry(esbuild: CompileEsbuild, options: DesignE
 	const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
 	if (bootJs === undefined) throw new Error(`${options.label} compiled to no module`);
 	const bundledCss = result.outputFiles.find((file) => file.path.endsWith(".css"))?.text;
-	return { sourceFiles, bootJs, bundledCss };
+	const map = result.outputFiles.find((file) => file.path.endsWith(".js.map"))?.text;
+	return { sourceFiles, bootJs, bundledCss, ...(map === undefined ? {} : { map }) };
 }
 
 /** One frame's document to compile: the canvas's dialect, stamped for the picker. */
@@ -275,6 +283,8 @@ export interface CompiledFrameDocument {
 	fonts: number;
 	/** Every input was one state through the compile (see DesignReads); an unsettled document is never cached. */
 	settled: boolean;
+	/** Themed Tailwind classes its sources name that its stylesheet has no rule for (`unstyled-classes.ts`). */
+	unstyled: string[];
 }
 
 /**
@@ -287,16 +297,10 @@ export async function compileFrameDocument(
 	{ designDir, frame, project, authority, version, webfonts = inertWebfonts() }: FrameDocumentRequest,
 ): Promise<CompiledFrameDocument> {
 	const reads = createDesignReads(designDir, host.files);
-	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry(host.esbuild, {
-		designDir,
-		resolveDir: join(designDir, frameFolder(frame)),
-		sourcefile: STDIN_NAME,
-		contents: bootEntry(frame),
-		label: `frame "${frame}"`,
-		imageBudget: IMAGE_BUDGET_BYTES,
-		files: host.files,
-		reads: () => reads,
-	});
+	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry(
+		host.esbuild,
+		frameEntryOptions(host, designDir, frame, reads),
+	);
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
@@ -317,6 +321,14 @@ export async function compileFrameDocument(
 	);
 	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
+	// classes the frame names that its stylesheet never built, for a shot to report
+	const unstyled = unstyledClasses(
+		sourceFiles.flatMap((file) => {
+			const text = reads.text(file);
+			return text === undefined ? [] : [{ file, text }];
+		}),
+		`${css}\n${bundledCss ?? ""}`,
+	);
 	const document = assembleFrameDocument({
 		project,
 		frame,
@@ -350,6 +362,49 @@ export async function compileFrameDocument(
 		inputs: [...digests.keys()],
 		fonts: fontsRevision,
 		settled,
+		unstyled,
+	};
+}
+
+function frameEntryOptions(
+	host: CompileHost,
+	designDir: string,
+	frame: string,
+	reads: DesignReads,
+): DesignEntryOptions {
+	return {
+		designDir,
+		resolveDir: join(designDir, frameFolder(frame)),
+		sourcefile: STDIN_NAME,
+		contents: bootEntry(frame),
+		label: `frame "${frame}"`,
+		imageBudget: IMAGE_BUDGET_BYTES,
+		files: host.files,
+		reads: () => reads,
+	};
+}
+
+/**
+ * A frame's bundle compiled again with its source map, for reading a stack
+ * back to the frame's files (`stack-map.ts`): the same module the document
+ * inlines, its sources named from design/.
+ */
+export async function compileFrameSourceMap(host: CompileHost, designDir: string, frame: string): Promise<BundleMap> {
+	const reads = createDesignReads(designDir, host.files);
+	const { bootJs, map } = await buildDesignEntry(host.esbuild, {
+		...frameEntryOptions(host, designDir, frame, reads),
+		sourcemap: true,
+	});
+	const parsed = JSON.parse(map ?? "{}") as { sources?: unknown; mappings?: unknown };
+	const sources = Array.isArray(parsed.sources) ? parsed.sources.map(String) : [];
+	return {
+		bootJs: escapeInlineScript(bootJs),
+		sources: sources.map((source) =>
+			relative(designDir, resolve(designDir, VIRTUAL_OUTDIR, source))
+				.split(sep)
+				.join("/"),
+		),
+		mappings: typeof parsed.mappings === "string" ? parsed.mappings : "",
 	};
 }
 

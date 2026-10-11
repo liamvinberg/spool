@@ -868,7 +868,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			parking: undefined,
 		};
 		page.on("pageerror", (error) => {
-			const text = String(error);
+			// the stack, which a shot reads back to the frame's files (`stack-map.ts`)
+			const text = error.stack ?? String(error);
 			tab.errors.push(text);
 			tab.entries.push({ type: "pageerror", text });
 		});
@@ -1125,7 +1126,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const etag = response.headers().etag;
 		const world = await isolatedWorld(tab);
 		const rendered = await booted(tab, world, COVER_BOOT_MS, true);
-		if (!rendered && tab.errors[0] !== undefined) return { kind: "threw", message: tab.errors[0] };
+		if (!rendered && tab.errors[0] !== undefined) return { kind: "threw", message: describe(tab.errors[0]) };
 		await settled(tab, world);
 		const bytes = await screenshot(tab, {
 			format: "jpeg",

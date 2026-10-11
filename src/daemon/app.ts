@@ -150,6 +150,7 @@ import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import type { PlaceholderAuthor } from "./sidecar";
+import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
 import { createTeamSync, endedWith, followedLink, type OpenSyncSocket } from "./team-sync";
@@ -165,6 +166,7 @@ import {
 	writePace,
 } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
+import { unstyledWarning } from "./unstyled-classes";
 import { createUpdateChecker } from "./update-check";
 import {
 	reactVersion,
@@ -3066,14 +3068,24 @@ export function createDaemonApp({
 								const message = again.kind === "error" ? again.message : `frame "${frame}" failed to serve`;
 								return { outcome: { kind: "broken", message } };
 							}
+							// an uncaught throw's stack, read back to the frame's own files
+							const { entries, errors } = await mapBootStacks(
+								shot,
+								doc.document,
+								`/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`,
+								() => compiler.sourceMap(project.root, frame),
+							);
+							// classes its stylesheet never built render unstyled with a clean console
+							const unstyled = unstyledWarning(doc.unstyled);
+							if (unstyled !== undefined) entries.unshift({ type: "spool", text: unstyled });
 							const files = recordBoot(project.root, frame, {
 								etag: doc.etag,
 								scenario: scenario ?? "default",
 								scheme: shot.scheme,
 								pngs: shot.pngs,
-								entries: shot.entries,
+								entries,
 							});
-							const { entries, errors, contentHeight } = shot;
+							const { contentHeight } = shot;
 							return { outcome: { kind: "booted", files, entries, errors, contentHeight } };
 						} catch (error) {
 							return {
