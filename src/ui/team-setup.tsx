@@ -28,8 +28,8 @@ export interface OwnProject {
 export interface SetupHost {
 	/** The Mac app, which holds this Mac's own projects; or a browser at spool.page/<team>. */
 	on: "mac" | "browser";
-	/** The signed-in account's address. */
-	you: string;
+	/** The signed-in account's address, when the host knows it. */
+	you?: string | undefined;
 	/** Where the team's pages are: `<origin>/<address>`. */
 	origin: string;
 	/** In the app: this Mac's own projects, each of which can move in. */
@@ -42,8 +42,8 @@ export interface SetupHost {
 	cycle?: BillingCycle | undefined;
 	/** The last step is done and spool.page has the list gone for good. */
 	onSetUp: (team: CloudTeam) => void;
-	/** Read the facts again when this changes, as when a project moved in on this Mac. */
-	revision?: string;
+	/** Read the facts again when this changes, as the count of the team's projects on this Mac does when one moves in. */
+	revision?: number;
 }
 
 type StepId = "named" | "pay" | "invited" | "mac" | "moved";
@@ -380,7 +380,8 @@ function MacStep({ team, host, next }: { team: CloudTeam; host: SetupHost; next:
 	if (host.on === "mac")
 		return (
 			<p className="text-secondary type-label">
-				spool on this Mac is signed in as {host.you}. This step is done as soon as spool.page sees it.
+				spool on this Mac is signed in{host.you === undefined ? "" : ` as ${host.you}`}. This step is done as soon
+				as spool.page sees it.
 			</p>
 		);
 	return (
@@ -392,7 +393,7 @@ function MacStep({ team, host, next }: { team: CloudTeam; host: SetupHost; next:
 				<OpenInSpool team={team} onNotice={setNotice} />
 			</div>
 			<p className="text-secondary type-label">
-				Sign in there as {host.you} and spool carries on with step {next}.
+				Sign in there{host.you === undefined ? "" : ` as ${host.you}`} and spool carries on with step {next}.
 			</p>
 			{notice && (
 				<p role="status" className="type-control">

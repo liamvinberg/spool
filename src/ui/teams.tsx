@@ -963,8 +963,8 @@ export function useTeamHome(
 		own?: readonly OwnProject[];
 		/** Today's Move to team… sheet, for this team. */
 		onMoveIn?: (team: CloudTeam, project: OwnProject) => void;
-		/** Changes when the team's projects on this Mac do, so the setup list reads its facts again. */
-		revision?: (address: string) => string;
+		/** How many of the team's projects are on this Mac: when it changes, the setup list reads its facts again. */
+		revision?: (address: string) => number;
 	},
 ) {
 	const teamActions = useContext(TeamsSourceContext);
@@ -1084,13 +1084,13 @@ export function useTeamHome(
 							onNewProject={projects && (() => projects.onNewProject(current))}
 							setup={{
 								on: "mac",
-								you: signedIn ?? "",
+								you: signedIn ?? undefined,
 								origin: ready.origin,
 								own: projects?.own ?? [],
 								onMove: (project) => projects?.onMoveIn?.(current, project),
 								onOpen: open,
 								onSetUp,
-								revision: projects?.revision?.(current.address) ?? "",
+								revision: projects?.revision?.(current.address) ?? 0,
 							}}
 							onOpen={open}
 						/>

@@ -350,7 +350,7 @@ describe("a new team's setup list", () => {
 		fake.set({
 			setup: steps({ invited: "skipped", mac: { email: "ada@tidemark.app" }, moved: { project: "tidemark-app" } }),
 		});
-		render({ revision: "/Users/ada/code/tidemark-app" });
+		render({ revision: 1 });
 		await settle();
 		expect(host.querySelector(".pj-team-setup")).toBeNull();
 		expect(fake.asked.filter((line) => line === "setup done tidemark")).toHaveLength(1);

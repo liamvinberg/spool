@@ -587,11 +587,7 @@ export function App() {
 		),
 		own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
 		onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
-		revision: (address) =>
-			projects
-				.filter((project) => project.team?.team === address)
-				.map((project) => project.root)
-				.join("\n"),
+		revision: (address) => projects.filter((project) => project.team?.team === address).length,
 	});
 	/** "Move to team…", while this account edits in a team; a team project has nowhere to move. */
 	const moveToTeam =
