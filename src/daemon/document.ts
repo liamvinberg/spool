@@ -353,7 +353,19 @@ export function captureWorkerDocument(controlOrigin: string): string {
  * bundle put at its head stays at the head.
  */
 export function layeredProjectCss(css: string): string {
-	if (css.trim() === "") return css;
+	const { head, layered } = projectCssParts(css);
+	return `${head}${layered}`;
+}
+
+/**
+ * The project's stylesheets in two parts: the `@charset` and `@import`
+ * statements the bundle put at its head, and the rest wrapped in the project
+ * layer. A sheet that composes the project's CSS after other rules (a frame's
+ * standalone closure follows Tailwind's) puts the head first: an `@import`
+ * after any other rule is invalid, and the browser drops it.
+ */
+export function projectCssParts(css: string): { head: string; layered: string } {
+	if (css.trim() === "") return { head: "", layered: css };
 	let at = 0;
 	while (at < css.length) {
 		const rest = css.slice(at);
@@ -369,8 +381,8 @@ export function layeredProjectCss(css: string): string {
 	}
 	const head = css.slice(0, at);
 	const body = css.slice(at);
-	if (body.trim() === "") return css;
-	return `${head}@layer ${PROJECT_LAYER} {\n${body}\n}\n`;
+	if (body.trim() === "") return { head, layered: body };
+	return { head, layered: `@layer ${PROJECT_LAYER} {\n${body}\n}\n` };
 }
 
 /** Where a top-level at-statement ends: the first `;` outside a string, a comment or brackets. */

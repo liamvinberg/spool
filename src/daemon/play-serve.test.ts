@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
 	compositionOf,
+	leadingCssImports,
 	makeApp,
 	makeProject,
 	makeTempDir,
@@ -183,6 +184,39 @@ describe("serving the player", () => {
 
 		expect(doc).toContain("::view-transition-old(root)");
 		expect(doc).toContain("https://fonts.test/inter.css");
+	});
+
+	it("keeps a frame stylesheet's @import at the head of its closure, where a browser loads it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			"shared/type.css",
+			'@import "https://fonts.test/shared.css";\n.shared-type { color: red; }\n',
+		);
+		writeDesignFile(root, "frames/guide/layout.css", ".guide-layout { display: grid; }\n");
+		writeDesignFile(
+			root,
+			"frames/guide/guide.css",
+			'@import url("https://fonts.test/css2?family=Geist:wght@400;500&display=swap");\n@import "shared/type.css";\n.guide-only { font-family: Geist; }\n',
+		);
+		writeFrame(
+			root,
+			"guide",
+			'import "./layout.css"; import "./guide.css"; export default () => <main className="guide-only p-7">guide</main>;\n',
+		);
+		const app = makeApp(spoolDir);
+
+		const doc = await (await app.request(`/play/${name}?frame=guide`)).text();
+		const config = configOf(doc) as ReturnType<typeof configOf> & { styles: Record<string, string> };
+		const css = await (await app.request(`/play/${name}/-/${config.styles.guide}`)).text();
+
+		expect(css).toContain(".guide-only");
+		expect(css).toContain(".p-7");
+		expect(leadingCssImports(css)).toEqual([
+			"https://fonts.test/css2?family=Geist:wght@400;500&display=swap",
+			"https://fonts.test/shared.css",
+		]);
 	});
 
 	it("ships one standalone-layered stylesheet closure per frame", async () => {
