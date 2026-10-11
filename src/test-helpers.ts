@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "playwright-core";
-import { inject, onTestFinished } from "vitest";
+import { expect, inject, onTestFinished } from "vitest";
 import { createClaudeAdapter } from "./daemon/agent-claude";
 import type { AgentPermissions } from "./daemon/agent-defaults";
 import { createAgentDefaults } from "./daemon/agent-defaults";
@@ -80,6 +80,26 @@ export async function builtUi(): Promise<string> {
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	return dir;
+}
+
+/**
+ * The stylesheets a browser would fetch: the `@import`s before the sheet's first
+ * other rule (only `@charset` and `@layer` statements may precede them; an
+ * `@import` anywhere after is invalid and ignored). Throws on one that is.
+ */
+export function leadingCssImports(css: string): string[] {
+	const statements = css.replace(/\/\*[\s\S]*?\*\//g, "");
+	const imports: string[] = [];
+	const statement = /\s*(@(charset|layer|import)\b(?:"[^"]*"|'[^']*'|[^;{"'])*);/y;
+	let head = 0;
+	for (let match = statement.exec(statements); match !== null; match = statement.exec(statements)) {
+		const [, rule = "", keyword] = match;
+		if (keyword === "import") imports.push(rule.match(/["']([^"']+)["']/)?.[1] ?? rule);
+		head = statement.lastIndex;
+	}
+	const rest = statements.slice(head);
+	expect(rest, "an @import after the sheet's first rule").not.toMatch(/@import\b/);
+	return imports;
 }
 
 export function makeTempDir(): string {

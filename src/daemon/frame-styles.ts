@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { frameFolder } from "../page-path";
 import { buildDesignEntry, type CompileHost, cssSources } from "./design-compile";
 import type { DesignReads } from "./design-reads";
-import { layeredProjectCss } from "./document";
+import { projectCssParts } from "./document";
 
 const STYLESHEET_ENTRY = "<spool-styles>";
 
@@ -38,9 +38,10 @@ export async function buildFrameStyleClosure(
 	});
 	const compiled = await host.stylesheets(designDir, cssSources(reads, frame.sourceFiles));
 	for (const sheet of compiled.stylesheets) reads.noted(sheet.file, sheet.digest);
-	const project = frame.bundledCss === undefined ? "" : layeredProjectCss(frame.bundledCss);
+	// the bundle's @imports lead the whole sheet: after Tailwind's rules a browser ignores them
+	const { head, layered } = projectCssParts(frame.bundledCss ?? "");
 	return {
-		css: project === "" ? compiled.css : `${compiled.css}\n${project}`,
+		css: `${head}${layered === "" ? compiled.css : `${compiled.css}\n${layered}`}`,
 		inputs: [...frame.sourceFiles, ...compiled.stylesheets.map((sheet) => sheet.file)],
 	};
 }

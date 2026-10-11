@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
 import {
+	leadingCssImports,
 	makeApp,
 	makeProject,
 	makeTempDir,
@@ -292,6 +293,33 @@ describe("frame documents", () => {
 		const second = await app.request(`/p/${name}/frames/hello`);
 		expect(second.headers.get("x-spool-cache")).toBe("miss");
 		expect(await second.text()).toContain("#00aa55");
+	});
+
+	it("keeps a frame stylesheet's @import at the head of its style, where a browser loads it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			"shared/type.css",
+			'@import "https://fonts.test/shared.css";\n.shared-type { color: red; }\n',
+		);
+		writeDesignFile(root, "frames/hello/layout.css", ".hello-layout { display: grid; }\n");
+		writeDesignFile(
+			root,
+			"frames/hello/hello.css",
+			'@import url("https://fonts.test/css2?family=Geist:wght@400;500&display=swap");\n@import "shared/type.css";\n.hello-only { font-family: Geist; }\n',
+		);
+		writeFrame(root, "hello", `import "./layout.css";\nimport "./hello.css";\n${helloTsx}`);
+		const app = makeApp(spoolDir);
+
+		const doc = await (await app.request(`/p/${name}/frames/hello`)).text();
+
+		const css = doc.match(/<style id="spool-bundled-css">([\s\S]*?)<\/style>/)?.[1] ?? "";
+		expect(css).toContain(".hello-only");
+		expect(leadingCssImports(css)).toEqual([
+			"https://fonts.test/css2?family=Geist:wght@400;500&display=swap",
+			"https://fonts.test/shared.css",
+		]);
 	});
 
 	it("reports loaded from a commit-time effect, never rAF", async () => {

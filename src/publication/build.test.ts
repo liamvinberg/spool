@@ -1,7 +1,7 @@
 import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { leadingCssImports, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildWebsite, writeWebsite } from "./build";
 import { withCapturedWebsite } from "./capture";
 import { fetchPublicResource } from "./fetch";
@@ -150,6 +150,27 @@ describe("portable website build", { timeout: 30000 }, () => {
 		await expect(buildWebsite(options)).rejects.toThrow("missing");
 		writeFrame(options.root, "next", 'import image from "./absent.png"; export default () => <img src={image}/>;');
 		await expect(buildWebsite(options)).rejects.toThrow("absent.png");
+	});
+	it("keeps a frame stylesheet's @import at the head of its published stylesheet", async () => {
+		const options = project();
+		writeDesignFile(
+			options.root,
+			"frames/start/start.css",
+			'@import url("https://fonts.test/geist.css");\n.start-only { font-family: Geist; }\n',
+		);
+		writeFrame(
+			options.root,
+			"start",
+			'import "./start.css"; export default () => <main className="start-only p-7">start</main>;',
+		);
+		const site = await buildWebsite(options);
+
+		const entry = validateManifest(site.manifest).frames.find(({ name }) => name === "start");
+		const bytes = entry === undefined ? undefined : site.objects.get(entry.stylesheet)?.bytes;
+		const css = Buffer.from(bytes ?? new Uint8Array()).toString("utf8");
+		expect(css).toContain(".start-only");
+		// a remote import stays remote, as in a Vite build: the page's policy lets it load
+		expect(leadingCssImports(css)).toEqual(["https://fonts.test/geist.css"]);
 	});
 	it("captures a shader imported with a query suffix, as the canvas compiles it", async () => {
 		const options = project();
