@@ -206,7 +206,8 @@ it("paid for on its trial says there is no charge until the trial ends, and noth
 	const fake = fakeTeamsSource({
 		teams: [team()],
 		people: PEOPLE,
-		billing: { ...PAYING, nextCharge: { at: at(2026, 10, 25), amount: 57_600 } },
+		// Stripe first tries the charge about an hour after the trial ends
+		billing: { ...PAYING, nextCharge: { at: at(2026, 10, 25) + 3600, amount: 57_600 } },
 	});
 	const { host } = settings(fake);
 	await settle();

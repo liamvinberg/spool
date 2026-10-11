@@ -42,9 +42,12 @@ function markCheckout(address: string, pending: boolean) {
 /** Paying for a team this close to its trial's end charges at once, rather than at the trial's end. */
 const TRIAL_KEPT_SECONDS = 48 * 3600;
 
+/** How long after a trial's end Stripe first tries to charge: about an hour, so a day is room enough. */
+const TRIAL_CHARGE_SLACK_SECONDS = 24 * 3600;
+
 /**
  * Whether a paying team is still on its trial: Stripe charges first when the trial ends, so the next charge is then
- * the trial's end rather than a cycle after paying.
+ * just after the trial's end rather than a cycle after paying.
  */
 export function payingOnTrial(summary: BillingSummary, now = Date.now()): boolean {
 	const ends = summary.trialEndsAt;
@@ -52,7 +55,7 @@ export function payingOnTrial(summary: BillingSummary, now = Date.now()): boolea
 		summary.state === "paying" &&
 		ends !== null &&
 		ends * 1000 > now &&
-		(summary.nextCharge === null || summary.nextCharge.at <= ends)
+		(summary.nextCharge === null || summary.nextCharge.at <= ends + TRIAL_CHARGE_SLACK_SECONDS)
 	);
 }
 
