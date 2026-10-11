@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
-import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamProjectHere, TeamRole } from "../cloud-teams";
+import type { CloudTeam, CloudTeamInvite, TeamPeople, TeamRole } from "../cloud-teams";
 import type { ColorScheme, Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import { AGENT_PERMISSIONS, type AgentEngineId, type AgentPermissions, isAgentEngineId } from "../daemon/agent-engine";
@@ -34,6 +34,7 @@ import { createPlayerPublicationClient } from "../runtime/player-publication-cli
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
+import { base64Logo, type TeamsSource, teamsAt } from "./team-source";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
 declare global {
@@ -1723,82 +1724,23 @@ export async function signOutCloudAccount(): Promise<void> {
 	if (!response.ok) throw new Error(await errorText(response));
 }
 
+/**
+ * Home's teams on this Mac: the daemon holds the Mac's device session, so Home asks it and it asks spool.page. A
+ * logo goes to the daemon as JSON.
+ */
+export const daemonTeams: TeamsSource = teamsAt("/api/cloud", {
+	fetch: controlFetch,
+	logo: base64Logo,
+});
+
 /** This Mac's teams and the invites to its address, as spool.page says through the daemon. */
-export async function fetchCloudTeams(): Promise<CloudTeamsState> {
-	try {
-		const response = await controlFetch("/api/cloud/teams");
-		const body = (response.ok ? await response.json() : null) as CloudTeamsState | null;
-		if (body?.state === "ready" && Array.isArray(body.teams) && Array.isArray(body.invites)) return body;
-		return body?.state === "signed-out" ? body : { state: "unreachable" };
-	} catch {
-		return { state: "unreachable" };
-	}
-}
-
-/** spool.page, or the daemon on its behalf, said no. `code` is the reason, such as `last_admin`. */
-export class TeamActionRefused extends Error {
-	constructor(readonly code: string) {
-		super(code);
-	}
-}
-
-async function teamAction<T>(method: string, path: string, body?: unknown): Promise<T> {
-	let response: Response;
-	try {
-		response = await controlFetch(`/api/cloud${path}`, {
-			method,
-			...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-		});
-	} catch {
-		throw new TeamActionRefused("unreachable");
-	}
-	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;
-	if (!response.ok) throw new TeamActionRefused(typeof parsed?.error === "string" ? parsed.error : "unreachable");
-	return parsed as T;
-}
-
-const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
-
-/** Everything Home's team pages ask of spool.page. Each throws `TeamActionRefused` when refused. */
-export const teamActions = {
-	create: (name: string) => teamAction<Pick<CloudTeam, "address" | "name">>("POST", "/teams", { name }),
-	people: (address: string) => teamAction<TeamPeople>("GET", `${team(address)}/people`),
-	update: (address: string, change: { name?: string; address?: string }) =>
-		teamAction<Pick<CloudTeam, "address" | "name">>("PATCH", team(address), change),
-	delete: (address: string) => teamAction<unknown>("DELETE", team(address)),
-	setLogo: (address: string, data: string) => teamAction<unknown>("PUT", `${team(address)}/logo`, { data }),
-	removeLogo: (address: string) => teamAction<unknown>("DELETE", `${team(address)}/logo`),
-	invite: (address: string, email: string, role: TeamRole) =>
-		teamAction<{ emailed: boolean }>("POST", `${team(address)}/invites`, { email, role }),
-	resendInvite: (address: string, invite: string) =>
-		teamAction<{ emailed: boolean }>("POST", `${team(address)}/invites/${encodeURIComponent(invite)}/resend`),
-	cancelInvite: (address: string, invite: string) =>
-		teamAction<unknown>("DELETE", `${team(address)}/invites/${encodeURIComponent(invite)}`),
-	setRole: (address: string, account: string, role: TeamRole) =>
-		teamAction<unknown>("PATCH", `${team(address)}/members/${encodeURIComponent(account)}`, { role }),
-	removeMember: (address: string, account: string) =>
-		teamAction<unknown>("DELETE", `${team(address)}/members/${encodeURIComponent(account)}`),
-	accept: (invite: string) =>
-		teamAction<Pick<CloudTeam, "address" | "name" | "role">>("POST", `/invites/${encodeURIComponent(invite)}/accept`),
-	decline: (invite: string) => teamAction<unknown>("POST", `/invites/${encodeURIComponent(invite)}/decline`),
-};
+export const fetchCloudTeams = (): Promise<CloudTeamsState> => daemonTeams.list();
 
 export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
 
-/** Who is inside a team project right now, as its cover says it. */
-export type HerePerson = TeamProjectHere["people"][number];
+export { type HerePerson, TeamActionRefused } from "./team-source";
 
-/** Who is inside each of a team's projects now, by project name; undefined while spool.page can't say. */
-export async function fetchTeamHere(address: string): Promise<ReadonlyMap<string, HerePerson[]> | undefined> {
-	try {
-		const response = await controlFetch(`/api/cloud${team(address)}/here`);
-		const body = (response.ok ? await response.json() : null) as { projects?: unknown } | null;
-		if (!Array.isArray(body?.projects)) return undefined;
-		return new Map((body.projects as TeamProjectHere[]).map((project) => [project.name, project.people]));
-	} catch {
-		return undefined;
-	}
-}
+const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
 
 /** A team's projects, each on this Mac already or not ("Get it"); undefined while spool.page can't say. */
 export async function fetchTeamProjects(address: string): Promise<TeamProjectOnMac[] | undefined> {

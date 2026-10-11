@@ -1,16 +1,14 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
 	type CloudAccountState,
 	type CloudTeam,
 	type CloudTeamInvite,
 	type CloudTeamsState,
-	fetchCloudTeams,
-	fetchTeamHere,
+	daemonTeams,
 	type HerePerson,
 	TeamActionRefused,
 	type TeamPeople,
 	type TeamRole,
-	teamActions,
 } from "./api";
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -20,13 +18,17 @@ import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
 import { NavItem } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
+import type { TeamsSource } from "./team-source";
 
 /**
  * Home's teams: the switcher at the top of the sidebar, the invite line above the covers, and a team's
  * Projects, People and Settings. spool.page decides every rule; these screens ask and say what it said.
  */
 
-type ReadyTeams = Extract<CloudTeamsState, { state: "ready" }>;
+export type ReadyTeams = Extract<CloudTeamsState, { state: "ready" }>;
+
+/** Where the team pages under it read and change teams: the daemon in the Mac app, spool.page in a browser. */
+export const TeamsSourceContext = createContext<TeamsSource>(daemonTeams);
 export type TeamPage = "projects" | "people" | "settings";
 
 export const ROLE_LABEL: Record<TeamRole, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
@@ -334,13 +336,14 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 	const [confirming, setConfirming] = useState<Confirming | null>(null);
 	const [menu, setMenu] = useState<string | null>(null);
 	const admin = team.role === "admin";
+	const teamActions = useContext(TeamsSourceContext);
 	const load = useCallback(async () => {
 		try {
 			setPeople(await teamActions.people(team.address));
 		} catch (error) {
 			setNotice(teamSays(error));
 		}
-	}, [team.address]);
+	}, [team.address, teamActions]);
 	useEffect(() => {
 		void load();
 	}, [load]);
@@ -628,6 +631,7 @@ export function TeamSettingsPage({
 	const [notice, setNotice] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState(false);
 	const file = useRef<HTMLInputElement>(null);
+	const teamActions = useContext(TeamsSourceContext);
 	useEffect(() => {
 		setName(team.name);
 		setAddress(team.address);
@@ -677,7 +681,7 @@ export function TeamSettingsPage({
 						onChange={(event) => {
 							const chosen = event.target.files?.[0];
 							event.target.value = "";
-							if (chosen) void act(async () => teamActions.setLogo(team.address, await base64(chosen)));
+							if (chosen) void act(() => teamActions.setLogo(team.address, chosen));
 						}}
 					/>
 					<Button className="ml-[8px]" onClick={() => file.current?.click()}>
@@ -765,14 +769,6 @@ export function TeamSettingsPage({
 	);
 }
 
-async function base64(file: File): Promise<string> {
-	const bytes = new Uint8Array(await file.arrayBuffer());
-	let binary = "";
-	for (let start = 0; start < bytes.length; start += 0x8000)
-		binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
-	return btoa(binary);
-}
-
 /** "New team…": a name, and spool.page decides whether this account may start one yet. */
 export function NewTeamDialog({
 	allowed,
@@ -826,6 +822,7 @@ export const HERE_MS = 10_000;
  * chosen and again every `HERE_MS` while the window is shown. Nobody is said while spool.page can't say.
  */
 export function useTeamHere(address: string | null): TeamHere {
+	const source = useContext(TeamsSourceContext);
 	const [here, setHere] = useState<TeamHere>(new Map());
 	useEffect(() => {
 		setHere(new Map());
@@ -833,7 +830,7 @@ export function useTeamHere(address: string | null): TeamHere {
 		let current = true;
 		const read = () => {
 			if (document.hidden) return;
-			void fetchTeamHere(address).then((read) => {
+			void source.here(address).then((read) => {
 				if (current) setHere(read ?? new Map());
 			});
 		};
@@ -845,7 +842,7 @@ export function useTeamHere(address: string | null): TeamHere {
 			clearInterval(timer);
 			document.removeEventListener("visibilitychange", read);
 		};
-	}, [address]);
+	}, [address, source]);
 	return here;
 }
 
@@ -867,12 +864,13 @@ export function useTeamHome(
 		away?: (team: CloudTeam, here: TeamHere) => ReactNode;
 	},
 ) {
+	const teamActions = useContext(TeamsSourceContext);
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
 	const [scope, setScope] = useState<string | null>(shown);
 	const [page, setPage] = useState<TeamPage>("projects");
 	const [creating, setCreating] = useState(false);
 	const signedIn = account.state === "signed-in" ? account.email : null;
-	const refresh = useCallback(async () => setTeams(await fetchCloudTeams()), []);
+	const refresh = useCallback(async () => setTeams(await teamActions.list()), [teamActions]);
 	useEffect(() => {
 		if (!signedIn) {
 			setTeams({ state: "signed-out" });
