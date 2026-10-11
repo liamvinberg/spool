@@ -177,7 +177,45 @@ it("says dates in UTC, as spool.page's emails do, wherever the Mac is", async ()
 	expect(host.textContent).toContain("On trial until October 26.");
 });
 
+/** Billing read as of noon UTC on the day given. */
+function today(year: number, month: number, date: number) {
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(at(year, month, date) * 1000);
+	onTestFinished(() => void vi.useRealTimers());
+}
+
+it("on a trial says paying now charges nothing until it ends, unless it ends too soon for that", async () => {
+	today(2026, 10, 11);
+	const fake = fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: TRIAL });
+	const { host } = settings(fake);
+	await settle();
+	expect(host.textContent).toContain("On trial until October 25. Paying now charges nothing until October 25.");
+
+	// a day left: paying charges at once
+	today(2026, 10, 24);
+	act(() => {
+		window.dispatchEvent(new Event("focus"));
+	});
+	await settle();
+	expect(host.textContent).toContain("On trial until October 25.");
+	expect(host.textContent).not.toContain("Paying now");
+});
+
+it("paid for on its trial says there is no charge until the trial ends", async () => {
+	today(2026, 10, 11);
+	const fake = fakeTeamsSource({
+		teams: [team()],
+		people: PEOPLE,
+		billing: { ...PAYING, nextCharge: { at: at(2026, 10, 25), amount: 57_600 } },
+	});
+	const { host } = settings(fake);
+	await settle();
+	const text = host.textContent ?? "";
+	expect(text).toContain("No charge until October 25.");
+});
+
 it("once paid shows the plan, the next charge and the card, and Manage billing opens Stripe's portal", async () => {
+	today(2026, 10, 11);
 	const fake = fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: PAYING });
 	const { host, opened } = settings(fake);
 	await settle();
@@ -186,6 +224,7 @@ it("once paid shows the plan, the next charge and the card, and Manage billing o
 	expect(text).toContain("Next chargeOctober 25, 2027 · $576Seats added before then are charged for the days left");
 	expect(text).toContain("CardVisa ending 4242Invoices go to ada@tidemark.app");
 	expect(text).not.toContain("On trial");
+	expect(text).not.toContain("No charge until");
 	expect(text).not.toContain("Continue to payment");
 	await act(async () => button(host, "Manage billing").click());
 	await settle();

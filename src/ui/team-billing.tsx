@@ -39,6 +39,23 @@ function markCheckout(address: string, pending: boolean) {
 	}
 }
 
+/** Paying for a team this close to its trial's end charges at once, rather than at the trial's end. */
+const TRIAL_KEPT_SECONDS = 48 * 3600;
+
+/**
+ * Whether a paying team is still on its trial: Stripe charges first when the trial ends, so the next charge is then
+ * the trial's end rather than a cycle after paying.
+ */
+export function payingOnTrial(summary: BillingSummary, now = Date.now()): boolean {
+	const ends = summary.trialEndsAt;
+	return (
+		summary.state === "paying" &&
+		ends !== null &&
+		ends * 1000 > now &&
+		(summary.nextCharge === null || summary.nextCharge.at <= ends)
+	);
+}
+
 /**
  * What each billing state means on screen: `paid` while a subscription pays for the team (its plan and Manage
  * billing show), `choice` while it has no paid time of its own yet (the payment choice shows, and a Checkout's return
@@ -52,9 +69,19 @@ export const BILLING_STATES: Record<
 	trial: {
 		paid: false,
 		choice: true,
-		line: (_, summary) => (summary.trialEndsAt === null ? null : `On trial until ${day(summary.trialEndsAt)}.`),
+		line: (_, summary) => {
+			const ends = summary.trialEndsAt;
+			if (ends === null) return null;
+			const kept = ends - Date.now() / 1000 >= TRIAL_KEPT_SECONDS;
+			return `On trial until ${day(ends)}.${kept ? ` Paying now charges nothing until ${day(ends)}.` : ""}`;
+		},
 	},
-	paying: { paid: true, choice: false, line: () => null },
+	paying: {
+		paid: true,
+		choice: false,
+		line: (_, summary) =>
+			payingOnTrial(summary) && summary.trialEndsAt !== null ? `No charge until ${day(summary.trialEndsAt)}.` : null,
+	},
 	failing: {
 		paid: true,
 		choice: false,
