@@ -159,6 +159,24 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 	expect(opened).toEqual(["https://checkout.stripe.test/tidemark"]);
 });
 
+it("says dates in UTC, as spool.page's emails do, wherever the Mac is", async () => {
+	const zone = process.env.TZ;
+	process.env.TZ = "America/Los_Angeles";
+	onTestFinished(() => {
+		if (zone === undefined) delete process.env.TZ;
+		else process.env.TZ = zone;
+	});
+	// half past midnight on October 26 in UTC: still the 25th in Los Angeles
+	const fake = fakeTeamsSource({
+		teams: [team()],
+		people: PEOPLE,
+		billing: { ...TRIAL, trialEndsAt: Date.UTC(2026, 9, 26, 0, 30) / 1000 },
+	});
+	const { host } = settings(fake);
+	await settle();
+	expect(host.textContent).toContain("On trial until October 26.");
+});
+
 it("once paid shows the plan, the next charge and the card, and Manage billing opens Stripe's portal", async () => {
 	const fake = fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: PAYING });
 	const { host, opened } = settings(fake);

@@ -341,9 +341,10 @@ function per(cents: number, cycle: BillingCycle): string {
 	return `${money(cents)} ${cycle === "monthly" ? "a month" : "a year"}`;
 }
 
-/** "October 25", or "October 25, 2027" with its year: US style, as spool.page's emails write dates. */
+/** "October 25", or "October 25, 2027" with its year: US style in UTC, as spool.page's emails write dates. */
 export function day(seconds: number, year = false): string {
 	return new Date(seconds * 1000).toLocaleDateString("en-US", {
+		timeZone: "UTC",
 		month: "long",
 		day: "numeric",
 		...(year ? { year: "numeric" } : {}),
