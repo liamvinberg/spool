@@ -18,7 +18,8 @@ import { SpoolError } from "./errors";
  */
 const spoolPackageJson = () => fileURLToPath(new URL("../package.json", import.meta.url));
 
-const overview = () => `spool — the live prototyping canvas. Frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
+const overview =
+	() => `spool — the live prototyping canvas. Frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
 
 This skill is the complete contract: if it isn't here, spool doesn't do it.
 

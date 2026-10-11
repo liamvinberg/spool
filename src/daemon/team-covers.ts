@@ -40,7 +40,8 @@ export function createTeamCovers({ spoolDir, request, log = () => {} }: TeamCove
 			// a version spool.page holds a newer cover than (410), or a cover it filed since this one was taken
 			// (409 cover_stale), is no failure; signed out, or out of reach, the next shot of a new version tries again
 			if (error instanceof CloudShareRefused) {
-				if (error.status !== 410 && error.code !== "cover_stale") log(`the cover of ${frame} wasn't sent to ${link.team}: ${error.status}`);
+				if (error.status !== 410 && error.code !== "cover_stale")
+					log(`the cover of ${frame} wasn't sent to ${link.team}: ${error.status}`);
 			} else if (!(error instanceof CloudSignedOut))
 				log(`the cover of ${frame} wasn't sent: ${(error as Error).message}`);
 		}
