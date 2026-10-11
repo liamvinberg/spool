@@ -482,12 +482,130 @@ export default function Loud() {
 		expect(loud.consoleErrors.join("\n")).not.toContain("not an error");
 		const block = formatBatchShot(shots[1] as BatchShot).split("\n");
 		expect(block[0]).toBe(`loud: shot, content 120px tall, ${loud.consoleErrors.length} console errors`);
-		expect(block.slice(1)).toEqual([join(verify, "loud.png"), ...loud.consoleErrors].map((line) => `  ${line}`));
+		expect(block.slice(1)).toEqual(
+			[join(verify, "loud.png"), ...loud.consoleErrors]
+				.flatMap((line) => line.split("\n"))
+				.map((line) => `  ${line}`),
+		);
 		expect(existsSync(join(verify, "loud.png"))).toBe(true);
 		expect(shots[2]?.outcome.kind).toBe("broken");
 	});
 
-	it("settles the way a cover does, or waits exactly as long as --at says", { timeout: 120_000 }, async () => {
+	it("says what the console never does, and a throw in the frame's own words and lines", {
+		timeout: 120_000,
+	}, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(
+			root,
+			"lost",
+			`import { useEffect, useRef } from "react";
+
+export default function Lost() {
+	const ref = useRef<HTMLCanvasElement>(null);
+	useEffect(() => {
+		ref.current?.getContext("webgl")?.getExtension("WEBGL_lose_context")?.loseContext();
+	}, []);
+	return <canvas ref={ref} width={40} height={40} className="text-nonexistent p-2" />;
+}
+`,
+		);
+		writeFrame(
+			root,
+			"thrower",
+			`export default function Thrower() {
+	throw new Error("boom at boot");
+}
+`,
+		);
+		writeFrame(
+			root,
+			"looping",
+			`import { useLayoutEffect, useState } from "react";
+
+export default function Looping() {
+	const [count, setCount] = useState(0);
+	useLayoutEffect(() => setCount(count + 1));
+	return <main>{count}</main>;
+}
+`,
+		);
+		const { frame: _, ...batch } = deps("unused", { viewport: { width: 160, height: 120 } });
+		const shots: BatchShot[] = [];
+		for await (const shot of shotFrames(batch, ["lost", "thrower", "looping"])) shots.push(shot);
+		const [lost, thrower, looping] = shots.map((shot) => shot.outcome);
+
+		// a lost context and a class no stylesheet built leave the console clean
+		if (lost?.kind !== "shot") throw new Error("lost was not shot");
+		expect(lost.consoleErrors).toEqual([]);
+		expect(lost.warnings).toContain("[spool] WebGL context lost: the canvas shows nothing it drew after this");
+		expect(lost.warnings).toContain(
+			"[spool] classes with no CSS: text-nonexistent (no token or utility builds them)",
+		);
+		const block = formatBatchShot(shots[0] as BatchShot).split("\n");
+		expect(block[0]).toBe("lost: shot, content 120px tall, no console errors");
+		expect(block).toContain("  [spool] WebGL context lost: the canvas shows nothing it drew after this");
+
+		// the stack names the frame's file and line rather than the document's
+		if (thrower?.kind !== "shot") throw new Error("thrower was not shot");
+		expect(thrower.bootErrors[0]).toMatch(
+			/^Error: boom at boot\n {4}at Thrower \(frames\/thrower\/frame\.tsx:2:\d+\)$/,
+		);
+
+		// React's own words, where the production build gives a number
+		if (looping?.kind !== "shot") throw new Error("looping was not shot");
+		expect(looping.bootErrors.join("\n")).toContain("Maximum update depth exceeded");
+		expect(looping.bootErrors.join("\n")).toContain("frames/looping/frame.tsx:");
+	});
+
+	it("seeks the frame's own time with --at: the same --at is the same picture", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(
+			root,
+			"slide",
+			`export default function Slide() {
+	return (
+		<main>
+			<style>{"@keyframes slide { from { transform: translateX(0) } to { transform: translateX(120px) } } .box { animation: slide 1000ms linear forwards; width: 40px; height: 40px; background: #f00 }"}</style>
+			<div className="box" />
+		</main>
+	);
+}
+`,
+		);
+		const shotAt = async (at: number) => {
+			const shot = await shotFrame(deps("slide", { viewport: { width: 160, height: 60 }, at }));
+			if (shot.kind !== "shot") throw new Error("slide was not shot");
+			return readFileSync(shot.files[0] as string);
+		};
+		const half = await shotAt(500);
+		expect((await shotAt(500)).equals(half)).toBe(true);
+		expect((await shotAt(250)).equals(half)).toBe(false);
+
+		// the stopped clocks are the shot's alone, never a boot's beside it
+		writeFrame(
+			root,
+			"clockless",
+			`console.log("fake clock: " + String((Date as { isFake?: boolean }).isFake === true));
+
+export default function Clockless() {
+	return <main>clockless</main>;
+}
+`,
+		);
+		const [, plain] = await Promise.all([shotAt(500), shotFrame(deps("clockless"))]);
+		expect(plain.kind).toBe("shot");
+		const logs = await logsFrame(deps("clockless"));
+		if (logs.kind !== "logs") throw new Error("logs failed");
+		expect(logs.entries).toContainEqual({ type: "log", text: "fake clock: false" });
+	});
+
+	it("settles the way a cover does, or runs the frame's timers as far as --at says", {
+		timeout: 120_000,
+	}, async () => {
 		if (!(await browserAvailable())) return;
 
 		const { root, deps } = await serveVerifyProject();

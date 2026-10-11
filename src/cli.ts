@@ -549,6 +549,7 @@ program
 		}
 		process.stdout.write(`${outcome.files.join("\n")}\n`);
 		narrate(`"${frame}" content height: ${outcome.contentHeight}px`);
+		if (outcome.warnings.length > 0) process.stderr.write(`${outcome.warnings.join("\n")}\n`);
 		if (outcome.bootErrors.length > 0) {
 			process.stderr.write(`${outcome.bootErrors.join("\n")}\n`);
 			process.exitCode = 1;

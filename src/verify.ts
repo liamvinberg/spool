@@ -56,6 +56,11 @@ export type ShotOutcome =
 			bootErrors: string[];
 			/** Every console error and uncaught throw of the boot, as `[type] text` lines the way logs prints them. */
 			consoleErrors: string[];
+			/**
+			 * What spool saw wrong that the console never says (classes with no CSS, a
+			 * WebGL context lost or drawn in software), as `[spool] text` lines.
+			 */
+			warnings: string[];
 			contentHeight: number;
 	  };
 
@@ -77,6 +82,7 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 		consoleErrors: boot.entries
 			.filter((entry) => entry.type === "error" || entry.type === "pageerror")
 			.map((entry) => `[${entry.type}] ${entry.text}`),
+		warnings: boot.entries.filter((entry) => entry.type === "spool").map((entry) => `[spool] ${entry.text}`),
 		contentHeight: boot.contentHeight,
 	};
 }
@@ -136,7 +142,7 @@ export function formatBatchShot(shot: BatchShot): string {
 		case "shot": {
 			const errors = outcome.consoleErrors.length;
 			const head = `${frame}: shot, content ${outcome.contentHeight}px tall, ${errors === 0 ? "no console errors" : errors === 1 ? "1 console error" : `${errors} console errors`}`;
-			return [head, ...outcome.files, ...outcome.consoleErrors]
+			return [head, ...outcome.files, ...outcome.consoleErrors, ...outcome.warnings]
 				.map((line, i) => (i === 0 ? line : indent(line)))
 				.join("\n");
 		}
