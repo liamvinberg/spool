@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { CloudTeam } from "./api";
+import type { BillingCycle, CloudTeam } from "./api";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { Button } from "./primitives/actions";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./primitives/overlays";
@@ -9,11 +9,21 @@ import { PayChoice, useBilling } from "./team-billing";
  * A lapsed team's Home: it has no paid time left and has gone local. Its admins get one dialog to pay for it again,
  * once it has had time; everyone else gets one line. spool.page says the state; this only says it.
  */
-export function TeamLapsed({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
+export function TeamLapsed({
+	team,
+	onOpen,
+	cycle,
+}: {
+	team: CloudTeam;
+	onOpen: (url: string) => void;
+	/** The cycle the dialog's payment choice starts on. */
+	cycle?: BillingCycle | undefined;
+}) {
 	if (team.billing?.state !== "lapsed") return null;
 	const hadTime = team.billing.hadTime !== false;
 	// a team that never had time is paid for from its setup list and Billing
-	if (team.role === "admin") return hadTime ? <TrialEndDialog key={team.address} team={team} onOpen={onOpen} /> : null;
+	if (team.role === "admin")
+		return hadTime ? <TrialEndDialog key={team.address} team={team} onOpen={onOpen} cycle={cycle} /> : null;
 	return (
 		<GoneLocalLine>
 			{hadTime
@@ -39,7 +49,15 @@ function GoneLocalLine({ children }: { children: ReactNode }) {
  * monthly or yearly. A team that never had time is paid for from its setup list and Billing instead. Closed, it stays
  * closed while the team's Projects page is up, and comes back the next time it opens.
  */
-function TrialEndDialog({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
+function TrialEndDialog({
+	team,
+	onOpen,
+	cycle,
+}: {
+	team: CloudTeam;
+	onOpen: (url: string) => void;
+	cycle: BillingCycle | undefined;
+}) {
 	const { summary, people, notice, pay } = useBilling(team, onOpen);
 	const [closed, setClosed] = useState(false);
 	// unread: the team list's word stands, said in a line with why the dialog couldn't open
@@ -61,8 +79,9 @@ function TrialEndDialog({ team, onOpen }: { team: CloudTeam; onOpen: (url: strin
 				<PayChoice
 					people={people}
 					prices={summary.prices}
-					onPay={async (editors, cycle) => {
-						if (await pay(editors, cycle)) close();
+					cycle={cycle}
+					onPay={async (editors, chosen) => {
+						if (await pay(editors, chosen)) close();
 					}}
 				/>
 			</DialogBody>

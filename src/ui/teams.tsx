@@ -288,6 +288,7 @@ export function TeamProjects({
 	onNewProject,
 	setup,
 	onOpen,
+	cycle,
 	empty = `${team.name} has no projects on this Mac yet`,
 }: {
 	team: CloudTeam;
@@ -296,6 +297,8 @@ export function TeamProjects({
 	 * browser, the system browser from the Mac.
 	 */
 	onOpen: (url: string) => void;
+	/** The cycle a payment choice here starts on, as the landing's switch showed it; yearly when not said. */
+	cycle?: BillingCycle | undefined;
 	/** What it says with no covers and nothing away. */
 	empty?: string;
 	notice?: ReactNode;
@@ -318,7 +321,7 @@ export function TeamProjects({
 					</Button>
 				)}
 			</header>
-			<TeamLapsed team={team} onOpen={onOpen} />
+			<TeamLapsed team={team} onOpen={onOpen} cycle={cycle} />
 			<TeamFailing team={team} onOpen={onOpen} />
 			{notice}
 			{setup && <TeamSetupList key={team.address} team={team} host={setup} onShowing={setListing} />}

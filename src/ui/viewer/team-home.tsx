@@ -250,6 +250,7 @@ function Projects({ team, notice, setup }: { team: CloudTeam; notice: ReactNode;
 			team={team}
 			notice={notice}
 			setup={setup}
+			cycle={setup.cycle}
 			empty={`${team.name} has no projects yet`}
 			// Stripe's Checkout comes back to /<team>/settings/billing, so it opens in this tab
 			onOpen={(url) => location.assign(url)}

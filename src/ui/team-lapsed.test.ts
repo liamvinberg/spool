@@ -124,6 +124,30 @@ it("asks an admin, once the trial ended unpaid, who stays an editor and to pay, 
 	expect(dialog(host)).toBeNull();
 });
 
+it("starts its payment choice on the cycle the landing showed", async () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	act(() =>
+		root.render(
+			createElement(
+				TeamsSourceContext.Provider,
+				{ value: fake.source },
+				createElement(TeamProjects, { team: team("admin"), onOpen: () => {}, cycle: "monthly" }),
+			),
+		),
+	);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+	});
+	await settle();
+	expect(dialog(host)?.querySelector("[data-billing-total]")?.textContent).toBe("$60 a month");
+});
+
 it("says a team that had paid has gone local", async () => {
 	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: { ...LAPSED, paidBefore: true } });
 	const { host } = home(fake, team("admin"));
