@@ -4,7 +4,7 @@ import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
 import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop } from "../home";
 import { MenuItem } from "../primitives/overlays";
 import { ProjectIconView } from "../project-icon";
-import { SetUpToast, type SetupHost } from "../team-setup";
+import { type SetupHost, useSetUpToast } from "../team-setup";
 import type { ListedTeamProject, TeamsSource } from "../team-source";
 import {
 	InviteLine,
@@ -86,15 +86,13 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 	const [joined] = useState(() => new URLSearchParams(location.search).get("joined") === "viewer");
 	// the cycle the landing's switch showed, when spool.page/start sent this team here: the payment choice starts on it
 	const [cycle] = useState(() => cycleOf(location.search));
-	/** The team whose setup list just finished, while its toast shows. */
-	const [setUp, setSetUp] = useState<CloudTeam | null>(null);
-	const dismissSetUp = useCallback(() => setSetUp(null), []);
 	const refresh = useCallback(async () => setTeams(await source.list()), [source]);
 	const go = useCallback((next: HomePlace, replace = false) => {
 		const path = pathOf(next);
 		if (path !== location.pathname) history[replace ? "replaceState" : "pushState"](null, "", path);
 		setPlace(next);
 	}, []);
+	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
 	useEffect(() => {
 		void refresh();
 		const back = () => void refresh();
@@ -192,7 +190,7 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 							origin: ready.origin,
 							onOpen: (url) => location.assign(url),
 							cycle,
-							onSetUp: setSetUp,
+							onSetUp,
 						}}
 						notice={
 							<>
@@ -226,16 +224,7 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 					/>
 				)}
 			</main>
-			{setUp && (
-				<SetUpToast
-					team={setUp}
-					onDismiss={dismissSetUp}
-					onInviteMore={() => {
-						setSetUp(null);
-						go({ team: setUp.address, page: "people" });
-					}}
-				/>
-			)}
+			{toast}
 		</HomeShell>
 	);
 }

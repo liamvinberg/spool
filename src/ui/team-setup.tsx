@@ -431,8 +431,30 @@ function MoveStep({ team, host }: { team: CloudTeam; host: SetupHost }) {
 /** How long "<team> is set up" stays. */
 export const SET_UP_TOAST_MS = 6_000;
 
-/** Home's toast, said once when a team's last setup step is done. */
-export function SetUpToast({
+/**
+ * Home's toast, said once when a team's last setup step is done: `onSetUp` is the list's, `toast` what the host
+ * draws, and Invite more takes the host to that team's People.
+ */
+export function useSetUpToast(onInviteMore: (team: CloudTeam) => void): {
+	toast: ReactNode;
+	onSetUp: (team: CloudTeam) => void;
+} {
+	const [setUp, setSetUp] = useState<CloudTeam | null>(null);
+	const dismiss = useCallback(() => setSetUp(null), []);
+	const toast = setUp && (
+		<SetUpToast
+			team={setUp}
+			onDismiss={dismiss}
+			onInviteMore={() => {
+				setSetUp(null);
+				onInviteMore(setUp);
+			}}
+		/>
+	);
+	return { toast, onSetUp: setSetUp };
+}
+
+function SetUpToast({
 	team,
 	onInviteMore,
 	onDismiss,

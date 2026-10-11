@@ -22,7 +22,7 @@ import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { BILLING_STATES, money, TeamBilling } from "./team-billing";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
-import { type OwnProject, SetUpToast, type SetupHost, TeamSetupList } from "./team-setup";
+import { type OwnProject, type SetupHost, TeamSetupList, useSetUpToast } from "./team-setup";
 import { type TeamsSource, teamSays } from "./team-source";
 
 export { teamSays };
@@ -961,9 +961,10 @@ export function useTeamHome(
 	const [page, setPage] = useState<TeamPage>("projects");
 	const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 	const [creating, setCreating] = useState(false);
-	/** The team whose setup list just finished, while its toast shows. */
-	const [setUp, setSetUp] = useState<CloudTeam | null>(null);
-	const dismissSetUp = useCallback(() => setSetUp(null), []);
+	const { toast, onSetUp } = useSetUpToast((team) => {
+		setScope(team.address);
+		setPage("people");
+	});
 	const signedIn = account.state === "signed-in" ? account.email : null;
 	const refresh = useCallback(async () => setTeams(await teamActions.list()), [teamActions]);
 	useEffect(() => {
@@ -1076,7 +1077,7 @@ export function useTeamHome(
 								own: projects?.own ?? [],
 								onMove: (project) => projects?.onMoveIn?.(current, project),
 								onOpen: open,
-								onSetUp: setSetUp,
+								onSetUp,
 								revision: projects?.revision?.(current.address) ?? "",
 							}}
 							onOpen={open}
@@ -1084,17 +1085,6 @@ export function useTeamHome(
 					),
 			}
 		: undefined;
-	const toast = setUp && (
-		<SetUpToast
-			team={setUp}
-			onDismiss={dismissSetUp}
-			onInviteMore={() => {
-				setSetUp(null);
-				setScope(setUp.address);
-				setPage("people");
-			}}
-		/>
-	);
 	/** The teams the switcher offers: their projects are on their own pages, not among this Mac's own. */
 	const editing = ready.teams.filter((team) => team.role !== "viewer");
 	return {
