@@ -342,7 +342,7 @@ function PaidSummary({ summary, onManage }: { summary: BillingSummary; onManage:
 		rows.push([
 			"Next charge",
 			`${day(summary.nextCharge.at, true)} · ${money(summary.nextCharge.amount)}`,
-			"Seats added before then are charged for the days left",
+			payingOnTrial(summary) ? null : "Seats added before then are charged for the days left",
 		]);
 	if (summary.card)
 		rows.push([

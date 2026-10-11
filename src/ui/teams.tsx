@@ -578,7 +578,7 @@ export function seatCost(billing: PeopleBilling | undefined, role: TeamRole, ema
 	const who = local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "they";
 	const when =
 		billing.cycle === "yearly"
-			? `charged for the days left this year once ${who} ${local ? "joins" : "join"}`
+			? `charged for the days left this billing year once ${who} ${local ? "joins" : "join"}`
 			: `added to the next invoice once ${who} ${local ? "joins" : "join"}`;
 	return `An ${role} is one more seat: ${money(billing.seatPrice)} a month, ${when}.`;
 }

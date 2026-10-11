@@ -103,13 +103,13 @@ it("tells an admin of a yearly team how many seats it pays for and what an edito
 	expect(host.textContent).toContain("4 people · 3 seats");
 	type(host, "noor@tidemark.app");
 	expect(costLine(host)).toBe(
-		"An editor is one more seat: $16 a month, charged for the days left this year once Noor joins.",
+		"An editor is one more seat: $16 a month, charged for the days left this billing year once Noor joins.",
 	);
 	choose(host, "viewer");
 	expect(costLine(host)).toBeNull();
 	choose(host, "admin");
 	expect(costLine(host)).toBe(
-		"An admin is one more seat: $16 a month, charged for the days left this year once Noor joins.",
+		"An admin is one more seat: $16 a month, charged for the days left this billing year once Noor joins.",
 	);
 });
 

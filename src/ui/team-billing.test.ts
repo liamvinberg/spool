@@ -201,7 +201,7 @@ it("on a trial says paying now charges nothing until it ends, unless it ends too
 	expect(host.textContent).not.toContain("Paying now");
 });
 
-it("paid for on its trial says there is no charge until the trial ends", async () => {
+it("paid for on its trial says there is no charge until the trial ends, and nothing of seats charged for days left", async () => {
 	today(2026, 10, 11);
 	const fake = fakeTeamsSource({
 		teams: [team()],
@@ -212,6 +212,8 @@ it("paid for on its trial says there is no charge until the trial ends", async (
 	await settle();
 	const text = host.textContent ?? "";
 	expect(text).toContain("No charge until October 25.");
+	expect(text).toContain("Next chargeOctober 25, 2026 · $576Card");
+	expect(text).not.toContain("charged for the days left");
 });
 
 it("once paid shows the plan, the next charge and the card, and Manage billing opens Stripe's portal", async () => {

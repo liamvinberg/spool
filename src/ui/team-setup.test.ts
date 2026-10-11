@@ -234,8 +234,8 @@ describe("a new team's setup list", () => {
 		type(emails(host)[1] as HTMLInputElement, "lena@harbourbank.se");
 		const costs = () => Array.from(host.querySelectorAll(".pj-seat-cost")).map((line) => line.textContent);
 		expect(costs()).toEqual([
-			"An editor is one more seat: $16 a month, charged for the days left this year once Noor joins.",
-			"An editor is one more seat: $16 a month, charged for the days left this year once Lena joins.",
+			"An editor is one more seat: $16 a month, charged for the days left this billing year once Noor joins.",
+			"An editor is one more seat: $16 a month, charged for the days left this billing year once Lena joins.",
 		]);
 		act(() =>
 			host
@@ -245,7 +245,7 @@ describe("a new team's setup list", () => {
 				?.click(),
 		);
 		expect(costs()).toEqual([
-			"An editor is one more seat: $16 a month, charged for the days left this year once Noor joins.",
+			"An editor is one more seat: $16 a month, charged for the days left this billing year once Noor joins.",
 		]);
 	});
 
