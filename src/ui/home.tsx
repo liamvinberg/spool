@@ -532,6 +532,166 @@ function ProjectTile({
 	onRemoveIcon?: () => void;
 	onRemoveThumbnail?: () => void;
 }) {
+	const cover = project.covers[0];
+	return (
+		<CoverTile
+			name={project.name}
+			open={{ onClick: onOpen }}
+			here={here}
+			transition={transitionName(project.root)}
+			line={<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />}
+			menuOpen={menuOpen}
+			onToggleMenu={onToggleMenu}
+			onCloseMenu={onCloseMenu}
+			art={
+				<>
+					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
+					{project.thumbnail !== undefined ? (
+						<img
+							src={thumbnailUrl(project.name, project.thumbnail.hash)}
+							alt=""
+							draggable={false}
+							className="h-full w-full object-contain"
+						/>
+					) : cover ? (
+						<Thumbnail
+							project={project.name}
+							frame={cover.frame}
+							cover={cover.cover}
+							alt={cover.frame}
+							draggable={false}
+							className="h-full w-full object-contain"
+						/>
+					) : (
+						// nothing to picture yet: its own mark, so an empty project still reads as itself
+						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
+					)}
+				</>
+			}
+			menu={({ close, refocus }) => (
+				<>
+					<MenuItem
+						label="Open"
+						onClick={() => {
+							close();
+							onOpen();
+						}}
+					/>
+					{onChangeIcon && (
+						<MenuItem
+							label="Change icon…"
+							onClick={() => {
+								refocus();
+								close();
+								onChangeIcon();
+							}}
+						/>
+					)}
+					{onRemoveIcon && (
+						<MenuItem
+							label="Remove icon"
+							onClick={() => {
+								refocus();
+								close();
+								onRemoveIcon();
+							}}
+						/>
+					)}
+					{onRemoveThumbnail && (
+						<MenuItem
+							label="Remove thumbnail"
+							onClick={() => {
+								refocus();
+								close();
+								onRemoveThumbnail();
+							}}
+						/>
+					)}
+					<MenuItem
+						label="Export project…"
+						onClick={() => {
+							refocus();
+							close();
+							onExport();
+						}}
+					/>
+					<MenuItem
+						label="Rename…"
+						onClick={() => {
+							refocus();
+							close();
+							onRename();
+						}}
+					/>
+					{onMoveToTeam && (
+						<MenuItem
+							label="Move to team…"
+							onClick={() => {
+								refocus();
+								close();
+								onMoveToTeam();
+							}}
+						/>
+					)}
+					<MenuItem
+						label="Copy path"
+						onClick={() => {
+							close();
+							void navigator.clipboard?.writeText(project.root);
+						}}
+					/>
+					<MenuSeparator />
+					<MenuItem
+						label="Hide from Spool"
+						onClick={() => {
+							close();
+							withViewTransition(onForget);
+						}}
+					/>
+					<MenuItem
+						label={`Move to ${systemTrashName()}…`}
+						destructive
+						onClick={() => {
+							refocus();
+							close();
+							onTrash();
+						}}
+					/>
+				</>
+			)}
+		/>
+	);
+}
+
+/**
+ * One cover on Home: its picture fitted whole on the canvas colour, who is inside it, its name and one quiet line,
+ * and a menu under its dots. It opens by a click in the app, or as a link in a browser.
+ */
+export function CoverTile({
+	name,
+	open,
+	art,
+	here,
+	line,
+	transition,
+	menuOpen,
+	onToggleMenu,
+	onCloseMenu,
+	menu,
+}: {
+	name: string;
+	open: { onClick: () => void } | { href: string };
+	art: ReactNode;
+	here: readonly HerePerson[] | undefined;
+	line: ReactNode;
+	/** Its view-transition name, for the grid's reflow when a cover leaves. */
+	transition?: string;
+	menuOpen: boolean;
+	onToggleMenu: () => void;
+	onCloseMenu: () => void;
+	/** The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a sheet. */
+	menu: (manage: { close: () => void; refocus: () => void }) => ReactNode;
+}) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const tileRef = useRef<HTMLElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -559,62 +719,48 @@ function ProjectTile({
 			window.removeEventListener("scroll", close, true);
 		};
 	}, [menuOpen]);
-	const cover = project.covers[0];
+	const face = (
+		<>
+			<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
+				{art}
+				<HerePill people={here} />
+				{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						"pointer-events-none absolute inset-0 rounded-[inherit] border transition-colors duration-fast ease-out motion-reduce:transition-none",
+						menuOpen
+							? "border-line-strong"
+							: "border-line-subtle group-focus-within/project:border-line-strong group-hover/project:border-line-strong",
+					)}
+				/>
+			</div>
+			<div className="pj-cover-caption pt-[15px] pr-[32px]">
+				<strong className="block truncate type-title font-[500]">{name}</strong>
+				{line}
+			</div>
+		</>
+	);
+	const opener = "pj-cover-button focus-ring block w-full rounded-[8px] text-left";
 	return (
 		<article
 			ref={tileRef}
 			className={cn("pj-project-cover group/project relative min-w-0", menuOpen ? "z-20" : "")}
-			style={{ viewTransitionName: transitionName(project.root) }}
+			style={transition === undefined ? undefined : { viewTransitionName: transition }}
 		>
-			<button
-				type="button"
-				className="pj-cover-button focus-ring block w-full rounded-[8px] text-left"
-				aria-label={`Open ${project.name}`}
-				onClick={onOpen}
-			>
-				<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
-					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
-					{project.thumbnail !== undefined ? (
-						<img
-							src={thumbnailUrl(project.name, project.thumbnail.hash)}
-							alt=""
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : cover ? (
-						<Thumbnail
-							project={project.name}
-							frame={cover.frame}
-							cover={cover.cover}
-							alt={cover.frame}
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : (
-						// nothing to picture yet: its own mark, so an empty project still reads as itself
-						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
-					)}
-					<HerePill people={here} />
-					{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
-					<span
-						aria-hidden="true"
-						className={cn(
-							"pointer-events-none absolute inset-0 rounded-[inherit] border transition-colors duration-fast ease-out motion-reduce:transition-none",
-							menuOpen
-								? "border-line-strong"
-								: "border-line-subtle group-focus-within/project:border-line-strong group-hover/project:border-line-strong",
-						)}
-					/>
-				</div>
-				<div className="pj-cover-caption pt-[15px] pr-[32px]">
-					<strong className="block truncate type-title font-[500]">{project.name}</strong>
-					<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />
-				</div>
-			</button>
+			{"href" in open ? (
+				<a className={opener} href={open.href} aria-label={`Open ${name}`}>
+					{face}
+				</a>
+			) : (
+				<button type="button" className={opener} aria-label={`Open ${name}`} onClick={open.onClick}>
+					{face}
+				</button>
+			)}
 			<IconButton
 				ref={manageRef}
 				icon={<DotsIcon />}
-				label={`Manage ${project.name}`}
+				label={`Manage ${name}`}
 				pressed={menuOpen}
 				aria-haspopup="menu"
 				aria-expanded={menuOpen}
@@ -636,93 +782,7 @@ function ProjectTile({
 							: { top: menuAt.top, left: menuAt.left, transformOrigin: `right ${menuAt.up ? "bottom" : "top"}` }
 					}
 				>
-					<MenuItem
-						label="Open"
-						onClick={() => {
-							onCloseMenu();
-							onOpen();
-						}}
-					/>
-					{onChangeIcon && (
-						<MenuItem
-							label="Change icon…"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onChangeIcon();
-							}}
-						/>
-					)}
-					{onRemoveIcon && (
-						<MenuItem
-							label="Remove icon"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onRemoveIcon();
-							}}
-						/>
-					)}
-					{onRemoveThumbnail && (
-						<MenuItem
-							label="Remove thumbnail"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onRemoveThumbnail();
-							}}
-						/>
-					)}
-					<MenuItem
-						label="Export project…"
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onExport();
-						}}
-					/>
-					<MenuItem
-						label="Rename…"
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onRename();
-						}}
-					/>
-					{onMoveToTeam && (
-						<MenuItem
-							label="Move to team…"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onMoveToTeam();
-							}}
-						/>
-					)}
-					<MenuItem
-						label="Copy path"
-						onClick={() => {
-							onCloseMenu();
-							void navigator.clipboard?.writeText(project.root);
-						}}
-					/>
-					<MenuSeparator />
-					<MenuItem
-						label="Hide from Spool"
-						onClick={() => {
-							onCloseMenu();
-							withViewTransition(onForget);
-						}}
-					/>
-					<MenuItem
-						label={`Move to ${systemTrashName()}…`}
-						destructive
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onTrash();
-						}}
-					/>
+					{menu({ close: onCloseMenu, refocus: () => manageRef.current?.focus() })}
 				</Menu>
 			)}
 		</article>
