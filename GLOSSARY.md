@@ -18,6 +18,10 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Local copy**: One real `design/` of a team project on one machine, kept out of git by its own `.gitignore` of `*`: in a repo checkout, in a worktree, or on its own. A machine may hold several, all kept in step, and Home shows the team project as one cover; `spool remove` forgets one copy and never touches the team. "Get it" makes one on a machine that has none: in a checkout of the project's repo, or on its own under `<projects location>/<team>/<project>`. It stays one whatever branch is checked out, a branch from before the move with no `spool.json` included, and keeps no history. Git never writes to one: what a checkout, pull, reset or merge puts in `design/` is never sent, the team's version comes back over what the team has, and a file the team never had stays as git left it. A team project is known by its team and name, never by where a local copy sits. _Avoid_: mount, checkout, clone
 
+**Gone local**: A team project's local copy stopped because its team has no paid time left, its billing having lapsed. It stays linked, out of git and exactly as it was, nothing is committed for anyone, and it syncs again by itself once the team pays, sending what was made meanwhile as ordinary saves. spool.page answers such a copy's standing `unpaid`. _Avoid_: unpaid copy, paused
+
+**Free team**: A team spool.page marks as never paying, as Devosurf is: it has no trial, no seats and no Billing, and its copies never go local.
+
 **Collision**: A save to a team project built on a version of the file its machine had not yet seen. The save that reached Spool Cloud first stands and the later one is set aside, except that an edit always beats a delete. `canvas.json` never collides; its keys are taken one at a time. _Avoid_: conflict, overwrite
 
 **Set aside**: What happens to the losing save in a collision. It is kept in the team's history and never applied, the writer's own files take the team's version, and only that writer is told, by a mark on each frame that renders the file. Putting it back is an ordinary new save. _Avoid_: rejected, discarded, conflict copy
