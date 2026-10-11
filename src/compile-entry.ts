@@ -26,7 +26,7 @@
  *
  * What the canvas draws of the same files, its pages, frames and where each
  * stands, is `projectDesign`: the read-only canvas in a browser draws a team
- * project from it.
+ * project from it, and `coverFrame` is the frame its cover on Home pictures.
  *
  * Importing this module runs nothing: no file is read and no dependency is
  * called until a compile is.
@@ -45,7 +45,7 @@ export {
 	type FrameDocumentRequest,
 } from "./daemon/design-compile";
 export { type DesignEntry, type DesignFileKind, type DesignFiles, memoryDesignFiles } from "./daemon/design-files";
-export { type DesignFrame, type DesignProjection, projectDesign } from "./daemon/design-projection";
+export { coverFrame, type DesignFrame, type DesignProjection, projectDesign } from "./daemon/design-projection";
 export { errorDocument } from "./daemon/document";
 export { inertWebfonts, type WebfontFile, type Webfonts } from "./daemon/font-faces";
 /** The policy every frame document is served under, given the origin it is served from. */

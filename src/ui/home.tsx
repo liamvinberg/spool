@@ -94,232 +94,273 @@ export function Home({
 		[],
 	);
 	return (
+		<HomeShell
+			switcher={switcher}
+			nav={
+				team ? (
+					team.nav
+				) : (
+					<NavItem
+						icon={<FrameIcon />}
+						label="Projects"
+						current
+						className={NARROW_NAV}
+						onClick={() => setQuery("")}
+					/>
+				)
+			}
+			foot={
+				<>
+					<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
+						<NavItem
+							icon={<CogIcon />}
+							label="Settings"
+							className={NARROW_NAV}
+							onClick={onSettings}
+							title={`Settings ${hotkeyKey("app.settings")}`}
+						/>
+					</nav>
+					{account ?? <span>On this Mac</span>}
+				</>
+			}
+		>
+			{team ? (
+				<main className={HOME_MAIN}>{team.main}</main>
+			) : loading ? (
+				<main aria-busy="true" />
+			) : projects.length === 0 && needle === "" ? (
+				<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
+					{notice && <div className="w-[650px] max-w-full">{notice}</div>}
+					<EmptyState
+						className="pj-welcome mt-[-50px] w-[650px] max-w-full [@media(max-width:720px)]:m-0"
+						heading="h1"
+						align="start"
+						title="Start with an idea."
+						description="Your next project can start here, or in a folder you already have."
+						actions={
+							<div className="grid w-[650px] max-w-full grid-cols-2 gap-[22px] text-left [@media(max-width:720px)]:grid-cols-1">
+								<button
+									type="button"
+									className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
+									onClick={onStart}
+								>
+									<PlusIcon />
+									<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
+										New project…
+										<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
+									</strong>
+									<small className="mt-[10px] text-secondary type-control">
+										Open a blank canvas.
+										<br />
+										spool saves the project on your Mac.
+									</small>
+								</button>
+								<button
+									type="button"
+									className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
+									onClick={onFolder}
+								>
+									<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
+									<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
+										Open…
+										<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
+									</strong>
+									<small className="mt-[10px] text-secondary type-control">
+										Bring your codebase.
+										<br />
+										Keep the design beside your code.
+									</small>
+								</button>
+								<button
+									type="button"
+									className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
+									onClick={onImport}
+								>
+									<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
+									<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
+										Import…
+										<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
+									</strong>
+									<small className="mt-[10px] text-secondary type-control">Open a .spool project file.</small>
+								</button>
+							</div>
+						}
+					/>
+				</main>
+			) : (
+				<main className={HOME_MAIN}>
+					<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
+						<div className="flex items-baseline gap-3">
+							<h1 className="type-page font-medium">Projects</h1>
+							<Count
+								aria-label={
+									needle === ""
+										? `${covers.length} ${covers.length === 1 ? "project" : "projects"}`
+										: `${visible.length} of ${covers.length} projects`
+								}
+								value={needle === "" ? covers.length : `${visible.length} of ${covers.length}`}
+							/>
+						</div>
+						<div className="flex items-center gap-2 [@media(max-width:720px)]:flex-wrap">
+							<div className="relative">
+								<SelectTrigger
+									// the trigger's own face is a toolbar's; in the head it matches the search beside it
+									value={<span className="type-control">{SORT_LABEL[sort]}</span>}
+									open={headMenu === "sort"}
+									aria-haspopup="menu"
+									aria-label={`Sort projects: ${SORT_LABEL[sort]}`}
+									className="h-control-lg px-2"
+									onClick={() => setHeadMenu(headMenu === "sort" ? null : "sort")}
+								/>
+								{headMenu === "sort" && (
+									<Menu aria-label="Sort projects" className="absolute top-full left-0 z-20 mt-1">
+										{SORTS.map((choice) => (
+											<MenuItem
+												key={choice}
+												label={SORT_LABEL[choice]}
+												checked={sort === choice}
+												onClick={() => {
+													setSort(choice);
+													setHeadMenu(null);
+												}}
+											/>
+										))}
+									</Menu>
+								)}
+							</div>
+							<SearchField
+								className="w-menu"
+								value={query}
+								onValueChange={setQuery}
+								placeholder="Search projects"
+								inputProps={{ ref: searchRef }}
+							/>
+							<div className="relative">
+								<SplitButton
+									size="lg"
+									icon={<PlusIcon />}
+									onClick={onStart}
+									menuLabel="More ways to start"
+									menuOpen={headMenu === "start"}
+									onMenu={() => setHeadMenu(headMenu === "start" ? null : "start")}
+								>
+									New project…
+								</SplitButton>
+								{headMenu === "start" && (
+									<Menu aria-label="Start a project" className="absolute top-full right-0 z-20 mt-1">
+										<MenuItem
+											label="New project…"
+											shortcut={hotkeyKey("app.new-project")}
+											onClick={() => {
+												setHeadMenu(null);
+												onStart();
+											}}
+										/>
+										<MenuSeparator />
+										<MenuItem
+											label="Open folder…"
+											shortcut={hotkeyKey("app.open-project")}
+											onClick={() => {
+												setHeadMenu(null);
+												onFolder();
+											}}
+										/>
+										{onImport && (
+											<MenuItem
+												label="Import .spool file…"
+												onClick={() => {
+													setHeadMenu(null);
+													onImport();
+												}}
+											/>
+										)}
+									</Menu>
+								)}
+							</div>
+						</div>
+						{headMenu !== null && <MenuBackdrop onClose={() => setHeadMenu(null)} />}
+					</header>
+					{notice && <div className="mb-[24px]">{notice}</div>}
+					{visible.length === 0 ? (
+						<EmptyState
+							className="min-h-[420px] justify-center p-[35px]"
+							art={<EmptyFrames />}
+							title={`Nothing matches “${query}”`}
+							description="Try a project name or part of its path."
+							actions={
+								<Button size="lg" onClick={() => setQuery("")}>
+									Clear search
+								</Button>
+							}
+						/>
+					) : (
+						<ProjectGrid
+							projects={visible}
+							query={needle}
+							menu={menuRoot}
+							onMenu={setMenuRoot}
+							onOpenProject={onOpenProject}
+							onForgetProject={onForgetProject}
+							onTrashProject={onTrashProject}
+							onRenameProject={onRenameProject}
+							{...(onExportProject === undefined ? {} : { onExportProject })}
+							{...(onMoveToTeam === undefined ? {} : { onMoveToTeam })}
+							{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
+							{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
+							{...(onRemoveThumbnail === undefined ? {} : { onRemoveThumbnail })}
+						/>
+					)}
+				</main>
+			)}
+		</HomeShell>
+	);
+}
+
+/** Home's page beside the sidebar: its padding, which a narrow window tightens. */
+export const HOME_MAIN =
+	"pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]";
+
+/**
+ * Home's frame: the sidebar with the wordmark, the team switcher, the nav and its foot, and the page beside it. In the
+ * Mac app it sits under the window's tabs; at spool.page/<team> it has the whole browser window.
+ */
+export function HomeShell({
+	switcher,
+	nav,
+	foot,
+	underTabs = true,
+	children,
+}: {
+	switcher?: ReactNode;
+	nav: ReactNode;
+	foot: ReactNode;
+	/** Whether the window's tab strip stands above it, as in the Mac app. */
+	underTabs?: boolean;
+	/** The page: a `main`. */
+	children: ReactNode;
+}) {
+	return (
 		<div className="pj-body h-full overflow-auto bg-surface-window text-primary [scrollbar-width:thin] [scrollbar-color:var(--color-line-strong)_transparent]">
 			<div className="pj-layout grid min-h-full grid-cols-[208px_minmax(0,1fr)] [@media(max-width:720px)]:grid-cols-[64px_minmax(0,1fr)]">
-				<aside className="pj-navigation sticky top-0 z-10 flex h-[calc(100vh-44px)] flex-col border-r border-line-default bg-surface-window px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]">
+				<aside
+					className={cn(
+						"pj-navigation sticky top-0 z-10 flex flex-col border-r border-line-default bg-surface-window px-[16px] pt-[32px] pb-[22px] [@media(max-width:720px)]:px-[8px] [@media(max-width:720px)]:py-[24px]",
+						underTabs ? "h-[calc(100vh-44px)]" : "h-dvh",
+					)}
+				>
 					<div className="pj-wordmark mb-[30px] flex h-[32px] items-center gap-[10px] px-[13px] [font:var(--type-mark)] tracking-[-1px] [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden">
 						<RibbonMark className="pj-logo h-[25px] w-[19px] shrink-0 text-accent" />
 						<span>spool</span>
 					</div>
 					{switcher}
 					<nav className="flex flex-col gap-[4px]" aria-label="Home sections">
-						{team ? (
-							team.nav
-						) : (
-							<NavItem
-								icon={<FrameIcon />}
-								label="Projects"
-								current
-								className={NARROW_NAV}
-								onClick={() => setQuery("")}
-							/>
-						)}
+						{nav}
 					</nav>
 					<div className="pj-navigation-foot mt-auto flex flex-col gap-[22px] [&>span]:pl-[12px] [&>span]:text-secondary [&>span]:[font:var(--type-detail)] [&>span]:[font-feature-settings:var(--font-mono--font-feature-settings)] [@media(max-width:720px)]:[&>span]:hidden">
-						<nav className="flex flex-col gap-[4px]" aria-label="Home actions">
-							<NavItem
-								icon={<CogIcon />}
-								label="Settings"
-								className={NARROW_NAV}
-								onClick={onSettings}
-								title={`Settings ${hotkeyKey("app.settings")}`}
-							/>
-						</nav>
-						{account ?? <span>On this Mac</span>}
+						{foot}
 					</div>
 				</aside>
-				{team ? (
-					<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
-						{team.main}
-					</main>
-				) : loading ? (
-					<main aria-busy="true" />
-				) : projects.length === 0 && needle === "" ? (
-					<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
-						{notice && <div className="w-[650px] max-w-full">{notice}</div>}
-						<EmptyState
-							className="pj-welcome mt-[-50px] w-[650px] max-w-full [@media(max-width:720px)]:m-0"
-							heading="h1"
-							align="start"
-							title="Start with an idea."
-							description="Your next project can start here, or in a folder you already have."
-							actions={
-								<div className="grid w-[650px] max-w-full grid-cols-2 gap-[22px] text-left [@media(max-width:720px)]:grid-cols-1">
-									<button
-										type="button"
-										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
-										onClick={onStart}
-									>
-										<PlusIcon />
-										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-											New project…
-											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-										</strong>
-										<small className="mt-[10px] text-secondary type-control">
-											Open a blank canvas.
-											<br />
-											spool saves the project on your Mac.
-										</small>
-									</button>
-									<button
-										type="button"
-										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-										onClick={onFolder}
-									>
-										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
-										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-											Open…
-											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-										</strong>
-										<small className="mt-[10px] text-secondary type-control">
-											Bring your codebase.
-											<br />
-											Keep the design beside your code.
-										</small>
-									</button>
-									<button
-										type="button"
-										className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-										onClick={onImport}
-									>
-										<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
-										<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-											Import…
-											<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-										</strong>
-										<small className="mt-[10px] text-secondary type-control">
-											Open a .spool project file.
-										</small>
-									</button>
-								</div>
-							}
-						/>
-					</main>
-				) : (
-					<main className="pj-main min-w-0 px-[48px] pt-[46px] pb-[30px] [@media(max-width:1050px)]:px-[30px] [@media(max-width:1050px)]:py-[34px]">
-						<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
-							<div className="flex items-baseline gap-3">
-								<h1 className="type-page font-medium">Projects</h1>
-								<Count
-									aria-label={
-										needle === ""
-											? `${covers.length} ${covers.length === 1 ? "project" : "projects"}`
-											: `${visible.length} of ${covers.length} projects`
-									}
-									value={needle === "" ? covers.length : `${visible.length} of ${covers.length}`}
-								/>
-							</div>
-							<div className="flex items-center gap-2 [@media(max-width:720px)]:flex-wrap">
-								<div className="relative">
-									<SelectTrigger
-										// the trigger's own face is a toolbar's; in the head it matches the search beside it
-										value={<span className="type-control">{SORT_LABEL[sort]}</span>}
-										open={headMenu === "sort"}
-										aria-haspopup="menu"
-										aria-label={`Sort projects: ${SORT_LABEL[sort]}`}
-										className="h-control-lg px-2"
-										onClick={() => setHeadMenu(headMenu === "sort" ? null : "sort")}
-									/>
-									{headMenu === "sort" && (
-										<Menu aria-label="Sort projects" className="absolute top-full left-0 z-20 mt-1">
-											{SORTS.map((choice) => (
-												<MenuItem
-													key={choice}
-													label={SORT_LABEL[choice]}
-													checked={sort === choice}
-													onClick={() => {
-														setSort(choice);
-														setHeadMenu(null);
-													}}
-												/>
-											))}
-										</Menu>
-									)}
-								</div>
-								<SearchField
-									className="w-menu"
-									value={query}
-									onValueChange={setQuery}
-									placeholder="Search projects"
-									inputProps={{ ref: searchRef }}
-								/>
-								<div className="relative">
-									<SplitButton
-										size="lg"
-										icon={<PlusIcon />}
-										onClick={onStart}
-										menuLabel="More ways to start"
-										menuOpen={headMenu === "start"}
-										onMenu={() => setHeadMenu(headMenu === "start" ? null : "start")}
-									>
-										New project…
-									</SplitButton>
-									{headMenu === "start" && (
-										<Menu aria-label="Start a project" className="absolute top-full right-0 z-20 mt-1">
-											<MenuItem
-												label="New project…"
-												shortcut={hotkeyKey("app.new-project")}
-												onClick={() => {
-													setHeadMenu(null);
-													onStart();
-												}}
-											/>
-											<MenuSeparator />
-											<MenuItem
-												label="Open folder…"
-												shortcut={hotkeyKey("app.open-project")}
-												onClick={() => {
-													setHeadMenu(null);
-													onFolder();
-												}}
-											/>
-											{onImport && (
-												<MenuItem
-													label="Import .spool file…"
-													onClick={() => {
-														setHeadMenu(null);
-														onImport();
-													}}
-												/>
-											)}
-										</Menu>
-									)}
-								</div>
-							</div>
-							{headMenu !== null && <MenuBackdrop onClose={() => setHeadMenu(null)} />}
-						</header>
-						{notice && <div className="mb-[24px]">{notice}</div>}
-						{visible.length === 0 ? (
-							<EmptyState
-								className="min-h-[420px] justify-center p-[35px]"
-								art={<EmptyFrames />}
-								title={`Nothing matches “${query}”`}
-								description="Try a project name or part of its path."
-								actions={
-									<Button size="lg" onClick={() => setQuery("")}>
-										Clear search
-									</Button>
-								}
-							/>
-						) : (
-							<ProjectGrid
-								projects={visible}
-								query={needle}
-								menu={menuRoot}
-								onMenu={setMenuRoot}
-								onOpenProject={onOpenProject}
-								onForgetProject={onForgetProject}
-								onTrashProject={onTrashProject}
-								onRenameProject={onRenameProject}
-								{...(onExportProject === undefined ? {} : { onExportProject })}
-								{...(onMoveToTeam === undefined ? {} : { onMoveToTeam })}
-								{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
-								{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
-								{...(onRemoveThumbnail === undefined ? {} : { onRemoveThumbnail })}
-							/>
-						)}
-					</main>
-				)}
+				{children}
 			</div>
 		</div>
 	);
@@ -493,6 +534,166 @@ function ProjectTile({
 	onRemoveIcon?: () => void;
 	onRemoveThumbnail?: () => void;
 }) {
+	const cover = project.covers[0];
+	return (
+		<CoverTile
+			name={project.name}
+			open={{ onClick: onOpen }}
+			here={here}
+			transition={transitionName(project.root)}
+			line={<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />}
+			menuOpen={menuOpen}
+			onToggleMenu={onToggleMenu}
+			onCloseMenu={onCloseMenu}
+			art={
+				<>
+					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
+					{project.thumbnail !== undefined ? (
+						<img
+							src={thumbnailUrl(project.name, project.thumbnail.hash)}
+							alt=""
+							draggable={false}
+							className="h-full w-full object-contain"
+						/>
+					) : cover ? (
+						<Thumbnail
+							project={project.name}
+							frame={cover.frame}
+							cover={cover.cover}
+							alt={cover.frame}
+							draggable={false}
+							className="h-full w-full object-contain"
+						/>
+					) : (
+						// nothing to picture yet: its own mark, so an empty project still reads as itself
+						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
+					)}
+				</>
+			}
+			menu={({ close, refocus }) => (
+				<>
+					<MenuItem
+						label="Open"
+						onClick={() => {
+							close();
+							onOpen();
+						}}
+					/>
+					{onChangeIcon && (
+						<MenuItem
+							label="Change icon…"
+							onClick={() => {
+								refocus();
+								close();
+								onChangeIcon();
+							}}
+						/>
+					)}
+					{onRemoveIcon && (
+						<MenuItem
+							label="Remove icon"
+							onClick={() => {
+								refocus();
+								close();
+								onRemoveIcon();
+							}}
+						/>
+					)}
+					{onRemoveThumbnail && (
+						<MenuItem
+							label="Remove thumbnail"
+							onClick={() => {
+								refocus();
+								close();
+								onRemoveThumbnail();
+							}}
+						/>
+					)}
+					<MenuItem
+						label="Export project…"
+						onClick={() => {
+							refocus();
+							close();
+							onExport();
+						}}
+					/>
+					<MenuItem
+						label="Rename…"
+						onClick={() => {
+							refocus();
+							close();
+							onRename();
+						}}
+					/>
+					{onMoveToTeam && (
+						<MenuItem
+							label="Move to team…"
+							onClick={() => {
+								refocus();
+								close();
+								onMoveToTeam();
+							}}
+						/>
+					)}
+					<MenuItem
+						label="Copy path"
+						onClick={() => {
+							close();
+							void navigator.clipboard?.writeText(project.root);
+						}}
+					/>
+					<MenuSeparator />
+					<MenuItem
+						label="Hide from Spool"
+						onClick={() => {
+							close();
+							withViewTransition(onForget);
+						}}
+					/>
+					<MenuItem
+						label={`Move to ${systemTrashName()}…`}
+						destructive
+						onClick={() => {
+							refocus();
+							close();
+							onTrash();
+						}}
+					/>
+				</>
+			)}
+		/>
+	);
+}
+
+/**
+ * One cover on Home: its picture fitted whole on the canvas colour, who is inside it, its name and one quiet line,
+ * and a menu under its dots. It opens by a click in the app, or as a link in a browser.
+ */
+export function CoverTile({
+	name,
+	open,
+	art,
+	here,
+	line,
+	transition,
+	menuOpen,
+	onToggleMenu,
+	onCloseMenu,
+	menu,
+}: {
+	name: string;
+	open: { onClick: () => void } | { href: string };
+	art: ReactNode;
+	here: readonly HerePerson[] | undefined;
+	line: ReactNode;
+	/** Its view-transition name, for the grid's reflow when a cover leaves. */
+	transition?: string;
+	menuOpen: boolean;
+	onToggleMenu: () => void;
+	onCloseMenu: () => void;
+	/** The menu's items: `close` closes it, `refocus` gives the dots back the focus first, for an item that opens a sheet. */
+	menu: (manage: { close: () => void; refocus: () => void }) => ReactNode;
+}) {
 	const manageRef = useRef<HTMLButtonElement>(null);
 	const tileRef = useRef<HTMLElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -520,62 +721,48 @@ function ProjectTile({
 			window.removeEventListener("scroll", close, true);
 		};
 	}, [menuOpen]);
-	const cover = project.covers[0];
+	const face = (
+		<>
+			<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
+				{art}
+				<HerePill people={here} />
+				{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						"pointer-events-none absolute inset-0 rounded-[inherit] border transition-colors duration-fast ease-out motion-reduce:transition-none",
+						menuOpen
+							? "border-line-strong"
+							: "border-line-subtle group-focus-within/project:border-line-strong group-hover/project:border-line-strong",
+					)}
+				/>
+			</div>
+			<div className="pj-cover-caption pt-[15px] pr-[32px]">
+				<strong className="block truncate type-title font-[500]">{name}</strong>
+				{line}
+			</div>
+		</>
+	);
+	const opener = "pj-cover-button focus-ring block w-full rounded-[8px] text-left";
 	return (
 		<article
 			ref={tileRef}
 			className={cn("pj-project-cover group/project relative min-w-0", menuOpen ? "z-20" : "")}
-			style={{ viewTransitionName: transitionName(project.root) }}
+			style={transition === undefined ? undefined : { viewTransitionName: transition }}
 		>
-			<button
-				type="button"
-				className="pj-cover-button focus-ring block w-full rounded-[8px] text-left"
-				aria-label={`Open ${project.name}`}
-				onClick={onOpen}
-			>
-				<div className="pj-cover-art relative grid aspect-[1.82] place-items-center overflow-hidden rounded-[8px] bg-surface-canvas">
-					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
-					{project.thumbnail !== undefined ? (
-						<img
-							src={thumbnailUrl(project.name, project.thumbnail.hash)}
-							alt=""
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : cover ? (
-						<Thumbnail
-							project={project.name}
-							frame={cover.frame}
-							cover={cover.cover}
-							alt={cover.frame}
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : (
-						// nothing to picture yet: its own mark, so an empty project still reads as itself
-						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
-					)}
-					<HerePill people={here} />
-					{/* the resting edge, so a pale cover still ends on a pale page; it firms under the pointer */}
-					<span
-						aria-hidden="true"
-						className={cn(
-							"pointer-events-none absolute inset-0 rounded-[inherit] border transition-colors duration-fast ease-out motion-reduce:transition-none",
-							menuOpen
-								? "border-line-strong"
-								: "border-line-subtle group-focus-within/project:border-line-strong group-hover/project:border-line-strong",
-						)}
-					/>
-				</div>
-				<div className="pj-cover-caption pt-[15px] pr-[32px]">
-					<strong className="block truncate type-title font-[500]">{project.name}</strong>
-					<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />
-				</div>
-			</button>
+			{"href" in open ? (
+				<a className={opener} href={open.href} aria-label={`Open ${name}`}>
+					{face}
+				</a>
+			) : (
+				<button type="button" className={opener} aria-label={`Open ${name}`} onClick={open.onClick}>
+					{face}
+				</button>
+			)}
 			<IconButton
 				ref={manageRef}
 				icon={<DotsIcon />}
-				label={`Manage ${project.name}`}
+				label={`Manage ${name}`}
 				pressed={menuOpen}
 				aria-haspopup="menu"
 				aria-expanded={menuOpen}
@@ -597,93 +784,7 @@ function ProjectTile({
 							: { top: menuAt.top, left: menuAt.left, transformOrigin: `right ${menuAt.up ? "bottom" : "top"}` }
 					}
 				>
-					<MenuItem
-						label="Open"
-						onClick={() => {
-							onCloseMenu();
-							onOpen();
-						}}
-					/>
-					{onChangeIcon && (
-						<MenuItem
-							label="Change icon…"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onChangeIcon();
-							}}
-						/>
-					)}
-					{onRemoveIcon && (
-						<MenuItem
-							label="Remove icon"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onRemoveIcon();
-							}}
-						/>
-					)}
-					{onRemoveThumbnail && (
-						<MenuItem
-							label="Remove thumbnail"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onRemoveThumbnail();
-							}}
-						/>
-					)}
-					<MenuItem
-						label="Export project…"
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onExport();
-						}}
-					/>
-					<MenuItem
-						label="Rename…"
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onRename();
-						}}
-					/>
-					{onMoveToTeam && (
-						<MenuItem
-							label="Move to team…"
-							onClick={() => {
-								manageRef.current?.focus();
-								onCloseMenu();
-								onMoveToTeam();
-							}}
-						/>
-					)}
-					<MenuItem
-						label="Copy path"
-						onClick={() => {
-							onCloseMenu();
-							void navigator.clipboard?.writeText(project.root);
-						}}
-					/>
-					<MenuSeparator />
-					<MenuItem
-						label="Hide from Spool"
-						onClick={() => {
-							onCloseMenu();
-							withViewTransition(onForget);
-						}}
-					/>
-					<MenuItem
-						label={`Move to ${systemTrashName()}…`}
-						destructive
-						onClick={() => {
-							manageRef.current?.focus();
-							onCloseMenu();
-							onTrash();
-						}}
-					/>
+					{menu({ close: onCloseMenu, refocus: () => manageRef.current?.focus() })}
 				</Menu>
 			)}
 		</article>
@@ -737,7 +838,7 @@ function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: 
 }
 
 /** Clicking anywhere off an open menu closes it. */
-function MenuBackdrop({ onClose }: { onClose: () => void }) {
+export function MenuBackdrop({ onClose }: { onClose: () => void }) {
 	return (
 		<button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Close menu" onClick={onClose} />
 	);

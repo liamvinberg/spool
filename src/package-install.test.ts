@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
+import { buildEntry } from "./ui/viewer/build-entry";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -80,19 +81,24 @@ describe("packed install", () => {
 			["/vendor/react.js", "/vendor/spool.js", "/vendor/spool-jsx.js"],
 			["index.css", "theme.css", "preflight.css", "utilities.css"],
 		]);
-		const viewer = JSON.parse(
+		const manifest = JSON.parse(
 			run(
 				process.execPath,
 				[
 					"--input-type=module",
 					"--eval",
-					'import { createRequire } from "node:module"; process.stdout.write(JSON.stringify(createRequire(import.meta.url)("spool.page/viewer/manifest.json")["index.html"]));',
+					'import { createRequire } from "node:module"; process.stdout.write(JSON.stringify(createRequire(import.meta.url)("spool.page/viewer/manifest.json")));',
 				],
 				prefix,
 			),
-		) as { file: string; css: string[] };
-		expect(existsSync(join(dirname(anchor), "dist", "viewer", viewer.file))).toBe(true);
-		expect(viewer.css.every((css) => existsSync(join(dirname(anchor), "dist", "viewer", css)))).toBe(true);
+		);
+		// the read-only canvas and Home, each with its script and every stylesheet it links
+		for (const page of ["index.html", "home.html"]) {
+			const entry = buildEntry(manifest, page);
+			expect(existsSync(join(dirname(anchor), "dist", "viewer", entry.file))).toBe(true);
+			expect(entry.css.length).toBeGreaterThan(0);
+			expect(entry.css.every((css) => existsSync(join(dirname(anchor), "dist", "viewer", css)))).toBe(true);
+		}
 
 		const clipboardProject = makeTempDir();
 		markProject(clipboardProject);

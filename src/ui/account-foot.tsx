@@ -15,8 +15,11 @@ export function AccountFoot({
 	onReopen,
 	onCancel,
 	onSignOut,
+	inBrowser = false,
 }: {
 	account: CloudAccountState;
+	/** At spool.page itself rather than on a Mac: the account page is here, and signing out is this browser's. */
+	inBrowser?: boolean;
 	onSignIn: () => void;
 	onReopen: () => void;
 	onCancel: () => void;
@@ -65,17 +68,21 @@ export function AccountFoot({
 					<Menu aria-label={account.email} className="absolute bottom-[calc(100%+8px)] left-0 z-30">
 						<p className="flex h-row items-center truncate px-3 text-primary type-control">{account.email}</p>
 						<MenuSeparator />
-						<MenuItem
-							href={account.accountUrl}
-							target="_blank"
-							rel="noreferrer"
-							label="Passkeys and Macs"
-							meta="spool.page ↗"
-							onClick={() => setMenuOpen(false)}
-						/>
+						{inBrowser ? (
+							<MenuItem href={account.accountUrl} label="Passkeys and Macs" />
+						) : (
+							<MenuItem
+								href={account.accountUrl}
+								target="_blank"
+								rel="noreferrer"
+								label="Passkeys and Macs"
+								meta="spool.page ↗"
+								onClick={() => setMenuOpen(false)}
+							/>
+						)}
 						<MenuSeparator />
 						<MenuItem
-							label="Sign out of this Mac"
+							label={inBrowser ? "Sign out" : "Sign out of this Mac"}
 							onClick={() => {
 								setMenuOpen(false);
 								onSignOut();

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { isSafeName, pageUnder, ROOT_PAGE } from "../page-path";
+import { flatPages, mergePageTree } from "../ui/canvas/order";
 import { type CanvasOrder, type CanvasPlaces, parseOrder, parsePlaces } from "./canvas-fields";
 import type { DesignFiles } from "./design-files";
 import { besideField, DEFAULT_FOOTPRINT, pageObjectsOn, placePages } from "./placement";
@@ -104,4 +105,24 @@ function readJson(files: DesignFiles, path: string): unknown {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The frame a project's cover pictures, as Home picks it on a Mac (`topLeftFrame` in projection.ts): on the root page,
+ * the one with the smallest top edge, ties to the smallest left, then to its name. A root page with no frames gives
+ * way to the pages in rail order, and the first of them with frames is asked the same. None for a project with no
+ * frames.
+ */
+export function coverFrame(projection: DesignProjection): string | undefined {
+	const byPage = new Map<string, DesignFrame[]>();
+	for (const frame of projection.frames) {
+		const page = frame.page ?? ROOT_PAGE;
+		byPage.set(page, [...(byPage.get(page) ?? []), frame]);
+	}
+	const rail = byPage.has(ROOT_PAGE)
+		? [ROOT_PAGE]
+		: flatPages(mergePageTree(projection.order.pages, projection.pages));
+	const page = rail.find((each) => byPage.has(each));
+	const frames = page === undefined ? [] : (byPage.get(page) ?? []);
+	return [...frames].sort((a, b) => a.y - b.y || a.x - b.x || a.name.localeCompare(b.name))[0]?.name;
 }
