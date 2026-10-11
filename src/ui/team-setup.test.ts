@@ -302,4 +302,70 @@ describe("a new team's setup list", () => {
 		expect(host.querySelector(".pj-team-setup")).toBeNull();
 		expect(fake.asked.filter((line) => line.startsWith("setup"))).toEqual([]);
 	});
+
+	it("starts afresh on another team, as the app switches teams on one Projects page", async () => {
+		const harbour: CloudTeam = { ...team(), id: "u", address: "harbour", name: "Harbour" };
+		const done = steps({ invited: "skipped", mac: { email: "ada@tidemark.app" }, moved: { project: "app" } });
+		const fake = fakeTeamsSource({ teams: [team(), harbour] });
+		const answers = new Map<string, Promise<TeamSetup>>([["tidemark", Promise.resolve(FRESH)]]);
+		let answerHarbour: (setup: TeamSetup) => void = () => {};
+		answers.set("harbour", new Promise((resolve) => (answerHarbour = resolve)));
+		fake.source.setup = (address) => answers.get(address) ?? Promise.reject(new Error(address));
+		fake.source.setupDone = async (address) => {
+			fake.asked.push(`setup done ${address}`);
+			return { ...done, done: true };
+		};
+		vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+		const element = document.createElement("div");
+		document.body.append(element);
+		const root = createRoot(element);
+		const setUp: string[] = [];
+		const show = (shown: CloudTeam) =>
+			act(() =>
+				root.render(
+					createElement(
+						TeamsSourceContext.Provider,
+						{ value: fake.source },
+						createElement(TeamProjects, {
+							team: shown,
+							onOpen: () => {},
+							setup: {
+								on: "mac",
+								you: "ada@tidemark.app",
+								origin: "https://spool.page",
+								onOpen: () => {},
+								onSetUp: (finished) => setUp.push(finished.name),
+							},
+						}),
+					),
+				),
+			);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			element.remove();
+			vi.unstubAllGlobals();
+		});
+
+		show(team());
+		await settle();
+		expect(element.querySelector(".pj-team-setup")?.getAttribute("aria-label")).toBe("Set up Tidemark");
+		// Harbour's facts aren't in yet: Tidemark's steps never stand under its name
+		show(harbour);
+		await settle();
+		expect(element.querySelector(".pj-team-setup")).toBeNull();
+
+		// Tidemark finishes, then Harbour does too: each is said once
+		answers.set("tidemark", Promise.resolve(done));
+		show(team());
+		await settle();
+		expect(setUp).toEqual(["Tidemark"]);
+		show(harbour);
+		answerHarbour(done);
+		await settle();
+		expect(fake.asked.filter((line) => line.startsWith("setup done"))).toEqual([
+			"setup done tidemark",
+			"setup done harbour",
+		]);
+		expect(setUp).toEqual(["Tidemark", "Harbour"]);
+	});
 });

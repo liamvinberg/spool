@@ -321,7 +321,7 @@ export function TeamProjects({
 			<TeamLapsed team={team} onOpen={onOpen} />
 			<TeamFailing team={team} onOpen={onOpen} />
 			{notice}
-			{setup && <TeamSetupList team={team} host={setup} onShowing={setListing} />}
+			{setup && <TeamSetupList key={team.address} team={team} host={setup} onShowing={setListing} />}
 			{covers ??
 				(away || listing ? null : (
 					<EmptyState className="min-h-[420px] justify-center p-[35px]" art={<EmptyFrames />} title={empty} />
