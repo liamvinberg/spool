@@ -1190,6 +1190,52 @@ describe("when a team lapses", () => {
 		expect(said.ben.filter((message) => message === GONE_LOCAL)).toHaveLength(1);
 	}, 20_000);
 
+	it("says nothing of going local when the copy's record can't take it, so the canvas isn't told it syncs again", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		// Ben's daemon again, on a Mac whose disk refuses his copy's record once the copy has stopped: a folder where
+		// it goes, put there while the daemon asks the team's name to say it
+		await ben.daemon.close();
+		const record = join(ben.root, "design/.spool/sync.json");
+		let refuse = false;
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const asked = new Request(input, init);
+			if (refuse && new URL(asked.url).pathname === "/api/teams") {
+				rmSync(record);
+				mkdirSync(record);
+			}
+			return ben.machine.cloud.fetch(asked);
+		};
+		const told: string[] = [];
+		const daemon = makeApp(ben.state, {
+			cloud: { ...ben.machine.cloud, fetch },
+			teamNotice: (message) => told.push(message),
+		});
+		writeFrame(ana.root, "about", "export default () => <h1>About</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"));
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await daemon.request("/api/events", { signal: controller.signal }));
+
+		refuse = true;
+		cloud.lapse();
+		await until(() => said.ana.includes(GONE_LOCAL) && told.some((message) => message.includes("EISDIR")));
+		expect(told).not.toContain(GONE_LOCAL);
+		expect(await syncState(daemon)).toMatchObject({ ended: null, goneLocal: null });
+		// no page hears of a sync change: a canvas would read the state again and say it syncs
+		const heard: unknown[] = [];
+		await expect(
+			(async () => {
+				for (;;) {
+					const event = await events.next(1_500);
+					if ((event.data as { kind?: string }).kind === "sync") heard.push(event.data);
+				}
+			})(),
+		).rejects.toThrow("timed out");
+		expect(heard).toEqual([]);
+	}, 20_000);
+
 	it("isn't said again after a restart, and the copy follows the team again once it pays, with what was made meanwhile", async () => {
 		const { cloud, said, ana, ben } = await twoEditors({ goneLocalAskMs: 300 });
 		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");

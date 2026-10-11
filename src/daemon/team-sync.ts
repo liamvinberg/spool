@@ -990,7 +990,8 @@ export function createTeamSync(deps: {
 				recordGoneLocal(root, link, name);
 				say(`${name} has gone local. Your copy keeps working here and syncs again once the team pays.`, root);
 			} catch (error) {
-				say(error instanceof Error ? error.message : String(error), root);
+				// its record is what the canvas and the cover read: with none, nothing says it went local
+				return say(error instanceof Error ? error.message : String(error), root);
 			}
 		}
 		deps.onGoneLocal?.(root);
@@ -1032,7 +1033,11 @@ export function createTeamSync(deps: {
 			if (closed || stopped.get(root) !== link) return;
 			if (now === "editor") {
 				stopped.delete(root);
-				recordGoneLocal(root, link, undefined);
+				try {
+					recordGoneLocal(root, link, undefined);
+				} catch (error) {
+					say(error instanceof Error ? error.message : String(error), root);
+				}
 				follow(root, link);
 				deps.onGoneLocal?.(root);
 			} else if (now === "not_editor") {
