@@ -15,13 +15,21 @@ export function TeamLapsed({ team, onOpen }: { team: CloudTeam; onOpen: (url: st
 	// a team that never had time is paid for from its setup list and Billing
 	if (team.role === "admin") return hadTime ? <TrialEndDialog key={team.address} team={team} onOpen={onOpen} /> : null;
 	return (
+		<GoneLocalLine>
+			{hadTime
+				? `${team.name} has gone local. Ask an admin to pay for it to sync again.`
+				: `${team.name} isn’t paid for yet. Ask an admin to pay for it to sync.`}
+		</GoneLocalLine>
+	);
+}
+
+function GoneLocalLine({ children }: { children: ReactNode }) {
+	return (
 		<p
 			role="status"
 			className="pj-gone-local -mt-[8px] mb-[22px] flex min-h-[48px] items-center border-line-default border-y py-[8px] type-control"
 		>
-			{hadTime
-				? `${team.name} has gone local. Ask an admin to pay for it to sync again.`
-				: `${team.name} isn’t paid for yet. Ask an admin to pay for it to sync.`}
+			{children}
 		</p>
 	);
 }
@@ -34,6 +42,13 @@ export function TeamLapsed({ team, onOpen }: { team: CloudTeam; onOpen: (url: st
 function TrialEndDialog({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
 	const { summary, people, notice, pay } = useBilling(team, onOpen);
 	const [closed, setClosed] = useState(false);
+	// unread: the team list's word stands, said in a line with why the dialog couldn't open
+	if (summary === null && notice !== null)
+		return (
+			<GoneLocalLine>
+				{team.name} has gone local. {notice}
+			</GoneLocalLine>
+		);
 	if (closed || summary === null || people === null || summary.state !== "lapsed" || !summary.hadTime) return null;
 	const close = () => setClosed(true);
 	return (

@@ -16,7 +16,9 @@ export function TeamFailing({ team, onOpen }: { team: CloudTeam; onOpen: (url: s
 function FailingLine({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
 	const { summary, notice, manage } = useBilling(team, onOpen);
 	const [busy, setBusy] = useState(false);
-	if (summary === null || summary.state !== "failing") return null;
+	// unread, the team list's word stands: the line says so, without a date, and why it couldn't say more
+	if (summary === null ? notice === null : summary.state !== "failing") return null;
+	const lapsesAt = summary?.lapsesAt ?? null;
 	return (
 		<div
 			role="status"
@@ -25,9 +27,9 @@ function FailingLine({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) 
 		>
 			<span className="min-w-0 flex-1 type-control">
 				{team.name}’s last payment failed.{" "}
-				{summary.lapsesAt === null
+				{lapsesAt === null
 					? "Update the card to keep it syncing."
-					: `Update the card before ${day(summary.lapsesAt)} to keep it syncing.`}
+					: `Update the card before ${day(lapsesAt)} to keep it syncing.`}
 				{notice && <span className="text-secondary"> {notice}</span>}
 			</span>
 			<Button

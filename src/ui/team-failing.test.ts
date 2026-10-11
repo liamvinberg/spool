@@ -110,6 +110,18 @@ it("says what spool.page refused when the portal can't open", async () => {
 	expect(opened).toEqual([]);
 });
 
+it("still tells an admin when billing can't be read, saying why it can't say more", async () => {
+	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE });
+	fake.source.billing = async () => {
+		throw new Error("offline");
+	};
+	const { host } = home(fake, team("admin"));
+	await settle();
+	expect(line(host)?.textContent).toBe(
+		"Tidemark’s last payment failed. Update the card to keep it syncing. spool.page can’t be reached just now. Try again.Manage billing",
+	);
+});
+
 it("goes once the team pays again", async () => {
 	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: FAILING });
 	const { host, render } = home(fake, team("admin"));

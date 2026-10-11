@@ -175,6 +175,19 @@ it("says what spool.page refused, and stays open", async () => {
 	expect(opened).toEqual([]);
 });
 
+it("tells an admin in a line when billing can't be read, saying why the dialog can't open", async () => {
+	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE });
+	fake.source.billing = async () => {
+		throw new Error("offline");
+	};
+	const { host } = home(fake, team("admin"));
+	await settle();
+	expect(dialog(host)).toBeNull();
+	expect(host.querySelector(".pj-gone-local")?.textContent).toBe(
+		"Tidemark has gone local. spool.page can’t be reached just now. Try again.",
+	);
+});
+
 it("asks nothing of an admin whose team never had time: it is paid for from Billing", async () => {
 	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: { ...LAPSED, hadTime: false } });
 	const { host } = home(fake, team("admin"));
