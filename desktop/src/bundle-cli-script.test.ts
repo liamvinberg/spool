@@ -88,7 +88,7 @@ test("a release waits for the exact npm version instead of packing the checkout"
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/60\)/);
+		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/180\)/);
 		assert.match(result.stdout, /installing spool\.page@9\.8\.7 from the registry/);
 		assert.throws(() => readFileSync(setup.packLog));
 	} finally {
@@ -97,7 +97,7 @@ test("a release waits for the exact npm version instead of packing the checkout"
 });
 
 test("a release fails clearly when npm never serves the exact version", () => {
-	const setup = fixture(61);
+	const setup = fixture(181);
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 1);
@@ -114,7 +114,7 @@ test("a release waits for the tarball even when npm lists the version", () => {
 	try {
 		const result = spawnSync(SCRIPT, { env: setup.env, encoding: "utf8" });
 		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/60\)/);
+		assert.match(result.stdout, /waiting for npm to serve spool\.page@9\.8\.7 \(2\/180\)/);
 		assert.equal(readFileSync(join(setup.directory, "tarball-attempts"), "utf8").trim(), "3");
 		assert.throws(() => readFileSync(setup.packLog));
 	} finally {
