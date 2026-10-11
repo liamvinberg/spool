@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { CloudTeam, TeamPeople } from "../../cloud-teams";
+import type { BillingSummary, CloudTeam, TeamPeople } from "../../cloud-teams";
 import { testBrowser } from "../../test-browser";
 import { buildEntry } from "./build-entry";
 
@@ -27,6 +27,21 @@ const PEOPLE: TeamPeople = {
 	invites: [],
 };
 
+const BILLING: BillingSummary = {
+	state: "trial",
+	trialEndsAt: Date.UTC(2026, 9, 25, 12) / 1000,
+	hadTime: true,
+	prices: { currency: "usd", monthly: 2000, yearly: 19200 },
+	plan: null,
+	nextCharge: null,
+	card: null,
+	billingEmail: null,
+	periodEnd: null,
+	cancelAt: null,
+	failingSince: null,
+	lapsesAt: null,
+};
+
 let built: string;
 let entry: { file: string; css: string[] };
 
@@ -43,22 +58,29 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(built, { recursive: true, force: true }));
 
-async function open(path: string): Promise<{ page: Page; asked: string[] }> {
+async function open(path: string): Promise<{ page: Page; asked: string[]; left: string[] }> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const asked: string[] = [];
+	const left: string[] = [];
 	await page.route("**/*", async (route) => {
 		const request = route.request();
 		const url = new URL(request.url());
-		if (url.origin !== APP) return route.abort();
+		if (url.origin !== APP) {
+			if (url.hostname === "checkout.stripe.test") left.push(url.toString());
+			return route.abort();
+		}
 		if (url.pathname.startsWith("/_viewer/")) {
 			const file = join(built, url.pathname.slice("/_viewer/".length));
 			const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "font/woff2";
 			return route.fulfill({ body: readFileSync(file), contentType: type });
 		}
 		if (url.pathname.startsWith("/api/")) {
-			asked.push(`${request.method()} ${url.pathname}`);
+			asked.push(`${request.method()} ${url.pathname}${request.postData() ? ` ${request.postData()}` : ""}`);
+			if (url.pathname === "/api/teams/devosurf/billing/checkout")
+				return route.fulfill({ json: { url: "https://checkout.stripe.test/c/1" } });
 			if (request.method() !== "GET") return route.fulfill({ json: {} });
+			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: BILLING });
 			if (url.pathname === "/api/teams")
 				return route.fulfill({ json: { teams: TEAMS, invites: [], mayCreateTeam: false } });
 			if (url.pathname === "/api/teams/devosurf/projects")
@@ -91,7 +113,7 @@ async function open(path: string): Promise<{ page: Page; asked: string[] }> {
 		});
 	});
 	await page.goto(`${APP}${path}`);
-	return { page, asked };
+	return { page, asked, left };
 }
 
 describe("Home in a browser", () => {
@@ -134,6 +156,32 @@ describe("Home in a browser", () => {
 		const { page, asked } = await open("/devosurf/people");
 		await page.getByRole("button", { name: "Role of sam@devosurf.com" }).click();
 		await page.getByRole("menuitemcheckbox", { name: "Admin" }).click();
-		await expect.poll(() => asked).toContain("PATCH /api/teams/devosurf/members/a2");
+		await expect.poll(() => asked).toContain('PATCH /api/teams/devosurf/members/a2 {"role":"admin"}');
+	});
+
+	it("opens Settings on Billing at /<team>/settings/billing, and goes to Checkout in the same tab", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, asked, left } = await open("/devosurf/settings/billing");
+		await page.getByText("On trial until October 25.").waitFor();
+		expect(await page.getByRole("tab", { name: "Billing" }).getAttribute("aria-selected")).toBe("true");
+		expect(await page.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("false");
+		await page.getByText("sam@devosurf.com").waitFor();
+		expect(await page.locator("[data-billing-total]").textContent()).toBe("$384 a year");
+		if (process.env.SPOOL_BILLING_SHOT) await page.screenshot({ path: process.env.SPOOL_BILLING_SHOT });
+		await page.getByRole("button", { name: "Continue to payment" }).click();
+		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
+		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly"}');
+	});
+
+	it("moves between Settings' tabs at their own addresses", { timeout: 60_000 }, async () => {
+		const { page } = await open("/devosurf/settings");
+		await page.getByText("Delete team").waitFor();
+		await page.getByRole("tab", { name: "Billing" }).click();
+		await page.getByText("On trial until October 25.").waitFor();
+		expect(new URL(page.url()).pathname).toBe("/devosurf/settings/billing");
+		await page.goBack();
+		await page.getByText("Delete team").waitFor();
+		expect(new URL(page.url()).pathname).toBe("/devosurf/settings");
 	});
 });

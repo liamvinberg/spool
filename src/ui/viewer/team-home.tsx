@@ -8,6 +8,7 @@ import type { ListedTeamProject, TeamsSource } from "../team-source";
 import {
 	InviteLine,
 	NewTeamDialog,
+	type SettingsTab,
 	type TeamHere,
 	TeamNav,
 	type TeamPage,
@@ -22,7 +23,8 @@ import { cloudTeams } from "./team-source";
 
 /**
  * What spool.page tells Home in a browser, in a `<script id="spool-home" type="application/json">`: who is signed
- * in. Which team and page it shows is the address: `/<team>`, `/<team>/people`, `/<team>/settings`.
+ * in. Which team and page it shows is the address: `/<team>`, `/<team>/people`, `/<team>/settings` and
+ * `/<team>/settings/billing`.
  */
 export interface HomeConfig {
 	account: string;
@@ -39,16 +41,21 @@ export function readHomeConfig(): HomeConfig {
 export interface HomePlace {
 	team: string;
 	page: TeamPage;
+	/** Settings' tab; General when absent. */
+	tab?: SettingsTab;
 }
 
 export function placeOf(path: string): HomePlace | null {
-	const [team, page, ...rest] = path.split("/").filter(Boolean);
+	const [team, page, tab, ...rest] = path.split("/").filter(Boolean);
 	if (team === undefined || rest.length > 0) return null;
 	if (page === undefined) return { team, page: "projects" };
+	if (page === "settings" && tab === "billing") return { team, page, tab };
+	if (tab !== undefined) return null;
 	return page === "people" || page === "settings" ? { team, page } : null;
 }
 
 export function pathOf(place: HomePlace): string {
+	if (place.page === "settings" && place.tab === "billing") return `/${place.team}/settings/billing`;
 	return place.page === "projects" ? `/${place.team}` : `/${place.team}/${place.page}`;
 }
 
@@ -154,8 +161,12 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 						key={current.id}
 						team={current}
 						origin={ready.origin}
+						tab={place?.tab ?? "general"}
+						onTab={(tab) => go({ team: current.address, page: "settings", tab })}
+						// Stripe's pages come back to /<team>/settings/billing, so they open in this tab
+						onOpen={(url) => location.assign(url)}
 						onChanged={() => void refresh()}
-						onMoved={(address) => go({ team: address, page: "settings" }, true)}
+						onMoved={(address) => go({ team: address, page: "settings", tab: place?.tab ?? "general" }, true)}
 						onDeleted={() => void refresh()}
 					/>
 				) : (

@@ -16,8 +16,9 @@ import { ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
-import { NavItem } from "./primitives/navigation";
+import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
+import { TeamBilling } from "./team-billing";
 import type { TeamsSource } from "./team-source";
 
 /**
@@ -30,6 +31,8 @@ export type ReadyTeams = Extract<CloudTeamsState, { state: "ready" }>;
 /** Where the team pages under it read and change teams: the daemon in the Mac app, spool.page in a browser. */
 export const TeamsSourceContext = createContext<TeamsSource>(daemonTeams);
 export type TeamPage = "projects" | "people" | "settings";
+/** Settings' tabs: General is the team itself; Billing, for admins, is what it pays. */
+export type SettingsTab = "general" | "billing";
 
 export const ROLE_LABEL: Record<TeamRole, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
 
@@ -50,6 +53,10 @@ const SAYS: Record<string, string> = {
 	invite_expired: "That invite has run out. Ask for a new one.",
 	invite_closed: "That invite is no longer open.",
 	signed_out: "Sign in again to reach your teams.",
+	billing_free: "This team is free. There’s nothing to pay.",
+	already_paying: "This team is already paid for.",
+	invalid_billing: "Choose monthly or yearly and try again.",
+	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
 };
 
 export function teamSays(error: unknown): string {
@@ -618,8 +625,57 @@ function InviteForm({
 	);
 }
 
-/** Logo, name, address and Delete team, in that order. Admins only; spool.page refuses anyone else. */
+/**
+ * Settings in two tabs. General: logo, name, address and Delete team, in that order. Billing: what the team pays,
+ * for admins only. spool.page refuses anyone else either way.
+ */
 export function TeamSettingsPage({
+	team,
+	origin,
+	tab = "general",
+	onTab,
+	onOpen,
+	onChanged,
+	onMoved,
+	onDeleted,
+}: {
+	team: CloudTeam;
+	origin: string;
+	tab?: SettingsTab;
+	onTab: (tab: SettingsTab) => void;
+	/** Opens Stripe's Checkout or portal. */
+	onOpen: (url: string) => void;
+	onChanged: () => void;
+	onMoved: (address: string) => void;
+	onDeleted: () => void;
+}) {
+	const admin = team.role === "admin";
+	const shown = admin ? tab : "general";
+	return (
+		<div className="pj-team-settings max-w-[720px]">
+			<header className="pj-heading mb-[28px] flex h-[35px] items-center">
+				<h1 className="type-page font-medium">Settings</h1>
+			</header>
+			{admin && (
+				<Tabs className="mb-[28px]">
+					<Tab selected={shown === "general"} onClick={() => onTab("general")}>
+						General
+					</Tab>
+					<Tab selected={shown === "billing"} onClick={() => onTab("billing")}>
+						Billing
+					</Tab>
+				</Tabs>
+			)}
+			{shown === "billing" ? (
+				<TeamBilling team={team} onOpen={onOpen} />
+			) : (
+				<TeamGeneral team={team} origin={origin} onChanged={onChanged} onMoved={onMoved} onDeleted={onDeleted} />
+			)}
+		</div>
+	);
+}
+
+function TeamGeneral({
 	team,
 	origin,
 	onChanged,
@@ -664,10 +720,7 @@ export function TeamSettingsPage({
 		</div>
 	);
 	return (
-		<div className="pj-team-settings max-w-[720px]">
-			<header className="pj-heading mb-[28px] flex h-[35px] items-center">
-				<h1 className="type-page font-medium">Settings</h1>
-			</header>
+		<div className="pj-team-general">
 			{notice && (
 				<p role="status" className="mb-[14px] type-control">
 					{notice}
@@ -874,6 +927,7 @@ export function useTeamHome(
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
 	const [scope, setScope] = useState<string | null>(shown);
 	const [page, setPage] = useState<TeamPage>("projects");
+	const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 	const [creating, setCreating] = useState(false);
 	const signedIn = account.state === "signed-in" ? account.email : null;
 	const refresh = useCallback(async () => setTeams(await teamActions.list()), [teamActions]);
@@ -894,6 +948,7 @@ export function useTeamHome(
 	const select = (address: string | null) => {
 		setScope(address);
 		setPage("projects");
+		setSettingsTab("general");
 	};
 	if (!ready)
 		return {
@@ -943,7 +998,16 @@ export function useTeamHome(
 		) : undefined;
 	const team = current
 		? {
-				nav: <TeamNav team={current} page={page} onPage={setPage} />,
+				nav: (
+					<TeamNav
+						team={current}
+						page={page}
+						onPage={(to) => {
+							setPage(to);
+							setSettingsTab("general");
+						}}
+					/>
+				),
 				main:
 					page === "people" ? (
 						<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
@@ -952,6 +1016,9 @@ export function useTeamHome(
 							key={current.id}
 							team={current}
 							origin={ready.origin}
+							tab={settingsTab}
+							onTab={setSettingsTab}
+							onOpen={open}
 							onChanged={() => void refresh()}
 							onMoved={(address) => setScope(address)}
 							onDeleted={() => {
