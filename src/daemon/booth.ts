@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { BrowserContext, CDPSession, ConsoleMessage, Page } from "playwright-core";
+import type { BrowserContext, CDPSession, ConsoleMessage, Disposable, Page } from "playwright-core";
 import { COVER_QUALITY, type ColorScheme, type CoverShape, coverShape, SETTLE_BUDGET_MS } from "../cover";
 import {
 	fetchHeadlessShell,
@@ -11,6 +11,7 @@ import {
 import { pageParent } from "../page-path";
 import { settleSource } from "./document";
 import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
+import { VENDOR_REACT_URL } from "./vendor-pins";
 import type { LogEntry } from "./verify-record";
 
 /**
@@ -120,6 +121,83 @@ const COVER_BOOT_MS = 5000;
  * renders nothing still shoots, so running this out is not a failure.
  */
 const SHOT_BOOT_MS = 10_000;
+
+/**
+ * How far a stopped clock runs at a time, during a shot's boot and its seek:
+ * one display frame, so each step runs at most one animation frame.
+ */
+const SEEK_STEP_MS = 16;
+
+/** How long a shot's boot waits on a stopped clock before running it, for a frame whose first render waits on a timer. */
+const STEP_AFTER_MS = 1000;
+
+/** How long a seek leaves for what its last step scheduled on real time, a React render, before the picture. */
+const SEEK_FLUSH_MS = 50;
+
+/**
+ * The marker a shot's watch says its findings with: a frame never logs it, so
+ * the console line is spool's own.
+ */
+const WATCH_MARK = "\u2063spool\u2063";
+
+/**
+ * What a shot watches the frame for, ahead of its document: a WebGL context
+ * lost, and WebGL drawn in software, either of which leaves a canvas black or
+ * stale with nothing in the console. Each is said once, as a console line
+ * carrying WATCH_MARK, read back as a "spool" entry.
+ */
+const WATCH_SOURCE = `(() => {
+	// React's development build asks for its DevTools on every boot otherwise
+	globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__ ??= { isDisabled: true };
+	const warn = console.warn.bind(console);
+	const said = new Set();
+	const say = (text) => { if (!said.has(text)) { said.add(text); warn(${JSON.stringify(WATCH_MARK)} + text); } };
+	addEventListener("webglcontextlost", () => say("WebGL context lost: the canvas shows nothing it drew after this"), true);
+	const software = (gl) => {
+		try {
+			const info = gl.getExtension("WEBGL_debug_renderer_info");
+			const renderer = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+			if (/swiftshader|llvmpipe|softpipe|software/i.test(renderer)) {
+				say("WebGL renders in software here (" + renderer + "): heavy shaders run slowly, and a black canvas may be this browser's limit rather than the frame's");
+			}
+		} catch {}
+	};
+	for (const Canvas of [globalThis.HTMLCanvasElement, globalThis.OffscreenCanvas]) {
+		if (Canvas === undefined) continue;
+		const getContext = Canvas.prototype.getContext;
+		Canvas.prototype.getContext = function (type, ...rest) {
+			const context = getContext.call(this, type, ...rest);
+			if (context !== null && /webgl/.test(String(type))) software(context);
+			return context;
+		};
+	}
+})();`;
+
+/**
+ * A console line as the browser's own console prints it: a first argument
+ * with %s, %d, %o or %c in it takes the arguments after it in their place,
+ * which React's development build relies on for every warning it says.
+ */
+export function formatConsole(args: readonly string[], fallback: string): string {
+	const [format, ...rest] = args;
+	if (format === undefined || !/%[sdifoOc]/.test(format)) return fallback;
+	let next = 0;
+	const text = format.replace(/%([sdifoOc%])/g, (whole, kind: string) => {
+		if (kind === "%") return "%";
+		if (next >= rest.length) return whole;
+		const value = rest[next++] ?? "";
+		return kind === "c" ? "" : value;
+	});
+	return [text, ...rest.slice(next)].join(" ").trimEnd();
+}
+
+function consoleText(message: ConsoleMessage): string {
+	// a handle's preview is its value for a string or a number, which is all a format takes
+	return formatConsole(
+		message.args().map((arg) => arg.toString()),
+		message.text(),
+	);
+}
 
 /** How long a document's fonts may keep a shot waiting (#18). */
 const SHOT_FONTS_MS = 15_000;
@@ -426,6 +504,11 @@ export interface BoothDeps {
 	failed(root: string, frame: string, reason: string): void;
 	/** A sitting for this frame is over, whatever came of it. */
 	finished?(root: string, frame: string): void;
+	/**
+	 * React's development build, which a shot or logs boot loads in place of the
+	 * pinned production one so its errors arrive in words. Covers keep production.
+	 */
+	reactDev?(): Promise<string>;
 	/** The browser; tests hand in their own. */
 	launch?(): Promise<HeadlessShell>;
 	/** The first-run fetch of the pinned shell; tests hand in their own. */
@@ -451,7 +534,7 @@ interface ShotRequest {
 	scale: number;
 	/** Top-to-bottom slices in CSS pixels; one when the frame fits a single image. */
 	tiles: ReadonlyArray<{ y: number; height: number }>;
-	/** A fixed wait after the first commit instead of the settle. */
+	/** How far the frame's own clock is run past its first commit instead of the settle (`seek`). */
 	at?: number | undefined;
 	scenario?: string | undefined;
 }
@@ -498,6 +581,8 @@ interface Tab {
 	entries: LogEntry[];
 	/** Going back to an empty page after a drain; the next sitting waits on it. */
 	parking: Promise<unknown> | undefined;
+	/** The context of its own a tab outside every slot is in, closed with it. */
+	alone: BrowserContext | undefined;
 }
 
 /** What one sitting saw. */
@@ -824,8 +909,13 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 	}
 
-	async function tabFor(slot: number): Promise<Tab> {
-		const existing = tabs.get(slot);
+	/**
+	 * The slot's tab, or with `alone` a tab of a context of its own that is
+	 * never the slot's: a fake clock is the whole context's, and would reach
+	 * every other tab's covers.
+	 */
+	async function tabFor(slot: number, alone = false): Promise<Tab> {
+		const existing = alone ? undefined : tabs.get(slot);
 		if (existing !== undefined) {
 			await existing.parking;
 			existing.parking = undefined;
@@ -842,7 +932,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			throw new LaunchFailure(describe(error), error instanceof HeadlessShellCannotRunError);
 		}
 		try {
-			return await within(openTab(slot, live, shell), ANSWER_MS * 2, "opening a tab");
+			return await within(openTab(slot, live, shell, alone), ANSWER_MS * 2, "opening a tab");
 		} catch {
 			// it started, and has gone away or stopped answering since
 			lose(live);
@@ -850,9 +940,9 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 	}
 
-	async function openTab(slot: number, live: Running, shell: HeadlessShell): Promise<Tab> {
+	async function openTab(slot: number, live: Running, shell: HeadlessShell, alone: boolean): Promise<Tab> {
 		live.context ??= shell.browser.newContext({ viewport: null });
-		const context = await live.context;
+		const context = alone ? await shell.browser.newContext({ viewport: null }) : await live.context;
 		const page = await context.newPage();
 		const cdp = await context.newCDPSession(page);
 		const { targetInfo } = (await cdp.send("Target.getTargetInfo")) as { targetInfo: { targetId: string } };
@@ -866,6 +956,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			errors: [],
 			entries: [],
 			parking: undefined,
+			alone: alone ? context : undefined,
 		};
 		page.on("pageerror", (error) => {
 			// the stack, which a shot reads back to the frame's files (`stack-map.ts`)
@@ -874,14 +965,14 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			tab.entries.push({ type: "pageerror", text });
 		});
 		if (live.ended !== undefined) throw new BrowserLost();
-		tabs.set(slot, tab);
+		if (!alone) tabs.set(slot, tab);
 		return tab;
 	}
 
 	/** A tab that failed a sitting, or has taken its share, is closed rather than trusted with the next. */
 	function retire(slot: number, tab: Tab): void {
 		if (tabs.get(slot) === tab) tabs.delete(slot);
-		void tab.page.close().catch(() => {});
+		void (tab.alone ?? tab.page).close().catch(() => {});
 	}
 
 	/**
@@ -1141,15 +1232,26 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const origin = deps.origin();
 		if (origin === undefined) throw new Error("the daemon is not listening yet");
 		const { request } = pending;
-		const tab = await tabFor(slot);
+		// a shot that runs the frame's clocks fakes them for its whole context
+		const tab = await tabFor(slot, request.at !== undefined);
 		// the console is a shot's to keep, and only a shot's: a frame logging every
 		// tick would otherwise cost every cover the serialization of every line
-		const onConsole = (message: ConsoleMessage) => tab.entries.push({ type: message.type(), text: message.text() });
+		const onConsole = (message: ConsoleMessage) => {
+			const text = consoleText(message);
+			// what the shot's own watch saw (`WATCH_SOURCE`), said as spool's
+			if (text.startsWith(WATCH_MARK)) tab.entries.push({ type: "spool", text: text.slice(WATCH_MARK.length) });
+			else tab.entries.push({ type: message.type(), text });
+		};
 		tab.page.on("console", onConsole);
+		let watch: Disposable | undefined;
 		try {
 			const url = frameUrl(origin, request.project, request.frame, request.scenario);
 			const ms = timing.shotMs + (request.at ?? 0);
-			return await underDeadline(slot, tab, ms, "booting", sitShot(tab, url, request));
+			const shot = (async () => {
+				watch = await shotOnly(tab);
+				return await sitShot(tab, url, request);
+			})();
+			return await underDeadline(slot, tab, ms, "booting", shot);
 		} catch (error) {
 			if (error instanceof LaunchFailure || error instanceof TimedOut) throw error;
 			if (error instanceof BrowserLost || (await browserGone(tab))) {
@@ -1159,20 +1261,61 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			throw error;
 		} finally {
 			tab.page.off("console", onConsole);
+			// a tab of its own leaves with its shot; the slot's tab loses only the
+			// shot's own additions, and goes on making covers as it was
+			if (tab.alone !== undefined) retire(slot, tab);
+			else if (tabs.get(slot) === tab) await leaveShot(tab, watch).catch(() => retire(slot, tab));
 		}
+	}
+
+	/**
+	 * What only a shot's boot gets, ahead of its document: React's development
+	 * build, and the watch that says when the frame's WebGL is lost or drawn in
+	 * software. Answers the watch, for `leaveShot` to take away.
+	 */
+	async function shotOnly(tab: Tab): Promise<Disposable> {
+		const reactDev = deps.reactDev;
+		if (reactDev !== undefined) {
+			await tab.page.route(`**${VENDOR_REACT_URL}`, async (route) => {
+				try {
+					await route.fulfill({
+						status: 200,
+						headers: {
+							"content-type": "text/javascript; charset=utf-8",
+							"access-control-allow-origin": "*",
+							"cache-control": "no-store",
+						},
+						body: await reactDev(),
+					});
+				} catch {
+					await route.continue().catch(() => {});
+				}
+			});
+		}
+		return await tab.page.addInitScript({ content: WATCH_SOURCE });
+	}
+
+	async function leaveShot(tab: Tab, watch: Disposable | undefined): Promise<void> {
+		if (deps.reactDev !== undefined) await tab.page.unroute(`**${VENDOR_REACT_URL}`);
+		await watch?.dispose();
 	}
 
 	/** One boot for an agent: the shot's slices, the console, and how tall the content ran. */
 	async function sitShot(tab: Tab, url: string, request: ShotRequest): Promise<ShotResult> {
 		const taken = await prepare(tab, { width: request.width, height: request.height, scale: request.scale });
+		const { at } = request;
+		if (at !== undefined) await stopClocks(tab);
 		const response = await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
 		if (response !== null && response.status() >= 500) return { kind: "unserved", status: response.status() };
 		const world = await isolatedWorld(tab);
 		// frames are blank until React commits (#16); one that renders nothing
-		// is legitimate, so running this out still shoots what is there
-		await booted(tab, world, SHOT_BOOT_MS, false);
-		if (request.at === undefined) await settled(tab, world);
-		else await pause(request.at);
+		// is legitimate, so running this out still shoots what is there. A
+		// stopped clock is run alongside, for a frame whose first render waits on
+		// a timer, and stopped again the moment it commits
+		const step = at === undefined ? undefined : () => tab.page.clock.runFor(SEEK_STEP_MS);
+		await booted(tab, world, SHOT_BOOT_MS, false, step);
+		if (at === undefined) await settled(tab, world);
+		else await seek(tab, world, at);
 		await within(evaluate(tab, world, "document.fonts.ready.then(() => true)"), SHOT_FONTS_MS, "loading fonts").catch(
 			() => {},
 		);
@@ -1218,8 +1361,15 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	}
 
 	/** The frame has drawn something into its root, or the budget ran out, or (for a cover) it threw. */
-	async function booted(tab: Tab, world: number, budgetMs: number, stopOnError: boolean): Promise<boolean> {
-		const deadline = performance.now() + budgetMs;
+	async function booted(
+		tab: Tab,
+		world: number,
+		budgetMs: number,
+		stopOnError: boolean,
+		step?: () => Promise<void>,
+	): Promise<boolean> {
+		const began = performance.now();
+		const deadline = began + budgetMs;
 		let erroredAt: number | undefined;
 		while (performance.now() < deadline) {
 			if ((await evaluate(tab, world, "(document.getElementById('root')?.childElementCount ?? 0) > 0")) === true) {
@@ -1230,9 +1380,58 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 				// a throw is final once the tree has had a beat to commit anyway
 				if (performance.now() - erroredAt > 150) return false;
 			}
+			// a step taken as the frame commits would land its first effects a step
+			// early, so the clock runs only for a frame that has waited a while
+			if (performance.now() - began > STEP_AFTER_MS) await step?.();
 			await pause(16);
 		}
 		return false;
+	}
+
+	/**
+	 * Stops every clock the frame can read, before its document loads, so `--at`
+	 * is a place in the frame's own time rather than a wait: its JavaScript
+	 * clocks (Date, performance.now, timers, requestAnimationFrame) through
+	 * Playwright's fake clock, and its CSS and Web Animations by holding the
+	 * document timeline still. The fake clock is the whole context's, so this is
+	 * only ever a tab of its own (`tabFor`).
+	 */
+	async function stopClocks(tab: Tab): Promise<void> {
+		const now = Date.now();
+		await tab.page.clock.install({ time: now });
+		await tab.page.clock.pauseAt(now);
+		await tab.cdp.send("Animation.enable");
+		await tab.cdp.send("Animation.setPlaybackRate", { playbackRate: 0 });
+	}
+
+	/**
+	 * Runs the frame's stopped clocks `at` ms past its first commit, a step at a
+	 * time, noting the step each animation first appeared at, then sets every
+	 * animation on the document timeline to its own age. The same frame shot at
+	 * the same `at` lands on the same picture, to within a step of its
+	 * JavaScript time, however slow the machine.
+	 */
+	async function seek(tab: Tab, world: number, at: number): Promise<void> {
+		// the first commit's effects, which start the frame's own clocks, run first
+		await pause(SEEK_FLUSH_MS);
+		await evaluate(
+			tab,
+			world,
+			`globalThis.spoolBorn = new WeakMap(); globalThis.spoolTag = (t) => { for (const a of document.getAnimations()) if (!spoolBorn.has(a)) spoolBorn.set(a, t); }; spoolTag(0)`,
+		);
+		for (let ran = 0; ran < at; ) {
+			const step = Math.min(SEEK_STEP_MS, at - ran);
+			await tab.page.clock.runFor(step);
+			ran += step;
+			await evaluate(tab, world, `spoolTag(${ran})`);
+		}
+		await evaluate(
+			tab,
+			world,
+			`for (const a of document.getAnimations()) { if (a.timeline !== document.timeline) continue; try { a.currentTime = ${at} - (spoolBorn.get(a) ?? ${at}); } catch {} }`,
+		);
+		// what the last step scheduled (React's render of it) runs on real time
+		await pause(SEEK_FLUSH_MS);
 	}
 
 	/**

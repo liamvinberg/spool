@@ -172,6 +172,7 @@ import {
 	reactVersion,
 	type VendorModule,
 	vendorPlayerShellJs,
+	vendorReactDevJs,
 	vendorReactJs,
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
@@ -1045,6 +1046,7 @@ export function createDaemonApp({
 		paced: (root, frame, pace) => {
 			if (frameExists(root, frame)) writePace(root, frame, pace);
 		},
+		reactDev: vendorReactDevJs,
 		// The booth compiles every frame of every registered project, where the
 		// canvas only ever compiled the page it showed, and a compiled document
 		// holds the frame's whole bundle and stylesheet. One of a page nobody has

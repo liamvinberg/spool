@@ -44,9 +44,17 @@ function lazyBuild<T>(builder: () => Promise<T>): () => Promise<T> {
 	};
 }
 
-export const vendorReactJs: () => Promise<string> = lazyBuild(buildVendorReact);
+export const vendorReactJs: () => Promise<string> = lazyBuild(() => buildVendorReact("production"));
 
-async function buildVendorReact(): Promise<string> {
+/**
+ * The same React in its development build, which a shot or logs boot loads in
+ * place of the pinned one (`booth.ts`): its errors arrive in words, with the
+ * component that threw, where the production build says only an error number.
+ * Nothing else is ever served it.
+ */
+export const vendorReactDevJs: () => Promise<string> = lazyBuild(() => buildVendorReact("development"));
+
+async function buildVendorReact(mode: "production" | "development"): Promise<string> {
 	const seen = new Set<string>(["default"]);
 	const lines: string[] = [];
 	for (const [i, spec] of REACT_SPECIFIERS.entries()) {
@@ -65,8 +73,9 @@ async function buildVendorReact(): Promise<string> {
 		bundle: true,
 		format: "esm",
 		platform: "browser",
-		minify: true,
-		define: { "process.env.NODE_ENV": '"production"' },
+		// the development build keeps its names, which its warnings and stacks print
+		...(mode === "production" ? { minify: true } : { minifyWhitespace: true, minifySyntax: true }),
+		define: { "process.env.NODE_ENV": JSON.stringify(mode) },
 		write: false,
 		logLevel: "silent",
 	});
