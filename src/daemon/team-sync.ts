@@ -1109,6 +1109,10 @@ export function createTeamSync(deps: {
 				}
 			}
 		},
+		/** Every copy of a team gone local asks at once whether the team pays again, as when it is said to. */
+		recheck(team: string): void {
+			for (const [root, link] of stopped) if (link.team === team) void ask(root);
+		},
 		/** The local copy at a root, while it is followed. */
 		copy: (root: string): LocalCopy | undefined => copies.get(root),
 		/** What a root's canvas says of its sync now: nothing to say for a solo project. */

@@ -1295,6 +1295,24 @@ describe("when a team lapses", () => {
 		reachable();
 		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") !== undefined, 8_000);
 	}, 20_000);
+
+	it("follows the team again as soon as Home reads it paid for, without waiting for the hour", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.lapse();
+		await until(() => said.ben.includes(GONE_LOCAL));
+		writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
+
+		cloud.pay();
+		// an admin paid from this Mac: Home's team list says the team no longer lapsed
+		const teams = (await (await ben.daemon.request("/api/cloud/teams")).json()) as {
+			teams: { billing?: { state: string } }[];
+		};
+		expect(teams.teams[0]?.billing?.state).toBe("paying");
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") !== undefined, 5_000);
+		expect(await syncState(ben.daemon)).toMatchObject({ goneLocal: null });
+	}, 20_000);
 });
 
 describe("the sync socket", () => {

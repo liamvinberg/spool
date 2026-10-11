@@ -3811,7 +3811,17 @@ export function createDaemonApp({
 		.get("/", (c) => serveUiIndex(c))
 		.get("/p/:project", (c) => serveUiIndex(c));
 	// Outside the typed chain, which is as deep as the compiler follows; Home reads these by their exported types.
-	app.route("/api/cloud", cloudTeamRoutes({ spoolDir, cloud }));
+	app.route(
+		"/api/cloud",
+		cloudTeamRoutes({
+			spoolDir,
+			cloud,
+			// a team paid for again, as an admin who just paid from this Mac sees it: its copies here follow it now
+			onTeams: (teams) => {
+				for (const team of teams) if (team.billing?.state !== "lapsed") teamSync.recheck(team.address);
+			},
+		}),
+	);
 	app.route(
 		"/api/cloud",
 		teamProjectRoutes({

@@ -42,7 +42,12 @@ const roleBody = validator("json", (value, c) => {
  * The daemon's side of Home's teams: it holds this Mac's device session, so Home asks it and it asks
  * spool.page. A refusal comes back as spool.page's own reason, for Home to say in its words.
  */
-export function cloudTeamRoutes(options: { spoolDir: string; cloud?: DaemonCloud | undefined }) {
+export function cloudTeamRoutes(options: {
+	spoolDir: string;
+	cloud?: DaemonCloud | undefined;
+	/** The teams this account is in, as just read: a copy gone local asks again once its team no longer lapsed. */
+	onTeams?: (teams: readonly CloudTeam[]) => void;
+}) {
 	const origin = () => originOf(options.cloud);
 	const client = () => cloudTeams(options.spoolDir, { ...options.cloud, origin: origin() });
 	const act = async (c: Context, action: () => Promise<unknown>) => {
@@ -61,6 +66,7 @@ export function cloudTeamRoutes(options: { spoolDir: string; cloud?: DaemonCloud
 				let state: CloudTeamsState;
 				try {
 					state = { state: "ready", ...(await client().list()), origin: origin() };
+					options.onTeams?.(state.teams);
 				} catch (error) {
 					state = error instanceof CloudSignedOut ? { state: "signed-out" } : { state: "unreachable" };
 				}
