@@ -57,7 +57,7 @@ const same = (a: string, b: string, path: string) =>
 	existsSync(join(b, "design", path)) && read(a, path).equals(read(b, path));
 
 /** Ana starts the team project; Ben's clone fetches it; both daemons follow their local copies. */
-async function twoEditors() {
+async function twoEditors(options: Partial<Parameters<typeof makeApp>[1]> = {}) {
 	const cloud = fakeTeam();
 	const ana = cloud.machine("ana");
 	const ben = cloud.machine("ben");
@@ -78,10 +78,12 @@ async function twoEditors() {
 	const anaDaemon = makeApp(anaState, {
 		cloud: ana.cloud,
 		teamNotice: (message) => said.ana.push(message),
+		...options,
 	});
 	const benDaemon = makeApp(benState, {
 		cloud: ben.cloud,
 		teamNotice: (message) => said.ben.push(message),
+		...options,
 	});
 	return {
 		cloud,
@@ -1013,6 +1015,7 @@ describe("a limit", () => {
 			kind: "sync",
 			root: ana.root,
 			paused: "this project took 120 saves in the last minute",
+			unpaid: null,
 		});
 		expect((await card())?.syncPaused).toBe("this project took 120 saves in the last minute");
 		await until(() =>
@@ -1027,6 +1030,7 @@ describe("a limit", () => {
 		// a canvas opened now still says so, for as long as it lasts
 		expect(await syncState(ana.daemon)).toEqual({
 			ended: null,
+			unpaid: null,
 			paused: "this project took 120 saves in the last minute",
 			held: [],
 		});
@@ -1035,8 +1039,8 @@ describe("a limit", () => {
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
 		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 5_000);
 		await until(() => said.ana.includes("Sync resumed."));
-		expect(await syncState(ana.daemon)).toEqual({ ended: null, paused: null, held: [] });
-		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: null });
+		expect(await syncState(ana.daemon)).toEqual({ ended: null, unpaid: null, paused: null, held: [] });
+		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: null, unpaid: null });
 		expect((await card())?.syncPaused).toBeUndefined();
 	});
 });
@@ -1060,7 +1064,7 @@ describe("when a team project ends for a machine", () => {
 			expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
 			expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
 			// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
-			expect(await syncState(ben.daemon)).toEqual({ ended: "devosurf", paused: null, held: [] });
+			expect(await syncState(ben.daemon)).toEqual({ ended: "devosurf", unpaid: null, paused: null, held: [] });
 			const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
 				projects: { root: string; ended?: string }[];
 			};
@@ -1148,6 +1152,85 @@ describe("when a team project ends for a machine", () => {
 		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
 		expect(said.ben.filter((message) => message.includes("signed out"))).toHaveLength(1);
 	});
+});
+
+const GONE_LOCAL = "Devosurf has gone local. Your copy keeps working here and syncs again once the team pays.";
+
+describe("when a team lapses", () => {
+	it("stops the copy without ending it, says so once, and leaves the folder and git as they were", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const link = readFileSync(join(ben.root, "spool.json"), "utf8");
+
+		cloud.lapse();
+		await until(() => said.ben.includes(GONE_LOCAL) && said.ana.includes(GONE_LOCAL));
+		// still a local copy of the team project: out of git, linked, and never ended
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+		expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
+		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")).ended).toBeUndefined();
+		expect(teamProjects(ben.state).map(({ copies }) => copies)).toEqual([[ben.root]]);
+		expect(git(ben.root, "rev-list", "--all", "--count").trim()).toBe("0");
+		// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
+		expect(await syncState(ben.daemon)).toEqual({ ended: null, unpaid: "Devosurf", paused: null, held: [] });
+		const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
+			projects: { root: string; unpaid?: string; team?: { team: string } }[];
+		};
+		const card = listed.projects.find((project) => project.root === ben.root);
+		expect(card?.unpaid).toBe("Devosurf");
+		expect(card?.team?.team).toBe("devosurf");
+
+		// stopped, not retrying: nobody asks again until the hour is up, and nothing Ben makes goes anywhere
+		const asked = cloud.standingAsked();
+		writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
+		await new Promise((wake) => setTimeout(wake, 2_500));
+		expect(cloud.standingAsked()).toBe(asked);
+		expect(cloud.file("checkout", "frames/mine/frame.tsx")).toBeUndefined();
+		expect(read(ben.root, "frames/mine/frame.tsx").toString()).toContain("Mine");
+		expect(said.ben.filter((message) => message === GONE_LOCAL)).toHaveLength(1);
+	}, 20_000);
+
+	it("isn't said again after a restart, and the copy follows the team again once it pays, with what was made meanwhile", async () => {
+		const { cloud, said, ana, ben } = await twoEditors({ teamStandingMs: 300 });
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.lapse();
+		await until(() => said.ben.includes(GONE_LOCAL) && said.ana.includes(GONE_LOCAL));
+		// both keep working while the team is local: Ana changes the home page, Ben makes a page of his own
+		writeFrame(ana.root, "home", "export default () => <h1>Ana's home</h1>;\n");
+		writeFrame(ben.root, "mine", "export default () => <h1>Mine</h1>;\n");
+
+		// Ben's Mac restarts while the team is still local: standing is asked at start, and nothing is said again
+		await ben.daemon.close();
+		const again: string[] = [];
+		const asked = cloud.standingAsked();
+		const restarted = makeApp(ben.state, {
+			cloud: ben.machine.cloud,
+			teamNotice: (message) => again.push(message),
+			teamStandingMs: 300,
+		});
+		await until(() => cloud.standingAsked() > asked);
+		expect(await syncState(restarted)).toMatchObject({ ended: null, unpaid: "Devosurf" });
+		await new Promise((wake) => setTimeout(wake, 500));
+		expect(again).toEqual([]);
+
+		cloud.pay();
+		// asked again on the hour: both copies follow the team again, and catch up as after any time offline
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") !== undefined, 10_000);
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx")?.includes("Ana's home") === true, 10_000);
+		await until(() => same(ben.root, ana.root, "frames/mine/frame.tsx"), 10_000);
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 10_000);
+		// Ben's copy never took the team back to the home page it had: the team kept Ana's newer one
+		expect(read(ben.root, "frames/home/frame.tsx").toString()).toContain("Ana's home");
+		expect(cloud.saves("checkout").filter((save) => save.outcome === "set_aside")).toEqual([]);
+		expect(await syncState(restarted)).toEqual({ ended: null, unpaid: null, paused: null, held: [] });
+		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")).unpaid).toBeUndefined();
+		expect(again).toEqual([]);
+
+		// and it goes on syncing as ever
+		writeFrame(ben.root, "after", "export default () => <h1>After</h1>;\n");
+		await until(() => same(ben.root, ana.root, "frames/after/frame.tsx"), 10_000);
+	}, 40_000);
 });
 
 describe("the sync socket", () => {

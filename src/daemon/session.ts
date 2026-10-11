@@ -31,8 +31,11 @@ export type AppEvent =
 	| { kind: "icon"; root: string; icon: ProjectIcon | null }
 	/** a project's thumbnail file changed: its card takes this one, and its top-left frame again for null */
 	| { kind: "thumbnail"; root: string; thumbnail: ProjectThumbnail | null }
-	/** a team project's local copy paused or resumed its sync: its card takes the reason, null once it lifts */
-	| { kind: "sync"; root: string; paused: string | null }
+	/**
+	 * a team project's local copy paused or resumed its sync, or its team went local or pays again: its card takes the
+	 * reason and the team, null once each lifts
+	 */
+	| { kind: "sync"; root: string; paused: string | null; unpaid: string | null }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.

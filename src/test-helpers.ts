@@ -153,6 +153,8 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 	closeAfterTest(daemon);
 	return {
 		historyNotices,
+		/** Stops the daemon as quitting spool does, before the test ends: what a restart is made of. */
+		close: () => daemon.close(),
 		/** the raw door: no capability is added, so a test can assert one is required */
 		fetch: (input: string, init?: RequestInit) =>
 			daemon.app.fetch(new Request(new URL(input, "http://localhost:7766"), init)),

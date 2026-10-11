@@ -126,7 +126,7 @@ export function App() {
 						name: card?.name ?? basename(root),
 						icon: card?.icon,
 						teamAddress: card?.team?.team,
-						paused: card?.syncPaused !== undefined,
+						paused: card?.syncPaused !== undefined || card?.unpaid !== undefined,
 					};
 				}),
 		[open, byRoot, forgetting],
@@ -300,9 +300,13 @@ export function App() {
 						return setThumbnail(event.root, thumbnail);
 					}
 					if (event.kind === "sync" && typeof event.root === "string") {
-						const paused = (data as { paused?: unknown }).paused;
+						const { paused, unpaid } = data as { paused?: unknown; unpaid?: unknown };
 						return patchCard(event.root, (card) =>
-							withPause(card, typeof paused === "string" ? paused : undefined),
+							withPause(
+								card,
+								typeof paused === "string" ? paused : undefined,
+								typeof unpaid === "string" ? unpaid : undefined,
+							),
 						);
 					}
 					if (
@@ -845,9 +849,13 @@ function withThumbnail(card: ProjectCard, thumbnail: ProjectThumbnail | undefine
 	return thumbnail === undefined ? rest : { ...rest, thumbnail };
 }
 
-function withPause(card: ProjectCard, paused: string | undefined): ProjectCard {
-	const { syncPaused: _was, ...rest } = card;
-	return paused === undefined ? rest : { ...rest, syncPaused: paused };
+function withPause(card: ProjectCard, paused: string | undefined, unpaid: string | undefined): ProjectCard {
+	const { syncPaused: _was, unpaid: _gone, ...rest } = card;
+	return {
+		...rest,
+		...(paused === undefined ? {} : { syncPaused: paused }),
+		...(unpaid === undefined ? {} : { unpaid }),
+	};
 }
 
 function basename(path: string): string {

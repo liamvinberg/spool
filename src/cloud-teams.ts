@@ -222,9 +222,15 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		/** Record the repo a project's code lives in, from a checkout's `origin`. Editors and admins only. */
 		setRepo: (address: string, name: string, repo: string) =>
 			call<CloudTeamProject>("PUT", `${team(address)}/projects/${encodeURIComponent(name)}/repo`, { repo }),
-		/** One team project, and this account's role in its team. */
+		/**
+		 * One team project, and this account's role in its team: what a local copy asks after a close or a refused
+		 * connect. `standing` is `unpaid` while the team has gone local, whatever the role.
+		 */
 		project: (address: string, name: string) =>
-			call<CloudTeamProject & { role: TeamRole }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}`),
+			call<CloudTeamProject & { role: TeamRole; standing?: "unpaid" }>(
+				"GET",
+				`${team(address)}/projects/${encodeURIComponent(name)}`,
+			),
 	};
 }
 

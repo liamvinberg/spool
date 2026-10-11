@@ -5,6 +5,7 @@ import {
 	CANVAS_PATH,
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
+	CLOSE_UNPAID,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
@@ -80,6 +81,10 @@ export function fakeTeam(team = "devosurf") {
 	const away = new Set<string>();
 	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
 	let refusing: number | undefined;
+	/** The team has no paid time left: nobody syncs, and asking says `unpaid`. */
+	let lapsed = false;
+	/** How many times a machine asked where it stands in a project, as a daemon does after a close. */
+	let asked = 0;
 	/** Solo projects whose shares moved into a team project, as spool.page was asked. */
 	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
 	const project = (name: string) => projects.get(name);
@@ -115,7 +120,17 @@ export function fakeTeam(team = "devosurf") {
 				teams:
 					person.role === null
 						? []
-						: [{ id: "t1", address: team, name: "Devosurf", role: person.role, logo: null, people: people.size }],
+						: [
+								{
+									id: "t1",
+									address: team,
+									name: "Devosurf",
+									role: person.role,
+									logo: null,
+									people: people.size,
+									billing: { state: lapsed ? "lapsed" : "paying" },
+								},
+							],
 				invites: [],
 				mayCreateTeam: false,
 			});
@@ -188,7 +203,8 @@ export function fakeTeam(team = "devosurf") {
 			});
 		const found = match[2] === undefined ? undefined : project(match[2]);
 		if (found === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
-		return Response.json({ ...described(found.name), role: person.role });
+		asked++;
+		return Response.json({ ...described(found.name), role: person.role, ...(lapsed ? { standing: "unpaid" } : {}) });
 	}
 
 	function receive(at: Project, from: Connected, data: string | Uint8Array): void {
@@ -389,7 +405,14 @@ export function fakeTeam(team = "devosurf") {
 				},
 			};
 			// refused at the handshake, as the Worker refuses: no code reaches the daemon
-			if (person === undefined || person.revoked || at === undefined || !edits(person) || away.has(person.accountId))
+			if (
+				person === undefined ||
+				person.revoked ||
+				at === undefined ||
+				!edits(person) ||
+				away.has(person.accountId) ||
+				lapsed
+			)
 				connected.close();
 			else if (refusing !== undefined) connected.close(refusing);
 			else {
@@ -471,6 +494,20 @@ export function fakeTeam(team = "devosurf") {
 			projects.delete(name);
 			for (const socket of removed?.sockets ?? []) socket.close(CLOSE_NOT_EDITOR);
 		},
+		/**
+		 * The team lapses, as spool.page's sweep or Stripe ends its paid time: every connection is closed as unpaid,
+		 * new ones are refused before they open, and asking where a machine stands says `unpaid`.
+		 */
+		lapse() {
+			lapsed = true;
+			for (const socket of sockets()) socket.close(CLOSE_UNPAID);
+		},
+		/** The team pays again: sync is let back in. */
+		pay() {
+			lapsed = false;
+		},
+		/** How many times machines have asked where they stand in a project. */
+		standingAsked: () => asked,
 		/** Every save is refused for a limit until `lift`, saying when it may lift. */
 		limit(reason: Limited, retryAfter: number) {
 			limited = { reason, retryAfter };

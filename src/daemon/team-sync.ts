@@ -11,6 +11,7 @@ import {
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNAVAILABLE,
+	CLOSE_UNPAID,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
@@ -54,6 +55,11 @@ interface CopyState {
 	files: Record<string, { version: number; hash: string | null }>;
 	/** The team project ended for this machine, and the folder is an ordinary project here now. */
 	ended?: true;
+	/**
+	 * The team went local (no paid time left): the copy is stopped, not ended, and this is the team's name, said once.
+	 * Gone again when the team pays and the copy follows it again.
+	 */
+	unpaid?: string;
 	/** When this copy last watched design/ for git (ms): whatever git did after it is checked as git's. */
 	watched?: number;
 }
@@ -72,9 +78,10 @@ export interface SyncSocketEvents {
 
 /**
  * Whether this machine still edits a team project, as spool.page says when asked: `not_editor` when the account
- * was removed or made a viewer or the team or project is gone, `unknown` when spool.page can't be reached.
+ * was removed or made a viewer or the team or project is gone, `unpaid` while the team has no paid time left,
+ * `unknown` when spool.page can't be reached.
  */
-export type Standing = "editor" | "not_editor" | "signed_out" | "unknown";
+export type Standing = "editor" | "not_editor" | "unpaid" | "signed_out" | "unknown";
 
 /** The connection itself, swapped by tests for an in-process team. */
 export type OpenSyncSocket = (url: string, token: string, events: SyncSocketEvents) => SyncSocket;
@@ -98,6 +105,8 @@ export interface LocalCopyOptions {
 	standing?: () => Promise<Standing>;
 	/** The project ended for this machine. The copy has stopped; ending it is its owner's. */
 	ended?: () => void;
+	/** The team went local until it pays. The copy has stopped; stopping it is its owner's. */
+	unpaid?: () => void;
 	/**
 	 * A solo project moving into this team project (DEV-190): it has no `spool.json` until the team has every file,
 	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
@@ -107,10 +116,12 @@ export interface LocalCopyOptions {
 
 /**
  * What a project's canvas says of its sync for as long as it lasts, wherever it opens: the team the copy was synced
- * with until it ended here, the limit sync is paused on, and every file that didn't travel and why.
+ * with until it ended here, the team that went local while it isn't paid for, the limit sync is paused on, and every
+ * file that didn't travel and why.
  */
 export interface SyncState {
 	ended: string | null;
+	unpaid: string | null;
 	paused: string | null;
 	held: { path: string; why: string }[];
 }
@@ -247,6 +258,7 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 function closedOnce(code: number | undefined): SpoolError {
 	if (code === CLOSE_SIGNED_OUT) return new SyncRefused("not signed in; run `spool login`");
 	if (code === CLOSE_NOT_EDITOR) return new SyncRefused("you can't edit this team project");
+	if (code === CLOSE_UNPAID) return new SyncRefused("the team has gone local; it syncs again once the team pays");
 	if (code === CLOSE_UNAVAILABLE) return new SyncDropped("spool.page is unavailable");
 	return new SyncDropped("the connection to spool.page dropped");
 }
@@ -712,17 +724,18 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				if (!live) return fail(closedOnce(code));
 				if (code === CLOSE_SIGNED_OUT) signedOut();
 				// cut off, or refused before it opened: spool.page says whether this machine still edits the project
-				if (code === CLOSE_NOT_EDITOR || !opened) return void askStanding();
+				if (code === CLOSE_NOT_EDITOR || code === CLOSE_UNPAID || !opened) return void askStanding();
 				reconnect();
 			},
 		});
 	};
 
-	/** Whether the project ended for this machine; otherwise the copy keeps trying, as it does offline. */
+	/** Whether the project ended for this machine, or its team went local; otherwise it keeps trying, as offline. */
 	const askStanding = async () => {
 		const standing = (await options.standing?.()) ?? "unknown";
 		if (closed) return;
 		if (standing === "not_editor" && options.ended !== undefined) return options.ended();
+		if (standing === "unpaid" && options.unpaid !== undefined) return options.unpaid();
 		if (standing === "signed_out") signedOut();
 		reconnect();
 	};
@@ -877,9 +890,14 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 	};
 }
 
+/** How often a copy stopped because its team went local asks again whether the team pays, besides at start. */
+const UNPAID_ASK_MS = 60 * 60_000;
+
 /**
  * Every team project the daemon has registered, followed for as long as it stays registered. A local copy
- * whose `design/` isn't there yet waits for a fetch to fill it, and one whose project ended is never followed.
+ * whose `design/` isn't there yet waits for a fetch to fill it, and one whose project ended is never followed. One
+ * whose team went local is stopped, not ended: it keeps its link and its files, and asks at start and every hour
+ * whether the team pays again, when it follows the team once more and catches up as after any time offline.
  */
 export function createTeamSync(deps: {
 	spoolDir: string;
@@ -893,19 +911,32 @@ export function createTeamSync(deps: {
 	onMarks?: (root: string) => void;
 	/** A local copy's sync paused on a limit, or the pause lifted. */
 	onSyncChanged?: (root: string) => void;
+	/** A local copy stopped because its team went local, or follows the team again: `state(root).unpaid` says which. */
+	onUnpaid?: (root: string) => void;
+	/** How often a stopped copy asks again whether its team pays: an hour, unless a test can't wait that long. */
+	unpaidAskMs?: number;
 }) {
 	const copies = new Map<string, LocalCopy>();
+	/** Copies stopped because their team went local, by root, with the link each keeps. */
+	const stopped = new Map<string, ProjectLink>();
+	/** Stopped roots whose standing is being asked now. */
+	const asking = new Set<string>();
 	/** Who listens for presence on each root's canvas. */
 	const watchers = new Map<string, Set<(presence: Presence) => void>>();
 	let closed = false;
 	const say = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
+	const requestAt = (origin: string, vault: Pick<CloudVault, "read">) => ({
+		origin,
+		vault,
+		...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+	});
 
 	const standing =
 		(link: ProjectLink, origin: string, vault: Pick<CloudVault, "read">) => async (): Promise<Standing> => {
 			try {
-				const request = { origin, vault, ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }) };
-				const { role } = await cloudTeams(deps.spoolDir, request).project(link.team, link.project);
-				return role === "viewer" ? "not_editor" : "editor";
+				const found = await cloudTeams(deps.spoolDir, requestAt(origin, vault)).project(link.team, link.project);
+				if (found.standing === "unpaid") return "unpaid";
+				return found.role === "viewer" ? "not_editor" : "editor";
 			} catch (error) {
 				if (error instanceof CloudSignedOut) return "signed_out";
 				// not in the team, the team deleted, or the project removed: all answered the same
@@ -913,6 +944,16 @@ export function createTeamSync(deps: {
 				return "unknown";
 			}
 		};
+
+	/** What the team is called, to say it went local: its address when spool.page doesn't say. */
+	const teamName = async (link: ProjectLink, origin: string, vault: Pick<CloudVault, "read">) => {
+		try {
+			const { teams } = await cloudTeams(deps.spoolDir, requestAt(origin, vault)).list();
+			return teams.find((team) => team.address === link.team)?.name ?? link.team;
+		} catch {
+			return link.team;
+		}
+	};
 
 	const end = (root: string, link: ProjectLink) => {
 		copies.get(root)?.close();
@@ -925,6 +966,85 @@ export function createTeamSync(deps: {
 		}
 	};
 
+	/**
+	 * The team went local: the copy stops where it is, with its link, its files and git as they were, and is said
+	 * once, in its record, so a restart doesn't say it again.
+	 */
+	const goneLocal = async (root: string, link: ProjectLink, origin: string, vault: Pick<CloudVault, "read">) => {
+		copies.get(root)?.close();
+		copies.delete(root);
+		stopped.set(root, link);
+		if (unpaidWith(root) === undefined) {
+			const name = await teamName(link, origin, vault);
+			if (closed || stopped.get(root) !== link) return;
+			try {
+				recordUnpaid(root, link, name);
+				say(`${name} has gone local. Your copy keeps working here and syncs again once the team pays.`, root);
+			} catch (error) {
+				say(error instanceof Error ? error.message : String(error), root);
+			}
+		}
+		deps.onUnpaid?.(root);
+	};
+
+	const follow = (root: string, link: ProjectLink) => {
+		try {
+			const origin = deps.origin();
+			const vault = deps.vault(origin);
+			copies.set(
+				root,
+				followLocalCopy({
+					root,
+					origin,
+					vault,
+					...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
+					notice: (message) => say(message, root),
+					standing: standing(link, origin, vault),
+					ended: () => end(root, link),
+					unpaid: () => void goneLocal(root, link, origin, vault),
+					...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
+					...(deps.onSyncChanged === undefined ? {} : { onPaused: () => deps.onSyncChanged?.(root) }),
+					onPresence: (presence) => {
+						for (const watcher of watchers.get(root) ?? []) watcher(presence);
+					},
+				}),
+			);
+		} catch (error) {
+			say(error instanceof Error ? error.message : String(error), root);
+		}
+	};
+
+	/** Whether a stopped copy's team pays again: an editor's copy follows it again, and catches up. */
+	const ask = async (root: string) => {
+		const link = stopped.get(root);
+		if (link === undefined || asking.has(root)) return;
+		asking.add(root);
+		try {
+			const origin = deps.origin();
+			const now = await standing(link, origin, deps.vault(origin))();
+			if (closed || stopped.get(root) !== link) return;
+			if (now === "editor") {
+				stopped.delete(root);
+				recordUnpaid(root, link, undefined);
+				follow(root, link);
+				deps.onUnpaid?.(root);
+			} else if (now === "not_editor") {
+				stopped.delete(root);
+				end(root, link);
+			}
+			// still unpaid, signed out or unreachable: asked again on the hour
+		} catch (error) {
+			say(error instanceof Error ? error.message : String(error), root);
+		} finally {
+			asking.delete(root);
+		}
+	};
+
+	const hourly = setInterval(() => {
+		for (const root of stopped.keys()) void ask(root);
+	}, deps.unpaidAskMs ?? UNPAID_ASK_MS);
+	hourly.unref?.();
+
 	return {
 		keeping(roots: readonly string[]): void {
 			if (closed) return;
@@ -936,32 +1056,16 @@ export function createTeamSync(deps: {
 				copy.close();
 				copies.delete(root);
 			}
+			for (const root of stopped.keys()) if (!wanted.includes(root)) stopped.delete(root);
 			for (const root of wanted) {
-				if (copies.has(root)) continue;
-				try {
-					const origin = deps.origin();
-					const vault = deps.vault(origin);
-					const link = followedLink(root);
-					if (link === undefined) continue;
-					copies.set(
-						root,
-						followLocalCopy({
-							root,
-							origin,
-							vault,
-							...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
-							notice: (message) => say(message, root),
-							standing: standing(link, origin, vault),
-							ended: () => end(root, link),
-							...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
-							...(deps.onSyncChanged === undefined ? {} : { onPaused: () => deps.onSyncChanged?.(root) }),
-							onPresence: (presence) => {
-								for (const watcher of watchers.get(root) ?? []) watcher(presence);
-							},
-						}),
-					);
-				} catch (error) {
-					say(error instanceof Error ? error.message : String(error), root);
+				if (copies.has(root) || stopped.has(root)) continue;
+				const link = followedLink(root);
+				if (link === undefined) continue;
+				if (unpaidWith(root) === undefined) follow(root, link);
+				else {
+					// stopped in an earlier run: asked again now, at start, rather than connecting to be refused
+					stopped.set(root, link);
+					void ask(root);
 				}
 			}
 		},
@@ -970,6 +1074,7 @@ export function createTeamSync(deps: {
 		/** What a root's canvas says of its sync now: nothing to say for a solo project. */
 		state: (root: string): SyncState => ({
 			ended: endedWith(root) ?? null,
+			unpaid: unpaidWith(root) ?? null,
 			...(copies.get(root)?.state() ?? { paused: null, held: [] }),
 		}),
 		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
@@ -983,8 +1088,10 @@ export function createTeamSync(deps: {
 		},
 		close(): void {
 			closed = true;
+			clearInterval(hourly);
 			for (const copy of copies.values()) copy.close();
 			copies.clear();
+			stopped.clear();
 		},
 	};
 }
@@ -1001,7 +1108,8 @@ export function endLocalCopy(root: string, link: ProjectLink): void {
 	writeAtomic(join(designDir, ".gitignore"), SOLO_GITIGNORE);
 	const stateFile = join(designDir, ".spool", "sync.json");
 	// the link the copy was followed by: a branch checked out now may have no spool.json
-	const state: CopyState = { ...readState(stateFile, link.url), ended: true };
+	const { unpaid: _, ...kept } = readState(stateFile, link.url);
+	const state: CopyState = { ...kept, ended: true };
 	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 }
 
@@ -1015,6 +1123,22 @@ export function resumeLocalCopy(root: string): void {
 	const { ended: _, ...state } = JSON.parse(readFileSync(stateFile, "utf8")) as CopyState;
 	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 	writeAtomic(join(designDir, ".gitignore"), TEAM_GITIGNORE);
+}
+
+/**
+ * Say in a local copy's record that its team went local, with the team's name, or with none that it pays again. Only
+ * the record changes: the folder, its `.gitignore`, `spool.json` and git stay as they are.
+ */
+function recordUnpaid(root: string, link: ProjectLink, team: string | undefined): void {
+	const stateFile = join(realDesignDir(root), ".spool", "sync.json");
+	const { unpaid: _, ...state } = readState(stateFile, link.url);
+	writeAtomic(stateFile, `${JSON.stringify(team === undefined ? state : { ...state, unpaid: team })}\n`);
+}
+
+/** The team a local copy is stopped for while it has gone local: what its canvas and its cover say meanwhile. */
+export function unpaidWith(root: string): string | undefined {
+	const record = copyRecord(root);
+	return record?.ended !== true && typeof record?.unpaid === "string" ? record.unpaid : undefined;
 }
 
 /** Whether a local copy's team project ended for this machine. */

@@ -200,6 +200,11 @@ export const SAVES_PER_MONTH = 30_000;
 export const CLOSE_INVALID = 4400;
 /** Its device session was revoked or has expired. */
 export const CLOSE_SIGNED_OUT = 4401;
+/**
+ * The team has no paid time left and has gone local: its copies stop without ending, keep their link, and ask again
+ * later. A new connection to such a team is refused before it opens, with 402.
+ */
+export const CLOSE_UNPAID = 4402;
 /** The account no longer edits this team project, or it is gone. A browser watching a canvas: no longer a member. */
 export const CLOSE_NOT_EDITOR = 4403;
 /** The daemon speaks another `PROTOCOL_VERSION`. */

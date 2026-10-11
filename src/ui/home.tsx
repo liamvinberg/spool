@@ -786,6 +786,7 @@ function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: 
 	const when = [
 		team?.name,
 		project.syncPaused !== undefined && "sync paused",
+		project.unpaid !== undefined && "gone local",
 		relativeTime(project.openedAt),
 		project.ended !== undefined && `no longer synced with ${project.ended}`,
 	];
