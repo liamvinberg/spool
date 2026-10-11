@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.37.1
+
+### Patch Changes
+
+- 6cbe664: Home's sidebar no longer has its own Settings at the foot. The gear at the top right and ⌘, open settings from anywhere, so a team's Settings is the only one in the sidebar.
+
 ## 0.37.0
 
 ### Minor Changes
