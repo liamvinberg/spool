@@ -34,14 +34,18 @@ const LAPSED: BillingSummary = {
 	lapsesAt: null,
 };
 
-const team = (role: CloudTeam["role"], state: NonNullable<CloudTeam["billing"]>["state"] = "lapsed"): CloudTeam => ({
+const team = (
+	role: CloudTeam["role"],
+	state: NonNullable<CloudTeam["billing"]>["state"] = "lapsed",
+	hadTime?: boolean,
+): CloudTeam => ({
 	id: "t",
 	address: "tidemark",
 	name: "Tidemark",
 	role,
 	logo: null,
 	people: 4,
-	billing: { state },
+	billing: { state, ...(hadTime === undefined ? {} : { hadTime }) },
 });
 
 function home(fake: ReturnType<typeof fakeTeamsSource>, shown: CloudTeam) {
@@ -162,6 +166,24 @@ it("asks nothing of an admin whose team never had time: it is paid for from Bill
 	await settle();
 	expect(dialog(host)).toBeNull();
 	expect(host.querySelector(".pj-gone-local")).toBeNull();
+	// the team list says so too: then billing isn't even read
+	const listed = fakeTeamsSource({ teams: [team("admin", "lapsed", false)], people: PEOPLE, billing: LAPSED });
+	const again = home(listed, team("admin", "lapsed", false));
+	await settle();
+	expect(dialog(again.host)).toBeNull();
+	expect(listed.asked).toEqual([]);
+});
+
+it("tells editors and viewers of a team that never had time that it isn't paid for yet", async () => {
+	for (const role of ["editor", "viewer"] as const) {
+		const fake = fakeTeamsSource({ teams: [team(role, "lapsed", false)], people: PEOPLE });
+		const { host } = home(fake, team(role, "lapsed", false));
+		await settle();
+		expect(host.querySelector(".pj-gone-local")?.textContent).toBe(
+			"Tidemark isn’t paid for yet. Ask an admin to pay for it to sync.",
+		);
+		expect(fake.asked).toEqual([]);
+	}
 });
 
 it("tells editors and viewers in one line, and never reads billing for them", async () => {

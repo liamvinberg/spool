@@ -11,13 +11,17 @@ import { TeamsSourceContext, teamSays } from "./teams";
  */
 export function TeamLapsed({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
 	if (team.billing?.state !== "lapsed") return null;
-	if (team.role === "admin") return <TrialEndDialog key={team.address} team={team} onOpen={onOpen} />;
+	const hadTime = team.billing.hadTime !== false;
+	// a team that never had time is paid for from its setup list and Billing
+	if (team.role === "admin") return hadTime ? <TrialEndDialog key={team.address} team={team} onOpen={onOpen} /> : null;
 	return (
 		<p
 			role="status"
 			className="pj-gone-local -mt-[8px] mb-[22px] flex min-h-[48px] items-center border-line-default border-y py-[8px] type-control"
 		>
-			{team.name} has gone local. Ask an admin to pay for it to sync again.
+			{hadTime
+				? `${team.name} has gone local. Ask an admin to pay for it to sync again.`
+				: `${team.name} isn’t paid for yet. Ask an admin to pay for it to sync.`}
 		</p>
 	);
 }

@@ -130,7 +130,7 @@ export function fakeTeam(team = "devosurf") {
 									role: person.role,
 									logo: null,
 									people: people.size,
-									billing: { state: lapsed ? "lapsed" : "paying" },
+									billing: { state: lapsed ? "lapsed" : "paying", hadTime: true },
 								},
 							],
 				invites: [],

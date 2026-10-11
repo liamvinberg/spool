@@ -16,8 +16,12 @@ export interface CloudTeam {
 	role: TeamRole;
 	logo: string | null;
 	people: number;
-	/** Where the team stands with paying, said to every member. Absent from a spool.page that predates billing. */
-	billing?: { state: BillingState };
+	/**
+	 * Where the team stands with paying, said to every member. Absent from a spool.page that predates billing.
+	 * `hadTime` is false for a team that never had a trial or a subscription, so a lapse is "isn't paid for yet"
+	 * rather than "gone local"; a spool.page that doesn't say it means true.
+	 */
+	billing?: { state: BillingState; hadTime?: boolean };
 }
 
 /**
