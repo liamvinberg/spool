@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useContext, useEffect, useState } from "react";
-import type { BillingCycle, BillingSummary, CloudTeam, TeamPeople } from "./api";
+import type { BillingCycle, BillingState, BillingSummary, CloudTeam, TeamPeople } from "./api";
 import { cn } from "./cn";
 import { Button } from "./primitives/actions";
 import { Checkbox, Segment, SegmentedControl } from "./primitives/selection";
@@ -29,13 +29,8 @@ function checkoutPending(address: string): boolean {
 	}
 }
 
-/** This window sent the team to Checkout: Billing waits for Stripe to say it paid when it is opened. */
-export function checkoutStarted(address: string): void {
-	markCheckout(address, true);
-}
-
 /** Marks the team as gone to Checkout from this window, or no longer, so Billing waits for Stripe on its return. */
-export function markCheckout(address: string, pending: boolean) {
+function markCheckout(address: string, pending: boolean) {
 	try {
 		if (pending) sessionStorage.setItem(checkoutKey(address), String(Date.now()));
 		else sessionStorage.removeItem(checkoutKey(address));
@@ -44,8 +39,115 @@ export function markCheckout(address: string, pending: boolean) {
 	}
 }
 
-/** States with no paid time yet, where a Checkout's return is waited for. */
-const UNPAID = new Set<BillingSummary["state"]>(["trial", "lapsed"]);
+/**
+ * What each billing state means on screen: `paid` while a subscription pays for the team (its plan and Manage
+ * billing show), `choice` while it has no paid time of its own yet (the payment choice shows, and a Checkout's return
+ * is waited for), and the line Billing opens with. A free team has neither.
+ */
+export const BILLING_STATES: Record<
+	BillingState,
+	{ paid: boolean; choice: boolean; line: (team: CloudTeam, summary: BillingSummary) => ReactNode }
+> = {
+	free: { paid: false, choice: false, line: () => "Free team" },
+	trial: {
+		paid: false,
+		choice: true,
+		line: (_, summary) => (summary.trialEndsAt === null ? null : `On trial until ${day(summary.trialEndsAt)}.`),
+	},
+	paying: { paid: true, choice: false, line: () => null },
+	failing: {
+		paid: true,
+		choice: false,
+		line: (team, summary) =>
+			summary.lapsesAt === null
+				? "The last payment failed. Update the card in Manage billing."
+				: `The last payment failed. Stripe tries the card again until ${day(summary.lapsesAt)}, then ${team.name} goes local. Update the card in Manage billing.`,
+	},
+	ending: {
+		paid: true,
+		choice: false,
+		line: (team, summary) => {
+			const ends = summary.cancelAt ?? summary.periodEnd;
+			return `${ends === null ? "Ends when the paid period does." : `Ends on ${day(ends)}.`} Undo it in Manage billing to keep ${team.name}.`;
+		},
+	},
+	lapsed: {
+		paid: false,
+		choice: true,
+		line: (team, summary) => {
+			if (!summary.hadTime) return `Pay for ${team.name}`;
+			return `${summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.`;
+		},
+	},
+};
+
+/**
+ * One team's billing, for an admin's screen: the summary and People as last read, again on coming back to the
+ * window and, while a Checkout this window opened hasn't shown up, every `pollMs` for a while; paying through
+ * Checkout and managing through Stripe's portal, each opened by the host; and what went wrong, in words. Nobody
+ * else's screen reads it.
+ */
+export function useBilling(team: CloudTeam, onOpen: (url: string) => void, pollMs = CHECKOUT_POLL_MS) {
+	const source = useContext(TeamsSourceContext);
+	const [read, setRead] = useState<{ summary: BillingSummary; people: TeamPeople } | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+	const admin = team.role === "admin";
+	const load = useCallback(async () => {
+		try {
+			const [summary, people] = await Promise.all([source.billing(team.address), source.people(team.address)]);
+			setRead({ summary, people });
+			if (!BILLING_STATES[summary.state].choice) markCheckout(team.address, false);
+			return summary;
+		} catch (error) {
+			setNotice(teamSays(error));
+			return null;
+		}
+	}, [source, team.address]);
+	useEffect(() => {
+		if (!admin) return;
+		let current = true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		// Back from Stripe: read again, and while a Checkout this window opened hasn't shown up, keep reading a while.
+		const wait = (until: number) => {
+			clearTimeout(timer);
+			void load().then((summary) => {
+				if (!current || summary === null || !BILLING_STATES[summary.state].choice) return;
+				if (checkoutPending(team.address) && Date.now() + pollMs < until)
+					timer = setTimeout(() => wait(until), pollMs);
+			});
+		};
+		const back = () => wait(Date.now() + CHECKOUT_WAIT_MS);
+		back();
+		window.addEventListener("focus", back);
+		return () => {
+			current = false;
+			clearTimeout(timer);
+			window.removeEventListener("focus", back);
+		};
+	}, [admin, load, pollMs, team.address]);
+	/** Checkout for the editors kept and the cycle: whether Stripe's page was opened. */
+	const pay = async (editors: string[], cycle: BillingCycle): Promise<boolean> => {
+		setNotice(null);
+		try {
+			const { url } = await source.checkout(team.address, editors, cycle);
+			markCheckout(team.address, true);
+			onOpen(url);
+			return true;
+		} catch (error) {
+			setNotice(teamSays(error));
+			return false;
+		}
+	};
+	const manage = async () => {
+		setNotice(null);
+		try {
+			onOpen((await source.portal(team.address)).url);
+		} catch (error) {
+			setNotice(teamSays(error));
+		}
+	};
+	return { summary: read?.summary ?? null, people: read?.people ?? null, notice, pay, manage };
+}
 
 export function TeamBilling({
 	team,
@@ -60,45 +162,7 @@ export function TeamBilling({
 	cycle?: BillingCycle | undefined;
 	pollMs?: number;
 }) {
-	const source = useContext(TeamsSourceContext);
-	const [summary, setSummary] = useState<BillingSummary | null>(null);
-	const [people, setPeople] = useState<TeamPeople | null>(null);
-	const [notice, setNotice] = useState<string | null>(null);
-	const load = useCallback(async () => {
-		try {
-			const [read, members] = await Promise.all([source.billing(team.address), source.people(team.address)]);
-			setSummary(read);
-			setPeople(members);
-			if (!UNPAID.has(read.state)) markCheckout(team.address, false);
-			return read;
-		} catch (error) {
-			setNotice(teamSays(error));
-			return null;
-		}
-	}, [source, team.address]);
-	useEffect(() => {
-		// billing is an admin's business: nobody else's screen asks for it
-		if (team.role !== "admin") return;
-		let current = true;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		// Back from Stripe: read again, and while a Checkout this window opened hasn't shown up, keep reading a while.
-		const wait = (until: number) => {
-			clearTimeout(timer);
-			void load().then((read) => {
-				if (!current || read === null || !UNPAID.has(read.state)) return;
-				if (checkoutPending(team.address) && Date.now() + pollMs < until)
-					timer = setTimeout(() => wait(until), pollMs);
-			});
-		};
-		const back = () => wait(Date.now() + CHECKOUT_WAIT_MS);
-		back();
-		window.addEventListener("focus", back);
-		return () => {
-			current = false;
-			clearTimeout(timer);
-			window.removeEventListener("focus", back);
-		};
-	}, [load, pollMs, team.address, team.role]);
+	const { summary, people, notice, pay, manage } = useBilling(team, onOpen, pollMs);
 	if (team.role !== "admin") return null;
 	const say = notice && (
 		<p role="status" className="mb-[14px] type-control">
@@ -106,59 +170,23 @@ export function TeamBilling({
 		</p>
 	);
 	if (summary === null || people === null) return say || null;
-	const pay = async (editors: string[], cycle: BillingCycle) => {
-		setNotice(null);
-		try {
-			const { url } = await source.checkout(team.address, editors, cycle);
-			markCheckout(team.address, true);
-			onOpen(url);
-		} catch (error) {
-			setNotice(teamSays(error));
-		}
-	};
-	const manage = async () => {
-		setNotice(null);
-		try {
-			onOpen((await source.portal(team.address)).url);
-		} catch (error) {
-			setNotice(teamSays(error));
-		}
-	};
-	const line = stateLine(team, summary);
+	const { paid, choice, line } = BILLING_STATES[summary.state];
+	const opening = line(team, summary);
 	return (
 		<div className="pj-team-billing flex flex-col">
 			{say}
-			{line && <p className="mb-[22px] text-secondary type-control">{line}</p>}
-			{summary.state === "free" ? null : summary.state === "trial" || summary.state === "lapsed" ? (
-				<PayChoice people={people} prices={summary.prices} cycle={cycle} onPay={pay} />
-			) : (
-				<PaidSummary summary={summary} onManage={manage} />
+			{opening && <p className="mb-[22px] text-secondary type-control">{opening}</p>}
+			{choice && (
+				<PayChoice
+					people={people}
+					prices={summary.prices}
+					cycle={cycle}
+					onPay={async (editors, chosen) => void (await pay(editors, chosen))}
+				/>
 			)}
+			{paid && <PaidSummary summary={summary} onManage={manage} />}
 		</div>
 	);
-}
-
-/** The one line Billing opens with, above the summary or the payment choice. */
-function stateLine(team: CloudTeam, summary: BillingSummary): ReactNode {
-	switch (summary.state) {
-		case "free":
-			return "Free team";
-		case "trial":
-			return summary.trialEndsAt === null ? null : `On trial until ${day(summary.trialEndsAt)}.`;
-		case "failing":
-			return summary.lapsesAt === null
-				? "The last payment failed. Update the card in Manage billing."
-				: `The last payment failed. Stripe tries the card again until ${day(summary.lapsesAt)}, then ${team.name} goes local. Update the card in Manage billing.`;
-		case "ending": {
-			const ends = summary.cancelAt ?? summary.periodEnd;
-			return `${ends === null ? "Ends when the paid period does." : `Ends on ${day(ends)}.`} Undo it in Manage billing to keep ${team.name}.`;
-		}
-		case "lapsed":
-			if (!summary.hadTime) return `Pay for ${team.name}`;
-			return `${summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.`;
-		default:
-			return null;
-	}
 }
 
 /**

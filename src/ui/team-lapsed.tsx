@@ -1,10 +1,9 @@
-import { type ReactNode, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { BillingCycle, BillingSummary, CloudTeam, TeamPeople } from "./api";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type { CloudTeam } from "./api";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { Button } from "./primitives/actions";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./primitives/overlays";
-import { checkoutStarted, PayChoice } from "./team-billing";
-import { TeamsSourceContext, teamSays } from "./teams";
+import { PayChoice, useBilling } from "./team-billing";
 
 /**
  * A lapsed team's Home: it has no paid time left and has gone local. Its admins get one dialog to pay for it again,
@@ -33,44 +32,24 @@ export function TeamLapsed({ team, onOpen }: { team: CloudTeam; onOpen: (url: st
  * closed while the team's Projects page is up, and comes back the next time it opens.
  */
 function TrialEndDialog({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
-	const source = useContext(TeamsSourceContext);
-	const [read, setRead] = useState<{ summary: BillingSummary; people: TeamPeople } | null>(null);
+	const { summary, people, notice, pay } = useBilling(team, onOpen);
 	const [closed, setClosed] = useState(false);
-	const [notice, setNotice] = useState<string | null>(null);
-	useEffect(() => {
-		if (closed) return;
-		let current = true;
-		void Promise.all([source.billing(team.address), source.people(team.address)]).then(
-			([summary, people]) => {
-				if (current) setRead({ summary, people });
-			},
-			() => {},
-		);
-		return () => {
-			current = false;
-		};
-	}, [source, team.address, closed]);
-	if (closed || read === null || read.summary.state !== "lapsed" || !read.summary.hadTime) return null;
+	if (closed || summary === null || people === null || summary.state !== "lapsed" || !summary.hadTime) return null;
 	const close = () => setClosed(true);
-	const pay = async (editors: string[], cycle: BillingCycle) => {
-		setNotice(null);
-		try {
-			const { url } = await source.checkout(team.address, editors, cycle);
-			checkoutStarted(team.address);
-			close();
-			onOpen(url);
-		} catch (error) {
-			setNotice(teamSays(error));
-		}
-	};
 	return (
 		<Modal
-			title={read.summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}
+			title={summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}
 			description="Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer."
 			onClose={close}
 		>
 			<DialogBody notice={notice}>
-				<PayChoice people={read.people} prices={read.summary.prices} onPay={pay} />
+				<PayChoice
+					people={people}
+					prices={summary.prices}
+					onPay={async (editors, cycle) => {
+						if (await pay(editors, cycle)) close();
+					}}
+				/>
 			</DialogBody>
 			<DialogFooter>
 				<Button variant="ghost" onClick={close}>

@@ -19,7 +19,7 @@ import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
-import { money, TeamBilling } from "./team-billing";
+import { BILLING_STATES, money, TeamBilling } from "./team-billing";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
 import { type OwnProject, SetUpToast, type SetupHost, TeamSetupList } from "./team-setup";
@@ -561,7 +561,7 @@ function headcount(people: TeamPeople, admin: boolean): string {
  */
 function seatCost(billing: PeopleBilling | undefined, role: TeamRole, email: string): string | null {
 	if (!billing || role === "viewer" || billing.cycle === null || billing.seatPrice === null) return null;
-	if (billing.state !== "paying" && billing.state !== "failing" && billing.state !== "ending") return null;
+	if (!BILLING_STATES[billing.state].paid) return null;
 	const local = email.trim().split("@")[0] ?? "";
 	const who = local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "they";
 	const when =

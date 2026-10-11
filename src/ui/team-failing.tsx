@@ -1,8 +1,7 @@
-import { useContext, useEffect, useState } from "react";
-import type { BillingSummary, CloudTeam } from "./api";
+import { useState } from "react";
+import type { CloudTeam } from "./api";
 import { Button } from "./primitives/actions";
-import { day } from "./team-billing";
-import { TeamsSourceContext, teamSays } from "./teams";
+import { day, useBilling } from "./team-billing";
 
 /**
  * A failing team's Home, for its admins: the last payment failed and Stripe is trying the card again. Everything
@@ -15,37 +14,9 @@ export function TeamFailing({ team, onOpen }: { team: CloudTeam; onOpen: (url: s
 }
 
 function FailingLine({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
-	const source = useContext(TeamsSourceContext);
-	const [summary, setSummary] = useState<BillingSummary | null>(null);
+	const { summary, notice, manage } = useBilling(team, onOpen);
 	const [busy, setBusy] = useState(false);
-	const [notice, setNotice] = useState<string | null>(null);
-	useEffect(() => {
-		let current = true;
-		void source.billing(team.address).then(
-			(read) => {
-				if (current) setSummary(read);
-			},
-			() => {},
-		);
-		return () => {
-			current = false;
-		};
-	}, [source, team.address]);
 	if (summary === null || summary.state !== "failing") return null;
-	const manage = () => {
-		setBusy(true);
-		setNotice(null);
-		source.portal(team.address).then(
-			({ url }) => {
-				setBusy(false);
-				onOpen(url);
-			},
-			(error: unknown) => {
-				setNotice(teamSays(error));
-				setBusy(false);
-			},
-		);
-	};
 	return (
 		<div
 			role="status"
@@ -59,7 +30,13 @@ function FailingLine({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) 
 					: `Update the card before ${day(summary.lapsesAt)} to keep it syncing.`}
 				{notice && <span className="text-secondary"> {notice}</span>}
 			</span>
-			<Button disabled={busy} onClick={manage}>
+			<Button
+				disabled={busy}
+				onClick={() => {
+					setBusy(true);
+					void manage().finally(() => setBusy(false));
+				}}
+			>
 				Manage billing
 			</Button>
 		</div>

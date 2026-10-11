@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { BillingCycle, BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "./api";
+import type { BillingCycle, CloudTeam, TeamSetup } from "./api";
 import { cn } from "./cn";
 import { DOWNLOAD_URL } from "./desktop-bridge";
 import { handoverAddress, knock } from "./handover";
@@ -8,7 +8,7 @@ import { Button } from "./primitives/actions";
 import { TextAction, Toast } from "./primitives/feedback";
 import { TextField } from "./primitives/inputs";
 import { Segment, SegmentedControl } from "./primitives/selection";
-import { markCheckout, PayChoice } from "./team-billing";
+import { PayChoice, useBilling } from "./team-billing";
 import { TeamsSourceContext, teamSays } from "./teams";
 
 /**
@@ -203,24 +203,7 @@ export function TeamSetupList({
 
 /** An account whose trial is used pays first: Billing's own choice, in the list. */
 function PayStep({ team, host }: { team: CloudTeam; host: SetupHost }) {
-	const source = useContext(TeamsSourceContext);
-	const [summary, setSummary] = useState<BillingSummary | null>(null);
-	const [people, setPeople] = useState<TeamPeople | null>(null);
-	const [notice, setNotice] = useState<string | null>(null);
-	useEffect(() => {
-		let current = true;
-		void Promise.all([source.billing(team.address), source.people(team.address)]).then(
-			([read, members]) => {
-				if (!current) return;
-				setSummary(read);
-				setPeople(members);
-			},
-			(error: unknown) => current && setNotice(teamSays(error)),
-		);
-		return () => {
-			current = false;
-		};
-	}, [source, team.address]);
+	const { summary, people, notice, pay } = useBilling(team, host.onOpen);
 	return (
 		<div className="flex flex-col gap-[16px]">
 			<p className="text-secondary type-control">This account has had its trial, so {team.name} starts paid.</p>
@@ -235,16 +218,7 @@ function PayStep({ team, host }: { team: CloudTeam; host: SetupHost }) {
 					people={people}
 					prices={summary.prices}
 					cycle={host.cycle}
-					onPay={async (editors, cycle) => {
-						setNotice(null);
-						try {
-							const { url } = await source.checkout(team.address, editors, cycle);
-							markCheckout(team.address, true);
-							host.onOpen(url);
-						} catch (error) {
-							setNotice(teamSays(error));
-						}
-					}}
+					onPay={async (editors, cycle) => void (await pay(editors, cycle))}
 				/>
 			)}
 		</div>
