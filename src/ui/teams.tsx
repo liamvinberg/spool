@@ -562,7 +562,8 @@ function headcount(people: TeamPeople, admin: boolean): string {
 function seatCost(billing: PeopleBilling | undefined, role: TeamRole, email: string): string | null {
 	if (!billing || role === "viewer" || billing.cycle === null || billing.seatPrice === null) return null;
 	if (!BILLING_STATES[billing.state].paid) return null;
-	const local = email.trim().split("@")[0] ?? "";
+	// the name before the address's first `.`, `_` or `+`: noor.k@ is Noor
+	const local = email.trim().split("@")[0]?.split(/[._+]/u)[0] ?? "";
 	const who = local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "they";
 	const when =
 		billing.cycle === "yearly"

@@ -113,6 +113,21 @@ it("tells an admin of a yearly team how many seats it pays for and what an edito
 	);
 });
 
+it("names the invitee by their address's first name, up to a dot, underscore or plus", async () => {
+	const host = mount(source("admin", MONTHLY), "admin");
+	await settle();
+	for (const [email, name] of [
+		["noor.k@tidemark.app", "Noor"],
+		["sam_li@tidemark.app", "Sam"],
+		["mira+work@tidemark.app", "Mira"],
+	]) {
+		type(host, email);
+		expect(costLine(host)).toBe(
+			`An editor is one more seat: $20 a month, added to the next invoice once ${name} joins.`,
+		);
+	}
+});
+
 it("says a monthly team's editor goes on the next invoice", async () => {
 	const host = mount(source("admin", MONTHLY), "admin");
 	await settle();
