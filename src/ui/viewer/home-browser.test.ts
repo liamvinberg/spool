@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { BillingSummary, CloudTeam, TeamPeople } from "../../cloud-teams";
+import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../../cloud-teams";
 import { testBrowser } from "../../test-browser";
 import { buildEntry } from "./build-entry";
 
@@ -58,7 +58,10 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(built, { recursive: true, force: true }));
 
-async function open(path: string): Promise<{ page: Page; asked: string[]; left: string[] }> {
+async function open(
+	path: string,
+	answers: { setup?: TeamSetup; billing?: BillingSummary } = {},
+): Promise<{ page: Page; asked: string[]; left: string[] }> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const asked: string[] = [];
@@ -79,8 +82,12 @@ async function open(path: string): Promise<{ page: Page; asked: string[]; left: 
 			asked.push(`${request.method()} ${url.pathname}${request.postData() ? ` ${request.postData()}` : ""}`);
 			if (url.pathname === "/api/teams/devosurf/billing/checkout")
 				return route.fulfill({ json: { url: "https://checkout.stripe.test/c/1" } });
+			if (url.pathname === "/api/teams/devosurf/setup" && answers.setup)
+				return route.fulfill({ json: answers.setup });
+			if (url.pathname === "/api/teams/devosurf/setup/done" && answers.setup)
+				return route.fulfill({ json: { ...answers.setup, done: true } });
 			if (request.method() !== "GET") return route.fulfill({ json: {} });
-			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: BILLING });
+			if (url.pathname === "/api/teams/devosurf/billing") return route.fulfill({ json: answers.billing ?? BILLING });
 			if (url.pathname === "/api/teams")
 				return route.fulfill({ json: { teams: TEAMS, invites: [], mayCreateTeam: false } });
 			if (url.pathname === "/api/teams/devosurf/projects")
@@ -183,5 +190,48 @@ describe("Home in a browser", () => {
 		await page.goBack();
 		await page.getByText("Delete team").waitFor();
 		expect(new URL(page.url()).pathname).toBe("/devosurf/settings");
+	});
+
+	it("shows a new team's setup list, starting its payment choice on the cycle spool.page/start passed on", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, asked, left } = await open("/devosurf?cycle=monthly", {
+			setup: {
+				done: false,
+				steps: { named: { address: "devosurf" }, pay: { paid: false }, invited: null, mac: null, moved: null },
+			},
+			billing: { ...BILLING, state: "lapsed", trialEndsAt: null, hadTime: false },
+		});
+		await page.getByRole("heading", { name: "Set up Devosurf" }).waitFor();
+		expect(await page.locator("[data-step=named]").textContent()).toContain("cloud.test/devosurf");
+		const pay = page.locator("[data-step=pay]");
+		expect(await pay.getAttribute("data-state")).toBe("current");
+		await pay.getByText("This account has had its trial, so Devosurf starts paid.").waitFor();
+		await pay.getByText("sam@devosurf.com").waitFor();
+		expect(await pay.getByRole("radio", { name: "monthly · $20" }).isChecked()).toBe(true);
+		if (process.env.SPOOL_SETUP_SHOT) await page.screenshot({ path: process.env.SPOOL_SETUP_SHOT });
+		await pay.getByRole("button", { name: "Continue to payment" }).click();
+		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
+		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"monthly"}');
+	});
+
+	it("says the team is set up once its last step is done, and the list is gone", { timeout: 60_000 }, async () => {
+		const { page, asked } = await open("/devosurf", {
+			setup: {
+				done: false,
+				steps: {
+					named: { address: "devosurf" },
+					pay: null,
+					invited: { editors: 1, viewers: 0 },
+					mac: { email: "vic@devosurf.com" },
+					moved: { project: "checkout" },
+				},
+			},
+		});
+		await page.getByRole("status").getByText("Devosurf is set up").waitFor();
+		expect(asked.filter((line) => line === "POST /api/teams/devosurf/setup/done")).toHaveLength(1);
+		expect(await page.locator(".pj-team-setup").count()).toBe(0);
+		await page.getByRole("button", { name: "Invite more" }).click();
+		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
 	});
 });

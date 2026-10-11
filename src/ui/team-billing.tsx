@@ -29,7 +29,8 @@ function checkoutPending(address: string): boolean {
 	}
 }
 
-function markCheckout(address: string, pending: boolean) {
+/** Marks the team as gone to Checkout from this window, or no longer, so Billing waits for Stripe on its return. */
+export function markCheckout(address: string, pending: boolean) {
 	try {
 		if (pending) sessionStorage.setItem(checkoutKey(address), String(Date.now()));
 		else sessionStorage.removeItem(checkoutKey(address));
@@ -44,11 +45,14 @@ const UNPAID = new Set<BillingSummary["state"]>(["trial", "lapsed"]);
 export function TeamBilling({
 	team,
 	onOpen,
+	cycle,
 	pollMs = CHECKOUT_POLL_MS,
 }: {
 	team: CloudTeam;
 	/** Opens Stripe's page: this tab in a browser, the system browser from the Mac app. */
 	onOpen: (url: string) => void;
+	/** The cycle the payment choice starts on; yearly when not said. */
+	cycle?: BillingCycle | undefined;
 	pollMs?: number;
 }) {
 	const source = useContext(TeamsSourceContext);
@@ -119,7 +123,7 @@ export function TeamBilling({
 			{say}
 			{line && <p className="mb-[22px] text-secondary type-control">{line}</p>}
 			{summary.state === "free" ? null : summary.state === "trial" || summary.state === "lapsed" ? (
-				<PayChoice people={people} prices={summary.prices} onPay={pay} />
+				<PayChoice people={people} prices={summary.prices} cycle={cycle} onPay={pay} />
 			) : (
 				<PaidSummary summary={summary} onManage={manage} />
 			)}
@@ -151,14 +155,20 @@ function stateLine(team: CloudTeam, summary: BillingSummary): ReactNode {
 export function PayChoice({
 	people,
 	prices,
+	cycle: start = "yearly",
+	compact = false,
 	onPay,
 }: {
 	people: TeamPeople;
 	prices: BillingSummary["prices"];
+	/** The cycle it starts on: the landing's, when spool.page/start was given one. */
+	cycle?: BillingCycle | undefined;
+	/** Tighter, inside a list or a dialog. */
+	compact?: boolean;
 	onPay: (editors: string[], cycle: BillingCycle) => Promise<void>;
 }) {
 	const [left, setLeft] = useState<ReadonlySet<string>>(new Set());
-	const [cycle, setCycle] = useState<BillingCycle>("yearly");
+	const [cycle, setCycle] = useState<BillingCycle>(start);
 	const [busy, setBusy] = useState(false);
 	const admins = people.members.filter((person) => person.role === "admin");
 	const editors = people.members.filter((person) => person.role === "editor");
@@ -173,7 +183,7 @@ export function PayChoice({
 		</span>
 	);
 	return (
-		<div className="flex flex-col gap-6">
+		<div className={cn("flex flex-col", compact ? "gap-4" : "gap-6")}>
 			<div className="flex flex-col gap-2">
 				<span className="type-label">Who you pay for</span>
 				<ul className="flex flex-col border-line-default border-b">

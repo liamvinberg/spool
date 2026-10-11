@@ -1,9 +1,10 @@
 import { type ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { AccountFoot } from "../account-foot";
-import type { CloudTeam, CloudTeamsState } from "../api";
+import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
 import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop } from "../home";
 import { MenuItem } from "../primitives/overlays";
 import { ProjectIconView } from "../project-icon";
+import { SetUpToast, type SetupHost } from "../team-setup";
 import type { ListedTeamProject, TeamsSource } from "../team-source";
 import {
 	InviteLine,
@@ -35,6 +36,12 @@ export function readHomeConfig(): HomeConfig {
 	const config = JSON.parse(script?.textContent ?? "null") as Partial<HomeConfig> | null;
 	if (typeof config?.account !== "string") throw new Error("spool home: no config");
 	return { account: config.account };
+}
+
+/** `?cycle=monthly|yearly`, as spool.page/start passes on the landing's choice. */
+export function cycleOf(search: string): BillingCycle | undefined {
+	const cycle = new URLSearchParams(search).get("cycle");
+	return cycle === "monthly" || cycle === "yearly" ? cycle : undefined;
 }
 
 /** Where Home is, read from its address. */
@@ -77,6 +84,11 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 	const [teams, setTeams] = useState<CloudTeamsState | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [joined] = useState(() => new URLSearchParams(location.search).get("joined") === "viewer");
+	// the cycle the landing's switch showed, when spool.page/start sent this team here: the payment choice starts on it
+	const [cycle] = useState(() => cycleOf(location.search));
+	/** The team whose setup list just finished, while its toast shows. */
+	const [setUp, setSetUp] = useState<CloudTeam | null>(null);
+	const dismissSetUp = useCallback(() => setSetUp(null), []);
 	const refresh = useCallback(async () => setTeams(await source.list()), [source]);
 	const go = useCallback((next: HomePlace, replace = false) => {
 		const path = pathOf(next);
@@ -165,6 +177,7 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 						onTab={(tab) => go({ team: current.address, page: "settings", tab })}
 						// Stripe's pages come back to /<team>/settings/billing, so they open in this tab
 						onOpen={(url) => location.assign(url)}
+						cycle={cycle}
 						onChanged={() => void refresh()}
 						onMoved={(address) => go({ team: address, page: "settings", tab: place?.tab ?? "general" }, true)}
 						onDeleted={() => void refresh()}
@@ -173,6 +186,14 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 					<Projects
 						key={current.address}
 						team={current}
+						setup={{
+							on: "browser",
+							you: account,
+							origin: ready.origin,
+							onOpen: (url) => location.assign(url),
+							cycle,
+							onSetUp: setSetUp,
+						}}
 						notice={
 							<>
 								{joined && (
@@ -205,12 +226,22 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 					/>
 				)}
 			</main>
+			{setUp && (
+				<SetUpToast
+					team={setUp}
+					onDismiss={dismissSetUp}
+					onInviteMore={() => {
+						setSetUp(null);
+						go({ team: setUp.address, page: "people" });
+					}}
+				/>
+			)}
 		</HomeShell>
 	);
 }
 
 /** The team's projects, every one of them, each a cover that opens its read-only canvas. */
-function Projects({ team, notice }: { team: CloudTeam; notice: ReactNode }) {
+function Projects({ team, notice, setup }: { team: CloudTeam; notice: ReactNode; setup: SetupHost }) {
 	const source = useContext(TeamsSourceContext);
 	const here = useTeamHere(team.address);
 	const [projects, setProjects] = useState<ListedTeamProject[] | undefined>();
@@ -229,6 +260,7 @@ function Projects({ team, notice }: { team: CloudTeam; notice: ReactNode }) {
 		<TeamProjects
 			team={team}
 			notice={notice}
+			setup={setup}
 			empty={`${team.name} has no projects yet`}
 			covers={
 				projects.length === 0 ? undefined : (

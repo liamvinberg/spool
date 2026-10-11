@@ -84,8 +84,8 @@ export function App() {
 	/** The team New project starts in, while the picker is open for one. */
 	const [pickingTeam, setPickingTeam] = useState<string | undefined>();
 	const [teamMenu, setTeamMenu] = useState<string | null>(null);
-	/** The project "Move to team…" is asking about. */
-	const [moving, setMoving] = useState<{ root: string; name: string } | null>(null);
+	/** The project "Move to team…" is asking about, and the team it goes to when a setup list asked. */
+	const [moving, setMoving] = useState<{ root: string; name: string; team?: string } | null>(null);
 	/** What became of a move's commit, when it wasn't made, until dismissed. */
 	const [moveNote, setMoveNote] = useState<string | null>(null);
 	useEffect(() => {
@@ -581,6 +581,13 @@ export function App() {
 				}}
 			/>
 		),
+		own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
+		onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
+		revision: (address) =>
+			projects
+				.filter((project) => project.team?.team === address)
+				.map((project) => project.root)
+				.join("\n"),
 	});
 	/** "Move to team…", while this account edits in a team; a team project has nowhere to move. */
 	const moveToTeam =
@@ -737,6 +744,7 @@ export function App() {
 
 				{transfer.surface}
 				{icons.surface}
+				{focusedTab === undefined && teamHome.toast}
 				{toast !== null && (
 					<UpdateToastPill
 						toast={toast}
@@ -810,7 +818,11 @@ export function App() {
 				{moving !== null && (
 					<MoveToTeamDialog
 						project={moving}
-						teams={teamHome.editing}
+						teams={
+							moving.team === undefined
+								? teamHome.editing
+								: teamHome.editing.filter((team) => team.address === moving.team)
+						}
 						onMoved={(outcome, team) => {
 							setMoveNote(moveCommitNote(outcome, team) ?? null);
 							void refetch();

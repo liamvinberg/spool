@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
+	type BillingCycle,
 	type CloudAccountState,
 	type CloudTeam,
 	type CloudTeamInvite,
@@ -20,6 +21,7 @@ import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { money, TeamBilling } from "./team-billing";
+import { type OwnProject, SetUpToast, type SetupHost, TeamSetupList } from "./team-setup";
 import type { TeamsSource } from "./team-source";
 
 /**
@@ -310,6 +312,7 @@ export function TeamProjects({
 	covers,
 	away,
 	onNewProject,
+	setup,
 	empty = `${team.name} has no projects on this Mac yet`,
 }: {
 	team: CloudTeam;
@@ -321,7 +324,10 @@ export function TeamProjects({
 	/** The team's projects not on this Mac yet, dimmed with "Get it". */
 	away?: ReactNode;
 	onNewProject?: (() => void) | undefined;
+	/** Where the setup list is drawn, for a new team's admins; no list without it. */
+	setup?: SetupHost | undefined;
 }) {
+	const [listing, setListing] = useState(false);
 	return (
 		<>
 			<header className="pj-heading mb-[31px] flex h-[35px] items-center justify-between gap-[25px]">
@@ -333,8 +339,9 @@ export function TeamProjects({
 				)}
 			</header>
 			{notice}
+			{setup && <TeamSetupList team={team} host={setup} onShowing={setListing} />}
 			{covers ??
-				(away ? null : (
+				(away || listing ? null : (
 					<EmptyState className="min-h-[420px] justify-center p-[35px]" art={<EmptyFrames />} title={empty} />
 				))}
 			{away}
@@ -669,6 +676,7 @@ export function TeamSettingsPage({
 	tab = "general",
 	onTab,
 	onOpen,
+	cycle,
 	onChanged,
 	onMoved,
 	onDeleted,
@@ -679,6 +687,8 @@ export function TeamSettingsPage({
 	onTab: (tab: SettingsTab) => void;
 	/** Opens Stripe's Checkout or portal. */
 	onOpen: (url: string) => void;
+	/** The cycle Billing's payment choice starts on. */
+	cycle?: BillingCycle | undefined;
 	onChanged: () => void;
 	onMoved: (address: string) => void;
 	onDeleted: () => void;
@@ -701,7 +711,7 @@ export function TeamSettingsPage({
 				</Tabs>
 			)}
 			{shown === "billing" ? (
-				<TeamBilling team={team} onOpen={onOpen} />
+				<TeamBilling team={team} onOpen={onOpen} cycle={cycle} />
 			) : (
 				<TeamGeneral team={team} origin={origin} onChanged={onChanged} onMoved={onMoved} onDeleted={onDeleted} />
 			)}
@@ -955,6 +965,12 @@ export function useTeamHome(
 		onNewProject: (team: CloudTeam) => void;
 		/** The team's projects not on this Mac yet, to Get. */
 		away?: (team: CloudTeam, here: TeamHere) => ReactNode;
+		/** This Mac's own projects, which a new team's setup list offers to move in. */
+		own?: readonly OwnProject[];
+		/** Today's Move to team… sheet, for this team. */
+		onMoveIn?: (team: CloudTeam, project: OwnProject) => void;
+		/** Changes when the team's projects on this Mac do, so the setup list reads its facts again. */
+		revision?: (address: string) => string;
 	},
 ) {
 	const teamActions = useContext(TeamsSourceContext);
@@ -963,6 +979,9 @@ export function useTeamHome(
 	const [page, setPage] = useState<TeamPage>("projects");
 	const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 	const [creating, setCreating] = useState(false);
+	/** The team whose setup list just finished, while its toast shows. */
+	const [setUp, setSetUp] = useState<CloudTeam | null>(null);
+	const dismissSetUp = useCallback(() => setSetUp(null), []);
 	const signedIn = account.state === "signed-in" ? account.email : null;
 	const refresh = useCallback(async () => setTeams(await teamActions.list()), [teamActions]);
 	useEffect(() => {
@@ -992,6 +1011,7 @@ export function useTeamHome(
 			teams: new Set<string>(),
 			editing: [] as CloudTeam[],
 			all: NO_TEAMS,
+			toast: undefined,
 		};
 	const switcher = (
 		<>
@@ -1067,11 +1087,40 @@ export function useTeamHome(
 							covers={projects?.covers(current.address, here)}
 							away={projects?.away?.(current, here)}
 							onNewProject={projects && (() => projects.onNewProject(current))}
+							setup={{
+								on: "mac",
+								you: signedIn ?? "",
+								origin: ready.origin,
+								own: projects?.own ?? [],
+								onMove: (project) => projects?.onMoveIn?.(current, project),
+								onOpen: open,
+								onSetUp: setSetUp,
+								revision: projects?.revision?.(current.address) ?? "",
+							}}
 						/>
 					),
 			}
 		: undefined;
+	const toast = setUp && (
+		<SetUpToast
+			team={setUp}
+			onDismiss={dismissSetUp}
+			onInviteMore={() => {
+				setSetUp(null);
+				setScope(setUp.address);
+				setPage("people");
+			}}
+		/>
+	);
 	/** The teams the switcher offers: their projects are on their own pages, not among this Mac's own. */
 	const editing = ready.teams.filter((team) => team.role !== "viewer");
-	return { switcher, notice, team, teams: new Set(editing.map((team) => team.address)), editing, all: ready.teams };
+	return {
+		switcher,
+		notice,
+		team,
+		teams: new Set(editing.map((team) => team.address)),
+		editing,
+		all: ready.teams,
+		toast,
+	};
 }
