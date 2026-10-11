@@ -5,8 +5,8 @@ import { day, useBilling } from "./team-billing";
 
 /**
  * A failing team's Home, for its admins: the last payment failed and Stripe is trying the card again. Everything
- * keeps working meanwhile, so it is one line above the covers, with Stripe's portal to fix the card. Nobody else
- * hears of it.
+ * keeps working meanwhile, so it is one line above the covers, its failure in the danger ink, with Stripe's portal to
+ * fix the card. Nobody else hears of it.
  */
 export function TeamFailing({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
 	if (team.billing?.state !== "failing" || team.role !== "admin") return null;
@@ -25,8 +25,9 @@ function FailingLine({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) 
 			className="pj-billing-failing -mt-[8px] mb-[22px] flex min-h-[48px] items-center gap-[12px] border-line-default border-y py-[8px]"
 			aria-busy={busy}
 		>
+			<span aria-hidden="true" className="size-[8px] shrink-0 rounded-full bg-danger" />
 			<span className="min-w-0 flex-1 type-control">
-				{team.name}’s last payment failed.{" "}
+				<span className="font-medium text-danger-strong">{team.name}’s last payment failed.</span>{" "}
 				{lapsesAt === null
 					? "Update the card to keep it syncing."
 					: `Update the card before ${day(lapsesAt)} to keep it syncing.`}

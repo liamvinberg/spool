@@ -86,6 +86,9 @@ it("tells an admin the last payment failed and until when, and Manage billing op
 	expect(line(host)?.textContent).toBe(
 		"Tidemark’s last payment failed. Update the card before July 1 to keep it syncing.Manage billing",
 	);
+	// read as a warning: the failure in the danger ink, after a danger dot
+	expect(line(host)?.querySelector(".text-danger-strong")?.textContent).toBe("Tidemark’s last payment failed.");
+	expect(line(host)?.querySelector(".bg-danger")).not.toBeNull();
 	await act(async () => line(host)?.querySelector("button")?.click());
 	await settle();
 	expect(fake.asked).toEqual(["billing tidemark", "portal tidemark"]);
