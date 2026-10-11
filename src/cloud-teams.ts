@@ -75,6 +75,23 @@ export interface TeamPeople {
 		expiresAt: number;
 		expired: boolean;
 	}[];
+	/** Admins and editors, counted by spool.page. Said to admins only. */
+	seats?: number;
+	/** What one more seat costs and how full a trial is. Said to admins only. */
+	billing?: PeopleBilling;
+}
+
+/** The facts People words its seat and cost lines from. Money in cents, a seat's price a month on its cycle. */
+export interface PeopleBilling {
+	state: BillingState;
+	/** Null unless the team has a subscription. */
+	cycle: BillingCycle | null;
+	seatPrice: number | null;
+	/** Yearly charges the days left at once; monthly adds them, prorated, to the next invoice. */
+	charged: "now" | "next_invoice" | null;
+	/** During a trial: the cap, and admins plus editors plus open admin and editor invites. */
+	trialEditorCap: number | null;
+	trialEditors: number | null;
 }
 
 /** A team project: `<origin>/<team>/<name>` is its `url`, what a local copy's spool.json holds. */

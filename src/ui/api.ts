@@ -6,6 +6,7 @@ import type {
 	BillingSummary,
 	CloudTeam,
 	CloudTeamInvite,
+	PeopleBilling,
 	TeamPeople,
 	TeamRole,
 } from "../cloud-teams";
@@ -79,6 +80,7 @@ export type {
 	LocatedRange,
 	MovePlace,
 	PatchRefusal,
+	PeopleBilling,
 	Place,
 	ProjectCard,
 	ProjectedFrame,

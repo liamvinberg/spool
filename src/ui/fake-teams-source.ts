@@ -39,8 +39,10 @@ export function fakeTeamsSource(start: {
 			return { address: name.toLowerCase(), name };
 		},
 		people: async (address) => {
-			teamOf(address);
-			return state.people ?? { members: [], invites: [] };
+			const people = state.people ?? { members: [], invites: [] };
+			if (teamOf(address).role === "admin") return people;
+			const { seats: _seats, billing: _billing, ...everyone } = people;
+			return everyone;
 		},
 		update: async (address, change) => {
 			ask(`update ${address} ${JSON.stringify(change)}`);
@@ -51,6 +53,9 @@ export function fakeTeamsSource(start: {
 		removeLogo: async (address) => ask(`remove logo ${address}`),
 		invite: async (address, email, role) => {
 			ask(`invite ${address} ${email} ${role}`);
+			const trial = state.people?.billing;
+			if (role !== "viewer" && trial?.trialEditorCap != null && (trial.trialEditors ?? 0) >= trial.trialEditorCap)
+				throw new TeamActionRefused("trial_editor_cap");
 			return { emailed: true };
 		},
 		resendInvite: async (address, invite) => {

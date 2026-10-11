@@ -305,7 +305,7 @@ function PaidSummary({ summary, onManage }: { summary: BillingSummary; onManage:
 }
 
 /** Cents in dollars, whole where they are whole: $16, $1,920, $16.50. */
-function money(cents: number): string {
+export function money(cents: number): string {
 	return new Intl.NumberFormat("en-US", {
 		style: "currency",
 		currency: "USD",

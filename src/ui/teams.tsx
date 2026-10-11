@@ -6,6 +6,7 @@ import {
 	type CloudTeamsState,
 	daemonTeams,
 	type HerePerson,
+	type PeopleBilling,
 	TeamActionRefused,
 	type TeamPeople,
 	type TeamRole,
@@ -18,7 +19,7 @@ import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
-import { TeamBilling } from "./team-billing";
+import { money, TeamBilling } from "./team-billing";
 import type { TeamsSource } from "./team-source";
 
 /**
@@ -57,6 +58,7 @@ const SAYS: Record<string, string> = {
 	already_paying: "This team is already paid for.",
 	invalid_billing: "Choose monthly or yearly and try again.",
 	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
+	trial_editor_cap: "A trial holds up to 10 editors. Pay for the team in Settings › Billing to add more.",
 };
 
 export function teamSays(error: unknown): string {
@@ -412,11 +414,10 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 			<header className="pj-heading mb-[10px] flex h-[35px] items-center">
 				<h1 className="type-page font-medium">People</h1>
 			</header>
-			<p className="mb-[22px] text-secondary type-detail">
-				{people ? `${people.members.length} ${people.members.length === 1 ? "person" : "people"}` : " "}
-			</p>
+			<p className="mb-[22px] text-secondary type-detail">{people ? headcount(people, admin) : " "}</p>
 			<InviteForm
 				admin={admin}
+				billing={admin ? people?.billing : undefined}
 				onInvite={(email, role) => act(() => teamActions.invite(team.address, email, role), "Invite sent.")}
 			/>
 			{notice && (
@@ -557,6 +558,30 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 	);
 }
 
+/** "4 people", and to an admin "4 people · 3 seats". */
+function headcount(people: TeamPeople, admin: boolean): string {
+	const count = people.members.length;
+	const said = `${count} ${count === 1 ? "person" : "people"}`;
+	if (!admin || people.seats === undefined) return said;
+	return `${said} · ${people.seats} ${people.seats === 1 ? "seat" : "seats"}`;
+}
+
+/**
+ * What inviting an editor or admin adds to a team with a subscription, said before the invite goes: a seat once
+ * they join, charged at once for the year's days left or added to the next monthly invoice. Null when it adds none.
+ */
+function seatCost(billing: PeopleBilling | undefined, role: TeamRole, email: string): string | null {
+	if (!billing || role === "viewer" || billing.cycle === null || billing.seatPrice === null) return null;
+	if (billing.state !== "paying" && billing.state !== "failing" && billing.state !== "ending") return null;
+	const local = email.trim().split("@")[0] ?? "";
+	const who = local ? `${local.charAt(0).toUpperCase()}${local.slice(1)}` : "they";
+	const when =
+		billing.cycle === "yearly"
+			? `charged for the days left this year once ${who} ${local ? "joins" : "join"}`
+			: `added to the next invoice once ${who} ${local ? "joins" : "join"}`;
+	return `An ${role} is one more seat: ${money(billing.seatPrice)} a month, ${when}.`;
+}
+
 function daysLeft(expiresAt: number): string {
 	const days = Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000));
 	return days === 1 ? "1 day left" : `${days} days left`;
@@ -574,54 +599,63 @@ function Initial({ email }: { email: string }) {
 	);
 }
 
-/** An address and a role. Admins invite anyone; everyone else invites viewers. */
+/**
+ * An address and a role. Admins invite anyone; everyone else invites viewers. On a paying team an admin reads what
+ * an editor costs under the row before sending.
+ */
 function InviteForm({
 	admin,
+	billing,
 	onInvite,
 }: {
 	admin: boolean;
+	billing?: PeopleBilling | undefined;
 	onInvite: (email: string, role: TeamRole) => Promise<void>;
 }) {
 	const [email, setEmail] = useState("");
 	const [role, setRole] = useState<TeamRole>(admin ? "editor" : "viewer");
 	const [busy, setBusy] = useState(false);
+	const cost = seatCost(billing, role, email);
 	return (
-		<form
-			className="mb-[22px] flex items-center gap-[10px]"
-			onSubmit={(event) => {
-				event.preventDefault();
-				setBusy(true);
-				void onInvite(email.trim(), role).finally(() => {
-					setBusy(false);
-					setEmail("");
-				});
-			}}
-		>
-			<TextField
-				size="lg"
-				className="flex-1"
-				value={email}
-				onValueChange={setEmail}
-				placeholder="Email address"
-				label="Email address"
-				inputProps={{ type: "email", required: true }}
-			/>
-			<select
-				value={role}
-				aria-label="Role"
-				onChange={(event) => setRole(event.target.value as TeamRole)}
-				className="h-[38px] cursor-pointer rounded-[7px] border border-line-strong bg-transparent px-[9px] text-primary type-control"
+		<div className="mb-[22px]">
+			<form
+				className="flex items-center gap-[10px]"
+				onSubmit={(event) => {
+					event.preventDefault();
+					setBusy(true);
+					void onInvite(email.trim(), role).finally(() => {
+						setBusy(false);
+						setEmail("");
+					});
+				}}
 			>
-				{(admin ? (["admin", "editor", "viewer"] as const) : (["viewer"] as const)).map((option) => (
-					<option key={option} value={option} className="bg-surface-panel">
-						as {ROLE_LABEL[option]}
-					</option>
-				))}
-			</select>
-			<Button type="submit" size="lg" variant="primary" disabled={busy}>
-				Invite
-			</Button>
-		</form>
+				<TextField
+					size="lg"
+					className="flex-1"
+					value={email}
+					onValueChange={setEmail}
+					placeholder="Email address"
+					label="Email address"
+					inputProps={{ type: "email", required: true }}
+				/>
+				<select
+					value={role}
+					aria-label="Role"
+					onChange={(event) => setRole(event.target.value as TeamRole)}
+					className="h-[38px] cursor-pointer rounded-[7px] border border-line-strong bg-transparent px-[9px] text-primary type-control"
+				>
+					{(admin ? (["admin", "editor", "viewer"] as const) : (["viewer"] as const)).map((option) => (
+						<option key={option} value={option} className="bg-surface-panel">
+							as {ROLE_LABEL[option]}
+						</option>
+					))}
+				</select>
+				<Button type="submit" size="lg" variant="primary" disabled={busy}>
+					Invite
+				</Button>
+			</form>
+			{cost && <p className="pj-seat-cost mt-[8px] text-secondary type-label">{cost}</p>}
+		</div>
 	);
 }
 

@@ -146,3 +146,31 @@ it("carries billing to spool.page: the summary, Checkout and the portal, each an
 		{ method: "POST", path: "/api/teams/tidemark/billing/portal", body: "" },
 	]);
 });
+
+it("carries People's seat facts to an admin and the trial's editor cap back from an invite, as spool.page said them", async () => {
+	const people = {
+		members: [{ accountId: "ada", email: "ada@tidemark.app", role: "admin", you: true }],
+		invites: [],
+		seats: 1,
+		billing: {
+			state: "trial",
+			cycle: null,
+			seatPrice: null,
+			charged: null,
+			trialEditorCap: 10,
+			trialEditors: 10,
+		},
+	};
+	const { api } = harness({
+		token: TOKEN,
+		answer: (request) =>
+			request.method === "GET"
+				? Response.json(people)
+				: Response.json({ error: "trial_editor_cap" }, { status: 409 }),
+	});
+	expect(await api("/teams/tidemark/people")).toEqual({ status: 200, body: people });
+	expect(await api("/teams/tidemark/invites", "POST", { email: "noor@tidemark.app", role: "editor" })).toEqual({
+		status: 409,
+		body: { error: "trial_editor_cap" },
+	});
+});
