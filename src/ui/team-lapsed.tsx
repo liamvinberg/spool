@@ -1,5 +1,6 @@
 import { type ReactNode, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { BillingCycle, BillingSummary, CloudTeam, TeamPeople } from "./api";
+import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { Button } from "./primitives/actions";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./primitives/overlays";
 import { checkoutStarted, PayChoice } from "./team-billing";
@@ -26,33 +27,15 @@ export function TeamLapsed({ team, onOpen }: { team: CloudTeam; onOpen: (url: st
 	);
 }
 
-const closedKey = (address: string) => `spool:lapsed-closed:${address}`;
-
-/** Whether the dialog was closed in this window: it comes back on the next visit. */
-function closedHere(address: string): boolean {
-	try {
-		return sessionStorage.getItem(closedKey(address)) !== null;
-	} catch {
-		return false;
-	}
-}
-
-function closeHere(address: string) {
-	try {
-		sessionStorage.setItem(closedKey(address), "1");
-	} catch {
-		// no storage: it closes until Home is opened again
-	}
-}
-
 /**
  * The trial's end, or a paid team's lapse, asking an admin the one question Billing asks: who stays an editor, and
- * monthly or yearly. A team that never had time is paid for from its setup list and Billing instead.
+ * monthly or yearly. A team that never had time is paid for from its setup list and Billing instead. Closed, it stays
+ * closed while the team's Projects page is up, and comes back the next time it opens.
  */
 function TrialEndDialog({ team, onOpen }: { team: CloudTeam; onOpen: (url: string) => void }) {
 	const source = useContext(TeamsSourceContext);
 	const [read, setRead] = useState<{ summary: BillingSummary; people: TeamPeople } | null>(null);
-	const [closed, setClosed] = useState(() => closedHere(team.address));
+	const [closed, setClosed] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
 	useEffect(() => {
 		if (closed) return;
@@ -68,10 +51,7 @@ function TrialEndDialog({ team, onOpen }: { team: CloudTeam; onOpen: (url: strin
 		};
 	}, [source, team.address, closed]);
 	if (closed || read === null || read.summary.state !== "lapsed" || !read.summary.hadTime) return null;
-	const close = () => {
-		closeHere(team.address);
-		setClosed(true);
-	};
+	const close = () => setClosed(true);
 	const pay = async (editors: string[], cycle: BillingCycle) => {
 		setNotice(null);
 		try {
@@ -115,6 +95,8 @@ function Modal({
 }) {
 	const id = useId();
 	const ref = useRef<HTMLDialogElement>(null);
+	// modal: the app's own keys (New project, Open, Settings) wait behind it
+	useEffect(() => attachHotkeyLayer({ scope: "dialog", handlers: {} }), []);
 	useLayoutEffect(() => {
 		const dialog = ref.current;
 		if (dialog?.open === false) dialog.showModal?.();

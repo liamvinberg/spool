@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { BillingSummary, CloudTeam, TeamPeople } from "../cloud-teams";
 import { fakeTeamsSource } from "./fake-teams-source";
+import { attachHotkeyLayer, runMenuHotkey } from "./hotkey-dispatch";
 import { TeamProjects, TeamsSourceContext } from "./teams";
 
 /** A lapsed team's Home over a team source held in memory: the dialog its admins get, the line everyone else gets. */
@@ -68,13 +69,14 @@ function home(fake: ReturnType<typeof fakeTeamsSource>, shown: CloudTeam) {
 	onTestFinished(() => {
 		act(() => root.unmount());
 		host.remove();
-		sessionStorage.clear();
 		vi.unstubAllGlobals();
 	});
 	return {
 		host,
 		opened,
-		/** Home opened again in this window, as going to People and back does. */
+		/** Home drawn again where it stands, as a team list read on focus does. */
+		rerender: render,
+		/** Home's Projects page opened again in this window, as going to People and back does. */
 		again: () => {
 			act(() => root.render(null));
 			render();
@@ -129,18 +131,31 @@ it("says a team that had paid has gone local", async () => {
 	expect(dialog(host)?.querySelector("h2")?.textContent).toBe("Tidemark has gone local");
 });
 
+it("keeps the app's keys behind it while it is open", async () => {
+	const ran: string[] = [];
+	const detach = attachHotkeyLayer({ scope: "app", handlers: { "app.new-project": () => ran.push("new project") } });
+	onTestFinished(detach);
+	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
+	const { host } = home(fake, team("admin"));
+	await settle();
+	expect(dialog(host)?.open).toBe(true);
+	expect(runMenuHotkey("app.new-project")).toBe(false);
+	act(() => button(host, "Not now").click());
+	expect(runMenuHotkey("app.new-project")).toBe(true);
+	expect(ran).toEqual(["new project"]);
+});
+
 it("can be closed, and comes back on the next visit", async () => {
 	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
-	const { host, again } = home(fake, team("admin"));
+	const { host, again, rerender } = home(fake, team("admin"));
 	await settle();
 	act(() => button(host, "Not now").click());
 	expect(dialog(host)).toBeNull();
-	// back on Home in the same window: still closed
-	again();
+	// a team list read again on focus keeps Home's Projects page up: still closed
+	rerender();
 	await settle();
 	expect(dialog(host)).toBeNull();
-	// the next visit opens a new window
-	sessionStorage.clear();
+	// the next visit to the team's Projects page opens it again, in the same window too
 	again();
 	await settle();
 	expect(dialog(host)?.open).toBe(true);
