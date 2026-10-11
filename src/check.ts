@@ -87,6 +87,14 @@ interface SourceInspection {
 	bindings: string[];
 	bindingReceivers: BindingReceiverUse[];
 	inspectable: boolean;
+	/** Where and why the parser refused the source, when it said. */
+	syntaxError?: SyntaxFailure;
+}
+
+interface SyntaxFailure {
+	line: number;
+	column: number;
+	message: string;
 }
 
 interface SourceClosure {
@@ -236,9 +244,12 @@ async function runCheckDesign(root: string): Promise<CheckDiagnostic[]> {
 		...entryBoundaries(designDir, entries),
 		...boundaryDependencies.diagnostics,
 		...authoredModules.diagnostics,
-		...[...uninspectableSources].map((file) =>
-			checkerDiagnostic(designDir, file, 1, 1, 1003, "Source syntax cannot be inspected safely"),
-		),
+		...[...uninspectableSources].map((file) => {
+			const failure = inspections.get(file)?.syntaxError;
+			return failure === undefined
+				? checkerDiagnostic(designDir, file, 1, 1, 1003, "Source syntax cannot be inspected safely")
+				: checkerDiagnostic(designDir, file, failure.line, failure.column, 1003, failure.message);
+		}),
 	];
 	const trusted = trustedRoots();
 	const virtualFiles = new Map<string, string>();
@@ -1799,7 +1810,8 @@ function inspectSource(file: string, source: string): SourceInspection {
 			inspectable: true,
 		};
 	}
-	const tree = parseSource(file, source);
+	const refusal: { syntaxError?: SyntaxFailure } = {};
+	const tree = parseSource(file, source, refusal);
 	if (tree === undefined) {
 		return {
 			moduleUses: [],
@@ -1809,6 +1821,7 @@ function inspectSource(file: string, source: string): SourceInspection {
 			bindings: [],
 			bindingReceivers: [],
 			inspectable: false,
+			...refusal,
 		};
 	}
 	const scopeAnalysis = analyzeAstScopes(tree);
@@ -2267,7 +2280,22 @@ function previousLineBreak(source: string, start: number): number {
 	return -1;
 }
 
-function parseSource(file: string, source: string): unknown | undefined {
+/** The parser's own words and place for a refused source, when it gave them. */
+function syntaxFailure(error: unknown): SyntaxFailure | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const { message, loc } = error as { message?: unknown; loc?: { line?: unknown; column?: unknown } };
+	if (typeof message !== "string" || typeof loc?.line !== "number" || typeof loc.column !== "number") return undefined;
+	// the parser's plugins are its own business: an author can only change the source
+	const said = message
+		.replace(/ \(\d+:\d+\)$/u, "")
+		.replace(
+			/^This experimental syntax requires enabling (?:the parser plugin|one of the following parser plugin\(s\)): (.*?)\.?$/u,
+			"Syntax this file can't use here (it would need $1).",
+		);
+	return { line: loc.line, column: loc.column + 1, message: said };
+}
+
+function parseSource(file: string, source: string, refusal: { syntaxError?: SyntaxFailure } = {}): unknown | undefined {
 	try {
 		const plugins: ParserPlugin[] = ["decorators", "decoratorAutoAccessors", "deprecatedImportAssert"];
 		const extension = extname(file).toLowerCase();
@@ -2288,6 +2316,8 @@ function parseSource(file: string, source: string): unknown | undefined {
 				tree = parse(inspectionSource, options);
 				break;
 			} catch (error) {
+				const failure = syntaxFailure(error);
+				if (failure !== undefined) refusal.syntaxError = failure;
 				if (decoratedClassSites.length >= maxDecoratedDeclareRetries) return undefined;
 				const site = decoratedClassSite(file, source, error);
 				if (site === undefined || decoratedClassSites.some((candidate) => candidate.classStart === site.classStart))
@@ -2297,7 +2327,13 @@ function parseSource(file: string, source: string): unknown | undefined {
 				if (inspectionSource.length !== source.length) return undefined;
 			}
 		}
-		if ((tree.errors?.length ?? 0) > 0) return undefined;
+		const [recovered] = tree.errors ?? [];
+		if (recovered !== undefined) {
+			const failure = syntaxFailure(recovered);
+			if (failure !== undefined) refusal.syntaxError = failure;
+			return undefined;
+		}
+		delete refusal.syntaxError;
 		if (!restoreDecoratedClasses(tree, source, decoratedClassSites)) return undefined;
 		if (!isTypeScriptSource(file)) {
 			let defaultExports = 0;
@@ -2314,7 +2350,15 @@ function parseSource(file: string, source: string): unknown | undefined {
 						);
 					}).length;
 				}
-				if (defaultExports > 1) return undefined;
+				if (defaultExports > 1) {
+					const { line = 1, column = 0 } = statement.loc?.start ?? {};
+					refusal.syntaxError = {
+						line,
+						column: column + 1,
+						message: "A module cannot have multiple default exports.",
+					};
+					return undefined;
+				}
 			}
 		}
 		return tree;
