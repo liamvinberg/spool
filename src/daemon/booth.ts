@@ -9,7 +9,7 @@ import {
 	MissingHeadlessShellError,
 } from "../headless-shell";
 import { pageParent } from "../page-path";
-import { settleSource } from "./document";
+import { contentHeightSource, settleSource } from "./document";
 import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
 import type { LogEntry } from "./verify-record";
 
@@ -451,15 +451,19 @@ interface ShotRequest {
 	scale: number;
 	/** Top-to-bottom slices in CSS pixels; one when the frame fits a single image. */
 	tiles: ReadonlyArray<{ y: number; height: number }>;
-	/** A fixed wait after the first commit instead of the settle. */
-	at?: number | undefined;
+	/**
+	 * Fixed times after the first commit, ascending, in place of the settle: the
+	 * slices are taken at each, in one boot.
+	 */
+	at?: readonly number[] | undefined;
 	scenario?: string | undefined;
 }
 
 type ShotResult =
 	| {
 			kind: "booted";
-			pngs: Buffer[];
+			/** The slices, top to bottom, once per time asked for (once after the settle when none was). */
+			shots: Array<{ at?: number; pngs: Buffer[] }>;
 			entries: LogEntry[];
 			errors: string[];
 			contentHeight: number;
@@ -1147,7 +1151,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		tab.page.on("console", onConsole);
 		try {
 			const url = frameUrl(origin, request.project, request.frame, request.scenario);
-			const ms = timing.shotMs + (request.at ?? 0);
+			const ms = timing.shotMs + Math.max(0, ...(request.at ?? []));
 			return await underDeadline(slot, tab, ms, "booting", sitShot(tab, url, request));
 		} catch (error) {
 			if (error instanceof LaunchFailure || error instanceof TimedOut) throw error;
@@ -1161,7 +1165,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 	}
 
-	/** One boot for an agent: the shot's slices, the console, and how tall the content ran. */
+	/** One boot for an agent: the shot's slices at each time, the console, and how tall the content ran. */
 	async function sitShot(tab: Tab, url: string, request: ShotRequest): Promise<ShotResult> {
 		const taken = await prepare(tab, { width: request.width, height: request.height, scale: request.scale });
 		const response = await tab.page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
@@ -1170,24 +1174,43 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		// frames are blank until React commits (#16); one that renders nothing
 		// is legitimate, so running this out still shoots what is there
 		await booted(tab, world, SHOT_BOOT_MS, false);
-		if (request.at === undefined) await settled(tab, world);
-		else await pause(request.at);
-		await within(evaluate(tab, world, "document.fonts.ready.then(() => true)"), SHOT_FONTS_MS, "loading fonts").catch(
-			() => {},
-		);
-		const contentHeight = Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
-		const pngs: Buffer[] = [];
-		for (const tile of request.tiles) {
-			pngs.push(
-				await screenshot(tab, {
-					format: "png",
-					clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
-				}),
-			);
+		const committed = performance.now();
+		const slices = async (): Promise<Buffer[]> => {
+			await within(
+				evaluate(tab, world, "document.fonts.ready.then(() => true)"),
+				SHOT_FONTS_MS,
+				"loading fonts",
+			).catch(() => {});
+			const pngs: Buffer[] = [];
+			for (const tile of request.tiles) {
+				pngs.push(
+					await screenshot(tab, {
+						format: "png",
+						clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
+					}),
+				);
+			}
+			return pngs;
+		};
+		const shots: Array<{ at?: number; pngs: Buffer[] }> = [];
+		if (request.at === undefined || request.at.length === 0) {
+			await settled(tab, world);
+			shots.push({ pngs: await slices() });
+		} else {
+			// each time counts from the commit, not from the slice before it
+			for (const at of request.at) {
+				await pause(Math.max(0, committed + at - performance.now()));
+				shots.push({ at, pngs: await slices() });
+			}
 		}
+		// the content's own bottom, as the canvas reads it; a viewport-sized app
+		// that does not scroll has none, and runs exactly as tall as the document
+		const own = Number(await evaluate(tab, world, `(${contentHeightSource()})()`));
+		const contentHeight =
+			own > 0 ? own : Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
 		return {
 			kind: "booted",
-			pngs,
+			shots,
 			entries: [...tab.entries],
 			errors: [...tab.errors],
 			contentHeight,

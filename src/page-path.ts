@@ -41,7 +41,7 @@ export function isFramePath(frame: string): boolean {
 
 /**
  * A frame's name as one path segment, for the stores that keep a file or a
- * folder per frame (covers, verify records): `shop/checkout` is stored as
+ * folder per frame (covers): `shop/checkout` is stored as
  * `shop%2Fcheckout`. One flat folder of them stays flat at any depth, and no
  * two names ever share a spelling.
  */
