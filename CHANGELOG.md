@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.36.2
+
+### Patch Changes
+
+- 956d347: The window's tabs sit right after Home again, instead of starting where the left side ends and leaving a gap.
+
 ## 0.36.1
 
 ### Patch Changes
