@@ -91,13 +91,14 @@ it("closes a side to its rail of icons, and an icon opens it again on that pane"
 	await expect.poll(() => page.locator("[data-agent-rail]").isVisible()).toBe(true);
 	await expect.poll(() => rail.isVisible()).toBe(false);
 
-	// the window's tabs start where the left side ends, open or closed to its rail
-	expect(await firstTab(page)).toBe((await sideWidth(page, "left")) + 8);
+	// the window's tabs start right after Home, whatever the left side's width
+	const afterHome = await firstTab(page);
+	expect(afterHome).toBe((await homeEnd(page)) + 8);
 	// ⌘B closes the left side the same way, and a side closed stays closed across a reload
 	await page.locator("[data-canvas-camera]").click({ position: { x: 5, y: 5 }, force: true });
 	await page.keyboard.press("ControlOrMeta+b");
 	await expect.poll(() => sideWidth(page, "left")).toBe(44);
-	await expect.poll(() => firstTab(page)).toBe(52);
+	expect(await firstTab(page)).toBe(afterHome);
 	await expect
 		.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("spool.panes.layout") ?? "null")?.left?.open))
 		.toBe(false);
@@ -133,11 +134,7 @@ it("draws the same window bar on Home and on a canvas", { timeout: 120_000 }, as
 		return settings === null ? null : Math.round(settings.x);
 	};
 	const onHome = await end();
-	// on Home they start where its sidebar ends
-	const sidebar = await page
-		.locator("aside.pj-navigation")
-		.evaluate((el) => Math.round(el.getBoundingClientRect().right));
-	await expect.poll(() => firstTab(page)).toBe(sidebar + 8);
+	await expect.poll(async () => firstTab(page)).toBe((await homeEnd(page)) + 8);
 	await page.locator(".project-tab-label").first().click();
 	await page.locator("[data-frame-label]").first().waitFor();
 	expect(await end()).toBe(onHome);
@@ -153,6 +150,11 @@ const groupTabs = (page: Page, group: string) =>
 const sideWidth = (page: Page, side: "left" | "right") =>
 	page.locator(`aside[data-side="${side}"]`).evaluate((el) => Math.round(el.getBoundingClientRect().width));
 
+const homeEnd = (page: Page) =>
+	page
+		.locator(".project-tabs > div")
+		.first()
+		.evaluate((el) => Math.round(el.getBoundingClientRect().right));
 const firstTab = (page: Page) =>
 	page
 		.locator("[data-tab-slot]")

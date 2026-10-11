@@ -8,7 +8,6 @@ import { IconButton } from "../primitives/actions";
 import { IconRail, IconRailItem, Tab, Tabs } from "../primitives/navigation";
 import { Menu, MenuItem } from "../primitives/overlays";
 import { useRemembered } from "../remembered";
-import { useWindowEdge } from "../window-edge";
 import type { PaletteCommand } from "./find-palette";
 import {
 	type Action,
@@ -215,9 +214,6 @@ export function PaneWindow({
 	const ghost = useRef<HTMLDivElement>(null);
 	const mark = useRef<HTMLDivElement>(null);
 	const markWords = useRef<HTMLSpanElement>(null);
-	/** the left side, whose edge the window's tabs start from */
-	const leftSide = useRef<HTMLElement>(null);
-	useWindowEdge(leftSide);
 
 	/** null until measured, and in a document with no layout at all: nothing closes for a window nobody has */
 	const [env, setEnv] = useState<Env | null>(null);
@@ -975,7 +971,6 @@ export function PaneWindow({
 		});
 		return (
 			<aside
-				ref={id === "left" ? leftSide : undefined}
 				aria-label={`${SIDE_NAME[id]} side`}
 				data-side={id}
 				data-side-open={open && !empty ? "" : undefined}
