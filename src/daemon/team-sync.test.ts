@@ -1015,7 +1015,7 @@ describe("a limit", () => {
 			kind: "sync",
 			root: ana.root,
 			paused: "this project took 120 saves in the last minute",
-			unpaid: null,
+			goneLocal: null,
 		});
 		expect((await card())?.syncPaused).toBe("this project took 120 saves in the last minute");
 		await until(() =>
@@ -1030,7 +1030,7 @@ describe("a limit", () => {
 		// a canvas opened now still says so, for as long as it lasts
 		expect(await syncState(ana.daemon)).toEqual({
 			ended: null,
-			unpaid: null,
+			goneLocal: null,
 			paused: "this project took 120 saves in the last minute",
 			held: [],
 		});
@@ -1039,8 +1039,8 @@ describe("a limit", () => {
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
 		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 5_000);
 		await until(() => said.ana.includes("Sync resumed."));
-		expect(await syncState(ana.daemon)).toEqual({ ended: null, unpaid: null, paused: null, held: [] });
-		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: null, unpaid: null });
+		expect(await syncState(ana.daemon)).toEqual({ ended: null, goneLocal: null, paused: null, held: [] });
+		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: null, goneLocal: null });
 		expect((await card())?.syncPaused).toBeUndefined();
 	});
 });
@@ -1064,7 +1064,7 @@ describe("when a team project ends for a machine", () => {
 			expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
 			expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
 			// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
-			expect(await syncState(ben.daemon)).toEqual({ ended: "devosurf", unpaid: null, paused: null, held: [] });
+			expect(await syncState(ben.daemon)).toEqual({ ended: "devosurf", goneLocal: null, paused: null, held: [] });
 			const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
 				projects: { root: string; ended?: string }[];
 			};
@@ -1172,12 +1172,12 @@ describe("when a team lapses", () => {
 		expect(teamProjects(ben.state).map(({ copies }) => copies)).toEqual([[ben.root]]);
 		expect(git(ben.root, "rev-list", "--all", "--count").trim()).toBe("0");
 		// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
-		expect(await syncState(ben.daemon)).toEqual({ ended: null, unpaid: "Devosurf", paused: null, held: [] });
+		expect(await syncState(ben.daemon)).toEqual({ ended: null, goneLocal: "Devosurf", paused: null, held: [] });
 		const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
-			projects: { root: string; unpaid?: string; team?: { team: string } }[];
+			projects: { root: string; goneLocal?: string; team?: { team: string } }[];
 		};
 		const card = listed.projects.find((project) => project.root === ben.root);
-		expect(card?.unpaid).toBe("Devosurf");
+		expect(card?.goneLocal).toBe("Devosurf");
 		expect(card?.team?.team).toBe("devosurf");
 
 		// stopped, not retrying: nobody asks again until the hour is up, and nothing Ben makes goes anywhere
@@ -1191,7 +1191,7 @@ describe("when a team lapses", () => {
 	}, 20_000);
 
 	it("isn't said again after a restart, and the copy follows the team again once it pays, with what was made meanwhile", async () => {
-		const { cloud, said, ana, ben } = await twoEditors({ teamStandingMs: 300 });
+		const { cloud, said, ana, ben } = await twoEditors({ goneLocalAskMs: 300 });
 		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
 		cloud.lapse();
@@ -1207,10 +1207,10 @@ describe("when a team lapses", () => {
 		const restarted = makeApp(ben.state, {
 			cloud: ben.machine.cloud,
 			teamNotice: (message) => again.push(message),
-			teamStandingMs: 300,
+			goneLocalAskMs: 300,
 		});
 		await until(() => cloud.standingAsked() > asked);
-		expect(await syncState(restarted)).toMatchObject({ ended: null, unpaid: "Devosurf" });
+		expect(await syncState(restarted)).toMatchObject({ ended: null, goneLocal: "Devosurf" });
 		await new Promise((wake) => setTimeout(wake, 500));
 		expect(again).toEqual([]);
 
@@ -1223,8 +1223,8 @@ describe("when a team lapses", () => {
 		// Ben's copy never took the team back to the home page it had: the team kept Ana's newer one
 		expect(read(ben.root, "frames/home/frame.tsx").toString()).toContain("Ana's home");
 		expect(cloud.saves("checkout").filter((save) => save.outcome === "set_aside")).toEqual([]);
-		expect(await syncState(restarted)).toEqual({ ended: null, unpaid: null, paused: null, held: [] });
-		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")).unpaid).toBeUndefined();
+		expect(await syncState(restarted)).toEqual({ ended: null, goneLocal: null, paused: null, held: [] });
+		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")).goneLocal).toBeUndefined();
 		expect(again).toEqual([]);
 
 		// and it goes on syncing as ever

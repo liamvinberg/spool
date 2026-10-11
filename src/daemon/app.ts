@@ -152,7 +152,7 @@ import { createProjectShares } from "./shares";
 import type { PlaceholderAuthor } from "./sidecar";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
-import { createTeamSync, endedWith, followedLink, type OpenSyncSocket, unpaidWith } from "./team-sync";
+import { createTeamSync, endedWith, followedLink, goneLocalWith, type OpenSyncSocket } from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -239,8 +239,8 @@ export interface DaemonOptions {
 	cloud?: DaemonCloud;
 	/** Where what team sync says about a project goes, besides its open canvases: the log, unless a test listens. */
 	teamNotice?: (message: string, root?: string) => void;
-	/** How often a local copy whose team went local asks whether it pays again: an hour, unless a test can't wait. */
-	teamStandingMs?: number;
+	/** How often a local copy gone local asks whether its team pays again: an hour, unless a test can't wait. */
+	goneLocalAskMs?: number;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
@@ -504,7 +504,7 @@ export function createDaemonApp({
 	cloudAccountServices,
 	cloud,
 	teamNotice = (message) => console.error(`spool: ${message}`),
-	teamStandingMs,
+	goneLocalAskMs,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
 }: DaemonOptions) {
@@ -956,17 +956,17 @@ export function createDaemonApp({
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
 		// a pause hollows the copy's team mark on its tab and its cover, and a resume fills it again
 		onSyncChanged: (root) => emitAppEvent({ kind: "sync", root, ...syncMarks(root) }),
-		// a team gone local says so on its copy's cover and canvas until it pays, when they read again
-		onUnpaid: (root) => {
+		// a copy gone local says so on its cover and canvas until its team pays, when they read again
+		onGoneLocal: (root) => {
 			emitAppEvent({ kind: "sync", root, ...syncMarks(root) });
-			if (teamSync.state(root).unpaid === null) hub.publish(root, { kind: "sync", message: "syncing again" });
+			if (teamSync.state(root).goneLocal === null) hub.publish(root, { kind: "sync", message: "syncing again" });
 		},
-		...(teamStandingMs === undefined ? {} : { unpaidAskMs: teamStandingMs }),
+		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 	});
-	/** What a copy's tab and cover show of its sync: a pause on a limit, or a team gone local. */
+	/** What a copy's tab and cover show of its sync: a pause on a limit, or the copy gone local. */
 	const syncMarks = (root: string) => {
-		const { paused, unpaid } = teamSync.state(root);
-		return { paused, unpaid };
+		const { paused, goneLocal } = teamSync.state(root);
+		return { paused, goneLocal };
 	};
 	teamSync.keeping(registeredRoots());
 	// what this machine's agent is doing on a team project, said to the team with its person's presence (#378)
@@ -1947,7 +1947,7 @@ export function createDaemonApp({
 					const link = followedLink(project.root);
 					const ended = endedWith(project.root);
 					const paused = link === undefined ? null : teamSync.state(project.root).paused;
-					const unpaid = link === undefined ? undefined : unpaidWith(project.root);
+					const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
 					const [summary, icon, thumbnail] = await Promise.all([
 						summarizeProject(project.root),
 						findProjectIcon(project.root),
@@ -1962,7 +1962,7 @@ export function createDaemonApp({
 						...(icon === undefined ? {} : { icon }),
 						...(thumbnail === undefined ? {} : { thumbnail }),
 						...(paused === null ? {} : { syncPaused: paused }),
-						...(unpaid === undefined ? {} : { unpaid }),
+						...(goneLocal === undefined ? {} : { goneLocal }),
 						...summary,
 					};
 				}),

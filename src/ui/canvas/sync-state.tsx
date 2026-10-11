@@ -7,7 +7,8 @@ export const SYNC_CHANGED = "spool-sync-change";
 
 /**
  * A team project's sync, said on its canvas for as long as it lasts and whenever the canvas opens: that the project
- * ended here, that its team went local until it pays, that sync is paused on a limit, and which files didn't travel. A solo project's canvas says nothing.
+ * ended here, that it has gone local until its team pays, that sync is paused on a limit, and which files didn't
+ * travel. A solo project's canvas says nothing.
  */
 export function useSyncState(project: string): ReactNode {
 	const [state, setState] = useState<SyncState | undefined>(undefined);
@@ -33,8 +34,8 @@ export function useSyncState(project: string): ReactNode {
 
 export function SyncStateLine({ state }: { state: SyncState }) {
 	const [open, setOpen] = useState(false);
-	const { ended, unpaid, paused, held } = state;
-	if (ended === null && unpaid === null && paused === null && held.length === 0) return null;
+	const { ended, goneLocal, paused, held } = state;
+	if (ended === null && goneLocal === null && paused === null && held.length === 0) return null;
 	return (
 		<Popover
 			role="region"
@@ -47,9 +48,9 @@ export function SyncStateLine({ state }: { state: SyncState }) {
 			{ended !== null && (
 				<p className="text-primary">No longer synced with {ended}. This is now a project on this Mac only.</p>
 			)}
-			{unpaid !== null && (
+			{goneLocal !== null && (
 				<p className="text-primary">
-					{unpaid} has gone local. Your copy keeps working here and syncs again once the team pays.
+					{goneLocal} has gone local. Your copy keeps working here and syncs again once the team pays.
 				</p>
 			)}
 			{paused !== null && (

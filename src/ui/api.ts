@@ -1849,7 +1849,7 @@ export async function fetchSyncState(project: string): Promise<SyncState | undef
 		if (!Array.isArray(body?.held)) return undefined;
 		return {
 			ended: typeof body.ended === "string" ? body.ended : null,
-			unpaid: typeof body.unpaid === "string" ? body.unpaid : null,
+			goneLocal: typeof body.goneLocal === "string" ? body.goneLocal : null,
 			paused: typeof body.paused === "string" ? body.paused : null,
 			held: body.held,
 		};

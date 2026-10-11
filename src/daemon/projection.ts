@@ -593,8 +593,8 @@ export interface ProjectCard extends ProjectSummary {
 	thumbnail?: ProjectThumbnail;
 	/** A team project's local copy whose sync is paused on a limit, and why: its team mark goes hollow. */
 	syncPaused?: string;
-	/** A team project's local copy stopped because its team went local until it pays: the team's name. */
-	unpaid?: string;
+	/** A team project's local copy gone local until its team pays: the team's name. */
+	goneLocal?: string;
 }
 
 /**

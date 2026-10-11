@@ -23,7 +23,7 @@ it("says a team project ended here, sync paused, and which files didn't travel, 
 		createElement(SyncStateLine, {
 			state: {
 				ended: "devosurf",
-				unpaid: null,
+				goneLocal: null,
 				paused: "this project took 120 saves in the last minute",
 				held: [{ path: "shared/assets/film.mov", why: "it's over 25 MB" }],
 			},
@@ -40,13 +40,15 @@ it("says a team project ended here, sync paused, and which files didn't travel, 
 });
 
 it("says nothing while a team project syncs as it should", () => {
-	const host = mount(createElement(SyncStateLine, { state: { ended: null, unpaid: null, paused: null, held: [] } }));
+	const host = mount(
+		createElement(SyncStateLine, { state: { ended: null, goneLocal: null, paused: null, held: [] } }),
+	);
 	expect(host.querySelector("[data-sync-state]")).toBeNull();
 });
 
 it("says the team went local and the copy keeps working here, until the team pays", () => {
 	const host = mount(
-		createElement(SyncStateLine, { state: { ended: null, unpaid: "Devosurf", paused: null, held: [] } }),
+		createElement(SyncStateLine, { state: { ended: null, goneLocal: "Devosurf", paused: null, held: [] } }),
 	);
 	expect(host.querySelector("[data-sync-state]")?.textContent).toBe(
 		"Devosurf has gone local. Your copy keeps working here and syncs again once the team pays.",
