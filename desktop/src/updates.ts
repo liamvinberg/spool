@@ -43,6 +43,13 @@ export class UpdateCheckError extends Error {
 	}
 }
 
+/** An attempt Squirrel cannot cancel: only a fresh process may try again. */
+export class RestartRequiredError extends UpdateCheckError {
+	constructor(message: string) {
+		super(message, false);
+	}
+}
+
 /** The GitHub API's answer, for a copy with no feed to read. */
 export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
 	let response: Response;
@@ -297,7 +304,7 @@ export async function installUpdate(
 	options: InstallOptions = {},
 ): Promise<string> {
 	if (installing) throw new UpdateCheckError("An update is already in progress.");
-	if (restartRequired) throw new UpdateCheckError("Restart Spool before trying the update again.", false);
+	if (restartRequired) throw new RestartRequiredError("Restart Spool before trying the update again.");
 	if (stagedVersion !== undefined) return stagedVersion;
 	installing = true;
 	try {
@@ -448,10 +455,11 @@ async function downloadAndPrepare(
 		report(
 			`failed version=${version} phase=${preparing ? "preparing" : "downloading"} elapsed=${elapsed()} ${detail}`,
 		);
-		throw new UpdateCheckError(
-			restartRequired && !detail.includes("Restart Spool") ? `${detail} Restart Spool before trying again.` : detail,
-			!restartRequired,
-		);
+		if (restartRequired)
+			throw new RestartRequiredError(
+				detail.includes("Restart Spool") ? detail : `${detail} Restart Spool before trying again.`,
+			);
+		throw new UpdateCheckError(detail);
 	} finally {
 		stopped = true;
 		clearTimeout(clock);

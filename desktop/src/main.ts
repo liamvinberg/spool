@@ -56,6 +56,7 @@ import {
 	nextCheckDelay,
 	RELEASES_PAGE,
 	type Release,
+	RestartRequiredError,
 	readCheckCache,
 	relaunchIntoUpdate,
 	UpdateCheckError,
@@ -1003,6 +1004,7 @@ function updateItem(): MenuItemConstructorOptions {
 				const { version: target } = update;
 				return { label: `Retry update to ${target}…`, click: () => void prepareUpdate(target) };
 			}
+			if (update.restart) return { label: "Restart Spool to Retry Update…", click: () => relaunchToRetryUpdate() };
 			return { label: `Download Spool ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD_URL) };
 	}
 }
@@ -1025,7 +1027,7 @@ type AppUpdate =
 	| { kind: "checking"; version: string }
 	| InstallProgress
 	| { kind: "restarting"; version: string }
-	| { kind: "failed"; version: string; message: string; retryable: boolean };
+	| { kind: "failed"; version: string; message: string; retryable: boolean; restart?: boolean };
 
 let update: AppUpdate | null = null;
 /** A check or a download in flight, so a second click does not stack one. */
@@ -1482,6 +1484,7 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 			version: target,
 			message: detail,
 			retryable: error instanceof UpdateCheckError && error.retryable,
+			restart: error instanceof RestartRequiredError,
 		});
 		closeUpdateProgress();
 		if (update?.kind === "failed" && update.retryable) scheduleCheckIn(5 * 60_000);
@@ -1493,6 +1496,14 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 	closeUpdateProgress();
 	setUpdate({ kind: "ready", version: target });
 	if (manual) await offerRestart();
+}
+
+/** A fresh process clears an attempt Squirrel could not cancel; the cached check prepares it again on launch. */
+function relaunchToRetryUpdate(): void {
+	if (shuttingDown) return;
+	log("updates", "relaunching to retry");
+	app.relaunch();
+	app.quit();
 }
 
 let restartDialogOpen = false;

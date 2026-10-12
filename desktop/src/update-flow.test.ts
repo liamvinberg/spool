@@ -45,6 +45,9 @@ const app = Object.assign(new EventEmitter(), {
 	exit: () => {
 		exits++;
 	},
+	relaunch: () => {
+		relaunches++;
+	},
 });
 let progressWindows = 0;
 let canvasOptions: Record<string, unknown> = {};
@@ -127,6 +130,7 @@ let checks: number;
 let restarts: number;
 let quits: number;
 let exits: number;
+let relaunches: number;
 let finish: (version: string) => void;
 let fail: (error: Error) => void;
 let cache: { latest: string; checkedAt: string } | undefined;
@@ -165,6 +169,7 @@ beforeEach(async () => {
 	restarts = 0;
 	quits = 0;
 	exits = 0;
+	relaunches = 0;
 	cache = undefined;
 	app.removeAllListeners();
 	ipc.removeAllListeners();
@@ -292,6 +297,22 @@ test("retryable background failures retry after five minutes without interruptin
 	assert.equal(downloads, 2);
 	finish("0.20.2");
 	await turn();
+});
+
+test("an attempt that needs a fresh process offers a relaunch, not the download", async () => {
+	api.boot();
+	await turn();
+	mock.timers.tick(10_000);
+	await turn();
+	const { RestartRequiredError } = require_("./updates") as typeof import("./updates");
+	fail(new RestartRequiredError("Restart Spool before trying the update again."));
+	await turn();
+	assert.equal(dialogs.length, 0);
+	click("Restart Spool to Retry Update…");
+	await turn();
+	assert.equal(relaunches, 1);
+	assert.equal(quits, 1);
+	assert.equal(restarts, 0);
 });
 
 test("an up-to-date manual check answers without downloading", async () => {
