@@ -508,6 +508,7 @@ export function TabStrip({
 								hold={holding?.get(tab.root)}
 								shift={shiftOf(drag, tab.root)}
 								lifted={drag?.root === tab.root}
+								dragging={drag !== null}
 								carried={drag?.root === tab.root && !drag.settling}
 								layout={drag === null && !quiet}
 								still={quiet || reduced}
@@ -615,7 +616,9 @@ function useWidth(ref: RefObject<HTMLElement | null>) {
  * The slot is what opens, closes and compresses: its width runs between nothing
  * and its share of the strip, clipped sideways so the tab is uncovered rather
  * than squeezed. A closing tab is already gone as far as anything but the eye is
- * concerned: not a target, not focusable, not a box a drag measures.
+ * concerned: not a target, not focusable, not a box a drag measures. While a
+ * drag is on, the open slots stop clipping, since the drag carries each tab out
+ * of its own slot.
  */
 function Tab({
 	tab,
@@ -623,6 +626,7 @@ function Tab({
 	hold,
 	shift,
 	lifted,
+	dragging,
 	carried,
 	layout,
 	still,
@@ -639,6 +643,8 @@ function Tab({
 	hold: number | undefined;
 	shift: number;
 	lifted: boolean;
+	/** a drag is carrying tabs out of their slots, which must show them rather than clip them */
+	dragging: boolean;
 	carried: boolean;
 	layout: boolean;
 	still: boolean;
@@ -716,7 +722,10 @@ function Tab({
 			ref={slot}
 			data-tab-slot={present ? tab.root : undefined}
 			className={cn(
-				"project-tab-slot group/slot relative flex h-full w-tab-max max-w-tab-max overflow-x-clip",
+				"project-tab-slot group/slot relative flex h-full w-tab-max max-w-tab-max",
+				// opening and closing uncover the tab by clipping it, but a drag moves the
+				// tab inside its slot: clipped then, it would leave its slot's sheet empty
+				!(dragging && present) && "overflow-x-clip",
 				"transition-[max-width,min-width,opacity] duration-slow ease-snap",
 				active && present ? "min-w-tab-min" : "min-w-tab-compact",
 				lifted && "z-10",
