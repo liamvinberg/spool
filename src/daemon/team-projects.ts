@@ -15,6 +15,7 @@ import {
 	MoveRefused,
 	moveIntoCheckout,
 	moveOutOfTeam,
+	moveSentence,
 	moveToTeam,
 	previewTeamMove,
 	type TeamMoveOptions,
@@ -362,35 +363,6 @@ export function teamProjectRoutes(options: {
 				},
 			)
 	);
-}
-
-/** What a move's refusal says, by spool.page's code (contract A2), for the sheet and the CLI. */
-function moveSentence(code: string, about: { team: string; project: string; to?: string; name?: string }): string {
-	const to = about.to ?? "that team";
-	const name = about.name ?? about.project;
-	switch (code) {
-		case "invalid_input":
-			return `"${name}" can't name a project: use 2 to 40 lowercase letters, digits and hyphens.`;
-		case "admin_required":
-			return `Only an admin of ${about.team} can move its projects.`;
-		case "same_team":
-			return `${about.project} is already in ${about.team}.`;
-		case "target_not_found":
-			return `You're not in a team at ${to}.`;
-		case "target_editor_required":
-			return `You're a viewer of ${to}. Only its editors and admins can move a project into it.`;
-		case "unpaid":
-			return `${to} has no paid time left. It takes projects again once an admin pays for it.`;
-		case "name_taken":
-			return `${to} already has a project called ${name}. Pick another name.`;
-		case "project_not_found":
-		case "team_not_found":
-			return `${about.team} has no project called ${about.project}, or you're no longer in it.`;
-		case "project_moved":
-			return `${about.team}/${about.project} has moved. Look for it in its new team.`;
-		default:
-			return `spool.page refused the move: ${code}`;
-	}
 }
 
 /** What the daemon answers a team-project request that failed, and with which status. */

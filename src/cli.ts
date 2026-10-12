@@ -40,12 +40,14 @@ import { publicationReadiness } from "./daemon/publication-readiness";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { createSettingsStore } from "./daemon/settings";
+import { followedLink } from "./daemon/team-sync";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
 import { checkInitTarget, chooseInitTarget, initDestination, initProject, initTeamProject } from "./init";
+import { runMove } from "./move-verb";
 import { fetchLocalCopy, openProject } from "./open";
 import { isFramePath, isSafeName } from "./page-path";
 import { buildWebsite, writeWebsite } from "./publication/build";
@@ -641,6 +643,50 @@ program
 			}\n`,
 		);
 	});
+
+program
+	.command("move")
+	.description("move a team project to another team, out of its team, or into a checkout; asks first")
+	.argument("[project]", "<team>/<project>, to move one that isn't on this Mac to another team")
+	.option("--team <address>", "the team it goes to")
+	.option("--name <name>", "its name there, when the one it has is taken")
+	.option("--out", "move it out of its team: design/ goes back into git here")
+	.option("--into <checkout>", "move a project in no repo into a checkout")
+	.option("--yes", "the person already said yes: move without asking")
+	.action(
+		async (
+			project: string | undefined,
+			options: { team?: string; name?: string; out?: boolean; into?: string; yes?: boolean },
+		) => {
+			const asks = process.stdin.isTTY === true && process.stderr.isTTY === true;
+			const daemon = await ensureDaemon(spoolDir);
+			warnGoneSource(daemon.pid);
+			await runMove(
+				{ project, ...options },
+				{
+					here: async () => {
+						await fetchFirst(process.cwd());
+						const { root } = resolveRegisteredProject(spoolDir, process.cwd());
+						const link = followedLink(root);
+						if (link === undefined)
+							throw new SpoolError(
+								`${root} isn't a local copy of a team project; Move to team in the app moves it into one`,
+							);
+						return { root, link };
+					},
+					request: (path, init) =>
+						fetch(`${daemon.url}/api/cloud${path}`, {
+							method: init?.method ?? "GET",
+							headers: { [CONTROL_HEADER]: daemon.controlToken, "content-type": "application/json" },
+							...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+						}),
+					confirm: asks ? confirmOnTty : undefined,
+					print: (line) => process.stdout.write(`${line}\n`),
+					cwd: process.cwd(),
+				},
+			);
+		},
+	);
 
 program
 	.command("skill")
