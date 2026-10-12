@@ -584,6 +584,24 @@ function Wash({ lit }: { lit: boolean }) {
 	);
 }
 
+/**
+ * What a carried tab stands on, so the tab it passes over does not show through.
+ * The focused tab's is the sheet's fill, inside the sheet's outline so the outline
+ * still draws round it; any other's is the bar's, short of the floor line.
+ */
+function Backing({ sheet }: { sheet: boolean }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				"pointer-events-none absolute inset-x-px",
+				sheet ? "bottom-0 bg-surface-canvas" : "bottom-px bg-surface-window",
+			)}
+			style={{ top: SHEET_TOP + 1, borderTopLeftRadius: FOOT - 0.5, borderTopRightRadius: FOOT - 0.5 }}
+		/>
+	);
+}
+
 function Name({ children }: { children: React.ReactNode }) {
 	return (
 		<span
@@ -761,6 +779,7 @@ function Tab({
 					onClose(true);
 				}}
 			>
+				{lifted && <Backing sheet={active} />}
 				<Wash lit={active} />
 				<button
 					type="button"
