@@ -5,6 +5,7 @@ import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop } from "../home";
 import { Button } from "../primitives/actions";
 import { MenuItem } from "../primitives/overlays";
 import { ProjectIconView } from "../project-icon";
+import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
 import { type SetupHost, useSetUpToast } from "../team-setup";
 import type { ListedTeamProject, TeamsSource } from "../team-source";
 import {
@@ -124,6 +125,7 @@ function Home({
 		if (place?.team) setLastTeam(place.team);
 	}, [place]);
 	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
+	const moved = useMovedToast();
 	useEffect(() => {
 		void refresh();
 		const back = () => void refresh();
@@ -246,6 +248,11 @@ function Home({
 					<Projects
 						key={current.address}
 						team={current}
+						teams={ready.teams}
+						onMoved={(done) => {
+							moved.say(done.toast);
+							if (typeof done.show === "string") go({ team: done.show, page: "projects" });
+						}}
 						setup={{
 							on: "browser",
 							you: account,
@@ -287,16 +294,34 @@ function Home({
 				)}
 			</main>
 			{toast}
+			{moved.toast}
 		</HomeShell>
 	);
 }
 
-/** The team's projects, every one of them, each a cover that opens its read-only canvas. */
-function Projects({ team, notice, setup }: { team: CloudTeam; notice: ReactNode; setup: SetupHost }) {
+/**
+ * The team's projects, every one of them, each a cover that opens its read-only canvas. An admin can move one to
+ * another team here; the moves that touch a Mac's folders are the app's.
+ */
+function Projects({
+	team,
+	teams,
+	notice,
+	setup,
+	onMoved,
+}: {
+	team: CloudTeam;
+	/** Every team of this account's, for where a project can move. */
+	teams: readonly CloudTeam[];
+	notice: ReactNode;
+	setup: SetupHost;
+	onMoved: (done: MoveDone) => void;
+}) {
 	const source = useContext(TeamsSourceContext);
 	const here = useTeamHere(team.address);
 	const [projects, setProjects] = useState<ListedTeamProject[] | undefined>();
 	const [menu, setMenu] = useState<string | null>(null);
+	const [moving, setMoving] = useState<ListedTeamProject | null>(null);
 	useEffect(() => {
 		let current = true;
 		void source.projects(team.address).then((listed) => {
@@ -318,7 +343,25 @@ function Projects({ team, notice, setup }: { team: CloudTeam; notice: ReactNode;
 			onOpen={(url) => location.assign(url)}
 			covers={
 				projects.length === 0 ? undefined : (
-					<CloudCovers team={team} projects={projects} here={here} menu={menu} onMenu={setMenu} />
+					<>
+						<CloudCovers
+							team={team}
+							projects={projects}
+							here={here}
+							menu={menu}
+							onMenu={setMenu}
+							onMove={mayMoveFrom(teams, team.address) ? setMoving : undefined}
+						/>
+						{moving !== null && (
+							<MoveTeamSheet
+								from={team}
+								project={moving}
+								targets={moveTargets(teams, team.address)}
+								onMoved={(outcome, to) => onMoved(teamMoveDone(moving.name, outcome, to))}
+								onClose={() => setMoving(null)}
+							/>
+						)}
+					</>
 				)
 			}
 		/>
@@ -331,12 +374,15 @@ function CloudCovers({
 	here,
 	menu,
 	onMenu,
+	onMove,
 }: {
 	team: CloudTeam;
 	projects: readonly ListedTeamProject[];
 	here: TeamHere;
 	menu: string | null;
 	onMenu: (name: string | null) => void;
+	/** "Move to team…", for an admin with another team to move a project to. */
+	onMove?: ((project: ListedTeamProject) => void) | undefined;
 }) {
 	return (
 		<>
@@ -379,6 +425,15 @@ function CloudCovers({
 												void navigator.clipboard?.writeText(new URL(at, location.origin).toString());
 											}}
 										/>
+										{onMove && (
+											<MenuItem
+												label="Move to team…"
+												onClick={() => {
+													close();
+													onMove(project);
+												}}
+											/>
+										)}
 									</>
 								)}
 							/>
