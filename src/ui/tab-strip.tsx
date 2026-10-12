@@ -901,6 +901,7 @@ function useSheet({
 	const want = useRef({ target, travel });
 	want.current = { target, travel };
 	const wake = useRef(() => {});
+	const drawNow = useRef(() => {});
 	const retarget = useRef(() => {});
 
 	useLayoutEffect(() => {
@@ -1010,6 +1011,12 @@ function useSheet({
 			still = 0;
 			if (request === 0) request = requestAnimationFrame(tick);
 		};
+		// in the commit itself, so the sheet paints in the same frame as the tab it stands on
+		drawNow.current = () => {
+			cancelAnimationFrame(request);
+			still = 0;
+			tick(Number(document.timeline?.currentTime ?? performance.now()));
+		};
 		const onWake = () => wake.current();
 		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onWake);
 		observer?.observe(element);
@@ -1022,6 +1029,7 @@ function useSheet({
 			element.removeEventListener("transitionrun", onWake);
 			scroller.removeEventListener("scroll", onWake);
 			wake.current = () => {};
+			drawNow.current = () => {};
 			retarget.current = () => {};
 		};
 	}, [layer, strip, curve]);
@@ -1029,8 +1037,9 @@ function useSheet({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new target is what moves the sheet
 	useLayoutEffect(() => retarget.current(), [target]);
 
-	// every render can move something under it
-	useLayoutEffect(() => wake.current());
+	// every render can move something under it: a dragged tab moves in the render
+	// itself, and a sheet waiting for the next frame would trail it by one
+	useLayoutEffect(() => drawNow.current());
 
 	return useMemo(() => Object.assign(() => wake.current(), { svg, fill, line }), []);
 }
