@@ -51,7 +51,7 @@ import { TeamsSourceContext } from "./teams";
 
 /**
  * The team's projects not yet on this Mac, dimmed, each with "Get it", and for the team's admins a "…" menu that
- * moves one to another team or out of this one. Read once when it mounts: Home mounts it again whenever this Mac's
+ * moves one to another team. Read once when it mounts: Home mounts it again whenever this Mac's
  * own projects change, so a project just got leaves the list, as one moved away does. Nothing shows while spool.page
  * can't say.
  */
@@ -74,7 +74,7 @@ export function TeamProjectsAway({
 	const [projects, setProjects] = useState<TeamProjectOnMac[] | undefined>();
 	const [getting, setGetting] = useState<TeamProjectOnMac | null>(null);
 	const [menu, setMenu] = useState<string | null>(null);
-	const [moving, setMoving] = useState<{ kind: "team" | "out"; project: TeamProjectOnMac } | null>(null);
+	const [moving, setMoving] = useState<TeamProjectOnMac | null>(null);
 	useEffect(() => {
 		let current = true;
 		void fetchTeamProjects(team.address).then((listed) => {
@@ -84,16 +84,10 @@ export function TeamProjectsAway({
 			current = false;
 		};
 	}, [team.address]);
-	const admin = team.role === "admin";
-	const moves = (project: TeamProjectOnMac): MoveItem[] => [
-		...(mayMoveFrom(teams, team.address)
-			? [{ label: "Move to team…", onClick: () => setMoving({ kind: "team", project }) }]
-			: []),
-		...(admin
-			? [{ label: `Move out of ${team.name}…`, end: true, onClick: () => setMoving({ kind: "out", project }) }]
-			: []),
-	];
-	/** A project moved to another team or out of this one leaves this team's list. */
+	// moving one out is only offered on a copy: its commit is what brings design/ back into git
+	const moves = (project: TeamProjectOnMac): MoveItem[] =>
+		mayMoveFrom(teams, team.address) ? [{ label: "Move to team…", onClick: () => setMoving(project) }] : [];
+	/** A project moved to another team leaves this team's list. */
 	const moved = (project: TeamProjectOnMac, done: MoveDone) => {
 		setProjects((listed) => listed?.filter((each) => each.url !== project.url));
 		onMoved?.(done);
@@ -156,20 +150,12 @@ export function TeamProjectsAway({
 				))}
 			</div>
 			{menu !== null && <MenuBackdrop onClose={() => setMenu(null)} />}
-			{moving?.kind === "team" && (
+			{moving !== null && (
 				<MoveTeamSheet
 					from={team}
-					project={moving.project}
+					project={moving}
 					targets={moveTargets(teams, team.address)}
-					onMoved={(outcome, to) => moved(moving.project, teamMoveDone(moving.project.name, outcome, to))}
-					onClose={() => setMoving(null)}
-				/>
-			)}
-			{moving?.kind === "out" && (
-				<MoveOutSheet
-					team={team}
-					project={moving.project.name}
-					onMoved={(done) => moved(moving.project, done)}
+					onMoved={(outcome, to) => moved(moving, teamMoveDone(moving.name, outcome, to))}
 					onClose={() => setMoving(null)}
 				/>
 			)}

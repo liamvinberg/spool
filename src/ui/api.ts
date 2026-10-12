@@ -101,14 +101,8 @@ export type {
 	ThreadPut,
 };
 
-/**
- * A project's card on Home. On a team project's local copy, `inRepo` says whether its root sits inside a git work
- * tree; on a copy that ended because its project moved out of its team, `movedOut` is that team's name.
- */
-export type ProjectCard = DaemonProjectCard & {
-	team?: { inRepo?: boolean };
-	movedOut?: string;
-};
+/** A project's card on Home. */
+export type ProjectCard = DaemonProjectCard;
 
 /**
  * The daemon over its typed RPC surface (#12): hc<AppType> is the

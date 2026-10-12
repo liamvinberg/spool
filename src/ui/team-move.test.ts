@@ -511,7 +511,7 @@ it("gives an admin a menu on a dimmed cover, and an editor none", async () => {
 	const ada = away(fakeTeamsSource({ teams: ADA }), ADA);
 	await settle();
 	await openMenu(ada.host, "onboarding");
-	expect(items(ada.host)).toEqual(["Move to team…", "!Move out of Tidemark…"]);
+	expect(items(ada.host)).toEqual(["Move to team…"]);
 
 	const mira = away(fakeTeamsSource({ teams: MIRA }), MIRA);
 	await settle();
@@ -532,24 +532,6 @@ it("moves a project not on this Mac to another team, with no commit to make here
 	await click(host, "Move to Northlight");
 	expect(fake.asked).toContain("move tidemark/onboarding northlight onboarding");
 	expect(done).toEqual([{ toast: "Moved onboarding to Northlight.", show: "northlight" }]);
-});
-
-it("moves a project not on this Mac out of its team, committing nothing here", async () => {
-	const asked = daemon((method, url) =>
-		method === "POST" && url.endsWith("/out")
-			? Response.json({ root: null, committed: false, commitWaiting: false })
-			: ONBOARDING(url),
-	);
-	const { host, done } = away(fakeTeamsSource({ teams: ADA, people: PEOPLE }), ADA);
-	await settle();
-	await openMenu(host, "onboarding");
-	await choose(host, "Move out of Tidemark…");
-	expect(sheet(host)?.textContent).toContain(
-		"Tidemark no longer has onboarding. No copy of it is on this Mac, so nothing is committed here.",
-	);
-	await click(host, "Move out of Tidemark");
-	expect(asked).toContain("POST /api/cloud/teams/tidemark/projects/onboarding/out {}");
-	expect(done).toEqual([{ toast: "onboarding is out of Tidemark." }]);
 });
 
 it("says a copy whose project moved out is to pull its repo, and an ended one that it no longer syncs", () => {
