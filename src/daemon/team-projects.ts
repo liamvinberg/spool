@@ -9,6 +9,16 @@ import { checkoutOf, cloneCommand } from "../git-remote";
 import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { expandHome, realDir } from "../paths";
 import { readRegistry, teamProjects } from "../registry";
+import {
+	copiesOf,
+	type MoveHooks,
+	MoveRefused,
+	moveIntoCheckout,
+	moveOutOfTeam,
+	moveToTeam,
+	previewTeamMove,
+	type TeamMoveOptions,
+} from "../team-moves";
 import type { DaemonCloud } from "./app";
 import { branchesTouchingDesign, type MoveCommit } from "./history";
 import { staysOnThisMac } from "./team-sync";
@@ -62,6 +72,10 @@ export function teamProjectRoutes(options: {
 	notice?: (message: string) => void;
 	/** The daemon is closing: a move commit still waiting on git stops, and is made at the next start. */
 	signal?: AbortSignal;
+	/** What the daemon does around moving a team project on (task 136); none, and those routes refuse. */
+	hooks?: Omit<MoveHooks, "onProgress">;
+	/** A move changed what Home's covers show. */
+	changed?: () => void;
 }) {
 	const origin = () => originOf(options.cloud);
 	const asked = () => ({
@@ -80,6 +94,26 @@ export function teamProjectRoutes(options: {
 	 * sheet that asks, once, for as long as `ENDED_KEPT_MS`.
 	 */
 	const ended = new Map<string, { team: string; ended: MoveEnded; at: number }>();
+	const moving = (): TeamMoveOptions => ({
+		...asked(),
+		location: options.location(),
+		...(options.signal === undefined ? {} : { signal: options.signal }),
+	});
+	const hooks = (onProgress?: (progress: MoveProgress) => void): MoveHooks => {
+		if (options.hooks === undefined) throw new SpoolError("this daemon doesn't move team projects");
+		return { ...options.hooks, ...(onProgress === undefined ? {} : { onProgress }) };
+	};
+	/** Where a move went wrong, said for the sheet: spool.page's code, and a sentence for it. */
+	const moveRefused = (
+		c: Context,
+		error: unknown,
+		about: { team: string; project: string; to?: string; name?: string },
+	) => {
+		if (error instanceof CloudTeamRefused)
+			return c.json({ error: moveSentence(error.code, about), code: error.code }, 409);
+		if (error instanceof MoveRefused) return c.json({ error: error.message, code: error.code }, 409);
+		return refused(c, error);
+	};
 	return (
 		new Hono()
 			/** How far a move under way has got, and a pause it is waiting out; null when none is. */
@@ -171,6 +205,108 @@ export function teamProjectRoutes(options: {
 					}
 				},
 			)
+			/** D1: what moving a team project to another team would do, here and at spool.page. */
+			.get("/teams/:team/projects/:project/move", async (c) => {
+				const to = c.req.query("to");
+				const name = c.req.query("name");
+				if (to === undefined || to === "") return c.json({ error: "expected ?to=<team address>" }, 400);
+				const from = { team: c.req.param("team"), project: c.req.param("project") };
+				try {
+					return c.json(await previewTeamMove(options.spoolDir, from, { team: to, name }, moving()));
+				} catch (error) {
+					return moveRefused(c, error, { ...from, to, ...(name === undefined ? {} : { name }) });
+				}
+			})
+			/** D2: the same project to another team; this Mac's copies follow it, committed where spool.json is tracked. */
+			.post(
+				"/teams/:team/projects/:project/move",
+				validator("json", (value, c) => {
+					const { to, name } = value as { to?: unknown; name?: unknown };
+					if (typeof to !== "string" || to === "" || (name !== undefined && typeof name !== "string"))
+						return c.json(
+							{ error: 'expected { "to": "<team address>", "name"?: "<name>" }', code: "invalid_input" },
+							400,
+						);
+					return { to, ...(name === undefined ? {} : { name }) };
+				}),
+				async (c) => {
+					const body = c.req.valid("json");
+					const from = { team: c.req.param("team"), project: c.req.param("project") };
+					try {
+						const moved = await moveToTeam(
+							options.spoolDir,
+							from,
+							{ team: body.to, name: body.name },
+							moving(),
+							hooks(),
+						);
+						options.notice?.(`moved ${from.team}/${from.project} to ${moved.team}/${moved.name}`);
+						options.changed?.();
+						return c.json(moved);
+					} catch (error) {
+						return moveRefused(c, error, { ...from, ...body });
+					}
+				},
+			)
+			/** D3: out of its team: this Mac's copy catches up, the team deletes it, and one commit puts design/ back in git. */
+			.post(
+				"/teams/:team/projects/:project/out",
+				validator("json", (value, c) => {
+					const path = (value as { path?: unknown } | null)?.path;
+					if (path !== undefined && (typeof path !== "string" || path === ""))
+						return c.json({ error: 'expected { "path"?: "/abs/project" }' }, 400);
+					return { path: path as string | undefined };
+				}),
+				async (c) => {
+					const from = { team: c.req.param("team"), project: c.req.param("project") };
+					let key: string | undefined;
+					try {
+						const path = c.req.valid("json").path;
+						key = path === undefined ? copiesOf(options.spoolDir, from)[0] : realDir(path);
+						if (key !== undefined && moves.has(key))
+							return c.json({ error: `${basename(key)} is already moving.` }, 409);
+						const root = key;
+						if (root !== undefined)
+							moves.set(root, { team: from.team, progress: { up: 0, total: 0, paused: null } });
+						const out = await moveOutOfTeam(
+							options.spoolDir,
+							from,
+							root,
+							moving(),
+							hooks(
+								root === undefined ? undefined : (progress) => moves.set(root, { team: from.team, progress }),
+							),
+						);
+						options.notice?.(`moved ${from.team}/${from.project} out of ${from.team}`);
+						options.changed?.();
+						return c.json(out);
+					} catch (error) {
+						return moveRefused(c, error, from);
+					} finally {
+						if (key !== undefined) moves.delete(key);
+					}
+				},
+			)
+			/** D4: a copy in no repo into a checkout: design/ moves in, spool.json and the AGENTS.md line are committed. */
+			.post(
+				"/teams/:team/projects/:project/into",
+				validator("json", (value, c) => {
+					const { path, checkout } = (value ?? {}) as { path?: unknown; checkout?: unknown };
+					if (typeof path !== "string" || path === "" || typeof checkout !== "string" || checkout === "")
+						return c.json({ error: 'expected { "path": "/abs/project", "checkout": "/abs/clone" }' }, 400);
+					return { path, checkout };
+				}),
+				async (c) => {
+					const from = { team: c.req.param("team"), project: c.req.param("project") };
+					try {
+						const into = await moveIntoCheckout(options.spoolDir, from, c.req.valid("json"), moving(), hooks());
+						options.changed?.();
+						return c.json(into);
+					} catch (error) {
+						return moveRefused(c, error, from);
+					}
+				},
+			)
 			.post(
 				"/teams/:team/move",
 				validator("json", (value, c) => {
@@ -226,6 +362,35 @@ export function teamProjectRoutes(options: {
 				},
 			)
 	);
+}
+
+/** What a move's refusal says, by spool.page's code (contract A2), for the sheet and the CLI. */
+function moveSentence(code: string, about: { team: string; project: string; to?: string; name?: string }): string {
+	const to = about.to ?? "that team";
+	const name = about.name ?? about.project;
+	switch (code) {
+		case "invalid_input":
+			return `"${name}" can't name a project: use 2 to 40 lowercase letters, digits and hyphens.`;
+		case "admin_required":
+			return `Only an admin of ${about.team} can move its projects.`;
+		case "same_team":
+			return `${about.project} is already in ${about.team}.`;
+		case "target_not_found":
+			return `You're not in a team at ${to}.`;
+		case "target_editor_required":
+			return `You're a viewer of ${to}. Only its editors and admins can move a project into it.`;
+		case "unpaid":
+			return `${to} has no paid time left. It takes projects again once an admin pays for it.`;
+		case "name_taken":
+			return `${to} already has a project called ${name}. Pick another name.`;
+		case "project_not_found":
+		case "team_not_found":
+			return `${about.team} has no project called ${about.project}, or you're no longer in it.`;
+		case "project_moved":
+			return `${about.team}/${about.project} has moved. Look for it in its new team.`;
+		default:
+			return `spool.page refused the move: ${code}`;
+	}
 }
 
 /** What the daemon answers a team-project request that failed, and with which status. */

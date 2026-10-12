@@ -23,6 +23,7 @@ import { fetchLocalCopy, openProject } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, themeInline } from "../settings/registry";
+import { finishOwedCommits } from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
@@ -1012,6 +1013,12 @@ export function createDaemonApp({
 	// DEV-190: a move whose commit git didn't take is owed it; it is made now, or at the next start
 	const moving = new AbortController();
 	void finishMoves(registeredRoots(), { signal: moving.signal }).then((finished) => {
+		for (const { root, commit } of finished)
+			if (commit.kind === "committed")
+				teamNotice(`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`, root);
+	});
+	// task 136: so is one moving a project to another team, out of one, or into a checkout
+	void finishOwedCommits(registeredRoots(), { signal: moving.signal }).then((finished) => {
 		for (const { root, commit } of finished)
 			if (commit.kind === "committed")
 				teamNotice(`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`, root);
@@ -3882,6 +3889,21 @@ export function createDaemonApp({
 				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
 			notice: teamNotice,
 			signal: moving.signal,
+			hooks: {
+				hold: (root) => teamSync.hold(root),
+				relocate: (from, to, folder) => {
+					const result = mutateMachineState(spoolDir, { kind: "relocate-project", root: from, to, folder });
+					hub.forget(from);
+					liveTurns.relocate(from, result.root);
+					selections.relocate(from, result.root);
+					machineStateWatch.acknowledgeRegistry(result.registry);
+					machineStateWatch.acknowledgeSession(result.session);
+					emitAppEvent({ kind: "project-renamed", from, root: result.root, name: result.name });
+				},
+				endMovedOut: (root, link) => teamSync.movedOut(root, link),
+				trash: trashImpl,
+			},
+			changed: () => emitAppEvent({ kind: "registry" }),
 		}),
 	);
 	app.route("/api/p", projectShares.routes);

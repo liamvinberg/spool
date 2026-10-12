@@ -36,6 +36,40 @@ export function renameProjectUnlocked(spoolDir: string, root: string, requestedN
 	) {
 		throw new SpoolError("This folder contains another Spool project or its app data and cannot be renamed here.");
 	}
+	return relocate(spoolDir, root, target, { folder: true, registry, session });
+}
+
+/**
+ * Only the closed machine-state operation calls this, with its cross-process lock held: a registered project is
+ * somewhere else now (task 136), its registry entry, open tab and conversations following it. With `folder`, the
+ * folder itself moves there first; without, its files already have (its design/ went into a checkout).
+ */
+export function relocateProjectUnlocked(
+	spoolDir: string,
+	root: string,
+	target: string,
+	options: { folder: boolean },
+): ProjectRename {
+	const registry = readMachineRegistry(spoolDir);
+	const session = readMachineSession(spoolDir);
+	if (!registry.projects.some((project) => project.root === root)) {
+		throw new SpoolError("This project is no longer registered. Open its folder again.");
+	}
+	if (target === root) return { root, name: basename(root), registry, session };
+	if (registry.projects.some((project) => project.root === target)) {
+		throw new SpoolError(`${target} is already a project spool knows.`);
+	}
+	if (options.folder) mkdirSync(dirname(target), { recursive: true });
+	return relocate(spoolDir, root, target, { folder: options.folder, registry, session });
+}
+
+function relocate(
+	spoolDir: string,
+	root: string,
+	target: string,
+	{ folder, registry, session }: { folder: boolean; registry: Registry; session: AppSession },
+): ProjectRename {
+	const name = basename(target);
 	const oldThreads = threadsDir(spoolDir, root);
 	const newThreads = threadsDir(spoolDir, target);
 	if (existsSync(newThreads)) throw new SpoolError("That location has saved conversations. Choose another name.");
@@ -46,8 +80,10 @@ export function renameProjectUnlocked(spoolDir: string, root: string, requestedN
 	const nextSession = { open: session.open.map((held) => (held === root ? target : held)) };
 	const restore: (() => void)[] = [];
 	try {
-		moveIntoVacantFolder(root, target);
-		restore.push(() => moveIntoVacantFolder(target, root));
+		if (folder) {
+			moveIntoVacantFolder(root, target);
+			restore.push(() => moveIntoVacantFolder(target, root));
+		}
 		if (existsSync(oldThreads)) {
 			moveIntoVacantFolder(oldThreads, newThreads);
 			restore.push(() => moveIntoVacantFolder(newThreads, oldThreads));

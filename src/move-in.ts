@@ -133,7 +133,13 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
  * copy's record says the team has. `GIVE_UP_ROUNDS` rounds in a row that get nothing up stop it, as does any other
  * stop, named, and nothing here has changed.
  */
-async function upload(root: string, spoolDir: string, link: ProjectLink, options: MoveOptions): Promise<void> {
+async function upload(
+	root: string,
+	spoolDir: string,
+	link: ProjectLink,
+	options: MoveOptions,
+	moving = true,
+): Promise<void> {
 	const name = basename(root);
 	const total = travellingFiles(root).length;
 	const say = (paused: MoveProgress["paused"] = null) => options.onProgress?.({ up, total, paused });
@@ -147,7 +153,7 @@ async function upload(root: string, spoolDir: string, link: ProjectLink, options
 		try {
 			await syncLocalCopy(root, spoolDir, {
 				...options,
-				moving: link,
+				...(moving ? { moving: link } : {}),
 				onSaved: () => {
 					up = Math.min(total, up + 1);
 					say();
@@ -175,6 +181,15 @@ async function upload(root: string, spoolDir: string, link: ProjectLink, options
 			say();
 		}
 	}
+}
+
+/**
+ * A local copy brought level with its team before it leaves it (task 136): everything here goes up and everything the
+ * team has comes down, waiting out what lifts by itself, as a move in's upload does. The daemon stops following the
+ * copy first: this is the only connection it has meanwhile.
+ */
+export function catchUp(root: string, spoolDir: string, link: ProjectLink, options: MoveOptions): Promise<void> {
+	return upload(root, spoolDir, link, options, false);
 }
 
 /** How long a move first waits after its connection drops, doubling each time to `DROP_WAIT_MAX_MS`. */

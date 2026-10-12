@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { PROJECT_LINK } from "../team-project";
 import { readCanvasFields } from "./canvas-file";
@@ -654,6 +654,152 @@ export async function commitMoveIn(root: string, options: MoveCommitOptions = {}
 		return { kind: "committed", commit: id };
 	}
 	return { kind: "failed" };
+}
+
+/** One commit on the current branch that takes these paths out of git and brings these in from disk. */
+export interface PathsCommit {
+	message: string;
+	/** Paths (files or folders) the commit takes out of git; what is on disk stays. */
+	remove?: readonly string[];
+	/** Files the commit brings in as they are on disk, ignored or not. */
+	add?: readonly string[];
+	wait?: (ms: number) => Promise<void>;
+	signal?: AbortSignal;
+}
+
+/**
+ * A commit a move makes besides the move in's (task 136): `spool.json` rewritten for another team, a project brought
+ * into a checkout, or one moved out of its team. Made the way the move commit is: on the checked-out branch, from a
+ * scratch index, no hook and no push, once git is done with any merge or rebase; the real index is then brought
+ * level for those paths alone. Paths are relative to `root`, wherever it sits in its repo.
+ */
+export async function commitPaths(root: string, change: PathsCommit): Promise<MoveCommit> {
+	const wait = change.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	const top = await git(root, ["rev-parse", "--show-toplevel"]);
+	if (!top.ok) return { kind: "no-git" };
+	const repo = top.stdout.trim();
+	const dir = await git(repo, ["rev-parse", "--absolute-git-dir"]);
+	if (!dir.ok) return { kind: "no-git" };
+	const inRepo = (path: string) => relative(repo, resolve(root, path)).split(sep).join("/");
+	const remove = (change.remove ?? []).map(inRepo);
+	const add = (change.add ?? []).map(inRepo);
+	for (let tries = 0; tries < MOVE_TRIES; tries += 1) {
+		if (change.signal?.aborted) return { kind: "failed" };
+		if (blocked(dir.stdout.trim())) {
+			await wait(1_000);
+			continue;
+		}
+		const branch = await git(repo, ["symbolic-ref", "--quiet", "HEAD"]);
+		if (!branch.ok) return { kind: "detached" };
+		const head = await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+		const parent = head.ok ? head.stdout.trim() : undefined;
+		const made = await pathsTree(repo, parent, remove, add);
+		if (made === undefined) return { kind: "failed" };
+		const commit = await git(repo, [
+			"-c",
+			"commit.gpgsign=false",
+			"commit-tree",
+			made,
+			...(parent === undefined ? [] : ["-p", parent]),
+			"-m",
+			change.message,
+		]);
+		if (!commit.ok) return { kind: "failed" };
+		const id = commit.stdout.trim();
+		const moved = await git(repo, [
+			"-c",
+			`core.hooksPath=${devNull}`,
+			"update-ref",
+			"-m",
+			change.message,
+			"HEAD",
+			id,
+			parent ?? "",
+		]);
+		if (!moved.ok) {
+			await wait(100);
+			continue;
+		}
+		if (remove.length > 0)
+			await git(repo, [
+				"--literal-pathspecs",
+				"rm",
+				"-r",
+				"--cached",
+				"--force",
+				"--quiet",
+				"--ignore-unmatch",
+				"--",
+				...remove,
+			]);
+		await stageFrom(repo, add);
+		return { kind: "committed", commit: id };
+	}
+	return { kind: "failed" };
+}
+
+/** HEAD's tree with `remove` taken out and `add` brought in from disk, written from a scratch index. */
+async function pathsTree(
+	repo: string,
+	parent: string | undefined,
+	remove: readonly string[],
+	add: readonly string[],
+): Promise<string | undefined> {
+	const scratch = mkdtempSync(join(tmpdir(), "spool-move-"));
+	try {
+		const index = join(scratch, "index");
+		if (parent !== undefined && !(await git(repo, ["read-tree", parent], index)).ok) return undefined;
+		if (
+			remove.length > 0 &&
+			!(
+				await git(
+					repo,
+					[
+						"--literal-pathspecs",
+						"rm",
+						"-r",
+						"--cached",
+						"--force",
+						"--quiet",
+						"--ignore-unmatch",
+						"--",
+						...remove,
+					],
+					index,
+				)
+			).ok
+		)
+			return undefined;
+		if (!(await stageFrom(repo, add, index, scratch))) return undefined;
+		const tree = await git(repo, ["write-tree"], index);
+		return tree.ok ? tree.stdout.trim() : undefined;
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+/** Stage files from disk, however many, ignored or not: listed in a file, so no command line is too long. */
+async function stageFrom(
+	repo: string,
+	paths: readonly string[],
+	indexFile?: string,
+	scratch?: string,
+): Promise<boolean> {
+	if (paths.length === 0) return true;
+	const dir = scratch ?? mkdtempSync(join(tmpdir(), "spool-stage-"));
+	try {
+		const list = join(dir, "paths");
+		writeFileSync(list, `${paths.join("\0")}\0`);
+		return (
+			await git(
+				repo,
+				["--literal-pathspecs", "add", "-f", `--pathspec-from-file=${list}`, "--pathspec-file-nul"],
+				indexFile,
+			)
+		).ok;
+	} finally {
+		if (scratch === undefined) rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 /** Whether git tracks this file, relative to its repo's top or absolute. */

@@ -4,7 +4,7 @@ import { writeAtomic } from "./atomic-write";
 import { SpoolError } from "./errors";
 import { type FileLockPhase, withFileLockSync } from "./file-lock";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "./machine-state-files";
-import { type ProjectRename, renameProjectUnlocked } from "./rename-project";
+import { type ProjectRename, relocateProjectUnlocked, renameProjectUnlocked } from "./rename-project";
 
 const LOCK_FILE = "machine-state.lock";
 export type MachineStateLockPhase = FileLockPhase;
@@ -29,7 +29,9 @@ export type MachineStateMutation =
 	| { kind: "update-session"; root: string; open: boolean }
 	| { kind: "order-session"; order: readonly string[] }
 	| { kind: "remove-project"; root: string }
-	| { kind: "rename-project"; root: string; name: string };
+	| { kind: "rename-project"; root: string; name: string }
+	/** a project's folder moved with its team, or its design/ into a checkout (task 136): everything follows it */
+	| { kind: "relocate-project"; root: string; to: string; folder: boolean };
 
 export type MachineStateMutationResult<Mutation extends MachineStateMutation> = Mutation extends {
 	kind: "update-session";
@@ -39,7 +41,7 @@ export type MachineStateMutationResult<Mutation extends MachineStateMutation> = 
 		? AppSession
 		: Mutation extends { kind: "remove-project" }
 			? MachineProjectRemoval
-			: Mutation extends { kind: "rename-project" }
+			: Mutation extends { kind: "rename-project" } | { kind: "relocate-project" }
 				? ProjectRename
 				: Mutation extends { kind: "visit-project" }
 					? VisitResult
@@ -99,6 +101,8 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 			return removeProjectUnlocked(spoolDir, mutation.root);
 		case "rename-project":
 			return renameProjectUnlocked(spoolDir, mutation.root, mutation.name);
+		case "relocate-project":
+			return relocateProjectUnlocked(spoolDir, mutation.root, mutation.to, { folder: mutation.folder });
 	}
 }
 
@@ -267,6 +271,15 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 			const root = dataValue(mutation, "root");
 			const name = dataValue(mutation, "name");
 			return typeof root === "string" && typeof name === "string" ? { kind, root, name } : undefined;
+		}
+		case "relocate-project": {
+			if (!hasExactDataKeys(mutation, ["folder", "kind", "root", "to"])) return undefined;
+			const root = dataValue(mutation, "root");
+			const to = dataValue(mutation, "to");
+			const folder = dataValue(mutation, "folder");
+			return typeof root === "string" && typeof to === "string" && typeof folder === "boolean"
+				? { kind, root, to, folder }
+				: undefined;
 		}
 		case "order-session": {
 			if (!hasExactDataKeys(mutation, ["kind", "order"])) return undefined;
