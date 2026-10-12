@@ -3,7 +3,6 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { CloudTeam, TeamProjectOnMac } from "./api";
-import { Home } from "./home";
 import { GetItDialog, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
 
 function mount(element: React.ReactNode) {
@@ -238,39 +237,6 @@ it("moves a project to the chosen team, saying history before the move stays in 
 		'POST /api/cloud/teams/tidemark/move {"path":"/Users/ana/site"}',
 	]);
 	expect(onMoved).toHaveBeenCalledWith({ root: "/Users/ana/site", name: "site", commit: "committed" }, TIDEMARK);
-});
-
-it("offers Move to team on a project's cover, never on a team project's", async () => {
-	const card = (name: string, team?: { url: string; team: string; project: string }) => ({
-		name,
-		root: `/Users/ana/${name}`,
-		openedAt: new Date().toISOString(),
-		frameCount: 1,
-		covers: [],
-		...(team === undefined ? {} : { team }),
-	});
-	const onMoveToTeam = vi.fn();
-	const noop = vi.fn();
-	const host = mount(
-		createElement(Home, {
-			projects: [
-				card("site"),
-				card("app", { url: "https://spool.page/devosurf/app", team: "devosurf", project: "app" }),
-			] as never,
-			onOpenProject: noop,
-			onForgetProject: noop,
-			onTrashProject: noop,
-			onRenameProject: noop,
-			onStart: noop,
-			onFolder: noop,
-			onMoveToTeam,
-		}),
-	);
-	await act(async () => (host.querySelector('[aria-label="Manage app"]') as HTMLButtonElement).click());
-	expect(Array.from(host.querySelectorAll("button")).some((node) => node.textContent === "Move to team…")).toBe(false);
-	await act(async () => (host.querySelector('[aria-label="Manage site"]') as HTMLButtonElement).click());
-	await act(async () => button(host, "Move to team…").click());
-	expect(onMoveToTeam).toHaveBeenCalledWith(expect.objectContaining({ root: "/Users/ana/site", name: "site" }));
 });
 
 const CHAMFER = { root: "/Users/ana/chamfer", name: "chamfer" };

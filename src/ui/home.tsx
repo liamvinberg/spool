@@ -26,7 +26,7 @@ export function Home({
 	onFolder,
 	onImport,
 	onExportProject,
-	onMoveToTeam,
+	moveItems,
 	onChangeIcon,
 	onRemoveIcon,
 	onRemoveThumbnail,
@@ -45,8 +45,8 @@ export function Home({
 	onFolder: () => void;
 	onImport?: () => void;
 	onExportProject?: (project: ProjectCard) => void;
-	/** "Move to team…" on a project's cover, while this account edits in a team. */
-	onMoveToTeam?: ((project: { root: string; name: string }) => void) | undefined;
+	/** The ways each cover's project can move: "Move to team…" and the like. */
+	moveItems?: MoveItems | undefined;
 	/** "Change icon…" on a project's cover. */
 	onChangeIcon?: (project: { root: string; name: string }) => void;
 	/** "Remove icon" on a cover whose icon is the project's own file. */
@@ -289,7 +289,7 @@ export function Home({
 							onTrashProject={onTrashProject}
 							onRenameProject={onRenameProject}
 							{...(onExportProject === undefined ? {} : { onExportProject })}
-							{...(onMoveToTeam === undefined ? {} : { onMoveToTeam })}
+							{...(moveItems === undefined ? {} : { moveItems })}
 							{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
 							{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
 							{...(onRemoveThumbnail === undefined ? {} : { onRemoveThumbnail })}
@@ -413,6 +413,16 @@ export function HerePill({ people }: { people: readonly HerePerson[] | undefined
 /** The faces a cover shows before the rest are only counted. */
 const HERE_FACES = 4;
 
+/** One way a cover's project can move, in its menu: an `end` one sits at the foot with Hide and Trash, destructive. */
+export interface MoveItem {
+	label: string;
+	end?: boolean;
+	onClick: () => void;
+}
+
+/** The ways a cover's project can move, as this account may move it: none, for most. */
+export type MoveItems = (project: ProjectCard) => readonly MoveItem[];
+
 /** The covers, three across, each with its menu: `menu` is the root whose menu is open. */
 export function ProjectGrid({
 	projects,
@@ -424,7 +434,7 @@ export function ProjectGrid({
 	onTrashProject,
 	onRenameProject,
 	onExportProject,
-	onMoveToTeam,
+	moveItems,
 	onChangeIcon,
 	onRemoveIcon,
 	onRemoveThumbnail,
@@ -440,8 +450,8 @@ export function ProjectGrid({
 	onTrashProject: (project: { root: string; name: string }) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onExportProject?: (project: ProjectCard) => void;
-	/** "Move to team…", offered on a project that isn't a team project yet. */
-	onMoveToTeam?: (project: { root: string; name: string }) => void;
+	/** The ways each cover's project can move, as this account may move it. */
+	moveItems?: MoveItems;
 	onChangeIcon?: (project: { root: string; name: string }) => void;
 	onRemoveIcon?: (project: { root: string; name: string }) => void;
 	onRemoveThumbnail?: (project: { root: string; name: string }) => void;
@@ -466,9 +476,7 @@ export function ProjectGrid({
 						onTrash={() => onTrashProject(project)}
 						onRename={() => onRenameProject(project)}
 						onExport={() => onExportProject?.(project)}
-						{...(onMoveToTeam === undefined || project.team !== undefined
-							? {}
-							: { onMoveToTeam: () => onMoveToTeam(project) })}
+						moves={moveItems?.(project) ?? []}
 						{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(project) })}
 						{...(onRemoveIcon === undefined || project.icon?.from !== "file"
 							? {}
@@ -497,7 +505,7 @@ function ProjectTile({
 	onTrash,
 	onRename,
 	onExport,
-	onMoveToTeam,
+	moves,
 	onChangeIcon,
 	onRemoveIcon,
 	onRemoveThumbnail,
@@ -514,7 +522,7 @@ function ProjectTile({
 	onTrash: () => void;
 	onRename: () => void;
 	onExport: () => void;
-	onMoveToTeam?: () => void;
+	moves: readonly MoveItem[];
 	onChangeIcon?: () => void;
 	onRemoveIcon?: () => void;
 	onRemoveThumbnail?: () => void;
@@ -610,16 +618,19 @@ function ProjectTile({
 							onRename();
 						}}
 					/>
-					{onMoveToTeam && (
-						<MenuItem
-							label="Move to team…"
-							onClick={() => {
-								refocus();
-								close();
-								onMoveToTeam();
-							}}
-						/>
-					)}
+					{moves
+						.filter((move) => !move.end)
+						.map((move) => (
+							<MenuItem
+								key={move.label}
+								label={move.label}
+								onClick={() => {
+									refocus();
+									close();
+									move.onClick();
+								}}
+							/>
+						))}
 					<MenuItem
 						label="Copy path"
 						onClick={() => {
@@ -635,6 +646,20 @@ function ProjectTile({
 							withViewTransition(onForget);
 						}}
 					/>
+					{moves
+						.filter((move) => move.end)
+						.map((move) => (
+							<MenuItem
+								key={move.label}
+								label={move.label}
+								destructive
+								onClick={() => {
+									refocus();
+									close();
+									move.onClick();
+								}}
+							/>
+						))}
 					<MenuItem
 						label={`Move to ${systemTrashName()}…`}
 						destructive
@@ -778,7 +803,7 @@ export function CoverTile({
 
 /**
  * A card's one quiet line. At rest: when it was opened, with the team it is shared in or the team it no longer syncs
- * with. Under the pointer, on focus, with its menu open, or when a search hits only its path, the line turns to where
+ * with, or, when its project moved out of that team, that its repo is to pull. Under the pointer, on focus, with its menu open, or when a search hits only its path, the line turns to where
  * the project lives, how many frames it has and how many copies of it this Mac holds.
  */
 function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: number; detail: boolean }) {
@@ -788,7 +813,10 @@ function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: 
 		project.syncPaused !== undefined && "sync paused",
 		project.goneLocal !== undefined && "gone local",
 		relativeTime(project.openedAt),
-		project.ended !== undefined && `no longer synced with ${project.ended}`,
+		project.ended !== undefined &&
+			(project.movedOut === undefined
+				? `no longer synced with ${project.ended}`
+				: `out of ${project.movedOut} · pull its repo`),
 	];
 	const where = [
 		tilde(project.root),
