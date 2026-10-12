@@ -1023,14 +1023,16 @@ export function useTeamHome(
 		covers: (address: string, here: TeamHere) => ReactNode;
 		/** New project, started in this team. */
 		onNewProject: (team: CloudTeam) => void;
-		/** The team's projects not on this Mac yet, to Get. */
-		away?: (team: CloudTeam, here: TeamHere) => ReactNode;
+		/** The team's projects not on this Mac yet, to Get, among every team of this account's. */
+		away?: (team: CloudTeam, here: TeamHere, teams: readonly CloudTeam[]) => ReactNode;
 		/** This Mac's own projects, which a new team's setup list offers to move in. */
 		own?: readonly OwnProject[];
 		/** Today's Move to team… sheet, for this team. */
 		onMoveIn?: (team: CloudTeam, project: OwnProject) => void;
 		/** How many of the team's projects are on this Mac: when it changes, the setup list reads its facts again. */
 		revision?: (address: string) => number;
+		/** A line about a move's commit, kept above the covers until dismissed. */
+		note?: ReactNode;
 	},
 ) {
 	const teamActions = useContext(TeamsSourceContext);
@@ -1073,6 +1075,7 @@ export function useTeamHome(
 			editing: [] as CloudTeam[],
 			all: NO_TEAMS,
 			toast: undefined,
+			show: select,
 		};
 	const switcher = (
 		<>
@@ -1145,9 +1148,18 @@ export function useTeamHome(
 					) : (
 						<TeamProjects
 							team={current}
-							notice={notice}
+							notice={
+								projects?.note ? (
+									<>
+										{projects.note}
+										{notice}
+									</>
+								) : (
+									notice
+								)
+							}
 							covers={projects?.covers(current.address, here)}
-							away={projects?.away?.(current, here)}
+							away={projects?.away?.(current, here, ready.teams)}
 							onNewProject={projects && (() => projects.onNewProject(current))}
 							onBilling={
 								current.role === "admin"
@@ -1182,5 +1194,7 @@ export function useTeamHome(
 		editing,
 		all: ready.teams,
 		toast,
+		/** Home shows a team's page, by its address, or Your projects. */
+		show: select,
 	};
 }

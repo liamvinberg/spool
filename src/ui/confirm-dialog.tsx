@@ -3,6 +3,9 @@ import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { Button } from "./primitives/actions";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./primitives/overlays";
 
+/** Thrown from `onConfirm` when the sheet already says why in place, beside the field it is about: no notice under it. */
+export class RefusedInPlace extends Error {}
+
 /** A modal confirmation that waits for the action and keeps failures retryable. */
 export function ConfirmDialog({
 	title,
@@ -76,7 +79,8 @@ export function ConfirmDialog({
 							await onConfirm();
 							onClose();
 						} catch (error) {
-							setNotice(error instanceof Error ? error.message : "Could not finish. Try again.");
+							if (!(error instanceof RefusedInPlace))
+								setNotice(error instanceof Error ? error.message : "Could not finish. Try again.");
 						} finally {
 							submitting.current = false;
 							setBusy(false);

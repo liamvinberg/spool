@@ -41,7 +41,8 @@ import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { SharedControl, useShares } from "./shares";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
-import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
+import { type MoveDone, useMovedToast } from "./team-move";
+import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway, useCoverMoves } from "./team-moves";
 import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
@@ -562,6 +563,8 @@ export function App() {
 					onChangeIcon={icons.change}
 					onRemoveIcon={icons.remove}
 					onRemoveThumbnail={icons.removeThumbnail}
+					// read once the hook below has made them, when the grid draws
+					moveItems={(project) => coverMoves.moveItems(project)}
 					here={here}
 				/>
 			);
@@ -571,27 +574,39 @@ export function App() {
 			setPicking("new");
 		},
 		// keyed on this Mac's copies of the team's projects, so one just got leaves the list
-		away: (team, here) => (
+		away: (team, here, teams) => (
 			<TeamProjectsAway
 				key={projects
 					.filter((project) => project.team?.team === team.address)
 					.map((project) => project.root)
 					.join("\n")}
 				team={team}
+				teams={teams}
 				here={here}
 				onGot={(project) => {
 					void refetch();
 					openTab(project);
 				}}
+				onMoved={(done) => moveDone(done)}
 			/>
 		),
 		own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
 		onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
 		revision: (address) => projects.filter((project) => project.team?.team === address).length,
+		note: moveNote === null ? undefined : <MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />,
 	});
-	/** "Move to team…", while this account edits in a team; a team project has nowhere to move. */
+	/** "Move to team…" on a project in no team, while this account edits in a team. */
 	const moveToTeam =
 		teamHome.editing.length === 0 ? undefined : (project: { root: string; name: string }) => setMoving(project);
+	const movedToast = useMovedToast();
+	/** A team project moved to another team, out of its team, or into a checkout: said, and Home shows where it went. */
+	const moveDone = (done: MoveDone) => {
+		movedToast.say(done.toast);
+		if (done.note !== undefined) setMoveNote(done.note);
+		if (done.show !== undefined) teamHome.show(done.show);
+		void refetch();
+	};
+	const coverMoves = useCoverMoves({ teams: teamHome.all, onMoveIn: moveToTeam, onDone: moveDone });
 	/** The teams this Mac knows, for the marks a team project's tab and cover wear. */
 	const markTeams = useMemo(() => new Map(teamHome.all.map((team) => [team.address, team])), [teamHome.all]);
 	const focusedSolo =
@@ -689,7 +704,7 @@ export function App() {
 								onForgetProject={(project) => void forgetProject(project)}
 								onTrashProject={setTrashRequest}
 								onRenameProject={(project) => void requestRename(project)}
-								onMoveToTeam={moveToTeam}
+								moveItems={coverMoves.moveItems}
 								switcher={teamHome.switcher}
 								notice={
 									moveNote === null ? (
@@ -745,6 +760,7 @@ export function App() {
 				{transfer.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}
+				{focusedTab === undefined && movedToast.toast}
 				{toast !== null && (
 					<UpdateToastPill
 						toast={toast}
@@ -815,6 +831,7 @@ export function App() {
 				)}
 
 				{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
+				{coverMoves.surface}
 				{moving !== null && (
 					<MoveToTeamDialog
 						project={moving}
