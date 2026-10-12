@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.39.0
+
+### Minor Changes
+
+- 5c367e4: Your account at spool.page/account now opens inside Home, beside your team, from your email at the foot of the sidebar. It lists your Macs and passkeys the way Settings lists things, and you can revoke a Mac, add or remove a passkey and sign out there. Someone in no team yet lands there too, with a way to start one. On a Mac, the menu item is now called Account.
+- 33fe6f7: New team… says what the team begins as before it is made: the account's 14-day free trial, paid for from the start once the trial is used, or free.
+
+### Patch Changes
+
+- 148dad7: Teammates on a team canvas now show up right away and stay shown. A Mac that slept or switched networks reconnects to the team within about half a minute instead of waiting minutes on a dead connection, and tries again every 15 seconds at most while offline. Someone sitting still on the canvas no longer vanishes for everyone else when their app reconnects to Spool in the background, and a canvas opened before its project finished syncing is shown to the team once it has. The same holds for a canvas open in the browser.
+- a8c181d: Dragging a tab to reorder it no longer leaves an empty tab outline behind: the tab you carry and the tabs stepping aside for it stay visible the whole way, the carried tab covers the one it passes over, and its outline moves with it in the same frame.
+- 3aa82d5: When an interrupted Mac app update needs a fresh start before it can try again, the menu now offers "Restart Spool to Retry Update…" instead of sending you to download the dmg.
+
 ## 0.38.0
 
 ### Minor Changes
