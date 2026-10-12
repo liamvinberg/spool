@@ -191,6 +191,7 @@ function Home({
 						{creating && (
 							<NewTeamDialog
 								allowed={ready.mayCreateTeam}
+								starts={ready.newTeam}
 								onCreate={async (name) => {
 									const created = await source.create(name);
 									await refresh();

@@ -9,6 +9,7 @@ import {
 	type CloudTeamInvite,
 	CloudTeamRefused,
 	cloudTeams,
+	type NewTeamStart,
 	type TeamRole,
 } from "../cloud-teams";
 import { SpoolError } from "../errors";
@@ -25,6 +26,7 @@ export type CloudTeamsState =
 			teams: CloudTeam[];
 			invites: CloudTeamInvite[];
 			mayCreateTeam: boolean;
+			newTeam?: NewTeamStart;
 			/** Where a team's pages are in a browser: `<origin>/<address>`. */
 			origin: string;
 	  };

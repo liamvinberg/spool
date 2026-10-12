@@ -7,6 +7,7 @@ import {
 	type CloudTeamsState,
 	daemonTeams,
 	type HerePerson,
+	type NewTeamStart,
 	type PeopleBilling,
 	type TeamPeople,
 	type TeamRole,
@@ -920,13 +921,23 @@ function TeamGeneral({
 	);
 }
 
+/** What the new team begins as, said before it is made: the account's one trial, free, or paid for from the start. */
+const NEW_TEAM_STARTS: Record<NewTeamStart, string> = {
+	trial: "It starts your 14-day free trial. No card needed.",
+	paid: "You’ve used your free trial, so this team is paid for from the start. You pay first, then invite people.",
+	free: "Teams you start are free.",
+};
+
 /** "New team…": a name, and spool.page decides whether this account may start one yet. */
 export function NewTeamDialog({
 	allowed,
+	starts,
 	onCreate,
 	onClose,
 }: {
 	allowed: boolean;
+	/** What spool.page says the team begins as; unsaid by an older spool.page. */
+	starts?: NewTeamStart | undefined;
 	onCreate: (name: string) => Promise<void>;
 	onClose: () => void;
 }) {
@@ -944,6 +955,7 @@ export function NewTeamDialog({
 	return (
 		<ConfirmDialog
 			title="New team"
+			{...(starts ? { description: NEW_TEAM_STARTS[starts] } : {})}
 			confirmLabel="Create team"
 			disabled={name.trim() === ""}
 			onConfirm={async () => {
@@ -1068,6 +1080,7 @@ export function useTeamHome(
 			{creating && (
 				<NewTeamDialog
 					allowed={ready.mayCreateTeam}
+					starts={ready.newTeam}
 					onCreate={async (name) => {
 						const created = await teamActions.create(name);
 						await refresh();

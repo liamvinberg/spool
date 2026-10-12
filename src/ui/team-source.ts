@@ -145,6 +145,7 @@ export function teamsAt(
 				teams?: unknown;
 				invites?: unknown;
 				mayCreateTeam?: unknown;
+				newTeam?: unknown;
 				origin?: unknown;
 			} | null;
 			if (response.status === 401 || body?.state === "signed-out") return { state: "signed-out" };
@@ -155,6 +156,9 @@ export function teamsAt(
 				teams: body.teams as CloudTeam[],
 				invites: body.invites as CloudTeamInvite[],
 				mayCreateTeam: body.mayCreateTeam === true,
+				...(body.newTeam === "trial" || body.newTeam === "free" || body.newTeam === "paid"
+					? { newTeam: body.newTeam }
+					: {}),
 				// the daemon says where spool.page is; spool.page itself is where this page is
 				origin: typeof body.origin === "string" ? body.origin : location.origin,
 			};

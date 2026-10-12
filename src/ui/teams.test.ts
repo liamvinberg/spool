@@ -136,6 +136,18 @@ it("tells someone not yet approved that creating a team isn't open", () => {
 	expect(document.body.querySelector("input")).toBeNull();
 });
 
+it("says before a team is made whether it starts the trial, is paid for from the start, or is free", () => {
+	const says = (starts: "trial" | "paid" | "free") => {
+		const host = mount(createElement(NewTeamDialog, { allowed: true, starts, onCreate: vi.fn(), onClose: vi.fn() }));
+		const text = document.body.textContent ?? "";
+		act(() => host.remove());
+		return text;
+	};
+	expect(says("trial")).toContain("It starts your 14-day free trial. No card needed.");
+	expect(says("paid")).toContain("You’ve used your free trial, so this team is paid for from the start.");
+	expect(says("free")).toContain("Teams you start are free.");
+});
+
 it("lists the team's projects on this Mac and starts a new one in the team", () => {
 	const devosurf: CloudTeam = {
 		id: "t",

@@ -89,7 +89,11 @@ export interface CloudTeams {
 	invites: CloudTeamInvite[];
 	/** Until launch, a maintainer decides who may start a team. */
 	mayCreateTeam: boolean;
+	/** What a team this account starts begins as: its one free trial, free, or paid for from the start. */
+	newTeam?: NewTeamStart;
 }
+
+export type NewTeamStart = "trial" | "free" | "paid";
 
 export interface TeamPeople {
 	members: { accountId: string; email: string; role: TeamRole; you: boolean }[];
