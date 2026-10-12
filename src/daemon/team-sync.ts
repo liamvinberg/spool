@@ -196,9 +196,8 @@ const SETTLE_MS = 50;
 const BIG_FILE_BYTES = 1_000_000;
 const BIG_FILE_STILL_MS = 500;
 const RECONNECT_MIN_MS = 1_000;
-const RECONNECT_MAX_MS = 60_000;
-/** A keepalive the sync object answers without waking. */
-const PING_MS = 30_000;
+/** The longest a dropped copy waits between tries: back on the team, and on its canvas, soon after the network is. */
+const RECONNECT_MAX_MS = 15_000;
 /** How long a turn's last writes are given to reach the watcher before its end is said after them. */
 const TURN_SETTLE_MS = 500;
 /** The longest git may hold its index lock before what it left is looked at anyway: a crashed git leaves one. */
@@ -292,7 +291,6 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let failure: Error | undefined;
 	let retryMs = RECONNECT_MIN_MS;
 	let retry: NodeJS.Timeout | undefined;
-	let ping: NodeJS.Timeout | undefined;
 	let refs = 0;
 	/** Saves sent and not yet answered, by their ref, with the bytes a set-aside mark keeps. */
 	const inflight = new Map<string, { path: string; hash: string | null; bytes: Buffer | undefined; batch: string }>();
@@ -775,11 +773,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		);
 	};
 
-	if (live) {
-		follow();
-		ping = setInterval(() => socket?.send("ping"), PING_MS);
-		ping.unref?.();
-	}
+	if (live) follow();
 	void connect();
 
 	return {
@@ -814,7 +808,6 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			closed = true;
 			if (retry !== undefined) clearTimeout(retry);
 			if (settle !== undefined) clearTimeout(settle);
-			if (ping !== undefined) clearInterval(ping);
 			if (gitWait !== undefined) clearTimeout(gitWait);
 			if (asking !== undefined) clearImmediate(asking);
 			gaps?.close();
@@ -939,6 +932,11 @@ export function createTeamSync(deps: {
 	const retries = new Map<string, { timer: ReturnType<typeof setTimeout>; wait: number }>();
 	/** Who listens for presence on each root's canvas. */
 	const watchers = new Map<string, Set<(presence: Presence) => void>>();
+	/**
+	 * Where this machine's person is on each root's canvas, as its canvas last said: a copy followed after the canvas
+	 * opened (a fetch just filled it, or its team pays again) says it as soon as it is caught up.
+	 */
+	const canvases = new Map<string, PresenceState>();
 	let closed = false;
 	const say = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	/** A copy's link and how to ask spool.page about it, resolved once each time it is followed or asked after. */
@@ -1028,6 +1026,8 @@ export function createTeamSync(deps: {
 					},
 				}),
 			);
+			const said = canvases.get(root);
+			if (said !== undefined) copies.get(root)?.presence(said);
 		} catch (error) {
 			say(error instanceof Error ? error.message : String(error), root);
 		}
@@ -1118,6 +1118,12 @@ export function createTeamSync(deps: {
 		},
 		/** The local copy at a root, while it is followed. */
 		copy: (root: string): LocalCopy | undefined => copies.get(root),
+		/** Where this machine's person is on a root's canvas, or null once no canvas here shows it. Never stored. */
+		presence(root: string, state: PresenceState | null): void {
+			if (state === null) canvases.delete(root);
+			else canvases.set(root, state);
+			copies.get(root)?.presence(state);
+		},
 		/** What a root's canvas says of its sync now: nothing to say for a solo project. */
 		state: (root: string): SyncState => ({
 			ended: endedWith(root) ?? null,
@@ -1220,22 +1226,94 @@ function copyRecord(root: string): Partial<CopyState> | undefined {
 	}
 }
 
-export const openWebSocket: OpenSyncSocket = (url, token, events) => {
-	const socket = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
-	socket.binaryType = "arraybuffer";
-	socket.addEventListener("open", () => events.open());
-	socket.addEventListener("message", (event) => events.message(event.data as string | ArrayBuffer));
-	// a failed handshake or a dropped line is an error and then a close; the close is what is answered
-	socket.addEventListener("error", () => {});
-	socket.addEventListener("close", (event) => events.close(event.code));
-	// a socket still handshaking throws on send, where a closed one drops it; what matters is said again on catch-up
-	return {
-		send: (frame) => {
-			if (socket.readyState === WebSocket.OPEN) socket.send(frame);
-		},
-		close: () => socket.close(),
+/** How the sync socket tells a live connection from a dead one. */
+export interface SocketTiming {
+	/** How often an open connection is asked whether it is still there. */
+	pingMs: number;
+	/** How long a connection may stay silent after being asked before it is taken for dead. */
+	silentMs: number;
+	/** How long the handshake may take before the try is given up. */
+	handshakeMs: number;
+}
+
+/**
+ * Asked every 15 seconds (spool.page's sync object answers "pong" without waking), and given 10 to answer: a
+ * connection that died without a close, as one does when the Mac sleeps or the network changes, is found within
+ * about 25 seconds rather than the minutes TCP takes to give up on it.
+ */
+const SOCKET_TIMING: SocketTiming = { pingMs: 15_000, silentMs: 10_000, handshakeMs: 15_000 };
+
+/**
+ * The sync socket over a real WebSocket. A connection that goes silent, or a handshake that never finishes, is
+ * closed here and said closed at once, without waiting on a close the other end will never send; nothing it says
+ * after that is passed on.
+ */
+export function openWebSocketWith(timing: SocketTiming): OpenSyncSocket {
+	return (url, token, events) => {
+		const socket = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
+		socket.binaryType = "arraybuffer";
+		let over = false;
+		let ping: ReturnType<typeof setInterval> | undefined;
+		let deadline: ReturnType<typeof setTimeout> | undefined;
+		const end = (code?: number) => {
+			if (over) return;
+			over = true;
+			clearInterval(ping);
+			clearTimeout(deadline);
+			events.close(code);
+		};
+		const dead = () => {
+			end();
+			try {
+				socket.close();
+			} catch {
+				// already closing
+			}
+		};
+		const wait = (ms: number) => {
+			deadline = setTimeout(dead, ms);
+			deadline.unref?.();
+		};
+		const heard = () => {
+			clearTimeout(deadline);
+			deadline = undefined;
+		};
+		wait(timing.handshakeMs);
+		socket.addEventListener("open", () => {
+			if (over) return;
+			heard();
+			ping = setInterval(() => {
+				if (socket.readyState !== WebSocket.OPEN) return;
+				socket.send("ping");
+				// anything heard answers it, the pong or any other frame
+				if (deadline === undefined) wait(timing.silentMs);
+			}, timing.pingMs);
+			ping.unref?.();
+			events.open();
+		});
+		socket.addEventListener("message", (event) => {
+			if (over) return;
+			heard();
+			events.message(event.data as string | ArrayBuffer);
+		});
+		// a failed handshake or a dropped line is an error and then a close; the close is what is answered
+		socket.addEventListener("error", () => {});
+		socket.addEventListener("close", (event) => end(event.code));
+		// a socket still handshaking throws on send, where a closed one drops it; what matters is said again on catch-up
+		return {
+			send: (frame) => {
+				if (!over && socket.readyState === WebSocket.OPEN) socket.send(frame);
+			},
+			close: () => {
+				clearInterval(ping);
+				clearTimeout(deadline);
+				socket.close();
+			},
+		};
 	};
-};
+}
+
+export const openWebSocket: OpenSyncSocket = openWebSocketWith(SOCKET_TIMING);
 
 function byOf(value: unknown): SetAsideMark["by"] {
 	if (typeof value !== "object" || value === null) return null;

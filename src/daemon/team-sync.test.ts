@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	appendFileSync,
 	copyFileSync,
@@ -23,7 +24,7 @@ import { SOLO_GITIGNORE } from "../templates";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 import { historyEnabled } from "./history";
-import { openWebSocket } from "./team-sync";
+import { openWebSocket, openWebSocketWith } from "./team-sync";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -1343,5 +1344,74 @@ describe("the sync socket", () => {
 		await until(() => held.length === 1);
 		expect(() => socket.send("ping")).not.toThrow();
 		socket.close();
+	});
+
+	/**
+	 * A WebSocket server that finishes every handshake, then says `pong` every `every` ms while `answering` holds, as
+	 * spool.page answers a ping; one that stops answering is a line that died without a close.
+	 */
+	async function quietServer(every = 20) {
+		const sockets: Socket[] = [];
+		const state = { answering: true };
+		const server = createServer((connection) => {
+			sockets.push(connection);
+			connection.once("data", (head) => {
+				const key = /sec-websocket-key: *(\S+)/iu.exec(head.toString())?.[1] ?? "";
+				const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+				connection.write(
+					`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+				);
+				const pong = setInterval(() => {
+					if (state.answering) connection.write(Buffer.from([0x81, 4, ...Buffer.from("pong")]));
+				}, every);
+				connection.on("close", () => clearInterval(pong));
+				connection.on("error", () => {});
+			});
+		});
+		await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+		onTestFinished(() => {
+			for (const connection of sockets) connection.destroy();
+			server.close();
+		});
+		const { port } = server.address() as { port: number };
+		return { url: `ws://127.0.0.1:${port}/sync`, state };
+	}
+
+	const quick = { pingMs: 40, silentMs: 120, handshakeMs: 300 };
+
+	it("stays open while spool.page answers, and says it closed once the line goes silent", async () => {
+		const { url, state } = await quietServer();
+		const said: string[] = [];
+		openWebSocketWith(quick)(url, "token", {
+			open: () => said.push("open"),
+			message: () => {},
+			close: () => said.push("close"),
+		});
+		await until(() => said.includes("open"));
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		expect(said).toEqual(["open"]);
+		// the Mac slept, or the network changed: nothing comes back, and no close ever arrives
+		state.answering = false;
+		await until(() => said.includes("close"), 2_000);
+		expect(said).toEqual(["open", "close"]);
+	});
+
+	it("gives up a handshake that never finishes, so the copy tries again", async () => {
+		const held: Socket[] = [];
+		const server = createServer((connection) => held.push(connection));
+		await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+		onTestFinished(() => {
+			for (const connection of held) connection.destroy();
+			server.close();
+		});
+		const { port } = server.address() as { port: number };
+		const said: string[] = [];
+		openWebSocketWith(quick)(`ws://127.0.0.1:${port}/sync`, "token", {
+			open: () => said.push("open"),
+			message: () => {},
+			close: () => said.push("close"),
+		});
+		await until(() => said.includes("close"), 2_000);
+		expect(said).toEqual(["close"]);
 	});
 });
