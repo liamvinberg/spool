@@ -587,10 +587,19 @@ export interface ProjectCard extends ProjectSummary {
 	name: string;
 	root: string;
 	openedAt: string;
-	/** The team project this root is a local copy of: Home shows all of one's copies as one cover. */
-	team?: { url: string; team: string; project: string };
+	/**
+	 * The team project this root is a local copy of: Home shows all of one's copies as one cover. `inRepo` is whether
+	 * the copy's root is inside a git work tree (task 136): one in no repo may move into a checkout. The daemon always
+	 * says it.
+	 */
+	team?: { url: string; team: string; project: string; inRepo?: boolean };
 	/** The team this folder was a local copy for until the project ended here: its cover goes on saying so. */
 	ended?: string;
+	/**
+	 * An ended copy whose project was moved out of its team, by the team's name: its cover says "out of <team> · pull
+	 * its repo" until a pull brings design/ back into git.
+	 */
+	movedOut?: string;
 	/** What its tab and its cover draw: its icon file or its repo's favicon; absent, the name's first letter. */
 	icon?: ProjectIcon;
 	/** What its cover shows over its top-left frame: its `design/shared/thumbnail.*`, when it has one. */

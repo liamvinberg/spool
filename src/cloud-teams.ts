@@ -142,11 +142,27 @@ export interface TeamProjectHere {
 	people: { name: string; color: string }[];
 }
 
-/** spool.page said no. `code` is its reason, such as `last_admin` or `team_creation_closed`. */
+/** Someone who loses a project that moves to a team they aren't in: what presence calls them, and their address. */
+export interface MoveLoser {
+	name: string;
+	email: string;
+}
+
+/** What a move to another team would do now: who loses the project, and what it would be refused with, if anything. */
+export interface MovePreview {
+	losing: MoveLoser[];
+	refusal: string | null;
+}
+
+/**
+ * spool.page said no. `code` is its reason, such as `last_admin` or `team_creation_closed`; `body` is the rest of what
+ * it said, such as where a moved project lives now.
+ */
 export class CloudTeamRefused extends SpoolError {
 	constructor(
 		readonly code: string,
 		readonly status: number,
+		readonly body: Record<string, unknown> = {},
 	) {
 		super(
 			code === "unpaid"
@@ -181,7 +197,8 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		}
 		if (!response.ok) {
 			const code = (parsed as { error?: unknown } | null)?.error;
-			throw new CloudTeamRefused(typeof code === "string" ? code : "unavailable", response.status);
+			const body = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
+			throw new CloudTeamRefused(typeof code === "string" ? code : "unavailable", response.status, body);
 		}
 		return parsed as T;
 	}
@@ -238,6 +255,25 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		/** Record the repo a project's code lives in, from a checkout's `origin`. Editors and admins only. */
 		setRepo: (address: string, name: string, repo: string) =>
 			call<CloudTeamProject>("PUT", `${team(address)}/projects/${encodeURIComponent(name)}/repo`, { repo }),
+		/** Who would lose a project moved to `to` (as `name`, its own unless given), and what the move would be refused with. */
+		previewMove: (address: string, name: string, to: string, as?: string) =>
+			call<MovePreview>(
+				"GET",
+				`${team(address)}/projects/${encodeURIComponent(name)}/move?${new URLSearchParams({ to, ...(as === undefined ? {} : { name: as }) })}`,
+			),
+		/** The same project, its id and history kept, to another team (and another name); its old address forwards. Admins only. */
+		moveProject: (address: string, name: string, to: string, as?: string) =>
+			call<CloudTeamProject & { losing: MoveLoser[] }>(
+				"POST",
+				`${team(address)}/projects/${encodeURIComponent(name)}/move`,
+				{ to, ...(as === undefined ? {} : { name: as }) },
+			),
+		/** The project leaves the team for good, every copy ending; moved out, its address says so to the team. Admins only. */
+		deleteProject: (address: string, name: string, options: { out?: boolean } = {}) =>
+			call<null>(
+				"DELETE",
+				`${team(address)}/projects/${encodeURIComponent(name)}${options.out === true ? "?out=1" : ""}`,
+			),
 		/**
 		 * One team project, and this account's role in its team: what a local copy asks after a close or a refused
 		 * connect. `standing` is `unpaid` while the team has gone local, whatever the role.

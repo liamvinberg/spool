@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync, type Stats } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
@@ -6,6 +7,7 @@ import { writeAtomic } from "../atomic-write";
 import { account, type CloudRequestOptions, CloudSignedOut, type CloudVault, sessionVault } from "../cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
+import { checkoutOf } from "../git-remote";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
 	CLOSE_NOT_EDITOR,
@@ -67,6 +69,16 @@ interface CopyState {
 	goneLocal?: string;
 	/** When this copy last watched design/ for git (ms): whatever git did after it is checked as git's. */
 	watched?: number;
+	/**
+	 * The project moved team since this copy's `spool.json` was written: the addresses that lead to `project`, which
+	 * this copy follows until a pull brings the `spool.json` that names it.
+	 */
+	forwarded?: string[];
+	/**
+	 * The project was moved out of its team: the team's name, kept with `ended` until git brings `design/` back into
+	 * the checkout, while `design/.gitignore` stays the team's so a pull overwrites what it ignores.
+	 */
+	movedOut?: string;
 }
 
 export interface SyncSocket {
@@ -87,7 +99,17 @@ export interface SyncSocketEvents {
  * time left, `unknown` when spool.page can't be reached or its answer says nothing sure. `signedInAs` is another
  * account signed in here, one that can't edit the project: the copy waits, as it does signed out, and is never ended.
  */
-export type Standing = "editor" | "not_editor" | "unpaid" | "signed_out" | "unknown" | { signedInAs: string };
+export type Standing =
+	| "editor"
+	| "not_editor"
+	| "unpaid"
+	| "signed_out"
+	| "unknown"
+	| { signedInAs: string }
+	/** The project moved to another team, or was renamed with a move: it lives at this address now. */
+	| { movedTo: ProjectLink }
+	/** The project was moved out of its team: every copy ends. */
+	| "moved_out";
 
 /** The connection itself, swapped by tests for an in-process team. */
 export type OpenSyncSocket = (url: string, token: string, events: SyncSocketEvents) => SyncSocket;
@@ -115,6 +137,15 @@ export interface LocalCopyOptions {
 	ended?: () => void;
 	/** The team has no paid time left, so the copy goes local until it pays. The copy has stopped; stopping it is its owner's. */
 	goneLocal?: () => void;
+	/**
+	 * The project lives at another address now: true when the owner follows it there (the copy has stopped, and a new
+	 * one follows the new address); false to wait as offline and ask again.
+	 */
+	moved?: (to: ProjectLink) => boolean;
+	/** The project was moved out of its team. The copy has stopped; ending it is its owner's. */
+	movedOut?: () => void;
+	/** The copy caught up with the team. */
+	caughtUp?: () => void;
 	/**
 	 * A solo project moving into this team project (DEV-190): it has no `spool.json` until the team has every file,
 	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
@@ -212,6 +243,8 @@ const RECONNECT_MAX_MS = 15_000;
 const TURN_SETTLE_MS = 500;
 /** The longest git may hold its index lock before what it left is looked at anyway: a crashed git leaves one. */
 const GIT_WAIT_MS = 10_000;
+/** How many moved addresses a copy follows in a row before it waits as offline: forwards never loop it. */
+const MAX_HOPS = 5;
 
 /** A local copy kept in step with its team for as long as the daemon runs: it reconnects, and follows the folder. */
 export function followLocalCopy(options: LocalCopyOptions): LocalCopy {
@@ -691,6 +724,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			}
 			burst = undefined;
 			presence.joined(socket);
+			options.caughtUp?.();
 			// what git wrote over before the connection dropped is still waiting on the team's version
 			if (restoring.size > 0) askSoon();
 		} else if (message.type === "restored") {
@@ -777,8 +811,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (closed) return;
 		if (standing === "not_editor" && options.ended !== undefined) return options.ended();
 		if (standing === "unpaid" && options.goneLocal !== undefined) return options.goneLocal();
+		if (standing === "moved_out" && options.movedOut !== undefined) return options.movedOut();
+		if (typeof standing === "object" && "movedTo" in standing && options.moved?.(standing.movedTo) === true) return;
 		if (standing === "signed_out") signedOut();
-		if (typeof standing === "object") otherAccount(standing.signedInAs);
+		if (typeof standing === "object" && "signedInAs" in standing) otherAccount(standing.signedInAs);
 		reconnect();
 	};
 
@@ -961,6 +997,8 @@ export function createTeamSync(deps: {
 	onSyncChanged?: (root: string) => void;
 	/** A local copy went local, or follows its team again: `state(root).goneLocal` says which. */
 	onGoneLocal?: (root: string) => void;
+	/** A local copy ended because its project was moved out of its team. */
+	onEnded?: (root: string) => void;
 	/** How often a copy gone local asks again whether its team pays: a minute, unless a test can't wait that long. */
 	goneLocalAskMs?: number;
 	/** How soon it asks again when spool.page couldn't be reached, doubling up to `goneLocalAskMs`: a minute. */
@@ -981,6 +1019,10 @@ export function createTeamSync(deps: {
 	 * opened (a fetch just filled it, or its team pays again) says it as soon as it is caught up.
 	 */
 	const canvases = new Map<string, PresenceState>();
+	/** How many moved addresses each root has followed since it last caught up: a loop of forwards stops at `MAX_HOPS`. */
+	const hops = new Map<string, number>();
+	/** Roots this daemon is moving itself: never followed meanwhile, whatever their spool.json says. */
+	const held = new Set<string>();
 	let closed = false;
 	const say = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	/** A copy's link and how to ask spool.page about it, resolved once each time it is followed or asked after. */
@@ -1005,6 +1047,11 @@ export function createTeamSync(deps: {
 				if (found.role !== "viewer") return "editor";
 			} catch (error) {
 				if (error instanceof CloudSignedOut) return "signed_out";
+				if (error instanceof CloudTeamRefused && error.status === 410) {
+					if (error.code === "project_moved_out") return "moved_out";
+					const movedTo = error.code === "project_moved" ? parseProjectLink(error.body.url) : undefined;
+					if (movedTo !== undefined && movedTo.origin === link.origin) return { movedTo };
+				}
 				if (!(error instanceof CloudTeamRefused && error.status === 404 && OUT_OF_PROJECT.has(error.code)))
 					return "unknown";
 			}
@@ -1033,9 +1080,14 @@ export function createTeamSync(deps: {
 	const end = (root: string, link: ProjectLink) => {
 		copies.get(root)?.close();
 		copies.delete(root);
+		hops.delete(root);
 		try {
 			endLocalCopy(root, link);
-			say(`No longer synced with ${link.team}. This is now a project on this Mac only.`, root);
+			// a copy that followed a move and was never pulled says the team its spool.json names
+			say(
+				`No longer synced with ${(localCopyOf(root) ?? link).team}. This is now a project on this Mac only.`,
+				root,
+			);
 		} catch (error) {
 			say(error instanceof Error ? error.message : String(error), root);
 		}
@@ -1064,6 +1116,62 @@ export function createTeamSync(deps: {
 		deps.onGoneLocal?.(root);
 	};
 
+	/**
+	 * The project lives at another address now (it moved team, or was renamed with a move): the copy follows it there,
+	 * its record naming the new address and keeping everything it had, while `spool.json` waits for the next pull.
+	 * More than `MAX_HOPS` moves in a row without catching up, and it waits as offline instead.
+	 */
+	const forward = (root: string, from: ProjectLink, to: ProjectLink): boolean => {
+		const followed = hops.get(root) ?? 0;
+		if (followed >= MAX_HOPS || to.url === from.url) return false;
+		hops.set(root, followed + 1);
+		copies.get(root)?.close();
+		copies.delete(root);
+		try {
+			readdressCopy(root, from, to, { forwarded: true });
+		} catch (error) {
+			say(error instanceof Error ? error.message : String(error), root);
+			return false;
+		}
+		say(
+			`${from.team}/${from.project} moved to ${to.team}/${to.project}; this copy syncs there now. Pull to get the spool.json that names it.`,
+			root,
+		);
+		follow(root, to);
+		return true;
+	};
+
+	/**
+	 * The project was moved out of its team: the copy ends, and, in a checkout, keeps its `.gitignore` of everything
+	 * until the pull of the move-out commit brings `design/` back into git over it. In no checkout there is nothing to
+	 * pull: it ends as any other copy does.
+	 */
+	const endMovedOut = async (root: string, at: Linked) => {
+		const { link } = at;
+		copies.get(root)?.close();
+		copies.delete(root);
+		stopped.delete(root);
+		hops.delete(root);
+		const name = await teamName(at);
+		const inRepo = (await checkoutOf(root)) !== undefined;
+		if (closed) return;
+		try {
+			if (!inRepo) {
+				endLocalCopy(root, link);
+				say(`${link.project} was moved out of ${name}. This is now a project on this Mac only.`, root);
+			} else {
+				markMovedOut(root, link, name);
+				say(
+					`${link.project} was moved out of ${name}. This is now a project on this Mac only; pull its repo to bring design/ back into git.`,
+					root,
+				);
+			}
+		} catch (error) {
+			say(error instanceof Error ? error.message : String(error), root);
+		}
+		deps.onEnded?.(root);
+	};
+
 	const follow = (root: string, link: ProjectLink) => {
 		try {
 			const at = linked(link);
@@ -1079,6 +1187,9 @@ export function createTeamSync(deps: {
 					accountOf: accountOf(at),
 					ended: () => end(root, link),
 					goneLocal: () => void stop(root, at),
+					moved: (to) => forward(root, link, to),
+					movedOut: () => void endMovedOut(root, at),
+					caughtUp: () => hops.delete(root),
 					...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
 					...(deps.onSyncChanged === undefined ? {} : { onPaused: () => deps.onSyncChanged?.(root) }),
 					onPresence: (presence) => {
@@ -1118,6 +1229,12 @@ export function createTeamSync(deps: {
 			if (closed || stopped.get(root) !== link) return;
 			if (now === "unknown") return retry(root);
 			settle(root);
+			if (now === "moved_out") return void (await endMovedOut(root, linked(link)));
+			if (typeof now === "object" && "movedTo" in now) {
+				stopped.delete(root);
+				if (!forward(root, link, now.movedTo)) stopped.set(root, link);
+				return;
+			}
 			if (now === "editor") {
 				stopped.delete(root);
 				try {
@@ -1161,7 +1278,7 @@ export function createTeamSync(deps: {
 					settle(root);
 				}
 			for (const root of wanted) {
-				if (copies.has(root) || stopped.has(root)) continue;
+				if (copies.has(root) || stopped.has(root) || held.has(root)) continue;
 				const link = followedLink(root);
 				if (link === undefined) continue;
 				if (goneLocalWith(root) === undefined) follow(root, link);
@@ -1178,6 +1295,35 @@ export function createTeamSync(deps: {
 		},
 		/** The local copy at a root, while it is followed. */
 		copy: (root: string): LocalCopy | undefined => copies.get(root),
+		/**
+		 * The daemon moves this copy itself: it stops being followed until the returned release, which follows it again
+		 * wherever its record and `spool.json` say it is then, if it is still a copy.
+		 */
+		hold(root: string): () => void {
+			held.add(root);
+			copies.get(root)?.close();
+			copies.delete(root);
+			return () => {
+				held.delete(root);
+				if (closed || copies.has(root) || stopped.has(root)) return;
+				const link = followedLink(root);
+				if (link !== undefined && existsSync(join(root, "design", "canvas.json"))) follow(root, link);
+			};
+		},
+		/** The copy at a root reads its address again and syncs there now: this Mac just moved its project. */
+		refollow(root: string): void {
+			if (closed || held.has(root)) return;
+			copies.get(root)?.close();
+			copies.delete(root);
+			hops.delete(root);
+			const link = followedLink(root);
+			if (link !== undefined && !stopped.has(root) && existsSync(join(root, "design", "canvas.json")))
+				follow(root, link);
+		},
+		/** A copy whose project this Mac moved out of its team: it ends here, as every other copy does. */
+		movedOut(root: string, link: ProjectLink): Promise<void> {
+			return endMovedOut(root, linked(link));
+		},
 		/** Where this machine's person is on a root's canvas, or null once no canvas here shows it. Never stored. */
 		presence(root: string, state: PresenceState | null): void {
 			if (state === null) canvases.delete(root);
@@ -1263,7 +1409,73 @@ export function hasEnded(root: string): boolean {
 /** The team a copy that ended here was synced with: what its canvas and its cover go on saying. */
 export function endedWith(root: string): string | undefined {
 	const record = copyRecord(root);
-	return record?.ended === true ? parseProjectLink(record.project)?.team : undefined;
+	// a copy that followed a move and was never pulled was its spool.json's team's, as far as its person knows
+	return record?.ended === true ? (localCopyOf(root) ?? parseProjectLink(record.project))?.team : undefined;
+}
+
+/** The team (by name) a copy's project was moved out of, until git brings its `design/` back into the checkout. */
+export function movedOutOf(root: string): string | undefined {
+	const record = copyRecord(root);
+	return record?.ended === true && typeof record.movedOut === "string" ? record.movedOut : undefined;
+}
+
+/**
+ * A copy's record names another address for its project, keeping everything it had of the team: the project moved
+ * team (or was renamed with a move). Followed by a forward, the address `spool.json` names is kept as one that leads
+ * here, until a pull brings the new `spool.json`; rewritten with `spool.json` on the Mac that moved it, none is.
+ */
+export function readdressCopy(root: string, from: ProjectLink, to: ProjectLink, how: { forwarded: boolean }): void {
+	const stateFile = join(realDesignDir(root), ".spool", "sync.json");
+	// a copy may have followed the forward already, as this Mac's own copy can while its move is answered
+	const { forwarded = [], ...state } = readState(stateFile, copyRecord(root)?.project === to.url ? to.url : from.url);
+	const leading = [...new Set([...forwarded, from.url])].filter((url) => url !== to.url);
+	const next: CopyState = {
+		...state,
+		project: to.url,
+		...(how.forwarded && leading.length > 0 ? { forwarded: leading } : {}),
+	};
+	writeAtomic(stateFile, `${JSON.stringify(next)}\n`);
+}
+
+/** A copy's project was moved out of its team: it ends, its `.gitignore` of everything kept until git brings design/ back. */
+function markMovedOut(root: string, link: ProjectLink, team: string): void {
+	const stateFile = join(realDesignDir(root), ".spool", "sync.json");
+	const { goneLocal: _, ...kept } = readState(stateFile, link.url);
+	writeAtomic(stateFile, `${JSON.stringify({ ...kept, ended: true, movedOut: team } satisfies CopyState)}\n`);
+}
+
+/**
+ * A copy moved out of its team, its checkout pulled: once `spool.json` is gone from the working tree and git tracks
+ * files in `design/` again, the team's `.gitignore` of everything goes (only if it is still exactly that) and the
+ * moved-out mark is forgotten. True when it settled.
+ */
+export async function settleMovedOut(root: string): Promise<boolean> {
+	if (movedOutOf(root) === undefined || localCopyOf(root) !== undefined) return false;
+	const designDir = realDesignDir(root);
+	if (!(await tracksDesign(designDir))) return false;
+	const ignore = join(designDir, ".gitignore");
+	try {
+		if (readFileSync(ignore, "utf8") === TEAM_GITIGNORE) rmSync(ignore);
+	} catch {
+		// no .gitignore of the team's left to take away
+	}
+	const stateFile = join(designDir, ".spool", "sync.json");
+	const { movedOut: _, ...state } = JSON.parse(readFileSync(stateFile, "utf8")) as CopyState;
+	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
+	return true;
+}
+
+/** Whether git tracks any file in a design folder. */
+function tracksDesign(designDir: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		execFile(
+			"git",
+			["ls-files", "-z", "--", "."],
+			{ cwd: designDir, env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined }, timeout: 10_000 },
+			(error, stdout) =>
+				resolve(error === null && stdout.split("\0").some((path) => path !== "" && path !== ".gitignore")),
+		);
+	});
 }
 
 /**
@@ -1274,7 +1486,11 @@ export function endedWith(root: string): string | undefined {
 export function followedLink(root: string): ProjectLink | undefined {
 	const record = copyRecord(root);
 	if (record?.ended === true) return undefined;
-	return localCopyOf(root) ?? parseProjectLink(record?.project);
+	const named = localCopyOf(root);
+	// spool.json names an address the project moved from: the copy follows it where it is now, until a pull
+	if (named !== undefined && record?.forwarded?.includes(named.url) === true)
+		return parseProjectLink(record.project) ?? named;
+	return named ?? parseProjectLink(record?.project);
 }
 
 /** What a local copy's record in `design/.spool` says, unchecked, if it has one. */

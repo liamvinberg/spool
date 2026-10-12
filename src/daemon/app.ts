@@ -15,6 +15,7 @@ import { account, type CloudRequestOptions, originOf, sessionVault } from "../cl
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
+import { checkoutOf } from "../git-remote";
 import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves } from "../move-in";
@@ -153,7 +154,15 @@ import type { PlaceholderAuthor } from "./sidecar";
 import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
-import { createTeamSync, endedWith, followedLink, goneLocalWith, type OpenSyncSocket } from "./team-sync";
+import {
+	createTeamSync,
+	endedWith,
+	followedLink,
+	goneLocalWith,
+	movedOutOf,
+	type OpenSyncSocket,
+	settleMovedOut,
+} from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -967,6 +976,8 @@ export function createDaemonApp({
 			emitAppEvent({ kind: "sync", root, ...syncMarks(root) });
 			if (teamSync.state(root).goneLocal === null) hub.publish(root, { kind: "sync", message: "syncing again" });
 		},
+		// a copy whose project moved out of its team ended: its cover says so
+		onEnded: () => emitAppEvent({ kind: "registry" }),
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
 	});
@@ -988,6 +999,13 @@ export function createDaemonApp({
 			});
 		},
 		arrived: () => teamSync.keeping(registeredRoots()),
+		// task 136: a copy whose project moved out of its team waits for the pull that brings design/ back into git
+		movedOut: (root) => movedOutOf(root) !== undefined,
+		settle: async (root) => {
+			const settled = await settleMovedOut(root);
+			if (settled) emitAppEvent({ kind: "registry" });
+			return settled;
+		},
 		notice: teamNotice,
 	});
 	movedIn.keeping(registeredRoots());
@@ -1954,19 +1972,24 @@ export function createDaemonApp({
 				readRegistry(spoolDir).projects.map(async (project) => {
 					const link = followedLink(project.root);
 					const ended = endedWith(project.root);
+					const movedOut = ended === undefined ? undefined : movedOutOf(project.root);
 					const paused = link === undefined ? null : teamSync.state(project.root).paused;
 					const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
-					const [summary, icon, thumbnail] = await Promise.all([
+					const [summary, icon, thumbnail, inRepo] = await Promise.all([
 						summarizeProject(project.root),
 						findProjectIcon(project.root),
 						findProjectThumbnail(project.root),
+						link === undefined ? false : checkoutOf(project.root).then((found) => found !== undefined),
 					]);
 					return {
 						name: basename(project.root),
 						root: project.root,
 						openedAt: project.openedAt,
-						...(link === undefined ? {} : { team: { url: link.url, team: link.team, project: link.project } }),
+						...(link === undefined
+							? {}
+							: { team: { url: link.url, team: link.team, project: link.project, inRepo } }),
 						...(ended === undefined ? {} : { ended }),
+						...(movedOut === undefined ? {} : { movedOut }),
 						...(icon === undefined ? {} : { icon }),
 						...(thumbnail === undefined ? {} : { thumbnail }),
 						...(paused === null ? {} : { syncPaused: paused }),

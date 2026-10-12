@@ -11,10 +11,18 @@ import { rescanAfterWatchStarts, watchFolder } from "./watch-tree";
  * Every registered project that isn't a team project yet is watched for its `spool.json` arriving (one watch on the
  * root folder itself, not its tree). A team project with no `design/` on this Mac, found on start or on arrival, is
  * handed to `refill`; one that already has its `design/` to `arrived`, so the daemon follows it.
+ *
+ * The other way, a teammate's project moved out of its team: its copy here ended still out of git, and pulling the
+ * move-out commit takes `spool.json` away and brings `design/` back into git. Such a copy is watched the same way, and
+ * handed to `settle` whenever its `spool.json` may have gone, until it says it settled.
  */
 export function watchForMoves(deps: {
 	refill: (root: string) => Promise<void>;
 	arrived: (root: string) => void;
+	/** Whether a root's copy ended because its project moved out of its team, and waits on a pull. */
+	movedOut?: (root: string) => boolean;
+	/** A moved-out copy whose `spool.json` may have gone: true once it is an ordinary project in git again. */
+	settle?: (root: string) => Promise<boolean>;
 	notice?: (message: string) => void;
 }) {
 	const watched = new Map<string, FSWatcher>();
@@ -26,8 +34,25 @@ export function watchForMoves(deps: {
 		for (const root of watched.keys()) look(root);
 	});
 
+	const settlingOut = new Set<string>();
+	const settleOut = (root: string) => {
+		if (closed || settlingOut.has(root) || deps.settle === undefined) return;
+		settlingOut.add(root);
+		void deps
+			.settle(root)
+			.then((settled) => {
+				if (!settled || closed) return;
+				watched.get(root)?.close();
+				watched.delete(root);
+			})
+			.catch(() => {})
+			.finally(() => settlingOut.delete(root));
+	};
+
 	const look = (root: string) => {
-		if (closed || !isTeamProject(root)) return;
+		if (closed) return;
+		if (deps.movedOut?.(root) === true) return settleOut(root);
+		if (!isTeamProject(root)) return;
 		watched.get(root)?.close();
 		watched.delete(root);
 		if (existsSync(join(root, "design", "canvas.json"))) return deps.arrived(root);
@@ -52,7 +77,9 @@ export function watchForMoves(deps: {
 					watched.delete(root);
 				}
 			for (const root of roots) {
-				if (isTeamProject(root)) {
+				const out = deps.movedOut?.(root) === true;
+				if (out) settleOut(root);
+				if (!out && isTeamProject(root)) {
 					if (!existsSync(join(root, "design", "canvas.json"))) look(root);
 					continue;
 				}
