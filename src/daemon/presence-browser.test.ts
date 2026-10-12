@@ -74,11 +74,14 @@ async function teamCanvas() {
 
 	// Ben's own connection, which hears where Ana is
 	const heard: PresenceState[] = [];
+	/** Everything Ben's connection is told of Ana, her leaving (null) included. */
+	const told: (PresenceState | null)[] = [];
 	const token = await ben.cloud.vault.read();
 	const socket = ben.openSocket(syncUrl(link), token, {
 		open: () => socket.send(encodeFrame({ type: "hello", protocol: PROTOCOL_VERSION, format: 2, since: 0 })),
 		message: (data) => {
 			const message = decodeFrame(data)?.message;
+			if (message?.type === "presence") told.push(message.state as PresenceState | null);
 			if (message?.type === "presence" && message.state !== null) heard.push(message.state as PresenceState);
 		},
 		close: () => {},
@@ -93,6 +96,7 @@ async function teamCanvas() {
 	return {
 		page,
 		heard,
+		told,
 		/** The team says where somebody is, as the sync object relays it. */
 		say: (person: typeof BEN, state: PresenceState | null, still = 0) =>
 			cloud.forge("checkout", { type: "presence", person, state, still }),
@@ -483,4 +487,21 @@ it("tells the team where this canvas's person is inside a live frame, each click
 	await page.keyboard.press("Escape");
 	await expect.poll(() => heard.at(-1)?.inside).toBeNull();
 	expect(heard.at(-1)?.scrolled).toBeNull();
+});
+
+it("says Ana is here again when her canvas's stream to the daemon comes back, though she hasn't moved", {
+	timeout: 120_000,
+}, async () => {
+	const { page, told } = await teamCanvas();
+	await expect.poll(() => told.at(-1), { timeout: 10_000 }).toMatchObject({ page: "" });
+	// her canvas finds its stream gone quiet and hangs up: the daemon takes the last canvas closing as her leaving
+	await page.evaluate(() => {
+		const real = Date.now;
+		Date.now = () => real() + 10 * 60_000;
+		document.dispatchEvent(new Event("visibilitychange"));
+		Date.now = real;
+	});
+	await expect.poll(() => told.includes(null), { timeout: 10_000 }).toBe(true);
+	// the stream back, she is said to be here again without touching the mouse
+	await expect.poll(() => told.at(-1), { timeout: 10_000 }).toMatchObject({ page: "" });
 });

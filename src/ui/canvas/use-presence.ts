@@ -17,6 +17,15 @@ export interface InsideFrame {
 	scrolled(scrolled: { x: number; y: number }): void;
 }
 
+/** What the canvas can tell the sender: what the frame they're inside saw, and that its line to the team came back. */
+export interface PresenceSender extends InsideFrame {
+	/**
+	 * Say where this person is again even though it hasn't changed: the daemon behind the event stream may be a
+	 * new one, or may have said they left while the stream was down, so a person sitting still is never missing.
+	 */
+	again(): void;
+}
+
 /**
  * Say where this canvas's person is on a team canvas, as it changes (DEV-196): the page, the pointer in world
  * coordinates, a press, the frames a drag is moving, the frame they're inside live and the rectangle the
@@ -34,12 +43,13 @@ export function usePresenceSender(options: {
 	inside: string | null;
 	/** The frames a gesture is moving now, read when a state goes. */
 	dragging: () => readonly string[];
-}): InsideFrame {
+}): PresenceSender {
 	const latest = useRef(options);
 	latest.current = options;
 	const soon = useRef<() => void>(() => {});
 	const insideFrame = useRef<InsideFrame>({ pointer: () => {}, scrolled: () => {} });
 	const leftFrame = useRef<() => void>(() => {});
+	const again = useRef<() => void>(() => {});
 	const { send: say, team, camera, viewportRef } = options;
 
 	useEffect(() => {
@@ -92,6 +102,10 @@ export function usePresenceSender(options: {
 			timer ??= setTimeout(send, Math.max(0, sentAt + PRESENCE_SEND_MS - performance.now()));
 		};
 		soon.current = later;
+		again.current = () => {
+			told = "";
+			later();
+		};
 		/** Where the pointer is on the canvas, or false when it's over the window's other furniture. */
 		const over = (event: PointerEvent): boolean => {
 			const viewport = viewportRef.current;
@@ -152,6 +166,7 @@ export function usePresenceSender(options: {
 		later();
 		return () => {
 			soon.current = () => {};
+			again.current = () => {};
 			insideFrame.current = { pointer: () => {}, scrolled: () => {} };
 			leftFrame.current = () => {};
 			if (timer !== undefined) clearTimeout(timer);
@@ -171,9 +186,10 @@ export function usePresenceSender(options: {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the frame inside is the trigger
 	useEffect(() => leftFrame.current(), [options.inside]);
 
-	return useRef<InsideFrame>({
+	return useRef<PresenceSender>({
 		pointer: (at, press) => insideFrame.current.pointer(at, press),
 		scrolled: (scrolled) => insideFrame.current.scrolled(scrolled),
+		again: () => again.current(),
 	}).current;
 }
 
