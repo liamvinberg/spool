@@ -508,6 +508,7 @@ export function TabStrip({
 								hold={holding?.get(tab.root)}
 								shift={shiftOf(drag, tab.root)}
 								lifted={drag?.root === tab.root}
+								dragging={drag !== null}
 								carried={drag?.root === tab.root && !drag.settling}
 								layout={drag === null && !quiet}
 								still={quiet || reduced}
@@ -583,6 +584,24 @@ function Wash({ lit }: { lit: boolean }) {
 	);
 }
 
+/**
+ * What a carried tab stands on, so the tab it passes over does not show through.
+ * The focused tab's is the sheet's fill, inside the sheet's outline so the outline
+ * still draws round it; any other's is the bar's, short of the floor line.
+ */
+function Backing({ sheet }: { sheet: boolean }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				"pointer-events-none absolute inset-x-px",
+				sheet ? "bottom-0 bg-surface-canvas" : "bottom-px bg-surface-window",
+			)}
+			style={{ top: SHEET_TOP + 1, borderTopLeftRadius: FOOT - 0.5, borderTopRightRadius: FOOT - 0.5 }}
+		/>
+	);
+}
+
 function Name({ children }: { children: React.ReactNode }) {
 	return (
 		<span
@@ -615,7 +634,9 @@ function useWidth(ref: RefObject<HTMLElement | null>) {
  * The slot is what opens, closes and compresses: its width runs between nothing
  * and its share of the strip, clipped sideways so the tab is uncovered rather
  * than squeezed. A closing tab is already gone as far as anything but the eye is
- * concerned: not a target, not focusable, not a box a drag measures.
+ * concerned: not a target, not focusable, not a box a drag measures. While a
+ * drag is on, the open slots stop clipping, since the drag carries each tab out
+ * of its own slot.
  */
 function Tab({
 	tab,
@@ -623,6 +644,7 @@ function Tab({
 	hold,
 	shift,
 	lifted,
+	dragging,
 	carried,
 	layout,
 	still,
@@ -639,6 +661,8 @@ function Tab({
 	hold: number | undefined;
 	shift: number;
 	lifted: boolean;
+	/** a drag is carrying tabs out of their slots, which must show them rather than clip them */
+	dragging: boolean;
 	carried: boolean;
 	layout: boolean;
 	still: boolean;
@@ -716,7 +740,10 @@ function Tab({
 			ref={slot}
 			data-tab-slot={present ? tab.root : undefined}
 			className={cn(
-				"project-tab-slot group/slot relative flex h-full w-tab-max max-w-tab-max overflow-x-clip",
+				"project-tab-slot group/slot relative flex h-full w-tab-max max-w-tab-max",
+				// opening and closing uncover the tab by clipping it, but a drag moves the
+				// tab inside its slot: clipped then, it would leave its slot's sheet empty
+				!(dragging && present) && "overflow-x-clip",
 				"transition-[max-width,min-width,opacity] duration-slow ease-snap",
 				active && present ? "min-w-tab-min" : "min-w-tab-compact",
 				lifted && "z-10",
@@ -752,6 +779,7 @@ function Tab({
 					onClose(true);
 				}}
 			>
+				{lifted && <Backing sheet={active} />}
 				<Wash lit={active} />
 				<button
 					type="button"
@@ -892,6 +920,7 @@ function useSheet({
 	const want = useRef({ target, travel });
 	want.current = { target, travel };
 	const wake = useRef(() => {});
+	const drawNow = useRef(() => {});
 	const retarget = useRef(() => {});
 
 	useLayoutEffect(() => {
@@ -1001,6 +1030,12 @@ function useSheet({
 			still = 0;
 			if (request === 0) request = requestAnimationFrame(tick);
 		};
+		// in the commit itself, so the sheet paints in the same frame as the tab it stands on
+		drawNow.current = () => {
+			cancelAnimationFrame(request);
+			still = 0;
+			tick(Number(document.timeline?.currentTime ?? performance.now()));
+		};
 		const onWake = () => wake.current();
 		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onWake);
 		observer?.observe(element);
@@ -1013,6 +1048,7 @@ function useSheet({
 			element.removeEventListener("transitionrun", onWake);
 			scroller.removeEventListener("scroll", onWake);
 			wake.current = () => {};
+			drawNow.current = () => {};
 			retarget.current = () => {};
 		};
 	}, [layer, strip, curve]);
@@ -1020,8 +1056,9 @@ function useSheet({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a new target is what moves the sheet
 	useLayoutEffect(() => retarget.current(), [target]);
 
-	// every render can move something under it
-	useLayoutEffect(() => wake.current());
+	// every render can move something under it: a dragged tab moves in the render
+	// itself, and a sheet waiting for the next frame would trail it by one
+	useLayoutEffect(() => drawNow.current());
 
 	return useMemo(() => Object.assign(() => wake.current(), { svg, fill, line }), []);
 }

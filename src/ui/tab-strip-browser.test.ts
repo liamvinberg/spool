@@ -674,3 +674,55 @@ it("starts the tabs right after Home", async () => {
 		"1",
 	);
 });
+
+it("shows a dragged tab and the tabs it displaces whole, wherever they stand", async () => {
+	const page = await strip();
+	const alpha = await page.locator('[data-tab="/w/alpha"]').boundingBox();
+	if (alpha === null) throw new Error("missing alpha");
+	const y = alpha.y + 18;
+	const x = alpha.x + 20;
+	await page.mouse.move(x, y);
+	await page.mouse.down();
+	// past beta's centre and halfway into gamma-delta: alpha is out of its own slot, beta out of its
+	await page.mouse.move(x + alpha.width * 1.5, y, { steps: 6 });
+	await atRest(page);
+	// what the eye sees at a tab's middle is that tab, not a slot clipping it away
+	const shown = await page.evaluate(() =>
+		["/w/alpha", "/w/beta"].map((root) => {
+			const tab = document.querySelector(`[data-tab="${root}"]`) as HTMLElement;
+			const box = tab.getBoundingClientRect();
+			// everything painted there, top to bottom: a tab its slot clips away is not among it
+			const under = document.elementsFromPoint(box.left + 20, box.top + 18);
+			return { root, moved: tab.style.transform !== "translateX(0px)", whole: under.some((at) => tab.contains(at)) };
+		}),
+	);
+	expect(shown).toEqual([
+		{ root: "/w/alpha", moved: true, whole: true },
+		{ root: "/w/beta", moved: true, whole: true },
+	]);
+	// the sheet paints in the frame the tab does, never a move behind it
+	await page.evaluate(() => {
+		const probe = window as unknown as { gaps: number[]; done: boolean };
+		probe.gaps = [];
+		probe.done = false;
+		const tab = document.querySelector('[data-tab="/w/alpha"]') as HTMLElement;
+		const sheet = document.querySelector(".project-tab-sheet") as SVGElement;
+		const read = () => {
+			probe.gaps.push(sheet.getBoundingClientRect().left + 8 - tab.getBoundingClientRect().left);
+			if (!probe.done) requestAnimationFrame(read);
+		};
+		requestAnimationFrame(read);
+	});
+	for (let step = 1; step <= 20; step += 1) await page.mouse.move(x + alpha.width * 1.5 - step * 7, y);
+	const gaps = await page.evaluate(() => {
+		const probe = window as unknown as { gaps: number[]; done: boolean };
+		probe.done = true;
+		return probe.gaps;
+	});
+	expect(gaps.every((gap) => Math.abs(gap) < 0.5)).toBe(true);
+	await page.mouse.up();
+	await atRest(page);
+	expect(await page.evaluate(() => (window as unknown as { strip: { roots: () => string[] } }).strip.roots())).toEqual(
+		["/w/beta", "/w/alpha", "/w/gamma-delta", "/w/epsilon"],
+	);
+});
