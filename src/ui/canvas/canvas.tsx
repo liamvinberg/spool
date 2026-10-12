@@ -3826,6 +3826,8 @@ export function ProjectCanvas({
 					// a stream that comes back says again who is here
 					setTeam((data as { team?: unknown }).team === true);
 					presenceRoom.reset();
+					// and where this person is, said again: the daemon may be new, or have said they left meanwhile
+					insideFrameRef.current.again();
 					tellView();
 					// the stream tells every change from here on; one made before it
 					// opened, after the canvas's first read was answered, is in a read

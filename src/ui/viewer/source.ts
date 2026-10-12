@@ -87,12 +87,16 @@ export type ViewerLive =
 	| { type: "head"; head: number }
 	| { type: "saved"; head: number; by: string; changed: string[]; touched: string[] };
 
-/** How often a socket of the canvas's is told it is still there, so nothing between closes it as idle. */
-const PING_MS = 30_000;
+/** How often a socket of the canvas's asks whether it is still there; spool.page answers `pong` without waking. */
+const PING_MS = 15_000;
+/** How long a socket may stay silent after asking, or handshaking, before it is taken for dead. */
+const SILENT_MS = 10_000;
 
 /**
  * Hold a WebSocket to an address on the page's own origin open for as long as the canvas is, connecting again with
- * a growing wait when it drops, and saying it is still there every `PING_MS`.
+ * a growing wait when it drops. It asks whether it is still there every `PING_MS`, and straight away when the
+ * page comes back into view or the network returns; one that stays silent past `SILENT_MS` died without a close,
+ * as one does when the laptop sleeps, and is dropped and opened again rather than waited on.
  */
 function keepOpen(
 	address: string,
@@ -102,31 +106,77 @@ function keepOpen(
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 	let socket: WebSocket | undefined;
 	let ping: ReturnType<typeof setInterval> | undefined;
+	let deadline: ReturnType<typeof setTimeout> | undefined;
 	let retry: ReturnType<typeof setTimeout> | undefined;
 	let wait = 1000;
 	let stopped = false;
+	const quiet = () => {
+		clearInterval(ping);
+		clearTimeout(deadline);
+		ping = undefined;
+		deadline = undefined;
+	};
+	/** The socket is gone, said once whether it closed or died silent; a later word from it is never heard. */
+	const lost = (gone: WebSocket) => {
+		if (socket !== gone) return;
+		socket = undefined;
+		quiet();
+		if (stopped) return;
+		on.dropped?.();
+		retry = setTimeout(connect, wait);
+		wait = Math.min(wait * 2, 15_000);
+	};
+	const awaitWord = (from: WebSocket) => {
+		deadline ??= setTimeout(() => {
+			lost(from);
+			from.close();
+		}, SILENT_MS);
+	};
+	const ask = () => {
+		const open = socket;
+		if (open === undefined || open.readyState !== WebSocket.OPEN) return;
+		open.send("ping");
+		awaitWord(open);
+	};
 	const connect = () => {
+		retry = undefined;
 		const opening = new WebSocket(url);
 		socket = opening;
+		awaitWord(opening);
 		opening.addEventListener("open", () => {
+			if (socket !== opening) return;
+			clearTimeout(deadline);
+			deadline = undefined;
 			wait = 1000;
-			ping = setInterval(() => opening.send("ping"), PING_MS);
+			ping = setInterval(ask, PING_MS);
 			on.opened?.(opening);
 		});
-		opening.addEventListener("message", (event) => on.heard(event.data));
-		opening.addEventListener("close", () => {
-			clearInterval(ping);
-			if (stopped) return;
-			on.dropped?.();
-			retry = setTimeout(connect, wait);
-			wait = Math.min(wait * 2, 30_000);
+		opening.addEventListener("message", (event) => {
+			if (socket !== opening) return;
+			clearTimeout(deadline);
+			deadline = undefined;
+			on.heard(event.data);
 		});
+		opening.addEventListener("close", () => lost(opening));
 	};
+	/** Back in view or back online: a socket that died meanwhile is found now, and a wait to reconnect is cut short. */
+	const recheck = () => {
+		if (stopped || document.visibilityState !== "visible") return;
+		if (socket !== undefined) return ask();
+		if (retry !== undefined) {
+			clearTimeout(retry);
+			connect();
+		}
+	};
+	document.addEventListener("visibilitychange", recheck);
+	window.addEventListener("online", recheck);
 	connect();
 	return () => {
 		stopped = true;
-		clearInterval(ping);
+		quiet();
 		clearTimeout(retry);
+		document.removeEventListener("visibilitychange", recheck);
+		window.removeEventListener("online", recheck);
 		socket?.close();
 	};
 }
