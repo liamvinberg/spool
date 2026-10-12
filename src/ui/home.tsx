@@ -803,8 +803,9 @@ export function CoverTile({
 
 /**
  * A card's one quiet line. At rest: when it was opened, with the team it is shared in or the team it no longer syncs
- * with, or, when its project moved out of that team, that its repo is to pull. Under the pointer, on focus, with its menu open, or when a search hits only its path, the line turns to where
- * the project lives, how many frames it has and how many copies of it this Mac holds.
+ * with, or, when its project moved out of that team, that its repo is to pull. Under the pointer, on focus, with its
+ * menu open, or when a search hits only its path, the line turns to where the project lives, how many frames it has
+ * and how many copies of it this Mac holds.
  */
 function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: number; detail: boolean }) {
 	const team = useMarkTeam(project.team?.team);

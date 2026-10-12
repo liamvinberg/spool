@@ -45,13 +45,15 @@ import { TeamsSourceContext } from "./teams";
 
 /**
  * Getting a team project onto this Mac, and moving a project into a team (DEV-190). The daemon does the work; these
- * are the dimmed covers of what the team has that this Mac doesn't, the "Get it" sheet, and the "Move to team…" one.
+ * are the dimmed covers of what the team has that this Mac doesn't, the "Get it" sheet, and the "Move to team…" one,
+ * and for a team project, the sheets that move it out of its team or into a checkout.
  */
 
 /**
- * The team's projects not yet on this Mac, dimmed, each with "Get it". Read once when it mounts: Home mounts it
- * again whenever this Mac's own projects change, so a project just got leaves the list. Nothing shows while
- * spool.page can't say.
+ * The team's projects not yet on this Mac, dimmed, each with "Get it", and for the team's admins a "…" menu that
+ * moves one to another team or out of this one. Read once when it mounts: Home mounts it again whenever this Mac's
+ * own projects change, so a project just got leaves the list, as one moved away does. Nothing shows while spool.page
+ * can't say.
  */
 export function TeamProjectsAway({
 	team,
