@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { addAgentsLine } from "./agents-line";
 import { type CloudRequestOptions, CloudSignedOut, sessionVault } from "./cloud-auth";
 import {
 	type CloudTeam,
@@ -61,13 +62,14 @@ export interface TeamInitOptions {
  * `spool init --team`: start the project in the team at spool.page first, then
  * scaffold design/ with its own `.gitignore` of everything, write the `spool.json` link beside it, and upload
  * the scaffold as the team's first saves. Nothing is staged or committed: design/ never enters git, and
- * spool.json is the repo's to commit. A project spool.page refuses leaves nothing on disk.
+ * spool.json is the repo's to commit. In a checkout, the AGENTS.md line goes beside it (task 136), for the same
+ * commit; `agents` is the file it went into. A project spool.page refuses leaves nothing on disk.
  */
 export async function initTeamProject(
 	targetDir: string,
 	spoolDir: string,
 	options: TeamInitOptions,
-): Promise<{ root: string; link: ProjectLink; uploaded: boolean }> {
+): Promise<{ root: string; link: ProjectLink; uploaded: boolean; agents?: string }> {
 	const root = realDir(targetDir);
 	refuseExisting(root);
 	refuseForeignLink(root);
@@ -75,7 +77,8 @@ export async function initTeamProject(
 	const teams = cloudTeams(spoolDir, request);
 	const team = await chosenTeam(teams, options.team);
 	// where the code lives, as the team will see it: information, never a permission
-	const repo = (await checkoutOf(root))?.repo;
+	const checkout = await checkoutOf(root);
+	const repo = checkout?.repo;
 	let created: CloudTeamProject;
 	try {
 		created = await teams.createProject(team.address, basename(root), repo);
@@ -86,6 +89,7 @@ export async function initTeamProject(
 	if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
 	scaffold(root, { ...scaffoldFiles(false), ".gitignore": TEAM_GITIGNORE });
 	writeProjectLink(root, link);
+	const agents = checkout === undefined ? undefined : await addAgentsLine(checkout.top);
 	registerAndOpenProject(spoolDir, root);
 	let uploaded = true;
 	try {
@@ -94,7 +98,7 @@ export async function initTeamProject(
 		// the files are here and the daemon sends them the next time it can reach spool.page
 		uploaded = false;
 	}
-	return { root, link, uploaded };
+	return { root, link, uploaded, ...(agents === undefined ? {} : { agents }) };
 }
 
 /**

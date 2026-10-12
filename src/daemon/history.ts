@@ -578,6 +578,8 @@ export interface MoveCommitOptions {
 	wait?: (ms: number) => Promise<void>;
 	/** The daemon is closing: stop waiting. */
 	signal?: AbortSignal;
+	/** Files beside the move that its commit brings in as they are on disk, absolute: the AGENTS.md line's. */
+	also?: readonly string[];
 }
 
 /** Whether a move may commit here: the project is in no git work tree, or HEAD names a branch. */
@@ -604,6 +606,7 @@ export async function commitMoveIn(root: string, options: MoveCommitOptions = {}
 	if (!dir.ok) return { kind: "no-git" };
 	const scope = designPath(repo, designDir);
 	const link = designPath(repo, join(designDir, "..", PROJECT_LINK));
+	const also = (options.also ?? []).map((file) => designPath(repo, file));
 	for (let tries = 0; tries < MOVE_TRIES; tries += 1) {
 		if (options.signal?.aborted) return { kind: "failed" };
 		if (blocked(dir.stdout.trim())) {
@@ -616,7 +619,7 @@ export async function commitMoveIn(root: string, options: MoveCommitOptions = {}
 		const parent = head.ok ? head.stdout.trim() : undefined;
 		const kept = parent === undefined ? [] : await keptIn(repo, parent, scope, keep);
 		if (kept === undefined) return { kind: "failed" };
-		const made = await moveTree(repo, parent, scope, link, kept);
+		const made = await moveTree(repo, parent, scope, [link, ...also], kept);
 		if (made === undefined) return { kind: "failed" };
 		const commit = await git(repo, [
 			"-c",
@@ -647,10 +650,20 @@ export async function commitMoveIn(root: string, options: MoveCommitOptions = {}
 		}
 		await git(repo, ["rm", "-r", "--cached", "--force", "--quiet", "--ignore-unmatch", "--", scope]);
 		if (kept.length > 0) await git(repo, ["--literal-pathspecs", "reset", "--quiet", id, "--", ...kept]);
-		await git(repo, ["add", "-f", "--", link]);
+		await git(repo, ["add", "-f", "--", link, ...also]);
 		return { kind: "committed", commit: id };
 	}
 	return { kind: "failed" };
+}
+
+/** Whether git tracks this file, relative to its repo's top or absolute. */
+export async function tracked(repo: string, path: string): Promise<boolean> {
+	return (await git(repo, ["ls-files", "--error-unmatch", "--", path])).ok;
+}
+
+/** Whether git would ignore this file were it untracked. */
+export async function ignored(repo: string, path: string): Promise<boolean> {
+	return (await git(repo, ["check-ignore", "-q", "--", path])).ok;
 }
 
 /** How many of the most recent unmerged branches a move checks for design/ changes. */
@@ -769,7 +782,7 @@ async function moveTree(
 	repo: string,
 	parent: string | undefined,
 	scope: string,
-	link: string,
+	links: readonly string[],
 	kept: readonly string[],
 ): Promise<string | undefined> {
 	const scratch = mkdtempSync(join(tmpdir(), "spool-move-"));
@@ -781,7 +794,7 @@ async function moveTree(
 			["rm", "-r", "--cached", "--force", "--quiet", "--ignore-unmatch", "--", scope],
 			index,
 		);
-		if (!out.ok || !(await git(repo, ["add", "-f", "--", link], index)).ok) return undefined;
+		if (!out.ok || !(await git(repo, ["add", "-f", "--", ...links], index)).ok) return undefined;
 		if (
 			parent !== undefined &&
 			kept.length > 0 &&

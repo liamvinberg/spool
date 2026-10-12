@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { AGENTS_LINE } from "../agents-line";
 import { initProject, initTeamProject } from "../init";
 import { type MoveProgress, moveIntoTeam } from "../move-in";
 import { openProject } from "../open";
@@ -264,13 +265,14 @@ describe("Move to team", () => {
 			expect(cloud.file("site", path), path).toBe(text(project.root, path));
 		expect(cloud.repo("site")).toBe("github.com/devosurf/site");
 
-		// One commit, on main, on top of what was there: design/ out (files kept), spool.json in, nothing else.
+		// One commit, on main, on top of what was there: design/ out (files kept), spool.json and the AGENTS.md line in.
 		expect(git(project.root, "rev-list", "--count", `${before}..HEAD`)).toBe("1");
 		expect(git(project.root, "rev-parse", "HEAD~1")).toBe(before);
 		expect(git(project.root, "log", "-1", "--format=%s")).toBe(MOVE_MESSAGE);
 		expect(git(project.root, "symbolic-ref", "--short", "HEAD")).toBe("main");
 		const changes = git(project.root, "show", "--name-status", "--format=", "HEAD").split("\n").sort();
-		expect(changes).toEqual([...tracked.map((file) => `D\t${file}`), "A\tspool.json"].sort());
+		expect(changes).toEqual([...tracked.map((file) => `D\t${file}`), "A\tAGENTS.md", "A\tspool.json"].sort());
+		expect(readFileSync(join(project.root, "AGENTS.md"), "utf8")).toBe(`${AGENTS_LINE}\n`);
 		expect(git(project.root, "show", "HEAD:spool.json")).toBe(
 			JSON.stringify({ project: `${TEAM_ORIGIN}/devosurf/site` }, null, "\t"),
 		);

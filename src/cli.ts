@@ -272,13 +272,15 @@ program
 		);
 		if (target.kind === "team") {
 			if (options.history) throw new SpoolError("a team project keeps no git history; drop --history");
-			const { root, link, uploaded } = await initTeamProject(path, spoolDir, { team: target.team, origin });
+			const { root, link, uploaded, agents } = await initTeamProject(path, spoolDir, { team: target.team, origin });
 			process.stdout.write(`initialized team project ${link.url} at ${root}\n`);
 			process.stdout.write(
-				`design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json, never design/\n`,
+				agents === undefined
+					? `design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json, never design/\n`
+					: `design/ stays out of git: spool keeps it in step with ${link.team} — commit spool.json and ${basename(agents)}, never design/\n`,
 			);
 			if (!uploaded) narrate("spool.page could not be reached; the daemon uploads design/ once it can");
-			process.stdout.write(`\n${rootConfigPointer}`);
+			if (agents === undefined) process.stdout.write(`\n${rootConfigPointer}`);
 			return;
 		}
 		const { root } = initProject(path, spoolDir, { history: options.history });

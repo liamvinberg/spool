@@ -221,7 +221,7 @@ describe("presence on a team canvas", () => {
 		await bens.heard();
 
 		expect({ ana: disk(ana.root), ben: disk(ben.root), saves: cloud.saves("checkout").length }).toEqual(before);
-		expect(git(ana.root, "status", "--porcelain", "--untracked-files=all")).toBe("?? spool.json\n");
+		expect(git(ana.root, "status", "--porcelain", "--untracked-files=all")).toBe("?? AGENTS.md\n?? spool.json\n");
 		expect(git(ana.root, "log", "--oneline", "--all")).toBe("");
 	});
 

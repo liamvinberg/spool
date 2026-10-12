@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { addAgentsLine } from "./agents-line";
 import { CloudSignedOut } from "./cloud-auth";
 import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
 import { hasEnded, resumeLocalCopy } from "./daemon/team-sync";
@@ -82,6 +83,11 @@ export async function getTeamProject(
 			if (fresh) rmSync(join(root, "design"), { recursive: true, force: true });
 		}
 		throw error;
+	}
+	// a spool.json written into a checkout brings the AGENTS.md line with it, for the commit that takes it in
+	if (wrote && place.kind === "checkout") {
+		const top = (await checkoutOf(root))?.top;
+		if (top !== undefined) await addAgentsLine(top);
 	}
 	// a copy that ended here, its person an editor again, is followed again
 	if (hasEnded(root)) resumeLocalCopy(root);

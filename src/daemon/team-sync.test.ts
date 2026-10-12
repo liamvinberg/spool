@@ -111,7 +111,8 @@ describe("spool init --team", () => {
 		expect(JSON.parse(readFileSync(join(root, "spool.json"), "utf8"))).toEqual({ project: link.url });
 		expect(readFileSync(join(root, "design/.gitignore"), "utf8")).toBe("*\n");
 		expect(JSON.parse(readFileSync(join(root, "design/canvas.json"), "utf8"))).toMatchObject({ history: false });
-		expect(status(root)).toEqual(["?? spool.json"]);
+		// the repo's agents are told where the canvas is, beside spool.json, for the commit that takes it in
+		expect(status(root)).toEqual(["?? AGENTS.md", "?? spool.json"]);
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
 		expect(uploaded).toBe(true);
 		expect(cloud.paths("checkout")).toEqual([
@@ -328,7 +329,7 @@ describe("local copies", () => {
 		writeFileSync(join(root, "design/.gitignore"), SOLO_GITIGNORE);
 		makeApp(state, { cloud: ana.cloud, teamNotice: () => {} });
 		await until(() => readFileSync(join(root, "design/.gitignore"), "utf8") === "*\n");
-		expect(status(root)).toEqual(["?? spool.json"]);
+		expect(status(root)).toEqual(["?? AGENTS.md", "?? spool.json"]);
 	});
 
 	it("is never deleted for the team when its folder is erased while still registered", async () => {

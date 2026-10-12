@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { addAgentsLine } from "./agents-line";
 import { writeAtomic } from "./atomic-write";
 import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
@@ -32,7 +33,7 @@ import {
  * "Move to team…" (DEV-190): an existing project becomes a team project. The whole folder goes up first, and only
  * once the team has every file does anything change here: `spool.json` is written beside `design/`, `design/` gets
  * its `.gitignore` of everything, and one commit on the current branch takes `design/` out of git (the files stay)
- * and brings `spool.json` in. History before the move stays in git, and so does whatever in `design/` never travels
+ * and brings `spool.json` in, with the AGENTS.md line that points the repo's agents at the canvas. History before the move stays in git, and so does whatever in `design/` never travels
  * (`staysOnThisMac`), so teammates who pull keep it.
  *
  * A move that stops partway changes nothing here, and moving again picks up the same team project: the move under
@@ -115,8 +116,11 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	closing(basename(root), options);
 	writeProjectLink(root, link);
 	writeFileSync(join(design, ".gitignore"), TEAM_GITIGNORE);
+	// the repo's agents are told where the canvas is, in the same commit
+	const top = (await checkoutOf(root))?.top;
+	const agents = top === undefined ? undefined : await addAgentsLine(top);
 	// from here the move is made, and its commit is owed until git takes it, across restarts
-	writeAtomic(owed(root), `${JSON.stringify({ project: link.url })}\n`);
+	writeAtomic(owed(root), `${JSON.stringify({ project: link.url, ...(agents === undefined ? {} : { agents }) })}\n`);
 	rmSync(record, { force: true });
 	// the registry's change is what sets the daemon following the new local copy
 	registerProject(spoolDir, root);
@@ -222,8 +226,10 @@ function owed(root: string): string {
  */
 async function commitMove(root: string, options: Pick<MoveOptions, "wait" | "signal"> = {}): Promise<MoveCommit> {
 	const staying = new Set(staysOnThisMac(root).map(({ path }) => path));
+	const agents = owedAgents(root);
 	const commit = await commitMoveIn(root, {
 		keep: (path) => staying.has(path),
+		...(agents === undefined ? {} : { also: [agents] }),
 		...(options.wait === undefined ? {} : { wait: options.wait }),
 		...(options.signal === undefined ? {} : { signal: options.signal }),
 	});
@@ -241,6 +247,16 @@ export async function finishMoves(
 		if (existsSync(owed(root)) && isTeamProject(root))
 			finished.push({ root, commit: await commitMove(root, options) });
 	return finished;
+}
+
+/** The AGENTS.md (or CLAUDE.md) the owed move commit brings in beside spool.json, if the move added the line to one. */
+function owedAgents(root: string): string | undefined {
+	try {
+		const agents = (JSON.parse(readFileSync(owed(root), "utf8")) as { agents?: unknown }).agents;
+		return typeof agents === "string" && existsSync(agents) ? agents : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /** The team project a move that stopped partway was going to, if it was this one. */
