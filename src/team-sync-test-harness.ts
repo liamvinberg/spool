@@ -367,9 +367,9 @@ export function fakeTeam(team = "devosurf") {
 	}
 
 	const openSocket =
-		(token: string): OpenSyncSocket =>
+		(token: () => string): OpenSyncSocket =>
 		(url, presented, events: SyncSocketEvents) => {
-			const person = presented === token ? people.get(token) : undefined;
+			const person = presented === token() ? people.get(presented) : undefined;
 			const [, , name] = /\/api\/teams\/([^/]+)\/projects\/([^/]+)\/sync$/u.exec(new URL(url).pathname) ?? [];
 			const at = name === undefined ? undefined : project(name);
 			let open = true;
@@ -435,7 +435,8 @@ export function fakeTeam(team = "devosurf") {
 		origin: TEAM_ORIGIN,
 		/** One person signed in on one machine: what a CLI and a daemon there are handed. */
 		machine(name: string, role: Person["role"] = "editor") {
-			const token = `${name}-token`.padEnd(43, "x");
+			const tokenOf = (account: string) => `${account}-token`.padEnd(43, "x");
+			let token = tokenOf(name);
 			const color = TEAM_COLORS[people.size % TEAM_COLORS.length] as string;
 			people.set(token, { accountId: name, device: `${name}'s Mac`, role, color });
 			const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -444,16 +445,24 @@ export function fakeTeam(team = "devosurf") {
 				const presented = request.headers.get("authorization")?.replace(/^Bearer /u, "");
 				return answer(request, presented === token ? people.get(token) : undefined);
 			};
-			const request: CloudRequestOptions = { origin: TEAM_ORIGIN, vault: { read: async () => token }, fetch };
+			const vault = { read: async () => token };
+			const request: CloudRequestOptions = { origin: TEAM_ORIGIN, vault, fetch };
+			const socket = openSocket(() => token);
 			return {
 				request,
-				openSocket: openSocket(token),
+				openSocket: socket,
 				/** The daemon's whole boundary to this fake spool.page. */
-				cloud: {
-					origin: TEAM_ORIGIN,
-					vault: { read: async () => token },
-					fetch,
-					openSocket: openSocket(token),
+				cloud: { origin: TEAM_ORIGIN, vault, fetch, openSocket: socket },
+				/**
+				 * The machine signs in to another account, outside this team unless it is in it already: the connections
+				 * made with the last one are cut off, as signing out revokes them.
+				 */
+				signIn(account: string) {
+					const was = people.get(token);
+					token = tokenOf(account);
+					if (!people.has(token))
+						people.set(token, { accountId: account, device: `${name}'s Mac`, role: null, color });
+					for (const socket of sockets()) if (socket.person === was) socket.close(CLOSE_SIGNED_OUT);
 				},
 			};
 		},

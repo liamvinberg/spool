@@ -3,7 +3,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync, rmdirSyn
 import { dirname, join, relative, sep } from "node:path";
 import { WebSocket } from "undici";
 import { writeAtomic } from "../atomic-write";
-import { type CloudRequestOptions, CloudSignedOut, type CloudVault, sessionVault } from "../cloud-auth";
+import { account, type CloudRequestOptions, CloudSignedOut, type CloudVault, sessionVault } from "../cloud-auth";
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
@@ -56,6 +56,11 @@ interface CopyState {
 	/** The team project ended for this machine, and the folder is an ordinary project here now. */
 	ended?: true;
 	/**
+	 * The account this copy last synced as. Only that account leaving the team ends the copy: another one signed in
+	 * on this machine leaves it waiting for its own account to come back.
+	 */
+	account?: string;
+	/**
 	 * The copy has gone local (its team has no paid time left): stopped, not ended, and this is the team's name, said
 	 * once. Gone again when the team pays and the copy follows it again.
 	 */
@@ -77,11 +82,12 @@ export interface SyncSocketEvents {
 }
 
 /**
- * Whether this machine still edits a team project, as spool.page says when asked: `not_editor` when the account
- * was removed or made a viewer or the team or project is gone, `unpaid` while the team has no paid time left,
- * `unknown` when spool.page can't be reached.
+ * Whether this machine still edits a team project, as spool.page says when asked: `not_editor` when the account the
+ * copy syncs as was removed or made a viewer or the team or project is gone, `unpaid` while the team has no paid
+ * time left, `unknown` when spool.page can't be reached or its answer says nothing sure. `signedInAs` is another
+ * account signed in here, one that can't edit the project: the copy waits, as it does signed out, and is never ended.
  */
-export type Standing = "editor" | "not_editor" | "unpaid" | "signed_out" | "unknown";
+export type Standing = "editor" | "not_editor" | "unpaid" | "signed_out" | "unknown" | { signedInAs: string };
 
 /** The connection itself, swapped by tests for an in-process team. */
 export type OpenSyncSocket = (url: string, token: string, events: SyncSocketEvents) => SyncSocket;
@@ -103,6 +109,8 @@ export interface LocalCopyOptions {
 	onPresence?: (presence: Presence) => void;
 	/** Asked when spool.page refused or cut the connection: does this machine still edit the project? */
 	standing?: () => Promise<Standing>;
+	/** The account a session token signs in to, asked once a connection is caught up: whose copy this is. */
+	accountOf?: (token: string) => Promise<string>;
 	/** The project ended for this machine. The copy has stopped; ending it is its owner's. */
 	ended?: () => void;
 	/** The team has no paid time left, so the copy goes local until it pays. The copy has stopped; stopping it is its owner's. */
@@ -196,6 +204,8 @@ const SETTLE_MS = 50;
 const BIG_FILE_BYTES = 1_000_000;
 const BIG_FILE_STILL_MS = 500;
 const RECONNECT_MIN_MS = 1_000;
+/** What spool.page answers, by name, when an account is out of a project: the only 404s that can end a copy. */
+const OUT_OF_PROJECT = new Set(["team_not_found", "project_not_found"]);
 /** The longest a dropped copy waits between tries: back on the team, and on its canvas, soon after the network is. */
 const RECONNECT_MAX_MS = 15_000;
 /** How long a turn's last writes are given to reach the watcher before its end is said after them. */
@@ -311,6 +321,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let paused: { why: string; until: number } | undefined;
 	let resume: NodeJS.Timeout | undefined;
 	let toldSignedOut = false;
+	/** The other account signed in here that the copy last said it waits through, said once until it syncs again. */
+	let toldOther: string | undefined;
+	/** The session token the open connection was made with. */
+	let connectedWith: string | undefined;
 
 	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
 	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
@@ -418,6 +432,30 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const signedOut = () => {
 		if (!toldSignedOut) notice(`${link.url} is not synced while this machine is signed out; run \`spool login\``);
 		toldSignedOut = true;
+	};
+
+	const otherAccount = (email: string) => {
+		if (toldOther !== email)
+			notice(
+				`${link.url} is not synced while this Mac is signed in as ${email}, who can't edit it; sign in again with the account that synced it`,
+			);
+		toldOther = email;
+	};
+
+	/** Whose copy this is: the account the caught-up connection signed in as, kept in the record. */
+	const recordAccount = () => {
+		const token = connectedWith;
+		if (!live || token === undefined || options.accountOf === undefined) return;
+		options.accountOf(token).then(
+			(id) => {
+				if (closed || connectedWith !== token || state.account === id) return;
+				state.account = id;
+				persist();
+			},
+			() => {
+				// asked again on the next catch-up
+			},
+		);
 	};
 
 	const send = (path: string, bytes: Buffer | undefined) => {
@@ -640,6 +678,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			persist();
 			caughtUp = true;
 			toldSignedOut = false;
+			toldOther = undefined;
+			recordAccount();
 			retryMs = RECONNECT_MIN_MS;
 			checkEverything();
 			ownWork = false;
@@ -700,10 +740,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			return reconnect();
 		}
 		let opened = false;
+		const presented = token;
 		socket = openSocket(syncUrl(link), token, {
 			open: () => {
 				burst = randomUUID();
 				opened = true;
+				connectedWith = presented;
 				socket?.send(
 					encodeFrame({ type: "hello", protocol: PROTOCOL_VERSION, format: FORMAT_VERSION, since: state.head }),
 				);
@@ -711,6 +753,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			message: handle,
 			close: (code) => {
 				socket = undefined;
+				connectedWith = undefined;
 				caughtUp = false;
 				burst = undefined;
 				// what was in flight is settled by the next catch-up: applied saves come back as the team's version
@@ -735,6 +778,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (standing === "not_editor" && options.ended !== undefined) return options.ended();
 		if (standing === "unpaid" && options.goneLocal !== undefined) return options.goneLocal();
 		if (standing === "signed_out") signedOut();
+		if (typeof standing === "object") otherAccount(standing.signedInAs);
 		reconnect();
 	};
 
@@ -946,20 +990,35 @@ export function createTeamSync(deps: {
 		return { link, request: { origin, vault, ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }) } };
 	};
 
+	/**
+	 * Where this machine stands in a copy's project. Ending a copy can't be undone by waiting, so it takes spool.page
+	 * saying, by name, that the very account the copy synced as is out: not in the team, the team deleted, the project
+	 * removed, or a viewer now. Any other account signed in here only makes it wait, and so does a 404 that names
+	 * nothing, or a copy with no account on record: one never caught up since it was got.
+	 */
 	const standing =
-		({ link, request }: Linked) =>
+		(root: string, { link, request }: Linked) =>
 		async (): Promise<Standing> => {
 			try {
 				const found = await cloudTeams(deps.spoolDir, request).project(link.team, link.project);
 				if (found.standing === "unpaid") return "unpaid";
-				return found.role === "viewer" ? "not_editor" : "editor";
+				if (found.role !== "viewer") return "editor";
 			} catch (error) {
 				if (error instanceof CloudSignedOut) return "signed_out";
-				// not in the team, the team deleted, or the project removed: all answered the same
-				if (error instanceof CloudTeamRefused && error.status === 404) return "not_editor";
-				return "unknown";
+				if (!(error instanceof CloudTeamRefused && error.status === 404 && OUT_OF_PROJECT.has(error.code)))
+					return "unknown";
+			}
+			try {
+				const signedIn = await account(deps.spoolDir, request);
+				return copyRecord(root)?.account === signedIn.accountId ? "not_editor" : { signedInAs: signedIn.email };
+			} catch (error) {
+				return error instanceof CloudSignedOut ? "signed_out" : "unknown";
 			}
 		};
+	const accountOf =
+		({ request }: Linked) =>
+		async (token: string) =>
+			(await account(deps.spoolDir, { ...request, vault: { read: async () => token } })).accountId;
 
 	/** What the team is called, to say the copy went local: its address when spool.page doesn't say. */
 	const teamName = async ({ link, request }: Linked) => {
@@ -1016,7 +1075,8 @@ export function createTeamSync(deps: {
 					vault: at.request.vault,
 					...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
 					notice: (message) => say(message, root),
-					standing: standing(at),
+					standing: standing(root, at),
+					accountOf: accountOf(at),
 					ended: () => end(root, link),
 					goneLocal: () => void stop(root, at),
 					...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
@@ -1054,7 +1114,7 @@ export function createTeamSync(deps: {
 		if (link === undefined || pending.has(root)) return;
 		pending.add(root);
 		try {
-			const now = await standing(linked(link))();
+			const now = await standing(root, linked(link))();
 			if (closed || stopped.get(root) !== link) return;
 			if (now === "unknown") return retry(root);
 			settle(root);
@@ -1071,7 +1131,7 @@ export function createTeamSync(deps: {
 				stopped.delete(root);
 				end(root, link);
 			}
-			// still unpaid, or signed out: asked again on the minute
+			// still unpaid, signed out, or another account signed in: asked again on the minute
 		} catch (error) {
 			say(error instanceof Error ? error.message : String(error), root);
 		} finally {

@@ -1091,6 +1091,32 @@ describe("when a team project ends for a machine", () => {
 			expect(read(ben.root, "frames/home/frame.tsx").toString()).toContain("<h1>Home</h1>");
 		});
 
+	it("never ends because the machine signed in to another account, and syncs again once its own is back", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const record = () => JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8"));
+		// the copy knows whose it is: the account its connection signed in as
+		await until(() => record().account === "ben");
+
+		// Ben signs in on his Mac with a work account that isn't in devosurf
+		ben.machine.signIn("ben-work");
+		await until(() => said.ben.some((message) => message.includes("signed in as ben-work@devosurf.com")), 10_000);
+		expect(said.ben.filter((message) => message.startsWith("No longer synced"))).toEqual([]);
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe("*\n");
+		expect(record().ended).toBeUndefined();
+		expect(await syncState(ben.daemon)).toMatchObject({ ended: null });
+
+		// what the team does meanwhile waits for Ben's own account
+		writeFrame(ana.root, "about", "export default () => <h1>About</h1>;\n");
+		await until(() => cloud.file("checkout", "frames/about/frame.tsx") !== undefined);
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(existsSync(join(ben.root, "design/frames/about"))).toBe(false);
+
+		ben.machine.signIn("ben");
+		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 20_000);
+	});
+
 	it("is found on reconnect when the change was made while the copy was offline", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
 		writeFrame(ana.root, "home", "export default () => null;\n");
