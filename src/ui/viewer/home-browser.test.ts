@@ -13,6 +13,7 @@ import { buildEntry } from "./build-entry";
  */
 
 const APP = "https://cloud.test";
+const NOW = Math.floor(Date.now() / 1000);
 
 const TEAMS: CloudTeam[] = [
 	{ id: "t1", address: "devosurf", name: "Devosurf", role: "admin", logo: null, people: 3 },
@@ -67,6 +68,10 @@ async function open(
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const asked: string[] = [];
 	const left: string[] = [];
+	const macs = [
+		{ id: "d1", name: "Vic’s MacBook Pro", signedInAt: NOW - 4 * 86400, usedAt: NOW },
+		{ id: "d2", name: "Studio", signedInAt: NOW - 40 * 86400, usedAt: NOW - 30 * 86400 },
+	];
 	await page.route("**/*", async (route) => {
 		const request = route.request();
 		const url = new URL(request.url());
@@ -79,6 +84,18 @@ async function open(
 			const file = join(built, url.pathname.slice("/_viewer/".length));
 			const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "font/woff2";
 			return route.fulfill({ body: readFileSync(file), contentType: type });
+		}
+		if (url.pathname === "/account/summary" || /^\/account\/devices\/[^/]+\/revoke$/u.test(url.pathname)) {
+			asked.push(`${request.method()} ${url.pathname}`);
+			const revoked = url.pathname.match(/devices\/([^/]+)\/revoke/u)?.[1];
+			if (revoked)
+				macs.splice(
+					macs.findIndex((mac) => mac.id === revoked),
+					1,
+				);
+			return route.fulfill({
+				json: revoked ? { revoked: true } : { email: "vic@devosurf.com", devices: macs, passkeys: [] },
+			});
 		}
 		if (url.pathname.startsWith("/api/")) {
 			asked.push(`${request.method()} ${url.pathname}${request.postData() ? ` ${request.postData()}` : ""}`);
@@ -166,6 +183,40 @@ describe("Home in a browser", () => {
 		await page.getByText("Client Co has no projects yet").waitFor();
 		expect(await page.getByRole("navigation", { name: "Home sections" }).textContent()).not.toContain("Settings");
 		expect(asked).toContain("GET /api/teams/devosurf/people");
+	});
+
+	it("opens Account from the foot's menu beside the team it came from, and revokes a Mac there", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, asked } = await open("/devosurf/people");
+		await page.getByText("sam@devosurf.com").waitFor();
+		await page.getByRole("button", { name: "Signed in as vic@devosurf.com" }).click();
+		await page.getByRole("menuitem", { name: "Account" }).click();
+		await page.getByRole("heading", { name: "Account" }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/account");
+		expect(await page.title()).toBe("Account · spool");
+		// the team stays in the sidebar, with none of its pages current
+		expect(await page.locator("aside").textContent()).toContain("Devosurf");
+		expect(await page.locator("nav[aria-label='Home sections'] [aria-current=page]").count()).toBe(0);
+		const main = page.locator("main");
+		await main.getByText("In Devosurf and Client Co.").waitFor();
+		expect(await main.textContent()).toContain("used today");
+		await shoot(page, "account.png");
+		await page.getByRole("button", { name: "Revoke Studio" }).click();
+		await expect.poll(() => asked).toContain("POST /account/devices/d2/revoke");
+		await expect.poll(async () => (await main.textContent())?.includes("Studio")).toBe(false);
+		await page.getByRole("button", { name: "People" }).click();
+		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
+		await page.goBack();
+		await page.getByRole("heading", { name: "Account" }).waitFor();
+	});
+
+	it("takes an account in no team to Account, with the way to start one", { timeout: 60_000 }, async () => {
+		const { page } = await open("/devosurf", { teams: [] });
+		await page.locator("main").getByText("Not in a team yet.", { exact: true }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/account");
+		expect(await page.locator("aside").textContent()).toContain("You’re not in a team yet.");
+		await page.getByRole("button", { name: "Start a team…" }).waitFor();
 	});
 
 	it("changes a member's role at spool.page", { timeout: 60_000 }, async () => {

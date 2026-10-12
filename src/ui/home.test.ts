@@ -284,7 +284,7 @@ describe("the account at the foot of Home's sidebar", () => {
 		const chip = host.querySelector<HTMLButtonElement>('[aria-label="Signed in as ada@tidemark.app"]');
 		act(() => chip?.click());
 		expect(host.querySelector<HTMLAnchorElement>('a[href="https://spool.page/account"]')?.textContent).toContain(
-			"Passkeys and Macs",
+			"Account",
 		);
 		act(() => button(host, "Sign out of this Mac").click());
 		expect(calls.onSignOut).toHaveBeenCalledOnce();
