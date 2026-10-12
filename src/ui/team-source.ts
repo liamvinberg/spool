@@ -14,9 +14,15 @@ import type { CloudTeamsState } from "../daemon/cloud-teams";
 /** Who is inside a team project right now, as its cover says it. */
 export type HerePerson = TeamProjectHere["people"][number];
 
-/** spool.page, or the daemon on its behalf, said no. `code` is the reason, such as `last_admin`. */
+/**
+ * spool.page, or the daemon on its behalf, said no. `code` is the reason, such as `last_admin`; `said` is the
+ * daemon's own sentence for it, when it gave one.
+ */
 export class TeamActionRefused extends Error {
-	constructor(readonly code: string) {
+	constructor(
+		readonly code: string,
+		readonly said?: string,
+	) {
 		super(code);
 	}
 }
@@ -56,6 +62,34 @@ export function teamSays(error: unknown, otherwise = "spool.page can’t be reac
 /** A team project as its team's Projects page lists it, whichever side lists it. */
 export type ListedTeamProject = Pick<CloudTeamProject, "name" | "url" | "repo">;
 
+/** Someone a project's move takes it from: in the team it leaves, not in the one it joins. */
+export interface LosingPerson {
+	name: string;
+	email: string;
+}
+
+/**
+ * What moving a project to another team would do, asked before it moves: who loses it, the reason spool.page would
+ * refuse it right now, and, on a Mac, the checkouts where it makes a commit and the folder it moves.
+ */
+export interface MovePreview {
+	losing: LosingPerson[];
+	refusal: string | null;
+	commits: string[];
+	folder: { from: string; to: string } | null;
+}
+
+/** A project moved to another team: where it is now and, on a Mac, its copies afterwards and where each commit landed. */
+export interface TeamMoveOutcome {
+	team: string;
+	name: string;
+	url: string;
+	roots: string[];
+	committed: string[];
+	commitWaiting: string[];
+	losing: LosingPerson[];
+}
+
 /**
  * Where Home's team pages read and change a team: the daemon on a Mac, which asks spool.page with the Mac's device
  * session, or spool.page itself in a browser, with the browser's own session. spool.page decides every rule; each
@@ -68,6 +102,10 @@ export interface TeamsSource {
 	here(address: string): Promise<ReadonlyMap<string, HerePerson[]> | undefined>;
 	/** Every project in the team; undefined while spool.page can't say. */
 	projects(address: string): Promise<ListedTeamProject[] | undefined>;
+	/** What moving `project` to the team at `to`, as `name` when given, would do; undefined while it can't be said. */
+	movePreview(address: string, project: string, to: string, name?: string): Promise<MovePreview | undefined>;
+	/** The same project moves to the team at `to`, renamed when `name` is given; its old address leads on. */
+	move(address: string, project: string, to: string, name?: string): Promise<TeamMoveOutcome>;
 	create(name: string): Promise<Pick<CloudTeam, "address" | "name">>;
 	people(address: string): Promise<TeamPeople>;
 	update(address: string, change: { name?: string; address?: string }): Promise<Pick<CloudTeam, "address" | "name">>;
@@ -132,6 +170,7 @@ export function teamsAt(
 		}
 	};
 	const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
+	const moving = (address: string, project: string) => `${team(address)}/projects/${encodeURIComponent(project)}/move`;
 	return {
 		async list() {
 			let response: Response;
@@ -172,6 +211,34 @@ export function teamsAt(
 			const body = await read<{ projects?: unknown }>(`${team(address)}/projects`);
 			return Array.isArray(body?.projects) ? (body.projects as ListedTeamProject[]) : undefined;
 		},
+		async movePreview(address, project, to, name) {
+			const query = new URLSearchParams({ to, ...(name === undefined ? {} : { name }) });
+			const body = await read<Partial<MovePreview>>(`${moving(address, project)}?${query}`);
+			if (!Array.isArray(body?.losing)) return undefined;
+			// spool.page knows nothing of a Mac's folders: only the daemon says commits and a folder
+			return {
+				losing: body.losing,
+				refusal: typeof body.refusal === "string" ? body.refusal : null,
+				commits: Array.isArray(body.commits) ? body.commits : [],
+				folder: body.folder ?? null,
+			};
+		},
+		async move(address, project, to, name) {
+			const moved = await call<Partial<TeamMoveOutcome> & Pick<TeamMoveOutcome, "team" | "name" | "url">>(
+				"POST",
+				moving(address, project),
+				{ to, ...(name === undefined ? {} : { name }) },
+			);
+			return {
+				team: moved.team,
+				name: moved.name,
+				url: moved.url,
+				roots: moved.roots ?? [],
+				committed: moved.committed ?? [],
+				commitWaiting: moved.commitWaiting ?? [],
+				losing: moved.losing ?? [],
+			};
+		},
 		create: (name) => call("POST", "/teams", { name }),
 		people: (address) => call("GET", `${team(address)}/people`),
 		update: (address, change) => call("PATCH", team(address), change),
@@ -207,10 +274,13 @@ export function teamsAt(
 	};
 }
 
+/** spool.page refuses with its code as `error`; the daemon's own routes say a sentence there and the code beside it. */
 async function answer<T>(response: Response): Promise<T> {
-	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown }) | null;
-	if (!response.ok) throw new TeamActionRefused(typeof parsed?.error === "string" ? parsed.error : "unreachable");
-	return parsed as T;
+	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown; code?: unknown }) | null;
+	if (response.ok) return parsed as T;
+	const error = typeof parsed?.error === "string" ? parsed.error : undefined;
+	if (typeof parsed?.code === "string") throw new TeamActionRefused(parsed.code, error);
+	throw new TeamActionRefused(error ?? "unreachable");
 }
 
 /** A logo as the daemon takes it: its bytes in base64, in JSON. */

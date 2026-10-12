@@ -35,7 +35,7 @@ import type { LocatedRange } from "../daemon/locate";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectThumbnail } from "../daemon/project-thumbnail";
-import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
+import type { ProjectCard as DaemonProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
@@ -85,7 +85,6 @@ export type {
 	PatchRefusal,
 	PeopleBilling,
 	Place,
-	ProjectCard,
 	ProjectedFrame,
 	ProjectIcon,
 	Projection,
@@ -100,6 +99,15 @@ export type {
 	TeamRole,
 	TeamSetup,
 	ThreadPut,
+};
+
+/**
+ * A project's card on Home. On a team project's local copy, `inRepo` says whether its root sits inside a git work
+ * tree; on a copy that ended because its project moved out of its team, `movedOut` is that team's name.
+ */
+export type ProjectCard = DaemonProjectCard & {
+	team?: { inRepo?: boolean };
+	movedOut?: string;
 };
 
 /**
@@ -1758,7 +1766,13 @@ export const daemonTeams: TeamsSource = teamsAt("/api/cloud", {
 /** This Mac's teams and the invites to its address, as spool.page says through the daemon. */
 export const fetchCloudTeams = (): Promise<CloudTeamsState> => daemonTeams.list();
 
-export { type HerePerson, TeamActionRefused } from "./team-source";
+export {
+	type HerePerson,
+	type LosingPerson,
+	type MovePreview,
+	TeamActionRefused,
+	type TeamMoveOutcome,
+} from "./team-source";
 export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
 
 const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
@@ -1812,6 +1826,59 @@ export function getTeamProjectAt(
 /** "Move to team…": the project goes up whole, then one commit takes design/ out of git. */
 export function moveProjectToTeam(address: string, path: string): Promise<MoveOutcome> {
 	return teamProjectAction(`${team(address)}/move`, { path });
+}
+
+/** "Move out of <team>…": where this Mac's copy is now an ordinary project, and what became of its commit. */
+export interface MoveOutOutcome {
+	root: string | null;
+	committed: boolean;
+	commitWaiting: boolean;
+}
+
+/** "Move into a checkout…": the copy's new root, and what became of its commit. */
+export interface MoveIntoOutcome {
+	root: string;
+	committed: boolean;
+	commitWaiting: boolean;
+}
+
+/** The daemon's refusal of a move that touches this Mac's folders: the code it gave, and its sentence. */
+async function folderMove<T>(path: string, body: unknown): Promise<T> {
+	let response: Response;
+	try {
+		response = await controlFetch(`/api/cloud${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	} catch {
+		throw new TeamActionRefused("unreachable", "spool could not be reached. Try again.");
+	}
+	const parsed = (await response.json().catch(() => null)) as (T & { error?: unknown; code?: unknown }) | null;
+	if (response.ok && parsed !== null) return parsed;
+	const said = refusedSays(parsed, "Could not finish. Try again.");
+	throw new TeamActionRefused(typeof parsed?.code === "string" ? parsed.code : "refused", said);
+}
+
+/**
+ * "Move out of <team>…": once this Mac's copy at `path` (the latest opened when none is given) is caught up, the team
+ * no longer has the project, and one commit puts design/ back in git.
+ */
+export function moveProjectOut(address: string, project: string, path?: string): Promise<MoveOutOutcome> {
+	return folderMove(
+		`${team(address)}/projects/${encodeURIComponent(project)}/out`,
+		path === undefined ? {} : { path },
+	);
+}
+
+/** "Move into a checkout…": the copy at `path`, in no repo, moves into `checkout` with spool.json at its root. */
+export function moveProjectInto(
+	address: string,
+	project: string,
+	path: string,
+	checkout: string,
+): Promise<MoveIntoOutcome> {
+	return folderMove(`${team(address)}/projects/${encodeURIComponent(project)}/into`, { path, checkout });
 }
 
 /** A project's move under way and its team, or how one ended that no sheet heard; undefined when the daemon can't say. */

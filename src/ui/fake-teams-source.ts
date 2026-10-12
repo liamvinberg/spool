@@ -1,5 +1,21 @@
 import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../cloud-teams";
-import { TeamActionRefused, type TeamsSource } from "./team-source";
+import {
+	type ListedTeamProject,
+	type LosingPerson,
+	type MovePreview,
+	TeamActionRefused,
+	type TeamMoveOutcome,
+	type TeamsSource,
+} from "./team-source";
+
+/** What a move does on this Mac, as the daemon says it: nothing on spool.page itself, which has no Mac. */
+export interface FakeMac {
+	commits?: string[];
+	folder?: { from: string; to: string } | null;
+	roots?: string[];
+	committed?: string[];
+	commitWaiting?: string[];
+}
 
 /**
  * A team source held in memory, for the team screens' tests: it answers from what it was given, refuses what an
@@ -11,6 +27,12 @@ export function fakeTeamsSource(start: {
 	billing?: BillingSummary;
 	setup?: TeamSetup;
 	origin?: string;
+	/** Each team's projects, by its address. */
+	projects?: Record<string, ListedTeamProject[]>;
+	/** Who a move into each team would take a project from, by the target's address. */
+	losing?: Record<string, LosingPerson[]>;
+	/** What a move does on this Mac; none in a browser. */
+	mac?: FakeMac;
 }) {
 	const state = { ...start };
 	const asked: string[] = [];
@@ -25,6 +47,19 @@ export function fakeTeamsSource(start: {
 	const admin = (address: string) => {
 		if (teamOf(address).role !== "admin") throw new TeamActionRefused("admin_required");
 	};
+	const listed = (address: string) => state.projects?.[address] ?? [];
+	/** spool.page's refusal of a move, in its order, or null. */
+	const moveRefusal = (address: string, to: string, name: string): string | null => {
+		if (!/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u.test(name)) return "invalid_input";
+		if (teamOf(address).role !== "admin") return "admin_required";
+		if (to === address) return "same_team";
+		const target = state.teams.find((each) => each.address === to);
+		if (target === undefined) return "target_not_found";
+		if (target.role === "viewer") return "target_editor_required";
+		if (target.billing?.state === "lapsed") return "unpaid";
+		if (listed(to).some((project) => project.name === name)) return "name_taken";
+		return null;
+	};
 	const source: TeamsSource = {
 		list: async () => ({
 			state: "ready",
@@ -34,7 +69,40 @@ export function fakeTeamsSource(start: {
 			origin: state.origin ?? "https://spool.page",
 		}),
 		here: async () => new Map(),
-		projects: async () => [],
+		projects: async (address) => listed(address),
+		movePreview: async (address, project, to, name = project) => {
+			ask(`preview ${address}/${project} ${to} ${name}`);
+			teamOf(address);
+			const preview: MovePreview = {
+				losing: state.losing?.[to] ?? [],
+				refusal: moveRefusal(address, to, name),
+				commits: state.mac?.commits ?? [],
+				folder: state.mac?.folder ?? null,
+			};
+			return preview;
+		},
+		move: async (address, project, to, name = project) => {
+			ask(`move ${address}/${project} ${to} ${name}`);
+			const refusal = moveRefusal(address, to, name);
+			if (refusal !== null) throw new TeamActionRefused(refusal);
+			const moving = listed(address).find((each) => each.name === project);
+			const url = `${state.origin ?? "https://spool.page"}/${to}/${name}`;
+			state.projects = {
+				...state.projects,
+				[address]: listed(address).filter((each) => each.name !== project),
+				[to]: [...listed(to), { name, url, repo: moving?.repo ?? null }],
+			};
+			const moved: TeamMoveOutcome = {
+				team: to,
+				name,
+				url,
+				roots: state.mac?.roots ?? [],
+				committed: state.mac?.committed ?? [],
+				commitWaiting: state.mac?.commitWaiting ?? [],
+				losing: state.losing?.[to] ?? [],
+			};
+			return moved;
+		},
 		create: async (name) => {
 			ask(`create ${name}`);
 			return { address: name.toLowerCase(), name };
