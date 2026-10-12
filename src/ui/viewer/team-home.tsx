@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useContext, useEffect, useState } from "re
 import { AccountFoot } from "../account-foot";
 import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
 import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop } from "../home";
+import { Button } from "../primitives/actions";
 import { MenuItem } from "../primitives/overlays";
 import { ProjectIconView } from "../project-icon";
 import { type SetupHost, useSetUpToast } from "../team-setup";
@@ -20,12 +21,14 @@ import {
 	TeamsSourceContext,
 	useTeamHere,
 } from "../teams";
+import { AccountPage } from "./account-page";
+import { type AccountSource, cloudAccount } from "./account-source";
 import { cloudTeams } from "./team-source";
 
 /**
  * What spool.page tells Home in a browser, in a `<script id="spool-home" type="application/json">`: who is signed
  * in. Which team and page it shows is the address: `/<team>`, `/<team>/people`, `/<team>/settings` and
- * `/<team>/settings/billing`.
+ * `/<team>/settings/billing`, or `/account`, the account's own page.
  */
 export interface HomeConfig {
 	account: string;
@@ -44,16 +47,22 @@ export function cycleOf(search: string): BillingCycle | undefined {
 	return cycle === "monthly" || cycle === "yearly" ? cycle : undefined;
 }
 
-/** Where Home is, read from its address. */
-export interface HomePlace {
-	team: string;
-	page: TeamPage;
-	/** Settings' tab; General when absent. */
-	tab?: SettingsTab;
-}
+/** Where Home is, read from its address: one of a team's pages, or the account, which is no team's. */
+export type HomePlace =
+	| {
+			team: string;
+			page: TeamPage;
+			/** Settings' tab; General when absent. */
+			tab?: SettingsTab;
+	  }
+	| { team: null; page: "account" };
+
+/** spool.page/account. `account` is a reserved team address, so no team stands there. */
+export const ACCOUNT_PLACE: HomePlace = { team: null, page: "account" };
 
 export function placeOf(path: string): HomePlace | null {
 	const [team, page, tab, ...rest] = path.split("/").filter(Boolean);
+	if (team === "account" && page === undefined) return ACCOUNT_PLACE;
 	if (team === undefined || rest.length > 0) return null;
 	if (page === undefined) return { team, page: "projects" };
 	if (page === "settings" && tab === "billing") return { team, page, tab };
@@ -62,6 +71,7 @@ export function placeOf(path: string): HomePlace | null {
 }
 
 export function pathOf(place: HomePlace): string {
+	if (place.team === null) return "/account";
 	if (place.page === "settings" && place.tab === "billing") return `/${place.team}/settings/billing`;
 	return place.page === "projects" ? `/${place.team}` : `/${place.team}/${place.page}`;
 }
@@ -71,16 +81,34 @@ export function pathOf(place: HomePlace): string {
  * covers, People and Settings, read and changed at spool.page with this browser's session. Every team is a place
  * here, a viewer's included, and each project opens as the read-only canvas.
  */
-export function BrowserHome({ config, source = cloudTeams }: { config: HomeConfig; source?: TeamsSource }) {
+export function BrowserHome({
+	config,
+	source = cloudTeams,
+	account = cloudAccount,
+}: {
+	config: HomeConfig;
+	source?: TeamsSource;
+	account?: AccountSource;
+}) {
 	return (
 		<TeamsSourceContext.Provider value={source}>
-			<Home account={config.account} source={source} />
+			<Home account={config.account} source={source} accountSource={account} />
 		</TeamsSourceContext.Provider>
 	);
 }
 
-function Home({ account, source }: { account: string; source: TeamsSource }) {
+function Home({
+	account,
+	source,
+	accountSource,
+}: {
+	account: string;
+	source: TeamsSource;
+	accountSource: AccountSource;
+}) {
 	const [place, setPlace] = useState<HomePlace | null>(() => placeOf(location.pathname));
+	// the team Account was opened from stays in the sidebar while it is open
+	const [lastTeam, setLastTeam] = useState<string | null>(null);
 	const [teams, setTeams] = useState<CloudTeamsState | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [joined] = useState(() => new URLSearchParams(location.search).get("joined") === "viewer");
@@ -92,6 +120,9 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 		if (path !== location.pathname) history[replace ? "replaceState" : "pushState"](null, "", path);
 		setPlace(next);
 	}, []);
+	useEffect(() => {
+		if (place?.team) setLastTeam(place.team);
+	}, [place]);
 	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
 	useEffect(() => {
 		void refresh();
@@ -105,32 +136,58 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 		};
 	}, [refresh]);
 	const ready = teams?.state === "ready" ? teams : null;
-	const current = ready?.teams.find((team) => team.address === place?.team) ?? null;
+	const onAccount = place?.page === "account";
+	const current = onAccount
+		? (ready?.teams.find((team) => team.address === lastTeam) ?? ready?.teams[0] ?? null)
+		: (ready?.teams.find((team) => team.address === place?.team) ?? null);
+	const signIn = useCallback(() => location.assign(`/sign-in?next=${encodeURIComponent(location.pathname)}`), []);
+	const signOut = useCallback(() => {
+		void fetch("/sign-out", { method: "POST", credentials: "same-origin" }).finally(() =>
+			location.assign("/sign-in"),
+		);
+	}, []);
 	// a team left, deleted or never this account's: the next one it is in, or the account page when none
 	useEffect(() => {
-		if (teams?.state === "signed-out") location.assign(`/sign-in?next=${encodeURIComponent(location.pathname)}`);
-		if (ready === null || current !== null) return;
+		if (teams?.state === "signed-out") signIn();
+		if (ready === null || current !== null || onAccount) return;
 		const next = ready.teams[0];
-		if (next === undefined) location.assign("/account");
-		else go({ team: next.address, page: "projects" }, true);
-	}, [teams, ready, current, go]);
+		go(next === undefined ? ACCOUNT_PLACE : { team: next.address, page: "projects" }, true);
+	}, [teams, ready, current, onAccount, go, signIn]);
 	useEffect(() => {
-		if (current !== null) document.title = `${current.name} · spool`;
-	}, [current]);
-	const page = place?.page === "settings" && current?.role !== "admin" ? "projects" : (place?.page ?? "projects");
+		if (onAccount) document.title = "Account · spool";
+		else if (current !== null) document.title = `${current.name} · spool`;
+	}, [current, onAccount]);
+	const tab = place?.team ? place.tab : undefined;
+	const page: TeamPage | null =
+		place === null || place.page === "account"
+			? onAccount
+				? null
+				: "projects"
+			: place.page === "settings" && current?.role !== "admin"
+				? "projects"
+				: place.page;
 	return (
 		<HomeShell
 			underTabs={false}
 			switcher={
 				ready && (
 					<>
-						<TeamSwitcher
-							teams={ready}
-							current={current}
-							onMac={false}
-							onSelect={(address) => address !== null && go({ team: address, page: "projects" })}
-							onNewTeam={() => setCreating(true)}
-						/>
+						{ready.teams.length === 0 ? (
+							<div className="pj-team-switch mb-[18px] flex flex-col gap-[10px] [@media(max-width:720px)]:hidden">
+								<p className="pl-[2px] text-secondary type-label">You’re not in a team yet.</p>
+								<Button className="w-full justify-start" onClick={() => location.assign("/start")}>
+									Start a team…
+								</Button>
+							</div>
+						) : (
+							<TeamSwitcher
+								teams={ready}
+								current={current}
+								onMac={false}
+								onSelect={(address) => address !== null && go({ team: address, page: "projects" })}
+								onNewTeam={() => setCreating(true)}
+							/>
+						)}
 						{creating && (
 							<NewTeamDialog
 								allowed={ready.mayCreateTeam}
@@ -152,32 +209,36 @@ function Home({ account, source }: { account: string; source: TeamsSource }) {
 				<AccountFoot
 					inBrowser
 					account={{ state: "signed-in", email: account, accountUrl: "/account" }}
+					onAccount={() => go(ACCOUNT_PLACE)}
 					onSignIn={() => {}}
 					onReopen={() => {}}
 					onCancel={() => {}}
-					onSignOut={() => {
-						void fetch("/sign-out", { method: "POST", credentials: "same-origin" }).finally(() =>
-							location.assign("/sign-in"),
-						);
-					}}
+					onSignOut={signOut}
 				/>
 			}
 		>
-			<main className={HOME_MAIN} aria-busy={current === null}>
-				{current === null || ready === null ? null : page === "people" ? (
+			<main className={HOME_MAIN} aria-busy={onAccount ? undefined : current === null}>
+				{onAccount ? (
+					<AccountPage
+						source={accountSource}
+						teams={ready?.teams.map((team) => team.name)}
+						onSignedOut={signIn}
+						onSignOut={signOut}
+					/>
+				) : current === null || ready === null ? null : page === "people" ? (
 					<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
 				) : page === "settings" ? (
 					<TeamSettingsPage
 						key={current.id}
 						team={current}
 						origin={ready.origin}
-						tab={place?.tab ?? "general"}
+						tab={tab ?? "general"}
 						onTab={(tab) => go({ team: current.address, page: "settings", tab })}
 						// Stripe's pages come back to /<team>/settings/billing, so they open in this tab
 						onOpen={(url) => location.assign(url)}
 						cycle={cycle}
 						onChanged={() => void refresh()}
-						onMoved={(address) => go({ team: address, page: "settings", tab: place?.tab ?? "general" }, true)}
+						onMoved={(address) => go({ team: address, page: "settings", tab: tab ?? "general" }, true)}
 						onDeleted={() => void refresh()}
 					/>
 				) : (

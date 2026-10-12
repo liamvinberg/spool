@@ -263,7 +263,16 @@ export function InviteLine({
 }
 
 /** A team's nav under the switcher: Projects, People, and Settings for admins. */
-export function TeamNav({ team, page, onPage }: { team: CloudTeam; page: TeamPage; onPage: (page: TeamPage) => void }) {
+/** A team's nav under the switcher; `page` null while a place outside the team, such as Account, is open. */
+export function TeamNav({
+	team,
+	page,
+	onPage,
+}: {
+	team: CloudTeam;
+	page: TeamPage | null;
+	onPage: (page: TeamPage) => void;
+}) {
 	const item = (to: TeamPage, icon: ReactNode, label: string, count?: number) => (
 		<NavItem icon={icon} label={label} meta={count} current={page === to} onClick={() => onPage(to)} />
 	);
