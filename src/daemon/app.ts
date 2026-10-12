@@ -3887,7 +3887,7 @@ export function createDaemonApp({
 		if ("response" in project) return project.response;
 		const state = readPresenceState(((await c.req.json().catch(() => undefined)) as { state?: unknown })?.state);
 		if (state === undefined) return c.text("presence must be { state: { page, pointer, ... } | null }", 400);
-		teamSync.copy(project.root)?.presence(state);
+		teamSync.presence(project.root, state);
 		return c.body(null, 204);
 	});
 
@@ -3904,7 +3904,7 @@ export function createDaemonApp({
 		const unwatch = teamSync.watchPresence(root, tell);
 		return () => {
 			unwatch();
-			if (![...views.values()].some((view) => view.root === root)) teamSync.copy(root)?.presence(null);
+			if (![...views.values()].some((view) => view.root === root)) teamSync.presence(root, null);
 		};
 	}
 
