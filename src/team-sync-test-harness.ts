@@ -26,10 +26,15 @@ import {
  */
 export const TEAM_ORIGIN = "https://cloud.test";
 
+type Role = "admin" | "editor" | "viewer" | null;
+
 interface Person {
 	accountId: string;
 	device: string;
-	role: "admin" | "editor" | "viewer" | null;
+	/** Their role in the first team, the one every test starts with. */
+	role: Role;
+	/** Their role in every other team, by address. */
+	roles: Map<string, Role>;
 	/** Their colour on the team canvas, by when they joined. */
 	color: string;
 	/** The machine's device session was revoked. */
@@ -40,6 +45,8 @@ interface Person {
 export const TEAM_COLORS = ["#7aa7ff", "#eaa94a", "#4cc495", "#b896ff", "#f28cbc"];
 
 interface Project {
+	/** Kept through a move: the sync object, history and shares go with it. */
+	id: string;
 	team: string;
 	name: string;
 	files: Map<string, TeamVersion>;
@@ -74,22 +81,34 @@ interface Connected {
 	cut(): void;
 }
 
-export function fakeTeam(team = "devosurf") {
+export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const people = new Map<string, Person>();
+	/** Every project, by `<team>/<name>`: where it lives now. */
 	const projects = new Map<string, Project>();
+	/** Every team, by address: the first, and any a test adds to move projects between. */
+	const teams = new Map<string, { name: string; lapsed: boolean }>([[team, { name: teamName, lapsed: false }]]);
+	/** Old addresses (`<team>/<name>`) that lead on to a project that moved, wherever it is now. */
+	const forwards = new Map<string, Project>();
+	/** Addresses whose project was moved out of its team (`DELETE ?out=1`). */
+	const movedOut = new Set<string>();
+	/** Every move spool.page took, in order. */
+	const moves: { from: string; to: string; by: string }[] = [];
+	let ids = 0;
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
 	/** While set, spool.page doesn't answer at all: every request fails as a network that is down does. */
 	let down = false;
 	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
 	let refusing: number | undefined;
-	/** The team has no paid time left: nobody syncs, and asking says `unpaid`. */
-	let lapsed = false;
 	/** How many times a machine asked where it stands in a project, as a daemon does after a close. */
 	let asked = 0;
 	/** Solo projects whose shares moved into a team project, as spool.page was asked. */
 	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
-	const project = (name: string) => projects.get(name);
+	/** A project by its name in the first team, or by `<team>/<name>` in any. */
+	const project = (name: string) => projects.get(name.includes("/") ? name : `${team}/${name}`);
+	const lapsed = (address: string) => teams.get(address)?.lapsed === true;
+	const roleIn = (person: Person, address: string): Role =>
+		address === team ? person.role : (person.roles.get(address) ?? null);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
@@ -103,11 +122,15 @@ export function fakeTeam(team = "devosurf") {
 		}
 		return Math.max(1, Math.ceil((rate.start + rate.windowMs - rate.now()) / 1_000));
 	};
-	const edits = (person: Person) => person.role === "admin" || person.role === "editor";
+	const edits = (person: Person, address = team) => {
+		const role = roleIn(person, address);
+		return role === "admin" || role === "editor";
+	};
 	const sockets = () => [...projects.values()].flatMap((each) => [...each.sockets]);
 
 	function answer(request: Request, person: Person | undefined): Response | Promise<Response> {
-		const path = new URL(request.url).pathname;
+		const url = new URL(request.url);
+		const path = url.pathname;
 		if (person === undefined || person.revoked)
 			return Response.json({ error: "account_session_required" }, { status: 401 });
 		if (path === "/auth/account/session")
@@ -119,80 +142,89 @@ export function fakeTeam(team = "devosurf") {
 			});
 		if (path === "/api/teams")
 			return Response.json({
-				teams:
-					person.role === null
-						? []
-						: [
-								{
-									id: "t1",
-									address: team,
-									name: "Devosurf",
-									role: person.role,
-									logo: null,
-									people: people.size,
-									billing: { state: lapsed ? "lapsed" : "paying", hadTime: true },
-								},
-							],
+				teams: [...teams]
+					.filter(([address]) => roleIn(person, address) !== null)
+					.map(([address, about], at) => ({
+						id: `t${at + 1}`,
+						address,
+						name: about.name,
+						role: roleIn(person, address),
+						logo: null,
+						people: [...people.values()].filter((one) => roleIn(one, address) !== null).length,
+						billing: { state: about.lapsed ? "lapsed" : "paying", hadTime: true },
+					})),
 				invites: [],
 				mayCreateTeam: false,
-			});
-		if (path === `/api/teams/${team}/people` && person.role !== null)
-			return Response.json({
-				members: [...people.values()]
-					.filter((one) => one.role !== null)
-					.map((one) => ({ accountId: one.accountId, email: `${one.accountId}@devosurf.com`, role: one.role })),
-				invites: [],
-			});
-		// who is inside each project now, as the sync objects say from their sockets: never the asker
-		if (path === `/api/teams/${team}/here` && person.role !== null)
-			return Response.json({
-				projects: [...projects.values()]
-					.sort((a, b) => a.name.localeCompare(b.name))
-					.map((at) => ({
-						name: at.name,
-						url: `${TEAM_ORIGIN}/${team}/${at.name}`,
-						people: [...new Set([...at.sockets].map((socket) => socket.person))]
-							.filter((one) => one !== person && standing(at, one) !== undefined)
-							.map((one) => ({ name: one.accountId, color: one.color })),
-					})),
 			});
 		const solo = /^\/api\/solo\/projects\/([0-9a-f]{32})\/move$/u.exec(path);
 		if (solo !== null && request.method === "POST")
 			return request.json().then((body: { team: string; project: string }) => {
-				if (body.team !== team || person.role === null)
+				if (!teams.has(body.team) || roleIn(person, body.team) === null)
 					return Response.json({ error: "team_not_found" }, { status: 404 });
 				soloMoves.push({ solo: solo[1] ?? "", ...body, by: person.accountId });
 				return Response.json({ shares: 1 });
 			});
-		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo)?$/u.exec(path);
-		if (match === null || match[1] !== team || person.role === null)
+		// an old address says where the project is now to anyone in either team, before anything else
+		const old = /^\/api\/teams\/([^/]+)\/projects\/([^/]+)(?:\/|$)/u.exec(path);
+		const moved = old === null ? undefined : forwards.get(`${old[1]}/${old[2]}`);
+		if (old !== null && moved !== undefined && !projects.has(`${old[1]}/${old[2]}`)) {
+			if (roleIn(person, old[1] ?? "") !== null || roleIn(person, moved.team) !== null)
+				return Response.json(
+					{
+						error: "project_moved",
+						team: moved.team,
+						name: moved.name,
+						url: `${TEAM_ORIGIN}/${moved.team}/${moved.name}`,
+					},
+					{ status: 410 },
+				);
 			return Response.json({ error: "team_not_found" }, { status: 404 });
-		const described = (name: string) => ({
-			id: name,
-			name,
-			team,
-			url: `${TEAM_ORIGIN}/${team}/${name}`,
-			repo: project(name)?.repo ?? null,
-		});
-		if (request.method === "GET" && match[2] === undefined)
-			return Response.json({ projects: [...projects.keys()].sort().map(described) });
-		if (request.method === "PUT" && match[3] !== undefined)
-			return request.json().then((body: { repo: string }) => {
-				const found = project(match[2] ?? "");
-				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
-				if (found === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
-				found.repo = body.repo;
-				return Response.json(described(found.name));
+		}
+		const inTeam = /^\/api\/teams\/([^/]+)\//u.exec(path)?.[1];
+		if (inTeam === undefined || !teams.has(inTeam) || roleIn(person, inTeam) === null)
+			return Response.json({ error: "team_not_found" }, { status: 404 });
+		const address = inTeam;
+		const role = roleIn(person, address);
+		if (path === `/api/teams/${address}/people`)
+			return Response.json({
+				members: [...people.values()]
+					.filter((one) => roleIn(one, address) !== null)
+					.map((one) => ({
+						accountId: one.accountId,
+						email: `${one.accountId}@devosurf.com`,
+						role: roleIn(one, address),
+					})),
+				invites: [],
 			});
-		if (request.method === "POST" && match[2] === undefined)
+		// who is inside each project now, as the sync objects say from their sockets: never the asker
+		if (path === `/api/teams/${address}/here`)
+			return Response.json({
+				projects: inside(address).map((at) => ({
+					name: at.name,
+					url: `${TEAM_ORIGIN}/${address}/${at.name}`,
+					people: [...new Set([...at.sockets].map((socket) => socket.person))]
+						.filter((one) => one !== person && standing(at, one) !== undefined)
+						.map((one) => ({ name: one.accountId, color: one.color })),
+				})),
+			});
+		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move)?$/u.exec(path);
+		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
+		const named = match[2];
+		const at = named === undefined ? undefined : projects.get(`${address}/${named}`);
+		if (named !== undefined && at === undefined && movedOut.has(`${address}/${named}`))
+			return Response.json({ error: "project_moved_out" }, { status: 410 });
+		if (request.method === "GET" && named === undefined)
+			return Response.json({ projects: inside(address).map(described) });
+		if (request.method === "POST" && named === undefined)
 			return request.json().then((body: { name: string; repo?: string }) => {
-				if (person.role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
 				// a lapsed team takes no new work that would sync
-				if (lapsed) return Response.json({ error: "unpaid" }, { status: 402 });
+				if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
 				const name = body.name.toLowerCase();
-				if (projects.has(name)) return Response.json({ error: "project_taken" }, { status: 409 });
-				projects.set(name, {
-					team,
+				if (projects.has(`${address}/${name}`)) return Response.json({ error: "project_taken" }, { status: 409 });
+				const made: Project = {
+					id: `p${++ids}`,
+					team: address,
 					name,
 					files: new Map(),
 					saves: [],
@@ -202,13 +234,94 @@ export function fakeTeam(team = "devosurf") {
 					resent: [],
 					turns: [],
 					repo: body.repo ?? null,
-				});
-				return Response.json(described(name), { status: 201 });
+				};
+				arrive(made);
+				return Response.json(described(made), { status: 201 });
 			});
-		const found = match[2] === undefined ? undefined : project(match[2]);
-		if (found === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
+		if (at === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
+		if (request.method === "PUT" && match[3] === "/repo")
+			return request.json().then((body: { repo: string }) => {
+				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				at.repo = body.repo;
+				return Response.json(described(at));
+			});
+		if (match[3] === "/move" && request.method === "GET") {
+			const to = url.searchParams.get("to") ?? "";
+			const name = url.searchParams.get("name") ?? at.name;
+			return Response.json({ losing: losing(at, to, person), refusal: moveRefusal(at, person, to, name) });
+		}
+		if (match[3] === "/move" && request.method === "POST")
+			return request.json().then((body: { to?: unknown; name?: unknown }) => {
+				const to = typeof body.to === "string" ? body.to : "";
+				const name = body.name === undefined ? at.name : body.name;
+				const refusal = typeof body.to !== "string" ? "invalid_input" : moveRefusal(at, person, to, name);
+				if (refusal !== null) return Response.json({ error: refusal }, { status: REFUSAL_STATUS[refusal] ?? 400 });
+				const gone = losing(at, to, person);
+				const from = `${at.team}/${at.name}`;
+				projects.delete(from);
+				forwards.set(from, at);
+				at.team = to;
+				at.name = name as string;
+				arrive(at);
+				moves.push({ from, to: `${to}/${at.name}`, by: person.accountId });
+				// every connection asks its standing again, and meets the old address's answer
+				for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
+				return Response.json({ ...described(at), losing: gone });
+			});
+		if (request.method === "DELETE" && match[3] === undefined) {
+			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
+			remove(at, url.searchParams.get("out") === "1");
+			return Response.json({});
+		}
 		asked++;
-		return Response.json({ ...described(found.name), role: person.role, ...(lapsed ? { standing: "unpaid" } : {}) });
+		return Response.json({ ...described(at), role, ...(lapsed(address) ? { standing: "unpaid" } : {}) });
+	}
+
+	/** Today's described project, at its team and name now. */
+	function described(at: Project) {
+		return { id: at.id, name: at.name, team: at.team, url: `${TEAM_ORIGIN}/${at.team}/${at.name}`, repo: at.repo };
+	}
+
+	/** A team's projects, by name. */
+	function inside(address: string): Project[] {
+		return [...projects.values()].filter((at) => at.team === address).sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	/** A project takes an address: a forward or a moved-out mark there goes, since a real project lives there now. */
+	function arrive(at: Project): void {
+		const key = `${at.team}/${at.name}`;
+		projects.set(key, at);
+		forwards.delete(key);
+		movedOut.delete(key);
+	}
+
+	/** A project deleted, its forwards with it; moved out, its address says so to the team from then on. */
+	function remove(at: Project, out: boolean): void {
+		const key = `${at.team}/${at.name}`;
+		projects.delete(key);
+		for (const [old, to] of forwards) if (to === at) forwards.delete(old);
+		if (out) movedOut.add(key);
+		for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
+	}
+
+	/** Editors and admins of the project's team who aren't in the target, the asker never among them, by name. */
+	function losing(at: Project, to: string, asker: Person) {
+		return [...people.values()]
+			.filter((one) => one.accountId !== asker.accountId && edits(one, at.team) && roleIn(one, to) === null)
+			.map((one) => ({ name: one.accountId, email: `${one.accountId}@devosurf.com` }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	/** What a move would be refused with now, in spool.page's order, or null. */
+	function moveRefusal(at: Project, person: Person, to: string, name: unknown): string | null {
+		if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u.test(name)) return "invalid_input";
+		if (roleIn(person, at.team) !== "admin") return "admin_required";
+		if (to === at.team) return "same_team";
+		if (!teams.has(to) || roleIn(person, to) === null) return "target_not_found";
+		if (roleIn(person, to) === "viewer") return "target_editor_required";
+		if (lapsed(to)) return "unpaid";
+		if (projects.has(`${to}/${name}`)) return "name_taken";
+		return null;
 	}
 
 	function receive(at: Project, from: Connected, data: string | Uint8Array): void {
@@ -261,7 +374,7 @@ export function fakeTeam(team = "devosurf") {
 			from.deliver(
 				encodeFrame({ type: "refused", ref, path, reason, ...(retryAfter === undefined ? {} : { retryAfter }) }),
 			);
-		if (from.person.revoked || !edits(from.person)) {
+		if (from.person.revoked || !edits(from.person, at.team)) {
 			refuse(from.person.revoked ? "signed_out" : "not_editor");
 			from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
 		} else if (!travels(path)) refuse("outside_layout");
@@ -370,8 +483,9 @@ export function fakeTeam(team = "devosurf") {
 		(token: () => string): OpenSyncSocket =>
 		(url, presented, events: SyncSocketEvents) => {
 			const person = presented === token() ? people.get(presented) : undefined;
-			const [, , name] = /\/api\/teams\/([^/]+)\/projects\/([^/]+)\/sync$/u.exec(new URL(url).pathname) ?? [];
-			const at = name === undefined ? undefined : project(name);
+			const [, address, name] = /\/api\/teams\/([^/]+)\/projects\/([^/]+)\/sync$/u.exec(new URL(url).pathname) ?? [];
+			// an old address takes no connection: its answer is the 410 asking where it stands meets
+			const at = name === undefined ? undefined : projects.get(`${address}/${name}`);
 			let open = true;
 			// every frame arrives later and in order, as it would over a network
 			let queue = Promise.resolve();
@@ -394,7 +508,7 @@ export function fakeTeam(team = "devosurf") {
 				return true;
 			};
 			const connected: Connected = {
-				person: person ?? { accountId: "", device: "", role: null, color: "" },
+				person: person ?? { accountId: "", device: "", role: null, roles: new Map(), color: "" },
 				live: false,
 				deliver: (frame) =>
 					later(() => {
@@ -413,9 +527,9 @@ export function fakeTeam(team = "devosurf") {
 				person === undefined ||
 				person.revoked ||
 				at === undefined ||
-				!edits(person) ||
+				!edits(person, at.team) ||
 				away.has(person.accountId) ||
-				lapsed
+				lapsed(at.team)
 			)
 				connected.close();
 			else if (refusing !== undefined) connected.close(refusing);
@@ -438,7 +552,7 @@ export function fakeTeam(team = "devosurf") {
 			const tokenOf = (account: string) => `${account}-token`.padEnd(43, "x");
 			let token = tokenOf(name);
 			const color = TEAM_COLORS[people.size % TEAM_COLORS.length] as string;
-			people.set(token, { accountId: name, device: `${name}'s Mac`, role, color });
+			people.set(token, { accountId: name, device: `${name}'s Mac`, role, roles: new Map(), color });
 			const fetch: typeof globalThis.fetch = async (input, init) => {
 				if (down) throw new TypeError("fetch failed");
 				const request = new Request(input, init);
@@ -461,7 +575,13 @@ export function fakeTeam(team = "devosurf") {
 					const was = people.get(token);
 					token = tokenOf(account);
 					if (!people.has(token))
-						people.set(token, { accountId: account, device: `${name}'s Mac`, role: null, color });
+						people.set(token, {
+							accountId: account,
+							device: `${name}'s Mac`,
+							role: null,
+							roles: new Map(),
+							color,
+						});
 					for (const socket of sockets()) if (socket.person === was) socket.close(CLOSE_SIGNED_OUT);
 				},
 			};
@@ -491,12 +611,34 @@ export function fakeTeam(team = "devosurf") {
 		soloMoves,
 		/** The repo spool.page has recorded for a project. */
 		repo: (name: string) => project(name)?.repo,
-		/** An admin changes someone's role, or removes them with null; their connections are cut off at once. */
-		role(accountId: string, role: Person["role"]) {
-			for (const person of people.values()) if (person.accountId === accountId) person.role = role;
-			for (const socket of sockets())
-				if (socket.person.accountId === accountId && !edits(socket.person)) socket.close(CLOSE_NOT_EDITOR);
+		/**
+		 * An admin changes someone's role, or removes them with null, in the first team or the one named; their
+		 * connections are cut off at once.
+		 */
+		role(accountId: string, role: Role, address = team) {
+			for (const person of people.values())
+				if (person.accountId === accountId) {
+					if (address === team) person.role = role;
+					else person.roles.set(address, role);
+				}
+			for (const at of projects.values())
+				for (const socket of at.sockets)
+					if (socket.person.accountId === accountId && !edits(socket.person, at.team))
+						socket.close(CLOSE_NOT_EDITOR);
 		},
+		/** Another team at spool.page, with nobody in it until `role` puts them there. */
+		addTeam(address: string, name: string) {
+			teams.set(address, { name, lapsed: false });
+		},
+		/** Every move spool.page took, as `<team>/<name>` from and to, and who moved it. */
+		moves,
+		/** Where an old address leads now, as `<team>/<name>`, or nothing. */
+		forward(address: string) {
+			const to = forwards.get(address);
+			return to === undefined ? undefined : `${to.team}/${to.name}`;
+		},
+		/** Whether an address's project was moved out of its team. */
+		movedOut: (address: string) => movedOut.has(address),
 		/** A machine's device session revoked from spool.page/account. */
 		revoke(accountId: string) {
 			for (const person of people.values()) if (person.accountId === accountId) person.revoked = true;
@@ -505,20 +647,22 @@ export function fakeTeam(team = "devosurf") {
 		/** An admin removes a team project: every connection to it is cut off. */
 		removeProject(name: string) {
 			const removed = project(name);
-			projects.delete(name);
-			for (const socket of removed?.sockets ?? []) socket.close(CLOSE_NOT_EDITOR);
+			if (removed !== undefined) remove(removed, false);
 		},
 		/**
 		 * The team lapses, as spool.page's sweep or Stripe ends its paid time: every connection is closed as unpaid,
 		 * new ones are refused before they open, and asking where a machine stands says `unpaid`.
 		 */
-		lapse() {
-			lapsed = true;
-			for (const socket of sockets()) socket.close(CLOSE_UNPAID);
+		lapse(address = team) {
+			const about = teams.get(address);
+			if (about !== undefined) about.lapsed = true;
+			for (const at of projects.values())
+				if (at.team === address) for (const socket of at.sockets) socket.close(CLOSE_UNPAID);
 		},
 		/** The team pays again: sync is let back in. */
-		pay() {
-			lapsed = false;
+		pay(address = team) {
+			const about = teams.get(address);
+			if (about !== undefined) about.lapsed = false;
 		},
 		/** spool.page can't be reached by anyone until the returned undo: its requests fail, as offline. */
 		unreachable() {
@@ -553,6 +697,17 @@ export function fakeTeam(team = "devosurf") {
 		},
 	};
 }
+
+/** The status each move refusal is answered with. */
+const REFUSAL_STATUS: Record<string, number> = {
+	invalid_input: 400,
+	admin_required: 403,
+	same_team: 400,
+	target_not_found: 404,
+	target_editor_required: 403,
+	unpaid: 402,
+	name_taken: 409,
+};
 
 function fileFrame(path: string, file: TeamVersion): string | Uint8Array {
 	return encodeFrame(
