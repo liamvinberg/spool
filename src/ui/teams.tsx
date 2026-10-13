@@ -20,6 +20,7 @@ import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
+import { keep, recall } from "./remembered";
 import { BILLING_STATES, money, TeamBilling } from "./team-billing";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
@@ -1009,6 +1010,10 @@ export function useTeamHere(address: string | null): TeamHere {
 	return here;
 }
 
+/** Where Home's team is kept between reloads: a team's address, or null for Your projects. */
+const HOME_TEAM = "home.team";
+const isAddress = (value: unknown): value is string => typeof value === "string";
+
 /**
  * Home's teams, wired: reads this Mac's teams once it is signed in, keeps which one Home shows, and hands
  * Home its switcher, its invite lines and, while a team is chosen, that team's nav and page.
@@ -1037,7 +1042,11 @@ export function useTeamHome(
 ) {
 	const teamActions = useContext(TeamsSourceContext);
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
-	const [scope, setScope] = useState<string | null>(shown);
+	// the team Home was showing comes back on a reload, unless a link hands over another
+	const [scope, setScope] = useState<string | null>(() => shown ?? recall(HOME_TEAM, isAddress));
+	useEffect(() => {
+		if (scope !== recall(HOME_TEAM, isAddress)) keep(HOME_TEAM, scope);
+	}, [scope]);
 	const [page, setPage] = useState<TeamPage>("projects");
 	const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
 	const [creating, setCreating] = useState(false);

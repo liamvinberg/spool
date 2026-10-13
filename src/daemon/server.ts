@@ -8,6 +8,7 @@ import type { AgentExecutor } from "./agent-exec";
 import type { Look } from "./agent-preflight";
 import { createDaemonApp, type DaemonCloud } from "./app";
 import type { BoothSeams } from "./booth";
+import type { CloudAccountServices } from "./cloud-account";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
 import type { PublicationJobServices } from "./publication-jobs";
 
@@ -36,6 +37,8 @@ export interface ServeDaemonOptions {
 	/** Controlled Cloud boundary for teams, a team project's sync and its teammates' names. */
 	cloud?: DaemonCloud | undefined;
 	teamNotice?: ((message: string, root?: string) => void) | undefined;
+	/** Who Home's sidebar says is signed in, as a browser test sets it. */
+	cloudAccountServices?: CloudAccountServices | undefined;
 }
 
 export interface RunningDaemon {
@@ -70,6 +73,7 @@ export function serveDaemon({
 	booth,
 	cloud,
 	teamNotice,
+	cloudAccountServices,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
 	assertLoopbackHost(host);
 	const daemon = createDaemonApp({
@@ -88,6 +92,7 @@ export function serveDaemon({
 		...(booth === undefined ? {} : { booth }),
 		...(cloud === undefined ? {} : { cloud }),
 		...(teamNotice === undefined ? {} : { teamNotice }),
+		...(cloudAccountServices === undefined ? {} : { cloudAccountServices }),
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {

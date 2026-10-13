@@ -34,6 +34,19 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 		uiDir: await builtUi(),
 		cloud: ana.cloud,
 		teamNotice: () => {},
+		// signed in as ana, so Home has her team to show
+		cloudAccountServices: {
+			origin: () => TEAM_ORIGIN,
+			account: async () => ({
+				accountId: "ana",
+				email: "ana@example.test",
+				sessionId: "s",
+				expiresAt: Date.now() + 3_600_000,
+			}),
+			login: () => new Promise(() => {}),
+			logout: async () => {},
+			open: () => {},
+		},
 	});
 	closeAfterTest(daemon);
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1280, height: 800 } });
@@ -50,4 +63,17 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 	// the team alone, from its setup list's Open in spool: taken, so Home's address loses it, with no tab opened
 	await page.goto(local(handoverAddress({ team: "devosurf" })));
 	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/`);
+	const switcher = page.locator(".pj-team-switch > button");
+	const shown = switcher.locator(".truncate");
+	await expect.poll(() => shown.textContent(), { timeout: 30_000 }).toBe("Devosurf");
+
+	// Home keeps showing the team it was on through a reload, and Your projects once that is chosen
+	await page.reload();
+	await expect.poll(() => shown.textContent(), { timeout: 30_000 }).toBe("Devosurf");
+	await switcher.click();
+	await page.getByRole("menuitem", { name: "Your projects" }).click();
+	await page.reload();
+	await page.locator(".pj-team-switch").waitFor();
+	await page.waitForTimeout(500);
+	expect(await shown.textContent()).toBe("Your projects");
 });
