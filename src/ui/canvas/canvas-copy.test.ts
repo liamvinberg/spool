@@ -71,6 +71,39 @@ describe("canvas copy, paste and duplicate", () => {
 		expect(host.querySelector("[data-pages-copied]")).toBeNull();
 	});
 
+	it("pastes beside sources that are in view", async () => {
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+		const { host, asked } = await mountCanvas({ "/frames/duplicate": [{ from: "home", to: "home-copy" }] });
+		await select(host, "home");
+		await act(async () => press("c"));
+		await act(async () => press("v"));
+		await settle();
+
+		expect(bodyOf(asked, "/frames/duplicate")).toEqual({ frames: ["home"], page: "" });
+		expect(bodyOf(asked, "/geometry")).toEqual({
+			frames: { "home-copy": { x: 40 + COPY_CASCADE_PX, y: 40 + COPY_CASCADE_PX, w: 100, h: 100 } },
+		});
+	});
+
+	it.each([
+		["⌘D", ["d"]],
+		["⌘V", ["c", "v"]],
+	])("takes %s back in one press of undo", async (_, keys) => {
+		const { host } = await mountCanvas({ "/frames/duplicate": [{ from: "home", to: "home-copy" }] });
+		await select(host, "home");
+		for (const key of keys) await act(async () => press(key));
+		await settle();
+		const copy = () => host.querySelector('[data-frame-label="home-copy"]');
+		for (let attempt = 0; attempt < 20 && copy() === null; attempt++) await settle();
+		expect(copy()).not.toBeNull();
+
+		await act(async () => press("z"));
+		await settle();
+		expect(copy()).toBeNull();
+		expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
+	});
+
 	it("leaves the keys alone with nothing selected", async () => {
 		const { asked } = await mountCanvas({});
 		const event = press("d");
@@ -116,7 +149,7 @@ async function mountCanvas(
 	copies: Partial<Record<"/frames/duplicate", unknown[]>>,
 ): Promise<{ host: HTMLElement; asked: Asked[] }> {
 	const asked: Asked[] = [];
-	const frames = [
+	const frames: { name: string; page?: string; x: number; y: number; w: number; h: number }[] = [
 		{ name: "home", x: 40, y: 40, w: 100, h: 100 },
 		{ name: "about", x: 400, y: 40, w: 100, h: 100 },
 	];
@@ -131,8 +164,16 @@ async function mountCanvas(
 			asked.push({ path: url.pathname, method, body: typeof raw === "string" ? JSON.parse(raw) : undefined });
 			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
-			if (url.pathname.endsWith("/frames/duplicate"))
-				return Response.json({ frames: copies["/frames/duplicate"] ?? [] });
+			if (url.pathname.endsWith("/frames/duplicate")) {
+				const made = (copies["/frames/duplicate"] ?? []) as { from: string; to: string; page?: string }[];
+				// the daemon copies the folder, geometry and all, so the disk has moved
+				for (const copy of made) {
+					const from = frames.find((frame) => frame.name === copy.from);
+					if (from !== undefined)
+						frames.push({ ...from, name: copy.to, ...(copy.page === undefined ? {} : { page: copy.page }) });
+				}
+				return Response.json({ frames: made });
+			}
 			if (url.pathname.endsWith("/frames")) return Response.json({ root: "/project", pages: ["shop"], frames });
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: frames.map((each) => each.name), links: [], edges: [], unreadable: [] });
