@@ -44,15 +44,7 @@ export interface UnreadableSite {
 export interface NavSites {
 	sites: NavSite[];
 	unreadable: UnreadableSite[];
-	links?: LinksDeclaration;
-	invalidLinks?: { path: string; line: number };
 	parseFailure?: { path: string; line: number };
-}
-
-export interface LinksDeclaration {
-	path: string;
-	line: number;
-	values: Readonly<Record<string, string>>;
 }
 
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
@@ -309,8 +301,6 @@ export function frameSourceIn(pass: SourcePass, frameDir: string): FrameSource {
 		if (parsed === undefined) continue;
 		source.sites.push(...parsed.sites);
 		source.unreadable.push(...parsed.unreadable);
-		if (folder.includes(file) && parsed.links !== undefined) source.links = parsed.links;
-		if (folder.includes(file) && parsed.invalidLinks !== undefined) source.invalidLinks = parsed.invalidLinks;
 		if (parsed.parseFailure !== undefined) source.parseFailure ??= parsed.parseFailure;
 	}
 	return source;
@@ -381,12 +371,7 @@ function parseSource(source: string, path: string): ParsedSource {
 		return out;
 	}
 	out.program = program as Program;
-	const declaration = linksIn(program, path);
-	if (declaration.kind === "valid") {
-		out.links = declaration.value;
-		out.literals.push(...declaration.literals);
-	}
-	if (declaration.kind === "invalid") out.invalidLinks = declaration.at;
+	out.literals.push(...linksIn(program));
 	walkNodes(program, [], (node, ancestors) => {
 		// static import/export-from and dynamic import(): every way a file names
 		// another file, type-only imports included — they carry no walk of their
@@ -548,34 +533,18 @@ function unwrap(node: Node): Node {
 		: node;
 }
 
-function linksIn(
-	program: Node,
-	path: string,
-):
-	| { kind: "none" }
-	| { kind: "invalid"; at: { path: string; line: number } }
-	| { kind: "valid"; value: LinksDeclaration; literals: TargetLiteral[] } {
-	if (program.type !== "Program") return { kind: "none" };
+/**
+ * The frame names an exported `links` object spells: `export const links = { … } as const`
+ * of literal frame names. Its literals are targets a move rewrites; any other shape spells none.
+ */
+function linksIn(program: Node): TargetLiteral[] {
+	if (program.type !== "Program") return [];
 	for (const statement of program.body) {
 		if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
 		const declaration = statement.declaration;
-		if (declaration?.type !== "VariableDeclaration") {
-			if (
-				statement.specifiers.some(
-					(item) =>
-						item.type === "ExportSpecifier" &&
-						((item.exported.type === "Identifier" && item.exported.name === "links") ||
-							(item.exported.type === "StringLiteral" && item.exported.value === "links")),
-				) ||
-				((declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
-					declaration.id?.name === "links")
-			)
-				return { kind: "invalid", at: { path, line: statement.loc?.start.line ?? 1 } };
-			continue;
-		}
+		if (declaration?.type !== "VariableDeclaration") continue;
 		for (const item of declaration.declarations) {
 			if (item.id.type !== "Identifier" || item.id.name !== "links") continue;
-			const at = { path, line: item.loc?.start.line ?? 0 };
 			const object = item.init == null ? undefined : unwrap(item.init as Node);
 			if (
 				declaration.kind !== "const" ||
@@ -585,12 +554,11 @@ function linksIn(
 				item.init.typeAnnotation.typeName.type !== "Identifier" ||
 				item.init.typeAnnotation.typeName.name !== "const"
 			)
-				return { kind: "invalid", at };
-			const values: Record<string, string> = {};
+				return [];
 			const literals: TargetLiteral[] = [];
 			for (const property of object.properties) {
 				if (property.type !== "ObjectProperty" || property.computed || property.key.type === "PrivateName")
-					return { kind: "invalid", at };
+					return [];
 				const key =
 					property.key.type === "Identifier"
 						? property.key.name
@@ -598,14 +566,13 @@ function linksIn(
 							? property.key.value
 							: undefined;
 				const target = property.value.type === "StringLiteral" ? property.value.value : undefined;
-				if (key === undefined || target === undefined) return { kind: "invalid", at };
-				values[key] = target;
+				if (key === undefined || target === undefined) return [];
 				literals.push(literalOf(property.value as Node, target));
 			}
-			return { kind: "valid", value: { path, line: at.line, values }, literals };
+			return literals;
 		}
 	}
-	return { kind: "none" };
+	return [];
 }
 
 /** Merge branch arms: every target turns conditional, any dark arm stays named. */

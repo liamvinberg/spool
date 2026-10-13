@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
-import { frameSource, parseNavSites } from "./nav-sites";
+import { frameSource, parseNavSites, targetLiterals } from "./nav-sites";
 
 /**
  * The claim reader (#34): arrows claim what the code says, so this parser is
@@ -69,7 +69,7 @@ describe("data-go sites", () => {
 });
 
 describe("ui.go sites", () => {
-	it("keeps flow semantics separate from publication constants", () => {
+	it("draws no arrow from a links object, but spells its values as targets", () => {
 		const source = `import { ui } from "spool";
 const fallback = "archive";
 export const links = { inbox: "inbox", archive: "archive" } as const;
@@ -80,12 +80,11 @@ export default function Frame() {
 		const parsed = parseNavSites(source, PATH);
 		expect(parsed.sites).toEqual([]);
 		expect(parsed.unreadable).toHaveLength(1);
-		expect(parsed.links).toEqual({ path: PATH, line: 3, values: { inbox: "inbox", archive: "archive" } });
+		expect(targetLiterals(source, PATH).map((literal) => literal.target)).toEqual(["inbox", "archive"]);
 	});
 
-	it("keeps an invalid links declaration explicit", () => {
-		const parsed = parseNavSites(`export let links = makeLinks();\nexport default () => null;\n`, PATH);
-		expect(parsed.invalidLinks).toEqual({ path: PATH, line: 1 });
+	it("spells no targets from a links object it cannot read", () => {
+		expect(targetLiterals(`export let links = makeLinks();\nexport default () => null;\n`, PATH)).toEqual([]);
 	});
 
 	it("reads a literal call, anchored at the element whose handler makes it", () => {
