@@ -113,10 +113,10 @@ const imported = (test: string, text: string) =>
 	);
 /**
  * Runtime the daemon bundles and serves from disk, which no test imports: its
- * own suites stand in, with the two that play a whole project in a browser.
+ * own suites stand in, with the one that plays a whole project in a browser.
  */
 const served = sources.some((source) => source.startsWith("src/runtime/"));
-const playing = ["src/daemon/player-parity-browser.test.ts", "src/publication/website-browser.test.ts"];
+const playing = ["src/daemon/player-parity-browser.test.ts"];
 const picked = tests.filter((test) => {
 	if (changed.includes(test)) return true;
 	if (served && (test.startsWith("src/runtime/") || playing.includes(test))) return true;

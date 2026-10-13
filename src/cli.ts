@@ -9,17 +9,8 @@ import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkStart, runCheck } from "./check-command";
 import { cliName } from "./cli-name";
-import { CloudNotApproved, CloudRequestFailure, CloudSignedOut, cloudOrigin, login, logout } from "./cloud-auth";
-import {
-	CloudPublicationFailure,
-	listPublications,
-	mutatePublicationGrant,
-	publicationStatus,
-	publishWebsite,
-	stopPublication,
-} from "./cloud-publication";
+import { cloudOrigin, login, logout } from "./cloud-auth";
 import { readCanvasFields } from "./daemon/canvas-file";
-import { createFlowGraph } from "./daemon/flows";
 import {
 	daemonUrl,
 	ensureDaemon,
@@ -36,7 +27,6 @@ import {
 } from "./daemon/lifecycle";
 import { describeMigration, FOLDER_NAMES_FORMAT, migrateFrameNames } from "./daemon/migrate-frame-names";
 import { discoverFrames } from "./daemon/projection";
-import { publicationReadiness } from "./daemon/publication-readiness";
 import { CONTROL_HEADER } from "./daemon/security";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { createSettingsStore } from "./daemon/settings";
@@ -50,13 +40,12 @@ import { checkInitTarget, chooseInitTarget, initDestination, initProject, initTe
 import { runMove } from "./move-verb";
 import { fetchLocalCopy, openProject } from "./open";
 import { isFramePath, isSafeName } from "./page-path";
-import { buildWebsite, writeWebsite } from "./publication/build";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
-import { mintPlayerUrl, mintRawUrl, readFlows, readReadiness, readSelection, resolveRegisteredProject } from "./verbs";
+import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -155,104 +144,6 @@ program
 			process.exitCode = 1;
 		}
 	});
-
-const cloud = program.command("cloud").description("publish and inspect protected websites");
-
-/**
- * Every `spool cloud` verb answers in JSON on stdout, a failure too, so a script can read it. A failure also says
- * itself as a plain sentence on stderr, where the CLI's other errors go, so a person never has to read the JSON.
- */
-async function cloudJson(action: () => Promise<unknown>): Promise<void> {
-	try {
-		process.stdout.write(`${JSON.stringify(await action())}\n`);
-	} catch (error) {
-		const known =
-			error instanceof CloudPublicationFailure
-				? error.detail
-				: error instanceof CloudRequestFailure || error instanceof CloudNotApproved
-					? { code: error.code, retryable: error.retryable }
-					: error instanceof CloudSignedOut
-						? { code: error.code, retryable: false }
-						: undefined;
-		process.stderr.write(`spool: ${error instanceof Error ? error.message : "Cloud publication failed"}\n`);
-		process.stdout.write(
-			`${JSON.stringify({
-				error: {
-					code: known?.code ?? "client_error",
-					message: error instanceof Error ? error.message : "Cloud publication failed",
-					retryable: known?.retryable ?? false,
-					...(known?.retryAfter === undefined ? {} : { retryAfter: known.retryAfter }),
-					...(known?.operation === undefined ? {} : { state: known.operation.state, operation: known.operation }),
-					...(known?.operationId === undefined && known?.operation === undefined
-						? {}
-						: { operationId: known.operation?.id ?? known.operationId }),
-					...(known?.publication === undefined ? {} : { publication: known.publication }),
-				},
-			})}\n`,
-		);
-		process.exitCode = 1;
-	}
-}
-
-cloud
-	.command("publish")
-	.description("publish a connected website")
-	.argument("<frame>", "original entry frame", parseFrame)
-	.option("--invite <email...>", "person allowed to open the new website")
-	.option("--scenario <name>", "scenario seed", parseScenario)
-	.option("--publication <id>", "owned publication to update")
-	.action(async (entry: string, options: { invite?: string[]; scenario?: string; publication?: string }) => {
-		await cloudJson(async () => {
-			const root = await offlineProject(process.cwd());
-			return publishWebsite({
-				spoolDir,
-				root,
-				entry,
-				...(options.invite === undefined ? {} : { invitedEmails: options.invite }),
-				version: pkg.version,
-				origin: cloudOrigin(process.env),
-				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
-				...(options.publication === undefined ? {} : { publicationId: options.publication }),
-				progress: (message) => process.stderr.write(`spool: ${message}\n`),
-			});
-		});
-	});
-
-cloud
-	.command("stop")
-	.description("stop sharing a publication")
-	.argument("<publication>", "publication id")
-	.action(async (publication: string) => {
-		await cloudJson(() => stopPublication(spoolDir, publication, { origin: cloudOrigin(process.env) }));
-	});
-
-cloud
-	.command("list")
-	.description("list your Cloud publications")
-	.action(async () => {
-		await cloudJson(() => listPublications(spoolDir, { origin: cloudOrigin(process.env) }));
-	});
-
-cloud
-	.command("status")
-	.description("read one Cloud publication")
-	.argument("<publication>", "publication id")
-	.action(async (publication: string) => {
-		await cloudJson(() => publicationStatus(spoolDir, publication, { origin: cloudOrigin(process.env) }));
-	});
-
-for (const kind of ["invite", "revoke"] as const) {
-	cloud
-		.command(kind)
-		.description(`${kind} a publication recipient`)
-		.argument("<publication>", "publication id")
-		.argument("<email>", "recipient email")
-		.action(async (publication: string, email: string) => {
-			await cloudJson(() =>
-				mutatePublicationGrant(spoolDir, publication, email, kind, { origin: cloudOrigin(process.env) }),
-			);
-		});
-}
 
 program
 	.command("init")
@@ -355,49 +246,18 @@ program
 
 program
 	.command("check")
-	.description("type-check frames, or connected publication navigation, offline; never writes")
+	.description("type-check frames offline; never writes")
 	.argument(
 		"[paths...]",
 		"frames to check, by folder, frame.tsx, folder of frames or frame name; all of them when none",
 	)
-	.option("--entry <frame>", "check navigation only, without typechecking", parseFrame)
-	.action(async (paths: string[], options: { entry?: string }) => {
+	.action(async (paths: string[]) => {
 		// read-only: a project due its frame-name migration is told so, not migrated
 		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
-		if (options.entry !== undefined) {
-			const readiness = await publicationReadiness(createFlowGraph(), root, options.entry);
-			process.stdout.write(`${JSON.stringify(readiness)}\n`);
-			if (!readiness.ok) process.exitCode = 1;
-			return;
-		}
 		const output = await runCheck(root, process.cwd(), paths);
 		for (const line of output.stderr) process.stderr.write(`${line}\n`);
 		for (const line of output.stdout) process.stdout.write(`${line}\n`);
 		if (!output.ok) process.exitCode = 1;
-	});
-
-program
-	.command("build")
-	.description("export the connected website without starting a daemon")
-	.argument("<frame>", "entry frame", parseFrame)
-	.requiredOption("--out <directory>", "output directory, empty or a previous Spool build")
-	.option("--scenario <name>", "scenario seed", parseScenario)
-	.action(async (entry: string, options: { out: string; scenario?: string }) => {
-		const root = await offlineProject(process.cwd());
-		try {
-			const artifact = await buildWebsite({
-				root,
-				entry,
-				version: pkg.version,
-				...(options.scenario === undefined ? {} : { scenario: options.scenario }),
-			});
-			writeWebsite(artifact, options.out, root);
-			process.stdout.write(
-				`${JSON.stringify({ out: options.out, entry, included: artifact.manifest.frames.map((frame) => frame.name), contentIdentity: artifact.manifest.contentIdentity, inputIdentity: artifact.inputIdentity })}\n`,
-			);
-		} catch (error) {
-			throw new SpoolError(error instanceof Error ? error.message : String(error));
-		}
 	});
 
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------
@@ -562,12 +422,9 @@ program
 program
 	.command("flows")
 	.description("print the link graph: read from source, verified by sessions")
-	.option("--entry <frame>", "check the connected set for publication", parseFrame)
-	.action(async (options: { entry?: string }) => {
+	.action(async () => {
 		const { name, daemonUrl, controlToken } = await verbContext();
-		process.stdout.write(
-			`${options.entry === undefined ? await readFlows(daemonUrl, name, controlToken) : await readReadiness(daemonUrl, name, options.entry, controlToken)}\n`,
-		);
+		process.stdout.write(`${await readFlows(daemonUrl, name, controlToken)}\n`);
 	});
 
 program

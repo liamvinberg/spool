@@ -4,7 +4,6 @@ import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
 import { DESK_BAR_PX, deskWindow, readBarHidden } from "./player-page";
-import { createPlayerPublicationClient } from "./player-publication-client";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -32,7 +31,6 @@ export interface ShellConfig {
 	innerUrl: string;
 	/** Trusted outer-shell capability. Never forwarded to the authored iframe. */
 	controlToken: string;
-	publicationPath: string;
 }
 
 interface PlayerState {
@@ -1029,12 +1027,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			/>
 		);
 	}
-	const publication = createPlayerPublicationClient({
-		path: config.publicationPath,
-		entry: config.start,
-		scenario: config.scenario,
-		controlToken: config.controlToken,
-	});
 	function Page() {
 		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
 		const { hidden, loadError } = shell.view();
@@ -1042,7 +1034,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			project: config.project,
 			frames: {},
 			controller: shell.controller,
-			publication,
 			host: createElement(Host),
 			// The bar says so while the iframe is held back: the compile and the
 			// first fetch happen behind it, and a blank white box says nothing.

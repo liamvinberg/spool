@@ -51,7 +51,6 @@ function shellConfigOf(document: string): {
 	scenario: string;
 	innerUrl: string;
 	controlToken: string;
-	publicationPath: string;
 } {
 	const serialized = document.match(/window\.__SPOOL_SHELL__\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\)/)?.[1];
 	expect(serialized, "player shell config").toBeDefined();
@@ -382,7 +381,6 @@ describe("daemon authority matrix", () => {
 			start: "home",
 			scenario: "default",
 			controlToken: CONTROL_TOKEN,
-			publicationPath: `/api/p/${encodeURIComponent(project.name)}/publication`,
 		});
 		const shellInner = new URL(shellConfig.innerUrl);
 		expect(`${shellInner.origin}${shellInner.pathname}`).toBe(`http://${RENDER_HOST}${playPath.split("?")[0]}`);
@@ -403,7 +401,6 @@ describe("daemon authority matrix", () => {
 		expect(inner.headers.get("content-security-policy")).toBe(FRAME_CSP);
 		expect(innerHtml).toContain("window.__SPOOL_PLAY__");
 		expect(innerHtml).not.toContain(CONTROL_TOKEN);
-		expect(innerHtml).not.toContain(shellConfig.publicationPath);
 	});
 
 	it("pins the resolved start frame into the render-origin player request", async () => {

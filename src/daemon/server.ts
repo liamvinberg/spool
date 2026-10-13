@@ -10,7 +10,6 @@ import { createDaemonApp, type DaemonCloud } from "./app";
 import type { BoothSeams } from "./booth";
 import type { CloudAccountServices } from "./cloud-account";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
-import type { PublicationJobServices } from "./publication-jobs";
 
 export interface ServeDaemonOptions {
 	spoolDir: string;
@@ -30,8 +29,6 @@ export interface ServeDaemonOptions {
 	agentEngines?: readonly AgentEngine[] | undefined;
 	/** A stand-in for the `which` behind the install wall, so that turn has a composer. */
 	agentLook?: Look | undefined;
-	/** Controlled Cloud boundary for publication browser tests. */
-	publicationServices?: PublicationJobServices | undefined;
 	/** The photo booth's browser, starting scheme and waits, as a browser test sets them. */
 	booth?: BoothSeams | undefined;
 	/** Controlled Cloud boundary for teams, a team project's sync and its teammates' names. */
@@ -69,7 +66,6 @@ export function serveDaemon({
 	agentExecutor,
 	agentEngines,
 	agentLook,
-	publicationServices,
 	booth,
 	cloud,
 	teamNotice,
@@ -88,7 +84,6 @@ export function serveDaemon({
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),
 		...(agentLook === undefined ? {} : { agentLook }),
-		...(publicationServices === undefined ? {} : { publicationServices }),
 		...(booth === undefined ? {} : { booth }),
 		...(cloud === undefined ? {} : { cloud }),
 		...(teamNotice === undefined ? {} : { teamNotice }),
