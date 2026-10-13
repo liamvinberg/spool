@@ -310,6 +310,7 @@ const bootRequest = z.strictObject({
 	width: z.number().int().positive(),
 	height: z.number().int().positive(),
 	at: z.array(z.number().int().nonnegative().max(SHOT_AT_MAX_MS)).min(1).max(SHOT_AT_MAX_COUNT).optional(),
+	scroll: z.number().int().nonnegative().optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 
@@ -3093,7 +3094,7 @@ export function createDaemonApp({
 				const parsed = bootRequest.safeParse(value);
 				return parsed.success
 					? parsed.data
-					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scenario"? }', 400);
+					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scroll"?: px, "scenario"? }', 400);
 			}),
 			(c) => {
 				// shot and logs (#25): one boot of the served document in the photo
@@ -3105,7 +3106,7 @@ export function createDaemonApp({
 				const project = resolveProject(c, name);
 				if ("response" in project) return project.response;
 				const frame = c.req.param("frame");
-				const { width, height, at, scenario } = c.req.valid("json");
+				const { width, height, at, scroll, scenario } = c.req.valid("json");
 				c.header("content-type", "application/x-ndjson; charset=utf-8");
 				c.header("cache-control", "no-store");
 				return stream(c, async (out) => {
@@ -3125,6 +3126,7 @@ export function createDaemonApp({
 									scale: plan.scale,
 									tiles: plan.tiles,
 									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
+									scroll,
 									scenario,
 								},
 								(line) => void write({ narrate: line }).catch(() => {}),
@@ -3150,6 +3152,7 @@ export function createDaemonApp({
 								scenario: scenario ?? "default",
 								scheme: shot.scheme,
 								tiles: plan.tiles,
+								...(scroll === undefined ? {} : { scroll }),
 								shots: shot.shots,
 								entries,
 							});

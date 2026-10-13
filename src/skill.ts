@@ -255,7 +255,7 @@ Verify with spool url, shot and logs: wait for async initialization, inspect ren
 
 shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, the same browser that makes the canvas's pictures of frames, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900), in the colour scheme the canvas shows (this machine's light or dark setting until a canvas has said). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
 
-  spool shot <frame>… [--viewport <width>x<height>] [--at <ms>[,<ms>…]] [--scenario <name>]
+  spool shot <frame>… [--viewport <width>x<height>] [--at <ms>[,<ms>…]] [--scroll <px>] [--scenario <name>]
                        Name every frame to check in one call, or a page folder for every frame under it: they boot in parallel in the same browser, the options applying to each. One block per frame on stdout, in the order named:
                          shop/checkout: shot, content 3765px tall, no console errors
                            <root>/design/.spool/verify/shop/checkout.1.png  css y 0-1800 of 3765, scale 1.111
@@ -263,6 +263,7 @@ shot and logs are two outputs of one boot: the frame's really-served document in
                        Files mirror the frame's path under design/.spool/verify. A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png that overlap a little, the last anchored to the bottom: each line's y range says where it sits. Read every file — the layout's truth is the whole stack.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.
                        --at shoots at each listed time after the first commit (at most 30000 ms) instead of settling, all in one boot, writing <frame>@<ms>.png; a shot at other times never overwrites it. Each time is a seek, not a wait: the frame's clocks (Date, performance.now, timers, requestAnimationFrame, CSS and Web Animations) stand still and are run to it, so the same time is the same picture on any machine.
+                       --scroll scrolls the document down that many CSS pixels once the frame commits, at once even under smooth scroll-behavior, then settles (or seeks, with --at) and shoots the viewport there, writing <frame>.scroll<px>.png (<frame>.scroll<px>@<ms>.png with --at); the shot from the top stays. Use it for below-fold content and scroll-driven effects of a frame shot at its screen height, instead of editing the frame or its frame.json h. A document that runs out first stops at its end and a [spool] line says where. It scrolls the document, not an element that scrolls inside it.
                        Without --at, waits for #root to have children (up to 10s), then settles the way the canvas's picture of the frame does (fonts, finite entry animations, a quiet DOM, up to 900ms), waits for document.fonts.ready, then shoots; a frame that renders nothing still shoots.
                        Exit 1 if any frame did not compile, was not found, or threw uncaught; the last line on stderr names which.
   spool logs <frame> [--scenario <name>]

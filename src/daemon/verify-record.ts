@@ -36,6 +36,8 @@ export interface ShotFile {
 	height: number;
 	/** Milliseconds after the first commit, when `--at` asked for a time. */
 	at?: number;
+	/** CSS px the document was scrolled down, when `--scroll` asked for an offset. */
+	scroll?: number;
 }
 
 /** What one boot came to. */
@@ -64,12 +66,19 @@ export type BootLine = { beat: true } | { narrate: string } | { outcome: BootOut
  * Where a shot lands: the frame's own path under design/.spool/verify, so
  * `shop/checkout` is `verify/shop/checkout.png`. A time asked of `--at` names
  * its own file (`checkout@1500.png`), so a series never overwrites itself, and
- * a frame too tall for one image is numbered slices (`checkout.1.png`, …).
+ * a frame too tall for one image is numbered slices (`checkout.1.png`, …). An
+ * offset asked of `--scroll` names its own too (`checkout.scroll1200.png`,
+ * `checkout.scroll1200@1500.png`), so the top of the frame is never overwritten.
  */
-export function shotFile(root: string, frame: string, options: { at?: number; tile?: number } = {}): string {
+export function shotFile(
+	root: string,
+	frame: string,
+	options: { at?: number; scroll?: number; tile?: number } = {},
+): string {
+	const offset = options.scroll === undefined ? "" : `.scroll${options.scroll}`;
 	const time = options.at === undefined ? "" : `@${options.at}`;
 	const tile = options.tile === undefined ? "" : `.${options.tile}`;
-	return verifyFile(root, frame, `${time}${tile}.png`);
+	return verifyFile(root, frame, `${offset}${time}${tile}.png`);
 }
 
 /**
@@ -130,6 +139,8 @@ export function recordBoot(
 		scenario: string;
 		scheme: ColorScheme;
 		tiles: ReadonlyArray<{ y: number; height: number }>;
+		/** The `--scroll` offset the shots were taken at, if one was asked. */
+		scroll?: number;
 		shots: ReadonlyArray<{ at?: number; pngs: readonly Buffer[] }>;
 		entries: readonly LogEntry[];
 	},
@@ -139,13 +150,18 @@ export function recordBoot(
 		const kept: string[] = [];
 		for (const [index, png] of shot.pngs.entries()) {
 			const at = shot.at === undefined ? {} : { at: shot.at };
-			const file = shotFile(root, frame, { ...at, ...(shot.pngs.length === 1 ? {} : { tile: index + 1 }) });
+			const scroll = boot.scroll === undefined ? {} : { scroll: boot.scroll };
+			const file = shotFile(root, frame, {
+				...scroll,
+				...at,
+				...(shot.pngs.length === 1 ? {} : { tile: index + 1 }),
+			});
 			const tile = boot.tiles[index] ?? { y: 0, height: 0 };
 			writeAtomic(file, png);
 			kept.push(file);
-			files.push({ file, y: tile.y, height: tile.height, ...at });
+			files.push({ file, y: tile.y, height: tile.height, ...at, ...scroll });
 		}
-		sweepShotFiles(root, frame, shot.at, kept);
+		sweepShotFiles(root, frame, { at: shot.at, scroll: boot.scroll }, kept);
 	}
 	sweepEncoded(root, frame);
 	const { etag, scenario, scheme, entries } = boot;
@@ -187,8 +203,16 @@ export function readLogsCache(
 	return sound ? { etag, scenario, scheme: typeof scheme === "string" ? scheme : "", entries } : undefined;
 }
 
-function sweepShotFiles(root: string, frame: string, at: number | undefined, kept: string[]): void {
-	const plain = shotFile(root, frame, at === undefined ? {} : { at });
+function sweepShotFiles(
+	root: string,
+	frame: string,
+	variant: { at: number | undefined; scroll: number | undefined },
+	kept: string[],
+): void {
+	const plain = shotFile(root, frame, {
+		...(variant.at === undefined ? {} : { at: variant.at }),
+		...(variant.scroll === undefined ? {} : { scroll: variant.scroll }),
+	});
 	const dir = dirname(plain);
 	const keep = new Set(kept.map((file) => file.slice(dir.length + 1)));
 	let names: string[];

@@ -31,6 +31,8 @@ export interface BootDeps {
 	viewport?: { width: number; height: number };
 	/** Fixed times after the first commit, in place of the settle every cover gets: one set of files each. */
 	at?: number[];
+	/** CSS px to scroll the document down after it commits, before it settles or seeks. */
+	scroll?: number;
 	scenario?: string;
 	/** How long the daemon may say nothing at all before the CLI stops waiting; a seam for tests. */
 	quietMs?: number;
@@ -302,6 +304,7 @@ async function bootFrame(deps: BootDeps, { w, h }: FrameSize): Promise<Boot> {
 				width: w,
 				height: h,
 				...(deps.at === undefined ? {} : { at: deps.at }),
+				...(deps.scroll === undefined ? {} : { scroll: deps.scroll }),
 				...(deps.scenario === undefined ? {} : { scenario: deps.scenario }),
 			}),
 			signal: stopped.signal,

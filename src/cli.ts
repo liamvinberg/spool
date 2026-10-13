@@ -434,6 +434,7 @@ const confirmOnTty = async (question: string): Promise<boolean> => {
 interface VerifyOptions {
 	viewport?: { width: number; height: number };
 	at?: number[];
+	scroll?: number;
 	scenario?: string;
 }
 
@@ -464,6 +465,15 @@ function parseMilliseconds(value: string): number[] {
 		throw new SpoolError(`--at lists at most ${SHOT_AT_MAX_COUNT} times, got ${unique.length}`);
 	}
 	return unique;
+}
+
+/** `--scroll 1200`: CSS px down the document, from its top. */
+function parseScroll(value: string): number {
+	const px = Number(value);
+	if (!/^\d+$/.test(value) || !Number.isSafeInteger(px)) {
+		throw new SpoolError(`--scroll takes whole CSS pixels down from the top, like 1200, got "${value}"`);
+	}
+	return px;
 }
 
 /**
@@ -580,6 +590,7 @@ program
 	)
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
 	.option("--at <milliseconds>", "shoot at these times after the first commit, one or 0,1500,4000", parseMilliseconds)
+	.option("--scroll <px>", "scroll the document down this far before shooting", parseScroll)
 	.option("--scenario <name>", "named scenario seed", parseScenario)
 	.action(async (frames: string[], options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
