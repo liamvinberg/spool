@@ -540,6 +540,8 @@ interface ShotRequest {
 	 * one boot.
 	 */
 	at?: readonly number[] | undefined;
+	/** CSS px to scroll the document down once it commits, ahead of the settle or the first seek. */
+	scroll?: number | undefined;
 	scenario?: string | undefined;
 }
 
@@ -1320,6 +1322,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const times = at ?? [];
 		const step = times.length === 0 ? undefined : () => tab.page.clock.runFor(SEEK_STEP_MS);
 		await booted(tab, world, SHOT_BOOT_MS, false, step);
+		const top = request.scroll === undefined ? 0 : await scrollTo(tab, world, request.scroll);
 		const slices = async (): Promise<Buffer[]> => {
 			await within(
 				evaluate(tab, world, "document.fonts.ready.then(() => true)"),
@@ -1331,7 +1334,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 				pngs.push(
 					await screenshot(tab, {
 						format: "png",
-						clip: { x: 0, y: tile.y, width: request.width, height: tile.height, scale: 1 },
+						clip: { x: 0, y: top + tile.y, width: request.width, height: tile.height, scale: 1 },
 					}),
 				);
 			}
@@ -1366,6 +1369,28 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			contentHeight,
 			scheme: taken,
 		};
+	}
+
+	/**
+	 * Scrolls the document down `px` at once, past any smooth scroll-behavior the
+	 * frame sets, and answers where it landed. A document that runs out first
+	 * stops at its end, and the shot says so in a [spool] line.
+	 */
+	async function scrollTo(tab: Tab, world: number, px: number): Promise<number> {
+		const landed = Number(
+			await evaluate(
+				tab,
+				world,
+				`(() => { window.scrollTo({ top: ${px}, left: 0, behavior: "instant" }); return window.scrollY; })()`,
+			),
+		);
+		if (landed < px) {
+			tab.entries.push({
+				type: "spool",
+				text: `scrolled to ${Math.round(landed)}, not ${px}: the document runs out there`,
+			});
+		}
+		return landed;
 	}
 
 	/** Metrics, scheme and a clean slate for the next document in this tab; answers the scheme it set. */

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { inflateSync } from "node:zlib";
 import { chromium } from "playwright-core";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
@@ -325,6 +326,36 @@ describe("verify records", () => {
 			"checkout@1500.png",
 		]);
 		expect(readdirSync(verify).sort()).toEqual(["shop"]);
+	});
+
+	it("name a scrolled shot its own file, which a shot from the top never retires", () => {
+		const root = makeTempDir();
+		writeFrame(root, "home", "export default function Home() { return <main /> }\n");
+		const verify = join(root, "design", ".spool", "verify");
+		const record = (scroll: number | undefined, shots: { at?: number; pngs: Buffer[] }[]) =>
+			recordBoot(root, "home", {
+				etag: '"e"',
+				scenario: "default",
+				scheme: "light",
+				tiles: [{ y: 0, height: 900 }],
+				...(scroll === undefined ? {} : { scroll }),
+				shots,
+				entries: [],
+			});
+
+		expect(record(1200, [{ pngs: [Buffer.from("a")] }])).toEqual([
+			{ file: join(verify, "home.scroll1200.png"), y: 0, height: 900, scroll: 1200 },
+		]);
+		expect(record(1200, [{ at: 500, pngs: [Buffer.from("b")] }]).map((each) => each.file)).toEqual([
+			join(verify, "home.scroll1200@500.png"),
+		]);
+		record(undefined, [{ pngs: [Buffer.from("c")] }]);
+		expect(readdirSync(verify).sort()).toEqual([
+			"home.logs.json",
+			"home.png",
+			"home.scroll1200.png",
+			"home.scroll1200@500.png",
+		]);
 	});
 });
 
@@ -745,6 +776,52 @@ export default function Late() {
 		expect(await lines()).toContain("late");
 	});
 
+	it("scrolls the document to --scroll before it settles and shoots", { timeout: 120_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(
+			root,
+			"bands",
+			`export default function Bands() {
+	return (
+		<main style={{ margin: 0 }}>
+			<style>{"body { margin: 0 } html { scroll-behavior: smooth }"}</style>
+			<div style={{ height: 400, background: "#ff0000" }} />
+			<div style={{ height: 400, background: "#00ff00" }} />
+			<div style={{ height: 400, background: "#0000ff" }} />
+		</main>
+	);
+}
+`,
+		);
+		const viewport = { width: 160, height: 120 };
+		const verify = join(root, "design", ".spool", "verify");
+
+		const top = await shotFrame(deps("bands", { viewport }));
+		if (top.kind !== "shot") throw new Error("bands was not shot");
+		expect(firstPixel(top.files[0]?.file ?? "")).toEqual([255, 0, 0]);
+
+		// smooth scrolling in the frame's CSS still lands at once, where it was asked
+		const scrolled = await shotFrame(deps("bands", { viewport, scroll: 420 }));
+		if (scrolled.kind !== "shot") throw new Error("bands was not shot scrolled");
+		expect(scrolled.files).toEqual([{ file: join(verify, "bands.scroll420.png"), y: 0, height: 120, scroll: 420 }]);
+		expect(firstPixel(join(verify, "bands.scroll420.png"))).toEqual([0, 255, 0]);
+		expect(scrolled.warnings).toEqual([]);
+		expect(existsSync(join(verify, "bands.png"))).toBe(true);
+
+		// a time and an offset together: scrolled first, then seeked
+		const timed = await shotFrame(deps("bands", { viewport, scroll: 820, at: [0] }));
+		if (timed.kind !== "shot") throw new Error("bands was not shot scrolled and timed");
+		expect(firstPixel(join(verify, "bands.scroll820@0.png"))).toEqual([0, 0, 255]);
+
+		// past the end the document stops where it runs out, and says so
+		const past = await shotFrame(deps("bands", { viewport, scroll: 5000 }));
+		if (past.kind !== "shot") throw new Error("bands was not shot past its end");
+		expect(past.warnings).toEqual(["[spool] scrolled to 1080, not 5000: the document runs out there"]);
+		expect(firstPixel(join(verify, "bands.scroll5000.png"))).toEqual([0, 0, 255]);
+	});
+
 	it("does not replay logs booted in the other colour scheme", { timeout: 60_000 }, async () => {
 		if (!(await browserAvailable())) return;
 		const { root, name, url, controlToken, deps } = await serveVerifyProject();
@@ -799,4 +876,19 @@ export default function Seeded() {
 function readPngSize(file: string): { width: number; height: number } {
 	const png = readFileSync(file);
 	return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
+/**
+ * The top-left pixel's RGB. The first pixel of the first row is stored raw
+ * under every PNG filter, so no unfiltering is needed to read it.
+ */
+function firstPixel(file: string): number[] {
+	const png = readFileSync(file);
+	const idat: Buffer[] = [];
+	for (let at = 8; at < png.length; ) {
+		const length = png.readUInt32BE(at);
+		if (png.toString("ascii", at + 4, at + 8) === "IDAT") idat.push(png.subarray(at + 8, at + 8 + length));
+		at += length + 12;
+	}
+	return [...inflateSync(Buffer.concat(idat)).subarray(1, 4)];
 }

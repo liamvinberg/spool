@@ -173,6 +173,8 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		[["shot", "cart", "--viewport", "390-by-844"], "--viewport must be <width>x<height> with positive integers"],
 		[["shot", "cart", "--viewport", "0x844"], "--viewport must be <width>x<height> with positive integers"],
 		[["shot", "cart", "--at", "soon"], "--at takes whole milliseconds"],
+		[["shot", "cart", "--scroll", "down"], "--scroll takes whole CSS pixels"],
+		[["shot", "cart", "--scroll", "-40"], "--scroll takes whole CSS pixels"],
 		[["shot", "cart", "--scenario", "review/error"], "--scenario must be a scenario name"],
 		[["logs", "cart", "--scenario", ".private"], "--scenario must be a scenario name"],
 		[["shot", "cart", "../cart"], "a frame is named by its path under design/frames"],
@@ -190,6 +192,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 
 		expect(shot.stdout).toContain("--viewport <width>x<height>");
 		expect(shot.stdout).toContain("--at <milliseconds>");
+		expect(shot.stdout).toContain("--scroll <px>");
 		expect(shot.stdout).toContain("--scenario <name>");
 		expect(logs.stdout).toContain("--scenario <name>");
 		expect(url.stdout).toContain("--raw");
