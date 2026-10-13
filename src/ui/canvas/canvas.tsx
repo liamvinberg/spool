@@ -57,6 +57,7 @@ import {
 } from "../api";
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
+import { isLetGo } from "../gone-projects";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
 import { AgentIcon, FolderIcon, PropertiesIcon } from "../icons";
@@ -4405,7 +4406,16 @@ export function ProjectCanvas({
 		const settle = setTimeout(persist, SETTLE_PERSIST_MS);
 		return () => clearTimeout(settle);
 	}, [restCamera, project, activePage, camera]);
-	useEffect(() => () => unsettled.current?.(), []);
+	// unless the canvas closed because its project was forgotten or trashed:
+	// nobody reads that camera again, and a forgotten folder is not written to
+	const rootRef = useRef(root);
+	rootRef.current = root;
+	useEffect(
+		() => () => {
+			if (!isLetGo(rootRef.current)) unsettled.current?.();
+		},
+		[],
+	);
 
 	// --- gestures ---------------------------------------------------------------
 

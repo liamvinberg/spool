@@ -29,6 +29,7 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
+import { keep, letGo } from "./gone-projects";
 import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
@@ -457,6 +458,8 @@ export function App() {
 	 */
 	const openTab = useCallback(
 		(project: TabProject, focus = true) => {
+			// a project forgotten earlier and opened again is kept like any other
+			keep(project.root);
 			if (!openRef.current.includes(project.root)) {
 				const next = [...openRef.current, project.root];
 				setOpen(next);
@@ -551,8 +554,10 @@ export function App() {
 
 	const forgetProject = useCallback(
 		async (project: TabProject) => {
+			letGo(project.root);
 			setForgetting((roots) => new Set([...roots, project.root]));
 			const ok = await postForgetProject(project.root);
+			if (!ok) keep(project.root);
 			if (ok) {
 				// Replace the cards before lifting the hide, and discard reads begun
 				// before the write so an older registry cannot bring the card back.
@@ -936,7 +941,13 @@ export function App() {
 					<TrashProjectDialog
 						project={trashRequest}
 						onTrash={async () => {
-							await trashProject(trashRequest.root);
+							letGo(trashRequest.root);
+							try {
+								await trashProject(trashRequest.root);
+							} catch (error) {
+								keep(trashRequest.root);
+								throw error;
+							}
 							projectRevision.current += 1;
 							setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
 							setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
