@@ -139,3 +139,109 @@ it("deletes on the still page", { timeout: 240_000 }, async () => {
 	await shows(".shader-surface", 1);
 	requests.stop();
 });
+
+/** A page written one element to a line, as agents mostly write them, with a component drawn twice. */
+const LINES = `function Card({ title }: { title: string }) {
+  return <article className="card">
+    <h3>{title}</h3>
+    <em>tag</em>
+  </article>;
+}
+
+export default function Lines() {
+  return <main>
+    <p id="one">First line.</p>
+    <p id="two">Second line.</p>
+    <p id="three">Third line.</p>
+    <Card title="Alpha" />
+    <Card title="Beta" />
+  </main>;
+}
+`;
+
+it("deletes whole lines in place, from every place the page draws them", { timeout: 240_000 }, async () => {
+	const f = await handCanvas({}, LINES, { w: 600, h: 500 });
+	const { page, frame } = f;
+	const write = async (action: () => Promise<unknown>, path = "/element") => {
+		const response = page.waitForResponse((answer) => answer.url().endsWith(path));
+		await action();
+		await (await response).finished();
+	};
+	const requests = apiRequests(page, f.project.name);
+	const says = (snippet: string, there = true) =>
+		expect.poll(() => f.bytes().includes(snippet), { timeout: 15_000 }).toBe(there);
+	const shows = (selector: string, count: number) =>
+		expect.poll(() => frame.locator(selector).count(), { timeout: 15_000 }).toBe(count);
+	// a mark on the document itself: a reload is a new window, and loses it
+	const keep = () => frame.locator("body").evaluate(() => Reflect.set(window, "__kept", true));
+	const kept = () => frame.locator("body").evaluate(() => Reflect.get(window, "__kept") === true);
+	const hold = async (selector: string) => {
+		await f.select(selector);
+		await requests.quiet();
+	};
+	await keep();
+
+	// the first paragraph's line goes, and the document stays
+	await hold("#one");
+	await write(() => page.keyboard.press("Backspace"));
+	await says("First line.", false);
+	await shows("#one", 0);
+	expect(await kept()).toBe(true);
+	// the stamps under it moved up a line with it: the third paragraph is the
+	// one that goes, not whatever now stands where it was written
+	await hold("#three");
+	await write(() => page.keyboard.press("Backspace"));
+	await says("Third line.", false);
+	await says("Second line.");
+	await shows("#three", 0);
+	expect(await kept()).toBe(true);
+
+	// undo puts each back in the file and the document, and redo takes it again
+	await write(() => f.history(), "/revert");
+	await says("Third line.");
+	await shows("#three", 1);
+	await write(() => f.history(), "/revert");
+	await says("First line.");
+	await shows("#one", 1);
+	expect(f.bytes()).toBe(LINES);
+	await write(() => f.history(true), "/revert");
+	await says("First line.", false);
+	await shows("#one", 0);
+	expect(await kept()).toBe(true);
+	// and the paragraph put back by an undo is where the file says it is
+	await write(() => f.history(), "/revert");
+	await shows("#one", 1);
+	await hold("#one");
+	await write(() => page.keyboard.press("Backspace"));
+	await says("First line.", false);
+	await says("Second line.");
+	await says("Third line.");
+	expect(await kept()).toBe(true);
+
+	// one card's call, through the call the refusal offers: the other card is
+	// drawn by its own call, so the document only loses this one
+	const instead = page.locator("[data-hand-instead]");
+	await hold("article:has-text('Alpha')");
+	await write(() => page.keyboard.press("Backspace"));
+	await expect.poll(() => instead.count(), { timeout: 15_000 }).toBe(1);
+	await write(() => instead.click());
+	await says('<Card title="Alpha" />', false);
+	await shows("article", 1);
+	expect(await kept()).toBe(true);
+
+	// a line of the card itself goes from every card the file draws, here as
+	// in the file, and comes back to both
+	await write(() => f.history(), "/revert");
+	await shows("article", 2);
+	await hold("article:has-text('Beta') em");
+	await write(() => page.keyboard.press("Backspace"));
+	await says("<em>tag</em>", false);
+	await shows("em", 0);
+	await shows("article", 2);
+	expect(await kept()).toBe(true);
+	await write(() => f.history(), "/revert");
+	await shows("em", 2);
+	await says("<em>tag</em>");
+	expect(await kept()).toBe(true);
+	requests.stop();
+});

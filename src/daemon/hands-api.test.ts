@@ -808,6 +808,60 @@ export default function Frame() {
 		expect(read()).toBe(changed);
 	});
 
+	it("deletes a line in place: the lines under it move up, and the undo puts the very run back (#317)", async () => {
+		const { name, app, read } = project();
+		const res = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({ frame: "nav", act: "delete", sources: [own('<a href="/docs"')], fingerprint: fingerprintOf(nav) }),
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			shifts: unknown;
+			undo: { path: string; start: number; end: number; text: string; fingerprint: string };
+		};
+		const line = '\t\t\t\t<a href="/docs">Docs</a>\n';
+		expect(read()).toBe(nav.replace(line, ""));
+		expect(body.shifts).toEqual([
+			{
+				line: 7,
+				column: 1,
+				delta: -line.length,
+				taken: line.length,
+				across: { end: { line: 8, column: 1 }, to: { line: 7, column: 1 } },
+			},
+		]);
+		// not the run slid to wherever the same bytes would do, but this one
+		expect(body.undo).toMatchObject({ start: nav.indexOf(line), end: nav.indexOf(line), text: line });
+		const back = await app.request(`/api/p/${name}/revert`, jsonPost(body.undo));
+		expect(((await back.json()) as { shifts: unknown }).shifts).toEqual([
+			{
+				line: 7,
+				column: 1,
+				delta: line.length,
+				taken: 0,
+				across: { end: { line: 7, column: 1 }, to: { line: 8, column: 1 } },
+			},
+		]);
+		expect(read()).toBe(nav);
+	});
+
+	it("reloads for a row of a list taken out: the rows after it are numbered by the render", async () => {
+		const { name, app, read } = project();
+		const res = await app.request(
+			`/api/p/${name}/element`,
+			jsonPost({
+				frame: "nav",
+				act: "delete",
+				sources: [own("<li key")],
+				fingerprint: fingerprintOf(nav),
+				item: { source: own("<li key"), index: 0, fingerprint: fingerprintOf(nav) },
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { shifts: unknown }).shifts).toBeNull();
+		expect(read()).toBe(nav.replace('["one", "two", "three"]', '["two", "three"]'));
+	});
+
 	it("moves a row of a list as its entry in the array", async () => {
 		const { name, app, read } = project();
 		const res = await app.request(

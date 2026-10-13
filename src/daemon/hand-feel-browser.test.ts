@@ -223,13 +223,14 @@ it("puts the ring back on the element a step was about", { timeout: 240_000 }, a
 	await expect.poll(held, { timeout: 30_000 }).toBe("div");
 	await expect.poll(hugging, { timeout: 15_000 }).toBeLessThanOrEqual(6);
 
-	// a step that takes the element away leaves nothing to point at, while the
-	// step that brings it back is picked again
+	// the delete itself leaves the hand on the element's parent, in the same
+	// document; a step that takes the element away leaves nothing to point at,
+	// while the step that brings it back is picked again
 	const deleted = page.waitForResponse((response) => response.url().endsWith("/element"));
 	await page.keyboard.press("Backspace");
 	await (await deleted).finished();
 	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(0);
-	await expect.poll(held, { timeout: 15_000 }).toBe("frame");
+	await expect.poll(held, { timeout: 15_000 }).toBe("main");
 	await f.history();
 	await expect.poll(() => frame.locator("div.veil-art").count(), { timeout: 15_000 }).toBe(1);
 	await expect.poll(held, { timeout: 15_000 }).toBe("div");

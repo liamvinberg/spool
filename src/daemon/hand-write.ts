@@ -375,9 +375,9 @@ export function textOwner(
 /**
  * How a write moved the stamps around it (#314): every element on the same
  * line after a patch shifts by the characters it added or took, and a frame
- * that is not reloaded carries those stamps on. Nothing when a patch crossed
- * a line, because then the lines under it moved too and only a reload says
- * where to.
+ * that is not reloaded carries those stamps on. A patch that only takes lines
+ * out or only puts them in (#317's delete, and its undo) moves the lines
+ * under it too, and says where its run ended and where its new one ends.
  */
 export interface StampShift {
 	line: number;
@@ -392,19 +392,53 @@ export interface StampShift {
 	 * stood at the run's own start where it was.
 	 */
 	taken: number;
+	/**
+	 * A patch across a line break: where the run it took ended, and where the
+	 * run it wrote ends. A stamp at or past `end` lands as far past `to`; one
+	 * inside the run it took went with it.
+	 */
+	across?: { end: LineColumn; to: LineColumn };
 }
 
+export interface LineColumn {
+	line: number;
+	column: number;
+}
+
+/**
+ * The shifts a set of patches makes, latest in the file first, so each is
+ * said in coordinates the ones before it in the list have not moved.
+ *
+ * Nothing when a patch writes lines over lines: a run that is neither only
+ * taken out nor only put in can carry elements past each other — a move —
+ * and only a reload says where each one went.
+ */
 export function shiftsOf(source: string, patches: readonly SpanPatch[]): StampShift[] | null {
 	const shifts: StampShift[] = [];
-	for (const patch of patches) {
+	for (const patch of [...patches].sort((a, b) => b.start - a.start)) {
 		const replaced = source.slice(patch.start, patch.end);
-		if (replaced.includes("\n") || patch.text.includes("\n")) return null;
-		const before = source.slice(0, patch.start);
-		const line = before.split("\n").length;
-		const column = patch.start - (before.lastIndexOf("\n") + 1) + 1;
-		shifts.push({ line, column, delta: patch.text.length - replaced.length, taken: replaced.length });
+		const at = lineColumnAt(source, patch.start);
+		const shift = { ...at, delta: patch.text.length - replaced.length, taken: replaced.length };
+		if (!replaced.includes("\n") && !patch.text.includes("\n")) {
+			shifts.push(shift);
+			continue;
+		}
+		if (replaced.length > 0 && patch.text.length > 0) return null;
+		const end = lineColumnAt(source, patch.end);
+		const lines = patch.text.split("\n");
+		const last = lines.at(-1) ?? "";
+		const to =
+			lines.length === 1
+				? { line: at.line, column: at.column + last.length }
+				: { line: at.line + lines.length - 1, column: last.length + 1 };
+		shifts.push({ ...shift, across: { end, to } });
 	}
 	return shifts;
+}
+
+function lineColumnAt(source: string, offset: number): LineColumn {
+	const before = source.slice(0, offset);
+	return { line: before.split("\n").length, column: offset - (before.lastIndexOf("\n") + 1) + 1 };
 }
 
 function planSupplied(source: string, call: Element, prop: string, text: string): OnePlan {
