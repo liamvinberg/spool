@@ -29,15 +29,15 @@ import { type FolderListing, type FrameSource, type ImportEdge, importCandidates
  *     names, for where it lands: every candidate the resolver tries lives in
  *     one of the two, so a candidate appearing or vanishing moves one of them.
  *
- * Two things a stat cannot show are refused outright, and a frame touching
- * either keeps the full proof on every read. A link anywhere on the way (a
- * linked entry in the folder, a linked candidate, a folder whose real path is
- * not its own) can be pointed elsewhere without moving anything above it. And
- * a timestamp only orders changes coarser than its tick (4 ms on Linux, 2 s on
- * FAT), so two same-size writes inside one tick look like one: a witness is
- * only taken of paths that last changed well before the read that built the
+ * Two things a stat cannot show. A link anywhere on the way (a linked entry in
+ * the folder, a linked candidate, a folder whose real path is not its own) can
+ * be pointed elsewhere without moving anything above it, so it is refused
+ * outright, and a frame touching one keeps the full proof on every read. And a
+ * timestamp only orders changes coarser than its tick (4 ms on Linux, 2 s on
+ * FAT), so two same-size writes inside one tick look like one: a stat only
+ * stands for a path that last changed well before the read that built the
  * entry began, git's racy-clean rule. A path written moments before is proven
- * by its bytes again next read, until it has settled.
+ * by its contents on every read, until it has settled.
  *
  * "Began" is read off the file system's own clock, never the machine's: a
  * mount whose server runs behind, or a wall clock stepped back, would make a
@@ -179,27 +179,92 @@ function landingFolders(designDir: string, edge: ImportEdge, looks: Looks): read
  * frame folder's own identity besides. That one is taken of the folder itself,
  * never through it: a folder swapped for a link is a frame the boundary has to
  * be asked about again, and a witness that holds is asked instead of it.
+ *
+ * A path's identity is only half of what it vouches with. The other half is
+ * what the path holds, which a read can always check where a stat cannot: a
+ * file's digest, a frame folder's listing, and for a folder an import lands
+ * by, where each of those imports still lands. So a path whose stat moved is
+ * asked about its contents rather than failing the whole frame: one write to
+ * a shared folder moves the folder of every frame importing anything beside
+ * it, and only the frames whose graph holds the written file have really
+ * changed. A path too fresh for its stat to speak for keeps no identity at
+ * all and is asked about its contents on every read until it settles.
  */
 export interface SourceWitness {
 	frameDir: string;
 	itself: string;
-	paths: ReadonlyMap<string, string>;
+	/** Each path's identity, or nothing while it is too fresh to be one. */
+	paths: ReadonlyMap<string, string | undefined>;
+	/** The digest of each file in the graph. */
+	digests: ReadonlyMap<string, string>;
+	/** The frame folder's own listing: its source files and its folders. */
+	tree: { files: readonly string[]; folders: readonly string[] };
+	/** The imports whose landing each folder decides. */
+	landings: ReadonlyMap<string, readonly ImportEdge[]>;
 }
 
-/** Whether no path the witness names has moved. */
-export function witnessHolds(witness: SourceWitness, looks: Looks): boolean {
-	if (looks.itself(witness.frameDir).identity !== witness.itself) return false;
-	for (const [path, identity] of witness.paths) if (looks.at(path).identity !== identity) return false;
+/** What proves a path by its contents: one read of the project, as the graph has it. */
+export interface ContentProof {
+	designDir: string;
+	digest(file: string): string;
+	listing(frameDir: string): FolderListing;
+	resolve(fromFile: string, specifier: string): string | undefined;
+}
+
+/**
+ * The witness as of this read when it still holds, or nothing when the frame
+ * has to be proven by its bytes. Unmoved, it is the same witness; a path whose
+ * stat moved and whose contents did not is taken again, so the next read asks
+ * a stat once more instead of its contents.
+ */
+export function witnessHolds(
+	witness: SourceWitness,
+	looks: Looks,
+	proof: ContentProof,
+	since: number | undefined,
+): SourceWitness | undefined {
+	if (looks.itself(witness.frameDir).identity !== witness.itself) return undefined;
+	let retaken: Map<string, string | undefined> | undefined;
+	for (const [path, identity] of witness.paths) {
+		const found = looks.at(path);
+		if (identity !== undefined && found.identity === identity) continue;
+		if (since === undefined || !holdsTheSame(witness, path, looks, proof)) return undefined;
+		retaken ??= new Map(witness.paths);
+		retaken.set(path, found.changed >= since - SETTLED_MS ? undefined : found.identity);
+	}
+	return retaken === undefined ? witness : { ...witness, paths: retaken };
+}
+
+/** Whether a path holds what it held when the witness was taken, read rather than stat'd. */
+function holdsTheSame(witness: SourceWitness, path: string, looks: Looks, proof: ContentProof): boolean {
+	const digest = witness.digests.get(path);
+	const folder = witness.tree.folders.includes(path);
+	const landing = witness.landings.get(path);
+	if (digest === undefined && !folder && landing === undefined) return false;
+	if (digest !== undefined && proof.digest(path) !== digest) return false;
+	if (folder) {
+		const now = proof.listing(witness.frameDir);
+		if (now.linked || now.folders === undefined) return false;
+		if (!same(now.files, witness.tree.files) || !same(now.folders, witness.tree.folders)) return false;
+	}
+	for (const edge of landing ?? []) {
+		if (proof.resolve(edge.from, edge.specifier) !== edge.to) return false;
+		if (looks.landing(proof.designDir, edge) === undefined) return false;
+	}
 	return true;
 }
+
+const same = (a: readonly string[], b: readonly string[]): boolean =>
+	a.length === b.length && a.every((item, at) => item === b[at]);
 
 /**
  * A witness for one frame's source half, read off disk after the half was
  * built, or nothing when a stat cannot vouch for it. `listing` is the frame
- * folder's listing the half was built from. `since` is the file system's time
- * when the read that built it began, nothing when it could not be told: a path
- * that changed after that, or too near before it, may hold bytes the build
- * never saw, so it is left to the full proof.
+ * folder's listing the half was built from, and `digest` the graph's files as
+ * the build read them. `since` is the file system's time when the read that
+ * built it began, nothing when it could not be told: a path that changed after
+ * that, or too near before it, may hold bytes the build never saw, so its
+ * stat is not taken as its identity until it has settled.
  */
 export function witnessSource(
 	designDir: string,
@@ -208,21 +273,38 @@ export function witnessSource(
 	source: Pick<FrameSource, "files" | "imports">,
 	since: number | undefined,
 	looks: Looks,
+	digest: (file: string) => string,
 ): SourceWitness | undefined {
 	if (since === undefined || listing.folders === undefined || listing.linked) return undefined;
 	if (!looks.isOwnPath(frameDir)) return undefined;
 	const paths = new Set<string>(listing.folders);
-	for (const file of source.files) paths.add(file);
+	const digests = new Map<string, string>();
+	for (const file of source.files) {
+		paths.add(file);
+		digests.set(file, digest(file));
+	}
+	const landings = new Map<string, ImportEdge[]>();
 	for (const edge of source.imports) {
 		const folders = looks.landing(designDir, edge);
 		if (folders === undefined) return undefined;
-		for (const folder of folders) paths.add(folder);
+		for (const folder of folders) {
+			paths.add(folder);
+			const edges = landings.get(folder);
+			if (edges === undefined) landings.set(folder, [edge]);
+			else edges.push(edge);
+		}
 	}
-	const witness = new Map<string, string>();
+	const witness = new Map<string, string | undefined>();
 	for (const path of paths) {
 		const found = looks.at(path);
-		if (found.changed >= since - SETTLED_MS) return undefined;
-		witness.set(path, found.identity);
+		witness.set(path, found.changed >= since - SETTLED_MS ? undefined : found.identity);
 	}
-	return { frameDir, itself: looks.itself(frameDir).identity, paths: witness };
+	return {
+		frameDir,
+		itself: looks.itself(frameDir).identity,
+		paths: witness,
+		digests,
+		tree: { files: listing.files, folders: listing.folders },
+		landings,
+	};
 }

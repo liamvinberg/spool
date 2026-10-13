@@ -417,11 +417,13 @@ interface ReadPass {
 }
 
 /**
- * Frames proven by their witness between two turns. Such a frame costs a few
- * stats, so a turn apiece spent more on the loop than on the frames; a frame
- * proven by its bytes still gets a turn of its own.
+ * The longest a build holds the thread over frames it only proves. A frame
+ * proven by its witness or its bytes costs a few stats or reads, and a turn
+ * apiece made a busy daemon's every other caller part of a build's wall time:
+ * each turn waits for whatever else is queued. A frame derived again still
+ * gets a turn of its own.
  */
-const WITNESSED_PER_TURN = 64;
+const TURN_MS = 4;
 
 /**
  * How often a project's frames are proven by their bytes whatever their
@@ -477,10 +479,10 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 	const queued = new Map<string, Promise<Built>>();
 
 	/**
-	 * One frame's source half, and whether proving it took a read from disk. A
-	 * witness that still holds is the whole proof; without one, or when it no
-	 * longer holds, the frame is proven by its bytes exactly as before
-	 * witnesses, and a fresh witness is taken for the next read.
+	 * One frame's source half, and whether it had to be derived again. A witness
+	 * that still holds is the whole proof; without one, or when it no longer
+	 * holds, the frame is proven by its bytes exactly as before witnesses, and a
+	 * fresh witness is taken for the next read.
 	 */
 	function entryFor(
 		root: string,
@@ -488,19 +490,23 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 		entries: Map<string, FrameEntry>,
 		frame: string,
 		dir: string,
-	): { entry: FrameEntry | undefined; fromDisk: boolean } {
+	): { entry: FrameEntry | undefined; derived: boolean } {
 		const { pass, looks, since } = disk;
 		const known = entries.get(frame);
 		// discovery spells a frame by its real folder, so a kept entry's own folder
 		// is the one discovered; the witness vouches it is still no link, and then
 		// nothing is read for the boundary to refuse
-		if (!disk.full && known?.witness !== undefined && known.dir === dir && witnessHolds(known.witness, looks)) {
-			return { entry: known, fromDisk: false };
+		if (!disk.full && known?.witness !== undefined && known.dir === dir) {
+			const witness = witnessHolds(known.witness, looks, pass, since);
+			if (witness !== undefined) {
+				known.witness = witness;
+				return { entry: known, derived: false };
+			}
 		}
 		const frameDir = insideDesign(disk.inside, dir);
 		if (frameDir === undefined) {
 			if (entries.delete(frame)) moved.add(root);
-			return { entry: undefined, fromDisk: false };
+			return { entry: undefined, derived: false };
 		}
 		const listing = pass.listing(frameDir);
 		if (
@@ -510,8 +516,8 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			fingerprintOf(pass, known.files) === known.fingerprint &&
 			sameImports(pass, known.imports)
 		) {
-			known.witness = witnessSource(pass.designDir, frameDir, listing, known, since, looks);
-			return { entry: known, fromDisk: true };
+			known.witness = witnessSource(pass.designDir, frameDir, listing, known, since, looks, pass.digest);
+			return { entry: known, derived: false };
 		}
 		const source = frameSourceIn(pass, frameDir);
 		const hash = sourceHash(pass, source.files);
@@ -522,12 +528,12 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			imports: source.imports,
 			fingerprint: fingerprintOf(pass, source.files),
 			hash,
-			witness: witnessSource(pass.designDir, frameDir, listing, source, since, looks),
+			witness: witnessSource(pass.designDir, frameDir, listing, source, since, looks, pass.digest),
 			graph: { frame, ...source, hash },
 		};
 		entries.set(frame, entry);
 		moved.add(root);
-		return { entry, fromDisk: true };
+		return { entry, derived: true };
 	}
 
 	/** Which frames a shared file reaches, so an edit there wakes only them. */
@@ -556,7 +562,7 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 
 	async function build(root: string): Promise<Built> {
 		const designDir = realDesignDir(root);
-		// before anything is read: a path that changed after this is never witnessed
+		// before anything is read: a path that changed after this is never vouched for by its stat
 		const since = clock(designDir);
 		const startedAt = performance.now();
 		const full = startedAt - (provenFully.get(root) ?? Number.NEGATIVE_INFINITY) >= FULL_PROOF_MS;
@@ -573,9 +579,9 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 		const graphs = new Map<string, FrameGraph>();
 		const edges: FlowEdge[] = [];
 		const unreadable: FlowUnreadable[] = [];
-		let witnessed = 0;
+		let turnFrom = performance.now();
 		for (const [frame, dir] of dirs) {
-			const { entry, fromDisk } = entryFor(root, disk, entries, frame, dir);
+			const { entry, derived } = entryFor(root, disk, entries, frame, dir);
 			if (entry === undefined) {
 				const graph = {
 					frame,
@@ -598,9 +604,12 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			}
 			edges.push(...entry.derived.edges);
 			unreadable.push(...entry.derived.unreadable);
-			// a frame read from disk is one turn: 5.5 ms of work is what makes the
-			// yield sound; a witnessed one is microseconds, and shares its turn
-			if (fromDisk || ++witnessed % WITNESSED_PER_TURN === 0) await handBack();
+			// a derived frame is one turn: 5.5 ms of work is what makes the yield
+			// sound; a proven one is microseconds, and shares its turn
+			if (derived || performance.now() - turnFrom >= TURN_MS) {
+				await handBack();
+				turnFrom = performance.now();
+			}
 		}
 		for (const frame of [...entries.keys()]) if (!dirs.has(frame) && entries.delete(frame)) moved.add(root);
 		if (full) provenFully.set(root, startedAt);
