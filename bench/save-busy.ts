@@ -68,7 +68,8 @@ function parseArgs(argv: string[]): Options {
 const VIEW = { width: 1440, height: 810 };
 const opts = parseArgs(process.argv.slice(2));
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
-const log = (line: string) => process.stderr.write(`save-busy: ${line}\n`);
+// stdout, because the m1 desktop session hands back nothing else
+const log = (line: string) => process.stdout.write(`save-busy: ${line}\n`);
 
 /** The late ticks the daemon's loop wrote (bench/loop-lag.ts), as [epoch ms, ms late]. */
 function lateTicks(file: string): [number, number][] {
@@ -249,4 +250,9 @@ async function main(): Promise<void> {
 	process.stdout.write(`${JSON.stringify(report)}\n`);
 }
 
-await main();
+try {
+	await main();
+} catch (error) {
+	log(`failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+	process.exitCode = 1;
+}
