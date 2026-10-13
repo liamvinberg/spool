@@ -679,7 +679,7 @@ export function createDaemonApp({
 	 * what the file already said writes nothing at all.
 	 */
 	const written = (root: string, site: Extract<WriteSite, { kind: "ok" }>) => {
-		const undo = spanBetween(site.source, site.text);
+		const undo = site.undo ?? spanBetween(site.source, site.text);
 		if (site.text !== site.source) writeAtomic(site.file, site.text);
 		const after = fingerprintOf(site.text);
 		return {

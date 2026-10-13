@@ -247,10 +247,10 @@ describe("in-place edit protocol (#255)", () => {
 		expect(editMessage("div > h1", 12, 8, 5)).toEqual({ spool: "edit", selector: "div > h1", x: 12, y: 8, id: 5 });
 		expect(endEditMessage(true)).toEqual({ spool: "edit-end", commit: true });
 		expect(restoreMessage(5, "before", 9)).toEqual({ spool: "restore", id: 5, way: "before", ask: 9 });
-		expect(restampMessage("frames/cart/frame.tsx", [{ line: 7, column: 41, delta: -5 }])).toEqual({
+		expect(restampMessage("frames/cart/frame.tsx", [{ line: 7, column: 41, delta: -5, taken: 5 }])).toEqual({
 			spool: "restamp",
 			file: "frames/cart/frame.tsx",
-			shifts: [{ line: 7, column: 41, delta: -5 }],
+			shifts: [{ line: 7, column: 41, delta: -5, taken: 5 }],
 		});
 	});
 });

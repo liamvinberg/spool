@@ -13,6 +13,7 @@ import {
 	planItemRemoval,
 	planOps,
 	readElements,
+	type SpanPatch,
 	STALE_STAMP,
 	type StampShift,
 	shiftsOf,
@@ -187,6 +188,12 @@ export type WriteSite =
 			text: string;
 			/** how the stamps on the patched lines moved, or nothing when only a reload can say */
 			shifts: StampShift[] | null;
+			/**
+			 * The patch that takes it back, when it has to be this very one: a
+			 * run taken across lines goes back exactly where it was, so the
+			 * frame can carry the stamps inside it back to where they stood.
+			 */
+			undo?: SpanPatch;
 	  }
 	| { kind: "refusal"; refusal: PatchRefusal }
 	| { kind: "error"; status: 400 | 404; message: string };
@@ -353,10 +360,21 @@ function arraySite(
 	}
 }
 
-/** An array entry's plan, as the site the write lands on. */
+/**
+ * An array entry's plan, as the site the write lands on. Always a reload: the
+ * document numbers its rows as the render that drew them did, and only a
+ * fresh render numbers the rows after a taken or moved one again.
+ */
 function listed(at: Stamp, source: string, plan: ReturnType<typeof planItemRemoval>): WriteSite {
 	if ("refusal" in plan) return { kind: "refusal", refusal: plan.refusal };
-	return spliced(at, source, { ok: true, text: applyAll(source, plan.patches), patches: plan.patches, mapped: true });
+	return {
+		kind: "ok",
+		file: at.file,
+		path: `design/${at.rel}`,
+		source,
+		text: applyAll(source, plan.patches),
+		shifts: null,
+	};
 }
 
 /**
@@ -465,6 +483,11 @@ function planned(stamp: Stamp, source: string, ops: Parameters<typeof planOps>[1
 }
 
 function spliced(stamp: Stamp, source: string, plan: Extract<ReturnType<typeof planOps>, { ok: true }>): WriteSite {
+	const [only, ...more] = plan.patches;
+	const across =
+		only !== undefined && more.length === 0 && source.slice(only.start, only.end).includes("\n")
+			? { start: only.start, end: only.start + only.text.length, text: source.slice(only.start, only.end) }
+			: undefined;
 	return {
 		kind: "ok",
 		file: stamp.file,
@@ -472,6 +495,7 @@ function spliced(stamp: Stamp, source: string, plan: Extract<ReturnType<typeof p
 		source,
 		text: plan.text,
 		shifts: shiftsOf(source, plan.patches),
+		...(across === undefined ? {} : { undo: across }),
 	};
 }
 

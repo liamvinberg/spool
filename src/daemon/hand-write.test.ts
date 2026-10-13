@@ -265,8 +265,38 @@ export function Link({ children }: { children: ReactNode }) {
 		expect(shiftsOf(VEIL, planned.patches)).toEqual([
 			{ line: 2, column, delta: -"something ".length, taken: "Make something".length },
 		]);
-		// a patch across a line break moves the lines under it, and only a reload can say where
-		expect(shiftsOf("a\nb", [{ start: 0, end: 2, text: "" }])).toBeNull();
+	});
+
+	it("moves the lines under a run taken out or put back, and refuses one written over lines", () => {
+		const source = "<a>\n\t<p>x</p>\n\t<b/> <i/>\n";
+		// the paragraph's whole line goes: whatever followed it moves up a line
+		expect(shiftsOf(source, [{ start: 4, end: 14, text: "" }])).toEqual([
+			{
+				line: 2,
+				column: 1,
+				delta: -10,
+				taken: 10,
+				across: { end: { line: 3, column: 1 }, to: { line: 2, column: 1 } },
+			},
+		]);
+		// and comes back, ending where the run it wrote ends
+		expect(shiftsOf("<a>\n\t<b/>", [{ start: 4, end: 4, text: "\t<p>x</p>\n" }])).toEqual([
+			{
+				line: 2,
+				column: 1,
+				delta: 10,
+				taken: 0,
+				across: { end: { line: 2, column: 1 }, to: { line: 3, column: 1 } },
+			},
+		]);
+		// two runs, the later first, so neither is said in places the other moved
+		const both = shiftsOf(source, [
+			{ start: 4, end: 14, text: "" },
+			{ start: 20, end: 25, text: "" },
+		]);
+		expect(both?.map((shift) => shift.line)).toEqual([3, 2]);
+		// lines written over lines carry elements past each other, which only a reload can say
+		expect(shiftsOf("a\nb", [{ start: 0, end: 3, text: "b\na" }])).toBeNull();
 	});
 });
 

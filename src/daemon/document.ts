@@ -665,14 +665,17 @@ export function settleSource(raf: string): string {
  * {spool:"edited"} once Enter, Esc or a click away has ended it, carrying the
  * element's child nodes and the call site one owner up (#314), and
  * {spool:"edit-end", commit} ends one from the canvas side (#255);
- * {spool:"alter", id, selectors, act, place} takes the elements out of the
+ * {spool:"alter", id, selectors, act, place, sources} takes the elements out of the
  * document, or puts the first beside the second (#340), and answers
  * {spool:"altered"} with the call one owner up (#317) and, for a move, the
- * moved element's new ancestry;
+ * moved element's new ancestry. A delete takes out every element its stamps
+ * draw, so a component drawn twice loses both; one the file may refuse (drawn
+ * more than once, or the whole of a component) answers held and stays until a
+ * {spool:"restore", way:"after"} takes it out;
  * {spool:"restore", id, way, ask} puts one committed edit's words or one
  * alteration back or forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
- * moves the stamps a save shifted on their line, since the document is not
- * reloaded for its own save;
+ * moves the stamps a save shifted, since the document is not reloaded for its
+ * own save;
  * {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
@@ -1677,8 +1680,9 @@ const canvasShimJs = `(() => {
 		return null;
 	}
 
-	// A write moved the stamps on its line, and this document is not reloaded
-	// for its own save: every element on that line past the patch shifts with it.
+	// A write moved the stamps after it, and this document is not reloaded for
+	// its own save: every element past a patch shifts with it — along its line,
+	// and down or up by the lines a delete or its undo took or put back.
 	//
 	// The attributes are walked here and now. The call sites the runtime minted
 	// are not attributes and cannot be walked at all, so every shift is kept and
@@ -1691,8 +1695,13 @@ const canvasShimJs = `(() => {
 		for (const el of document.querySelectorAll("[data-spool-source]")) {
 			const at = stampParts(el.getAttribute("data-spool-source"));
 			if (!at || at.file !== file) continue;
-			const moved = movedColumn(at, shifts);
-			if (moved !== at.column) el.setAttribute("data-spool-source", at.file + ":" + at.line + ":" + moved);
+			// an element inside a run a delete took is one about to go with it
+			// (a redo), and it keeps the stamp an undo will need again
+			let place = at;
+			for (const shift of shifts) place = shiftPlace(place, shift) || place;
+			if (place.line !== at.line || place.column !== at.column) {
+				el.setAttribute("data-spool-source", at.file + ":" + place.line + ":" + place.column);
+			}
 		}
 	}
 
@@ -1703,23 +1712,63 @@ const canvasShimJs = `(() => {
 		return match ? { file: match[1], line: Number(match[2]), column: Number(match[3]) } : null;
 	}
 
-	// Where a stamp's column ends up after a run of shifts: every patch earlier
-	// on its own line moves it by what that patch added or took.
-	function movedColumn(at, shifts) {
-		let moved = at.column;
-		for (const shift of shifts) {
-			if (shift.line === at.line && shift.column + (shift.taken || 0) <= moved) moved += shift.delta;
+	// Where a place ends up after one shift, or null when it stood inside a run
+	// the patch took across lines: the copy of shiftedPlace (src/ui/canvas/hand-edit.ts)
+	// the frame runs.
+	function shiftPlace(at, shift) {
+		const across = shift.across;
+		if (!across) {
+			if (shift.line === at.line && shift.column + (shift.taken || 0) <= at.column) {
+				return { line: at.line, column: at.column + shift.delta };
+			}
+			return at;
 		}
-		return moved;
+		if (earlier(at, shift)) return at;
+		if (shift.taken > 0 && earlier(at, across.end)) return null;
+		if (at.line === across.end.line) {
+			return { line: across.to.line, column: across.to.column + at.column - across.end.column };
+		}
+		return { line: at.line + across.to.line - across.end.line, column: at.column };
+	}
+	function earlier(a, b) {
+		return a.line < b.line || (a.line === b.line && a.column < b.column);
+	}
+	function offsetIn(at, from) {
+		return { line: at.line - from.line, column: at.line === from.line ? at.column - from.column : at.column };
 	}
 
 	// One compile-time stamp, as the file has it now: every shift this document
-	// was told about, in the order it was told, which is the arithmetic the
-	// attributes went through one call at a time.
+	// was told about, in the order it was told. A stamp inside a run a delete
+	// took is gone until an undo puts the very run back where it stood; one
+	// that never comes back says a line no file has, which refuses as stale
+	// rather than landing on whatever moved into its place.
 	function stampNow(source) {
 		const at = stampParts(source);
 		if (!at) return source;
-		return at.file + ":" + at.line + ":" + movedColumn(at, shifted.get(at.file) || []);
+		let place = { line: at.line, column: at.column };
+		let lost = null;
+		for (const shift of shifted.get(at.file) || []) {
+			if (!lost) {
+				const next = shiftPlace(place, shift);
+				if (next) place = next;
+				else lost = { anchor: { line: shift.line, column: shift.column }, offset: offsetIn(place, shift), extent: offsetIn(shift.across.end, shift) };
+				continue;
+			}
+			const back = shift.across && shift.taken === 0 && shift.line === lost.anchor.line && shift.column === lost.anchor.column
+				? offsetIn(shift.across.to, shift)
+				: null;
+			if (back && back.line === lost.extent.line && back.column === lost.extent.column) {
+				place = lost.offset.line === 0
+					? { line: shift.line, column: shift.column + lost.offset.column }
+					: { line: shift.line + lost.offset.line, column: lost.offset.column };
+				lost = null;
+				continue;
+			}
+			const anchor = shiftPlace(lost.anchor, shift);
+			if (!anchor) return at.file + ":0:0";
+			lost.anchor = anchor;
+		}
+		return lost ? at.file + ":0:0" : at.file + ":" + place.line + ":" + place.column;
 	}
 
 	// The structural gesture (#317): the element out of the document. Each is
@@ -1727,7 +1776,7 @@ const canvasShimJs = `(() => {
 	// where it stood rather than a copy React would go on updating blind.
 	var alters = new Map();
 
-	function alterElement(id, selectors, act, place) {
+	function alterElement(id, selectors, act, place, sources) {
 		const found = [];
 		for (let i = 0; i < selectors.length; i++) {
 			const one = elementFor(selectors[i]);
@@ -1754,16 +1803,58 @@ const canvasShimJs = `(() => {
 		// a multi-pick goes as one alteration, so undo puts every node back
 		// under one press. Taken in document order and put back in reverse,
 		// which is what keeps each one's next sibling connected when it is (#323)
+		const taken = withTwins(found, sources);
 		const gone = [];
-		for (let i = 0; i < found.length; i++) {
-			const parent = found[i].parentNode;
+		for (let i = 0; i < taken.length; i++) {
+			const parent = taken[i].parentNode;
 			if (!parent) return { ok: false, owner: owner };
-			gone.push({ el: found[i], parent: parent, next: found[i].nextSibling });
+			gone.push({ el: taken[i], parent: parent, next: taken[i].nextSibling });
 		}
-		for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
 		alters.set(id, { kind: "gone", gone: gone });
 		evictOldest(alters);
+		// what the file may well refuse stays on screen until it has answered,
+		// and goes then, on the canvas's word: an element drawn more than once,
+		// or one that is the whole of a component, would otherwise vanish and
+		// come back (#317)
+		if (taken.length > found.length || found.some((one) => sources && sources.includes(one.getAttribute("data-spool-source")) && wholeReturn(one))) {
+			return { ok: true, owner: owner, held: true };
+		}
+		for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
 		return { ok: true, owner: owner };
+	}
+
+	// Whether an element is the outermost one a component returns: no element
+	// stands between it and the component that rendered it.
+	function wholeReturn(el) {
+		const key = Object.keys(el).find((name) => name.startsWith("__reactFiber$"));
+		let fiber = key ? el[key] : null;
+		while (fiber && (fiber = fiber.return)) {
+			if (fiber.stateNode && fiber.stateNode.nodeType === 1) return false;
+			const type = fiber.type;
+			if (typeof type === "function" || (type && typeof type === "object" && (typeof type.type === "function" || typeof type.render === "function"))) return true;
+		}
+		return false;
+	}
+
+	// What a delete takes out of the file is everywhere this document draws it:
+	// the same element rendered again by a component drawn twice, or the same
+	// call made twice. The file loses all of them, so the document does too,
+	// and the page on screen is the one the file now says without a reload.
+	function withTwins(found, sources) {
+		const all = found.slice();
+		if (Array.isArray(sources)) {
+			const drawn = (stamp) => document.querySelectorAll('[data-spool-source="' + CSS.escape(stamp) + '"]');
+			for (const source of sources) if (typeof source === "string") for (const twin of drawn(source)) all.push(twin);
+			for (const el of found) {
+				const own = el.getAttribute && el.getAttribute("data-spool-source");
+				if (!own) continue;
+				for (const twin of drawn(own)) if (sources.includes(ownerOf(twin))) all.push(twin);
+			}
+		}
+		const unique = all.filter((el, i) => all.indexOf(el) === i);
+		return unique
+			.filter((el) => !unique.some((other) => other !== el && other.contains(el)))
+			.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
 	}
 
 	// One alteration put back or forward. False when the document has moved on
@@ -1785,6 +1876,8 @@ const canvasShimJs = `(() => {
 		}
 		for (let i = held.gone.length - 1; i >= 0; i--) {
 			const one = held.gone[i];
+			// a delete held on screen for the file's answer never left
+			if (one.el.isConnected) continue;
 			if (!one.parent.isConnected) return false;
 			try { one.parent.insertBefore(one.el, one.next && one.next.isConnected ? one.next : null); } catch { return false; }
 		}
@@ -2101,8 +2194,8 @@ const canvasShimJs = `(() => {
 			if (event.source !== parent || event.origin !== config.controlOrigin) return;
 			if (m.spool === "alter") {
 				let answer = { ok: false, owner: null };
-				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act, m.place); } catch {}
-				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner, ...(answer.chain ? { chain: answer.chain } : {}) }, "*");
+				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act, m.place, m.sources); } catch {}
+				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner, ...(answer.chain ? { chain: answer.chain } : {}), ...(answer.held ? { held: true } : {}) }, "*");
 				return;
 			}
 			if (m.spool === "restamp") {

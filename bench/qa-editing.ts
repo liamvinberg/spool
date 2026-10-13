@@ -235,6 +235,16 @@ async function candidates(page: Page, frame: Frame, name: string): Promise<Candi
 		.filter((c) => c.x > 40 && c.y > 70 && c.x < VIEW.width - 300 && c.y < VIEW.height - 40);
 }
 
+/** Whether the frame still shows the document marked before the gesture. */
+async function stillHere(page: Page, name: string): Promise<boolean> {
+	const f = await liveFrame(page, name).catch(() => undefined);
+	return (
+		(await f
+			?.evaluate(() => (window as unknown as Record<string, unknown>).__marker === "still-here")
+			.catch(() => false)) ?? false
+	);
+}
+
 async function refusalShown(page: Page): Promise<string | undefined> {
 	const refusal = page.locator("[data-hand-refusal]");
 	if ((await refusal.count()) === 0) return undefined;
@@ -502,22 +512,23 @@ async function main(): Promise<void> {
 			if ((await ringLatency(page)) === undefined) continue;
 			await read;
 			await sleep(opts.pause || 100);
-			await frame.evaluate(
-				({ index }) => {
-					const now = () => performance.timeOrigin + performance.now();
-					const w = window as unknown as Record<string, unknown> & { __qa: Element[] };
-					const el = w.__qa[index];
-					w.__goneAt = undefined;
-					w.__marker = "still-here";
-					new MutationObserver((_, observer) => {
-						if (!el?.isConnected) {
-							w.__goneAt = now();
-							observer.disconnect();
-						}
-					}).observe(document, { childList: true, subtree: true });
-				},
-				{ index: c.index },
-			);
+			// the element the hand holds is the one the delete takes, and it may
+			// be an ancestor of the candidate clicked or another element under
+			// the point; the first element taken out of this document is it
+			await frame.evaluate(() => {
+				const now = () => performance.timeOrigin + performance.now();
+				const w = window as unknown as Record<string, unknown>;
+				w.__goneAt = undefined;
+				w.__gone = undefined;
+				w.__marker = "still-here";
+				new MutationObserver((records, observer) => {
+					const taken = records.flatMap((r) => [...r.removedNodes]).find((n) => n.nodeType === 1);
+					if (taken === undefined) return;
+					w.__goneAt = now();
+					w.__gone = taken;
+					observer.disconnect();
+				}).observe(document, { childList: true, subtree: true });
+			});
 			const before = sourceTimes(root);
 			const beforeBytes = new Map([...before.keys()].map((p) => [p, readFileSync(p, "utf8")]));
 			api.length = 0;
@@ -569,8 +580,12 @@ async function main(): Promise<void> {
 			record("Delete → file saved", wrote.at - t0);
 			await sleep(1200);
 			if (screen !== undefined) record(`Delete → screen updated (${screen.how})`, screen.ms);
+			// taken out in place and then reloaded anyway is a whole document
+			// swapped in a moment after the press
+			const kept = await stillHere(page, opts.frame);
+			tally("Delete → document replaced after (1 = yes)", kept ? 0 : 1);
 			note(
-				`delete <${c.tag}> "${c.text.slice(0, 30)}" → ${wrote.path.replace(root, "")}; screen ${screen ? `${screen.ms.toFixed(0)} ms, ${screen.how}` : "not seen"}; api: ${api.map((a) => `${a.path} ${a.ms.toFixed(0)}ms`).join(", ")}`,
+				`delete <${c.tag}> "${c.text.slice(0, 30)}" → ${wrote.path.replace(root, "")}; screen ${screen ? `${screen.ms.toFixed(0)} ms, ${screen.how}` : "not seen"}; document ${kept ? "kept" : "replaced"}; api: ${api.map((a) => `${a.path} ${a.ms.toFixed(0)}ms`).join(", ")}`,
 			);
 			await hud(
 				page,
@@ -581,6 +596,10 @@ async function main(): Promise<void> {
 			// undo
 			const changed = wrote.path;
 			const original = beforeBytes.get(changed);
+			// the document on screen now is the one the undo is measured in: a
+			// delete that reloaded already replaced the one marked above
+			frame = await liveFrame(page, opts.frame);
+			await frame.evaluate(() => Reflect.set(window, "__marker", "still-here"));
 			const u0 = Date.now();
 			await page.keyboard.press("ControlOrMeta+z");
 			let restored: number | undefined;
@@ -590,23 +609,32 @@ async function main(): Promise<void> {
 			}
 			if (restored !== undefined) {
 				record("Undo → file restored", restored);
-				const back = Date.now();
-				frame = await liveFrame(page, opts.frame);
-				const text = c.text;
-				let seen = false;
-				for (let i = 0; i < 400 && !seen; i++) {
-					frame = await liveFrame(page, opts.frame).catch(() => frame);
-					seen = await frame
-						.evaluate((t) => (document.body.textContent ?? "").includes(t), text)
-						.catch(() => false);
-					if (!seen) await sleep(10);
+				// the element the delete took back in this very document, or a new
+				// document drawn from the file
+				let back: { ms: number; how: string } | undefined;
+				for (let i = 0; i < 400 && back === undefined; i++) {
+					const f = await liveFrame(page, opts.frame).catch(() => undefined);
+					const state = f
+						? await f
+								.evaluate(() => {
+									const w = window as unknown as Record<string, unknown>;
+									const gone = w.__gone as Element | undefined;
+									return { same: w.__marker === "still-here", back: gone?.isConnected === true };
+								})
+								.catch(() => undefined)
+						: undefined;
+					if (state?.same && state.back) back = { ms: Date.now() - u0, how: "put back in place" };
+					else if (state && !state.same) back = { ms: Date.now() - u0, how: "document reloaded" };
+					else await sleep(8);
 				}
-				const onScreen = Date.now() - back + restored;
+				await sleep(1200);
+				const keptUndo = await stillHere(page, opts.frame);
+				tally("Undo → document replaced after (1 = yes)", keptUndo ? 0 : 1);
 				note(
-					`undo restored the file in ${restored} ms, words ${seen ? `back in the document ${onScreen} ms` : "not seen within 4 s"} after ⌘Z`,
+					`undo restored the file in ${restored} ms, on screen ${back ? `${back.ms} ms, ${back.how}` : "not seen within 4 s"} after ⌘Z; document ${keptUndo ? "kept" : "replaced"}`,
 				);
-				if (seen) record("Undo → back on screen", onScreen);
-				await hud(page, `undo: file ${restored} ms · on screen ${seen ? onScreen : "?"} ms`);
+				if (back !== undefined) record(`Undo → back on screen (${back.how})`, back.ms);
+				await hud(page, `undo: file ${restored} ms · on screen ${back ? back.ms : "?"} ms`);
 			} else note("undo did not restore the file within 6 s");
 			await sleep(opts.pause || 300);
 			frame = await liveFrame(page, opts.frame);
