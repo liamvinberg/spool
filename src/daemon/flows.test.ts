@@ -401,6 +401,22 @@ describe("the kept graph", () => {
  * source half depends on, moving in a way only its stat can show.
  */
 describe("the witnessed graph", () => {
+	it("sees a same-size rewrite the moment after a read, before anything has settled", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeFrame(root, "cart", goTsx(["one"]));
+		writeFrame(root, "one", plainTsx);
+		writeFrame(root, "two", plainTsx);
+		// the file system's own clock: every path was written a moment ago
+		const graph = createFlowGraph();
+		const edges = async () => (await graph.flows(root)).edges.map((edge) => `${edge.from} -> ${edge.to}`);
+		expect(await edges()).toEqual(["cart -> one"]);
+		expect(await edges()).toEqual(["cart -> one"]);
+
+		writeFrame(root, "cart", goTsx(["two"]));
+
+		expect(await edges()).toEqual(["cart -> two"]);
+	});
+
 	const settledGraph = () => createFlowGraph({ clock: () => Date.now() + 3_600_000 });
 	const edgesOf = async (graph: ReturnType<typeof settledGraph>, root: string) =>
 		(await graph.flows(root)).edges.map((edge) => `${edge.from} -> ${edge.to}`);
@@ -551,6 +567,26 @@ describe("the witnessed graph", () => {
 		renameSync(next, through);
 
 		expect(await edgesOf(graph, root)).toEqual(["start -> two"]);
+	});
+
+	it("sees a shared file swapped in beside the files other frames read, and keeps those frames", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="one">on</a>;\n`);
+		writeDesignFile(root, "shared/ui/stay.tsx", `export const Stay = () => <a data-go="one">on</a>;\n`);
+		writeFrame(root, "start", `import { Go } from "../../shared/ui/go";\nexport default () => <Go />;\n`);
+		writeFrame(root, "rest", `import { Stay } from "../../shared/ui/stay";\nexport default () => <Stay />;\n`);
+		writeFrame(root, "one", plainTsx);
+		writeFrame(root, "two", plainTsx);
+		const graph = settledGraph();
+		expect(await edgesOf(graph, root)).toEqual(["rest -> one", "start -> one"]);
+
+		// the way a hand save lands: a new file renamed over the old, which moves the folder both imports land in
+		const file = join(root, "design", "shared", "ui", "go.tsx");
+		writeFileSync(`${file}.tmp`, `export const Go = () => <a data-go="two">on</a>;\n`);
+		renameSync(`${file}.tmp`, file);
+
+		expect(await edgesOf(graph, root)).toEqual(["rest -> one", "start -> two"]);
+		expect(graph.framesUsing(root, "shared/ui/stay.tsx")).toEqual(["rest"]);
 	});
 
 	it("sees a frame renamed and a frame removed", async () => {
