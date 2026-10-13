@@ -6,6 +6,11 @@ import type { ProjectCard } from "./api";
 import { App } from "./app";
 import type { DesktopCommand, DesktopWindow } from "./desktop-window";
 
+// the Mac's keyboard law, read once and before anything asks: ⌘ is accel, ctrl is not
+vi.hoisted(() => {
+	Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+});
+
 const card = (name: string): ProjectCard => ({
 	root: `/w/${name}`,
 	name,
@@ -14,8 +19,12 @@ const card = (name: string): ProjectCard => ({
 	covers: [],
 });
 
-/** The app on a daemon with three tabs open, as the Mac app's window, recording what it is told of the session. */
-async function launch() {
+/**
+ * The app on a daemon with three tabs open, recording what it is told of the
+ * session: as the Mac app's window, one from before it could be asked to
+ * close, or a browser tab.
+ */
+async function launch(host_: "app" | "old app" | "browser" = "app") {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	window.history.replaceState(null, "", "/");
 	const projects = [card("alpha"), card("beta"), card("gamma")];
@@ -52,14 +61,15 @@ async function launch() {
 	);
 	let command: ((command: DesktopCommand) => void) | undefined;
 	const closeWindow = vi.fn();
-	vi.stubGlobal("spoolCanvasWindow", {
+	const bridge: DesktopWindow = {
 		onCommand: (listener) => {
 			command = listener;
 			return () => {};
 		},
 		setCanvasActive: () => {},
-		closeWindow,
-	} satisfies DesktopWindow);
+	};
+	if (host_ === "app") bridge.closeWindow = closeWindow;
+	if (host_ !== "browser") vi.stubGlobal("spoolCanvasWindow", bridge);
 	// happy-dom runs no animations, and the strip asks after its own as a tab goes
 	const hadAnimations = "getAnimations" in Element.prototype;
 	if (!hadAnimations)
@@ -76,10 +86,14 @@ async function launch() {
 	});
 	await act(async () => root.render(createElement(App)));
 	await settle();
-	const key = (init: KeyboardEventInit) =>
-		act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+	/** a press, and whether the page claimed it */
+	const key = async (init: KeyboardEventInit): Promise<boolean> => {
+		const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+		await act(async () => {
+			window.dispatchEvent(event);
 		});
+		return event.defaultPrevented;
+	};
 	const menu = (name: DesktopCommand) => act(async () => command?.(name));
 	const tabs = () => [...host.querySelectorAll<HTMLElement>("[role=tab]")].map((tab) => tab.textContent?.trim());
 	return { host, key, menu, tabs, writes, closeWindow, path: () => window.location.pathname };
@@ -175,5 +189,30 @@ describe("the tab keys", () => {
 		expect(app.host.querySelector('dialog[aria-label="New project"]')).toBeNull();
 		expect(app.path()).toBe("/p/alpha");
 		expect(app.writes.filter((write) => write.startsWith("close"))).toEqual([]);
+	});
+
+	it("take nothing from a browser tab, whose tabs are the browser's", async () => {
+		const app = await launch("browser");
+		expect(await app.key({ key: "2", code: "Digit2", metaKey: true })).toBe(false);
+		expect(await app.key({ key: "9", code: "Digit9", metaKey: true })).toBe(false);
+		expect(await app.key({ key: "]", code: "BracketRight", metaKey: true, shiftKey: true })).toBe(false);
+		expect(app.path()).toBe("/");
+	});
+
+	it("leave ⌘W on Home to an older app's own Close Window", async () => {
+		const app = await launch("old app");
+		expect(await app.key({ key: "w", code: "KeyW", metaKey: true })).toBe(false);
+		expect(await app.key({ key: "W", code: "KeyW", metaKey: true, shiftKey: true })).toBe(false);
+		// a tab it can still close, and the press is the page's
+		await app.key({ key: "2", code: "Digit2", metaKey: true });
+		expect(await app.key({ key: "w", code: "KeyW", metaKey: true })).toBe(true);
+	});
+
+	it("step only under the platform's own accel: ctrl+⇧] on a Mac is not next tab", async () => {
+		const app = await launch();
+		expect(await app.key({ key: "]", code: "BracketRight", ctrlKey: true, shiftKey: true })).toBe(false);
+		expect(app.path()).toBe("/");
+		expect(await app.key({ key: "]", code: "BracketRight", metaKey: true, shiftKey: true })).toBe(true);
+		expect(app.path()).toBe("/p/alpha");
 	});
 });
