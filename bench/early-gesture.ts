@@ -164,7 +164,8 @@ async function main(): Promise<void> {
 		}
 
 		// straight after a save: type into one element, Enter, then click the next
-		for (let round = 0; round < 6; round++) {
+		let saves = 0;
+		for (let round = 0; round < 14 && saves < 5; round++) {
 			const c = list[round % list.length];
 			const next = list[(round + 3) % list.length];
 			if (c === undefined || next === undefined) break;
@@ -177,11 +178,9 @@ async function main(): Promise<void> {
 			await page.keyboard.type(" Q");
 			const before = sourceTimes(root);
 			await page.keyboard.press("Enter");
-			const wrote = await nextWrite(root, before, 8000);
-			if (wrote === undefined) {
-				note(`round ${round}: Enter saved nothing (${(await refusal(page)) ?? "no refusal"})`);
-				continue;
-			}
+			const wrote = await nextWrite(root, before, 4000);
+			if (wrote === undefined) continue;
+			saves++;
 			const ms = await clickRead(page, next);
 			if (ms !== undefined) record("click → POST /rungs answered, straight after a save", ms);
 			await sleep(1500);
@@ -190,9 +189,11 @@ async function main(): Promise<void> {
 		// ⌫ straight after a click, with no wait for the read
 		let saved = 0;
 		let refused = 0;
-		frame = await liveFrame(page);
-		const fresh = await candidates(page, frame);
-		for (const c of fresh.slice().reverse().slice(0, 6)) {
+		for (let tries = 0; tries < 8; tries++) {
+			frame = await liveFrame(page);
+			const fresh = await candidates(page, frame);
+			const c = fresh[fresh.length - 1 - tries];
+			if (c === undefined) break;
 			await page.keyboard.press("Escape");
 			await sleep(300);
 			const before = sourceTimes(root);
@@ -213,23 +214,28 @@ async function main(): Promise<void> {
 				.catch(() => undefined);
 			const ringMs = Date.now() - t0;
 			await page.keyboard.press("Backspace");
-			const wrote = await nextWrite(root, before, 6000);
-			const said = await refusal(page);
+			let said: string | undefined;
+			let wrote: { at: number; path: string } | undefined;
+			const deadline = Date.now() + 6000;
+			while (wrote === undefined && said === undefined && Date.now() < deadline) {
+				wrote = await nextWrite(root, before, 25);
+				said = await refusal(page);
+			}
+			const what = `⌫ on the ring ${ringMs} ms after the click on "${c.text.slice(0, 24)}"`;
 			if (wrote !== undefined) {
 				saved++;
 				record("click then ⌫ on the ring → file saved", wrote.at - t0);
-				note(`⌫ on the ring ${ringMs} ms after the click on "${c.text.slice(0, 24)}": saved`);
+				note(`${what}: saved`);
 				await sleep(600);
 				await page.keyboard.press("ControlOrMeta+z");
 				await sleep(1500);
 			} else {
 				if (said === "unread") refused++;
-				note(
-					`⌫ straight after a click on "${c.text.slice(0, 24)}": ${said ? `refused (${said})` : "nothing saved"}`,
-				);
+				note(`${what}: ${said ? `refused (${said})` : "nothing saved"}`);
+				await page.keyboard.press("Escape");
 			}
 		}
-		note(`⌫ straight after a click: ${saved} saved, ${refused} refused unread`);
+		note(`⌫ on the ring: ${saved} saved, ${refused} refused unread`);
 
 		const summary = Object.entries(results).map(([key, values]) => {
 			const sorted = [...values].sort((a, b) => a - b);
