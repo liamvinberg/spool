@@ -12,8 +12,10 @@ export interface AltReader {
 const SOURCE = new Set([".tsx", ".ts", ".jsx", ".js", ".mjs"]);
 
 // what reading ⌥ looks like in a key handler: the flag, the modifier state,
-// the key itself, or its two places on the board
-const READS_ALT = /\baltKey\b|getModifierState\(\s*["'`]Alt["'`]\s*\)|["'`](?:Alt|AltLeft|AltRight)["'`]/u;
+// the key itself, its two places on the board, or a combo string a hotkey
+// library takes ("alt+k", "mod+alt+arrowleft")
+const READS_ALT =
+	/\baltKey\b|getModifierState\(\s*["'`]Alt["'`]\s*\)|["'`](?:Alt|AltLeft|AltRight)["'`]|["'`](?:[a-z]+\+)*alt\+/iu;
 
 /**
  * The frames among `frames` (names under design/frames) whose own sources
@@ -44,20 +46,28 @@ export function describeAltReader(reader: AltReader): string {
 	return `${reader.path}:${reader.line} reads the ⌥ key: inside a live frame ⌥ arrows and a held ⌥ move between frames unless the frame calls preventDefault on them`;
 }
 
-function firstRead(folder: string): { file: string; line: number } | undefined {
+/** The first read in the frame's folder and the folders inside it, by path. */
+function firstRead(folder: string, under = ""): { file: string; line: number } | undefined {
 	let names: string[];
 	try {
-		names = readdirSync(folder).sort();
+		names = readdirSync(join(folder, under)).sort();
 	} catch {
 		return undefined;
 	}
 	for (const name of names) {
-		if (!SOURCE.has(extname(name).toLowerCase())) continue;
-		const path = join(folder, name);
-		if (!statSync(path).isFile()) continue;
+		if (name.startsWith(".") || name === "node_modules") continue;
+		const file = under === "" ? name : `${under}/${name}`;
+		const path = join(folder, file);
+		const stat = statSync(path);
+		if (stat.isDirectory()) {
+			const found = firstRead(folder, file);
+			if (found !== undefined) return found;
+			continue;
+		}
+		if (!stat.isFile() || !SOURCE.has(extname(name).toLowerCase())) continue;
 		const lines = withoutComments(readFileSync(path, "utf8")).split("\n");
 		const index = lines.findIndex((line) => READS_ALT.test(line));
-		if (index !== -1) return { file: name, line: index + 1 };
+		if (index !== -1) return { file, line: index + 1 };
 	}
 	return undefined;
 }
@@ -77,11 +87,15 @@ export function withoutComments(source: string): string {
 				index += 2;
 				continue;
 			}
-			if (char === quote) quote = null;
+			// a quote or apostrophe left open never runs past its line
+			if (char === quote || (char === "\n" && quote !== "`")) quote = null;
 			index += 1;
 			continue;
 		}
-		if (char === '"' || char === "'" || char === "`") {
+		// an apostrophe in words (JSX text: Don't) follows a letter; a string
+		// never starts straight after one
+		const word = index > 0 && /[\p{L}\p{N}]/u.test(source[index - 1] as string);
+		if ((char === '"' || char === "'" || char === "`") && !word) {
 			quote = char;
 			out += char;
 			index += 1;
