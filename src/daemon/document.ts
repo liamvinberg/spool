@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { MAX_CAPTURE_OUTPUT_PIXELS, SETTLE_BUDGET_MS } from "../cover";
 import { comboMatches, lowerCombo, parseCombo } from "../ui/hotkey-combos";
-import { relayedHotkeys } from "../ui/hotkeys";
+import { relayedHotkeys, tabHotkeyCombos } from "../ui/hotkeys";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 import { collapsedWords } from "./edit-words";
 import { tagWord, wholeComponent } from "./element-name";
@@ -40,6 +40,9 @@ const relayKeys = relayedHotkeys().flatMap(({ id, combos }) =>
 		return { id, match: lowerCombo(parsed), prevent: parsed.accel || parsed.ctrl };
 	}),
 );
+
+/** The tab keys, which an open edit of a frame's words keeps from the window. */
+const editHeldKeys = tabHotkeyCombos().map((combo) => lowerCombo(parseCombo(combo)));
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -2245,6 +2248,7 @@ const canvasShimJs = `(() => {
 	// focused frame cannot zoom the whole page into a trap.
 	var relayKeys = ${JSON.stringify(relayKeys)};
 	var relayMatches = ${shimHelpers.comboMatches};
+	var editHeldKeys = ${JSON.stringify(editHeldKeys)};
 	addEventListener("keydown", (event) => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
@@ -2268,6 +2272,11 @@ const canvasShimJs = `(() => {
 				event.stopImmediatePropagation();
 				try { document.execCommand("insertText", false, " "); } catch {}
 				return;
+			}
+			// the window's tab keys wait for the edit to end: let through, the Mac
+			// menu would close or leave the tab and the words with it
+			for (const held of editHeldKeys) {
+				if (relayMatches(event, held, null)) { event.preventDefault(); break; }
 			}
 			event.stopImmediatePropagation();
 			return;

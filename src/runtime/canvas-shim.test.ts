@@ -328,6 +328,59 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("holds the window's tab keys back while the frame's words are being edited", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentStub = { postMessage: (message: unknown) => posted.push(message) };
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", { configurable: true, value: parentStub });
+		// the canvas's origin, the one door an edit may come through; the frame runtime's own type does not name it
+		window.__SPOOL__ = {
+			project: "project",
+			frame: "host",
+			projectCapability: "project-capability",
+			...{ controlOrigin: "http://control.test" },
+		};
+		const words = document.createElement("p");
+		words.id = "words";
+		words.textContent = "Pay now";
+		document.body.append(words);
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+			const press = (init: KeyboardEventInit) => {
+				const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+				words.dispatchEvent(event);
+				return event.defaultPrevented;
+			};
+			// no edit open: the menu's ⌘W is the window's to have
+			expect(press({ key: "w", metaKey: true })).toBe(false);
+
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: { spool: "edit", selector: "#words", x: 0, y: 0, id: 1 },
+					origin: "http://control.test",
+					source: parentStub as unknown as Window,
+				}),
+			);
+			await beat();
+			expect(posted).toContainEqual(expect.objectContaining({ spool: "edit-open", ok: true }));
+
+			expect(press({ key: "w", metaKey: true }), "⌘W waits for the edit").toBe(true);
+			expect(press({ key: "2", metaKey: true })).toBe(true);
+			expect(press({ key: "Tab", ctrlKey: true })).toBe(true);
+			// the text's own chords stay the text's
+			expect(press({ key: "z", metaKey: true })).toBe(false);
+			expect(press({ key: "a", metaKey: true })).toBe(false);
+		} finally {
+			dispose?.();
+			words.remove();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("relays the jump chords and eats the browser's open-file dialog", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
