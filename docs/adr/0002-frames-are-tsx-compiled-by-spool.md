@@ -6,4 +6,4 @@ A frame is one default-exported TSX component; spool builds the document around 
 
 A `frame.tsx` needs Spool's compilation and injected document contract. Non-React products get agent-carried copy-out, not direct import. Compile-time JSX stamping is what gives selection exact source locations.
 
-Amended for portable website exports: `spool build` carries the compiled connected journey and its runtime into a standalone artifact. Hosting that artifact requires no running Spool daemon; compilation remains Spool's responsibility.
+Amended for portable website exports, and the amendment since withdrawn: `spool build` carried the compiled connected journey and its runtime into a standalone artifact until the sharing beta's exporter was retired (DEV-195). Shared pages are compiled by Spool Cloud from the project's files, so compilation remains Spool's responsibility.

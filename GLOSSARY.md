@@ -142,7 +142,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Play session**: One run through the flows: name-stack history, state seeded from the scenario. The session is the page, so reloading the tab starts it over.
 
-**Player**: The surface that plays a connected journey as one composed document, locally or from an exported website. Its inner viewport uses the available window height and a width capped at the active frame's authored width; content scrolls without scaling. _Avoid_: preview
+**Player**: The surface that plays a connected journey as one composed document. Its inner viewport uses the available window height and a width capped at the active frame's authored width; content scrolls without scaling. _Avoid_: preview
 
 **Edge bar**: The local player's 30px strip for switching frames, sharing and window controls. In a browser tab it can be hidden and recalled from the top edge; the Mac app keeps it in the native window. _Avoid_: toolbar, HUD, overlay, pill
 
