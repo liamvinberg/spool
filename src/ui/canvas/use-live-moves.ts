@@ -43,6 +43,8 @@ export interface LiveMoveDeps {
 	select: (name: string, trail: SpatialTrail | null) => void;
 	/** hand the keyboard back to an entered frame */
 	focusFrame: (name: string) => void;
+	/** select a frame anywhere, its page brought first if it is on another, as the finder does */
+	landOn: (name: string) => void;
 	/** whether a frame selected out on the canvas may take the overview now: no gesture, no edit */
 	selectionIdle: () => boolean;
 }
@@ -73,7 +75,9 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	const fork = useRef<ThreadFork | null>(null);
 	// the frame a live move just left: it may still hold the keyboard while the
 	// one it landed on boots, so what it relays still counts
-	const leftLive = useRef<string | null>(null);
+	// hold the keyboard while the one it landed on boots, so what it relays
+	// still counts until the landed one is heard from (loaded, or a relay)
+	const leftLive = useRef<{ from: string; to: string } | null>(null);
 	const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const frameNamed = useCallback(
@@ -109,7 +113,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 
 	/** Arrive somewhere live: the chip slides in from where you came, the ring flashes once. */
 	const landed = useCallback((from: string | null, to: string, came: SpatialDirection | null, note: string | null) => {
-		if (from !== null && from !== to) leftLive.current = from;
+		leftLive.current = from !== null && from !== to ? { from, to } : null;
 		if (noteTimer.current !== null) clearTimeout(noteTimer.current);
 		noteTimer.current = null;
 		setChip({ frame: to, at: performance.now(), came, note, ring: true });
@@ -265,6 +269,11 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			}
 			fork.current = move.fork;
 			if (entered === null) {
+				// a thread that runs onto another page goes there, as the finder does
+				if (frameNamed(move.to) === undefined) {
+					depsRef.current.landOn(move.to);
+					return;
+				}
 				const target = frameNamed(move.to);
 				const cam = camera.get();
 				const size = viewSize();
@@ -323,13 +332,29 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	const noteWalk = useCallback((from: string, to: string) => {
 		if (from === to) return;
 		taken.current = [...taken.current, { from, to }];
-		leftLive.current = from;
+		leftLive.current = { from, to };
 	}, []);
 
 	/** Whether a relayed move comes from the frame that is live, or the one a move just left. */
-	const fromLive = useCallback(
-		(frame: string) => frame === depsRef.current.enteredRef.current || frame === leftLive.current,
-		[],
+	const fromLive = useCallback((frame: string) => {
+		const left = leftLive.current;
+		// the landed frame speaking means it holds the keyboard now
+		if (left !== null && frame === left.to) leftLive.current = null;
+		return frame === depsRef.current.enteredRef.current || frame === leftLive.current?.from;
+	}, []);
+
+	/**
+	 * A frame's document (re)booted. The one a move landed on has the keyboard
+	 * from here, so the frame it left no longer speaks for it; and an overview
+	 * opened on a document that is gone has no ⌥ left to come up.
+	 */
+	const loaded = useCallback(
+		(frame: string) => {
+			if (leftLive.current?.to === frame) leftLive.current = null;
+			const current = overviewRef.current;
+			if (current !== null && current.mode === "live" && current.origin === frame) cancel();
+		},
+		[cancel],
 	);
 
 	// the overview opened inside a frame goes when that frame stops being live
@@ -337,9 +362,11 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	const entered = deps.enteredRef.current;
 	useEffect(() => {
 		const current = overviewRef.current;
+		if (entered === null) leftLive.current = null;
 		if (current !== null && current.mode === "live" && entered !== current.origin) {
 			hold.cancel();
 			setOverview(null);
+			depsRef.current.camera.fly(current.saved, OVERVIEW_OPEN_MS);
 		}
 	}, [entered, hold, setOverview]);
 
@@ -376,6 +403,9 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		landLive,
 		noteWalk,
 		fromLive,
+		loaded,
+		/** whether the overview is up on screen, not just armed */
+		isShown: () => overviewRef.current !== null,
 		isOpen: () => overviewRef.current !== null || hold.armed,
 	};
 }

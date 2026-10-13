@@ -3753,6 +3753,7 @@ export function ProjectCanvas({
 			spatialTrail.current = trail;
 		},
 		focusFrame: (name) => iframes.current.get(name)?.focus(),
+		landOn: (name) => landOnFrameRef.current(name),
 		selectionIdle: () =>
 			gesture.current.kind === "idle" &&
 			editingRef.current === null &&
@@ -3762,6 +3763,8 @@ export function ProjectCanvas({
 	});
 	const liveRef = useRef(live);
 	liveRef.current = live;
+	// the finder's landing, defined further down, for a thread that leaves the page
+	const landOnFrameRef = useRef<(name: string) => void>(() => {});
 
 	/**
 	 * Land a jump: another page arrives through switchToPage; the same page
@@ -4034,6 +4037,7 @@ export function ProjectCanvas({
 				}
 				case "loaded": {
 					lifecycleRef.current.noteLoaded(message.frame);
+					liveRef.current.loaded(message.frame);
 					// what waited on this document being there can ask it now (#340)
 					reloading.current.delete(message.frame);
 					const waiting = loadWaiters.current.get(message.frame) ?? [];
@@ -4228,8 +4232,9 @@ export function ProjectCanvas({
 					// the frame names the key that moved; which one is accel is the
 					// canvas's rule, so the other platform's modifier is ignored here
 					if (message.modifier !== accelKeyName()) return;
-					// a ⌘ let go anywhere ends a fork's ] again, a fresh one too
-					liveRef.current.accel(message.held, message.held && !accelDownRef.current);
+					// a ⌘ let go anywhere ends a fork's ] again, a fresh one too; but not
+					// a frame losing the focus to the next one, its ⌘ still down
+					if (message.blur !== true) liveRef.current.accel(message.held, message.held && !accelDownRef.current);
 					if (enteredRef.current === message.frame) setAccelDown(message.held);
 					return;
 				case "pan": {
@@ -4673,8 +4678,16 @@ export function ProjectCanvas({
 		if (findingRef.current || exportDialogRef.current !== null) return;
 		// a press ends the ⌥ overview where it stands: ⌥ drag and ⌥ click are
 		// gestures of their own (DEV-295)
-		if (live.isOpen()) live.cancel();
 		clickSwitch.current = null;
+		if (live.isShown()) {
+			// the camera moved under the pointer: the press only closes it, and
+			// never selects, drags or leaves the frame that was live
+			event.preventDefault();
+			event.stopPropagation();
+			live.cancel();
+			return;
+		}
+		if (live.isOpen()) live.cancel();
 		const cam = camera.get();
 		if (cam === null || event.button === 2) return;
 		camera.stop();
@@ -5291,6 +5304,7 @@ export function ProjectCanvas({
 		},
 		[recordDeparture, switchToPage, holdChain, camera],
 	);
+	landOnFrameRef.current = landOnFrame;
 
 	/**
 	 * What a row in the rail may do about the frame it names, as one object that holds

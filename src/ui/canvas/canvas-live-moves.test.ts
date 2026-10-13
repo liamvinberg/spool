@@ -33,16 +33,25 @@ const edges = [edge("welcome", "sign-up"), edge("sign-up", "verify"), edge("sign
 const START = { x: 0, y: 0, k: 2 };
 const VIEW = { w: 1000, h: 800 };
 
-async function openCanvas(): Promise<{ host: HTMLElement; canvas: HTMLElement }> {
+async function openCanvas(
+	world: { frames: Array<Record<string, unknown>>; edges: unknown[]; pages: string[] } = { frames, edges, pages: [] },
+): Promise<{ host: HTMLElement; canvas: HTMLElement }> {
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/events")) return openEventStream();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: START });
-			if (url.pathname.endsWith("/frames")) return Response.json({ root: "/project", pages: [], frames });
+			if (url.pathname.endsWith("/frames")) {
+				return Response.json({ root: "/project", pages: world.pages, frames: world.frames });
+			}
 			if (url.pathname.endsWith("/flows")) {
-				return Response.json({ frames: frames.map(({ name }) => name), links: [], edges, unreadable: [] });
+				return Response.json({
+					frames: world.frames.map(({ name }) => name),
+					links: [],
+					edges: world.edges,
+					unreadable: [],
+				});
 			}
 			return Response.json({});
 		}),
@@ -230,6 +239,121 @@ describe("moving between frames while live", () => {
 		expect(liveChip(host)).toBe("welcome");
 		await relay(host, "welcome", thread("canvas.thread-back"));
 		expect(liveChipText(host)).toBe("start of the thread");
+	});
+
+	it("keeps a fork's ] again when the frame it left loses the focus, ⌘ still down", async () => {
+		const { host } = await openCanvas();
+		await enter(host, "welcome");
+		await relay(host, "welcome", thread("canvas.thread-next"));
+		await relay(host, "sign-up", thread("canvas.thread-next"));
+		expect(liveChipText(host)).toBe("1 of 2 · ] again for plan");
+		// verify booted and took the focus: sign-up blurred, which is no ⌘ let go
+		await relay(host, "verify", { spool: "loaded" });
+		await relay(host, "sign-up", { spool: "modifier", modifier: "Meta", held: false, blur: true });
+		await relay(host, "sign-up", { spool: "modifier", modifier: "Control", held: false, blur: true });
+		expect(liveChipText(host)).toBe("1 of 2 · ] again for plan");
+		await relay(host, "verify", thread("canvas.thread-next"));
+		expect(liveChip(host)).toBe("plan");
+	});
+
+	it("hears the frame a move left only until the one it landed on speaks", async () => {
+		const { host } = await openCanvas();
+		await enter(host, "welcome");
+		await relay(host, "welcome", thread("canvas.thread-next"));
+		expect(liveChip(host)).toBe("sign-up");
+		// sign-up has booted: welcome no longer speaks for it
+		await relay(host, "sign-up", { spool: "loaded" });
+		await relay(host, "welcome", thread("canvas.thread-next"));
+		expect(liveChip(host)).toBe("sign-up");
+
+		// a step that boots nothing: the landed frame's first relay does the same
+		await relay(host, "sign-up", { ...step("ArrowLeft"), id: "canvas.step-through", metaKey: true });
+		expect(liveChip(host)).toBe("welcome");
+		await relay(host, "welcome", { ...step("ArrowRight"), id: "canvas.step-through", metaKey: true });
+		expect(liveChip(host)).toBe("sign-up");
+		await relay(host, "sign-up", thread("canvas.thread-back"));
+		expect(liveChip(host)).toBe("welcome");
+		await relay(host, "sign-up", thread("canvas.thread-next"));
+		expect(liveChip(host)).toBe("welcome");
+	});
+
+	it("closes an overview whose frame reloads, or stops being live, flying back", async () => {
+		const { host, canvas } = await openCanvas();
+		await enter(host, "welcome");
+		const entered = cameraTransform(host);
+
+		await relay(host, "welcome", step("ArrowRight"));
+		expect(overviewTarget(host)).toBe("sign-up");
+		// the document the ⌥ went down in is gone: its keyup never comes
+		await relay(host, "welcome", { spool: "loaded" });
+		expect(overviewTarget(host)).toBeNull();
+		expect(cameraTransform(host)).toBe(entered);
+		expect(liveChip(host)).toBe("welcome");
+
+		await relay(host, "welcome", step("ArrowRight"));
+		expect(overviewTarget(host)).toBe("sign-up");
+		await relay(host, "welcome", { spool: "key", id: "canvas.leave", metaKey: false, ctrlKey: false });
+		expect(liveChip(host)).toBeNull();
+		expect(overviewTarget(host)).toBeNull();
+		expect(cameraTransform(host)).toBe(entered);
+
+		// a press on the canvas with it up only closes it: nothing selected, the
+		// frame still live
+		await enter(host, "welcome");
+		await relay(host, "welcome", step("ArrowRight"));
+		const camera = cameraOf(host);
+		const down = new PointerEvent("pointerdown", {
+			bubbles: true,
+			cancelable: true,
+			button: 0,
+			pointerId: 1,
+			clientX: 230 * camera.k + camera.x,
+			clientY: 50 * camera.k + camera.y,
+		});
+		await act(async () => {
+			canvas.dispatchEvent(down);
+			canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1 }));
+		});
+		expect(down.defaultPrevented).toBe(true);
+		expect(overviewTarget(host)).toBeNull();
+		expect(liveChip(host)).toBe("welcome");
+		expect(labelClass(host, "sign-up")).not.toContain("text-accent");
+		expect(cameraTransform(host)).toBe(entered);
+	});
+
+	it("walks the selection onto another page along a thread that leaves this one", async () => {
+		const world = {
+			frames: [
+				{ name: "welcome", x: 0, y: 0, w: 100, h: 100 },
+				{ name: "shop/cart", page: "shop", x: 0, y: 0, w: 100, h: 100 },
+			],
+			edges: [edge("welcome", "shop/cart")],
+			pages: ["shop"],
+		};
+		const { host, canvas } = await openCanvas(world);
+		await act(async () => {
+			for (const type of ["pointerdown", "pointerup"]) {
+				canvas.dispatchEvent(
+					new PointerEvent(type, { bubbles: true, button: 0, clientX: 100, clientY: 100, pointerId: 1 }),
+				);
+			}
+		});
+		expect(labelClass(host, "welcome")).toContain("text-accent");
+		await act(async () => {
+			window.dispatchEvent(
+				new KeyboardEvent("keydown", {
+					bubbles: true,
+					cancelable: true,
+					key: "]",
+					code: "BracketRight",
+					metaKey: true,
+				}),
+			);
+		});
+		await until(() => host.querySelector('[data-frame-label="shop/cart"]') !== null);
+		expect(host.querySelector('[data-frame-label="welcome"]')).toBeNull();
+		// a frame on its page is labelled by its own name there
+		expect(host.querySelector('[data-frame-label="shop/cart"] span.text-accent-strong')?.textContent).toBe("cart");
 	});
 
 	it("enters another frame on one click while live, and says so on hover", async () => {

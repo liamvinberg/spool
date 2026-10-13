@@ -128,6 +128,8 @@ export interface FrameModifierMessage {
 	frame: string;
 	modifier: AccelKeyName;
 	held: boolean;
+	/** the release came of the frame losing focus, not of the key coming up */
+	blur?: true;
 }
 
 /**
