@@ -190,7 +190,12 @@ async function main(): Promise<void> {
 		let saved = 0;
 		let refused = 0;
 		for (let tries = 0; tries < 8; tries++) {
-			frame = await liveFrame(page);
+			const live = await liveFrame(page).catch(() => undefined);
+			if (live === undefined) {
+				note("the frame left its live document; the run stops here");
+				break;
+			}
+			frame = live;
 			const fresh = await candidates(page, frame);
 			const c = fresh[fresh.length - 1 - tries];
 			if (c === undefined) break;
