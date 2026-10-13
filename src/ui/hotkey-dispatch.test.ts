@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachHotkeyLayer, dispatchHotkeyEvent, runHotkey, runMenuHotkey } from "./hotkey-dispatch";
+import { attachHotkeyLayer, closeTopmost, dispatchHotkeyEvent, runHotkey, runMenuHotkey } from "./hotkey-dispatch";
 
 const detachers: Array<() => void> = [];
 
@@ -134,5 +134,50 @@ describe("hotkey dispatch", () => {
 		exporting = false;
 		expect(runMenuHotkey("canvas.zoom-in")).toBe(true);
 		expect(zoom).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("closing what is on top", () => {
+	it("is nothing while no modal surface is up", () => {
+		attach({ scope: "canvas", handlers: {} });
+		expect(closeTopmost()).toBe(false);
+	});
+
+	it("runs the most modal surface's own way out", () => {
+		const help = vi.fn();
+		const settings = vi.fn();
+		attach({ scope: "settings", handlers: { "settings.close": settings } });
+		attach({ scope: "help", handlers: { "help.close": help } });
+		expect(closeTopmost()).toBe(true);
+		expect(help).toHaveBeenCalledTimes(1);
+		expect(settings).not.toHaveBeenCalled();
+	});
+
+	it("sends Esc to a surface that answers its own", () => {
+		attach({ scope: "dialog", handlers: {} });
+		const button = document.createElement("button");
+		document.body.append(button);
+		button.focus();
+		const escaped = vi.fn();
+		button.addEventListener("keydown", (event) => escaped(event.key));
+		expect(closeTopmost()).toBe(true);
+		expect(escaped).toHaveBeenCalledWith("Escape");
+		button.remove();
+	});
+
+	it("sends a dialog holding the focus its cancel, and shuts it when nothing keeps it", () => {
+		attach({ scope: "picker", handlers: {} });
+		const dialog = document.createElement("dialog");
+		const input = document.createElement("input");
+		dialog.append(input);
+		document.body.append(dialog);
+		dialog.setAttribute("open", "");
+		input.focus();
+		const cancelled = vi.fn();
+		dialog.addEventListener("cancel", cancelled);
+		expect(closeTopmost()).toBe(true);
+		expect(cancelled).toHaveBeenCalledTimes(1);
+		expect(dialog.open).toBe(false);
+		dialog.remove();
 	});
 });

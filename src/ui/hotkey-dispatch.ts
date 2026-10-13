@@ -144,3 +144,54 @@ export function attachHotkeyLayer(layer: HotkeyLayer): () => void {
 		if (layers.size === 0) window.removeEventListener("keydown", onWindowKeyDown);
 	};
 }
+
+/** Each modal scope's own way out: the entry its Esc runs. */
+const CLOSERS: Partial<Record<HotkeyScope, HotkeyId>> = {
+	dialog: "dialog.close",
+	finder: "finder.close",
+	picker: "picker.close",
+	help: "help.close",
+	settings: "settings.close",
+};
+
+/**
+ * ⌘W's first meaning: put away the most modal surface that is up, as its Esc
+ * would. A surface whose layer only holds the keys and answers Esc itself (a
+ * native dialog, the picker) is sent one. False when nothing modal is up.
+ */
+export function closeTopmost(): boolean {
+	for (const scope of SCOPE_PRIORITY) {
+		if (!EXCLUSIVE_SCOPES.has(scope)) continue;
+		const up = activeLayers(scope);
+		if (up.length === 0) continue;
+		const id = CLOSERS[scope];
+		// the layer attached last is the one drawn on top
+		for (const layer of up.reverse()) {
+			const handler = id === undefined ? undefined : layer.handlers[id];
+			if (handler !== undefined) {
+				handler();
+				return true;
+			}
+		}
+		escapeTopmost();
+		return true;
+	}
+	return false;
+}
+
+/** Esc for a surface that takes its own: a dialog's cancel, else a keydown where the focus is. */
+function escapeTopmost(): void {
+	// a modal dialog holds the focus inside it, so the focus says which is on top
+	const modal =
+		document.activeElement?.closest<HTMLDialogElement>("dialog[open]") ??
+		[...document.querySelectorAll("dialog")].filter((dialog) => dialog.matches(":modal")).at(-1);
+	if (modal !== undefined) {
+		const cancel = new Event("cancel", { cancelable: true });
+		modal.dispatchEvent(cancel);
+		if (!cancel.defaultPrevented) modal.close();
+		return;
+	}
+	(document.activeElement ?? document.body).dispatchEvent(
+		new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }),
+	);
+}
