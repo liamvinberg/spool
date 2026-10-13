@@ -68,9 +68,7 @@ describe("spatial frame navigation", () => {
 		const outsideAligned = frame("outside-aligned", origin.w + MAX_SPATIAL_DISTANCE + 1, 0);
 
 		expect(nextSpatialFrame(origin, [origin, atBoundary], "right")?.name).toBe("at-boundary");
-		expect(nextSpatialFrame(origin, [origin, nearDiagonal, outsideAligned], "right")?.name).toBe(
-			"near-diagonal",
-		);
+		expect(nextSpatialFrame(origin, [origin, nearDiagonal, outsideAligned], "right")?.name).toBe("near-diagonal");
 	});
 
 	it("takes the nearest frame that way when nothing is within reach", () => {

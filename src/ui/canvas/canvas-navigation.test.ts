@@ -199,7 +199,12 @@ describe("canvas keyboard navigation", () => {
 					return Response.json({ root: "/project", pages: [], frames: stepFrames });
 				}
 				if (url.pathname.endsWith("/flows")) {
-					return Response.json({ frames: stepFrames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
+					return Response.json({
+						frames: stepFrames.map(({ name }) => name),
+						links: [],
+						edges: [],
+						unreadable: [],
+					});
 				}
 				return Response.json({});
 			}),
