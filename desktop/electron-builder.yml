@@ -3,7 +3,7 @@
 # person can read top to bottom rather than a hook.
 appId: page.spool.mac
 productName: Spool
-copyright: MIT
+copyright: Copyright 2026 Liam Vinberg
 directories:
   output: release
   buildResources: build
