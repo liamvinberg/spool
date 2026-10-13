@@ -446,7 +446,7 @@ function missingCurrentCoverNames(root: string, frames: readonly { name: string 
 		}
 		const images = files.filter((file) => CURRENT_COVER.test(file));
 		// one image, beside nothing but the colour scheme a scheme-following frame was taken in
-		if (images.length !== 1 || files.some((file) => file !== images[0] && file !== "scheme")) {
+		if (images.length !== 1 || files.some((file) => file !== images[0] && file !== "scheme" && file !== "booth")) {
 			missing.push(frame.name);
 		}
 	}
