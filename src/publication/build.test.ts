@@ -1,5 +1,5 @@
 import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import { leadingCssImports, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { buildWebsite, writeWebsite } from "./build";
@@ -171,6 +171,54 @@ describe("portable website build", { timeout: 30000 }, () => {
 		expect(css).toContain(".start-only");
 		// a remote import stays remote, as in a Vite build: the page's policy lets it load
 		expect(leadingCssImports(css)).toEqual(["https://fonts.test/geist.css"]);
+	});
+	it("carries each frame's theme and its font files, and none of the project's defaults", async () => {
+		const options = project();
+		writeDesignFile(options.root, "shared/tokens.css", "@theme { --color-primary: #abcdef; }\n");
+		writeDesignFile(
+			options.root,
+			"shared/fonts.css",
+			'@font-face { font-family: "ProjectFace"; src: url("assets/fonts/project.woff2"); }\n',
+		);
+		writeDesignFile(options.root, "shared/assets/fonts/project.woff2", "PROJECT_FACE");
+		for (const [theme, colour, face] of [
+			["vercel", "#000001", "GEIST_FACE"],
+			["linear", "#000002", "INTER_FACE"],
+		] as const) {
+			writeDesignFile(
+				options.root,
+				`shared/ui/${theme}/theme.css`,
+				`@import "tailwindcss";\n@theme { --color-primary: ${colour}; }\n@font-face { font-family: "${theme}"; src: url("./fonts/${theme}.woff2"); }\n`,
+			);
+			writeDesignFile(options.root, `shared/ui/${theme}/fonts/${theme}.woff2`, face);
+		}
+		writeFrame(
+			options.root,
+			"start",
+			'import "shared/ui/vercel/theme.css"; export default () => <button data-go="next" className="bg-primary">go</button>;',
+		);
+		writeFrame(
+			options.root,
+			"next",
+			'import "shared/ui/linear/theme.css"; export default () => <p className="bg-primary">next</p>;',
+		);
+		const site = await buildWebsite(options);
+
+		const text = (path: string) => Buffer.from(site.objects.get(path)?.bytes ?? new Uint8Array()).toString("utf8");
+		const frames = validateManifest(site.manifest).frames;
+		for (const [frame, colour, face] of [
+			["start", "#000001", "GEIST_FACE"],
+			["next", "#000002", "INTER_FACE"],
+		] as const) {
+			const stylesheet = frames.find(({ name }) => name === frame)?.stylesheet ?? "";
+			const css = text(stylesheet);
+			expect(css).toContain(colour);
+			expect(css).not.toContain("#abcdef");
+			expect(css).not.toContain("ProjectFace");
+			const font = /url\("([^"]+\.woff2)"\)/.exec(css)?.[1] ?? "";
+			expect(text(posix.join(posix.dirname(stylesheet), font))).toBe(face);
+		}
+		expect(text("styles/fonts.css")).not.toContain("ProjectFace");
 	});
 	it("captures a shader imported with a query suffix, as the canvas compiles it", async () => {
 		const options = project();

@@ -28,7 +28,8 @@ Run \`spool skill\` before working here. It is the complete contract: if it isn'
 `;
 
 const tokensCss = `/*
- * spool tokens, the single token file for this canvas.
+ * spool tokens, for every frame that imports no theme of its own
+ * (a frame may import one: spool skill styling).
  * Distilling from an existing product: paste its variables into :root verbatim.
  * Spool-born tokens: use @theme (Tailwind v4, shadcn v4 shape).
  * Starts empty on purpose: tokens arrive per change, carried by the agent.
@@ -46,7 +47,8 @@ const transitionsCss = `/*
 `;
 
 const fontsCss = `/*
- * Project fonts, plain CSS, loaded in every frame document:
+ * Project fonts, plain CSS, loaded in every frame that imports no theme
+ * of its own (a theme carries its fonts: spool skill styling):
  * a hosted @import url(...), or @font-face with absolute/data src.
  * A relative url() resolves from this folder — drop the file in
  * assets/fonts/ and spool carries it in the document.
