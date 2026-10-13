@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useReducer, useRef } from "react";
+import { type CSSProperties, useEffect, useLayoutEffect, useReducer, useRef } from "react";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import {
@@ -42,33 +42,55 @@ const PILL_H = 18;
 const PILL_GAP = 6;
 /** Above a frame's top edge, where its name's row is. */
 const NAME_ROW = 27;
+/** The room a frame's own name keeps on its row before the pills there shrink to dots. */
+const NAME_ROOM = 56;
+/** A pill shrunk to a dot, and how far each dot stands from the next, overlapping it. */
+const DOT = 10;
+const DOT_STEP = 7;
 
 /** A pill's width at 11px medium, near enough to line pills up by. */
 export function pillWidth(name: string): number {
 	return Math.round(name.length * 6.5 + 14);
 }
 
+/** Where a pill docked on a frame's name stands, in screen pixels, as a pill and shrunk to a dot. */
+export interface PillSlot {
+	x: number;
+	y: number;
+	/** Where it stands as a dot, stacked with the others on that name. */
+	dot: { x: number; y: number };
+	/** The pills on this name don't fit beside it, so they are dots. */
+	dotted: boolean;
+}
+
 /**
  * Where each pill docked on a frame's name stands, in screen pixels: right-aligned on the frame's
  * top-right corner, right to left in the order their people went inside, and stepped aside left of
- * the room an agent's companion takes on that row (#373).
+ * the room an agent's companion takes on that row (#373). Once the pills would crowd the frame's
+ * own name, as when zoomed out, they shrink to dots overlapping one another in the same order.
  */
 export function pillSlots(
 	frames: readonly (Box & { name: string })[],
 	inside: (frame: string) => readonly { id: string; name: string }[],
 	toScreen: (x: number, y: number) => { x: number; y: number },
 	taken?: ReadonlyMap<string, number>,
-): Map<string, { x: number; y: number }> {
-	const slots = new Map<string, { x: number; y: number }>();
+): Map<string, PillSlot> {
+	const slots = new Map<string, PillSlot>();
 	for (const frame of frames) {
 		const corner = toScreen(frame.x + frame.w, frame.y);
 		const room = taken?.get(frame.name) ?? 0;
-		let right = room > 0 ? corner.x - room - PILL_GAP : corner.x;
-		for (const mate of inside(frame.name)) {
+		const start = room > 0 ? corner.x - room - PILL_GAP : corner.x;
+		const mates = inside(frame.name);
+		const row = mates.reduce((sum, mate, i) => sum + pillWidth(mate.name) + (i > 0 ? PILL_GAP : 0), 0);
+		const left = toScreen(frame.x, frame.y).x;
+		const dotted = mates.length > 0 && start - row < left + NAME_ROOM;
+		let right = start;
+		mates.forEach((mate, i) => {
 			const width = pillWidth(mate.name);
-			slots.set(mate.id, { x: right - width, y: corner.y - NAME_ROW });
+			const dot = { x: start - DOT - i * DOT_STEP, y: corner.y - NAME_ROW + (PILL_H - DOT) / 2 };
+			slots.set(mate.id, { x: right - width, y: corner.y - NAME_ROW, dot, dotted });
 			right -= width + PILL_GAP;
-		}
+		});
 	}
 	return slots;
 }
@@ -78,8 +100,10 @@ interface Motion {
 	x: { p: number; v: number } | null;
 	y: { p: number; v: number } | null;
 	dock: { p: number; v: number };
+	/** How far a docked pill has shrunk to a dot, 0 to 1. */
+	dot: { p: number; v: number };
 	/** The name the pill last docked on, in screen pixels: where it flies home from. */
-	slot: { x: number; y: number } | null;
+	slot: PillSlot | null;
 }
 
 export function PresenceLayer({
@@ -122,6 +146,9 @@ export function PresenceLayer({
 				const goal = docked.current.get(mate.person.accountId) ? 1 : 0;
 				motion.dock = springStep(motion.dock, goal, dt, DOCK_W);
 				moving ||= Math.abs(motion.dock.p - goal) > 0.002;
+				const dotGoal = motion.slot?.dotted ? 1 : 0;
+				motion.dot = springStep(motion.dot, dotGoal, dt, DOCK_W);
+				moving ||= Math.abs(motion.dot.p - dotGoal) > 0.002;
 				if (at === null) continue;
 				motion.x = motion.x === null ? { p: at.x, v: 0 } : springStep(motion.x, at.x, dt, POINTER_W);
 				motion.y = motion.y === null ? { p: at.y, v: 0 } : springStep(motion.y, at.y, dt, POINTER_W);
@@ -157,7 +184,11 @@ export function PresenceLayer({
 	// a render is what decides who is docked where, so a pill whose dock changed starts flying from here
 	useEffect(() => {
 		for (const [id, motion] of motions.current)
-			if (Math.abs(motion.dock.p - (docked.current.get(id) ? 1 : 0)) > 0.002) return kicked.current();
+			if (
+				Math.abs(motion.dock.p - (docked.current.get(id) ? 1 : 0)) > 0.002 ||
+				Math.abs(motion.dot.p - (motion.slot?.dotted ? 1 : 0)) > 0.002
+			)
+				return kicked.current();
 	});
 
 	const cam = camera.get();
@@ -192,6 +223,7 @@ export function PresenceLayer({
 				x: at === null ? null : { p: at.x, v: 0 },
 				y: at === null ? null : { p: at.y, v: 0 },
 				dock: { p: slot === undefined ? 0 : 1, v: 0 },
+				dot: { p: slot?.dotted ? 1 : 0, v: 0 },
 				slot: slot ?? null,
 			});
 		else if (motion !== undefined && slot !== undefined) motion.slot = slot;
@@ -267,9 +299,12 @@ function Cursor({
 	mate: Teammate;
 	now: number;
 	motion: Motion | undefined;
-	slot: { x: number; y: number } | undefined;
+	slot: PillSlot | undefined;
 	toScreen: (x: number, y: number) => { x: number; y: number };
 }) {
+	// the pill's own width as a pill, measured, so shrinking to a dot starts from it
+	const pillRef = useRef<HTMLSpanElement>(null);
+	const natural = useRef(pillWidth(mate.person.name));
 	const { person, state } = mate;
 	const gone = mate.left !== null;
 	const resting = idle(mate, now);
@@ -279,7 +314,16 @@ function Cursor({
 			? null
 			: toScreen(motion.x.p, motion.y.p);
 	const dock = motion === undefined ? (slot === undefined ? 0 : 1) : Math.min(1, Math.max(0, motion.dock.p));
-	const home = motion?.slot ?? slot ?? null;
+	const docked = motion?.slot ?? slot ?? null;
+	// a pill flying off a dotted name grows back into a pill on the way
+	const dotted = docked === null ? 0 : Math.min(1, Math.max(0, motion?.dot.p ?? (docked.dotted ? 1 : 0))) * dock;
+	const home =
+		docked === null
+			? null
+			: { x: docked.x + (docked.dot.x - docked.x) * dotted, y: docked.y + (docked.dot.y - docked.y) * dotted };
+	useLayoutEffect(() => {
+		if (dotted === 0 && pillRef.current !== null) natural.current = pillRef.current.offsetWidth;
+	});
 	const docking = home !== null && dock > 0.01;
 	const hand = at === null ? null : { x: at.x + 13, y: at.y + 17 };
 	if (hand === null && !docking) return null;
@@ -328,20 +372,26 @@ function Cursor({
 			)}
 			{pill !== null && (
 				<span
+					ref={pillRef}
 					data-presence-pill={person.accountId}
 					data-presence-docked={slot === undefined ? undefined : (state.inside ?? undefined)}
+					data-presence-dot={slot?.dotted ? "" : undefined}
 					data-presence-said={said > 0 ? "" : undefined}
-					className="absolute top-0 left-0 flex items-center whitespace-nowrap rounded-full px-[7px] font-medium text-[11px] leading-none transition-[opacity,filter] duration-300"
+					className="absolute top-0 left-0 flex items-center overflow-hidden whitespace-nowrap rounded-full font-medium text-[11px] leading-none transition-[opacity,filter] duration-300"
 					style={{
-						height: PILL_H,
+						height: PILL_H + (DOT - PILL_H) * dotted,
+						width: dotted === 0 ? undefined : natural.current + (DOT - natural.current) * dotted,
+						paddingInline: 7 * (1 - dotted),
 						transform: `translate(${pill.x}px, ${pill.y}px)`,
 						background: person.color,
 						color: "#0e0e0e",
+						// dots stacked on one name stand apart by a ring of the canvas behind them
+						boxShadow: dotted === 0 ? undefined : `0 0 0 ${1.5 * dotted}px var(--color-surface-canvas)`,
 						opacity: gone ? 0 : said,
 						filter: slot !== undefined && resting ? "saturate(0.2)" : undefined,
 					}}
 				>
-					{person.name}
+					<span style={{ opacity: Math.max(0, 1 - dotted * 2.5) }}>{person.name}</span>
 					{/* out on the canvas, what their agent is doing rides beside their name (#378) */}
 					{slot === undefined && says !== null ? (
 						<span data-presence-agent="" className="opacity-70">

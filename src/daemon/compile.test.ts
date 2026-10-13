@@ -9,7 +9,7 @@ import { buildDesignEntry, cssSources, type DesignEntryOptions, designBuildOptio
 import { realDesignDir } from "./design-path";
 import { createDesignReads } from "./design-reads";
 import { diskDesignFiles } from "./disk-files";
-import { buildPublicationPlayer } from "./play";
+import { createPlayerCompiler } from "./play";
 import type { Webfonts } from "./webfonts";
 
 /** One entry through the design compile, on the disk with native esbuild, as the daemon compiles it. */
@@ -206,14 +206,20 @@ describe("a tsconfig.json above design/", () => {
 		},
 	});
 
-	async function compiled(root: string): Promise<{ document: string; publication: string }> {
+	async function compiled(root: string): Promise<{ document: string; player: string }> {
 		const doc = await createFrameCompiler("0.0.0-test").getDocument(root, "tsconfig", authority);
 		if (doc.kind !== "ok") throw new Error(doc.kind === "error" ? doc.message : doc.message);
-		const { bundle } = await buildPublicationPlayer(realDesignDir(root), [{ name: "tsconfig" }], "0.0.0-test");
-		return { document: doc.document, publication: [...bundle.chunks.values()].join("\n") };
+		const players = createPlayerCompiler("0.0.0-test");
+		try {
+			const player = await players.getBundle(root, [{ name: "tsconfig" }]);
+			if (player.kind !== "ok") throw new Error("the player did not compile");
+			return { document: doc.document, player: [...player.bundle.chunks.values()].join("\n") };
+		} finally {
+			await players.close();
+		}
 	}
 
-	it("leaves the frame document and the publication compile unchanged", async () => {
+	it("leaves the frame document and the player compile unchanged", async () => {
 		// the project one folder down, so the folder above it is the test's own
 		const outer = makeTempDir();
 		mkdirSync(join(outer, "repo"));

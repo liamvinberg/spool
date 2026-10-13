@@ -4,7 +4,7 @@
 
 Design websites, apps, and presentations with your agent. Try them live. Keep what works.
 
-Free and open source. Runs locally. Pre-1.0, actively developed and used every day.
+Free to use, with the source on GitHub. Runs locally. Pre-1.0, actively developed and used every day.
 
 ## Get spool
 
@@ -64,7 +64,7 @@ Real projects run the released version; a checkout daemon serves beside it on it
 
 ## License
 
-[MIT](LICENSE.md). Fork it, rework it, rename it, ship it. It is a tool for designing things; make it your own if you want to.
+[FSL-1.1-MIT](LICENSE.md), the [Functional Source License](https://fsl.software). Use spool for your own work, at a company too, and read, change and share its code. The one thing it rules out is selling a product that competes with spool. Each release becomes MIT two years after it comes out.
 
 Third-party components keep their own licenses, listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 

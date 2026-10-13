@@ -1,7 +1,6 @@
 import { type ReactNode, useMemo, useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
-import { type ShareChip, ShareChipButton } from "../../runtime/share-panel";
 import { cn } from "../cn";
 import { bucketOf } from "./bucket";
 import type { Box, NearScreen } from "./camera";
@@ -54,7 +53,6 @@ export function FrameLabel({
 	hovered,
 	unseen,
 	onPlay,
-	sharing,
 	setAside,
 	live,
 	clickEnters = false,
@@ -69,8 +67,6 @@ export function FrameLabel({
 	overview?: OverviewRole | null;
 	/** what letting go of ⌥ does, beside the target's name */
 	overviewHint?: string | undefined;
-	/** the frame's link, said at the one size the canvas keeps legible at any zoom */
-	sharing?: { chip: ShareChip; open: () => void; expanded: boolean } | undefined;
 	/** the frame the label names, in world units */
 	frame: Box;
 	/** The label holds one size on screen through the zoom, so it follows the camera (#81). */
@@ -188,7 +184,6 @@ export function FrameLabel({
 					    travelling to a corner of the chrome to act on what is right
 					    here. Ghost until wanted — the label is not a toolbar. */}
 						{setAside}
-						{sharing && <ShareChipButton chip={sharing.chip} expanded={sharing.expanded} onOpen={sharing.open} />}
 						{selected && onPlay !== undefined && (
 							<button
 								type="button"

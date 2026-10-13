@@ -743,7 +743,7 @@ export const HOTKEYS = [
 		keys: ["accel+o"],
 		repeats: false,
 	},
-	{ id: "home.search", scope: "home", group: "Home", label: "Search your projects", keys: ["slash"] },
+	{ id: "home.search", scope: "home", group: "Home", label: "Search projects", keys: ["slash"] },
 	{ id: "home.close-menu", scope: "home", group: "Home", label: "", keys: ["escape"], listed: false },
 
 	// --- Settings ---------------------------------------------------------------

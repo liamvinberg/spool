@@ -17,16 +17,15 @@ import {
 } from "./design-compile";
 import type { DesignFiles } from "./design-files";
 import { contentDigest, createDesignReads, type DesignReads } from "./design-reads";
-import { mergeImportMap } from "./document";
-import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
+import { hoistCssImports, mergeImportMap } from "./document";
+import { inlineLocalFonts, type Webfonts } from "./font-faces";
 import { buildFrameStyleClosure } from "./frame-styles";
 import { importMapPins } from "./vendor-pins";
 
 /**
  * The player's composition (#24): every frame of a project compiled into one
  * split bundle, each frame and whatever frames share cut into modules of their
- * own. The daemon composes the canvas's player from it (play.ts), and the
- * publication compile is the same composition built for a destination.
+ * own. The daemon composes the canvas's player from it (play.ts).
  */
 
 const STDIN_NAME = "<spool-play>";
@@ -77,44 +76,6 @@ export interface ComposedPlayer {
 	settled: boolean;
 }
 
-/** The frames a publication plays, and the folder they are in. */
-export interface PublicationRequest {
-	/** The design folder, absolute: the daemon's real path, or wherever a Worker holds the files. */
-	designDir: string;
-	frames: PlayerFrameRef[];
-	/** Spool's version, folded into the input hash. */
-	version: string;
-}
-
-/**
- * The publication compile: the player's split renderer, with strict
- * destination compilation and no source stamping. What `spool build` and Share
- * publish, and what a Worker serves to someone outside the project. A
- * composition that does not compile throws; `describeCompileError` says why.
- */
-export async function compilePublication(
-	host: CompileHost,
-	{ designDir, frames, version }: PublicationRequest,
-): Promise<{ bundle: PlayerBundle; inputs: string[]; hash: string }> {
-	const stamp = playerStamp(frames);
-	const reading: PlayerContext["reading"] = { reads: undefined };
-	const held: PlayerContext = {
-		stamp,
-		designDir,
-		reading,
-		context: await host.esbuild.context(
-			compositionOptions(designDir, playerEntry(frames, new Map()), host.files, () => reading.reads, true),
-		),
-		styles: new Map(),
-	};
-	try {
-		const result = await compilePlayer(host, version, designDir, frames, stamp, inertWebfonts(), held, true);
-		return { bundle: result.bundle, inputs: result.inputs, hash: result.hash };
-	} finally {
-		await held.context.dispose();
-	}
-}
-
 /** What a player is compiled for, besides its files: the folders of the frames it plays. */
 export function playerStamp(frames: readonly PlayerFrameRef[]): string {
 	return frames.map((ref) => frameFolder(ref.name)).join("\n");
@@ -139,6 +100,8 @@ export interface FrameStyle {
 	inputs: string[];
 	key: string;
 	css: string;
+	/** Compiled from a theme the frame imports, which carries its own fonts. */
+	themed: boolean;
 }
 
 /**
@@ -184,7 +147,6 @@ export async function compilePlayer(
 	stamp: string,
 	webfonts: Webfonts,
 	context: PlayerContext,
-	publication = false,
 ): Promise<ComposedPlayer> {
 	// One read of every input for the whole player, as for a frame document:
 	// the composition, every frame's stylesheet and the cache key are all made of
@@ -195,12 +157,7 @@ export async function compilePlayer(
 	let composed: { composition: Composition; broken: Map<string, string> };
 	context.reading.reads = reads;
 	try {
-		composed = publication
-			? {
-					composition: readComposition(designDir, frames, await context.context.rebuild(), host.files),
-					broken: new Map<string, string>(),
-				}
-			: await composePlayer(host, designDir, frames, context, reads);
+		composed = await composePlayer(host, designDir, frames, context, reads);
 	} finally {
 		context.reading.reads = undefined;
 	}
@@ -219,24 +176,32 @@ export async function compilePlayer(
 	const playing = new Set(frames.map((ref) => ref.name));
 	for (const name of kept.keys()) if (!playing.has(name)) kept.delete(name);
 	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
-		if (composed.broken.has(ref.name)) return { name: ref.name, css: "" };
+		if (composed.broken.has(ref.name)) return { name: ref.name, css: "", themed: false };
 		const last = kept.get(ref.name);
 		if (last !== undefined && styleKey(designDir, last.inputs, current, list) === last.key) {
-			return { name: ref.name, css: last.css };
+			return { name: ref.name, css: last.css, themed: last.themed };
 		}
-		const { css, inputs } = await buildFrameStyleClosure(host, designDir, ref, reads, publication);
+		const { css, inputs, themed } = await buildFrameStyleClosure(host, designDir, ref, reads);
 		// keyed by the bytes it was built from, which for a stylesheet Tailwind read
 		// is the digest its worker noted, never a later read of the file
 		const built = (file: string) => reads.digests().get(file) ?? current(file);
-		kept.set(ref.name, { inputs, key: styleKey(designDir, inputs, built, list), css });
-		return { name: ref.name, css };
+		kept.set(ref.name, { inputs, key: styleKey(designDir, inputs, built, list), css, themed });
+		return { name: ref.name, css, themed };
 	});
 	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
 	// read the moment the fonts resolve, as the frame compiler does (#80)
 	const fontsRevision = webfonts.revision();
-	const { css: fonts } = publication
-		? { css: resolvedFonts }
-		: inlineLocalFonts(designDir, resolvedFonts, reads.bytes, designPathResolver(designDir, host.files));
+	const { css: projectFonts } = inlineLocalFonts(
+		designDir,
+		resolvedFonts,
+		reads.bytes,
+		designPathResolver(designDir, host.files),
+	);
+	// A walk is one document, and a frame with a theme carries its own fonts: once
+	// one does, the project's ride each frame without a theme rather than the
+	// whole walk, so they switch with the frame as its tokens do.
+	const perFrame = frameStyles.some((frame) => frame.themed);
+	const fonts = perFrame ? undefined : projectFonts;
 	const transitions = reads.text(join(shared, "transitions.css"));
 	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
@@ -247,9 +212,10 @@ export async function compilePlayer(
 	const { entry, chunks, screens } = composed.composition;
 	const styles = new Map<string, string>();
 	for (const frame of frameStyles) {
-		const name = `styles/frame-${createHash("sha256").update(frame.css).digest("hex").slice(0, 16)}.css`;
+		const css = perFrame && !frame.themed ? withFonts(projectFonts, frame.css) : frame.css;
+		const name = `styles/frame-${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`;
 		styles.set(frame.name, name);
-		chunks.set(name, frame.css);
+		chunks.set(name, css);
 	}
 	// A bundle a file moved under while it compiled (a stylesheet two frames read
 	// differently) is named by its own contents, as a frame document is by its
@@ -280,6 +246,14 @@ export async function compilePlayer(
 			hash,
 		},
 	};
+}
+
+/** A frame's stylesheet with the project's fonts before it, both sheets' imports at the head. */
+function withFonts(fonts: string | undefined, css: string): string {
+	if (fonts === undefined || css === "") return css;
+	const face = hoistCssImports(fonts);
+	const frame = hoistCssImports(css);
+	return `${face.imports}${frame.imports}${frame.rest}\n${face.rest}`;
 }
 
 /** Keep large canvases from opening hundreds of esbuild and Tailwind compiles at once. */
@@ -361,7 +335,6 @@ export function compositionOptions(
 	contents: string,
 	files: DesignFiles,
 	reads: () => DesignReads | undefined,
-	publication = false,
 ) {
 	return {
 		...designBuildOptions({
@@ -370,7 +343,6 @@ export function compositionOptions(
 			sourcefile: STDIN_NAME,
 			contents,
 			label: "the player",
-			...(publication ? { publication: true } : {}),
 			files,
 			reads,
 		}),

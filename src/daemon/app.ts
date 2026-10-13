@@ -122,8 +122,6 @@ import {
 	type ProjectCard,
 	summarizeProject,
 } from "./projection";
-import { createPublicationJobs, type PublicationJobServices } from "./publication-jobs";
-import { publicationReadiness } from "./publication-readiness";
 import { createResolvePass } from "./resolve-pass";
 import {
 	CAPTURE_HOST,
@@ -244,8 +242,6 @@ export interface DaemonOptions {
 	onHistoryNotice?: (message: string) => void;
 	/** Machine-state observation failures stay visible without escaping a watcher callback. */
 	onMachineStateWatchError?: (error: Error) => void;
-	/** Controlled Cloud boundary for daemon publication route tests. */
-	publicationServices?: PublicationJobServices;
 	/** Controlled Cloud boundary for the account at the foot of Home. */
 	cloudAccountServices?: CloudAccountServices;
 	/** The daemon's one boundary to spool.page, for teams, sync, covers and shares: a test's fake, or the Mac's own. */
@@ -278,22 +274,6 @@ const playParams = z.object({
 		.optional(),
 });
 
-const publicationParams = z.strictObject({
-	entry: z.string().refine(isFramePath, { message: "not a frame name" }),
-	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }),
-});
-
-const publicationCreate = publicationParams.extend({
-	emails: z.array(z.string().trim().email().max(254)).max(100).optional(),
-	accessMode: z.enum(["invited", "public"]).optional(),
-	email: z.string().trim().email().max(320).optional(),
-});
-
-const publicationGrant = publicationParams.extend({
-	email: z.string().trim().email().max(320),
-	kind: z.enum(["invite", "revoke"]),
-});
-
 /**
  * What one open canvas shows, told at camera rest (#81): the event stream it
  * rides beside, the page it is on, and the frames inside its viewport.
@@ -310,6 +290,7 @@ const bootRequest = z.strictObject({
 	width: z.number().int().positive(),
 	height: z.number().int().positive(),
 	at: z.array(z.number().int().nonnegative().max(SHOT_AT_MAX_MS)).min(1).max(SHOT_AT_MAX_COUNT).optional(),
+	scroll: z.number().int().nonnegative().optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 });
 
@@ -515,7 +496,6 @@ export function createDaemonApp({
 	historyClock,
 	onHistoryNotice,
 	home,
-	publicationServices,
 	cloudAccountServices,
 	cloud,
 	teamNotice = (message) => console.error(`spool: ${message}`),
@@ -531,11 +511,6 @@ export function createDaemonApp({
 	let captureOrigin = captureOriginFor(controlOrigin);
 	const projectCapabilities = new Map<string, string>();
 	const playerHandoffs = new Map<string, { project: string; frame: string; scenario: string; expiresAt: number }>();
-	const publicationJobs = createPublicationJobs({
-		spoolDir,
-		version,
-		...(publicationServices === undefined ? {} : { services: publicationServices }),
-	});
 
 	function projectCapability(root: string): string {
 		let capability = projectCapabilities.get(root);
@@ -970,8 +945,12 @@ export function createDaemonApp({
 			if (root !== undefined) hub.publish(root, { kind: "sync", message });
 		},
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
-		// a pause hollows the copy's team mark on its tab and its cover, and a resume fills it again
-		onSyncChanged: (root) => emitAppEvent({ kind: "sync", root, ...syncMarks(root) }),
+		// a pause hollows the copy's team mark on its tab and its cover, and a resume fills it again; a long wait on the
+		// minute's bucket is said on the project's open canvases as it begins and ends
+		onSyncChanged: (root) => {
+			emitAppEvent({ kind: "sync", root, ...syncMarks(root) });
+			hub.publish(root, { kind: "sync", message: teamSync.state(root).sending ?? "" });
+		},
 		// a copy gone local says so on its cover and canvas until its team pays, when they read again
 		onGoneLocal: (root) => {
 			emitAppEvent({ kind: "sync", root, ...syncMarks(root) });
@@ -1536,7 +1515,6 @@ export function createDaemonApp({
 			if (!outcome.ok) return c.json({ error: outcome.error }, 409);
 			return c.json({ started: true }, 202);
 		})
-		.get("/api/cloud/session", async (c) => c.json({ available: await publicationJobs.available() }))
 		.get("/api/cloud/account", async (c) => c.json(await cloudAccount.read()))
 		.post("/api/cloud/account/sign-in", async (c) => {
 			cloudAccount.signIn();
@@ -2335,13 +2313,6 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			return c.json(await flowGraph.flows(project.root));
 		})
-		.get("/api/p/:project/readiness", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const entry = c.req.query("entry");
-			if (entry === undefined || !isFramePath(entry)) return c.text("entry must be a frame name", 400);
-			return c.json(await publicationReadiness(flowGraph, project.root, entry));
-		})
 		.post("/api/p/:project/flows/resolve", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -3093,7 +3064,7 @@ export function createDaemonApp({
 				const parsed = bootRequest.safeParse(value);
 				return parsed.success
 					? parsed.data
-					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scenario"? }', 400);
+					: c.text('a boot is { "width", "height", "at"?: [ms, …], "scroll"?: px, "scenario"? }', 400);
 			}),
 			(c) => {
 				// shot and logs (#25): one boot of the served document in the photo
@@ -3105,7 +3076,7 @@ export function createDaemonApp({
 				const project = resolveProject(c, name);
 				if ("response" in project) return project.response;
 				const frame = c.req.param("frame");
-				const { width, height, at, scenario } = c.req.valid("json");
+				const { width, height, at, scroll, scenario } = c.req.valid("json");
 				c.header("content-type", "application/x-ndjson; charset=utf-8");
 				c.header("cache-control", "no-store");
 				return stream(c, async (out) => {
@@ -3125,6 +3096,7 @@ export function createDaemonApp({
 									scale: plan.scale,
 									tiles: plan.tiles,
 									at: at === undefined ? undefined : [...new Set(at)].sort((a, b) => a - b),
+									scroll,
 									scenario,
 								},
 								(line) => void write({ narrate: line }).catch(() => {}),
@@ -3150,6 +3122,7 @@ export function createDaemonApp({
 								scenario: scenario ?? "default",
 								scheme: shot.scheme,
 								tiles: plan.tiles,
+								...(scroll === undefined ? {} : { scroll }),
 								shots: shot.shots,
 								entries,
 							});
@@ -3700,108 +3673,6 @@ export function createDaemonApp({
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
 		})
-		// every entry of this project with a link, so the canvas can mark each one
-		.get("/api/p/:project/publications", async (c) => {
-			const name = c.req.param("project");
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			return c.json({ entries: await publicationJobs.published(project.root, "default") });
-		})
-		.get(
-			"/api/p/:project/publication",
-			validator("query", (value, c) => {
-				const parsed = publicationParams.safeParse(value);
-				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
-			}),
-			async (c) => {
-				const name = c.req.param("project");
-				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				const { entry, scenario } = c.req.valid("query");
-				return c.json(await publicationJobs.model({ root: project.root, project: name, entry, scenario }));
-			},
-		)
-		.post(
-			"/api/p/:project/publication/jobs",
-			validator("json", (value, c) => {
-				const parsed = publicationCreate.safeParse(value);
-				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
-			}),
-			async (c) => {
-				const name = c.req.param("project");
-				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				const { entry, scenario, email, emails, accessMode } = c.req.valid("json");
-				return c.json(
-					await publicationJobs.start({
-						root: project.root,
-						project: name,
-						entry,
-						scenario,
-						...(email === undefined ? {} : { email }),
-						...(emails === undefined ? {} : { emails }),
-						...(accessMode === undefined ? {} : { accessMode }),
-					}),
-					202,
-				);
-			},
-		)
-		.put(
-			"/api/p/:project/publication/access",
-			validator("json", (value, c) => {
-				const parsed = publicationParams
-					.extend({
-						mode: z.enum(["invited", "public"]),
-						emails: z.array(z.string().email().max(254)).max(100),
-						expectedGeneration: z.number().int().positive(),
-					})
-					.safeParse(value);
-				return parsed.success ? parsed.data : c.text("invalid access request", 400);
-			}),
-			async (c) => {
-				const name = c.req.param("project");
-				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				return c.json(await publicationJobs.access({ root: project.root, project: name, ...c.req.valid("json") }));
-			},
-		)
-
-		.get("/api/p/:project/publication/jobs/:job", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const job = await publicationJobs.read(project.root, c.req.param("job"));
-			return job === undefined ? c.text("publication job not found", 404) : c.json(job);
-		})
-		.post(
-			"/api/p/:project/publication/grants",
-			validator("json", (value, c) => {
-				const parsed = publicationGrant.safeParse(value);
-				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
-			}),
-			async (c) => {
-				const name = c.req.param("project");
-				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				const { entry, scenario, email, kind } = c.req.valid("json");
-				return c.json(
-					await publicationJobs.grant({ root: project.root, project: name, entry, scenario, email, kind }),
-				);
-			},
-		)
-		.post(
-			"/api/p/:project/publication/stop",
-			validator("json", (value, c) => {
-				const parsed = publicationParams.safeParse(value);
-				return parsed.success ? parsed.data : c.text("invalid publication request", 400);
-			}),
-			async (c) => {
-				const name = c.req.param("project");
-				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				const { entry, scenario } = c.req.valid("json");
-				return c.json(await publicationJobs.stop({ root: project.root, project: name, entry, scenario }));
-			},
-		)
 		.get("/vendor/react.js", async (c) => {
 			// sandboxed srcdoc frames fetch this from a null origin — CORS must be open
 			c.header("access-control-allow-origin", "*");
@@ -4064,7 +3935,6 @@ export function createDaemonApp({
 			frames,
 			innerUrl,
 			controlToken: shellToken,
-			publicationPath: `/api/p/${encodeURIComponent(project)}/publication`,
 		});
 		const bridge = `(() => {
 	const config = window.__SPOOL_SHELL__;
@@ -4072,7 +3942,6 @@ export function createDaemonApp({
 	let geometryRevision = 0;
 	let geometryRequest = 0;
 	let geometrySubscribed = false;
-	let publicationConnected = false;
 	function retainedGeometry() {
 		return Object.entries(config.frames).map(([name, geometry]) => ({ name, w: geometry.w, h: geometry.h }));
 	}
@@ -4144,16 +4013,9 @@ export function createDaemonApp({
 				for (const block of blocks) {
 					const raw = block.match(/^data: (.*)$/m)?.[1];
 					if (!raw) continue;
-					if (/^event: hello$/m.test(block)) {
-						if (publicationConnected) window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
-						publicationConnected = true;
-					}
 					try {
 						const change = JSON.parse(raw);
 						if (change.kind === "geometry") void sendGeometry();
-						if (change.kind === "frame" || change.kind === "shared" || change.kind === "geometry") {
-							window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
-						}
 					} catch {}
 				}
 			}

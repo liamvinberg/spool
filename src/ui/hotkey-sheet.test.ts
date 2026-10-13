@@ -26,7 +26,7 @@ it("tells the whole register, grouped and in order", async () => {
 	}
 	expect(text).toContain("Enter the selected frame");
 	expect(text).toContain("double-click");
-	expect(text).toContain("Search your projects");
+	expect(text).toContain("Search projects");
 	// happy-dom is a non-Apple platform, so the accel face reads ctrl+ here
 	expect(text).toContain("ctrl+Z");
 	// dispatch-only plumbing never becomes a row

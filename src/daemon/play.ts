@@ -10,7 +10,6 @@ import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } f
 import {
 	type ComposedPlayer,
 	compilePlayer,
-	compilePublication,
 	compositionOptions,
 	type FrameStyle,
 	type PlayerBundle,
@@ -205,16 +204,6 @@ export function createPlayerCompiler(
 	}
 
 	return { getBundle, getChunk, forget, close };
-}
-
-/** The publication compile on the daemon (see `compilePublication`). */
-export async function buildPublicationPlayer(
-	designDir: string,
-	frames: PlayerFrameRef[],
-	version: string,
-): Promise<{ bundle: PlayerBundle; inputs: string[] }> {
-	const { bundle, inputs } = await compilePublication(daemonCompileHost, { designDir, frames, version });
-	return { bundle, inputs };
 }
 
 export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;

@@ -14,8 +14,6 @@ import {
 	useViewport,
 	writeBarHidden,
 } from "./player-page";
-import type { PlayerPublicationClient } from "./player-publication-client";
-import { usePlayerShare } from "./player-share";
 
 /**
  * The played page (#227). Play opens a browser tab, so the frame stops being a
@@ -28,7 +26,7 @@ import { usePlayerShare } from "./player-share";
  * that site would in production.
  *
  * The only chrome is the bar along the top, the same 30px the Mac app's window
- * wears: the frame switcher, sharing, the window's size, and browser close. In a
+ * wears: the frame switcher, the window's size, and browser close. In a
  * tab it can be put away with the eye on it, and a nub at the top edge is then
  * its trace — rest the cursor there and it peeks back in, press the nub and it
  * stays. Styling lives in the served document's chrome stylesheet; this
@@ -62,7 +60,6 @@ export function Player({
 	controller,
 	host,
 	loading = false,
-	publication,
 	onInset,
 	closeLabel = "Close the tab",
 }: {
@@ -73,8 +70,6 @@ export function Player({
 	host?: ReactNode;
 	/** The screen is still on its way — the shell's iframe has not been revealed yet. */
 	loading?: boolean;
-	/** Trusted outer-shell Cloud client. Authored player documents never receive it. */
-	publication?: PlayerPublicationClient;
 	/**
 	 * How much of the window the bar stands in front of, told to whoever sizes
 	 * the frame's box. The bare document needs no telling: its screen is laid
@@ -90,7 +85,6 @@ export function Player({
 	const viewport = useViewport();
 	const Screen = frames[frame];
 	const [picking, setPicking] = useState(false);
-	const share = usePlayerShare(publication);
 	// Which shell this document is in, asked once: a window the app made and
 	// handed a bridge draws the bar it was sized for, and everything else is the
 	// tab #227 designed. It cannot change under a live document, so it is read at
@@ -103,9 +97,8 @@ export function Player({
 		writeBarHidden(next);
 		setHidden(next);
 	};
-	// the external-link dialog is modal: it owns the moment, chrome and all. The
-	// share popover is not, but a put-away bar stays out while it hangs from it.
-	const blocked = externalHref !== null || share.open;
+	// the external-link dialog is modal: it owns the moment, chrome and all.
+	const blocked = externalHref !== null;
 	const { peeked, enter, leave } = usePeek(desk === null && hidden && !blocked);
 	// A bar that went away takes its open switcher with it.
 	const worn = desk !== null || !hidden || peeked;
@@ -141,14 +134,12 @@ export function Player({
 		<TopBar
 			project={project}
 			frame={frame}
-			frames={share.connected ?? controller.frames()}
-			linked={share.connected !== undefined}
+			frames={controller.frames()}
 			viewport={viewport}
 			picking={picking}
 			onPicking={setPicking}
 			onWalk={controller.walk}
 			loading={loading}
-			share={share.trigger}
 			{...(desk === null
 				? {
 						hidden,
@@ -180,7 +171,6 @@ export function Player({
 					onOpen={controller.dismissExternal}
 				/>
 			)}
-			{share.surface}
 			{desk === null && hidden ? (
 				// The strip the put-away bar left behind. The bar is inside it, so the
 				// browser's own hover says when the hand is on either: nothing crosses
@@ -268,7 +258,6 @@ function FrameSwitcher({
 	project,
 	frame,
 	frames,
-	linked,
 	picking,
 	onPicking,
 	onWalk,
@@ -277,7 +266,6 @@ function FrameSwitcher({
 	project?: string | undefined;
 	frame: string;
 	frames: string[];
-	linked: boolean;
 	picking: boolean;
 	onPicking: (picking: boolean) => void;
 	onWalk: (frame: string) => void;
@@ -384,7 +372,7 @@ function FrameSwitcher({
 					{matches.length === 0 && <span className="spool-picker-empty">No linked frames found.</span>}
 				</span>
 				<span className="spool-picker-foot">
-					{frames.length} {linked ? "linked frames · local preview" : frames.length === 1 ? "frame" : "frames"}
+					{frames.length} {frames.length === 1 ? "frame" : "frames"}
 				</span>
 			</span>
 		</span>
@@ -425,13 +413,11 @@ function TopBar({
 	project,
 	frame,
 	frames,
-	linked,
 	viewport,
 	picking,
 	onPicking,
 	onWalk,
 	loading,
-	share,
 	desk,
 	hidden,
 	away,
@@ -442,14 +428,12 @@ function TopBar({
 	project: string;
 	frame: string;
 	frames: string[];
-	linked: boolean;
 	viewport: { vw: number; vh: number };
 	picking: boolean;
 	onPicking: (picking: boolean) => void;
 	onWalk: (frame: string) => void;
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
-	share: ReactNode;
 	/** The app's window, when this is its title bar. */
 	desk?: DeskWindow;
 	/** Tab only: whether the bar is put away, so the eye knows which way it faces. */
@@ -478,7 +462,6 @@ function TopBar({
 			<FrameSwitcher
 				frame={frame}
 				frames={frames}
-				linked={linked}
 				picking={picking}
 				onPicking={onPicking}
 				onWalk={onWalk}
@@ -507,8 +490,6 @@ function TopBar({
 						<span className="spool-bar-rule" />
 					</span>
 				)}
-				{share}
-				{share !== null && <span className="spool-bar-rule" />}
 				{layout.size && (
 					<span className="spool-bar-hint">
 						{viewport.vw} × {viewport.vh}

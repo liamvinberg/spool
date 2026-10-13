@@ -56,7 +56,14 @@ import {
 import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { type MoveDone, useMovedToast } from "./team-move";
-import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway, useCoverMoves } from "./team-moves";
+import {
+	FoundAway,
+	MoveCommitLine,
+	MoveToTeamDialog,
+	moveCommitNote,
+	TeamProjectsAway,
+	useCoverMoves,
+} from "./team-moves";
 import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
@@ -674,10 +681,11 @@ export function App() {
 		openTab(project);
 	});
 	const teamHome = useTeamHome(account, openExternally, handed?.team ?? null, {
-		covers: (address, here) => {
+		covers: (address, here, sort) => {
 			const covers = coversOf(
 				projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
 			);
+			if (sort === "Name") covers.sort((a, b) => a.name.localeCompare(b.name));
 			return covers.length === 0 ? undefined : (
 				<ProjectGrid
 					projects={covers}
@@ -721,6 +729,10 @@ export function App() {
 		own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
 		onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
 		revision: (address) => projects.filter((project) => project.team?.team === address).length,
+		copies: projects
+			.filter((project) => project.team !== undefined)
+			.map((project) => project.root)
+			.join("\n"),
 		note: moveNote === null ? undefined : <MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />,
 	});
 	/** "Move to team…" on a project in no team, while this account edits in a team. */
@@ -732,6 +744,7 @@ export function App() {
 		movedToast.say(done.toast);
 		if (done.note !== undefined) setMoveNote(done.note);
 		if (done.show !== undefined) teamHome.show(done.show);
+		teamHome.refreshLists();
 		void refetch();
 	};
 	const coverMoves = useCoverMoves({ teams: teamHome.all, onMoveIn: moveToTeam, onDone: moveDone });
@@ -839,6 +852,30 @@ export function App() {
 									)
 								}
 								team={teamHome.team}
+								everywhere={
+									teamHome.everywhere && {
+										...teamHome.everywhere,
+										projects: projects.filter((project) => !forgetting.has(project.root)),
+										teams: teamHome.all,
+										away: teamHome.all.flatMap((team) =>
+											(teamHome.lists.get(team.address) ?? [])
+												.filter((project) => project.copies.length === 0)
+												.map((project) => ({ team: team.address, project })),
+										),
+										drawAway: (found) => (
+											<FoundAway
+												found={found}
+												teams={teamHome.all}
+												origin={teamHome.origin}
+												onGot={(project) => {
+													void refetch();
+													openTab(project);
+												}}
+												onOpen={openExternally}
+											/>
+										),
+									}
+								}
 								account={
 									<AccountFoot
 										account={account}

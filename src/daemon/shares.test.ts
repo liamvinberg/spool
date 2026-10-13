@@ -241,6 +241,45 @@ describe("a solo project's share", () => {
 		expect([...files.keys()].some((path) => path.startsWith("frames/checkout/"))).toBe(false);
 	});
 
+	it("shares a page whose navigation the flow map can't read or that leads nowhere", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writePageFrame(
+			root,
+			"checkout",
+			"pay",
+			[
+				'import { ui } from "spool";',
+				"export default function Frame() {",
+				"\treturn (",
+				"\t\t<main>",
+				"\t\t\t<a data-go={String(ui.state.next)}>next</a>",
+				'\t\t\t<a data-go="checkout/nowhere">gone</a>',
+				"\t\t</main>",
+				"\t);",
+				"}",
+				"",
+			].join("\n"),
+		);
+		const daemon = makeApp(spoolDir, { cloud: cloud.request });
+		const flows = (await (await daemon.request(`/api/p/${name}/flows`)).json()) as {
+			edges: { to: string; missing?: true }[];
+			unreadable: unknown[];
+		};
+		expect(flows.unreadable).toHaveLength(1);
+		expect(flows.edges.some((edge) => edge.to === "checkout/nowhere" && edge.missing === true)).toBe(true);
+
+		const made = await daemon.request(`/api/p/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind: "link", pages: ["checkout"] }),
+		});
+		expect(made.status, await made.clone().text()).toBe(200);
+		expect(cloud.shares.map((share) => share.pages)).toEqual([["checkout"]]);
+		expect(cloud.copy()["frames/checkout/pay/frame.tsx"]).toContain("checkout/nowhere");
+	});
+
 	it("offers nothing to share while nobody is signed in to spool.page", async () => {
 		const cloud = fakeCloud();
 		cloud.signOut();

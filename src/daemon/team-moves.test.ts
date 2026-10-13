@@ -752,9 +752,69 @@ describe("Move to team under the save limit", () => {
 		const last = progress.at(-1);
 		expect(last).toEqual({ up: last?.total, total: cloud.paths("site").length, paused: null });
 		expect(progress.find((at) => at.paused !== null)?.paused?.why).toBe(
-			"this project took 120 saves in the last minute",
+			"spool.page takes this project's saves at 120 a minute",
 		);
 		expect(progress.some((at) => at.up > 0 && at.up < at.total && at.paused === null)).toBe(true);
+	});
+
+	it("moves 2,000 files in one run with no refusals, counting none of them against spool.page's limits", {
+		timeout: 120_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = bigProject(2_000);
+		// a minute's bucket far smaller than the move, on a clock that never turns: it never refills
+		cloud.bucket(120, 120, () => 0);
+		const slept: number[] = [];
+		const moved = await moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			wait: async (ms) => void slept.push(ms),
+		});
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(cloud.paths("site")).toContain("frames/f1999/frame.tsx");
+		expect(cloud.refused("site")).toEqual([]);
+		expect(slept).toEqual([]);
+		expect(cloud.saves("site").every((save) => save.moved)).toBe(true);
+	});
+
+	it("still counts against nothing when a move that stopped partway is run again", { timeout: 60_000 }, async () => {
+		const cloud = fakeTeam();
+		const project = bigProject(300);
+		cloud.bucket(120, 120, () => 0);
+		const closing = new AbortController();
+		await expect(
+			moveAs(cloud, project, {
+				signal: closing.signal,
+				onProgress: (at) => {
+					if (at.up >= 100) closing.abort();
+				},
+			}),
+		).rejects.toThrow("spool closed before site moved");
+		const moved = await moveAs(cloud, project);
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(cloud.paths("site")).toContain("frames/f299/frame.tsx");
+		expect(cloud.refused("site")).toEqual([]);
+		expect(cloud.saves("site").every((save) => save.moved)).toBe(true);
+	});
+
+	it("never gives up on the minute's limit of a spool.page that counts a move against it", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const project = existingProject();
+		cloud.limit("rate_limited", 1);
+		const slept: number[] = [];
+		const moved = await moveAs(cloud, project, {
+			wait: async (ms) => {
+				slept.push(ms);
+				if (slept.length === 12) cloud.lift();
+			},
+		});
+		expect(await moved.commit).toMatchObject({ kind: "committed" });
+		expect(slept).toHaveLength(12);
 	});
 
 	for (const [reason, said] of [
@@ -813,7 +873,7 @@ describe("Move to team under the save limit", () => {
 		let seen = await progress();
 		for (const start = Date.now(); seen?.paused == null && Date.now() - start < 10_000; seen = await progress())
 			await new Promise((resolve) => setTimeout(resolve, 25));
-		expect(seen).toMatchObject({ up: 0, paused: { why: "this project took 120 saves in the last minute" } });
+		expect(seen).toMatchObject({ up: 0, paused: { why: "spool.page takes this project's saves at 120 a minute" } });
 		expect(seen?.total).toBeGreaterThanOrEqual(5);
 		cloud.lift();
 

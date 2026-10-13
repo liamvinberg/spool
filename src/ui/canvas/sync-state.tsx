@@ -7,7 +7,8 @@ export const SYNC_CHANGED = "spool-sync-change";
 
 /**
  * A team project's sync, said on its canvas for as long as it lasts and whenever the canvas opens: that the project
- * ended here, that it has gone local until its team pays, that sync is paused on a limit, and which files didn't
+ * ended here, that it has gone local until its team pays, that sync is paused on a limit, that changes are waiting
+ * out a long spell on the minute's limit, and which files didn't
  * travel. A solo project's canvas says nothing.
  */
 export function useSyncState(project: string): ReactNode {
@@ -34,8 +35,8 @@ export function useSyncState(project: string): ReactNode {
 
 export function SyncStateLine({ state }: { state: SyncState }) {
 	const [open, setOpen] = useState(false);
-	const { ended, goneLocal, paused, held } = state;
-	if (ended === null && goneLocal === null && paused === null && held.length === 0) return null;
+	const { ended, goneLocal, paused, sending, held } = state;
+	if (ended === null && goneLocal === null && paused === null && sending === null && held.length === 0) return null;
 	return (
 		<Popover
 			role="region"
@@ -56,6 +57,7 @@ export function SyncStateLine({ state }: { state: SyncState }) {
 			{paused !== null && (
 				<p className="text-primary">Sync paused: {paused}. Changes stay on this Mac until it lifts.</p>
 			)}
+			{sending !== null && <p className="text-secondary">{sending}.</p>}
 			{held.length > 0 && (
 				<>
 					<button

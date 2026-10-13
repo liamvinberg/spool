@@ -12,7 +12,6 @@ import {
 	login,
 	logout,
 	pastedCode,
-	session,
 } from "./cloud-auth";
 import { makeTempDir } from "./test-helpers";
 
@@ -375,9 +374,9 @@ esac
 		const vault = memoryVault();
 		await vault.write("t".repeat(43));
 		await expect(
-			session("/tmp/spool-one", {
+			account("/tmp/spool-one", {
 				vault,
-				fetch: async () => new Response('{"error":"publisher_session_required"}', { status: 401 }),
+				fetch: async () => new Response('{"error":"session_required"}', { status: 401 }),
 			}),
 		).rejects.toThrow(/expired or was revoked/u);
 	});
@@ -386,7 +385,7 @@ esac
 		const vault = memoryVault();
 		await vault.write("t".repeat(43));
 		await expect(
-			session("/tmp/spool-one", {
+			account("/tmp/spool-one", {
 				vault,
 				fetch: async () => Promise.reject(new Error("token ttt secret host detail")),
 			}),
@@ -397,13 +396,13 @@ esac
 		const held = new AbortController();
 		await authorizedCloudRequest(
 			"/tmp/spool-one",
-			"/api/publications",
+			"/api/teams",
 			{ signal: held.signal },
 			{
 				origin: "https://cloud.test",
 				vault: { read: async () => "t".repeat(43), write: async () => {}, delete: async () => {} },
 				fetch: async (input, init) => {
-					expect(String(input)).toBe("https://cloud.test/api/publications");
+					expect(String(input)).toBe("https://cloud.test/api/teams");
 					expect(init?.redirect).toBe("error");
 					expect(init?.signal).not.toBe(held.signal);
 					expect(init?.signal).toBeInstanceOf(AbortSignal);

@@ -1,7 +1,7 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
  * Play from here / Copy path / Reload / Set as thumbnail / Tidy / adaptive
- * export / the frame's link / Move to Trash. Set as thumbnail makes the frame's
+ * export / Move to Trash. Set as thumbnail makes the frame's
  * still as it is now the project's picture on Home; it waits, disabled, until
  * the frame has one. Export exists only for a frame selection: one frame downloads
  * immediately; a multi-selection opens the format choice. Tidy is always here —
@@ -28,23 +28,10 @@ const ROW = 28;
 const RULE = 9;
 const FRAME = 10;
 
-/** `shareRows` is the sharing verbs the menu carries: none, the one that makes a link, or a live link's three. */
-export function contextMenuSize(canExport: boolean, shareRows: 0 | 1 | 3 = 0): { w: number; h: number } {
-	const rows = 6 + (canExport ? 1 : 0) + shareRows;
-	const rules = 2 + (shareRows === 0 ? 0 : 1);
+export function contextMenuSize(canExport: boolean): { w: number; h: number } {
+	const rows = 6 + (canExport ? 1 : 0);
+	const rules = 2;
 	return { w: MENU_WIDTH, h: rows * ROW + rules * RULE + FRAME };
-}
-
-/**
- * The frame's link. Before it exists it is one row that copies a new one; after,
- * the row becomes the three verbs a live link has, so ending it is never buried
- * inside the popover that made it.
- */
-export interface MenuShare {
-	shared: boolean;
-	onCopy: () => void;
-	onManage: () => void;
-	onStop: () => void;
 }
 
 export function ContextMenu({
@@ -53,7 +40,6 @@ export function ContextMenu({
 	tidyLabel,
 	onTidy,
 	onPlay,
-	share,
 	onCopyPath,
 	onReload,
 	onSetThumbnail,
@@ -64,7 +50,6 @@ export function ContextMenu({
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
-	share?: MenuShare | undefined;
 	onCopyPath: () => void;
 	onReload: () => void;
 	/** "Set as thumbnail"; absent while the frame has no still, which leaves the item disabled. */
@@ -96,20 +81,6 @@ export function ContextMenu({
 					onClick={exportAction.onSelect}
 				/>
 			) : null}
-			{share !== undefined && (
-				<>
-					<MenuSeparator />
-					{share.shared ? (
-						<>
-							<MenuItem label="Copy link" onClick={share.onCopy} />
-							<MenuItem label="Sharing…" onClick={share.onManage} />
-							<MenuItem label="Stop sharing…" onClick={share.onStop} />
-						</>
-					) : (
-						<MenuItem label="Copy share link" onClick={share.onCopy} />
-					)}
-				</>
-			)}
 			<MenuSeparator />
 			<MenuItem label="Move to Trash" shortcut={hotkeyKey("canvas.trash")} onClick={onTrash} />
 		</Menu>

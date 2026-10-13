@@ -41,7 +41,6 @@ import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes"
 import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
-import { createPlayerPublicationClient } from "../runtime/player-publication-client";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
 import type { PresenceState } from "../team-sync-protocol";
@@ -1695,37 +1694,6 @@ export async function agentPermissions(
 	}
 }
 
-export function canvasPublicationClient(project: string, entry: string) {
-	return createPlayerPublicationClient({
-		path: `/api/p/${encodeURIComponent(project)}/publication`,
-		entry,
-		scenario: "default",
-		controlToken,
-	});
-}
-
-/** The frames of a project that have a link; empty when it cannot be read. */
-export async function fetchSharedEntries(project: string): Promise<string[]> {
-	try {
-		const response = await client.api.p[":project"].publications.$get({ param: { project } });
-		if (!response.ok) return [];
-		const body: unknown = await response.json();
-		const entries = typeof body === "object" && body !== null && "entries" in body ? body.entries : undefined;
-		return Array.isArray(entries) ? entries.filter((entry): entry is string => typeof entry === "string") : [];
-	} catch {
-		return [];
-	}
-}
-
-export async function fetchSharingAvailable(): Promise<boolean> {
-	try {
-		const response = await client.api.cloud.session.$get();
-		return response.ok && (await response.json()).available === true;
-	} catch {
-		return false;
-	}
-}
-
 /** Who this Mac is signed in to spool.page as; unreachable when the daemon cannot say. */
 export async function fetchCloudAccount(): Promise<CloudAccountState> {
 	try {
@@ -1940,6 +1908,7 @@ export async function fetchSyncState(project: string): Promise<SyncState | undef
 			ended: typeof body.ended === "string" ? body.ended : null,
 			goneLocal: typeof body.goneLocal === "string" ? body.goneLocal : null,
 			paused: typeof body.paused === "string" ? body.paused : null,
+			sending: typeof body.sending === "string" ? body.sending : null,
 			held: body.held,
 		};
 	} catch {

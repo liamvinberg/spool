@@ -50,7 +50,12 @@ interface Project {
 	team: string;
 	name: string;
 	files: Map<string, TeamVersion>;
-	saves: { path: string; base: number | null; deleted: boolean; by: string; outcome: string }[];
+	/** Every save it took, and whether it was a move's, which counts against no limit. */
+	saves: { path: string; base: number | null; deleted: boolean; by: string; outcome: string; moved: boolean }[];
+	/** Every save it refused, and why. */
+	refused: { path: string; reason: string }[];
+	/** Whose move the project holds nothing but, while it does: undefined before its first save, null once it holds more. */
+	mover?: string | null;
 	/** Every applied version's bytes and who made it, which a canvas.json merge reads its base from. */
 	versions: Map<number, TeamVersion>;
 	sockets: Set<Connected>;
@@ -72,6 +77,8 @@ interface TeamVersion {
 interface Connected {
 	person: Person;
 	live: boolean;
+	/** Its hello said it moves a project in. */
+	moving?: boolean;
 	/** Where this connection's person last said they were: kept only while it's connected. */
 	presence?: { state: PresenceState; at: number };
 	deliver(frame: string | Uint8Array): void;
@@ -112,6 +119,21 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let limited: { reason: Limited; retryAfter: number } | undefined;
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
+	/** The minute's bucket, on a clock the test turns: its level when last taken from, and how fast it refills. */
+	let bucket: { level: number; at: number; refill: number; now: () => number } | undefined;
+	/** The bucket's level now. */
+	const level = () =>
+		bucket === undefined
+			? Number.POSITIVE_INFINITY
+			: Math.min(2_000, bucket.level + ((bucket.now() - bucket.at) * bucket.refill) / 60_000);
+	/** Whether a save on this connection is a move's: the project holds nothing but this mover's saves. */
+	const movesIn = (at: Project, from: Connected) =>
+		from.moving === true && (at.mover === undefined ? at.saves.length === 0 : at.mover === from.person.accountId);
+	/** How full the bucket is, for a connection it paces. */
+	const pace = (at: Project, from: Connected) =>
+		bucket === undefined || movesIn(at, from)
+			? {}
+			: { pace: { room: Math.max(0, Math.floor(level())), refill: bucket.refill } };
 	/** Whether the rate lets one more save through now; when it doesn't, the seconds until it may. */
 	const overRate = (): number | undefined => {
 		if (rate === undefined) return undefined;
@@ -228,6 +250,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					name,
 					files: new Map(),
 					saves: [],
+					refused: [],
 					versions: new Map(),
 					sockets: new Set(),
 					version: 0,
@@ -333,7 +356,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				from.close();
 				return;
 			}
-			from.deliver(encodeFrame({ type: "welcome", protocol: PROTOCOL_VERSION, format: 2, head: at.version }));
+			from.moving = message.moving === true;
+			if (!from.moving && at.mover === from.person.accountId) at.mover = null;
+			from.deliver(
+				encodeFrame({
+					type: "welcome",
+					protocol: PROTOCOL_VERSION,
+					format: 2,
+					head: at.version,
+					...pace(at, from),
+				}),
+			);
 			const since = Number(message.since);
 			for (const [path, file] of [...at.files].sort((a, b) => a[1].version - b[1].version))
 				if (file.version > since) from.deliver(fileFrame(path, file));
@@ -370,10 +403,20 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			deleted: boolean;
 		};
 		const current = at.files.get(path);
-		const refuse = (reason: string, retryAfter?: number) =>
+		const refuse = (reason: string, retryAfter?: number) => {
+			at.refused.push({ path, reason });
 			from.deliver(
-				encodeFrame({ type: "refused", ref, path, reason, ...(retryAfter === undefined ? {} : { retryAfter }) }),
+				encodeFrame({
+					type: "refused",
+					ref,
+					path,
+					reason,
+					...(retryAfter === undefined ? {} : { retryAfter }),
+					...pace(at, from),
+				}),
 			);
+		};
+		const moved = movesIn(at, from);
 		if (from.person.revoked || !edits(from.person, at.team)) {
 			refuse(from.person.revoked ? "signed_out" : "not_editor");
 			from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
@@ -382,10 +425,16 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		else if (limited !== undefined) refuse(limited.reason, limited.retryAfter);
 		else {
 			const wait = overRate();
+			const room = level();
 			if (wait !== undefined) refuse("rate_limited", wait);
-			else if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
-				from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
-			else apply(at, from, { ref, path, base, deleted }, current, bytes);
+			else if (bucket !== undefined && !moved && room < 1)
+				refuse("rate_limited", Math.max(1, Math.ceil(((1 - room) * 60) / bucket.refill)));
+			else {
+				if (bucket !== undefined && !moved) Object.assign(bucket, { level: room - 1, at: bucket.now() });
+				if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
+					from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version, ...pace(at, from) }));
+				else apply(at, from, { ref, path, base, deleted }, current, bytes, moved);
+			}
 		}
 	}
 
@@ -399,6 +448,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		{ ref, path, base, deleted }: { ref: string; path: string; base: number | null; deleted: boolean },
 		current: TeamVersion | undefined,
 		bytes: Uint8Array | undefined,
+		moved = false,
 	): void {
 		const stale = current !== undefined && current.version !== base;
 		const merged =
@@ -406,14 +456,22 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				? mergeCanvas(base === null ? null : (at.versions.get(base)?.bytes ?? null), current.bytes, bytes)
 				: null;
 		if (merged !== null && current !== undefined && hash(merged) === hash(current.bytes)) {
-			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version }));
+			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version, ...pace(at, from) }));
 			from.deliver(fileFrame(path, current));
 			return;
 		}
 		const beatsDelete = stale && current.bytes === null && bytes !== undefined;
 		const applies = !stale || merged !== null || beatsDelete;
 		at.version += 1;
-		at.saves.push({ path, base, deleted, by: from.person.accountId, outcome: applies ? "applied" : "set_aside" });
+		at.saves.push({
+			path,
+			base,
+			deleted,
+			by: from.person.accountId,
+			outcome: applies ? "applied" : "set_aside",
+			moved,
+		});
+		at.mover = moved ? from.person.accountId : null;
 		if (!applies) {
 			const by = current.by ?? from.person;
 			from.deliver(
@@ -423,6 +481,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					path,
 					version: current.version,
 					by: { accountId: by.accountId, device: by.device },
+					...pace(at, from),
 				}),
 			);
 			from.deliver(fileFrame(path, current));
@@ -432,7 +491,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const file = { version: at.version, bytes: content, by: from.person };
 		at.files.set(path, file);
 		at.versions.set(file.version, file);
-		from.deliver(encodeFrame({ type: "saved", ref, path, version: file.version }));
+		from.deliver(encodeFrame({ type: "saved", ref, path, version: file.version, ...pace(at, from) }));
 		if (merged !== null) from.deliver(fileFrame(path, file));
 		const by = { accountId: from.person.accountId, device: from.person.device };
 		for (const other of at.sockets)
@@ -594,6 +653,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		bytes: (name: string, path: string) => project(name)?.files.get(path)?.bytes,
 		paths: (name: string) => [...(project(name)?.files.keys() ?? [])].sort(),
 		saves: (name: string) => project(name)?.saves ?? [],
+		/** Every save the project refused, and why. */
+		refused: (name: string) => project(name)?.refused ?? [],
 		resent: (name: string) => project(name)?.resent ?? [],
 		turns: (name: string) => project(name)?.turns ?? [],
 		/** A message the team never sends: what a compromised cloud might. */
@@ -687,7 +748,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				refusing = undefined;
 			};
 		},
-		/** At most `saves` saves are taken in each window of `now`, and the rest refused as rate_limited. */
+		/**
+		 * The minute's limit as spool.page keeps it now: a bucket holding `room` saves, refilling `refill` a minute on the
+		 * clock `now`, from everyone together and never from a move's saves. Answers say how full it is.
+		 */
+		bucket(room: number, refill: number, now: () => number) {
+			bucket = { level: room, at: now(), refill, now };
+		},
+		/**
+		 * At most `saves` saves are taken in each window of `now`, and the rest refused as rate_limited: the minute as
+		 * the spool.page before buckets counted it, a move's saves too.
+		 */
 		rateLimit(saves: number, windowMs: number, now: () => number) {
 			rate = { saves, windowMs, now, start: now(), taken: 0 };
 		},

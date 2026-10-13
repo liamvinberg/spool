@@ -100,14 +100,7 @@ export function TeamProjectsAway({
 			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
 				{away.map((project) => (
 					<article key={project.url} className="pj-away-cover group/project relative min-w-0">
-						<div className="relative">
-							<div className="grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-line-strong bg-surface-canvas opacity-60">
-								<span className="px-[18px] text-center text-secondary type-detail">
-									{project.repo ?? "no repo linked"}
-								</span>
-							</div>
-							<HerePill people={here?.get(project.name)} />
-						</div>
+						<AwayFace says={project.repo ?? "no repo linked"} here={here?.get(project.name)} />
 						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
 							<strong className="truncate text-secondary type-title font-[500]">{project.name}</strong>
 							<span className="flex items-center gap-[4px]">
@@ -171,6 +164,82 @@ export function TeamProjectsAway({
 				/>
 			)}
 		</section>
+	);
+}
+
+/** A project this Mac doesn't hold, dimmed: a dashed box saying where it is, and who is inside it now. */
+function AwayFace({ says, here }: { says: string; here: readonly HerePerson[] | undefined }) {
+	return (
+		<div className="relative">
+			<div className="grid aspect-[1.82] place-items-center rounded-[8px] border border-dashed border-line-strong bg-surface-canvas opacity-60">
+				<span className="px-[18px] text-center text-secondary type-detail">{says}</span>
+			</div>
+			<HerePill people={here} />
+		</div>
+	);
+}
+
+/**
+ * The teams' projects the search found that aren't on this Mac, among its covers: "Get it" for a team this account
+ * edits in, and for one it only watches, "Open" in the browser, since nothing of a viewer's comes to this Mac.
+ */
+export function FoundAway({
+	found,
+	teams,
+	origin,
+	onGot,
+	onOpen,
+}: {
+	found: readonly { team: string; project: TeamProjectOnMac }[];
+	teams: readonly CloudTeam[];
+	/** spool.page, where a viewer's project opens. */
+	origin: string;
+	onGot: (project: { root: string; name: string }) => void;
+	onOpen: (url: string) => void;
+}) {
+	const [getting, setGetting] = useState<{ team: CloudTeam; project: TeamProjectOnMac } | null>(null);
+	return (
+		<>
+			{found.map(({ team: address, project }) => {
+				const team = teams.find((each) => each.address === address);
+				if (team === undefined) return null;
+				const viewer = team.role === "viewer";
+				return (
+					<article key={project.url} className="pj-away-cover min-w-0">
+						<AwayFace says={viewer ? "opens in your browser" : "not on this Mac"} here={undefined} />
+						<div className="flex items-center justify-between gap-[9px] pt-[15px]">
+							<span className="min-w-0">
+								<strong className="block truncate text-secondary type-title font-[500]">{project.name}</strong>
+								<span className="mt-[5px] block truncate text-secondary type-detail">{team.name}</span>
+							</span>
+							{viewer ? (
+								<Button
+									aria-label={`Open ${project.name} in the browser`}
+									onClick={() => onOpen(`${origin}/${team.address}/${encodeURIComponent(project.name)}`)}
+								>
+									Open ↗
+								</Button>
+							) : (
+								<Button aria-label={`Get ${project.name}`} onClick={() => setGetting({ team, project })}>
+									Get it
+								</Button>
+							)}
+						</div>
+					</article>
+				);
+			})}
+			{getting !== null && (
+				<GetItDialog
+					team={getting.team}
+					project={getting.project}
+					onGot={(got) => {
+						setGetting(null);
+						onGot(got);
+					}}
+					onClose={() => setGetting(null)}
+				/>
+			)}
+		</>
 	);
 }
 
@@ -466,7 +535,7 @@ function MoveProgressLine({ progress, team }: { progress: MoveProgress | null; t
 			</p>
 			{progress.paused !== null && (
 				<p className="text-secondary type-label">
-					Paused: {progress.paused.why}. Carrying on in {seconds} {seconds === 1 ? "second" : "seconds"}.
+					Waiting: {progress.paused.why}. Carrying on in {seconds} {seconds === 1 ? "second" : "seconds"}.
 				</p>
 			)}
 		</div>

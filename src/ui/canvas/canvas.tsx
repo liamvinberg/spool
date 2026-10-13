@@ -211,7 +211,6 @@ import {
 import { useElementTree } from "./rail-elements";
 import { setAsideAsk, useSetAside } from "./set-aside";
 import { ShareSheet } from "./share-sheet";
-import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
@@ -399,8 +398,6 @@ export function ProjectCanvas({
 	 * by whatever follows it. A wheel tick moves it and renders nothing.
 	 */
 	const [camera] = useState(createCameraStore);
-	const sharingAvailable = useSharingAvailable();
-	const sharing = useCanvasSharing(project, sharingAvailable, camera);
 	// pages shared with outsiders through spool.page (DEV-193), started from a page's right-click
 	const pageShares = useMemo(() => daemonShares(project), [project]);
 	const { shares: projectShares } = useShares(pageShares);
@@ -3836,7 +3833,6 @@ export function ProjectCanvas({
 	 * every one it made.
 	 */
 	const resync = useCallback(() => {
-		window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
 		void refetchFrames();
 		void refetchFlows();
 		for (const frame of allFramesRef.current) reloadFrameDocument(frame.name);
@@ -3910,8 +3906,6 @@ export function ProjectCanvas({
 						cover?: Cover;
 						message?: string;
 					};
-					if (["frame", "shared", "geometry"].includes(event.kind))
-						window.dispatchEvent(new CustomEvent("spool-player-publication-change"));
 					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
@@ -5202,10 +5196,7 @@ export function ProjectCanvas({
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to Select's click, double-click and ⌘-click gestures.
 		cancelPicks();
-		const menuSize = contextMenuSize(
-			!elementSelection,
-			!sharingAvailable ? 0 : (sharing.state(hit)?.shared ?? sharing.listed(hit)) ? 3 : 1,
-		);
+		const menuSize = contextMenuSize(!elementSelection);
 		const viewport = viewportRef.current;
 		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - menuSize.w - 8);
 		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - menuSize.h - 8);
@@ -6175,12 +6166,6 @@ export function ProjectCanvas({
 										selected={isSelected}
 										hovered={isHovered}
 										unseen={unseen.get(frame.name)}
-										sharing={(() => {
-											const state = sharing.state(frame.name);
-											return state?.chip === undefined
-												? undefined
-												: { chip: state.chip, expanded: state.open, open: () => sharing.show(frame.name) };
-										})()}
 										onPlay={() => playFrame(frame.name)}
 										setAside={setAside.label(frame.name)}
 										live={
@@ -6348,25 +6333,6 @@ export function ProjectCanvas({
 											},
 										}
 							}
-							share={
-								sharingAvailable
-									? {
-											shared: sharing.state(menu.frame)?.shared ?? sharing.listed(menu.frame),
-											onCopy: () => {
-												sharing.copy(menu.frame);
-												setMenu(null);
-											},
-											onManage: () => {
-												sharing.show(menu.frame);
-												setMenu(null);
-											},
-											onStop: () => {
-												sharing.show(menu.frame, "stop");
-												setMenu(null);
-											},
-										}
-									: undefined
-							}
 							onPlay={() => {
 								const frame = menu.frame;
 								setMenu(null);
@@ -6472,7 +6438,6 @@ export function ProjectCanvas({
 					) : null}
 				</div>
 			</PaneWindow>
-			{sharing.node}
 			{sharingPage !== null && (
 				<ShareSheet
 					page={sharingPage}

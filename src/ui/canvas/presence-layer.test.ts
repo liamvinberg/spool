@@ -30,8 +30,8 @@ const companion = (over: Partial<AgentCompanion> = {}): AgentCompanion => ({
 describe("pills on a frame's name", () => {
 	it("line up right to left from the frame's top-right corner", () => {
 		const slots = pillSlots([HOME], () => [ben, ada], flat);
-		expect(slots.get("ben")).toEqual({ x: 500 - pillWidth("ben"), y: 100 - 27 });
-		expect(slots.get("ada")).toEqual({ x: 500 - pillWidth("ben") - 6 - pillWidth("ada lovelace"), y: 73 });
+		expect(slots.get("ben")).toMatchObject({ x: 500 - pillWidth("ben"), y: 100 - 27, dotted: false });
+		expect(slots.get("ada")).toMatchObject({ x: 500 - pillWidth("ben") - 6 - pillWidth("ada lovelace"), y: 73 });
 	});
 
 	it("step aside left of an agent's square docked on the same frame, and only that frame", () => {
@@ -40,7 +40,7 @@ describe("pills on a frame's name", () => {
 		const pill = slots.get("ben");
 		// the square's left edge, docked at the corner, is 10px in
 		expect(pill !== undefined && pill.x + pillWidth("ben")).toBeLessThanOrEqual(500 - 10 - 6);
-		expect(slots.get("ada")).toEqual({ x: 1000 - pillWidth("ada lovelace"), y: 73 });
+		expect(slots.get("ada")).toMatchObject({ x: 1000 - pillWidth("ada lovelace"), y: 73 });
 	});
 
 	it("clear the agent's name too once two agents share the page", () => {
@@ -79,6 +79,26 @@ describe("pills on a frame's name", () => {
 	it("stand in screen pixels at any zoom", () => {
 		const half = (x: number, y: number) => ({ x: x / 2 + 20, y: y / 2 });
 		const slots = pillSlots([HOME], () => [ben], half, dockRoom([companion()], PAGE));
-		expect(slots.get("ben")).toEqual({ x: 270 - 10 - 6 - pillWidth("ben"), y: 50 - 27 });
+		expect(slots.get("ben")).toMatchObject({ x: 270 - 10 - 6 - pillWidth("ben"), y: 50 - 27 });
+	});
+
+	it("shrink to dots stacked from the corner once they would crowd the frame's own name", () => {
+		const far = (x: number, y: number) => ({ x: x / 8, y: y / 8 });
+		const slots = pillSlots([HOME], () => [ben, ada], far);
+		const first = slots.get("ben");
+		const second = slots.get("ada");
+		expect(first?.dotted).toBe(true);
+		expect(second?.dotted).toBe(true);
+		// right-aligned on the corner, each next one overlapping the one before
+		expect(first?.dot).toEqual({ x: 500 / 8 - 10, y: 100 / 8 - 27 + 4 });
+		expect(second?.dot).toEqual({ x: 500 / 8 - 10 - 7, y: 100 / 8 - 27 + 4 });
+	});
+
+	it("stay pills on a frame wide enough for its name and theirs", () => {
+		expect(pillSlots([HOME], () => [ben, ada], flat).get("ada")?.dotted).toBe(false);
+		// a name crowded by one pill's worth, all of them dot together
+		const narrow = { ...HOME, w: pillWidth("ben") + 6 + pillWidth("ada lovelace") + 40 };
+		const slots = pillSlots([narrow], () => [ben, ada], flat);
+		expect([slots.get("ben")?.dotted, slots.get("ada")?.dotted]).toEqual([true, true]);
 	});
 });

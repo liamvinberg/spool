@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.41.0
+
+### Minor Changes
+
+- 22d9387: A frame can now import a theme of its own, so two looks can live side by side in one project. A theme is a stylesheet that imports `tailwindcss`. A frame that imports one compiles against it instead of `shared/tokens.css`, and gets the theme's fonts instead of `shared/fonts.css`, on the canvas and in the player. Frames without a theme work exactly as before. See `spool skill styling`.
+- 989e5a6: spool is now under the Functional Source License (FSL-1.1-MIT) instead of MIT. You can still use it for your own work, at a company too, and read, change and share the code. The one new limit is selling a product that competes with spool. Each release becomes MIT two years after it comes out, and versions up to 0.40.0 stay MIT.
+- be6e590: Breaking: the sharing beta's publishing is gone. `spool cloud publish`, `stop`, `list`, `status`, `invite` and `revoke` are removed, and so are `spool build`, `spool check --entry` and `spool flows --entry`. Frames no longer have share links on the canvas or in the player. To share, right-click a page in the Pages panel and choose Share…. No page is refused for navigation spool can't read. An exported `links` object is no longer required for anything. Spool still updates the frame names in it when frames move.
+- c162b70: `spool shot --scroll <px>` scrolls the frame down that far before it shoots, so below-fold content and scroll effects can be checked from the CLI. The shot is saved beside the one from the top, as `<frame>.scroll<px>.png`.
+
+### Patch Changes
+
+- 4495d9c: On a team canvas, teammates' names docked on a frame shrink smoothly into dots stacked on one another once they would crowd the frame's own name, as when zoomed out, and grow back into names as you zoom in.
+- 13969ba: Moving a project into a team no longer stops on spool.page's save limits, and its files no longer count against your saves for the month. When a team project saves faster than spool.page takes saves, your changes now wait and go up by themselves instead of pausing sync, and a wait longer than a few seconds shows how many changes are left and about how long. spool tells you once when you reach 24,000 of your 30,000 saves to a project in a month, and sync paused at the month's cap now says the date it starts again.
+- e620dc3: In the list of who's here, your own row cuts a long page name short instead of running it over "You", as teammates' rows do.
+
 ## 0.40.0
 
 ### Minor Changes

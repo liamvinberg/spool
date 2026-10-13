@@ -37,6 +37,7 @@ export function inlineLocalFonts(
 	css: string | undefined,
 	read: (file: string) => Buffer | undefined,
 	resolvePath: (file: string, authored?: string) => string,
+	source = "shared/fonts.css",
 ): { css: string | undefined; files: string[] } {
 	if (css === undefined) return { css: undefined, files: [] };
 	const sharedDir = join(designDir, "shared");
@@ -59,7 +60,7 @@ export function inlineLocalFonts(
 		spent += data.length;
 		if (spent > LOCAL_FONT_BUDGET_BYTES) {
 			throw new Error(
-				`design/${designRelativePath(designDir, file)} (${kilobytes(data.length)} inlined) puts shared/fonts.css over its ${kilobytes(LOCAL_FONT_BUDGET_BYTES)} local font budget`,
+				`design/${designRelativePath(designDir, file)} (${kilobytes(data.length)} inlined) puts ${source} over its ${kilobytes(LOCAL_FONT_BUDGET_BYTES)} local font budget`,
 			);
 		}
 		return `url(${data})`;

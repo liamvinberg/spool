@@ -18,10 +18,11 @@ import { DesignBoundaryError, designPathResolver, designRelativePath } from "./d
 import type { DesignFiles } from "./design-files";
 import { createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { type DesignResolution, designResolver, RESOLVE_EXTENSIONS } from "./design-resolve";
-import { assembleFrameDocument, escapeInlineScript, mergeImportMap, shimHash } from "./document";
+import { assembleFrameDocument, escapeInlineScript, hoistCssImports, mergeImportMap, shimHash } from "./document";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
+import { isThemeStylesheet } from "./themes";
 import { unstyledClasses } from "./unstyled-classes";
 import { importMapPins } from "./vendor-pins";
 
@@ -88,7 +89,6 @@ export interface DesignBundle {
 }
 
 export interface DesignEntryOptions {
-	publication?: true;
 	designDir: string;
 	/** Where the entry's relative imports resolve from. */
 	resolveDir: string;
@@ -169,10 +169,7 @@ function loaderOf(path: string, loaders: Readonly<Record<string, Loader>>): Load
  */
 export function designBuildOptions(options: DesignEntryOptions): BuildOptions & { metafile: true; write: false } {
 	const { designDir, resolveDir, sourcefile, contents, label, imageBudget, files, reads } = options;
-	const loader: Record<string, Loader> =
-		options.publication === true
-			? { ...TEXT_LOADERS, ".woff2": "dataurl", ".woff": "dataurl", ".ttf": "dataurl", ".otf": "dataurl" }
-			: TEXT_LOADERS;
+	const loader: Record<string, Loader> = TEXT_LOADERS;
 	return {
 		stdin: { contents, resolveDir, loader: "js", sourcefile },
 		bundle: true,
@@ -180,9 +177,8 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		platform: "browser",
 		target: "es2022",
 		jsx: "automatic",
-		jsxDev: options.publication !== true,
-		jsxImportSource: options.publication === true ? "react" : "spool",
-		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
+		jsxDev: true,
+		jsxImportSource: "spool",
 		...(options.sourcemap === true ? { sourcemap: "external" as const, sourcesContent: false } : {}),
 		loader,
 		tsconfigRaw: PINNED_TSCONFIG,
@@ -197,7 +193,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		plugins: [
 			sharedImportPlugin(designDir, files),
 			spoolBoundaryPlugin(designDir, { ...DEFAULT_LOADERS, ...loader }, reads),
-			spoolAssetPlugin(designDir, label, imageBudget, options.publication === true, files, reads),
+			spoolAssetPlugin(designDir, label, imageBudget, files, reads),
 			// last, so the plugins above answer what is theirs first
 			designResolvePlugin(designDir, files),
 		],
@@ -218,7 +214,7 @@ export function designEntryKey(options: Pick<DesignEntryOptions, "designDir" | "
 /**
  * The file behind one `metafile.inputs` key. esbuild drops a `?raw` or `#hash`
  * suffix to find a file no name carries, but keeps it on the key; a reader of
- * the key (the cache hash, the publication capture) wants the file.
+ * the key (the cache hash) wants the file.
  */
 export function designInputFile(designDir: string, input: string, files: DesignFiles): string {
 	const file = resolve(designDir, input);
@@ -303,22 +299,24 @@ export async function compileFrameDocument(
 	);
 
 	const shared = join(designDir, "shared");
-	const { css, stylesheets } = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
-	for (const sheet of stylesheets) reads.noted(sheet.file, sheet.digest);
+	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
+	for (const sheet of compiled.stylesheets) reads.noted(sheet.file, sheet.digest);
+	const resolvePath = designPathResolver(designDir, host.files);
+	// A theme carries its fonts in its stylesheet, in place of fonts.css: its
+	// hosted imports are resolved as fonts.css's are, and its own faces inlined.
+	const themed = compiled.theme === undefined ? undefined : themeStylesheet(designDir, compiled, reads, resolvePath);
+	const css = themed?.css ?? compiled.css;
 	// The stills' fonts (#80): remote faces resolved to this daemon so a
 	// capture can inline them, the file as written whenever that fails. The
 	// project's own faces (#101) then ride the document as data URIs.
-	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
+	const resolvedFonts = await webfonts.resolve(
+		themed === undefined ? reads.text(join(shared, "fonts.css")) : themed.fonts,
+	);
 	// The revision these fonts were resolved at, read before anything else is
 	// awaited: another compile's resolve can move it while this one hashes, and
 	// recording that later revision would keep these fonts past their retirement.
 	const fontsRevision = webfonts.revision();
-	const { css: fonts } = inlineLocalFonts(
-		designDir,
-		resolvedFonts,
-		reads.bytes,
-		designPathResolver(designDir, host.files),
-	);
+	const { css: fonts } = inlineLocalFonts(designDir, resolvedFonts, reads.bytes, resolvePath);
 	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
 	// classes the frame names that its stylesheet never built, for a shot to report
@@ -364,6 +362,23 @@ export async function compileFrameDocument(
 		settled,
 		unstyled,
 	};
+}
+
+/**
+ * A theme's compiled stylesheet split for the document: its hosted `@import`s
+ * become the fonts block, where fonts.css's would have been, and its own faces
+ * are carried in the rest as data URIs.
+ */
+function themeStylesheet(
+	designDir: string,
+	compiled: { css: string; theme?: string },
+	reads: DesignReads,
+	resolvePath: (file: string, authored?: string) => string,
+): { css: string; fonts: string | undefined } {
+	const { imports, rest } = hoistCssImports(compiled.css);
+	const label = `design/${designRelativePath(designDir, compiled.theme ?? "")}`;
+	const { css } = inlineLocalFonts(designDir, rest, reads.bytes, resolvePath, label);
+	return { css: css ?? rest, fonts: imports === "" ? undefined : imports };
 }
 
 function frameEntryOptions(
@@ -558,6 +573,9 @@ function spoolBoundaryPlugin(
 							errors: [{ text: `Could not read from file: ${designRelativePath(designDir, args.path)}` }],
 						};
 					}
+					// A theme is Tailwind's to compile (`themes.ts`), never the bundle's:
+					// it stays in the closure, so it is an input, and adds no CSS of its own.
+					if (loader === "css" && isThemeStylesheet(contents.toString("utf8"))) return { contents: "", loader };
 					return { contents, loader };
 				} catch (error) {
 					// The cause rides along in detail, which esbuild hands back to the JS
@@ -604,7 +622,6 @@ function spoolAssetPlugin(
 	designDir: string,
 	label: string,
 	budget: number | undefined,
-	publication: boolean,
 	files: DesignFiles,
 	readsOf: () => DesignReads | undefined,
 ): Plugin {
@@ -619,7 +636,7 @@ function spoolAssetPlugin(
 			// URLs stay the author's business and pass straight through.
 			build.onResolve({ filter: ASSET_FILTER }, (args) => {
 				const local = !args.path.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(args.path);
-				if (args.kind !== "url-token" || !local || publication) return null;
+				if (args.kind !== "url-token" || !local) return null;
 				return {
 					errors: [
 						{
@@ -645,7 +662,6 @@ function spoolAssetPlugin(
 				if (bytes === undefined) {
 					return { errors: [{ text: `Could not read from file: ${designRelativePath(designDir, args.path)}` }] };
 				}
-				if (publication) return { contents: bytes, loader: "dataurl" };
 				const url = `data:${type};base64,${bytes.toString("base64")}`;
 				spent += url.length;
 				if (budget !== undefined && spent > budget) {

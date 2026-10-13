@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, ProjectCard } from "./api";
-import { Home } from "./home";
+import { type Everywhere, Home } from "./home";
 import { ProjectPicker } from "./picker";
 
 function mount(element: React.ReactNode) {
@@ -765,4 +765,93 @@ it("confirms trashing the whole folder, supports cancellation and retries failur
 	expect(host.querySelector('[aria-label="Open coffee"]')).toBeNull();
 	// its tab is closing: still shrinking in the row, but no longer a tab
 	expect(host.querySelector(`[data-tab-slot="${coffee.root}"]`)).toBeNull();
+});
+
+describe("Search and Recent, once this account is in a team", () => {
+	const own = project("kaffe", "2026-09-03T00:00:00Z");
+	const site = {
+		...project("tidemark-site", "2026-09-04T00:00:00Z"),
+		team: { url: "https://spool.page/tidemark/site", team: "tidemark", project: "site" },
+	};
+	const pitch = {
+		team: "tidemark",
+		project: {
+			name: "pitch",
+			url: "https://spool.page/tidemark/pitch",
+			repo: null,
+			clone: null,
+			copies: [],
+			checkouts: [],
+			home: "~/spool/tidemark/pitch",
+		},
+	};
+	const everywhere = (change: Partial<Everywhere> = {}): Everywhere => ({
+		recent: true,
+		onRecent: vi.fn(),
+		query: "",
+		onQuery: vi.fn(),
+		onOwn: vi.fn(),
+		projects: [own, site],
+		teams: [{ address: "tidemark", name: "Tidemark" }],
+		away: [pitch],
+		drawAway: (found) =>
+			found.map((each) => createElement("p", { key: each.project.name }, `away ${each.project.name}`)),
+		...change,
+	});
+	const names = (host: HTMLElement) =>
+		Array.from(host.querySelectorAll("[aria-label^='Open ']")).map((node) => node.getAttribute("aria-label"));
+
+	it("opens on Recent: every project on this Mac, a team's included, newest opened first", () => {
+		const host = mount(createElement(Home, { projects: [own], ...actions(), everywhere: everywhere() }));
+		expect(host.querySelector("main h1")?.textContent).toBe("Recent");
+		expect(names(host)).toEqual(["Open tidemark-site", "Open kaffe"]);
+		expect(host.querySelector("nav [aria-current='page']")).toBeNull();
+		expect(host.querySelector('.pj-find [aria-current="page"]')?.textContent).toBe("Recent");
+	});
+
+	it("searches from the sidebar, the page having no search of its own", () => {
+		const onQuery = vi.fn();
+		const host = mount(
+			createElement(Home, { projects: [own], ...actions(), everywhere: everywhere({ recent: false, onQuery }) }),
+		);
+		expect(host.querySelector("main h1")?.textContent).toBe("Projects");
+		expect(host.querySelectorAll('input[type="search"]')).toHaveLength(1);
+		act(() => type(host.querySelector('.pj-find input[type="search"]'), "site"));
+		expect(onQuery).toHaveBeenCalledWith("site");
+	});
+
+	it("finds in every place, the projects not on this Mac among the covers, and narrows to one place", () => {
+		const host = mount(
+			createElement(Home, { projects: [own], ...actions(), everywhere: everywhere({ query: "t" }) }),
+		);
+		expect(host.querySelector("main h1")?.textContent).toBe("Search");
+		const tabs = Array.from(host.querySelectorAll('[role="tab"]'));
+		expect(tabs.map((tab) => tab.textContent)).toEqual(["All 3", "Your projects 1", "Tidemark 2"]);
+		expect(names(host)).toEqual(["Open tidemark-site", "Open kaffe"]);
+		expect(host.querySelector(".pj-covers-grid")?.textContent).toContain("away pitch");
+		act(() => (tabs[2] as HTMLElement).click());
+		expect(names(host)).toEqual(["Open tidemark-site"]);
+		expect(host.textContent).toContain("away pitch");
+	});
+
+	it("says when nothing in any place matches", () => {
+		const onQuery = vi.fn();
+		const host = mount(
+			createElement(Home, { projects: [own], ...actions(), everywhere: everywhere({ query: "zzz", onQuery }) }),
+		);
+		expect(host.textContent).toContain("Nothing matches “zzz”");
+		act(() =>
+			Array.from(host.querySelectorAll("button"))
+				.find((button) => button.textContent === "Clear search")
+				?.click(),
+		);
+		expect(onQuery).toHaveBeenCalledWith("");
+	});
+
+	it("goes to Your projects from the nav under the switcher", () => {
+		const onOwn = vi.fn();
+		const host = mount(createElement(Home, { projects: [own], ...actions(), everywhere: everywhere({ onOwn }) }));
+		act(() => (host.querySelector('nav[aria-label="Home sections"] button') as HTMLButtonElement).click());
+		expect(onOwn).toHaveBeenCalledOnce();
+	});
 });

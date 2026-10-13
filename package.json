@@ -1,10 +1,10 @@
 {
 	"name": "spool.page",
-	"version": "0.40.0",
+	"version": "0.41.0",
 	"description": "Live prototyping canvas: agent-authored TSX frames on an infinite canvas, repo-native.",
 	"repository": "github:liamvinberg/spool",
 	"homepage": "https://spool.page",
-	"license": "MIT",
+	"license": "FSL-1.1-MIT",
 	"type": "module",
 	"bin": {
 		"spool": "./dist/cli.js"

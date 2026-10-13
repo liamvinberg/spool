@@ -250,7 +250,9 @@ export function PresenceFaces({
 						<div className="flex h-row items-center gap-2 px-2 text-secondary">
 							<span className="size-4 shrink-0 rounded-full border border-line-strong" />
 							<span className="min-w-0 flex-1 type-control">You</span>
-							<span className="type-detail">{pageLabel(page)}</span>
+							<span className="block max-w-[110px] truncate type-detail" title={pageLabel(page)}>
+								{pageLabel(page)}
+							</span>
 						</div>
 					</div>
 				</div>

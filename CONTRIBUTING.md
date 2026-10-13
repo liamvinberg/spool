@@ -23,9 +23,9 @@ If you are not sure, open an issue before writing code. An issue costs you five 
 
 ## License
 
-Spool is [MIT](LICENSE.md). There is no CLA to sign and no sign-off to remember: your contribution is MIT like the rest of the project, and you keep the copyright on what you wrote.
+Spool is under [FSL-1.1-MIT](LICENSE.md). There is no CLA to sign and no sign-off to remember: your contribution comes under the same license as the rest of the project, and you keep the copyright on what you wrote.
 
-If your idea is on the "unlikely" list above and you still want it, forking is a fine outcome rather than a consolation prize. Rename it, rework it, make it yours.
+If your idea is on the "unlikely" list above and you still want it, forking is a fine outcome rather than a consolation prize. Rework it and make it yours, as long as you don't sell it as a competing product.
 
 ## Development
 
