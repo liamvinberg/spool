@@ -847,6 +847,41 @@ export function windowStats(state: BenchState, from: number, to: number): Gestur
 	};
 }
 
+/** Wait until every document mounted now has completed its latest boot. */
+export async function waitForMountedFramesLoaded(page: BrowserPage, timeoutMs: number): Promise<void> {
+	const pending = async (): Promise<string[]> =>
+		page.evaluate(() => {
+			const state = (globalThis as unknown as { __bench: BenchState }).__bench;
+			const latest = (stamps: Stamped[]): Map<string, number> => {
+				const byFrame = new Map<string, number>();
+				for (const stamp of stamps) {
+					byFrame.set(stamp.frame, Math.max(byFrame.get(stamp.frame) ?? -Infinity, stamp.t));
+				}
+				return byFrame;
+			};
+			const inserted = latest(state.inserted);
+			const loaded = latest(state.loaded);
+			const mounted = new Set([...document.querySelectorAll("iframe")].map((frame) => frame.title));
+			return [...mounted].filter((name) => {
+				const insertedAt = inserted.get(name);
+				return insertedAt === undefined || (loaded.get(name) ?? -Infinity) < insertedAt;
+			});
+		});
+
+	const deadline = Date.now() + timeoutMs;
+	let names = await pending();
+	while (names.length > 0 && Date.now() < deadline) {
+		await page.waitForTimeout(150);
+		names = await pending();
+	}
+	if (names.length === 0) return;
+	const sample = names.slice(0, 6).join(", ");
+	throw new Error(
+		`${names.length} mounted documents did not report loaded after their latest insertion within ${timeoutMs / 1000} s` +
+			` (${sample}${names.length > 6 ? ", …" : ""})`,
+	);
+}
+
 export const now = (page: BrowserPage): Promise<number> => page.evaluate(() => performance.now());
 export const read = (page: BrowserPage): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);

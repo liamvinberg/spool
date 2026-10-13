@@ -2,7 +2,6 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type BrowserContext, type CDPSession, chromium, type Page } from "playwright-core";
 import {
-	type BenchState,
 	type BuildRun,
 	buildsHeader,
 	collector,
@@ -23,13 +22,13 @@ import {
 	quantile,
 	RARE_INTERVAL_MS,
 	read,
-	type Stamped,
 	type Subject,
 	settle,
 	startSubjects,
 	stopSubjects,
 	takeBuildOptions,
 	VIEWPORT,
+	waitForMountedFramesLoaded,
 	windowStats,
 	writeCamera,
 	ZOOM_EVENTS,
@@ -142,41 +141,6 @@ function parseArgs(argv: string[]): Options {
 	if (throttle.some((rate) => !Number.isFinite(rate) || rate < 1)) throw new Error("--throttle takes rates >= 1");
 	if (!Number.isFinite(zoom) || zoom <= 0) throw new Error("--zoom takes a positive scale");
 	return { project, throttle, headed, zoom, out, page };
-}
-
-/** Wait until every document mounted now has completed its latest boot. */
-async function waitForMountedFramesLoaded(page: Page, timeoutMs: number): Promise<void> {
-	const pending = async (): Promise<string[]> =>
-		page.evaluate(() => {
-			const state = (globalThis as unknown as { __bench: BenchState }).__bench;
-			const latest = (stamps: Stamped[]): Map<string, number> => {
-				const byFrame = new Map<string, number>();
-				for (const stamp of stamps) {
-					byFrame.set(stamp.frame, Math.max(byFrame.get(stamp.frame) ?? -Infinity, stamp.t));
-				}
-				return byFrame;
-			};
-			const inserted = latest(state.inserted);
-			const loaded = latest(state.loaded);
-			const mounted = new Set([...document.querySelectorAll("iframe")].map((frame) => frame.title));
-			return [...mounted].filter((name) => {
-				const insertedAt = inserted.get(name);
-				return insertedAt === undefined || (loaded.get(name) ?? -Infinity) < insertedAt;
-			});
-		});
-
-	const deadline = Date.now() + timeoutMs;
-	let names = await pending();
-	while (names.length > 0 && Date.now() < deadline) {
-		await page.waitForTimeout(150);
-		names = await pending();
-	}
-	if (names.length === 0) return;
-	const sample = names.slice(0, 6).join(", ");
-	throw new Error(
-		`${names.length} mounted documents did not report loaded after their latest insertion within ${timeoutMs / 1000} s` +
-			` (${sample}${names.length > 6 ? ", …" : ""})`,
-	);
 }
 
 const ENTER_TIMEOUT_MS = 8000; // 20x the bar: past this it did not happen at all
