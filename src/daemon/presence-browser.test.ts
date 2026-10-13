@@ -266,6 +266,26 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	await page.waitForTimeout(600);
 	expect((await box(page, '[data-presence-pill="ben"]')).height).toBeCloseTo(before, 0);
 
+	// zoomed out until they'd crowd the frame's name, they shrink to dots stacked on one another, and back
+	const zoom = async (dy: number) => {
+		await page.keyboard.down("Control");
+		await page.mouse.wheel(0, dy);
+		await page.keyboard.up("Control");
+	};
+	await zoom(1200);
+	await expect.poll(() => pill.getAttribute("data-presence-dot")).toBe("");
+	await page.waitForTimeout(800);
+	const benDot = await box(page, '[data-presence-pill="ben"]');
+	const cleoDot = await box(page, '[data-presence-pill="cleo"]');
+	expect(benDot.width).toBeCloseTo(10, 0);
+	expect(benDot.height).toBeCloseTo(10, 0);
+	expect(cleoDot.x + cleoDot.width).toBeGreaterThan(benDot.x);
+	expect(cleoDot.x).toBeLessThan(benDot.x);
+	await zoom(-1200);
+	await expect.poll(() => pill.getAttribute("data-presence-dot")).toBe(null);
+	await page.waitForTimeout(800);
+	expect((await box(page, '[data-presence-pill="ben"]')).height).toBeCloseTo(before, 0);
+
 	// stepping out flies the pill home to the pointer
 	say(BEN, at(300, 500));
 	await expect.poll(() => pill.getAttribute("data-presence-docked")).toBe(null);
