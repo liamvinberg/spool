@@ -95,10 +95,11 @@ const topics: Record<string, () => string> = {
   frames/<page>/<name>/      a page: a folder grouping frames, its own canvas (below)
   frames/<page>/<page>/      pages hold pages, to any depth (below)
   shared/ui/                 shared components: kebab-case files, no barrels
+  shared/ui/<look>/theme.css a theme a frame may import for a look of its own (topic: styling)
   shared/lib/utils.ts        cn() — clsx + tailwind-merge
-  shared/tokens.css          the single token file (topic: styling)
+  shared/tokens.css          the project's tokens, for every frame without a theme (topic: styling)
   shared/transitions.css     player transition styling, plain CSS (topic: flows)
-  shared/fonts.css           @import / @font-face, injected into every document
+  shared/fonts.css           @import / @font-face, injected into every frame without a theme
   shared/importmap.json      URL imports for libraries (below)
   shared/scenarios/*.json    named seeds (topic: scenarios)
   shared/assets/             images and fonts more than one frame uses (below)
@@ -115,7 +116,7 @@ frame.json is the one file both hands write, geometry only, and the split is fix
 
 The rail keeps a manual order for the pages a page holds and for the frames on it: the hands' arrangement, stored in canvas.json, which is app-owned and never yours to write. A frame you create arrives at its alphabetical spot, and a \`--\` variant arrives beside its base, so a well-named variant files itself. There is no order verb.
 
-The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Nested flex-fill chains need a definite h-full at each link; min-h-full does not give flex-1 a definite height. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
+The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts (fonts.css, or its theme's), the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Nested flex-fill chains need a definite h-full at each link; min-h-full does not give flex-1 a definite height. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
 
 Frames are https-only, on the canvas, in the player, in shot and logs and in an export alike. A frame's fetch, script and image may reach https:, data: and blob: URLs and spool's own libraries, and nothing over plain http: a call to http://localhost:3000 or to any plain-http address on your network is refused before it leaves, and the frame's console names the address it refused (\`spool logs\` shows it). Never point a frame at a local dev server. Fake the backend instead: seed what it would answer with a scenario (topic: scenarios), and write what it would do as a mock module beside the frame that reads and writes ui.state. Frames have no localStorage or sessionStorage, anywhere they run: keep what must last a session in ui.state (topic: flows). A phone frame fills the whole screen, under the notch and the home bar, and pads itself with env(safe-area-inset-*).
 
@@ -213,13 +214,25 @@ Custom CSS remains supported: use a <style> element for a frame-local effect or 
 
 Compose classes with cn() from shared/lib/utils.ts — cn() only, never template-literal class strings. Variant components ride cva (pinned).
 
-Tokens live in shared/tokens.css, the single token file and the only stylesheet the Tailwind compile reads (plus its relative @imports; @plugin and @config are not supported):
+Tokens live in shared/tokens.css, the project's token file and the only stylesheet the Tailwind compile reads for a frame without a theme (plus its relative @imports; @plugin and @config are not supported):
   - distilled from a product: paste its variables into :root verbatim, names kept
   - born in spool: declare under @theme, and utilities pick them up (--color-surface → bg-surface)
   - bridging: @theme inline aliases existing :root variables into utility names
 One file, both blocks — shadcn v4's shape. Non-Tailwind consumers can import the same file; browsers skip @theme.
 
-Fonts: shared/fonts.css is injected into every document — @import url(...) for hosted fonts, @font-face with absolute/data src, or @font-face whose url() is a relative path from that file (shared/assets/fonts/local.woff2), which spool reads and carries in the document up to 1 MB. woff2, woff, ttf, otf.
+Fonts: shared/fonts.css is injected into every frame without a theme — @import url(...) for hosted fonts, @font-face with absolute/data src, or @font-face whose url() is a relative path from that file (shared/assets/fonts/local.woff2), which spool reads and carries in the document up to 1 MB. woff2, woff, ttf, otf.
+
+Themes: a frame may import a theme for a look of its own, the way a Vite app's entry imports its index.css — two design systems side by side, or a product and its marketing site, in one project. A theme is a stylesheet that imports tailwindcss; any other stylesheet stays plain component CSS.
+
+  // frames/vercel/buttons/frame.tsx
+  import "shared/ui/vercel/theme.css";
+
+  /* shared/ui/vercel/theme.css */
+  @import "tailwindcss";
+  @theme { --color-primary: #000; }
+  @font-face { font-family: "Geist"; src: url("../../assets/fonts/geist.woff2"); }
+
+For that frame Tailwind compiles from the theme instead of tokens.css, and fonts.css is not injected: nothing project-wide reaches it, on the canvas, in the player and in an export alike. A theme carries its own fonts under fonts.css's rules, a relative url() resolving from the theme's own folder; its relative @imports resolve as tokens.css's do. One theme per frame: a frame whose imports reach two fails to compile, naming both. Shared components never import a theme: they use token names like bg-primary and wear the theme of whichever frame uses them. A frame that imports no theme uses tokens.css and fonts.css.
 
 Motion is for interaction feel — the motion library is pinned (import { motion } from "motion/react"): hover, press, drag, springs, layout animation inside a frame. Screen-to-screen motion is never animated from a frame; it belongs to the flow layer (topic: flows). Other animation libraries: add them to the import map.
 
