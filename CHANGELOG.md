@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.40.0
+
+### Minor Changes
+
+- f6d0367: Who's here on a team canvas now sits at the canvas's top right instead of in the tab bar, so switching tabs no longer shifts the tabs. Press the faces to open the list of who's here, where each person is and how long they've been idle, then press a row to follow them. A team project's tab shows a dot for each person in it while you're on another tab, up to three.
+- 56cf050: Move a team project to another team (the same project, its history, shares and old address kept), out of its team (design/ committed back into git), or from no repo into a checkout: from a cover's menu on Home, from a dimmed cover for a project not on this Mac, or with `spool move`, which says what the move does and asks first. Teammates' copies follow the move and keep syncing until they pull, and whenever spool puts `spool.json` in a repo it also adds "design/ is a spool canvas: run `spool skill` before working there." to the checkout's AGENTS.md, else CLAUDE.md, else a new AGENTS.md.
+
+### Patch Changes
+
+- f61a168: Signing in to another account no longer stops your team projects syncing for good. A project now waits while the Mac is signed in to an account that can't edit it, says so, and syncs again as soon as you sign back in to the account that had it. Only that account being removed from the team ends the sync.
+- d5747e7: Home stays on the team you were looking at when you reload the window, instead of going back to Your projects.
+
 ## 0.39.0
 
 ### Minor Changes
