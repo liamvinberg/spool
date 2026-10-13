@@ -748,7 +748,7 @@ export function ProjectCanvas({
 	const restoreWaiters = useRef(new Map<number, (ok: boolean) => void>());
 	/** the frame's answer to a delete (#317), and to a move with where the element went (#340) */
 	const alterWaiters = useRef(
-		new Map<number, (answer: { ok: boolean; owner: string | null; chain?: PickedHit[] }) => void>(),
+		new Map<number, (answer: { ok: boolean; owner: string | null; chain?: PickedHit[]; held?: true }) => void>(),
 	);
 	/**
 	 * The frames the canvas has reloaded whose new document has not said
@@ -3043,7 +3043,7 @@ export function ProjectCanvas({
 					act: () => alterElementRef.current(picks, { sources: [call], fingerprint }),
 				};
 			};
-			alterWaiters.current.set(id, ({ ok, owner }) => {
+			alterWaiters.current.set(id, ({ ok, owner, held }) => {
 				if (!ok) {
 					showRefusal({ frame: pick.frame, selector: pick.selector, refusal: GONE, asked });
 					return;
@@ -3072,7 +3072,11 @@ export function ProjectCanvas({
 						// hand holds now, and it holds it only once the write has
 						// actually landed, so a refusal still has them to sit under
 						...(picks.length === 1 ? {} : { entry: { picks: picks.map((held) => held.selector) } }),
-						onLanded: () => holdParent(gone),
+						onLanded: () => {
+							// what the frame held on screen for the answer goes now
+							if (held === true) restoreWords(pick.frame, id, "after", () => {});
+							holdParent(gone);
+						},
 					});
 				});
 			});
@@ -4095,6 +4099,7 @@ export function ProjectCanvas({
 						ok: message.ok,
 						owner: message.owner,
 						...(message.chain === undefined ? {} : { chain: message.chain }),
+						...(message.held === undefined ? {} : { held: message.held }),
 					});
 					return;
 				}

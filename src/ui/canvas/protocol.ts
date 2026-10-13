@@ -221,7 +221,16 @@ export type FrameMessage =
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; nodes: EditedNode[]; owner: string | null }
 	| { spool: "restored"; frame: string; id: number; ok: boolean }
-	| { spool: "altered"; frame: string; id: number; ok: boolean; owner: string | null; chain?: PickedHit[] }
+	| {
+			spool: "altered";
+			frame: string;
+			id: number;
+			ok: boolean;
+			owner: string | null;
+			chain?: PickedHit[];
+			/** a delete the file may refuse, left on screen until it has answered */
+			held?: true;
+	  }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "external"; frame: string; href: string }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord; id?: number }

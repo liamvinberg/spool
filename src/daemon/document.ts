@@ -647,7 +647,9 @@ export function settleSource(raf: string): string {
  * document, or puts the first beside the second (#340), and answers
  * {spool:"altered"} with the call one owner up (#317) and, for a move, the
  * moved element's new ancestry. A delete takes out every element its stamps
- * draw, so a component drawn twice loses both;
+ * draw, so a component drawn twice loses both; one the file may refuse (drawn
+ * more than once, or the whole of a component) answers held and stays until a
+ * {spool:"restore", way:"after"} takes it out;
  * {spool:"restore", id, way, ask} puts one committed edit's words or one
  * alteration back or forward and answers {spool:"restored"}, and {spool:"restamp", file, shifts}
  * moves the stamps a save shifted, since the document is not reloaded for its
@@ -1786,10 +1788,30 @@ const canvasShimJs = `(() => {
 			if (!parent) return { ok: false, owner: owner };
 			gone.push({ el: taken[i], parent: parent, next: taken[i].nextSibling });
 		}
-		for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
 		alters.set(id, { kind: "gone", gone: gone });
 		evictOldest(alters);
+		// what the file may well refuse stays on screen until it has answered,
+		// and goes then, on the canvas's word: an element drawn more than once,
+		// or one that is the whole of a component, would otherwise vanish and
+		// come back (#317)
+		if (taken.length > found.length || found.some((one) => sources && sources.includes(one.getAttribute("data-spool-source")) && wholeReturn(one))) {
+			return { ok: true, owner: owner, held: true };
+		}
+		for (let i = 0; i < gone.length; i++) gone[i].parent.removeChild(gone[i].el);
 		return { ok: true, owner: owner };
+	}
+
+	// Whether an element is the outermost one a component returns: no element
+	// stands between it and the component that rendered it.
+	function wholeReturn(el) {
+		const key = Object.keys(el).find((name) => name.startsWith("__reactFiber$"));
+		let fiber = key ? el[key] : null;
+		while (fiber && (fiber = fiber.return)) {
+			if (fiber.stateNode && fiber.stateNode.nodeType === 1) return false;
+			const type = fiber.type;
+			if (typeof type === "function" || (type && typeof type === "object" && (typeof type.type === "function" || typeof type.render === "function"))) return true;
+		}
+		return false;
 	}
 
 	// What a delete takes out of the file is everywhere this document draws it:
@@ -1832,6 +1854,8 @@ const canvasShimJs = `(() => {
 		}
 		for (let i = held.gone.length - 1; i >= 0; i--) {
 			const one = held.gone[i];
+			// a delete held on screen for the file's answer never left
+			if (one.el.isConnected) continue;
 			if (!one.parent.isConnected) return false;
 			try { one.parent.insertBefore(one.el, one.next && one.next.isConnected ? one.next : null); } catch { return false; }
 		}
@@ -2146,7 +2170,7 @@ const canvasShimJs = `(() => {
 			if (m.spool === "alter") {
 				let answer = { ok: false, owner: null };
 				try { answer = alterElement(m.id, Array.isArray(m.selectors) ? m.selectors : [], m.act, m.place, m.sources); } catch {}
-				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner, ...(answer.chain ? { chain: answer.chain } : {}) }, "*");
+				parent.postMessage({ spool: "altered", frame: config.frame, id: m.id, ok: answer.ok, owner: answer.owner, ...(answer.chain ? { chain: answer.chain } : {}), ...(answer.held ? { held: true } : {}) }, "*");
 				return;
 			}
 			if (m.spool === "restamp") {

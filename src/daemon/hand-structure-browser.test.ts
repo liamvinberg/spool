@@ -218,25 +218,61 @@ it("deletes whole lines in place, from every place the page draws them", { timeo
 	await says("Third line.");
 	expect(await kept()).toBe(true);
 
+	// every element of a kind the frame takes out from here on, so a delete
+	// that is refused can be seen never to have blinked
+	const taken = () => frame.locator("body").evaluate(() => (Reflect.get(window, "__taken") as string[]).splice(0));
+	await frame.locator("body").evaluate(() => {
+		const seen: string[] = [];
+		Reflect.set(window, "__taken", seen);
+		new MutationObserver((records) => {
+			for (const record of records) {
+				for (const node of record.removedNodes) if (node instanceof Element) seen.push(node.tagName.toLowerCase());
+			}
+		}).observe(document, { childList: true, subtree: true });
+	});
+
 	// one card's call, through the call the refusal offers: the other card is
-	// drawn by its own call, so the document only loses this one
+	// drawn by its own call, so the document only loses this one. The card is
+	// the whole of its component, which the file refuses, so ⌫ leaves it on
+	// screen until the refusal has come back rather than taking it and putting
+	// it back
 	const instead = page.locator("[data-hand-instead]");
 	await hold("article:has-text('Alpha')");
 	await write(() => page.keyboard.press("Backspace"));
 	await expect.poll(() => instead.count(), { timeout: 15_000 }).toBe(1);
+	expect(await taken()).toEqual([]);
 	await write(() => instead.click());
 	await says('<Card title="Alpha" />', false);
 	await shows("article", 1);
 	expect(await kept()).toBe(true);
+	// a call the file takes for certain goes the moment it is pressed
+	expect(await taken()).toEqual(["article"]);
 
 	// a line of the card itself goes from every card the file draws, here as
 	// in the file, and comes back to both
 	await write(() => f.history(), "/revert");
 	await shows("article", 2);
+	// the file's answer is held back here: an element drawn twice stays on
+	// screen until the write has landed, and goes from both cards then
 	await hold("article:has-text('Beta') em");
-	await write(() => page.keyboard.press("Backspace"));
+	let answer: () => void = () => {};
+	const answered = new Promise<void>((resolve) => {
+		answer = resolve;
+	});
+	await page.route("**/element", async (route) => {
+		await answered;
+		await route.continue();
+	});
+	const press = write(() => page.keyboard.press("Backspace"));
+	await new Promise((resolve) => setTimeout(resolve, 400));
+	expect(await frame.locator("em").count()).toBe(2);
+	expect(await taken()).toEqual([]);
+	answer();
+	await press;
+	await page.unroute("**/element");
 	await says("<em>tag</em>", false);
 	await shows("em", 0);
+	expect(await taken()).toEqual(["em", "em"]);
 	await shows("article", 2);
 	expect(await kept()).toBe(true);
 	await write(() => f.history(), "/revert");
