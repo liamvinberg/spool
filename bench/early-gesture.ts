@@ -115,6 +115,13 @@ const refusal = async (page: Page) => {
 		: ((await shown.first().getAttribute("data-hand-refusal")) ?? "refused");
 };
 
+/** Where the selection ring stands now, to see the next one land. */
+const ringNow = (page: Page) =>
+	page.evaluate(() => {
+		const r = document.querySelector("[data-element-ring]")?.getBoundingClientRect();
+		return r === undefined ? "none" : `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}`;
+	});
+
 /** Click and time POST /rungs from the click to its answer. */
 async function clickRead(page: Page, at: { x: number; y: number }): Promise<number | undefined> {
 	const read = page.waitForResponse((r) => r.url().endsWith("/rungs"), { timeout: 8000 }).catch(() => undefined);
@@ -157,7 +164,7 @@ async function main(): Promise<void> {
 		}
 
 		// straight after a save: type into one element, Enter, then click the next
-		for (let round = 0; round < 4; round++) {
+		for (let round = 0; round < 6; round++) {
 			const c = list[round % list.length];
 			const next = list[(round + 3) % list.length];
 			if (c === undefined || next === undefined) break;
@@ -185,18 +192,33 @@ async function main(): Promise<void> {
 		let refused = 0;
 		frame = await liveFrame(page);
 		const fresh = await candidates(page, frame);
-		for (const c of fresh.slice().reverse().slice(0, 4)) {
+		for (const c of fresh.slice().reverse().slice(0, 6)) {
 			await page.keyboard.press("Escape");
 			await sleep(300);
 			const before = sourceTimes(root);
+			const ring = await ringNow(page);
 			const t0 = Date.now();
 			await page.mouse.click(c.x, c.y);
+			// the press a person makes the moment the ring is on the element: the
+			// pick has landed and the read it starts is still on its way
+			await page
+				.waitForFunction(
+					(before) => {
+						const r = document.querySelector("[data-element-ring]")?.getBoundingClientRect();
+						return r !== undefined && `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}` !== before;
+					},
+					ring,
+					{ polling: "raf", timeout: 3000 },
+				)
+				.catch(() => undefined);
+			const ringMs = Date.now() - t0;
 			await page.keyboard.press("Backspace");
 			const wrote = await nextWrite(root, before, 6000);
 			const said = await refusal(page);
 			if (wrote !== undefined) {
 				saved++;
-				record("click then ⌫ at once → file saved", wrote.at - t0);
+				record("click then ⌫ on the ring → file saved", wrote.at - t0);
+				note(`⌫ on the ring ${ringMs} ms after the click on "${c.text.slice(0, 24)}": saved`);
 				await sleep(600);
 				await page.keyboard.press("ControlOrMeta+z");
 				await sleep(1500);
