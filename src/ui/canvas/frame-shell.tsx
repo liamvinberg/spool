@@ -378,7 +378,10 @@ export const FrameShell = memo(function FrameShell({
 					// frame beneath owns the pointer, and the fade out of an entered
 					// frame's cover must not swallow the first click into it.
 					className="pointer-events-none absolute inset-0"
-					style={{ opacity: plan.cover ? 1 : 0, transition: active ? "none" : "opacity 180ms ease-out" }}
+					style={{
+						opacity: plan.cover ? 1 : 0,
+						transition: active ? "none" : "opacity var(--transition-duration-base) var(--ease-out)",
+					}}
 				>
 					{plan.image === "cover" && cover !== undefined ? (
 						// The still at its true shape, never stretched to the box: a cover

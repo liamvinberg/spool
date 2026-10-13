@@ -25,7 +25,7 @@ it("previews a hovered frame without selecting it", async () => {
 	});
 
 	const hover = host.querySelector<HTMLElement>('[data-frame-hover="home"]');
-	expect(hover?.style.opacity).toBe("1");
+	expect(hover?.classList.contains("opacity-0")).toBe(false);
 	expect(hover?.classList.contains("border-line-strong")).toBe(true);
 	expect(host.querySelector('[data-frame-label="home"] .text-primary')).not.toBeNull();
 	expect(host.querySelector('[data-frame-label="home"] .text-accent-strong')).toBeNull();
@@ -36,8 +36,8 @@ it("previews a hovered frame without selecting it", async () => {
 		);
 	});
 
-	expect(hover?.style.opacity).toBe("0");
-	expect(hover?.style.transition).toBe("opacity 80ms ease-out");
+	expect(hover?.classList.contains("opacity-0")).toBe(true);
+	expect(hover?.classList.contains("duration-quick")).toBe(true);
 	expect(host.querySelector('[data-frame-label="home"] .text-secondary')).not.toBeNull();
 
 	await act(async () => {

@@ -291,11 +291,10 @@ export function SelectionOverlay({
 					camera={camera}
 					screen={(at) => ringBox(at, hoveredFrame)}
 					data-frame-hover={hoveredFrame.name}
-					className="absolute border border-line-strong"
-					style={{
-						opacity: hovered?.visible === true ? 1 : 0,
-						transition: hovered?.visible === true ? "none" : "opacity 80ms ease-out",
-					}}
+					// at once under the pointer, and let go of slowly enough to see it go
+					className={`absolute border border-line-strong ${
+						hovered?.visible === true ? "" : "opacity-0 transition-opacity duration-quick ease-out"
+					}`}
 				/>
 			)}
 

@@ -110,7 +110,7 @@ export function FrameLabel({
 				className="pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
 			>
 				{entered ? (
-					<div className="flex items-center pb-2.5">
+					<div className="flex animate-chrome-in items-center pb-2.5">
 						<span className="rounded-xs bg-accent-strong px-2 py-[3px] text-on-accent type-detail">
 							live · esc exits
 						</span>
@@ -119,7 +119,7 @@ export function FrameLabel({
 					<div className="flex w-full min-w-0 items-center gap-1.5 pb-2.5">
 						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 						<span
-							className={`min-w-0 truncate type-value ${
+							className={`min-w-0 truncate transition-colors duration-fast ease-out type-value ${
 								selected
 									? "text-accent-strong"
 									: hovered || unseen !== undefined
