@@ -223,6 +223,16 @@ export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "move-
 export type RunEntry = (entry: RailEntry, way: Way) => Promise<boolean>;
 
 /**
+ * The rail's frame verbs, handed out so the canvas's ⌘C, ⌘V and ⌘D are these
+ * same verbs on the frames selected out there: one clipboard, one path.
+ */
+export interface FrameVerbs {
+	copy: (names: readonly string[]) => void;
+	paste: () => Promise<void>;
+	duplicate: (names: readonly string[]) => Promise<void>;
+}
+
+/**
  * What the canvas draws under one frame's row (#342): the frame's element
  * tree while the Edit tool is on. The rail makes the room and slides the rows
  * after it; what stands there is the canvas's. Closed, the room folds to
@@ -269,6 +279,7 @@ export function CanvasSidebar({
 	onMarkSeen,
 	under = null,
 	onSharePage,
+	verbs,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -290,8 +301,11 @@ export function CanvasSidebar({
 	onTrashPage: (page: string, frames: string[]) => void;
 	onRevealFrame: (name: string) => void;
 	onCopyPath: (name: string) => void;
-	/** Fresh copies exist: the canvas cascades them off their originals and selects them. */
-	onCopiesLanded: (copies: readonly FrameCopy[]) => void;
+	/**
+	 * Fresh copies exist: the canvas places them and selects them. `beside` is a
+	 * duplicate's, standing by its original; a paste may land where the view is.
+	 */
+	onCopiesLanded: (copies: readonly FrameCopy[], beside: boolean) => void;
 	/**
 	 * Frames answer to new names (#336): a frame is named by its path, so a
 	 * rename, a move, or its page moving renames it. `carry` says where each name
@@ -327,6 +341,8 @@ export function CanvasSidebar({
 	under?: RailUnder | null;
 	/** Share a page with outsiders, where this project can (DEV-193): a page row's right-click offers it. */
 	onSharePage?: ((page: string) => void) | undefined;
+	/** where the rail hands its frame verbs to the canvas */
+	verbs?: { current: FrameVerbs | null };
 }) {
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 	const [order, setOrder] = useState<CanvasOrder>({});
@@ -1004,7 +1020,7 @@ export function CanvasSidebar({
 			}
 			for (const [page, list] of byPage) next = withFrameOrder(next, page, list);
 			storeOrder(next);
-			onCopiesLanded(copies);
+			onCopiesLanded(copies, beside);
 			onRecord?.({ kind: "mint", staged: { frames: copies.map((copy) => copy.to), page: null } });
 			onRefresh();
 		},
@@ -1033,6 +1049,19 @@ export function CanvasSidebar({
 		if (names.length > 0) onTrashFrames([...names]);
 	}, [onTrashPage, onTrashFrames, framesUnder]);
 
+	const duplicateNames = useCallback(
+		async (names: readonly string[]) => {
+			if (names.length === 0) return;
+			const done = await duplicateFrames(project, [...names]);
+			if (done.kind === "refused") {
+				refuted();
+				return;
+			}
+			landCopies(done.copies, true);
+		},
+		[project, landCopies, refuted],
+	);
+
 	const duplicate = useCallback(async () => {
 		const row = now.current.cursorRow;
 		if (row?.kind === "page") {
@@ -1057,18 +1086,10 @@ export function CanvasSidebar({
 			onRefresh();
 			return;
 		}
-		const names = now.current.chosenFrames;
-		if (names.length === 0) return;
-		const done = await duplicateFrames(project, [...names]);
-		if (done.kind === "refused") {
-			refuted();
-			return;
-		}
-		landCopies(done.copies, true);
-	}, [project, storeOrder, pagesIn, onRecord, onRefresh, landCopies, refuted]);
+		await duplicateNames(now.current.chosenFrames);
+	}, [project, storeOrder, pagesIn, onRecord, onRefresh, duplicateNames, refuted]);
 
-	const copy = useCallback(() => {
-		const names = now.current.chosenFrames;
+	const copy = useCallback((names: readonly string[] = now.current.chosenFrames) => {
 		if (names.length > 0) setClipboard([...names]);
 	}, []);
 
@@ -1087,6 +1108,14 @@ export function CanvasSidebar({
 		},
 		[project, landCopies, refuted],
 	);
+
+	useEffect(() => {
+		if (verbs === undefined) return;
+		verbs.current = { copy, paste: () => paste(), duplicate: duplicateNames };
+		return () => {
+			verbs.current = null;
+		};
+	}, [verbs, copy, paste, duplicateNames]);
 
 	/* ── the one undo stack (#230) ───────────────────────────────────── */
 
@@ -1740,7 +1769,7 @@ export function CanvasSidebar({
 									// item asked, so it opens in its place rather than beside it
 									if (menuMove !== null) setMoving({ x: menu.x, y: menu.y, ...menuMove });
 								},
-								copy,
+								copy: () => copy(),
 								paste: () => void paste(menu.target.kind === "page" ? menu.target.page : undefined),
 								reveal: () => {
 									if (menu.target.kind === "frame") onRevealFrame(menu.target.name);

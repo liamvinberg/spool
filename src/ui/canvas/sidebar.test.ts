@@ -814,7 +814,7 @@ describe("the sidebar scope", () => {
 		await act(async () => press("v", ACCEL));
 		const paste = asked.find((call) => call.url.endsWith("/frames/duplicate"));
 		expect(paste?.body).toEqual({ frames: ["home"], page: "shop" });
-		expect(onCopiesLanded).toHaveBeenCalledWith([{ from: "home", to: "shop/home-copy", page: "shop" }]);
+		expect(onCopiesLanded).toHaveBeenCalledWith([{ from: "home", to: "shop/home-copy", page: "shop" }], false);
 		// the page's list names the copy by its own folder, as it names every frame on it
 		expect(lastOrder()?.frames?.shop).toEqual(["checkout", "home-copy"]);
 	});
