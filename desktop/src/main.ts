@@ -20,6 +20,7 @@ import { accountItems, type CloudAccountState, followAccount } from "./cloud-acc
 import * as daemon from "./daemon";
 import { directoryDialogOptions } from "./directory-dialog";
 import { log, openLog } from "./log";
+import { type MenuKeys, menuKey, reportedMenuKeys } from "./menu-keys";
 import { userPath } from "./path";
 import {
 	BAR_PX,
@@ -177,6 +178,8 @@ function awaitWorkspace(): void {
 
 let canvasActive = false;
 let pendingCanvasCommand: CanvasCommand | undefined;
+/** The menu's keys as the canvas reports them from its hotkey register. */
+let menuKeys: MenuKeys = {};
 /** The daemon this app started, if it started one. */
 let startedPid: number | undefined;
 /** The daemon this window is pointed at, for telling its popups from the web. */
@@ -835,6 +838,15 @@ function installCanvasChannels(): void {
 	ipcMain.on("spool:canvas-fullscreen", (event) => {
 		event.returnValue = window?.isFullScreen() ?? false;
 	});
+	ipcMain.on("spool:canvas-menu-keys", (event, keys: unknown) => {
+		if (!canvasSender(event)) return;
+		const next = reportedMenuKeys(keys);
+		if (JSON.stringify(next) === JSON.stringify(menuKeys)) return;
+		menuKeys = next;
+		// an accelerator is fixed once built, so the menu is built again around the keys
+		Menu.setApplicationMenu(buildAppMenu());
+		updateCanvasMenu();
+	});
 	ipcMain.on("spool:canvas-active", (event, active: unknown) => {
 		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
 			return;
@@ -857,7 +869,11 @@ export function buildAppMenu(): Menu {
 			submenu: [
 				{ role: "about" },
 				{ type: "separator" },
-				{ label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => sendCanvasCommand("app.settings") },
+				{
+					label: "Settings…",
+					accelerator: menuKey("app.settings", menuKeys),
+					click: () => sendCanvasCommand("app.settings"),
+				},
 				{
 					label: "Cloud Account",
 					submenu: accountItems(account, {
@@ -882,8 +898,16 @@ export function buildAppMenu(): Menu {
 			label: "File",
 			submenu: [
 				{ label: "Open Canvas", click: () => void openCanvas() },
-				{ label: "New Project…", accelerator: "CmdOrCtrl+N", click: () => sendCanvasCommand("app.new-project") },
-				{ label: "Open Project…", accelerator: "CmdOrCtrl+O", click: () => sendCanvasCommand("app.open-project") },
+				{
+					label: "New Project…",
+					accelerator: menuKey("app.new-project", menuKeys),
+					click: () => sendCanvasCommand("app.new-project"),
+				},
+				{
+					label: "Open Project…",
+					accelerator: menuKey("app.open-project", menuKeys),
+					click: () => sendCanvasCommand("app.open-project"),
+				},
 				{ type: "separator" },
 				// Closing the window leaves the app running in the menu bar, which
 				// is the whole reason Cmd+W and Cmd+Q are different keys here.

@@ -125,8 +125,17 @@ describe("external link protocol", () => {
 	});
 });
 
+describe("relayed keys", () => {
+	it("runs only what the register relays out of a frame", () => {
+		const leave = { spool: "key", frame: "host", id: "canvas.leave" };
+		expect(parseFrameMessage(leave)).toEqual(leave);
+		expect(parseFrameMessage({ spool: "key", frame: "host", id: "canvas.trash" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "key", frame: "host", key: "Escape" })).toBeUndefined();
+	});
+});
+
 describe("frame zoom protocol", () => {
-	it("accepts entered-frame pinch and shortcut intents", () => {
+	it("accepts entered-frame pinch intents", () => {
 		const wheel = {
 			spool: "zoom",
 			frame: "host",
@@ -136,10 +145,7 @@ describe("frame zoom protocol", () => {
 			deltaY: -20,
 			deltaMode: 0,
 		};
-		const shortcut = { spool: "zoom", frame: "host", kind: "out" };
-
 		expect(parseFrameMessage(wheel)).toEqual(wheel);
-		expect(parseFrameMessage(shortcut)).toEqual(shortcut);
 	});
 
 	it("rejects malformed zoom intents", () => {

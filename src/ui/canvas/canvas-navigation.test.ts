@@ -154,7 +154,7 @@ describe("canvas keyboard navigation", () => {
 		await act(async () => {
 			window.dispatchEvent(
 				new MessageEvent("message", {
-					data: { spool: "key", frame: "origin", key: "Escape" },
+					data: { spool: "key", frame: "origin", id: "canvas.leave" },
 					source: iframe?.contentWindow ?? null,
 				}),
 			);
@@ -413,7 +413,10 @@ describe("canvas keyboard navigation", () => {
 		const walked = host.querySelector<HTMLIFrameElement>('iframe[title="right"]')?.contentWindow ?? null;
 		await act(async () => {
 			window.dispatchEvent(
-				new MessageEvent("message", { data: { spool: "key", frame: "right", key: "ctrl+o" }, source: walked }),
+				new MessageEvent("message", {
+					data: { spool: "key", frame: "right", id: "canvas.jump-back" },
+					source: walked,
+				}),
 			);
 		});
 		// the departure was made from inside origin, so back stands there again
@@ -519,7 +522,7 @@ describe("canvas keyboard navigation", () => {
 		await act(async () => {
 			window.dispatchEvent(
 				new MessageEvent("message", {
-					data: { spool: "key", frame: "shop/checkout", key: "ctrl+o" },
+					data: { spool: "key", frame: "shop/checkout", id: "canvas.jump-back" },
 					source: walked,
 				}),
 			);

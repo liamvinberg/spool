@@ -217,7 +217,7 @@ it("keeps toolbar gestures out of the canvas beneath it", async () => {
 	await act(async () => {
 		window.dispatchEvent(
 			new MessageEvent("message", {
-				data: { spool: "key", frame: "home", key: "Escape" },
+				data: { spool: "key", frame: "home", id: "canvas.leave" },
 				source: iframe?.contentWindow ?? null,
 			}),
 		);
@@ -259,7 +259,7 @@ it("clears borrowed Select previews across Command release and window blur", asy
 	await act(async () => {
 		window.dispatchEvent(
 			new MessageEvent("message", {
-				data: { spool: "key", frame: "home", key: "Escape" },
+				data: { spool: "key", frame: "home", id: "canvas.leave" },
 				source: iframe?.contentWindow ?? null,
 			}),
 		);

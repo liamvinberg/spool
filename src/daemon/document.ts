@@ -1,27 +1,45 @@
 import { createHash } from "node:crypto";
 import { MAX_CAPTURE_OUTPUT_PIXELS, SETTLE_BUDGET_MS } from "../cover";
+import { comboMatches, lowerCombo, parseCombo } from "../ui/hotkey-combos";
+import { relayedHotkeys } from "../ui/hotkeys";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 import { collapsedWords } from "./edit-words";
 import { tagWord, wholeComponent } from "./element-name";
 import { PROJECT_LAYER } from "./tailwind";
 
 /**
- * The source of the three helpers the canvas shim carries, written and tested once in TypeScript
- * (`element-name.ts`, `edit-words.ts`). The release build prints them once and bakes the text in here
+ * The source of the helpers the canvas shim carries, written and tested once in TypeScript
+ * (`element-name.ts`, `edit-words.ts`, `ui/hotkey-combos.ts`). The release build prints them once and bakes the text in here
  * (tsup.config.ts), so every copy of this module carries the same bytes however it is bundled again: a
  * Worker that bundles `spool.page/compile` renames and reprints what it bundles, and a function's own
  * `toString()` would then compile a different document from the daemon's. Run from source, they are read off
  * the functions themselves.
  */
-declare const __SPOOL_SHIM_HELPERS__: { wholeComponent: string; tagWord: string; collapsedWords: string } | undefined;
+declare const __SPOOL_SHIM_HELPERS__:
+	| { wholeComponent: string; tagWord: string; collapsedWords: string; comboMatches: string }
+	| undefined;
 const shimHelpers =
 	typeof __SPOOL_SHIM_HELPERS__ === "undefined"
 		? {
 				wholeComponent: wholeComponent.toString(),
 				tagWord: tagWord.toString(),
 				collapsedWords: collapsedWords.toString(),
+				comboMatches: comboMatches.toString(),
 			}
 		: __SPOOL_SHIM_HELPERS__;
+
+/**
+ * The keys an entered frame hands back to the canvas, from the register's
+ * `relay` entries: each lowered combo, the entry it runs, and whether the
+ * browser's own meaning is eaten (a chord under ctrl or ⌘ has one; Esc stays
+ * the frame's too, its own modals included).
+ */
+const relayKeys = relayedHotkeys().flatMap(({ id, combos }) =>
+	combos.map((combo) => {
+		const parsed = parseCombo(combo);
+		return { id, match: lowerCombo(parsed), prevent: parsed.accel || parsed.ctrl };
+	}),
+);
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -2221,8 +2239,12 @@ const canvasShimJs = `(() => {
   }
  });
 
-	// Esc must still exit (#22); browser zoom shortcuts become the canvas's
-	// shortcuts so a focused frame cannot zoom the whole page into a trap.
+	// What reaches out of an entered frame is the register's to say (its \`relay\`
+	// entries, ui/hotkeys.ts): Esc must still exit (#22), the jump chords are
+	// owed mid-walk (#166), and browser zoom chords become the canvas's so a
+	// focused frame cannot zoom the whole page into a trap.
+	var relayKeys = ${JSON.stringify(relayKeys)};
+	var relayMatches = ${shimHelpers.comboMatches};
 	addEventListener("keydown", (event) => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
@@ -2256,24 +2278,12 @@ const canvasShimJs = `(() => {
 			window.parent.postMessage({ spool: "modifier", frame, modifier: event.key, held: true }, "*");
 			return;
 		}
-		if (event.key === "Escape") {
-			window.parent.postMessage({ spool: "key", frame, key: "Escape" }, "*");
+		for (const relay of relayKeys) {
+			if (!relayMatches(event, relay.match, null)) continue;
+			if (relay.prevent) event.preventDefault();
+			window.parent.postMessage({ spool: "key", frame, id: relay.id }, "*");
 			return;
 		}
-		// the jump chords are the canvas's on every platform (#166): relay the
-		// literal control chord and eat the browser's open-file dialog
-		if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.key === "o" || event.key === "i")) {
-			event.preventDefault();
-			window.parent.postMessage({ spool: "key", frame, key: "ctrl+" + event.key }, "*");
-			return;
-		}
-		if (!event.metaKey && !event.ctrlKey) return;
-		let kind;
-		if (event.key === "+" || event.key === "=") kind = "in";
-		else if (event.key === "-") kind = "out";
-		else return;
-			event.preventDefault();
-			window.parent.postMessage({ spool: "zoom", frame, kind }, "*");
 		}, true);
 
 	// A pointer trap is the same failure as a zoom trap: entered, the frame owns

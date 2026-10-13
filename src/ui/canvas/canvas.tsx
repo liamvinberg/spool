@@ -4137,15 +4137,17 @@ export function ProjectCanvas({
 				}
 				case "key":
 					// an entered frame owns the keyboard; the shim forwards what the
-					// canvas must never lose — from any frame: a walked-away source
+					// register relays out of it — from any frame: a walked-away source
 					// legitimately still holds focus, and its chord means the same
-					// thing (#28). The jump chords join Esc there (#166): mid-walk,
-					// inside a frame, is exactly where ctrl+o is owed. Each chord
-					// runs its register entry, so the relay can never drift from
-					// what the same key does out here.
-					if (message.key === "Escape") runHotkey("canvas.leave");
-					else if (message.key === "ctrl+o") runHotkey("canvas.jump-back");
-					else if (message.key === "ctrl+i") runHotkey("canvas.jump-forward");
+					// thing (#28). The zoom chords only ever moved the camera for the
+					// frame that is entered. Each runs its register entry, so the relay
+					// can never drift from what the same key does out here.
+					if (
+						(message.id === "canvas.zoom-in" || message.id === "canvas.zoom-out") &&
+						enteredRef.current !== message.frame
+					)
+						return;
+					runHotkey(message.id);
 					return;
 				case "modifier":
 					// the frame names the key that moved; which one is accel is the
@@ -4180,32 +4182,28 @@ export function ProjectCanvas({
 				case "zoom": {
 					// Entered frames own pointer + keyboard input, and those events do
 					// not cross an iframe boundary. The frame shim claims browser-zoom
-					// gestures and hands them back here as canvas camera intents.
+					// wheel gestures and hands them back here as canvas camera intents;
+					// its zoom chords arrive as relayed keys (case "key").
 					if (enteredRef.current !== message.frame) return;
 					camera.stop();
 					setMenu(null);
-					if (message.kind === "wheel") {
-						const iframe = iframes.current.get(message.frame);
-						const viewport = viewportRef.current;
-						if (iframe === undefined || viewport === null) return;
-						// The pointer is where the frame said it was inside its own box, and
-						// that box is where it was last drawn: measured, the two agree even
-						// while the camera is a few ticks ahead of the frame (#81), and the
-						// zoom pins the screen point the pointer is actually on.
-						const frameRect = iframe.getBoundingClientRect();
-						const viewportRect = viewport.getBoundingClientRect();
-						const cameraScale = camera.get()?.k ?? 1;
-						const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : cameraScale;
-						const scaleY = iframe.clientHeight > 0 ? frameRect.height / iframe.clientHeight : cameraScale;
-						zoomAtPoint(
-							frameRect.left - viewportRect.left + message.x * scaleX,
-							frameRect.top - viewportRect.top + message.y * scaleY,
-							wheelZoomFactor(message.deltaY, message.deltaMode, viewport.clientHeight),
-						);
-						return;
-					}
-					const c = viewportCenter();
-					zoomAtPoint(c.x, c.y, message.kind === "in" ? K_STEP : 1 / K_STEP, true);
+					const iframe = iframes.current.get(message.frame);
+					const viewport = viewportRef.current;
+					if (iframe === undefined || viewport === null) return;
+					// The pointer is where the frame said it was inside its own box, and
+					// that box is where it was last drawn: measured, the two agree even
+					// while the camera is a few ticks ahead of the frame (#81), and the
+					// zoom pins the screen point the pointer is actually on.
+					const frameRect = iframe.getBoundingClientRect();
+					const viewportRect = viewport.getBoundingClientRect();
+					const cameraScale = camera.get()?.k ?? 1;
+					const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : cameraScale;
+					const scaleY = iframe.clientHeight > 0 ? frameRect.height / iframe.clientHeight : cameraScale;
+					zoomAtPoint(
+						frameRect.left - viewportRect.left + message.x * scaleX,
+						frameRect.top - viewportRect.top + message.y * scaleY,
+						wheelZoomFactor(message.deltaY, message.deltaMode, viewport.clientHeight),
+					);
 					return;
 				}
 				case "scroll": {
@@ -4279,7 +4277,6 @@ export function ProjectCanvas({
 		walkTo,
 		zoomAtPoint,
 		panBy,
-		viewportCenter,
 		requestSiteBoxes,
 		strike,
 		releaseHold,

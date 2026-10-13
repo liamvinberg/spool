@@ -26,7 +26,7 @@ import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
-import { desktopWindow } from "./desktop-window";
+import { desktopWindow, menuAccelerators } from "./desktop-window";
 import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
@@ -641,6 +641,9 @@ export function App() {
 		trashRequest === null &&
 		moving === null &&
 		!transfer.confirming;
+	useEffect(() => {
+		appWindow?.setMenuKeys?.(menuAccelerators());
+	}, [appWindow]);
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);

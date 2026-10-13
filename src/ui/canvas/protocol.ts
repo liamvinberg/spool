@@ -7,6 +7,7 @@ import type { SessionRecord } from "../../runtime/frame-runtime";
 import type { AccelKeyName } from "../../runtime/platform-keys";
 import { isWalkId } from "../../runtime/walk-protocol";
 import type { MovePlace } from "../api";
+import { type HotkeyId, isRelayedHotkey } from "../hotkeys";
 import type { Box } from "./camera";
 
 /**
@@ -101,7 +102,7 @@ interface FrameWheelZoomMessage {
 	deltaMode: number;
 }
 
-export type FrameZoomMessage = FrameWheelZoomMessage | { spool: "zoom"; frame: string; kind: "in" | "out" };
+export type FrameZoomMessage = FrameWheelZoomMessage;
 
 /**
  * A plain wheel the entered frame could not scroll with: nothing under the
@@ -208,7 +209,7 @@ export type FrameMessage =
 	| CaptureSourceReply
 	| { spool: "session?"; frame: string }
 	| { spool: "state"; frame: string; scenario: string; state: Record<string, unknown> }
-	| { spool: "key"; frame: string; key: string }
+	| { spool: "key"; frame: string; id: HotkeyId }
 	| FrameModifierMessage
 	| FramePanMessage
 	| FrameZoomMessage
@@ -255,7 +256,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as CaptureSourceReply)
 				: undefined;
 		case "key":
-			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
+			// a frame may ask only for what the register relays out of it
+			return isRelayedHotkey(m.id) ? (m as unknown as FrameMessage) : undefined;
 		case "modifier":
 			return (m.modifier === "Meta" || m.modifier === "Control") && typeof m.held === "boolean"
 				? (m as unknown as FrameMessage)
@@ -265,9 +267,6 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "zoom":
-			if (m.kind === "in" || m.kind === "out") {
-				return m as unknown as FrameMessage;
-			}
 			return m.kind === "wheel" &&
 				finite(m.x) &&
 				finite(m.y) &&
