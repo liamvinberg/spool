@@ -95,6 +95,18 @@ export function centerOn(camera: Camera, box: Box, vw: number, vh: number): Came
 }
 
 /**
+ * Bring a box into view at the same zoom: the camera as it is when the whole
+ * box is already on screen, else centered on it. ⌥-arrow steps use it, so
+ * walking a group that fits never moves the view.
+ */
+export function revealCamera(camera: Camera, box: Box, vw: number, vh: number): Camera {
+	const view = visibleWorldRect(camera, vw, vh, 0);
+	const inside =
+		box.x >= view.x && box.y >= view.y && box.x + box.w <= view.x + view.w && box.y + box.h <= view.y + view.h;
+	return inside ? camera : centerOn(camera, box, vw, vh);
+}
+
+/**
  * The camera that makes a frame live without ever taking you further away.
  *
  * Below a fit, zoom in to fit. At or above it, center at the current zoom while
