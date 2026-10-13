@@ -134,6 +134,7 @@ export function FrameLabel({
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);
+	const hinted = overview === "target" && overviewHint !== undefined;
 
 	return (
 		<div ref={place} className="pointer-events-none absolute top-0 left-0 h-0">
@@ -159,7 +160,10 @@ export function FrameLabel({
 				) : (
 					<div
 						className={cn(
-							"flex w-full min-w-0 items-center gap-1.5 pb-2.5 transition-opacity duration-fast",
+							"flex w-full min-w-0 items-center gap-1.5 transition-opacity duration-fast",
+							// the overview's hint stands on its own line under the name, so a
+							// phone-narrow frame keeps its name whole and the hint truncates
+							hinted ? "pb-0.5" : "pb-2.5",
 							overview === "dim" && "opacity-40",
 						)}
 					>
@@ -175,9 +179,6 @@ export function FrameLabel({
 						>
 							{leaf}
 						</span>
-						{overview === "target" && overviewHint !== undefined && (
-							<span className="shrink-0 animate-find-in text-secondary type-detail">{overviewHint}</span>
-						)}
 						{clickEnters && overview === null && (
 							<span data-click-enters={name} className="shrink-0 animate-find-in text-tertiary type-detail">
 								click enters
@@ -205,6 +206,14 @@ export function FrameLabel({
 								play
 							</button>
 						)}
+					</div>
+				)}
+				{hinted && (
+					<div
+						data-overview-hint={name}
+						className="w-full min-w-0 animate-find-in truncate pb-2.5 text-secondary type-detail"
+					>
+						{overviewHint}
 					</div>
 				)}
 			</div>
