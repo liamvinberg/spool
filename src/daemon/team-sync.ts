@@ -125,7 +125,7 @@ export interface LocalCopyOptions {
 	notice?: (message: string) => void;
 	/** This copy's set-aside marks changed: one of its saves lost a collision, or a mark went. */
 	onMarks?: () => void;
-	/** Sync paused on a limit, or the pause lifted: `state().paused` says which. */
+	/** Sync paused on a limit, or the pause lifted, or a long wait on the minute's bucket began or ended: `state()` says. */
 	onPaused?: () => void;
 	/** The team took one of this copy's saves. */
 	onSaved?: (path: string) => void;
@@ -166,14 +166,16 @@ export interface SyncState {
 	ended: string | null;
 	goneLocal: string | null;
 	paused: string | null;
+	/** Changes waiting on the minute's bucket, said only once the wait is long: never a pause. */
+	sending: string | null;
 	held: { path: string; why: string }[];
 }
 
 export interface LocalCopy {
 	/** Resolves whenever the copy is caught up and nothing it sent is waiting on an answer. */
 	idle(): Promise<void>;
-	/** Sync paused, and what didn't travel, now. */
-	state(): Pick<SyncState, "paused" | "held">;
+	/** Sync paused, changes waiting on a long wait, and what didn't travel, now. */
+	state(): Pick<SyncState, "paused" | "sending" | "held">;
 	/** Where this machine's person is on the canvas, or null once nobody here is looking. Never stored. */
 	presence(state: PresenceState | null): void;
 	/**
@@ -200,7 +202,7 @@ const OUTSIDE_LAYOUT = "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shar
 /** How sync says each limit it paused on. */
 const LIMITS: Record<Limited, string> = {
 	project_full: `the team's design/ is at its ${PROJECT_LIMIT_BYTES / 1_000_000_000} GB limit`,
-	rate_limited: `this project took ${SAVES_PER_MINUTE} saves in the last minute`,
+	rate_limited: `spool.page takes this project's saves at ${SAVES_PER_MINUTE} a minute`,
 	monthly_limit: `you've made ${SAVES_PER_MONTH.toLocaleString("en")} saves to this project this month`,
 	unavailable: "spool.page couldn't check saves just now",
 };
@@ -233,6 +235,13 @@ export class SyncStopped extends SpoolError {}
 
 /** How long a pause lasts when spool.page can't say when its limit lifts. */
 const RETRY_LIMIT_SECONDS = 60;
+/**
+ * A save refused for the minute is sent again after `retryAfter` and up to this much of it again, at random, so
+ * copies refused together don't all come back together.
+ */
+const RETRY_SPREAD = 0.5;
+/** A wait on the minute's bucket longer than this is said, as progress; a shorter one is waited out in silence. */
+const SENDING_SAID_MS = 10_000;
 /** How long the copy's record waits for more changes before it is written: a catch-up of many files is one write. */
 const RECORD_MS = 250;
 /** How long the watcher's burst for one save is let settle before the files are read. */
@@ -358,6 +367,15 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const held = new Map<string, string>();
 	/** A limit paused sync: why, and until when nothing is sent. What changes meanwhile waits on disk. */
 	let paused: { why: string; until: number } | undefined;
+	/** Paths waiting on the minute's bucket: each is read and sent once it has room. */
+	const waiting = new Set<string>();
+	/** Until when the bucket takes nothing more from this copy: a refusal's `retryAfter`, spread. */
+	let holdUntil = 0;
+	/** How full spool.page last said the bucket was, and when; unknown from a move, or a spool.page that doesn't say. */
+	let pace: { room: number; refill: number; at: number } | undefined;
+	let flushing: NodeJS.Timeout | undefined;
+	/** What a long wait on the bucket says, while it lasts. */
+	let sending: string | null = null;
 	let resume: NodeJS.Timeout | undefined;
 	let toldSignedOut = false;
 	/** The other account signed in here that the copy last said it waits through, said once until it syncs again. */
@@ -388,7 +406,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		yielding.size === 0 &&
 		changed.size === 0 &&
 		restoring.size === 0 &&
-		deferred.size === 0;
+		deferred.size === 0 &&
+		waiting.size === 0;
 	const wake = () => {
 		if (!isIdle()) return;
 		for (const waiter of waiters.splice(0)) waiter.resolve();
@@ -449,10 +468,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	/** A limit was reached: nothing more is sent until it may have lifted, then everything waiting is tried. */
 	const pause = (reason: Limited, retryAfter: unknown) => {
-		const why = LIMITS[reason];
+		const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : RETRY_LIMIT_SECONDS;
+		const why =
+			reason === "monthly_limit" ? `${LIMITS[reason]}; sync starts again on ${liftsOn(seconds)}` : LIMITS[reason];
 		const was = isPaused();
 		if (paused?.why !== why) notice(`Sync paused: ${why}. Changes stay on this Mac until it lifts.`);
-		const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : RETRY_LIMIT_SECONDS;
 		const said = paused?.why;
 		paused = { why, until: Date.now() + seconds * 1_000 };
 		if (!was || said !== why) options.onPaused?.();
@@ -465,7 +485,75 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			wake();
 		}, seconds * 1_000);
 		resume.unref?.();
-		if (!live) fail(new SyncPaused(reason, why, seconds));
+		if (!live) fail(new SyncPaused(reason, LIMITS[reason], seconds));
+	};
+
+	// --- the minute's bucket: a save waits until it has room, and a long wait is said as progress, never a pause ---
+
+	/** What spool.page says of the bucket, on a welcome and on each answer to a save. */
+	const hearPace = (value: unknown) => {
+		if (typeof value !== "object" || value === null) return;
+		const { room, refill } = value as Record<string, unknown>;
+		if (typeof room === "number" && Number.isFinite(room) && typeof refill === "number" && refill > 0)
+			pace = { room, refill, at: Date.now() };
+	};
+
+	/**
+	 * How long until the bucket has room for one more save from here, 0 for now: what it last said it held, refilled
+	 * since, less the saves sent that it hasn't answered yet.
+	 */
+	const untilRoom = (): number => {
+		const now = Date.now();
+		let wait = Math.max(0, holdUntil - now);
+		if (pace !== undefined) {
+			const room = pace.room + ((now - pace.at) * pace.refill) / 60_000 - inflight.size;
+			if (room < 1) wait = Math.max(wait, ((1 - room) * 60_000) / pace.refill);
+		}
+		return wait;
+	};
+
+	/** A path waits for the bucket, read again when it is sent so only its latest bytes go. */
+	const wait = (path: string) => {
+		waiting.add(path);
+		flushSoon();
+		sayWait();
+	};
+
+	const flushSoon = () => {
+		if (flushing !== undefined || waiting.size === 0 || closed) return;
+		flushing = setTimeout(
+			() => {
+				flushing = undefined;
+				const paths = [...waiting];
+				waiting.clear();
+				for (const path of paths) check(path);
+				flushSoon();
+				sayWait();
+				wake();
+			},
+			Math.max(untilRoom(), SETTLE_MS),
+		);
+		flushing.unref?.();
+	};
+
+	/** A wait long enough to say: how many changes, to which team, and about how long until the last has gone. */
+	const sayWait = () => {
+		const refill = pace?.refill ?? SAVES_PER_MINUTE;
+		const ms = untilRoom() + ((waiting.size - 1) * 60_000) / refill;
+		const said =
+			waiting.size > 0 && ms > SENDING_SAID_MS
+				? `Sending ${waiting.size.toLocaleString("en")} ${waiting.size === 1 ? "change" : "changes"} to ${link.team}, ${aboutHowLong(ms)}`
+				: null;
+		const changed = (said === null) !== (sending === null);
+		sending = said;
+		if (changed) options.onPaused?.();
+	};
+
+	/** A save refused for the minute: sent again after `retryAfter`, spread at random, with no word unless it is long. */
+	const waitForRoom = (path: string, retryAfter: unknown) => {
+		const seconds = typeof retryAfter === "number" && retryAfter > 0 ? retryAfter : RETRY_LIMIT_SECONDS;
+		holdUntil = Math.max(holdUntil, Date.now() + seconds * 1_000 * (1 + Math.random() * RETRY_SPREAD));
+		wait(path);
 	};
 
 	const signedOut = () => {
@@ -530,7 +618,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const known = state.files[path];
 		if (hash !== (known?.hash ?? null) && gitWrote(path, bytes)) return restore(path, bytes);
 		held.delete(path);
-		if (hash !== (known?.hash ?? null)) send(path, bytes);
+		if (hash === (known?.hash ?? null)) return;
+		if (untilRoom() > 0) return wait(path);
+		send(path, bytes);
 	};
 
 	// --- the git guard: what git writes into design/ never goes up; the team's version comes back over it ---
@@ -711,7 +801,15 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (framed === null) return;
 		const { message, bytes } = framed;
 		if (message.type === "presence") return presence.hear(message);
-		if (message.type === "file") receive(message, bytes);
+		if (message.type === "welcome") {
+			// a move's connection is paced by nothing
+			pace = undefined;
+			hearPace(message.pace);
+		} else if (message.type === "month") {
+			const { made, limit } = message;
+			if (typeof made === "number" && typeof limit === "number")
+				notice(`${made.toLocaleString("en")} of ${limit.toLocaleString("en")} saves to ${link.project} this month`);
+		} else if (message.type === "file") receive(message, bytes);
 		else if (message.type === "caught-up") {
 			if (typeof message.head === "number" && message.head > state.head) state.head = message.head;
 			persist();
@@ -741,6 +839,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			const sent = typeof message.ref === "string" ? inflight.get(message.ref) : undefined;
 			if (sent === undefined || typeof message.ref !== "string") return;
 			inflight.delete(message.ref);
+			hearPace(message.pace);
 			if (message.type === "saved" && typeof message.version === "number") {
 				state.files[sent.path] = { version: message.version, hash: sent.hash };
 				persistSoon();
@@ -758,7 +857,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				const version = typeof message.version === "number" ? message.version : 0;
 				mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
 			}
-			if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
+			if (message.type === "refused" && message.reason === "rate_limited" && live)
+				waitForRoom(sent.path, message.retryAfter);
+			else if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
 			if (dirty.delete(sent.path)) check(sent.path);
 		}
 		wake();
@@ -787,7 +888,13 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				opened = true;
 				connectedWith = presented;
 				socket?.send(
-					encodeFrame({ type: "hello", protocol: PROTOCOL_VERSION, format: FORMAT_VERSION, since: state.head }),
+					encodeFrame({
+						type: "hello",
+						protocol: PROTOCOL_VERSION,
+						format: FORMAT_VERSION,
+						since: state.head,
+						...(options.moving === undefined ? {} : { moving: true }),
+					}),
 				);
 			},
 			message: handle,
@@ -875,6 +982,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		roster: () => presence.roster(),
 		state: () => ({
 			paused: isPaused() && paused !== undefined ? paused.why : null,
+			sending,
 			held: [...held].map(([path, why]) => ({ path, why })).sort((a, b) => (a.path < b.path ? -1 : 1)),
 		}),
 		turnEnded: () => {
@@ -902,12 +1010,25 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (watching || recording !== undefined) persist();
 			guard.close();
 			if (resume !== undefined) clearTimeout(resume);
+			if (flushing !== undefined) clearTimeout(flushing);
 			watch?.close();
 			socket?.close();
 			socket = undefined;
 			waiters = [];
 		},
 	};
+}
+
+/** The day a limit `seconds` from now lifts, as a person reads it: `1 June`. */
+export function liftsOn(seconds: number): string {
+	return new Date(Date.now() + seconds * 1_000).toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+}
+
+/** A wait said roughly: `under a minute`, `about a minute`, `about 3 minutes`. */
+function aboutHowLong(ms: number): string {
+	const minutes = Math.round(ms / 60_000);
+	if (minutes < 1) return "under a minute";
+	return minutes === 1 ? "about a minute" : `about ${minutes} minutes`;
 }
 
 /** A person's state without what their agent is doing: what they change themselves. */
@@ -1371,7 +1492,7 @@ export function createTeamSync(deps: {
 		state: (root: string): SyncState => ({
 			ended: endedWith(root) ?? null,
 			goneLocal: goneLocalWith(root) ?? null,
-			...(copies.get(root)?.state() ?? { paused: null, held: [] }),
+			...(copies.get(root)?.state() ?? { paused: null, sending: null, held: [] }),
 		}),
 		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
 		watchPresence(root: string, watcher: (presence: Presence) => void): () => void {

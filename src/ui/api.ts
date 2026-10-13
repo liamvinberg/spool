@@ -1900,6 +1900,7 @@ export async function fetchSyncState(project: string): Promise<SyncState | undef
 			ended: typeof body.ended === "string" ? body.ended : null,
 			goneLocal: typeof body.goneLocal === "string" ? body.goneLocal : null,
 			paused: typeof body.paused === "string" ? body.paused : null,
+			sending: typeof body.sending === "string" ? body.sending : null,
 			held: body.held,
 		};
 	} catch {

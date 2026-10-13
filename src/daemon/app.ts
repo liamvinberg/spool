@@ -945,8 +945,12 @@ export function createDaemonApp({
 			if (root !== undefined) hub.publish(root, { kind: "sync", message });
 		},
 		onMarks: (root) => hub.publish(root, { kind: "set-aside" }),
-		// a pause hollows the copy's team mark on its tab and its cover, and a resume fills it again
-		onSyncChanged: (root) => emitAppEvent({ kind: "sync", root, ...syncMarks(root) }),
+		// a pause hollows the copy's team mark on its tab and its cover, and a resume fills it again; a long wait on the
+		// minute's bucket is said on the project's open canvases as it begins and ends
+		onSyncChanged: (root) => {
+			emitAppEvent({ kind: "sync", root, ...syncMarks(root) });
+			hub.publish(root, { kind: "sync", message: teamSync.state(root).sending ?? "" });
+		},
 		// a copy gone local says so on its cover and canvas until its team pays, when they read again
 		onGoneLocal: (root) => {
 			emitAppEvent({ kind: "sync", root, ...syncMarks(root) });
