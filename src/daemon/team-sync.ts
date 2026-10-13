@@ -242,6 +242,8 @@ const RETRY_LIMIT_SECONDS = 60;
 const RETRY_SPREAD = 0.5;
 /** A wait on the minute's bucket longer than this is said, as progress; a shorter one is waited out in silence. */
 const SENDING_SAID_MS = 10_000;
+/** How often a long wait's count is told again as it goes down. */
+const SENDING_RETOLD_MS = 5_000;
 /** How long the copy's record waits for more changes before it is written: a catch-up of many files is one write. */
 const RECORD_MS = 250;
 /** How long the watcher's burst for one save is let settle before the files are read. */
@@ -374,8 +376,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** How full spool.page last said the bucket was, and when; unknown from a move, or a spool.page that doesn't say. */
 	let pace: { room: number; refill: number; at: number } | undefined;
 	let flushing: NodeJS.Timeout | undefined;
-	/** What a long wait on the bucket says, while it lasts. */
+	/** What a long wait on the bucket says, while it lasts, and when its listeners were last told. */
 	let sending: string | null = null;
+	let toldSending = 0;
 	let resume: NodeJS.Timeout | undefined;
 	let toldSignedOut = false;
 	/** The other account signed in here that the copy last said it waits through, said once until it syncs again. */
@@ -544,9 +547,13 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			waiting.size > 0 && ms > SENDING_SAID_MS
 				? `Sending ${waiting.size.toLocaleString("en")} ${waiting.size === 1 ? "change" : "changes"} to ${link.team}, ${aboutHowLong(ms)}`
 				: null;
-		const changed = (said === null) !== (sending === null);
+		// said as it begins and ends, and again now and then as it counts down
+		const tell =
+			(said === null) !== (sending === null) || (said !== null && Date.now() - toldSending >= SENDING_RETOLD_MS);
 		sending = said;
-		if (changed) options.onPaused?.();
+		if (!tell) return;
+		toldSending = Date.now();
+		options.onPaused?.();
 	};
 
 	/** A save refused for the minute: sent again after `retryAfter`, spread at random, with no word unless it is long. */
