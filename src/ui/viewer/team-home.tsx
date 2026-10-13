@@ -1,8 +1,11 @@
-import { type ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { AccountFoot } from "../account-foot";
 import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
 import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop } from "../home";
+import { FindNav, FoundHead, finds, useFoundPlace } from "../home-find";
+import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
+import { EmptyFrames, EmptyState } from "../primitives/feedback";
 import { MenuItem } from "../primitives/overlays";
 import { ProjectIconView } from "../project-icon";
 import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
@@ -116,11 +119,29 @@ function Home({
 	// the cycle the landing's switch showed, when spool.page/start sent this team here: the payment choice starts on it
 	const [cycle] = useState(() => cycleOf(location.search));
 	const refresh = useCallback(async () => setTeams(await source.list()), [source]);
+	// the search in the sidebar reaches every team; going to any place puts it away
+	const [query, setQuery] = useState("");
+	const searchRef = useRef<HTMLInputElement>(null);
+	const needle = query.trim().toLowerCase();
 	const go = useCallback((next: HomePlace, replace = false) => {
 		const path = pathOf(next);
 		if (path !== location.pathname) history[replace ? "replaceState" : "pushState"](null, "", path);
 		setPlace(next);
+		setQuery("");
 	}, []);
+	useEffect(
+		() =>
+			attachHotkeyLayer({
+				scope: "home",
+				handlers: {
+					"home.search": (event) => {
+						event?.preventDefault();
+						searchRef.current?.focus();
+					},
+				},
+			}),
+		[],
+	);
 	useEffect(() => {
 		if (place?.team) setLastTeam(place.team);
 	}, [place]);
@@ -182,13 +203,16 @@ function Home({
 								</Button>
 							</div>
 						) : (
-							<TeamSwitcher
-								teams={ready}
-								current={current}
-								onMac={false}
-								onSelect={(address) => address !== null && go({ team: address, page: "projects" })}
-								onNewTeam={() => setCreating(true)}
-							/>
+							<>
+								<FindNav query={query} onQuery={setQuery} inputRef={searchRef} />
+								<TeamSwitcher
+									teams={ready}
+									current={current}
+									onMac={false}
+									onSelect={(address) => address !== null && go({ team: address, page: "projects" })}
+									onNewTeam={() => setCreating(true)}
+								/>
+							</>
 						)}
 						{creating && (
 							<NewTeamDialog
@@ -206,7 +230,13 @@ function Home({
 				)
 			}
 			nav={
-				current && <TeamNav team={current} page={page} onPage={(to) => go({ team: current.address, page: to })} />
+				current && (
+					<TeamNav
+						team={current}
+						page={needle === "" ? page : null}
+						onPage={(to) => go({ team: current.address, page: to })}
+					/>
+				)
 			}
 			foot={
 				<AccountFoot
@@ -228,7 +258,9 @@ function Home({
 						onSignedOut={signIn}
 						onSignOut={signOut}
 					/>
-				) : current === null || ready === null ? null : page === "people" ? (
+				) : current === null || ready === null ? null : needle !== "" ? (
+					<CloudFound teams={ready.teams} needle={needle} query={query} onClear={() => setQuery("")} />
+				) : page === "people" ? (
 					<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
 				) : page === "settings" ? (
 					<TeamSettingsPage
@@ -339,14 +371,16 @@ function Projects({
 			setup={setup}
 			cycle={setup.cycle}
 			empty={`${team.name} has no projects yet`}
+			count={{ total: projects.length }}
 			// Stripe's Checkout comes back to /<team>/settings/billing, so it opens in this tab
 			onOpen={(url) => location.assign(url)}
 			covers={
 				projects.length === 0 ? undefined : (
 					<>
 						<CloudCovers
-							team={team}
-							projects={projects}
+							covers={[...projects]
+								.sort((a, b) => a.name.localeCompare(b.name))
+								.map((project) => ({ team, project }))}
 							here={here}
 							menu={menu}
 							onMenu={setMenu}
@@ -369,78 +403,154 @@ function Projects({
 }
 
 function CloudCovers({
-	team,
-	projects,
+	covers,
 	here,
+	said = false,
 	menu,
 	onMenu,
 	onMove,
 }: {
-	team: CloudTeam;
-	projects: readonly ListedTeamProject[];
-	here: TeamHere;
+	/** Each cover's project and the team it is in. */
+	covers: readonly { team: CloudTeam; project: ListedTeamProject }[];
+	/** Who is inside each, by its name, where every cover is one team's. */
+	here?: TeamHere | undefined;
+	/** Each cover names its team, where the covers come from several. */
+	said?: boolean;
 	menu: string | null;
-	onMenu: (name: string | null) => void;
+	onMenu: (url: string | null) => void;
 	/** "Move to team…", for an admin with another team to move a project to. */
 	onMove?: ((project: ListedTeamProject) => void) | undefined;
 }) {
 	return (
 		<>
 			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
-				{[...projects]
-					.sort((a, b) => a.name.localeCompare(b.name))
-					.map((project) => {
-						const at = `/${team.address}/${encodeURIComponent(project.name)}`;
-						return (
-							<CoverTile
-								key={project.url}
-								name={project.name}
-								open={{ href: at }}
-								here={here.get(project.name)}
-								art={<CloudCover team={team.address} project={project.name} />}
-								line={
-									<span className="mt-[5px] block truncate text-secondary type-detail">
-										{project.repo ?? "no repo linked"}
-									</span>
-								}
-								menuOpen={menu === project.name}
-								onToggleMenu={() => onMenu(menu === project.name ? null : project.name)}
-								onCloseMenu={() => onMenu(null)}
-								menu={({ close }) => (
-									<>
-										<MenuItem label="Open" href={at} onClick={close} />
-										{project.repo !== null && (
-											<MenuItem
-												label="Copy clone command"
-												onClick={() => {
-													close();
-													void navigator.clipboard?.writeText(`git clone https://${project.repo}.git`);
-												}}
-											/>
-										)}
+				{covers.map(({ team, project }) => {
+					const at = `/${team.address}/${encodeURIComponent(project.name)}`;
+					return (
+						<CoverTile
+							key={project.url}
+							name={project.name}
+							open={{ href: at }}
+							here={here?.get(project.name)}
+							art={<CloudCover team={team.address} project={project.name} />}
+							line={
+								<span className="mt-[5px] block truncate text-secondary type-detail">
+									{[said && team.name, project.repo ?? "no repo linked"].filter(Boolean).join(" · ")}
+								</span>
+							}
+							menuOpen={menu === project.url}
+							onToggleMenu={() => onMenu(menu === project.url ? null : project.url)}
+							onCloseMenu={() => onMenu(null)}
+							menu={({ close }) => (
+								<>
+									<MenuItem label="Open" href={at} onClick={close} />
+									{project.repo !== null && (
 										<MenuItem
-											label="Copy link"
+											label="Copy clone command"
 											onClick={() => {
 												close();
-												void navigator.clipboard?.writeText(new URL(at, location.origin).toString());
+												void navigator.clipboard?.writeText(`git clone https://${project.repo}.git`);
 											}}
 										/>
-										{onMove && (
-											<MenuItem
-												label="Move to team…"
-												onClick={() => {
-													close();
-													onMove(project);
-												}}
-											/>
-										)}
-									</>
-								)}
-							/>
-						);
-					})}
+									)}
+									<MenuItem
+										label="Copy link"
+										onClick={() => {
+											close();
+											void navigator.clipboard?.writeText(new URL(at, location.origin).toString());
+										}}
+									/>
+									{onMove && (
+										<MenuItem
+											label="Move to team…"
+											onClick={() => {
+												close();
+												onMove(project);
+											}}
+										/>
+									)}
+								</>
+							)}
+						/>
+					);
+				})}
 			</div>
 			{menu !== null && <MenuBackdrop onClose={() => onMenu(null)} />}
+		</>
+	);
+}
+
+/**
+ * What the search in the sidebar found: every team's projects whose name or repo it finds, by name, with a tab per
+ * team to narrow them to one. Each team's list is read once the search starts.
+ */
+function CloudFound({
+	teams,
+	needle,
+	query,
+	onClear,
+}: {
+	teams: readonly CloudTeam[];
+	needle: string;
+	query: string;
+	onClear: () => void;
+}) {
+	const source = useContext(TeamsSourceContext);
+	const [lists, setLists] = useState<ReadonlyMap<string, readonly ListedTeamProject[]> | undefined>();
+	const [menu, setMenu] = useState<string | null>(null);
+	useEffect(() => {
+		let current = true;
+		void Promise.all(
+			teams.map(async (team) => [team.address, (await source.projects(team.address)) ?? []] as const),
+		).then((read) => {
+			if (current) setLists(new Map(read));
+		});
+		return () => {
+			current = false;
+		};
+	}, [source, teams]);
+	const found = teams.flatMap((team) =>
+		(lists?.get(team.address) ?? [])
+			.filter((project) => finds(needle, project.name, project.repo ?? ""))
+			.map((project) => ({ team, project })),
+	);
+	const places = teams
+		.map((team) => ({
+			key: team.address,
+			name: team.name,
+			count: found.filter((each) => each.team.address === team.address).length,
+		}))
+		.filter((place) => place.count > 0);
+	const [only, setOnly] = useFoundPlace(places);
+	if (lists === undefined) return null;
+	if (places.length === 0)
+		return (
+			<>
+				<FoundHead places={places} only={null} onOnly={setOnly} />
+				<EmptyState
+					className="min-h-[420px] justify-center p-[35px]"
+					art={<EmptyFrames />}
+					title={`Nothing matches “${query}”`}
+					description="It looked in every team you’re in."
+					actions={
+						<Button size="lg" onClick={onClear}>
+							Clear search
+						</Button>
+					}
+				/>
+			</>
+		);
+	return (
+		<>
+			<FoundHead places={places} only={only} onOnly={setOnly} />
+			<CloudCovers
+				covers={found
+					.filter((each) => only === null || each.team.address === only)
+					.sort((a, b) => a.project.name.localeCompare(b.project.name))}
+				said={teams.length > 1}
+				menu={menu}
+				onMenu={setMenu}
+			/>
 		</>
 	);
 }
