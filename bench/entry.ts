@@ -39,7 +39,9 @@ import {
  *
  * and the animation-frame intervals over the flight and over the whole entry
  * (double-click to the later of the flight's end and the live document), with
- * the long-animation frames in them. Each entry is a fresh load of the canvas
+ * the long-animation frames in them. The double-click is a hand's, its
+ * presses held and spaced, because its first click selects the frame and
+ * that already mounts its document. Each entry is a fresh load of the canvas
  * at the overview camera, into a different frame, so every one boots a
  * document nobody has opened in that tab.
  *
@@ -60,6 +62,8 @@ interface Options {
 	zoom: number;
 	entries: number;
 	throttle: number[];
+	/** Experimental arms: each one's `__spoolBench.entry`, "+" joining several. */
+	modes: string[];
 	headed: boolean;
 	trace: string | undefined;
 	/** Which entry the trace records, from 1. */
@@ -74,6 +78,7 @@ function parseArgs(argv: string[]): Options {
 		zoom: DEFAULT_ZOOM,
 		entries: 6,
 		throttle: [1],
+		modes: ["base"],
 		headed: false,
 		trace: undefined,
 		traceEntry: 2,
@@ -90,6 +95,7 @@ function parseArgs(argv: string[]): Options {
 		else if (arg === "--zoom") options.zoom = Number(next);
 		else if (arg === "--entries") options.entries = Number(next);
 		else if (arg === "--throttle") options.throttle = next.split(",").map(Number);
+		else if (arg === "--modes") options.modes = next.split(",");
 		else if (arg === "--trace") options.trace = resolve(next);
 		else if (arg === "--trace-entry") options.traceEntry = Number(next);
 		else if (arg === "--out") options.out = resolve(next);
@@ -117,6 +123,8 @@ interface Mark {
 }
 
 interface Probe {
+	/** The double-click's first press. */
+	press: number | null;
 	click: number | null;
 	marks: Mark[];
 	stop: boolean;
@@ -128,8 +136,15 @@ interface Probe {
  * is measuring.
  */
 function installProbe(): void {
-	const probe: Probe = { click: null, marks: [], stop: false };
+	const probe: Probe = { press: null, click: null, marks: [], stop: false };
 	(globalThis as unknown as { __entry: Probe }).__entry = probe;
+	addEventListener(
+		"pointerdown",
+		(event) => {
+			probe.press = event.timeStamp;
+		},
+		{ capture: true, once: true },
+	);
 	addEventListener(
 		"dblclick",
 		(event) => {
@@ -161,8 +176,12 @@ function installProbe(): void {
 /** The still's fade, frame-shell.tsx's `opacity 180ms`: live is its start plus this. */
 const COVER_FADE_MS = 180;
 const ENTRY_TIMEOUT_MS = 8000;
+/** A double-click as a hand makes one: each press held this long, this far apart. */
+const CLICK_HOLD_MS = 60;
+const CLICK_GAP_MS = 90;
 
 interface Entry {
+	mode: string;
 	rate: number;
 	frame: string;
 	/** From the double-click, in ms. */
@@ -172,15 +191,28 @@ interface Entry {
 	slotShown: number;
 	loaded: number;
 	live: number;
+	/** From the first press to the double-click: what selecting the frame set going. */
+	between: GestureStats;
 	fly: GestureStats;
 	entry: GestureStats;
 	/** Documents mounted once the entry was over, the entered one included. */
 	mountedAfter: number;
 }
 
-async function enterOnce(page: Page, target: { x: number; y: number }, rate: number): Promise<Entry> {
+async function enterOnce(page: Page, target: { x: number; y: number }, rate: number, mode: string): Promise<Entry> {
 	await page.evaluate(installProbe);
-	await page.mouse.dblclick(Math.round(target.x), Math.round(target.y));
+	// a person's double-click, not playwright's instant one: the first click
+	// selects the frame, and what that starts has the gap to get going in
+	const x = Math.round(target.x);
+	const y = Math.round(target.y);
+	await page.mouse.move(x, y);
+	await page.mouse.down();
+	await page.waitForTimeout(CLICK_HOLD_MS);
+	await page.mouse.up();
+	await page.waitForTimeout(CLICK_GAP_MS);
+	await page.mouse.down({ clickCount: 2 });
+	await page.waitForTimeout(CLICK_HOLD_MS);
+	await page.mouse.up({ clickCount: 2 });
 	// over when the document is live, its fade done and the camera still for a while
 	const deadline = Date.now() + ENTRY_TIMEOUT_MS;
 	for (;;) {
@@ -203,7 +235,13 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 			{ fade: COVER_FADE_MS },
 		);
 		if (done) break;
-		if (Date.now() > deadline) throw new Error(`the entry did not go live within ${ENTRY_TIMEOUT_MS / 1000} s`);
+		if (Date.now() > deadline) {
+			const seen = await page.evaluate(() => {
+				const probe = (globalThis as unknown as { __entry: Probe }).__entry;
+				return { press: probe.press, click: probe.click, last: probe.marks.at(-1) };
+			});
+			throw new Error(`the entry did not go live within ${ENTRY_TIMEOUT_MS / 1000} s: ${JSON.stringify(seen)}`);
+		}
 		await page.waitForTimeout(100);
 	}
 	const probe = await page.evaluate(() => {
@@ -232,6 +270,7 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 	const liveAt = fadeAt + COVER_FADE_MS;
 	const end = Math.max(flyEnd, liveAt);
 	return {
+		mode,
 		rate,
 		frame,
 		flyStart,
@@ -240,6 +279,7 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 		slotShown: first((mark) => mark.entered === frame && !mark.slotHidden),
 		loaded: loadedAt - click,
 		live: liveAt - click,
+		between: windowStats(state, probe.press as number, click),
 		fly: windowStats(state, click, flyEnd),
 		entry: windowStats(state, click, end),
 		mountedAfter: marks.at(-1)?.iframes ?? 0,
@@ -281,48 +321,59 @@ async function measure(
 	options: Options,
 ): Promise<Entry[]> {
 	const entries: Entry[] = [];
-	for (const rate of options.throttle) {
-		for (let index = 0; index < options.entries; index++) {
-			writeCamera(subject.root, camera, page);
-			const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-			try {
-				await context.addInitScript(collector);
-				const tab = await context.newPage();
-				tab.on("pageerror", (error) =>
-					process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`),
-				);
-				const cdp = await context.newCDPSession(tab);
-				await cdp.send("Emulation.setCPUThrottlingRate", { rate });
-				await tab.goto(subject.url, { waitUntil: "domcontentloaded" });
-				await settleOnFrames(tab, 1000, 30_000);
-				await waitForMountedFramesLoaded(tab, 60_000);
-				await tab.waitForTimeout(600);
-				const target = (await targets(tab, options.entries))[index];
-				if (target === undefined) throw new Error(`no frame ${index + 1} on screen to enter`);
-				const trace = index + 1 === options.traceEntry && rate === options.throttle[0] ? options.trace : undefined;
-				if (trace !== undefined) await browser.startTracing(tab, { path: trace });
-				const entry = await enterOnce(tab, target, rate);
-				if (trace !== undefined) {
-					await browser.stopTracing();
-					process.stderr.write(`bench: wrote the trace to ${trace}\n`);
+	for (const mode of options.modes)
+		for (const rate of options.throttle) {
+			for (let index = 0; index < options.entries; index++) {
+				writeCamera(subject.root, camera, page);
+				const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+				try {
+					await context.addInitScript(collector);
+					await context.addInitScript(
+						(entry) => {
+							(globalThis as unknown as { __spoolBench: { entry: string } }).__spoolBench = { entry };
+						},
+						mode.replaceAll("+", ","),
+					);
+					const tab = await context.newPage();
+					tab.on("pageerror", (error) =>
+						process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`),
+					);
+					const cdp = await context.newCDPSession(tab);
+					await cdp.send("Emulation.setCPUThrottlingRate", { rate });
+					await tab.goto(subject.url, { waitUntil: "domcontentloaded" });
+					await settleOnFrames(tab, 1000, 30_000);
+					await waitForMountedFramesLoaded(tab, 60_000);
+					await tab.waitForTimeout(600);
+					const target = (await targets(tab, options.entries))[index];
+					if (target === undefined) throw new Error(`no frame ${index + 1} on screen to enter`);
+					const trace =
+						index + 1 === options.traceEntry && rate === options.throttle[0]
+							? options.trace?.replace(/\.json$/, `-${mode}.json`)
+							: undefined;
+					if (trace !== undefined) await browser.startTracing(tab, { path: trace });
+					const entry = await enterOnce(tab, target, rate, mode);
+					if (trace !== undefined) {
+						await browser.stopTracing();
+						process.stderr.write(`bench: wrote the trace to ${trace}\n`);
+					}
+					entries.push(entry);
+					process.stderr.write(
+						`bench:   ${mode} ${rate}x ${entry.frame}: fly ${ms(entry.flyStart)}–${ms(entry.flyEnd)}, loaded ${ms(entry.loaded)}, live ${ms(entry.live)}, ` +
+							`entry p95 ${ms(entry.entry.p95)} worst ${ms(entry.entry.worst)}\n`,
+					);
+				} finally {
+					await context.close();
 				}
-				entries.push(entry);
-				process.stderr.write(
-					`bench:   ${rate}x ${entry.frame}: fly ${ms(entry.flyStart)}–${ms(entry.flyEnd)}, loaded ${ms(entry.loaded)}, live ${ms(entry.live)}, ` +
-						`entry p95 ${ms(entry.entry.p95)} worst ${ms(entry.entry.worst)}\n`,
-				);
-			} finally {
-				await context.close();
+				// the canvas saves its camera on settle: let that land before the next plan
+				await new Promise((wait) => setTimeout(wait, 1500));
 			}
-			// the canvas saves its camera on settle: let that land before the next plan
-			await new Promise((wait) => setTimeout(wait, 1500));
 		}
-	}
 	return entries;
 }
 
-function table(entries: Entry[], rates: number[]): string {
-	const column = (rate: number) => entries.filter((entry) => entry.rate === rate);
+function table(entries: Entry[], modes: string[], rateList: number[]): string {
+	const rates = modes.flatMap((mode) => rateList.map((rate) => `${mode} ${rate}`));
+	const column = (key: string) => entries.filter((entry) => `${entry.mode} ${entry.rate}` === key);
 	const cell = (pick: (entry: Entry) => number) =>
 		rates
 			.map((rate) => {
@@ -341,6 +392,7 @@ function table(entries: Entry[], rates: number[]): string {
 		`| double-click to shell shown | ${cell((e) => e.slotShown)} |`,
 		`| double-click to document loaded (clickable) | ${cell((e) => e.loaded)} |`,
 		`| double-click to live (still faded) | ${cell((e) => e.live)} |`,
+		`| between the clicks, worst interval | ${cell((e) => e.between.worst)} |`,
 		`| flight frames drawn | ${count((e) => e.fly.frames)} |`,
 		`| flight p95 interval | ${cell((e) => e.fly.p95)} |`,
 		`| flight worst interval | ${cell((e) => e.fly.worst)} |`,
@@ -370,7 +422,7 @@ async function main(): Promise<void> {
 			await prepareCurrentCovers(browser, subject.daemon, subject.url, subject.root, measured.frames);
 			const entries = await measure(browser, subject, camera, measured.page, options);
 			process.stdout.write(
-				`entry from k=${options.zoom} on page "${measured.page}"\n\n${table(entries, options.throttle)}\n`,
+				`entry from k=${options.zoom} on page "${measured.page}"\n\n${table(entries, options.modes, options.throttle)}\n`,
 			);
 			if (options.out !== undefined) writeFileSync(options.out, `${JSON.stringify(entries, null, 2)}\n`);
 		} finally {
