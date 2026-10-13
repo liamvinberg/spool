@@ -5,7 +5,7 @@ import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { StampShift } from "../../daemon/hand-write";
 import type { ProjectedPlaceholder } from "../../daemon/projection";
 import type { Unseen } from "../../daemon/seen";
-import { pageWithin, ROOT_PAGE } from "../../page-path";
+import { pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
@@ -3646,6 +3646,27 @@ export function ProjectCanvas({
 		},
 		[clearCanvasSelection, recordDeparture, switchToPage],
 	);
+	/** ⏎, ⌘↓ and the double-click: inside a page object, as into a frame (#265) */
+	const goInsidePage = useCallback(
+		(page: string) => {
+			setSelectedPage(null);
+			activatePageFromTree(page);
+		},
+		[activatePageFromTree],
+	);
+	/**
+	 * Esc's last layer and ⌘↑: up to the page holding this one, landing with
+	 * the page object just left selected, the way Finder lands on the folder.
+	 * False on the root page, where there is nowhere up to go.
+	 */
+	const goUpPage = useCallback((): boolean => {
+		const here = activePageRef.current;
+		if (here === ROOT_PAGE) return false;
+		recordDeparture();
+		switchToPage(pageParent(here));
+		setSelectedPage(here);
+		return true;
+	}, [recordDeparture, switchToPage]);
 
 	// a page deleted on disk cannot stay active, and neither can one staged for
 	// the Trash: either way the canvas has nowhere to be, so it snaps back to
@@ -5023,8 +5044,7 @@ export function ProjectCanvas({
 			const page = pageObjectAt(pageObjectsRef.current, world);
 			if (page !== null) {
 				cancelGesture();
-				setSelectedPage(null);
-				activatePageFromTree(page.page);
+				goInsidePage(page.page);
 			}
 			return;
 		}
@@ -5296,6 +5316,18 @@ export function ProjectCanvas({
 				event?.preventDefault();
 				exitEntered(true);
 			},
+			// ⌘↓ / ⌘↑, Finder's own keys for into and out of a folder
+			"canvas.page-in": (event) => {
+				if (enteredRef.current !== null || editingRef.current !== null) return;
+				const page = selectedPageRef.current;
+				if (page === null) return;
+				event?.preventDefault();
+				goInsidePage(page);
+			},
+			"canvas.page-up": (event) => {
+				if (enteredRef.current !== null || editingRef.current !== null) return;
+				if (goUpPage()) event?.preventDefault();
+			},
 			"canvas.fit-all": () => zoomFit(),
 			"canvas.fit-selection": () => {
 				const names = selectedRef.current.length > 0 ? selectedRef.current : pickTarget();
@@ -5381,6 +5413,12 @@ export function ProjectCanvas({
 			// held in Select goes inside
 			"canvas.enter": (event) => {
 				if (editingRef.current !== null) return;
+				// a page object held goes inside, as its double-click does
+				if (enteredRef.current === null && selectedPageRef.current !== null) {
+					event?.preventDefault();
+					goInsidePage(selectedPageRef.current);
+					return;
+				}
 				if (pickedRef.current.length > 0 || toolRef.current === "edit") {
 					if (enteredRef.current !== null) return;
 					if (openHeld()) event?.preventDefault();
@@ -5429,8 +5467,11 @@ export function ProjectCanvas({
 				if (!gestureStill()) cancelGesture();
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
-				// Esc leaves first, then climbs to the parent the way ⇧⏎ does
-				else selectParent();
+				// Esc leaves first, then climbs to the parent the way ⇧⏎ does, then
+				// puts a page object down, and last goes up a page
+				else if (selectParent()) return;
+				else if (selectedPageRef.current !== null) setSelectedPage(null);
+				else goUpPage();
 			},
 		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
 		const detachDialog = attachHotkeyLayer({
@@ -5508,6 +5549,8 @@ export function ProjectCanvas({
 		selectSiblings,
 		walkSibling,
 		openWords,
+		goInsidePage,
+		goUpPage,
 		camera,
 	]);
 

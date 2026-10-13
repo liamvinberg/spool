@@ -152,4 +152,14 @@ describe("the register", () => {
 		expect(listedHotkeys("Frames").map((entry) => entry.id)).toContain("canvas.enter");
 		expect(listedHotkeys("Help").map((entry) => entry.id)).toContain("app.help");
 	});
+
+	it("tells the page keys beside the frame ones, ⏎ and Esc with Finder's ⌘↓ and ⌘↑", () => {
+		const frames = listedHotkeys("Frames");
+		const into = frames.find((entry) => entry.id === "canvas.page-in");
+		const up = frames.find((entry) => entry.id === "canvas.page-up");
+		expect(into && hotkeyChips(into).keys[0]).toBe("⏎");
+		expect(into && hotkeyChips(into).keys[1]).toMatch(/↓$/);
+		expect(up && hotkeyChips(up).keys[0]).toBe("esc");
+		expect(up && hotkeyChips(up).keys[1]).toMatch(/↑$/);
+	});
 });

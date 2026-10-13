@@ -119,6 +119,26 @@ export const HOTKEYS = [
 		keys: ["accel+escape"],
 		shown: () => ["esc", `${accelLabel()}esc`],
 	},
+	// pages (#265) go in and out the way frames do, and the way Finder's
+	// folders do: ⌘↓ and ⌘↑ beside ⏎ and the last Esc
+	{
+		id: "canvas.page-in",
+		scope: "canvas",
+		group: "Frames",
+		label: "Go inside the selected page",
+		keys: ["accel+arrowdown"],
+		shown: () => ["⏎", `${accelLabel()}↓`],
+		gesture: "double-click",
+		repeats: false,
+	},
+	{
+		id: "canvas.page-up",
+		scope: "canvas",
+		group: "Frames",
+		label: "Go up to the page holding this one",
+		keys: ["accel+arrowup"],
+		shown: () => ["esc", `${accelLabel()}↑`],
+	},
 	{
 		id: "canvas.play",
 		scope: "canvas",
