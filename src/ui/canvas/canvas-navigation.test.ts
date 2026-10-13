@@ -174,6 +174,85 @@ describe("canvas keyboard navigation", () => {
 		expect(requests.some((path) => path.endsWith("/walked"))).toBe(false);
 	});
 
+	it("alt arrows step back the way they came, keep the zoom, and reach a far frame", async () => {
+		const stepFrames = [
+			{ name: "high", x: 0, y: 0, w: 100, h: 100 },
+			{ name: "low", x: 0, y: 100, w: 100, h: 100 },
+			{ name: "right", x: 180, y: 50, w: 100, h: 100 },
+			{ name: "far", x: 4000, y: 50, w: 100, h: 100 },
+		];
+		const setAttribute = HTMLIFrameElement.prototype.setAttribute;
+		vi.spyOn(HTMLIFrameElement.prototype, "setAttribute").mockImplementation(function (
+			this: HTMLIFrameElement,
+			name,
+			value,
+		) {
+			setAttribute.call(this, name, name === "src" ? "about:blank" : value);
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+				if (url.pathname.endsWith("/events")) return openEventStream();
+				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 100, y: 100, k: 0.5 } });
+				if (url.pathname.endsWith("/frames")) {
+					return Response.json({ root: "/project", pages: [], frames: stepFrames });
+				}
+				if (url.pathname.endsWith("/flows")) {
+					return Response.json({ frames: stepFrames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
+				}
+				return Response.json({});
+			}),
+		);
+		vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+			callback(performance.now() + 1000);
+			return 1;
+		});
+		vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1200);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+			vi.unstubAllGlobals();
+			vi.restoreAllMocks();
+		});
+		await act(async () => root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} })));
+		await until(() => cameraTransform(host) === "translate(100px, 100px) scale(0.5)");
+		const canvas = host.querySelector<HTMLElement>('[role="application"]');
+		// "low" sits at world (0..100, 100..200): on screen at (100..150, 150..200)
+		await act(async () => {
+			for (const type of ["pointerdown", "pointerup"]) {
+				canvas?.dispatchEvent(
+					new PointerEvent(type, { bubbles: true, button: 0, clientX: 125, clientY: 175, pointerId: 1 }),
+				);
+			}
+		});
+		expect(labelClass(host, "low")).toContain("text-accent");
+		const press = async (key: string) =>
+			act(async () => {
+				window.dispatchEvent(new KeyboardEvent("keydown", { key, altKey: true }));
+			});
+
+		await press("ArrowRight");
+		expect(labelClass(host, "right")).toContain("text-accent");
+		await press("ArrowLeft");
+		// back where it started, though "high" is first by geometry from "right"
+		expect(labelClass(host, "low")).toContain("text-accent");
+		expect(labelClass(host, "high")).not.toContain("text-accent");
+		// every step stayed on screen, so the view never moved
+		expect(cameraTransform(host)).toBe("translate(100px, 100px) scale(0.5)");
+
+		await press("ArrowRight");
+		await press("ArrowRight");
+		// far past the local group, yet the key is not dead; the camera pans at the same zoom
+		expect(labelClass(host, "far")).toContain("text-accent");
+		expect(cameraTransform(host)).toBe(`translate(${600 - 4050 * 0.5}px, ${400 - 100 * 0.5}px) scale(0.5)`);
+	});
+
 	it("ctrl+o returns to the walk's departure and ctrl+i retraces it", async () => {
 		const cover = { hash: "c".repeat(32) };
 		const selections: Array<{

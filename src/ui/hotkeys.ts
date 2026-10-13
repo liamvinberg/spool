@@ -254,7 +254,7 @@ export const HOTKEYS = [
 		id: "canvas.step",
 		scope: "canvas",
 		group: "Selection",
-		label: "Select the neighbouring frame",
+		label: "Select the neighbouring frame; the opposite key steps back",
 		keys: ["alt+arrowleft", "alt+arrowright", "alt+arrowup", "alt+arrowdown"],
 		shown: ["⌥←↑→↓"],
 	},

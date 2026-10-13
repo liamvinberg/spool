@@ -88,6 +88,7 @@ import {
 	intersects,
 	K_STEP,
 	type NearScreen,
+	revealCamera,
 	toWorld,
 	visibleWorldRect,
 	wheelPixels,
@@ -209,7 +210,7 @@ import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
-import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
+import { type SpatialDirection, type SpatialTrail, stepSpatially } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
 import { TeammateCompanions, TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, Toast } from "./toast";
@@ -733,6 +734,12 @@ export function ProjectCanvas({
 	}, [pointerTool, hideFrameHover]);
 	const selectedRef = useRef(selected);
 	selectedRef.current = selected;
+	// the way back along ⌥-arrow steps, dropped once the selection moves any other way
+	const spatialTrail = useRef<SpatialTrail | null>(null);
+	useEffect(() => {
+		const trail = spatialTrail.current;
+		if (trail !== null && (selected.length !== 1 || selected[0] !== trail.at)) spatialTrail.current = null;
+	}, [selected]);
 	const pickedRef = useRef(picked);
 	pickedRef.current = picked;
 	// the walk session mirror: what the last go/back carried, owed to the next boot
@@ -5354,14 +5361,17 @@ export function ProjectCanvas({
 				if (current === undefined) return;
 				const direction = spatialDirection(event.key);
 				if (direction === undefined) return;
-				const target = nextSpatialFrame(current, framesRef.current, direction);
-				if (target === undefined) return;
+				const step = stepSpatially(current, framesRef.current, direction, spatialTrail.current);
+				if (step === undefined) return;
+				const { target } = step;
+				spatialTrail.current = step.trail;
 				setSelected([target.name]);
 				setPicked([]);
 				const viewport = viewportRef.current;
 				const cam = camera.get();
 				if (viewport !== null && cam !== null) {
-					camera.fly(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
+					const next = revealCamera(cam, target, viewport.clientWidth, viewport.clientHeight);
+					if (next !== cam) camera.fly(next);
 				}
 			},
 			// F2: the words of the one element held, and nothing else (#323)
