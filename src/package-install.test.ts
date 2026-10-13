@@ -56,7 +56,7 @@ describe("packed install", () => {
 		expect(JSON.parse(readFileSync(anchor, "utf8"))).toMatchObject({ name: "spool.page" });
 		// the compile a Worker imports, by its package name, with its types beside it
 		const compileProbe =
-			'const compile = await import("spool.page/compile"); process.stdout.write(JSON.stringify([typeof compile.compileFrameDocument, typeof compile.compilePublication, compile.ESBUILD_VERSION]));';
+			'const compile = await import("spool.page/compile"); process.stdout.write(JSON.stringify([typeof compile.compileFrameDocument, typeof compile.projectDesign, compile.ESBUILD_VERSION]));';
 		expect(JSON.parse(run(process.execPath, ["--input-type=module", "--eval", compileProbe], prefix))).toEqual([
 			"function",
 			"function",

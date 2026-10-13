@@ -68,7 +68,6 @@ function testWorkers(): number {
 }
 
 export default defineConfig({
-	define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 	resolve: {
 		alias: pins,
 	},

@@ -33,11 +33,6 @@ export function cloudOrigin(env: Record<string, string | undefined>): string {
 	return url.origin;
 }
 
-export interface CloudSession {
-	publisherId: string;
-	sessionId: string;
-}
-
 /** The account this machine is signed in to, through its own device session. */
 export interface CloudAccount {
 	accountId: string;
@@ -49,17 +44,6 @@ export interface CloudAccount {
 /** No device session, or one spool.page no longer accepts: the person signs in again. */
 export class CloudSignedOut extends SpoolError {
 	readonly code = "signed_out";
-}
-
-/** Signed in, but the account is not yet approved to publish websites. Teams need no such approval. */
-export class CloudNotApproved extends SpoolError {
-	readonly code = "not_approved";
-	readonly retryable = false;
-	constructor() {
-		super(
-			"this account is not approved to publish websites yet: publishing is an invite-only beta, and teams on spool.page work without it",
-		);
-	}
 }
 
 export class CloudRequestFailure extends SpoolError {
@@ -400,16 +384,7 @@ export async function account(spoolDir: string, options: CloudRequestOptions = {
 	return { accountId: body.accountId, email: body.email, sessionId: body.sessionId, expiresAt: body.expiresAt };
 }
 
-export async function session(spoolDir: string, options: CloudRequestOptions = {}): Promise<CloudSession> {
-	const response = await authorizedCloudRequest(spoolDir, "/auth/publisher/session", {}, options);
-	const body = await responseJson(response);
-	if (response.status === 403) throw new CloudNotApproved();
-	if (!response.ok || typeof body.publisherId !== "string" || typeof body.sessionId !== "string")
-		throw new SpoolError("Cloud sign-in expired or was revoked; run `spool login` again");
-	return { publisherId: body.publisherId, sessionId: body.sessionId };
-}
-
-const SESSION_PATHS = ["/auth/account/session", "/auth/publisher/session"];
+const SESSION_PATHS = ["/auth/account/session"];
 
 export async function authorizedCloudRequest(
 	spoolDir: string,
@@ -440,7 +415,7 @@ export async function authorizedCloudRequest(
 		if ((await vault.read()) !== token) throw new CloudAccountChanged();
 		if (SESSION_PATHS.includes(path))
 			throw new SpoolError("spool.page could not be reached; local spool is still available");
-		throw new CloudRequestFailure("spool.page could not be reached; publishing can be resumed safely");
+		throw new CloudRequestFailure("spool.page could not be reached; try again");
 	}
 	if ((await vault.read()) !== token) throw new CloudAccountChanged();
 	if (response.status === 401)

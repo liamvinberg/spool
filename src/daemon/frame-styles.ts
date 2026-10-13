@@ -19,14 +19,13 @@ export interface FrameStyleRef {
  * for the whole compile, and the stylesheets Tailwind read are noted in it.
  * Its inputs are every file the stylesheet was made of, so a caller can tell
  * when it would come out the same. A frame with a theme carries the theme's
- * fonts in it: inlined for the canvas, as files beside it for a publication.
+ * fonts in it, inlined.
  */
 export async function buildFrameStyleClosure(
 	host: CompileHost,
 	designDir: string,
 	ref: FrameStyleRef,
 	reads: DesignReads,
-	publication = false,
 ): Promise<{ css: string; inputs: string[]; themed: boolean }> {
 	const folder = frameFolder(ref.name);
 	const frame = await buildDesignEntry(host.esbuild, {
@@ -35,7 +34,6 @@ export async function buildFrameStyleClosure(
 		sourcefile: STYLESHEET_ENTRY,
 		contents: `import frame from ${JSON.stringify("./frame.tsx")};\nexport default frame;\n`,
 		label: `frame "${ref.name}"`,
-		...(publication ? { publication: true } : {}),
 		files: host.files,
 		reads: () => reads,
 	});
@@ -46,10 +44,8 @@ export async function buildFrameStyleClosure(
 	let css = compiled.css;
 	let faces: string[] = [];
 	if (compiled.theme !== undefined) {
-		// a publication reads its faces, for they are inputs, and leaves them files
-		const read = publication ? (file: string) => void reads.bytes(file) : reads.bytes;
 		const label = `design/${designRelativePath(designDir, compiled.theme)}`;
-		const inlined = inlineLocalFonts(designDir, css, read, designPathResolver(designDir, host.files), label);
+		const inlined = inlineLocalFonts(designDir, css, reads.bytes, designPathResolver(designDir, host.files), label);
 		css = inlined.css ?? css;
 		faces = inlined.files;
 	}
