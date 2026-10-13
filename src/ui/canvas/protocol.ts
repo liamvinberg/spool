@@ -209,7 +209,8 @@ export type FrameMessage =
 	| CaptureSourceReply
 	| { spool: "session?"; frame: string }
 	| { spool: "state"; frame: string; scenario: string; state: Record<string, unknown> }
-	| { spool: "key"; frame: string; id: HotkeyId }
+	// the modifiers held, for the canvas to read under its own accel rule
+	| { spool: "key"; frame: string; id: HotkeyId; metaKey?: boolean; ctrlKey?: boolean }
 	| FrameModifierMessage
 	| FramePanMessage
 	| FrameZoomMessage
@@ -257,7 +258,11 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "key":
 			// a frame may ask only for what the register relays out of it
-			return isRelayedHotkey(m.id) ? (m as unknown as FrameMessage) : undefined;
+			return isRelayedHotkey(m.id) &&
+				(m.metaKey === undefined || typeof m.metaKey === "boolean") &&
+				(m.ctrlKey === undefined || typeof m.ctrlKey === "boolean")
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "modifier":
 			return (m.modifier === "Meta" || m.modifier === "Control") && typeof m.held === "boolean"
 				? (m as unknown as FrameMessage)

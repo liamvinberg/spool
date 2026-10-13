@@ -766,3 +766,12 @@ export function relayedHotkeys(): readonly RelayedHotkey[] {
 export function isRelayedHotkey(id: unknown): id is HotkeyId {
 	return relayedHotkeys().some((relayed) => relayed.id === id);
 }
+
+/**
+ * The window's tab keys, every combo: a frame whose words are being edited
+ * holds them back from the Mac menu, since closing or leaving the tab then
+ * would take the open edit with it (daemon/document.ts).
+ */
+export function tabHotkeyCombos(): readonly string[] {
+	return HOTKEYS.flatMap((entry) => (entry.group === "Tabs" && "keys" in entry ? entry.keys : []));
+}

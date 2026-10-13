@@ -83,6 +83,21 @@ describe("hotkey dispatch", () => {
 		expect(nudge).toHaveBeenCalledTimes(1);
 	});
 
+	it("claims an ignored repeat, so a held ⌘W cannot fall through to the Mac menu once per repeat", () => {
+		const close = vi.fn();
+		attach({ scope: "app", handlers: { "app.close-tab": close } });
+		const first = key({ key: "w", metaKey: true });
+		dispatchHotkeyEvent(first);
+		const repeats = [1, 2, 3].map(() => key({ key: "w", metaKey: true, repeat: true }));
+		for (const repeat of repeats) dispatchHotkeyEvent(repeat);
+		expect(close).toHaveBeenCalledTimes(1);
+		expect(repeats.every((repeat) => repeat.defaultPrevented)).toBe(true);
+		// a key nobody answers is left alone, repeat or not
+		const unanswered = key({ key: "n", metaKey: true, repeat: true });
+		dispatchHotkeyEvent(unanswered);
+		expect(unanswered.defaultPrevented).toBe(false);
+	});
+
 	it("keeps the toast's undo reachable while the sheet is up", () => {
 		const closeHelp = vi.fn();
 		const toastUndo = vi.fn();

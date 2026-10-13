@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { accelPressed } from "../runtime/platform-keys";
 import type { TabPresence } from "../team-sync-protocol";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
@@ -27,12 +28,13 @@ import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
-import { desktopWindow, menuAccelerators } from "./desktop-window";
+import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
+import { keep, letGo } from "./gone-projects";
 import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
 import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
-import type { HotkeyIdFor } from "./hotkeys";
+import type { HotkeyId, HotkeyIdFor } from "./hotkeys";
 import { ProjectPicker } from "./picker";
 import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
@@ -456,6 +458,8 @@ export function App() {
 	 */
 	const openTab = useCallback(
 		(project: TabProject, focus = true) => {
+			// a project forgotten earlier and opened again is kept like any other
+			keep(project.root);
 			if (!openRef.current.includes(project.root)) {
 				const next = [...openRef.current, project.root];
 				setOpen(next);
@@ -523,12 +527,21 @@ export function App() {
 		focusProject(tab.root);
 	}, [focusProject]);
 
-	/** ⌘W: what is on top first, then the focused tab, and on Home the window. */
-	const closeOnTop = useCallback(() => {
-		if (closeTopmost()) return;
+	/**
+	 * ⌘W: what is on top first, then the focused tab, and on Home the window.
+	 * False when nothing closed: on Home in an app too old to be asked to close
+	 * its window, whose own menu then closes it.
+	 */
+	const closeOnTop = useCallback((): boolean => {
+		if (closeTopmost()) return true;
 		const root = focusedRef.current;
-		if (root !== null) closeTab(root);
-		else appWindow?.closeWindow?.();
+		if (root !== null) {
+			closeTab(root);
+			return true;
+		}
+		if (appWindow?.closeWindow === undefined) return false;
+		appWindow.closeWindow();
+		return true;
 	}, [closeTab, appWindow]);
 
 	/** A tab key's target, where the strip has one. */
@@ -541,8 +554,10 @@ export function App() {
 
 	const forgetProject = useCallback(
 		async (project: TabProject) => {
+			letGo(project.root);
 			setForgetting((roots) => new Set([...roots, project.root]));
 			const ok = await postForgetProject(project.root);
+			if (!ok) keep(project.root);
 			if (ok) {
 				// Replace the cards before lifting the hide, and discard reads begun
 				// before the write so an older registry cannot bring the card back.
@@ -565,55 +580,59 @@ export function App() {
 	}, []);
 	const closeSettings = useCallback(() => setSettingsOpen(false), []);
 	useEffect(() => {
+		const handlers = {
+			"app.new-project": (event) => {
+				event?.preventDefault();
+				setPicking("new");
+			},
+			"app.open-project": (event) => {
+				event?.preventDefault();
+				setPicking("folder");
+			},
+			"app.help": () => {
+				setSettingsOpen(false);
+				setKeysOpen(true);
+			},
+			"app.settings": (event) => {
+				event?.preventDefault();
+				openSettings();
+			},
+			"app.close-tab": (event) => {
+				if (closeOnTop()) event?.preventDefault();
+			},
+			"app.close-window": (event) => {
+				if (appWindow?.closeWindow === undefined) return;
+				event?.preventDefault();
+				appWindow.closeWindow();
+			},
+			"app.reopen-tab": (event) => {
+				event?.preventDefault();
+				reopenTab();
+			},
+			"app.home": (event) => {
+				event?.preventDefault();
+				focusSlot(null);
+			},
+			"app.next-tab": (event) => {
+				if (!tabStepKey(event)) return;
+				event?.preventDefault();
+				focusSlot(steppedTab(stripRef.current, focusedRef.current, 1));
+			},
+			"app.previous-tab": (event) => {
+				if (!tabStepKey(event)) return;
+				event?.preventDefault();
+				focusSlot(steppedTab(stripRef.current, focusedRef.current, -1));
+			},
+			...numberedTabHandlers((n) => focusSlot(numberedTab(stripRef.current, n))),
+			"app.tab-last": (event) => {
+				event?.preventDefault();
+				focusSlot(lastTab(stripRef.current));
+			},
+		} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>;
+		// the tab keys are the Mac app's: a browser tab leaves them, ⌘1-9 too, to the browser's own tabs
 		return attachHotkeyLayer({
 			scope: "app",
-			handlers: {
-				"app.new-project": (event) => {
-					event?.preventDefault();
-					setPicking("new");
-				},
-				"app.open-project": (event) => {
-					event?.preventDefault();
-					setPicking("folder");
-				},
-				"app.help": () => {
-					setSettingsOpen(false);
-					setKeysOpen(true);
-				},
-				"app.settings": (event) => {
-					event?.preventDefault();
-					openSettings();
-				},
-				"app.close-tab": (event) => {
-					event?.preventDefault();
-					closeOnTop();
-				},
-				"app.close-window": (event) => {
-					event?.preventDefault();
-					appWindow?.closeWindow?.();
-				},
-				"app.reopen-tab": (event) => {
-					event?.preventDefault();
-					reopenTab();
-				},
-				"app.home": (event) => {
-					event?.preventDefault();
-					focusSlot(null);
-				},
-				"app.next-tab": (event) => {
-					event?.preventDefault();
-					focusSlot(steppedTab(stripRef.current, focusedRef.current, 1));
-				},
-				"app.previous-tab": (event) => {
-					event?.preventDefault();
-					focusSlot(steppedTab(stripRef.current, focusedRef.current, -1));
-				},
-				...numberedTabHandlers((n) => focusSlot(numberedTab(stripRef.current, n))),
-				"app.tab-last": (event) => {
-					event?.preventDefault();
-					focusSlot(lastTab(stripRef.current));
-				},
-			} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>,
+			handlers: appWindow === undefined ? withoutTabKeys(handlers) : handlers,
 		});
 	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot]);
 
@@ -922,7 +941,13 @@ export function App() {
 					<TrashProjectDialog
 						project={trashRequest}
 						onTrash={async () => {
-							await trashProject(trashRequest.root);
+							letGo(trashRequest.root);
+							try {
+								await trashProject(trashRequest.root);
+							} catch (error) {
+								keep(trashRequest.root);
+								throw error;
+							}
 							projectRevision.current += 1;
 							setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
 							setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
@@ -953,6 +978,21 @@ export function App() {
 			</div>
 		</ProjectTeams.Provider>
 	);
+}
+
+/** The app's handlers without the tab keys, for a page in a browser tab. */
+function withoutTabKeys(handlers: Partial<Record<HotkeyId, HotkeyHandler>>): Partial<Record<HotkeyId, HotkeyHandler>> {
+	const tabKeys: ReadonlySet<string> = new Set(TAB_COMMANDS);
+	return Object.fromEntries(Object.entries(handlers).filter(([id]) => !tabKeys.has(id)));
+}
+
+/**
+ * Whether a press is the tab-stepping key it matched: ctrl+Tab, or ⌘⇧] and
+ * ⌘⇧[ under the platform's own accel, so ctrl+⇧] on a Mac is not one. A run
+ * without a press (a menu click, a relay) was decided where it came from.
+ */
+function tabStepKey(event: KeyboardEvent | undefined): boolean {
+	return event === undefined || event.key === "Tab" || accelPressed(event);
 }
 
 /** ⌘1-8, each its own register entry so the menu can wear it. */

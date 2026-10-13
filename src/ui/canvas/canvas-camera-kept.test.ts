@@ -3,12 +3,16 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { keep, letGo } from "../gone-projects";
 import { ProjectCanvas } from "./canvas";
 import { openEventStream } from "./test-event-stream";
 
 const frames = [{ name: "a", x: 0, y: 0, w: 400, h: 400 }];
 
-it("keeps the camera a canvas is closed on before it settled, for the tab that comes back", async () => {
+it.each([
+	{ gone: false, case: "keeps the camera a canvas is closed on before it settled, for the tab that comes back" },
+	{ gone: true, case: "writes nothing for a canvas closed because its project was forgotten or trashed" },
+])("$case", async ({ gone }) => {
 	const puts: unknown[] = [];
 	vi.stubGlobal(
 		"fetch",
@@ -57,7 +61,9 @@ it("keeps the camera a canvas is closed on before it settled, for the tab that c
 		vi.restoreAllMocks();
 	});
 
-	await act(async () => root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} })));
+	await act(async () =>
+		root.render(createElement(ProjectCanvas, { project: "test", root: "/project", onChrome: () => {} })),
+	);
 	await until(() => host.querySelector('[data-frame-label="a"]') !== null);
 	expect(cameraTransform(host)).toBe("translate(0px, 0px) scale(1)");
 	await act(async () => {
@@ -66,8 +72,15 @@ it("keeps the camera a canvas is closed on before it settled, for the tab that c
 	await until(() => !cameraTransform(host).endsWith("scale(1)"));
 	expect(puts).toEqual([]);
 
+	if (gone) letGo("/project");
+	onTestFinished(() => keep("/project"));
 	act(() => root.unmount());
 	mounted = false;
+	if (gone) {
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(puts).toEqual([]);
+		return;
+	}
 	await until(() => puts.length > 0);
 	const kept = puts[0] as { camera?: { k: number } };
 	expect(kept.camera?.k).toBeLessThan(1);

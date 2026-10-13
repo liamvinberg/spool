@@ -65,6 +65,16 @@ export function reportedMenuKeys(value: unknown): MenuKeys {
 	return keys;
 }
 
+/**
+ * The keys after the page reports `value`, or undefined when they stand as
+ * they are. A page navigated away reports nothing, so its keys go with it: the
+ * page that loads next may be an older daemon's that answers none of them.
+ */
+export function nextMenuKeys(current: MenuKeys, value: unknown): MenuKeys | undefined {
+	const next = reportedMenuKeys(value);
+	return JSON.stringify(next) === JSON.stringify(current) ? undefined : next;
+}
+
 /** The accelerator a keyed item wears: the page's, else its default. */
 export function menuKey(command: DefaultKeyedCommand, reported: MenuKeys): string {
 	return reported[command] ?? DEFAULT_MENU_KEYS[command];

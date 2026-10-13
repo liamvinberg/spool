@@ -83,12 +83,15 @@ export function dispatchHotkeyEvent(event: KeyboardEvent): void {
 		if (up.length === 0) continue;
 		for (const entry of entriesByScope.get(scope) ?? []) {
 			if (typing && !entry.typing) continue;
-			if (!entry.repeats && event.repeat) continue;
 			if (!entry.combos.some((combo) => matchesCombo(event, combo))) continue;
 			for (const layer of up) {
 				const handler = layer.handlers[entry.id];
 				if (handler !== undefined) {
-					handler(event);
+					// a held key's repeats are still the entry's, only not run: let
+					// through, each would reach the Mac menu's copy of the key and
+					// run there, one tab closed per repeat
+					if (!entry.repeats && event.repeat) event.preventDefault();
+					else handler(event);
 					return;
 				}
 			}
