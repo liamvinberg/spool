@@ -6,8 +6,8 @@ import { isIP, type LookupFunction } from "node:net";
 import { join } from "node:path";
 import { Agent } from "undici";
 import { writeAtomic } from "../atomic-write";
-import { publicResourceAddress } from "../publication/fetch";
 import type { WebfontFile, Webfonts } from "./font-faces";
+import { publicResourceAddress } from "./public-address";
 
 export { inertWebfonts, inlineLocalFonts, type WebfontFile, type Webfonts } from "./font-faces";
 
