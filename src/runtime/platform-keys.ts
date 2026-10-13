@@ -71,20 +71,6 @@ export function accelKeyName(platform = currentPlatform()): AccelKeyName {
 /** The two keys that can be a platform's accel modifier. Frames report which one moved. */
 export type AccelKeyName = "Meta" | "Control";
 
-/**
- * The one gesture spool keeps for itself, and the only one it may take from a
- * live frame (#227). Every ordinary key belongs to the prototype being used,
- * its own `esc` for modals included, so spool's own lives behind accel and
- * nowhere else. Undefined means the press was never spool's.
- */
-export function accelChord(
-	event: ModifierLike & { key: string; altKey: boolean; shiftKey: boolean },
-	platform = currentPlatform(),
-): "leave" | undefined {
-	if (!accelPressed(event, platform) || event.altKey || event.shiftKey) return undefined;
-	return event.key === "Escape" ? "leave" : undefined;
-}
-
 /** Whether a `KeyboardEvent.key` is one a platform could bind accel to. */
 export function isAccelKeyName(key: string): key is AccelKeyName {
 	return key === "Meta" || key === "Control";
