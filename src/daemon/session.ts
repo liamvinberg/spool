@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { mutateMachineState, type SessionMutationResult, type VisitResult } from "../machine-state";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
+import type { TabPresence } from "../team-sync-protocol";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
 import { watchFolder } from "./watch-tree";
@@ -36,6 +37,8 @@ export type AppEvent =
 	 * the reason and the team, null once each lifts
 	 */
 	| { kind: "sync"; root: string; paused: string | null; goneLocal: string | null }
+	/** who else is in a team project changed as its tab shows them: someone arrived, left or came back from idle */
+	| { kind: "presence"; root: string; people: TabPresence[] }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.

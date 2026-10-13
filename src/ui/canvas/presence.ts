@@ -1,4 +1,4 @@
-import type { Presence, PresencePerson, PresenceState } from "../../team-sync-protocol";
+import { PRESENCE_IDLE_MS, type Presence, type PresencePerson, type PresenceState } from "../../team-sync-protocol";
 
 /**
  * Who else is on a team canvas, as this canvas has heard it (DEV-196).
@@ -11,11 +11,8 @@ import type { Presence, PresencePerson, PresenceState } from "../../team-sync-pr
 
 /** How long a name stays said after its person stops moving or pressing. */
 export const PILL_HOLD_MS = 1_400;
-/**
- * How long a person has to change nothing to be idle. The spec leaves it to the build: long enough that
- * reading a frame or thinking isn't idle, short enough that someone who walked away reads as gone soon.
- */
-export const IDLE_MS = 60_000;
+/** How long a person has to change nothing to be idle. */
+export const IDLE_MS = PRESENCE_IDLE_MS;
 /** How long someone takes to fade out once they've left. */
 export const LEAVE_MS = 400;
 

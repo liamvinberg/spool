@@ -979,6 +979,8 @@ export function createDaemonApp({
 		},
 		// a copy whose project moved out of its team ended: its cover says so
 		onEnded: () => emitAppEvent({ kind: "registry" }),
+		// who else is in a team project, for its tab while another is focused (task 139)
+		onRoster: (root, people) => emitAppEvent({ kind: "presence", root, people }),
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
 	});
@@ -1687,6 +1689,8 @@ export function createDaemonApp({
 					data: JSON.stringify({ name: "spool", version, latest: updateAvailable() ?? null }),
 					id: String(id++),
 				});
+				// then who else is in each team project, which only changes from here on
+				for (const { root, people } of teamSync.rosters()) listener({ kind: "presence", root, people });
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
 		})

@@ -202,6 +202,52 @@ describe("presence on a team canvas", () => {
 		expect((await here()).projects[0]?.people).toEqual([]);
 	});
 
+	it("tells the window who is in each team project for its tab, without the window being anyone there", async () => {
+		const { ana, ben } = await team();
+		const anaDaemon = daemon(ana);
+		const benDaemon = daemon(ben);
+		const bens = await canvas(benDaemon, "checkout");
+		const window = sseReader(await benDaemon.request("/api/events"));
+		expect((await window.next()).event).toBe("hello");
+		const told = async () => {
+			for (;;) {
+				const event = await window.next(8000);
+				const data = event.data as {
+					kind?: string;
+					root?: string;
+					people?: { person: { name: string }; quiet: number }[];
+				};
+				if (event.event === "app" && data.kind === "presence") return data;
+			}
+		};
+
+		const anas = await canvas(anaDaemon, "checkout");
+		await anas.say(at(1, 1));
+		const arrived = await told();
+		expect(arrived).toMatchObject({ root: ben.root, people: [{ person: { name: "ana", color: TEAM_COLORS[0] } }] });
+		expect(arrived.people?.[0]?.quiet).toBeLessThan(5_000);
+		// moving about says nothing more to the window: only arriving, leaving and coming back from idle do
+		await anas.say(at(2, 2));
+		await bens.heard();
+		await bens.heard();
+		await window.expectQuiet(300);
+		// a window that opens now is told after its hello who is already there
+		const later = sseReader(await benDaemon.request("/api/events"));
+		expect((await later.next()).event).toBe("hello");
+		expect((await later.next()).data).toMatchObject({
+			kind: "presence",
+			root: ben.root,
+			people: [{ person: { name: "ana" } }],
+		});
+		// and the windows watching never made Ben someone on Ana's canvas
+		await anas.quiet();
+
+		await anas.close();
+		expect(await told()).toMatchObject({ root: ben.root, people: [] });
+		await window.cancel();
+		await later.cancel();
+	});
+
 	it("writes nothing to disk, to git or to the team", async () => {
 		const { cloud, ana, ben } = await team();
 		const anas = await canvas(daemon(ana), "checkout");

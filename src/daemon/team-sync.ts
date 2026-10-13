@@ -18,6 +18,7 @@ import {
 	encodeFrame,
 	FILE_LIMIT_BYTES,
 	type Limited,
+	PRESENCE_IDLE_MS,
 	PROJECT_LIMIT_BYTES,
 	PROTOCOL_VERSION,
 	type Presence,
@@ -27,6 +28,7 @@ import {
 	readPresence,
 	SAVES_PER_MINUTE,
 	SAVES_PER_MONTH,
+	type TabPresence,
 	travels,
 } from "../team-sync-protocol";
 import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
@@ -129,6 +131,8 @@ export interface LocalCopyOptions {
 	onSaved?: (path: string) => void;
 	/** Another person on this team canvas moved, arrived or left (`state` null). */
 	onPresence?: (presence: Presence) => void;
+	/** Who is here changed as the project's tab shows it: someone arrived, left, or came back from idle. */
+	onRoster?: () => void;
 	/** Asked when spool.page refused or cut the connection: does this machine still edit the project? */
 	standing?: () => Promise<Standing>;
 	/** The account a session token signs in to, asked once a connection is caught up: whose copy this is. */
@@ -179,6 +183,8 @@ export interface LocalCopy {
 	agent(agent: PresenceAgent | null): void;
 	/** Everyone else on the canvas now, `still` counted to this moment. */
 	people(): Presence[];
+	/** Everyone else on the canvas now as the project's tab shows them: who, and how long since they did anything. */
+	roster(): TabPresence[];
 	/**
 	 * The agent this daemon runs on the project finished its turn: said to the team once the turn's saves have gone
 	 * up, so the pages they touched settle for outsiders. Offline, nothing is said, and a quiet spell does it.
@@ -347,7 +353,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let settle: NodeJS.Timeout | undefined;
 	let watch: TreeWatch | undefined;
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
-	const presence = copyPresence(options.onPresence);
+	const presence = copyPresence(options.onPresence, options.onRoster);
 	/** Paths that didn't travel and why, each said once until it travels or goes. */
 	const held = new Map<string, string>();
 	/** A limit paused sync: why, and until when nothing is sent. What changes meanwhile waits on disk. */
@@ -866,6 +872,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		presence: (state) => presence.say(caughtUp ? socket : undefined, state),
 		agent: (agent) => presence.agent(caughtUp ? socket : undefined, agent),
 		people: () => presence.people(),
+		roster: () => presence.roster(),
 		state: () => ({
 			paused: isPaused() && paused !== undefined ? paused.why : null,
 			held: [...held].map(([path, why]) => ({ path, why })).sort((a, b) => (a.path < b.path ? -1 : 1)),
@@ -903,17 +910,25 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	};
 }
 
+/** A person's state without what their agent is doing: what they change themselves. */
+function ownPart(state: PresenceState | null): string {
+	if (state === null) return "null";
+	const { agent: _, ...own } = state;
+	return JSON.stringify(own);
+}
+
 /**
  * One local copy's share of presence. What this machine says goes up only while the copy is caught up, and is
  * said again on every reconnect; who else is here is known only for as long as the connection is up.
  */
-function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
+function copyPresence(onPresence: ((presence: Presence) => void) | undefined, onRoster?: () => void) {
 	let mine: PresenceState | null = null;
 	/** this machine's agent, which the daemon says and rides on where the canvas says its person is */
 	let working: PresenceAgent | null = null;
 	/** what the team was last told, so the same state is never said twice */
 	let told = "null";
-	const others = new Map<string, { presence: Presence; heard: number }>();
+	/** Everyone else, with when they were heard and when they last did anything of their own. */
+	const others = new Map<string, { presence: Presence; heard: number; active: number }>();
 	const tell = (state: PresenceState | null) => encodeFrame({ type: "presence", state });
 	const standing = (): PresenceState | null =>
 		mine === null ? null : working === null ? mine : { ...mine, agent: working };
@@ -946,15 +961,32 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined) {
 		hear(message: Record<string, unknown>): void {
 			const presence = readPresence(message);
 			if (presence === undefined) return;
-			if (presence.state === null) others.delete(presence.person.accountId);
-			else others.set(presence.person.accountId, { presence, heard: Date.now() });
+			const id = presence.person.accountId;
+			const was = others.get(id);
+			const now = Date.now();
+			if (presence.state === null) {
+				others.delete(id);
+				onPresence?.(presence);
+				if (was !== undefined) onRoster?.();
+				return;
+			}
+			// their agent at work is not them at work (#378): only their own changes keep them from going idle
+			const own = was === undefined || ownPart(was.presence.state) !== ownPart(presence.state);
+			const active = own ? now - presence.still : (was?.active ?? now);
+			others.set(id, { presence, heard: now, active });
 			onPresence?.(presence);
+			const back = was !== undefined && now - was.active >= PRESENCE_IDLE_MS && now - active < PRESENCE_IDLE_MS;
+			if (was === undefined || back) onRoster?.();
 		},
 		/** The connection dropped: everyone it showed is gone until it is back. */
 		lost(): void {
 			for (const { presence } of others.values()) onPresence?.({ ...presence, state: null, still: 0 });
+			const had = others.size > 0;
 			others.clear();
+			if (had) onRoster?.();
 		},
+		roster: (): TabPresence[] =>
+			[...others.values()].map(({ presence, active }) => ({ person: presence.person, quiet: Date.now() - active })),
 		people: (): Presence[] =>
 			[...others.values()].map(({ presence, heard }) => ({
 				...presence,
@@ -999,6 +1031,8 @@ export function createTeamSync(deps: {
 	onGoneLocal?: (root: string) => void;
 	/** A local copy ended because its project was moved out of its team. */
 	onEnded?: (root: string) => void;
+	/** Who else is in a local copy's project changed as its tab shows it; nobody once the copy stops. */
+	onRoster?: (root: string, people: TabPresence[]) => void;
 	/** How often a copy gone local asks again whether its team pays: a minute, unless a test can't wait that long. */
 	goneLocalAskMs?: number;
 	/** How soon it asks again when spool.page couldn't be reached, doubling up to `goneLocalAskMs`: a minute. */
@@ -1077,9 +1111,17 @@ export function createTeamSync(deps: {
 		}
 	};
 
-	const end = (root: string, link: ProjectLink) => {
-		copies.get(root)?.close();
+	/** A copy stops being followed: nobody is in it as far as its tab can tell. */
+	const drop = (root: string) => {
+		const copy = copies.get(root);
+		if (copy === undefined) return;
+		copy.close();
 		copies.delete(root);
+		deps.onRoster?.(root, []);
+	};
+
+	const end = (root: string, link: ProjectLink) => {
+		drop(root);
 		hops.delete(root);
 		try {
 			endLocalCopy(root, link);
@@ -1099,8 +1141,7 @@ export function createTeamSync(deps: {
 	 */
 	const stop = async (root: string, at: Linked) => {
 		const { link } = at;
-		copies.get(root)?.close();
-		copies.delete(root);
+		drop(root);
 		stopped.set(root, link);
 		if (goneLocalWith(root) === undefined) {
 			const name = await teamName(at);
@@ -1125,8 +1166,7 @@ export function createTeamSync(deps: {
 		const followed = hops.get(root) ?? 0;
 		if (followed >= MAX_HOPS || to.url === from.url) return false;
 		hops.set(root, followed + 1);
-		copies.get(root)?.close();
-		copies.delete(root);
+		drop(root);
 		try {
 			readdressCopy(root, from, to, { forwarded: true });
 		} catch (error) {
@@ -1148,8 +1188,7 @@ export function createTeamSync(deps: {
 	 */
 	const endMovedOut = async (root: string, at: Linked) => {
 		const { link } = at;
-		copies.get(root)?.close();
-		copies.delete(root);
+		drop(root);
 		stopped.delete(root);
 		hops.delete(root);
 		const name = await teamName(at);
@@ -1195,6 +1234,7 @@ export function createTeamSync(deps: {
 					onPresence: (presence) => {
 						for (const watcher of watchers.get(root) ?? []) watcher(presence);
 					},
+					onRoster: () => deps.onRoster?.(root, copies.get(root)?.roster() ?? []),
 				}),
 			);
 			const said = canvases.get(root);
@@ -1267,11 +1307,7 @@ export function createTeamSync(deps: {
 			const wanted = roots.filter(
 				(root) => followedLink(root) !== undefined && existsSync(join(root, "design", "canvas.json")),
 			);
-			for (const [root, copy] of copies) {
-				if (wanted.includes(root)) continue;
-				copy.close();
-				copies.delete(root);
-			}
+			for (const root of [...copies.keys()]) if (!wanted.includes(root)) drop(root);
 			for (const root of stopped.keys())
 				if (!wanted.includes(root)) {
 					stopped.delete(root);
@@ -1301,8 +1337,7 @@ export function createTeamSync(deps: {
 		 */
 		hold(root: string): () => void {
 			held.add(root);
-			copies.get(root)?.close();
-			copies.delete(root);
+			drop(root);
 			return () => {
 				held.delete(root);
 				if (closed || copies.has(root) || stopped.has(root)) return;
@@ -1313,8 +1348,7 @@ export function createTeamSync(deps: {
 		/** The copy at a root reads its address again and syncs there now: this Mac just moved its project. */
 		refollow(root: string): void {
 			if (closed || held.has(root)) return;
-			copies.get(root)?.close();
-			copies.delete(root);
+			drop(root);
 			hops.delete(root);
 			const link = followedLink(root);
 			if (link !== undefined && !stopped.has(root) && existsSync(join(root, "design", "canvas.json")))
@@ -1324,6 +1358,9 @@ export function createTeamSync(deps: {
 		movedOut(root: string, link: ProjectLink): Promise<void> {
 			return endMovedOut(root, linked(link));
 		},
+		/** Who else is in each followed copy's project now, for the tabs: copies nobody else is in are left out. */
+		rosters: (): { root: string; people: TabPresence[] }[] =>
+			[...copies].map(([root, copy]) => ({ root, people: copy.roster() })).filter(({ people }) => people.length > 0),
 		/** Where this machine's person is on a root's canvas, or null once no canvas here shows it. Never stored. */
 		presence(root: string, state: PresenceState | null): void {
 			if (state === null) canvases.delete(root);

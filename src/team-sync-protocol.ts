@@ -379,6 +379,21 @@ export interface Presence {
 	still: number;
 }
 
+/**
+ * How long a person has to change nothing of their own to be idle: an agent of theirs at work doesn't count. Long
+ * enough that reading a frame or thinking isn't idle, short enough that someone who walked away reads as gone soon.
+ */
+export const PRESENCE_IDLE_MS = 60_000;
+
+/**
+ * Daemon → window: who else is in one team project, for its tab while another is focused. `quiet` is how many
+ * milliseconds ago they last did anything of their own, counted to the moment it was said.
+ */
+export interface TabPresence {
+	person: PresencePerson;
+	quiet: number;
+}
+
 /** What a name in a presence message may be: a page or a frame. Small, so a person's whole state stays small. */
 export const PRESENCE_NAME = 160;
 /** The frames a dragging pointer names, at most. */
