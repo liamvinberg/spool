@@ -4370,9 +4370,13 @@ export function ProjectCanvas({
 	// when the write goes out rather than taken from the rest that armed it: a
 	// page switch re-arms this before the new page's camera has rested, and the
 	// camera standing then is the arriving page's, never the one it left.
+	// A tab closed or left before the settle still keeps where it was:
+	// the write that was waiting goes out as the canvas goes.
+	const unsettled = useRef<(() => void) | null>(null);
 	useEffect(() => {
 		if (restCamera === null) return;
-		const settle = setTimeout(() => {
+		const persist = () => {
+			unsettled.current = null;
 			const cam = camera.get();
 			if (cam === null) return;
 			cameras.current = { ...cameras.current, [activePage]: { x: cam.x, y: cam.y, k: cam.k } };
@@ -4380,9 +4384,12 @@ export function ProjectCanvas({
 				...stateCameraSlots(cameras.current),
 				...(activePage === ROOT_PAGE ? {} : { activePage }),
 			});
-		}, SETTLE_PERSIST_MS);
+		};
+		unsettled.current = persist;
+		const settle = setTimeout(persist, SETTLE_PERSIST_MS);
 		return () => clearTimeout(settle);
 	}, [restCamera, project, activePage, camera]);
+	useEffect(() => () => unsettled.current?.(), []);
 
 	// --- gestures ---------------------------------------------------------------
 
