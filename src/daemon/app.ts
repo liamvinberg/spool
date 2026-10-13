@@ -671,6 +671,18 @@ export function createDaemonApp({
 	});
 
 	/**
+	 * The same, for the selection's read (DEV-299): answered from the graph as
+	 * last built, and built only when it never was. Every click reads, and
+	 * waiting on a fresh pass over every frame made the read queue behind the
+	 * rebuild a save had just started; the canvas refetches the graph on every
+	 * change anyway, so the last pass is at most one change behind.
+	 */
+	const lastReadersIn = (root: string) => ({
+		framesUsing: async (path: string) =>
+			flowGraph.indexed(root) ? flowGraph.framesUsing(root, path) : framesUsingIn(root).framesUsing(path),
+	});
+
+	/**
 	 * A planned write, landed (#314, #317).
 	 *
 	 * Every hand write answers the same three things, so they are said in one
@@ -3248,7 +3260,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const { frame, sources } = c.req.valid("json");
-			const read = await readRungs(project.root, frame, sources, framesUsingIn(project.root));
+			const read = await readRungs(project.root, frame, sources, lastReadersIn(project.root));
 			if (read.kind === "error") return c.text(read.message, read.status);
 			return c.json({ rungs: read.rungs });
 		})

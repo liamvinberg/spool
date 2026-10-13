@@ -151,6 +151,37 @@ export function fingerprintOf(source: string): string {
 	return createHash("sha256").update(source).digest("hex");
 }
 
+/** How many files' trees are kept: a selection's ancestry and the files a write reaches. */
+const KEPT_TREES = 8;
+const trees = new Map<string, Node | null>();
+
+/**
+ * A file's tree, parsed once per fingerprint (DEV-299).
+ *
+ * A shared file is 20 to 50 KB and Babel takes tens of milliseconds over it,
+ * and the same bytes are parsed by the selection's read and again by the write
+ * it is measured against. Bytes are what decides the tree, so the fingerprint
+ * is the key and a file that changed is simply a new one. The trees are only
+ * ever read. Nothing when the file does not parse.
+ */
+function programOf(source: string): Node | undefined {
+	const key = fingerprintOf(source);
+	let program = trees.get(key);
+	if (program === undefined) {
+		try {
+			program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+		} catch {
+			program = null;
+		}
+	} else trees.delete(key);
+	trees.set(key, program);
+	for (const old of trees.keys()) {
+		if (trees.size <= KEPT_TREES) break;
+		trees.delete(old);
+	}
+	return program ?? undefined;
+}
+
 /** The bytes a file's fingerprint was taken of, changed exactly where the patch says. */
 export function applySpan(source: string, patch: SpanPatch): string {
 	return source.slice(0, patch.start) + patch.text + source.slice(patch.end);
@@ -197,10 +228,8 @@ export function spanBetween(before: string, after: string): SpanPatch {
  * earlier op moved.
  */
 export function planOps(source: string, ops: readonly HandOp[]): Planned {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return { ok: false, refusal: { code: "unparsable", says: "the file does not parse" } };
 	}
 
@@ -257,10 +286,8 @@ export function readElements(
 	/** how the file is named to a person */
 	rel = "",
 ): (ElementRead | undefined)[] {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return at.map(() => undefined);
 	}
 	return at.map(({ line, column }) => {
@@ -356,10 +383,8 @@ export function textOwner(
 	line: number,
 	column: number,
 ): { kind: "own" } | { kind: "supplied"; prop: string } | undefined {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return undefined;
 	}
 	const element = elementAt(program, line, column);
@@ -682,10 +707,8 @@ function rotated(source: string, slots: readonly Node[], moved: Node, target: No
  * the call is what the parent writes beside its siblings.
  */
 export function wholeReturnAt(source: string, at: { line: number; column: number }): boolean {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return false;
 	}
 	const element = elementAt(program, at.line, at.column);
@@ -918,25 +941,42 @@ interface Element {
  * stamp the file has moved on from.
  */
 function elementAt(program: Node, line: number, column: number, rel = ""): Element | undefined {
-	let found: Element | undefined;
+	const held = jsxIndexOf(program).get(`${line}:${column}`);
+	if (held === undefined) return undefined;
+	const { node, ancestors } = held;
+	const opening = node.openingElement;
+	return {
+		node,
+		tag: nameOf(opening.name),
+		attributes: opening.attributes,
+		children: node.children,
+		parent: ancestors[ancestors.length - 1],
+		ancestors: [...ancestors],
+		mapped: ancestors.some(isMapCall),
+		selfClosing: opening.selfClosing,
+		openEnd: nodeEnd(opening),
+		rel,
+	};
+}
+
+/**
+ * Every JSX element of a tree by where it opens, walked once per tree: a
+ * selection asks about a whole ancestry, and a walk per element was most of
+ * the read once the parse was kept (DEV-299). The last one at a place wins,
+ * as the walk it replaces had it.
+ */
+const jsxIndexes = new WeakMap<Node, Map<string, { node: JSXElement; ancestors: Node[] }>>();
+function jsxIndexOf(program: Node): Map<string, { node: JSXElement; ancestors: Node[] }> {
+	let index = jsxIndexes.get(program);
+	if (index !== undefined) return index;
+	const built = new Map<string, { node: JSXElement; ancestors: Node[] }>();
 	walkNodes(program, [], (node, ancestors) => {
-		if (node.type !== "JSXElement") return;
-		if (node.loc?.start.line !== line || node.loc.start.column + 1 !== column) return;
-		const opening = node.openingElement;
-		found = {
-			node,
-			tag: nameOf(opening.name),
-			attributes: opening.attributes,
-			children: node.children,
-			parent: ancestors[ancestors.length - 1],
-			ancestors: [...ancestors],
-			mapped: ancestors.some(isMapCall),
-			selfClosing: opening.selfClosing,
-			openEnd: nodeEnd(opening),
-			rel,
-		};
+		if (node.type !== "JSXElement" || node.loc == null) return;
+		built.set(`${node.loc.start.line}:${node.loc.start.column + 1}`, { node, ancestors: [...ancestors] });
 	});
-	return found;
+	index = built;
+	jsxIndexes.set(program, index);
+	return index;
 }
 
 /** `items.map(...)`: the element inside it is one literal and every row. */
@@ -993,10 +1033,8 @@ export type MappedArray =
 	| { kind: "refusal"; refusal: PatchRefusal };
 
 export function mappedArrayAt(source: string, at: { line: number; column: number }, rel = ""): MappedArray {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return { kind: "refusal", refusal: { code: "unparsable", says: "the file does not parse" } };
 	}
 	const element = elementAt(program, at.line, at.column, rel);
@@ -1059,10 +1097,8 @@ function bindingOf(
  * not ask for a blank one in its place. Every other byte of the file stands.
  */
 export function planItemRemoval(source: string, name: string, index: number): OnePlan {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return { refusal: { code: "unparsable", says: "the file does not parse" } };
 	}
 	let literal: Node | undefined;
@@ -1087,10 +1123,8 @@ export function planItemRemoval(source: string, name: string, index: number): On
  * hand could name, so it refuses.
  */
 export function planItemMove(source: string, name: string, index: number, target: number, place: Place): OnePlan {
-	let program: Node;
-	try {
-		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
-	} catch {
+	const program = programOf(source);
+	if (program === undefined) {
 		return { refusal: { code: "unparsable", says: "the file does not parse" } };
 	}
 	let literal: Node | undefined;

@@ -183,7 +183,7 @@ import { PlaceholderFrame, tileFor, workOf } from "./placeholder-frame";
 import { createPresenceRoom } from "./presence";
 import { FollowMark, PresenceFaces } from "./presence-faces";
 import { PresenceLayer } from "./presence-layer";
-import { type Held, PropertiesRail, rungOf, useRungs } from "./properties-rail";
+import { type Held, PropertiesRail, rungOf, stampsOf, useRungs } from "./properties-rail";
 import {
 	alterMessage,
 	clipboardCopyAllowed,
@@ -339,6 +339,8 @@ const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
 /** how long a hand edit's outgoing document may stand before the still returns */
 const HOLD_PAINT_MS = 3000;
+/** How long a gesture made ahead of the selection's read waits for it before it refuses (DEV-299). */
+const READ_WAIT_MS = 5000;
 /**
  * how long something waits on a reloaded document that never says loaded nor
  * broke, as one that throws while its modules evaluate never does (#340)
@@ -982,6 +984,22 @@ export function ProjectCanvas({
 	const heldReadRef = useRef<RungRead | undefined>(undefined);
 	/** the selection's read as the handlers see it, a paint earlier than the render */
 	const railRungsRef = useRef<(RungRead | undefined)[] | null>(null);
+	/** whether that read is still on its way */
+	const railReadingRef = useRef(false);
+	const readWaiters = useRef<(() => void)[]>([]);
+	const readRetrying = useRef(false);
+	/**
+	 * A gesture made before the selection's read has landed (DEV-299) waits for
+	 * it rather than refusing that the file was never read: a click and ⌫ at
+	 * once are one intent, and the read is the click's. The gesture runs again
+	 * once the read is in, and only then may it refuse — the second time round
+	 * this says no, so a read that never comes ends in the honest refusal.
+	 */
+	const afterRead = useCallback((gesture: () => void): boolean => {
+		if (readRetrying.current || !railReadingRef.current) return false;
+		readWaiters.current.push(gesture);
+		return true;
+	}, []);
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
@@ -2944,6 +2962,7 @@ export function ProjectCanvas({
 				});
 			};
 			if (fingerprint === undefined) {
+				if (afterRead(() => finishEdit(held, commit, nodes, owner))) return;
 				refuse({ code: "unread", says: "the file was never read; select the element again" });
 				return;
 			}
@@ -2975,7 +2994,7 @@ export function ProjectCanvas({
 				});
 			});
 		},
-		[fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, showRefusal, walkKin],
+		[afterRead, fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, showRefusal, walkKin],
 	);
 
 	// --- delete (#317) ------------------------------------------------------------
@@ -3165,6 +3184,7 @@ export function ProjectCanvas({
 					? read.fingerprint
 					: fingerprintFor(first.frame, sources[0] ?? "");
 			if (fingerprint === undefined) {
+				if (afterRead(() => deleteElement(picks))) return;
 				showRefusal({
 					frame: first.frame,
 					selector: first.selector,
@@ -3187,7 +3207,7 @@ export function ProjectCanvas({
 					: { source: row.map, index: row.index, fingerprint: rowPrint };
 			alterElement(picks, { sources, fingerprint, ...(item === undefined ? {} : { item }) });
 		},
-		[alterElement, fingerprintFor, showRefusal],
+		[afterRead, alterElement, fingerprintFor, showRefusal],
 	);
 
 	// --- move (#340) --------------------------------------------------------------
@@ -3253,6 +3273,7 @@ export function ProjectCanvas({
 			};
 			const fingerprint = printOf(stamp);
 			if (fingerprint === undefined) {
+				if (afterRead(() => moveBeside(subject, beside, place))) return;
 				refuse({ code: "unread", says: "the file was never read; select the element again" });
 				return;
 			}
@@ -3266,6 +3287,7 @@ export function ProjectCanvas({
 				}
 				const rowPrint = printOf(row.map);
 				if (rowPrint === undefined) {
+					if (afterRead(() => moveBeside(subject, beside, place))) return;
 					refuse({ code: "unread", says: "the file was never read; select the element again" });
 					return;
 				}
@@ -3354,6 +3376,7 @@ export function ProjectCanvas({
 			});
 		},
 		[
+			afterRead,
 			claimMove,
 			fingerprintFor,
 			holdChain,
@@ -5874,6 +5897,27 @@ export function ProjectCanvas({
 			? railRungs?.[rungOf(railHeld)]
 			: undefined;
 	railRungsRef.current = railRungs;
+	const railReading = railRungs === null && stampsOf(railHeld) !== null;
+	railReadingRef.current = railReading;
+	// the gestures that waited on the read go once it is in, or once it has been
+	// gone so long that the honest answer is the refusal (DEV-299)
+	useEffect(() => {
+		const flush = () => {
+			const waiting = readWaiters.current.splice(0);
+			readRetrying.current = true;
+			try {
+				for (const gesture of waiting) gesture();
+			} finally {
+				readRetrying.current = false;
+			}
+		};
+		if (!railReading) {
+			flush();
+			return;
+		}
+		const timer = setTimeout(flush, READ_WAIT_MS);
+		return () => clearTimeout(timer);
+	}, [railReading]);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
 
 	/**
