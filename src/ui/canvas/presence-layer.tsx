@@ -316,8 +316,7 @@ function Cursor({
 	const dock = motion === undefined ? (slot === undefined ? 0 : 1) : Math.min(1, Math.max(0, motion.dock.p));
 	const docked = motion?.slot ?? slot ?? null;
 	// a pill flying off a dotted name grows back into a pill on the way
-	const dotted =
-		docked === null ? 0 : Math.min(1, Math.max(0, motion?.dot.p ?? (docked.dotted ? 1 : 0))) * dock;
+	const dotted = docked === null ? 0 : Math.min(1, Math.max(0, motion?.dot.p ?? (docked.dotted ? 1 : 0))) * dock;
 	const home =
 		docked === null
 			? null
