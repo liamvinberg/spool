@@ -3077,7 +3077,13 @@ export function ProjectCanvas({
 				});
 			});
 			target.postMessage(
-				alterMessage(id, at.item === undefined ? picks.map((held) => held.selector) : [gone.selector], "delete"),
+				alterMessage(
+					id,
+					at.item === undefined ? picks.map((held) => held.selector) : [gone.selector],
+					"delete",
+					// a row's stamp draws every row, and the row alone goes (#324)
+					at.item === undefined ? at.sources : [],
+				),
 				"*",
 			);
 			setTimeout(() => {

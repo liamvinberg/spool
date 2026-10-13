@@ -1,3 +1,4 @@
+import type { LineColumn, StampShift } from "../../daemon/hand-write";
 import { parseStampRef } from "../../stamp";
 import type { Point } from "./camera";
 import type { PickedSelection } from "./overlays";
@@ -89,20 +90,43 @@ export interface HandEdit {
 export const OPENING_MS = 300;
 
 /**
- * A stamp after a save moved the stamps on its line (#314): every element on
- * that line past a patch shifts by what the patch added or took. The same
+ * A stamp after a save moved the stamps after it (#314, #317): every element
+ * on a patched line past the patch shifts by what the patch added or took,
+ * and the lines under a delete or its undo move up or down with it. The same
  * arithmetic the frame runs over its own document, for the picks out here.
  */
-export function restamped(
-	source: string,
-	file: string,
-	shifts: readonly { line: number; column: number; delta: number; taken: number }[],
-): string {
+export function restamped(source: string, file: string, shifts: readonly StampShift[]): string {
 	const at = parseStampRef(source);
 	if (at === undefined || at.rel !== file) return source;
-	let moved = at.column;
-	for (const shift of shifts) if (shift.line === at.line && shift.column + shift.taken <= moved) moved += shift.delta;
-	return `${at.rel}:${at.line}:${moved}`;
+	let place: LineColumn = at;
+	// a pick inside a run a delete took is the element that went
+	for (const shift of shifts) place = shiftedPlace(place, shift) ?? place;
+	return `${at.rel}:${place.line}:${place.column}`;
+}
+
+/**
+ * Where a place in a file ends up after one shift, or nothing when it stood
+ * inside a run the patch took across lines. A patch on one line moves what
+ * is past it on that line, an insertion pushing along whatever stands exactly
+ * where it lands; one across lines lands whatever followed its run as far
+ * past the run it wrote, and moves the lines under it.
+ */
+export function shiftedPlace(at: LineColumn, shift: StampShift): LineColumn | undefined {
+	const across = shift.across;
+	if (across === undefined) {
+		if (shift.line !== at.line || shift.column + shift.taken > at.column) return at;
+		return { line: at.line, column: at.column + shift.delta };
+	}
+	if (earlier(at, shift)) return at;
+	if (shift.taken > 0 && earlier(at, across.end)) return undefined;
+	if (at.line === across.end.line) {
+		return { line: across.to.line, column: across.to.column + at.column - across.end.column };
+	}
+	return { line: at.line + across.to.line - across.end.line, column: at.column };
+}
+
+function earlier(a: LineColumn, b: LineColumn): boolean {
+	return a.line < b.line || (a.line === b.line && a.column < b.column);
 }
 
 /** The words of a node list as one string, which is what an ask carries. */

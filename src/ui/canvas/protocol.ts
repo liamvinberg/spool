@@ -1,4 +1,5 @@
 import { captureRasterSize } from "../../cover";
+import type { StampShift } from "../../daemon/hand-write";
 
 export { parseStampRef, type StampRef } from "../../stamp";
 
@@ -543,14 +544,18 @@ export const restoreMessage = (id: number, way: "before" | "after", ask: number)
  * A structural gesture, in the document (#317): the element out of it. The
  * frame answers with whether it could and with the call one owner up, which
  * is the only place that knows it — a delete of something that is all of a
- * shared component offers that call instead.
+ * shared component offers that call instead. Every element the stamps
+ * draw goes, so a component drawn twice loses the element in both, as the
+ * file does.
  */
 export const alterMessage = (
 	id: number,
 	/** several for a delete of a multi-pick, which is one ask and one undo (#323) */
 	selectors: readonly string[],
 	act: "delete",
-) => ({ spool: "alter", id, selectors, act }) as const;
+	/** the stamps the write takes out of the file; none for a row of a list, whose stamp draws every row */
+	sources: readonly string[],
+) => ({ spool: "alter", id, selectors, act, sources }) as const;
 
 /**
  * A move the file has taken, in the document (#340): the first element put
@@ -561,8 +566,8 @@ export const alterMessage = (
 export const moveMessage = (id: number, moved: string, beside: string, place: MovePlace) =>
 	({ spool: "alter", id, selectors: [moved, beside], act: "move", place }) as const;
 
-/** How a save moved the stamps on its line, for a document that is not reloaded for it (#314). */
-export const restampMessage = (file: string, shifts: readonly { line: number; column: number; delta: number }[]) =>
+/** How a save moved the stamps after it, for a document that is not reloaded for it (#314, #317). */
+export const restampMessage = (file: string, shifts: readonly StampShift[]) =>
 	({ spool: "restamp", file, shifts }) as const;
 
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;

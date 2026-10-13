@@ -82,6 +82,34 @@ describe("after a save that is not a reload", () => {
 		expect(restamped("shared/ui/parts.tsx:7:50", "frames/veil/frame.tsx", shifts)).toBe("shared/ui/parts.tsx:7:50");
 	});
 
+	it("moves the lines under a delete, and back under its undo (#317)", () => {
+		const file = "frames/veil/frame.tsx";
+		// lines 4 and 5 taken out from column 3 of line 4 up to column 3 of line 6
+		const taken = {
+			line: 4,
+			column: 3,
+			delta: -40,
+			taken: 40,
+			across: { end: { line: 6, column: 3 }, to: { line: 4, column: 3 } },
+		};
+		expect(restamped(`${file}:3:9`, file, [taken])).toBe(`${file}:3:9`);
+		expect(restamped(`${file}:6:3`, file, [taken])).toBe(`${file}:4:3`);
+		expect(restamped(`${file}:6:12`, file, [taken])).toBe(`${file}:4:12`);
+		expect(restamped(`${file}:9:5`, file, [taken])).toBe(`${file}:7:5`);
+		// a stamp inside the run is the element that went, and keeps what it had
+		expect(restamped(`${file}:5:3`, file, [taken])).toBe(`${file}:5:3`);
+		const back = {
+			line: 4,
+			column: 3,
+			delta: 40,
+			taken: 0,
+			across: { end: { line: 4, column: 3 }, to: { line: 6, column: 3 } },
+		};
+		expect(restamped(`${file}:4:3`, file, [back])).toBe(`${file}:6:3`);
+		expect(restamped(`${file}:7:5`, file, [back])).toBe(`${file}:9:5`);
+		expect(restamped(`${file}:4:1`, file, [back])).toBe(`${file}:4:1`);
+	});
+
 	it("reads the words of what the frame handed back, a line break for each <br>", () => {
 		expect(wordsOf([{ text: "Make" }, { tag: "br", nodes: [] }, { tag: "span", nodes: [{ text: "it" }] }])).toBe(
 			"Make\nit",
