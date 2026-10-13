@@ -30,6 +30,8 @@ function repo(name: string, origin?: string): string {
 	const root = join(makeTempDir(), name);
 	mkdirSync(root);
 	git(root, "init", "--quiet", "--initial-branch=main", ".");
+	git(root, "config", "user.email", "hands@example.test");
+	git(root, "config", "user.name", "Hands");
 	git(root, "config", "commit.gpgsign", "false");
 	if (origin !== undefined) git(root, "remote", "add", "origin", origin);
 	writeFileSync(join(root, "README.md"), `# ${name}\n`);
@@ -125,6 +127,8 @@ async function cloneOf(remote: string, person: ReturnType<typeof mac>, name = "s
 	const parent = realpathSync(makeTempDir());
 	git(parent, "clone", "--quiet", remote, name);
 	const root = join(parent, name);
+	git(root, "config", "user.email", "hands@example.test");
+	git(root, "config", "user.name", "Hands");
 	git(root, "config", "commit.gpgsign", "false");
 	const got = await person.call("POST", `/teams/tidemark/projects/site/get`, { where: "checkout", path: root });
 	expect(got.status, JSON.stringify(got.body)).toBe(200);

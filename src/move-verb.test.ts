@@ -41,6 +41,8 @@ async function ada() {
 	const root = join(makeTempDir(), "site");
 	mkdirSync(root);
 	git(root, "init", "--quiet", "--initial-branch=main", ".");
+	git(root, "config", "user.email", "hands@example.test");
+	git(root, "config", "user.name", "Hands");
 	git(root, "config", "commit.gpgsign", "false");
 	const { link } = await initTeamProject(realpathSync(root), state, {
 		team: "tidemark",
