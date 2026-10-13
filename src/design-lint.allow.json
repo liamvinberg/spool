@@ -39,7 +39,7 @@
 		"ad-hoc-motion": 1
 	},
 	"src/ui/canvas/presence-faces.tsx": {
-		"ad-hoc-motion": 2,
+		"ad-hoc-motion": 1,
 		"raw-colour": 2
 	},
 	"src/ui/canvas/presence-layer.tsx": {

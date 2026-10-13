@@ -1,21 +1,24 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { ROOT_PAGE } from "../../page-path";
 import { cn } from "../cn";
-import { Divider } from "../primitives/display";
-import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
+import { MenuItem, MenuSeparator } from "../primitives/overlays";
 import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
 
 /**
- * Who's here, at the top right of a team canvas (DEV-196): a face for each teammate on the project, a count
- * once there are more than fit, and the list a press on the count opens with where each of them is. Pressing
- * a face follows that person's view.
+ * Who's here, at the top right of a team canvas (DEV-196, task 139): one chip, standing on the canvas rather than
+ * in the window's bar so switching tabs never moves the tabs. It holds a face for each teammate, four at most (three
+ * and a `+N` past that), and is one button: pressed, it grows in place into the list of who's here and where each of
+ * them is, or how long they've been idle. A row follows that person; pressing it again, or esc, stops.
  */
 
-/** The faces drawn before the rest collapse into a count. */
+/** The faces drawn before the rest collapse into `+N`. */
 export const FACES_SHOWN = 4;
 const SIZE = 22;
 const STEP = 17;
+/** How wide the chip opens into its list. */
+const LIST_W = 248;
+/** The chip's padding and edge, around its one button. */
+const CHIP_EDGE = 4 * 2 + 2;
 
 /** What the who's-here list says a page is called: its path, and `frames` for the root page, which is that folder. */
 export function pageLabel(page: string): string {
@@ -49,6 +52,18 @@ export function useRoomDrawn(room: PresenceRoom): void {
 	}, [room]);
 }
 
+/** Working people first, then the idle, each in the order they arrived: the order the faces and the list take. */
+export function hereInOrder(mates: readonly Teammate[], now: number): Teammate[] {
+	return [...mates.filter((mate) => !idle(mate, now)), ...mates.filter((mate) => idle(mate, now))];
+}
+
+/** The closed chip's width: its padding, the faces' run, the `+N`, the chevron. Every part is a fixed size. */
+export function chipWidth(here: number): number {
+	const faces = here > FACES_SHOWN ? FACES_SHOWN - 1 : here;
+	const more = here > FACES_SHOWN ? 5 + Math.max(26, String(here - faces).length * 7 + 12) : 0;
+	return CHIP_EDGE + 8 + (faces - 1) * STEP + SIZE + more + 4 + 16 + 4;
+}
+
 export function PresenceFaces({
 	room,
 	page,
@@ -62,20 +77,29 @@ export function PresenceFaces({
 	onFollow: (accountId: string | null) => void;
 }) {
 	useRoomDrawn(room);
-	/** Where the open list hangs: under the faces, over the canvas and its rails, so not inside the header. */
-	const [open, setOpen] = useState<{ top: number; right: number } | null>(null);
-	const faces = useRef<HTMLDivElement | null>(null);
-	const list = useRef<HTMLDivElement | null>(null);
+	const [open, setOpen] = useState(false);
+	const chip = useRef<HTMLDivElement | null>(null);
+	const button = useRef<HTMLButtonElement | null>(null);
+	const now = Date.now();
+	const here = hereInOrder(
+		room.teammates().filter((mate) => mate.left === null),
+		now,
+	);
+	const empty = here.length === 0;
 	useEffect(() => {
-		if (open === null) return;
+		if (empty) setOpen(false);
+	}, [empty]);
+	useEffect(() => {
+		if (!open) return;
 		const close = (event: PointerEvent) => {
-			const target = event.target as Node;
-			if (!list.current?.contains(target) && !faces.current?.contains(target)) setOpen(null);
+			if (!chip.current?.contains(event.target as Node)) setOpen(false);
 		};
 		const closeOnEsc = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
+			// the list goes first; following stops on the esc after
 			event.stopImmediatePropagation();
-			setOpen(null);
+			setOpen(false);
+			if (chip.current?.contains(document.activeElement)) button.current?.focus();
 		};
 		window.addEventListener("pointerdown", close, true);
 		window.addEventListener("keydown", closeOnEsc, true);
@@ -85,99 +109,172 @@ export function PresenceFaces({
 		};
 	}, [open]);
 
-	const now = Date.now();
-	const here = room.teammates().filter((mate) => mate.left === null);
-	if (here.length === 0) return null;
+	// the canvas under it never takes a press, a wheel or a menu meant for the chip, once the chip is drawn
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the chip comes and goes with whether anyone is here
+	useEffect(() => {
+		const element = chip.current;
+		if (element === null) return;
+		const keep = (event: Event) => event.stopPropagation();
+		const kinds = ["pointerdown", "wheel", "contextmenu"] as const;
+		for (const kind of kinds) element.addEventListener(kind, keep);
+		return () => {
+			for (const kind of kinds) element.removeEventListener(kind, keep);
+		};
+	}, [empty]);
+
+	if (empty) return null;
 	const shown = here.length > FACES_SHOWN ? here.slice(0, FACES_SHOWN - 1) : here;
 	const more = here.length - shown.length;
+	const closed = chipWidth(here.length);
 	const follow = (mate: Teammate) => {
-		setOpen(null);
+		setOpen(false);
 		onFollow(following === mate.person.accountId ? null : mate.person.accountId);
 	};
 
 	return (
-		<div ref={faces} className="relative flex h-full items-center" data-presence-faces="">
-			<Divider tone="strong" className="mr-3" />
-			<span className="relative flex h-[30px] items-center">
-				{shown.map((mate, i) => (
-					<button
-						key={mate.person.accountId}
-						type="button"
-						data-presence-face={mate.person.accountId}
-						aria-label={`${following === mate.person.accountId ? "Stop following" : "Follow"} ${mate.person.name}`}
-						aria-pressed={following === mate.person.accountId}
-						title={agentSays(mate) === null ? mate.person.name : `${mate.person.name} · ${agentSays(mate)}`}
-						className="relative h-[30px] shrink-0 animate-presence-in"
-						style={{ width: i === shown.length - 1 && more === 0 ? SIZE : STEP, zIndex: shown.length - i }}
-						onClick={() => follow(mate)}
-					>
-						<Face
-							mate={mate}
-							away={mate.state.page !== page}
-							resting={idle(mate, now)}
-							followed={following === mate.person.accountId}
-						/>
-					</button>
-				))}
-				{more > 0 && (
-					<span className="ml-[5px] flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-surface-panel px-1 text-secondary tabular-nums type-detail">
-						+{more}
-					</span>
-				)}
-			</span>
-			<button
-				type="button"
-				aria-expanded={open !== null}
-				aria-label="Who is here"
-				data-presence-count=""
-				className={cn(
-					"ml-1 flex h-8 items-center rounded-sm px-1.5 text-secondary tabular-nums transition-colors duration-[140ms] type-detail hover:bg-surface-panel",
-					open !== null && "bg-surface-panel",
-				)}
-				onClick={(event) => {
-					const at = event.currentTarget.getBoundingClientRect();
-					setOpen((was) => (was === null ? { top: at.bottom + 4, right: window.innerWidth - at.right } : null));
-				}}
+		<div ref={chip} className="relative h-[42px]" style={{ width: closed }} data-presence-faces="">
+			<div
+				data-presence-chip={open ? "open" : "closed"}
+				className="absolute top-0 right-0 overflow-hidden rounded-lg border border-line-strong bg-surface-window p-1 transition-[width] duration-base ease-snap"
+				style={{ width: open ? LIST_W : closed }}
 			>
-				{here.length}
-			</button>
-			{open !== null &&
-				createPortal(
-					<Menu ref={list} aria-label="Who is here" data-presence-list="" className="fixed z-50" style={open}>
-						{here.map((mate) => (
-							<MenuItem
-								key={mate.person.accountId}
-								data-presence-row={mate.person.accountId}
-								icon={
-									<span className="relative block size-4">
+				<button
+					ref={button}
+					type="button"
+					aria-label="Who is here"
+					aria-expanded={open}
+					aria-haspopup="menu"
+					data-presence-open=""
+					className={cn(
+						"flex h-8 shrink-0 items-center rounded-md pr-1 pl-2 transition-colors duration-fast hover:bg-state-hover-raised",
+						open ? "w-full" : "ml-auto",
+					)}
+					onClick={(event) => {
+						const opening = !open;
+						setOpen(opening);
+						// opened from the keyboard, the keyboard goes on into the list
+						if (opening && event.detail === 0)
+							requestAnimationFrame(() =>
+								chip.current?.querySelector<HTMLButtonElement>("[data-presence-row]")?.focus(),
+							);
+					}}
+				>
+					{open ? (
+						<span
+							data-presence-count=""
+							className="mr-auto whitespace-nowrap text-secondary tabular-nums type-detail"
+						>
+							{here.length} here
+						</span>
+					) : (
+						<>
+							<span className="relative flex h-[30px] items-center">
+								{shown.map((mate, i) => (
+									<span
+										key={mate.person.accountId}
+										data-presence-face={mate.person.accountId}
+										title={
+											agentSays(mate) === null
+												? mate.person.name
+												: `${mate.person.name} · ${agentSays(mate)}`
+										}
+										className="relative h-[30px] shrink-0 animate-presence-in"
+										style={{ width: i === shown.length - 1 ? SIZE : STEP, zIndex: shown.length - i }}
+									>
 										<Face
 											mate={mate}
 											away={mate.state.page !== page}
 											resting={idle(mate, now)}
-											followed={false}
-											size={16}
+											followed={following === mate.person.accountId}
 										/>
 									</span>
-								}
-								label={<span className={cn(idle(mate, now) && "text-secondary")}>{mate.person.name}</span>}
-								meta={
-									<span className="block max-w-[96px] truncate" data-presence-row-says="">
-										{agentSays(mate) ?? (idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page))}
-									</span>
-								}
-								onClick={() => follow(mate)}
-							/>
-						))}
+								))}
+							</span>
+							{more > 0 && (
+								<span className="ml-[5px] flex h-[22px] min-w-[26px] items-center justify-center rounded-full bg-surface-panel px-1 text-secondary tabular-nums type-detail">
+									+{more}
+								</span>
+							)}
+						</>
+					)}
+					<Chevron up={open} />
+				</button>
+				<div
+					className="grid transition-[grid-template-rows,opacity] duration-base ease-snap"
+					style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
+				>
+					<div
+						role="menu"
+						aria-label="Who is here"
+						data-presence-list=""
+						className="flex min-h-0 flex-col"
+						inert={!open}
+					>
+						<MenuSeparator />
+						{here.map((mate) => {
+							const followed = following === mate.person.accountId;
+							return (
+								<MenuItem
+									key={mate.person.accountId}
+									data-presence-row={mate.person.accountId}
+									title={`${followed ? "Stop following" : "Follow"} ${mate.person.name}`}
+									icon={
+										<span className="relative block size-4">
+											<Face
+												mate={mate}
+												away={mate.state.page !== page}
+												resting={idle(mate, now)}
+												followed={false}
+												size={16}
+											/>
+										</span>
+									}
+									label={<span className={cn(idle(mate, now) && "text-secondary")}>{mate.person.name}</span>}
+									meta={
+										<span
+											className="block max-w-[110px] truncate"
+											data-presence-row-says=""
+											style={followed ? { color: mate.person.color } : undefined}
+										>
+											{followed
+												? "following"
+												: (agentSays(mate) ??
+													(idle(mate, now) ? idleFor(mate, now) : pageLabel(mate.state.page)))}
+										</span>
+									}
+									onClick={() => follow(mate)}
+								/>
+							);
+						})}
 						<MenuSeparator />
 						<div className="flex h-row items-center gap-2 px-2 text-secondary">
 							<span className="size-4 shrink-0 rounded-full border border-line-strong" />
 							<span className="min-w-0 flex-1 type-control">You</span>
 							<span className="type-detail">{pageLabel(page)}</span>
 						</div>
-					</Menu>,
-					document.body,
-				)}
+					</div>
+				</div>
+			</div>
 		</div>
+	);
+}
+
+function Chevron({ up }: { up: boolean }) {
+	return (
+		<svg
+			viewBox="0 0 16 16"
+			className={cn("ml-1 size-4 shrink-0 text-secondary transition-transform duration-fast", up && "rotate-180")}
+			fill="none"
+			aria-hidden="true"
+		>
+			<path
+				d="m5 6.5 3 3 3-3"
+				stroke="currentColor"
+				strokeWidth="1.3"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
 	);
 }
 

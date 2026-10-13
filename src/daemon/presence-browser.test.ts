@@ -201,7 +201,7 @@ it("draws a teammate's named pointer, holds the name after they stop, and dims a
 			),
 		)
 		.toBeCloseTo(1 / 3, 2);
-	await page.locator("[data-presence-count]").click();
+	await page.locator("[data-presence-open]").click();
 	await expect.poll(() => page.locator('[data-presence-row="ben"]').textContent()).toContain("idle · 5m");
 	await page.keyboard.press("Escape");
 
@@ -341,16 +341,23 @@ it("shows a teammate's clicks, drags and scrolls inside a live frame on their po
 	await expect.poll(() => ben.locator("[data-presence-scroll]").count(), { timeout: 3_000 }).toBe(0);
 });
 
-it("shows the faces of who's here, collapses a crowd into a count, and follows a face's view", {
+it("shows the faces of who's here on the canvas, opens the list from them, collapses a crowd, and follows a row's view", {
 	timeout: 120_000,
 }, async () => {
 	const { page, say } = await teamCanvas();
 	say(BEN, at(300, 200, { view: { x: 800, y: 0, w: 640, h: 400 } }));
 	const face = page.locator('[data-presence-face="ben"]');
 	await face.waitFor();
-	expect(await page.locator("[data-presence-count]").textContent()).toBe("1");
-
-	await face.click();
+	// on the canvas, at its top right, never in the window's bar
+	expect(await page.locator('[role="application"] [data-presence-faces]').count()).toBe(1);
+	expect(await page.locator("header [data-presence-faces]").count()).toBe(0);
+	const follow = async (accountId: string) => {
+		await page.locator("[data-presence-open]").click();
+		await page.locator(`[data-presence-row="${accountId}"]`).click();
+	};
+	await page.locator("[data-presence-open]").click();
+	expect(await page.locator("[data-presence-count]").textContent()).toBe("1 here");
+	await page.locator('[data-presence-row="ben"]').click();
 	await page.locator('[data-presence-following="ben"]').waitFor();
 	expect(await page.locator('[data-presence-following="ben"]').textContent()).toBe("following ben · esc");
 	// the camera shows what Ben's does: the menu frame, whole
@@ -392,7 +399,7 @@ it("shows the faces of who's here, collapses a crowd into a count, and follows a
 	expect(Math.abs(stayed.x - viewport.x - viewport.width / 2)).toBeLessThan(3);
 
 	// following again, a camera moved by hand stops it too
-	await face.click();
+	await follow("ben");
 	await page.locator('[data-presence-following="ben"]').waitFor();
 	await page.mouse.move(700, 500);
 	await page.mouse.wheel(200, 0);
@@ -405,10 +412,10 @@ it("shows the faces of who's here, collapses a crowd into a count, and follows a
 
 	// a crowd collapses into a count past the faces that fit
 	for (const name of ["dag", "eva", "finn", "gus"]) say({ accountId: name, name, color: "#58c6dc" }, at(10, 10));
-	await expect.poll(() => page.locator("[data-presence-count]").textContent()).toBe("6");
-	expect(await page.locator("[data-presence-face]").count()).toBe(3);
+	await expect.poll(() => page.locator("[data-presence-face]").count()).toBe(3);
 	expect(await page.locator("[data-presence-faces]").textContent()).toContain("+3");
-	await page.locator("[data-presence-count]").click();
+	await page.locator("[data-presence-open]").click();
+	expect(await page.locator("[data-presence-count]").textContent()).toBe("6 here");
 	expect(await page.locator("[data-presence-row]").count()).toBe(6);
 	// each row's face sits in its own row, not stacked on the first
 	const faceTops = await page

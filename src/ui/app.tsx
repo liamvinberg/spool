@@ -24,7 +24,6 @@ import {
 } from "./api";
 import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
-import { PresenceFaces } from "./canvas/presence-faces";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
@@ -672,15 +671,6 @@ export function App() {
 						    would open is the frame you are looking at. A header button
 						    could only ever guess, and its guess with nothing selected was
 						    the first frame by name — a start that means nothing. */}
-							{/* who else is on a team project's canvas (DEV-196), at the window's top right */}
-							{chrome.presence !== undefined && (
-								<PresenceFaces
-									room={chrome.presence.room}
-									page={chrome.presence.page}
-									following={chrome.presence.following}
-									onFollow={chrome.presence.follow}
-								/>
-							)}
 							{/* who the project's pages are shared with, outside the team (DEV-193) */}
 							{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
 						</div>

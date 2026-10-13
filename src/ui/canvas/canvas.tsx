@@ -175,8 +175,8 @@ import { type PaneDef, PaneWindow, usePaneCommands } from "./pane-window";
 import { PictureCanvas, PictureClaims } from "./picture-canvas";
 import type { PictureFrame } from "./picture-layer";
 import { PlaceholderFrame, tileFor, workOf } from "./placeholder-frame";
-import { createPresenceRoom, type PresenceRoom } from "./presence";
-import { FollowMark } from "./presence-faces";
+import { createPresenceRoom } from "./presence";
+import { FollowMark, PresenceFaces } from "./presence-faces";
 import { PresenceLayer } from "./presence-layer";
 import { type Held, PropertiesRail, rungOf, useRungs } from "./properties-rail";
 import {
@@ -235,18 +235,8 @@ export interface CanvasChrome {
 	 * subscribe instead.
 	 */
 	camera: CameraStore;
-	/** Who else is on a team project's canvas, for the faces at the top right; absent on a project of one's own. */
-	presence?: CanvasPresence | undefined;
 	/** hands the project to an agent of one's own, for the bar's help; absent where there is no project folder */
 	useAgent?: (() => void) | undefined;
-}
-
-/** A team canvas's people, as the window's top right shows them and follows one. */
-export interface CanvasPresence {
-	room: PresenceRoom;
-	page: string;
-	following: string | null;
-	follow: (accountId: string | null) => void;
 }
 
 interface Point {
@@ -5516,11 +5506,10 @@ export function ProjectCanvas({
 	useEffect(() => {
 		onChrome({
 			camera,
-			presence: team ? { room: presenceRoom, page: activePage, following, follow: setFollowing } : undefined,
 			useAgent: root === undefined ? undefined : () => setAgentHandoff(true),
 		});
 		return () => onChrome(null);
-	}, [onChrome, camera, team, presenceRoom, activePage, following, root]);
+	}, [onChrome, camera, root]);
 
 	// --- presence (DEV-196) ---------------------------------------------------------
 
@@ -6057,6 +6046,17 @@ export function ProjectCanvas({
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
+					{/* who else is here, at the canvas's top right rather than in the window's bar, so the tabs never move for it */}
+					{team && (
+						<div className="absolute top-3 right-3 z-30">
+							<PresenceFaces
+								room={presenceRoom}
+								page={activePage}
+								following={following}
+								onFollow={setFollowing}
+							/>
+						</div>
+					)}
 
 					{menu !== null && (
 						<ContextMenu

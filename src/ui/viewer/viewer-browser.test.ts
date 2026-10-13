@@ -535,8 +535,9 @@ describe("the read-only canvas", () => {
 		await page.getByRole("button", { name: "Back to the canvas" }).click();
 		await expect.poll(() => said.at(-1)?.inside).toBeNull();
 
-		// a face pressed follows her: her page, her view, until esc
-		await page.locator('[data-presence-face="ana-id"]').click();
+		// her row in the list follows her: her page, her view, until esc
+		await page.locator("[data-presence-open]").click();
+		await page.locator('[data-presence-row="ana-id"]').click();
 		await page.locator('[data-presence-following="ana-id"]').waitFor();
 		hear({ page: "shop", inside: null, view: { x: 0, y: 0, w: 390, h: 844 } });
 		await expect.poll(() => new URL(page.url()).pathname).toBe(`${PATH}/shop`);
