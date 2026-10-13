@@ -2,8 +2,10 @@ import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { leadingCssImports, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createFrameCompiler } from "./compile";
+import { createPlayerCompiler } from "./play";
+import { listProjectFrames } from "./projection";
 
 const authority = { projectCapability: "capability", controlOrigin: "http://127.0.0.1:1" };
 
@@ -159,5 +161,41 @@ describe("editing a theme", () => {
 		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-primary: #fedcba;\n}\n");
 		rmSync(join(root, "design", "shared", "fonts.css"));
 		expect(await caches()).toEqual({ vercel: "hit", linear: "hit", plain: "miss" });
+	});
+});
+
+describe("the player", () => {
+	it("gives each themed frame its own tokens and fonts, and the project's only to frames without a theme", async () => {
+		const root = themedProject();
+		const compiled = await createPlayerCompiler("0.0.0-test").getBundle(root, listProjectFrames(root).frames);
+		if (compiled.kind !== "ok") throw new Error(compiled.message);
+		const { bundle } = compiled;
+		const style = (frame: string) => bundle.chunks.get(bundle.styles.get(frame) ?? "") ?? "";
+
+		// nothing project-wide rides the walk's document for every frame
+		expect(bundle.fonts).toBeUndefined();
+		expect(style("vercel")).toContain("#000001");
+		expect(style("vercel")).toContain(dataOf(GEIST));
+		expect(style("linear")).toContain("#000002");
+		expect(style("linear")).toContain(dataOf(INTER));
+		expect(leadingCssImports(style("linear"))).toEqual(["https://fonts.example/linear.css"]);
+		for (const themed of [style("vercel"), style("linear")]) {
+			expect(themed).not.toContain("#abcdef");
+			expect(themed).not.toContain("ProjectFace");
+			expect(themed).not.toContain("https://fonts.example/project.css");
+		}
+		expect(style("plain")).toContain("#abcdef");
+		expect(style("plain")).toContain(dataOf(PROJECT_FACE));
+		expect(leadingCssImports(style("plain"))).toEqual(["https://fonts.example/project.css"]);
+	});
+
+	it("keeps the project's fonts one block for the walk when no frame has a theme", async () => {
+		const root = themedProject();
+		const frames = listProjectFrames(root).frames.filter((ref) => ref.name === "plain");
+		const compiled = await createPlayerCompiler("0.0.0-test").getBundle(root, frames);
+		if (compiled.kind !== "ok") throw new Error(compiled.message);
+
+		expect(compiled.bundle.fonts).toContain("https://fonts.example/project.css");
+		expect(compiled.bundle.chunks.get(compiled.bundle.styles.get("plain") ?? "")).not.toContain("ProjectFace");
 	});
 });

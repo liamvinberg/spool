@@ -17,7 +17,7 @@ import {
 } from "./design-compile";
 import type { DesignFiles } from "./design-files";
 import { contentDigest, createDesignReads, type DesignReads } from "./design-reads";
-import { mergeImportMap } from "./document";
+import { hoistCssImports, mergeImportMap } from "./document";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import { buildFrameStyleClosure } from "./frame-styles";
 import { importMapPins } from "./vendor-pins";
@@ -139,6 +139,8 @@ export interface FrameStyle {
 	inputs: string[];
 	key: string;
 	css: string;
+	/** Compiled from a theme the frame imports, which carries its own fonts. */
+	themed: boolean;
 }
 
 /**
@@ -219,24 +221,29 @@ export async function compilePlayer(
 	const playing = new Set(frames.map((ref) => ref.name));
 	for (const name of kept.keys()) if (!playing.has(name)) kept.delete(name);
 	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
-		if (composed.broken.has(ref.name)) return { name: ref.name, css: "" };
+		if (composed.broken.has(ref.name)) return { name: ref.name, css: "", themed: false };
 		const last = kept.get(ref.name);
 		if (last !== undefined && styleKey(designDir, last.inputs, current, list) === last.key) {
-			return { name: ref.name, css: last.css };
+			return { name: ref.name, css: last.css, themed: last.themed };
 		}
-		const { css, inputs } = await buildFrameStyleClosure(host, designDir, ref, reads, publication);
+		const { css, inputs, themed } = await buildFrameStyleClosure(host, designDir, ref, reads, publication);
 		// keyed by the bytes it was built from, which for a stylesheet Tailwind read
 		// is the digest its worker noted, never a later read of the file
 		const built = (file: string) => reads.digests().get(file) ?? current(file);
-		kept.set(ref.name, { inputs, key: styleKey(designDir, inputs, built, list), css });
-		return { name: ref.name, css };
+		kept.set(ref.name, { inputs, key: styleKey(designDir, inputs, built, list), css, themed });
+		return { name: ref.name, css, themed };
 	});
 	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
 	// read the moment the fonts resolve, as the frame compiler does (#80)
 	const fontsRevision = webfonts.revision();
-	const { css: fonts } = publication
+	const { css: projectFonts } = publication
 		? { css: resolvedFonts }
 		: inlineLocalFonts(designDir, resolvedFonts, reads.bytes, designPathResolver(designDir, host.files));
+	// A walk is one document, and a frame with a theme carries its own fonts: once
+	// one does, the project's ride each frame without a theme rather than the
+	// whole walk, so they switch with the frame as its tokens do.
+	const perFrame = frameStyles.some((frame) => frame.themed);
+	const fonts = perFrame ? undefined : projectFonts;
 	const transitions = reads.text(join(shared, "transitions.css"));
 	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
@@ -247,9 +254,10 @@ export async function compilePlayer(
 	const { entry, chunks, screens } = composed.composition;
 	const styles = new Map<string, string>();
 	for (const frame of frameStyles) {
-		const name = `styles/frame-${createHash("sha256").update(frame.css).digest("hex").slice(0, 16)}.css`;
+		const css = perFrame && !frame.themed ? withFonts(projectFonts, frame.css) : frame.css;
+		const name = `styles/frame-${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`;
 		styles.set(frame.name, name);
-		chunks.set(name, frame.css);
+		chunks.set(name, css);
 	}
 	// A bundle a file moved under while it compiled (a stylesheet two frames read
 	// differently) is named by its own contents, as a frame document is by its
@@ -280,6 +288,14 @@ export async function compilePlayer(
 			hash,
 		},
 	};
+}
+
+/** A frame's stylesheet with the project's fonts before it, both sheets' imports at the head. */
+function withFonts(fonts: string | undefined, css: string): string {
+	if (fonts === undefined || css === "") return css;
+	const face = hoistCssImports(fonts);
+	const frame = hoistCssImports(css);
+	return `${face.imports}${frame.imports}${frame.rest}\n${face.rest}`;
 }
 
 /** Keep large canvases from opening hundreds of esbuild and Tailwind compiles at once. */
