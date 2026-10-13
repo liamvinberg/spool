@@ -110,6 +110,8 @@ export interface Daemon {
 	 */
 	booth: boolean;
 	stop: () => void;
+	/** Settles once the daemon's process is gone, its exit hooks (a CPU profile's write) run. */
+	exited: Promise<void>;
 }
 
 /**
@@ -338,6 +340,8 @@ export async function startDaemon(
 	root: string,
 	port: number,
 	cli = join(repoRoot, "dist/cli.js"),
+	/** Node flags for the serving daemon alone, such as a profiler's. */
+	nodeArgs: readonly string[] = [],
 ): Promise<Daemon> {
 	if (!existsSync(cli)) throw new Error(`${cli} is missing — run pnpm build first`);
 	const env = { SPOOL_DIR: spoolDir, SPOOL_PORT: String(port) };
@@ -350,7 +354,7 @@ export async function startDaemon(
 	// prepareCurrentCovers's exact-one check is the barrier.
 	const booth = existsSync(join(dirname(dirname(cli)), "src", "daemon", "booth.ts"));
 	const daemonEnv = booth ? env : { ...env, PLAYWRIGHT_BROWSERS_PATH: mkdtempSync(join(spoolDir, "no-headless-")) };
-	const child = spawn(process.execPath, [cli, "serve", "--foreground"], {
+	const child = spawn(process.execPath, [...nodeArgs, cli, "serve", "--foreground"], {
 		env: { ...process.env, ...daemonEnv },
 	});
 	const url = `http://127.0.0.1:${port}`;
@@ -362,7 +366,10 @@ export async function startDaemon(
 	while (Date.now() < deadline) {
 		try {
 			const response = await fetch(`${url}/p/${encodeURIComponent(basename(root))}`);
-			if (response.ok) return { url, renderUrl, booth, stop: () => child.kill() };
+			if (response.ok) {
+				const exited = new Promise<void>((done) => child.once("exit", () => done()));
+				return { url, renderUrl, booth, stop: () => child.kill(), exited };
+			}
 		} catch {
 			// not listening yet
 		}
