@@ -6,6 +6,7 @@ import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-tea
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { carrySharesOver } from "./daemon/shares";
 import {
+	liftsOn,
 	SyncDropped,
 	SyncPaused,
 	SyncRefused,
@@ -129,9 +130,10 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 
 /**
  * Everything in design/ that travels goes up, a limit that lifts by itself and a dropped connection waited out, so
- * a project bigger than a minute's saves moves in one go. Each round picks up where the last stopped, from what the
- * copy's record says the team has. `GIVE_UP_ROUNDS` rounds in a row that get nothing up stop it, as does any other
- * stop, named, and nothing here has changed.
+ * a project bigger than a minute's saves moves in one go. A move's saves count against no limit at a spool.page that
+ * knows moves (DEV-232); one that doesn't refuses them for the minute, and that is waited out however long it takes.
+ * Each round picks up where the last stopped, from what the copy's record says the team has. `GIVE_UP_ROUNDS` rounds
+ * in a row that get nothing up for any other wait stop it, as does any other stop, named, and nothing here has changed.
  */
 async function upload(
 	root: string,
@@ -170,7 +172,8 @@ async function upload(
 						? { why: error.why, ms: Math.min(DROP_WAIT_MS * 2 ** dropped++, DROP_WAIT_MAX_MS) }
 						: undefined;
 			if (waited === undefined) throw new SpoolError(`${name} didn't move: ${stopReason(error)}`);
-			if (up > was) {
+			// the minute's limit lifts by itself every time, so waiting on it is never a round that got nowhere
+			if (up > was || (error instanceof SyncPaused && error.reason === "rate_limited")) {
 				idle = 0;
 				dropped = error instanceof SyncDropped ? dropped : 0;
 			} else if (++idle >= GIVE_UP_ROUNDS)
@@ -202,7 +205,7 @@ const GIVE_UP_ROUNDS = 10;
 function stopReason(error: unknown): string {
 	if (error instanceof SyncPaused) {
 		if (error.reason === "monthly_limit")
-			return `${error.why}. It lifts on ${new Date(Date.now() + error.seconds * 1_000).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}. Nothing changed here.`;
+			return `${error.why}. It lifts on ${liftsOn(error.seconds)}. Nothing changed here.`;
 		return `${error.why}. Nothing changed here.`;
 	}
 	const why = error instanceof Error ? error.message : String(error);

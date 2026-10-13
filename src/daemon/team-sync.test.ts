@@ -1002,7 +1002,7 @@ async function syncState(daemon: ReturnType<typeof makeApp>, project = "checkout
 }
 
 describe("a limit", () => {
-	it("pauses sync with the reason, keeps changes on this machine, and resumes when it lifts", async () => {
+	it("pauses sync at the month's cap with the date it starts again, and keeps changes here", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
 		// every page hears a pause and its lifting, so a tab's team mark can go hollow and fill again
 		const controller = new AbortController();
@@ -1020,20 +1020,17 @@ describe("a limit", () => {
 			};
 			return projects.find((project) => project.root === ana.root);
 		};
-		cloud.limit("rate_limited", 1);
-		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
-		expect(await nextSync()).toEqual({
-			kind: "sync",
-			root: ana.root,
-			paused: "this project took 120 saves in the last minute",
-			goneLocal: null,
+		// the month turns twelve days on
+		const lifts = new Date(Date.now() + 12 * 86_400_000).toLocaleDateString("en-GB", {
+			day: "numeric",
+			month: "long",
 		});
-		expect((await card())?.syncPaused).toBe("this project took 120 saves in the last minute");
-		await until(() =>
-			said.ana.includes(
-				"Sync paused: this project took 120 saves in the last minute. Changes stay on this Mac until it lifts.",
-			),
-		);
+		const why = `you've made 30,000 saves to this project this month; sync starts again on ${lifts}`;
+		cloud.limit("monthly_limit", 12 * 86_400);
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: why, goneLocal: null });
+		expect((await card())?.syncPaused).toBe(why);
+		await until(() => said.ana.includes(`Sync paused: ${why}. Changes stay on this Mac until it lifts.`));
 		writeFrame(ana.root, "about", "export default () => <h1>About</h1>;\n");
 		await new Promise((wake) => setTimeout(wake, 300));
 		expect(existsSync(join(ben.root, "design/frames/home"))).toBe(false);
@@ -1042,17 +1039,90 @@ describe("a limit", () => {
 		expect(await syncState(ana.daemon)).toEqual({
 			ended: null,
 			goneLocal: null,
-			paused: "this project took 120 saves in the last minute",
+			paused: why,
+			sending: null,
 			held: [],
 		});
+	});
 
+	it("lifts a pause when spool.page takes saves again", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		cloud.limit("unavailable", 1);
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => said.ana.some((line) => line.startsWith("Sync paused: spool.page couldn't check saves")));
 		cloud.lift();
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
-		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 5_000);
 		await until(() => said.ana.includes("Sync resumed."));
-		expect(await syncState(ana.daemon)).toEqual({ ended: null, goneLocal: null, paused: null, held: [] });
-		expect(await nextSync()).toEqual({ kind: "sync", root: ana.root, paused: null, goneLocal: null });
-		expect((await card())?.syncPaused).toBeUndefined();
+		expect(await syncState(ana.daemon)).toEqual({
+			ended: null,
+			goneLocal: null,
+			paused: null,
+			sending: null,
+			held: [],
+		});
+	});
+});
+
+describe("the minute's bucket", () => {
+	it("waits out a save refused for the minute and sends it again, saying nothing and never pausing", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		cloud.limit("rate_limited", 1);
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => cloud.refused("checkout").length > 0);
+		expect(await syncState(ana.daemon)).toEqual({
+			ended: null,
+			goneLocal: null,
+			paused: null,
+			sending: null,
+			held: [],
+		});
+		cloud.lift();
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
+		expect(said.ana.filter((line) => line.startsWith("Sync paused") || line.startsWith("Sending"))).toEqual([]);
+	});
+
+	it("holds each save until the bucket has room for it, so none is refused", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		// one save of room, refilling two a second
+		cloud.bucket(1, 120, Date.now);
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") !== undefined);
+		const sent = Date.now();
+		for (const name of ["a", "b", "c"]) writeFrame(ana.root, name, `export default () => <p>${name}</p>;\n`);
+		await until(() => same(ana.root, ben.root, "frames/c/frame.tsx"), 5_000);
+		await until(() => same(ana.root, ben.root, "frames/a/frame.tsx"), 5_000);
+		// paced at the refill, never refused
+		expect(Date.now() - sent).toBeGreaterThanOrEqual(900);
+		expect(cloud.refused("checkout")).toEqual([]);
+	});
+
+	it("says a long wait as progress, never as a pause", async () => {
+		const { cloud, said, ana } = await twoEditors();
+		cloud.limit("rate_limited", 150);
+		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
+		writeFrame(ana.root, "about", "export default () => <h1>About</h1>;\n");
+		let state: { sending?: string | null } = {};
+		for (const start = Date.now(); state.sending?.includes("2 changes") !== true && Date.now() - start < 5_000; ) {
+			await new Promise((wake) => setTimeout(wake, 25));
+			state = await syncState(ana.daemon);
+		}
+		expect(state).toEqual({
+			ended: null,
+			goneLocal: null,
+			paused: null,
+			// two and a half minutes, and up to half as long again at random, so copies refused together spread out
+			sending: expect.stringMatching(/^Sending 2 changes to devosurf, about [34] minutes$/u),
+			held: [],
+		});
+		expect(said.ana.filter((line) => line.startsWith("Sync paused"))).toEqual([]);
+	});
+});
+
+describe("the month's heads-up", () => {
+	it("says how many of the month's saves this editor has made, when spool.page says", async () => {
+		const { cloud, said } = await twoEditors();
+		cloud.forge("checkout", { type: "month", made: 24_000, limit: 30_000 });
+		await until(() => said.ana.includes("24,000 of 30,000 saves to checkout this month"));
 	});
 });
 
@@ -1075,7 +1145,13 @@ describe("when a team project ends for a machine", () => {
 			expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
 			expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
 			// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
-			expect(await syncState(ben.daemon)).toEqual({ ended: "devosurf", goneLocal: null, paused: null, held: [] });
+			expect(await syncState(ben.daemon)).toEqual({
+				ended: "devosurf",
+				goneLocal: null,
+				paused: null,
+				sending: null,
+				held: [],
+			});
 			const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
 				projects: { root: string; ended?: string }[];
 			};
@@ -1209,7 +1285,13 @@ describe("when a team lapses", () => {
 		expect(teamProjects(ben.state).map(({ copies }) => copies)).toEqual([[ben.root]]);
 		expect(git(ben.root, "rev-list", "--all", "--count").trim()).toBe("0");
 		// said where it lasts: on the project's canvas whenever it opens, and on its cover at Home
-		expect(await syncState(ben.daemon)).toEqual({ ended: null, goneLocal: "Devosurf", paused: null, held: [] });
+		expect(await syncState(ben.daemon)).toEqual({
+			ended: null,
+			goneLocal: "Devosurf",
+			paused: null,
+			sending: null,
+			held: [],
+		});
 		const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
 			projects: { root: string; goneLocal?: string; team?: { team: string } }[];
 		};
@@ -1306,7 +1388,13 @@ describe("when a team lapses", () => {
 		// Ben's copy never took the team back to the home page it had: the team kept Ana's newer one
 		expect(read(ben.root, "frames/home/frame.tsx").toString()).toContain("Ana's home");
 		expect(cloud.saves("checkout").filter((save) => save.outcome === "set_aside")).toEqual([]);
-		expect(await syncState(restarted)).toEqual({ ended: null, goneLocal: null, paused: null, held: [] });
+		expect(await syncState(restarted)).toEqual({
+			ended: null,
+			goneLocal: null,
+			paused: null,
+			sending: null,
+			held: [],
+		});
 		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")).goneLocal).toBeUndefined();
 		expect(again).toEqual([]);
 

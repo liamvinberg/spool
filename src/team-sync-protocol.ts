@@ -22,6 +22,22 @@ export interface Hello {
 	format: number;
 	/** The newest team version this local copy has applied; 0 for none. */
 	since: Version;
+	/**
+	 * This connection moves a project in (DEV-232): its saves count against neither the minute's bucket nor the
+	 * month while the team project holds nothing but the move's files. An object that doesn't know it counts them.
+	 */
+	moving?: true;
+}
+
+/**
+ * How full the team project's minute bucket is, on a welcome and on every answer to a save, so a daemon holds its
+ * next save until it fits rather than uploading a file to be refused. Absent for a move, and from an older object.
+ */
+export interface Pace {
+	/** Whole saves the bucket holds now. */
+	room: number;
+	/** Saves it refills a minute. */
+	refill: number;
 }
 
 /**
@@ -45,6 +61,7 @@ export interface Welcome {
 	format: number;
 	/** The newest team version. */
 	head: Version;
+	pace?: Pace;
 }
 
 /** Object → daemon: one path as the team has it now, bytes in the binary frame unless it was deleted. */
@@ -69,6 +86,7 @@ export interface Saved {
 	ref: string;
 	path: string;
 	version: Version;
+	pace?: Pace;
 }
 
 /**
@@ -83,6 +101,7 @@ export interface SetAside {
 	version: Version;
 	/** Whose save stands, and from which machine. */
 	by: { accountId: string; device: string };
+	pace?: Pace;
 }
 
 /** Object → daemon: a save that can't be taken at all, such as a path outside the layout. */
@@ -93,6 +112,14 @@ export interface Refused {
 	reason: "outside_layout" | "invalid_save" | "too_large" | Unauthorized | Limited;
 	/** For a limit: seconds until it may lift, when the object can say. */
 	retryAfter?: number;
+	pace?: Pace;
+}
+
+/** Object → the saving daemon: its editor has made `made` of the month's `limit` saves to the project. Said once, at 80%. */
+export interface MonthCount {
+	type: "month";
+	made: number;
+	limit: number;
 }
 
 /**
@@ -118,7 +145,7 @@ export interface TurnEnded {
 }
 
 export type DaemonMessage = Hello | Save | Resend | TurnEnded;
-export type ObjectMessage = Welcome | TeamFile | CaughtUp | Saved | SetAside | Refused;
+export type ObjectMessage = Welcome | TeamFile | CaughtUp | Saved | SetAside | Refused | MonthCount;
 
 /** A message and the bytes riding with it, if any. */
 export interface Framed<T> {
@@ -178,8 +205,9 @@ export function travels(path: string): boolean {
 export type Unauthorized = "signed_out" | "not_editor";
 
 /**
- * A fair-use limit the save would pass, or the object couldn't check the save at all. Sync pauses until it
- * lifts, and the file stays where it was written.
+ * A fair-use limit the save would pass, or the object couldn't check the save at all. `rate_limited` is a wait: the
+ * daemon sends the save again after `retryAfter`. On the others sync pauses until it lifts, and the file stays where
+ * it was written.
  */
 export type Limited = "project_full" | "rate_limited" | "monthly_limit" | "unavailable";
 
@@ -187,8 +215,10 @@ export type Limited = "project_full" | "rate_limited" | "monthly_limit" | "unava
 export const FILE_LIMIT_BYTES = 25_000_000;
 /** The most a team project's design/ may hold. */
 export const PROJECT_LIMIT_BYTES = 1_000_000_000;
-/** Saves a team project takes in any minute, from everyone together. */
+/** Saves a team project's minute bucket refills a minute, from everyone together, unless a maintainer raised it. */
 export const SAVES_PER_MINUTE = 120;
+/** Saves the bucket holds: a burst this big goes through at once, and it starts full. */
+export const SAVE_BUCKET = 2_000;
 /** Saves one editor makes to a team project in a calendar month (UTC). */
 export const SAVES_PER_MONTH = 30_000;
 

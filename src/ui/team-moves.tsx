@@ -466,7 +466,7 @@ function MoveProgressLine({ progress, team }: { progress: MoveProgress | null; t
 			</p>
 			{progress.paused !== null && (
 				<p className="text-secondary type-label">
-					Paused: {progress.paused.why}. Carrying on in {seconds} {seconds === 1 ? "second" : "seconds"}.
+					Waiting: {progress.paused.why}. Carrying on in {seconds} {seconds === 1 ? "second" : "seconds"}.
 				</p>
 			)}
 		</div>

@@ -243,7 +243,7 @@ const CHAMFER = { root: "/Users/ana/chamfer", name: "chamfer" };
 const PAUSED = (until: number) => ({
 	up: 240,
 	total: 1922,
-	paused: { why: "this project took 120 saves in the last minute", until },
+	paused: { why: "spool.page is unavailable", until },
 });
 const NOTHING = { progress: null, team: null, ended: null };
 
@@ -284,7 +284,8 @@ it("shows how many files are up while it moves, and counts the pause down each s
 	await pass(1_000);
 	const progress = () => host.querySelector("[data-move-progress]")?.textContent;
 	expect(progress()).toContain("240 of 1,922 files up");
-	expect(progress()).toContain("Paused: this project took 120 saves in the last minute. Carrying on in 48 seconds.");
+	// a wait, never a stop: the move carries on by itself
+	expect(progress()).toContain("Waiting: spool.page is unavailable. Carrying on in 48 seconds.");
 	await pass(3_000);
 	expect(progress()).toContain("Carrying on in 45 seconds.");
 	// a poll still out is never asked again over, so an older answer can't land after a newer one
