@@ -381,6 +381,124 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("relays ⌥ steps and ⌥ held only where the frame did not keep them (DEV-295)", async () => {
+		const shim = await servedShim();
+		const posted: Array<Record<string, unknown>> = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		const field = document.createElement("input");
+		const area = document.createElement("textarea");
+		const editable = document.createElement("div");
+		editable.contentEditable = "true";
+		const button = document.createElement("button");
+		document.body.append(field, area, editable, button);
+		// a prototype's own listener on the window, added after the shim's, as
+		// a vanilla script would: it keeps ⌥↓ for itself
+		const keeps = (event: KeyboardEvent) => {
+			if (event.key === "ArrowDown" && event.altKey) event.preventDefault();
+		};
+		let dispose: (() => void) | undefined;
+		const press = (target: EventTarget, init: KeyboardEventInit, type = "keydown") => {
+			const event = new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init });
+			target.dispatchEvent(event);
+			return event;
+		};
+		const ids = () =>
+			posted
+				.filter((message) => message.spool !== "modifier")
+				.map((message) => (message.spool === "key" ? message.id : `${message.spool}:${message.phase}`));
+
+		try {
+			dispose = runShim(shim);
+			window.addEventListener("keydown", keeps);
+
+			// a plain ⌥ arrow and ⌥ hjkl by place (⌥H is ˙) go to the canvas, the
+			// key told so the canvas knows which way, the browser's meaning eaten
+			const right = press(button, { key: "ArrowRight", code: "ArrowRight", altKey: true });
+			const h = press(button, { key: "˙", code: "KeyH", altKey: true });
+			expect(right.defaultPrevented).toBe(true);
+			expect(h.defaultPrevented).toBe(true);
+			expect(posted).toEqual([
+				{
+					spool: "key",
+					frame: "host",
+					id: "canvas.step",
+					metaKey: false,
+					ctrlKey: false,
+					key: "ArrowRight",
+					code: "ArrowRight",
+				},
+				{ spool: "key", frame: "host", id: "canvas.step", metaKey: false, ctrlKey: false, key: "˙", code: "KeyH" },
+			]);
+			posted.length = 0;
+
+			// the frame's own handler kept it: spool leaves it be, wherever the
+			// handler sat, before the shim's listener or after it
+			press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true });
+			const onElement = (event: Event) => event.preventDefault();
+			button.addEventListener("keydown", onElement);
+			press(button, { key: "ArrowUp", code: "ArrowUp", altKey: true });
+			button.removeEventListener("keydown", onElement);
+			// one that stops it on its way up keeps it too, and the next press is
+			// not mistaken for it
+			const stops = (event: Event) => event.stopPropagation();
+			button.addEventListener("keydown", stops);
+			press(button, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+			button.removeEventListener("keydown", stops);
+			expect(posted).toEqual([]);
+			press(button, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+			expect(ids()).toEqual(["canvas.step"]);
+			posted.length = 0;
+
+			// in a text field plain ⌥ keys are the caret's; ⌘⌥ arrows still step
+			for (const typing of [field, area, editable]) {
+				expect(press(typing, { key: "ArrowLeft", code: "ArrowLeft", altKey: true }).defaultPrevented).toBe(false);
+				press(typing, { key: "˙", code: "KeyH", altKey: true });
+				press(typing, { key: "Alt", code: "AltLeft", altKey: true });
+			}
+			expect(posted).toEqual([]);
+			press(field, { key: "ArrowRight", code: "ArrowRight", altKey: true, metaKey: true });
+			expect(ids()).toEqual(["canvas.step-through"]);
+			posted.length = 0;
+
+			// ⌥ alone: held, then let go
+			press(button, { key: "Alt", code: "AltLeft", altKey: true });
+			press(button, { key: "Alt", code: "AltLeft", altKey: true, repeat: true });
+			press(button, { key: "Alt", code: "AltLeft" }, "keyup");
+			expect(ids()).toEqual(["canvas.overview", "hold:up"]);
+			posted.length = 0;
+
+			// ⌥2 is @ on a Swedish board: the hold breaks, once, and 2 is the frame's
+			press(button, { key: "Alt", code: "AltLeft", altKey: true });
+			const at = press(button, { key: "@", code: "Digit2", altKey: true });
+			press(button, { key: "£", code: "Digit3", altKey: true });
+			press(button, { key: "Alt", code: "AltLeft" }, "keyup");
+			expect(at.defaultPrevented).toBe(false);
+			expect(ids()).toEqual(["canvas.overview", "hold:broken", "hold:up"]);
+			posted.length = 0;
+
+			// a ⌥ step the frame kept breaks the hold; one spool takes does not
+			press(button, { key: "Alt", code: "AltLeft", altKey: true });
+			press(button, { key: "ArrowRight", code: "ArrowRight", altKey: true });
+			press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true });
+			window.dispatchEvent(new Event("blur"));
+			expect(ids()).toEqual(["canvas.overview", "canvas.step", "hold:broken"]);
+		} finally {
+			window.removeEventListener("keydown", keeps);
+			dispose?.();
+			field.remove();
+			area.remove();
+			editable.remove();
+			button.remove();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("relays the jump chords and eats the browser's open-file dialog", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];

@@ -34,10 +34,10 @@ const shimHelpers =
  * browser's own meaning is eaten (a chord under ctrl or ⌘ has one; Esc stays
  * the frame's too, its own modals included).
  */
-const relayKeys = relayedHotkeys().flatMap(({ id, combos }) =>
+const relayKeys = relayedHotkeys().flatMap(({ id, combos, yields, typing }) =>
 	combos.map((combo) => {
 		const parsed = parseCombo(combo);
-		return { id, match: lowerCombo(parsed), prevent: parsed.accel || parsed.ctrl };
+		return { id, match: lowerCombo(parsed), prevent: parsed.accel || parsed.ctrl, yields, typing };
 	}),
 );
 
@@ -2281,6 +2281,11 @@ const canvasShimJs = `(() => {
 			event.stopImmediatePropagation();
 			return;
 		}
+		// ⌥ held for the overview (DEV-295): any other key under it, the
+		// modifiers included, ends it unopened, so ⌥2 still types @
+		if (event.key === "Alt") {
+			if (!event.repeat) altHeld = null;
+		} else if (altHeld !== null && !yieldingMatch(event)) breakAlt(frame);
 		// which key is the accel modifier is the canvas's rule, not the frame's:
 		// report the key that moved and let the canvas decide it counts
 		if (event.key === "Meta" || event.key === "Control") {
@@ -2289,11 +2294,87 @@ const canvasShimJs = `(() => {
 		}
 		for (const relay of relayKeys) {
 			if (!relayMatches(event, relay.match, null)) continue;
+			if (relay.yields) {
+				if (relay.match.hold !== null && event.repeat) return;
+				// the frame's own listeners come first: decide once they all ran
+				if (!relay.typing && typingIn(event)) {
+					if (event.key !== "Alt") breakAlt(frame);
+					return;
+				}
+				awaitFrame(event, relay, frame);
+				return;
+			}
 			if (relay.prevent) event.preventDefault();
 			window.parent.postMessage({ spool: "key", frame, id: relay.id, metaKey: event.metaKey, ctrlKey: event.ctrlKey }, "*");
 			return;
 		}
 		}, true);
+
+	// A key a prototype may well bind itself (\`yields\` in the register: ⌥
+	// arrows, ⌥ hjkl, ⌥ held) is the frame's first. Spool takes it only when no
+	// listener in the frame called preventDefault (or stopped it on its way
+	// up), which it can know only once every one of them ran: the window's
+	// bubble listener added now, mid-dispatch, runs after every one the frame
+	// already had there. A press stopped on its way never reaches it, so the
+	// next press clears it away first.
+	var awaiting = null;
+	var yieldingMatch = (event) => relayKeys.some((relay) => relay.yields && relay.match.hold === null && relayMatches(event, relay.match, null));
+	var typingIn = (event) => {
+		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+		const el = path[0] instanceof Element ? path[0] : event.target;
+		if (!(el instanceof HTMLElement)) return false;
+		if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+		if (el.tagName !== "INPUT") return false;
+		return !["button", "checkbox", "radio", "submit", "reset", "range", "color", "file", "image", "hidden"].includes(el.type);
+	};
+	var awaitFrame = (event, relay, frame) => {
+		if (awaiting !== null) removeEventListener("keydown", awaiting.decide);
+		const decide = (seen) => {
+			if (seen !== event) return;
+			removeEventListener("keydown", decide);
+			awaiting = null;
+			if (event.defaultPrevented) {
+				// the frame keeps it, and a ⌥ it kept is no hold of spool's
+				if (altHeld !== null) breakAlt(frame);
+				return;
+			}
+			if (relay.match.hold === null) event.preventDefault();
+			else altHeld = { broken: false };
+			window.parent.postMessage({
+				spool: "key",
+				frame,
+				id: relay.id,
+				metaKey: event.metaKey,
+				ctrlKey: event.ctrlKey,
+				key: event.key,
+				code: event.code,
+			}, "*");
+		};
+		awaiting = { decide };
+		addEventListener("keydown", decide);
+	};
+	// the ⌥ held that spool was told of, once per hold; null while none is
+	var altHeld = null;
+	var breakAlt = (frame) => {
+		if (altHeld === null || altHeld.broken) return;
+		altHeld.broken = true;
+		window.parent.postMessage({ spool: "hold", frame, phase: "broken" }, "*");
+	};
+	addEventListener("keyup", (event) => {
+		if (window.parent === window || event.key !== "Alt" || altHeld === null) return;
+		altHeld = null;
+		window.parent.postMessage({ spool: "hold", frame: (window.__SPOOL__ || {}).frame, phase: "up" }, "*");
+	}, true);
+	addEventListener("blur", () => {
+		if (window.parent === window || altHeld === null) return;
+		breakAlt((window.__SPOOL__ || {}).frame);
+		altHeld = null;
+	});
+	// a press under a held ⌥ is a gesture of its own, the frame's or the canvas's
+	addEventListener("pointerdown", () => {
+		if (window.parent === window || altHeld === null) return;
+		breakAlt((window.__SPOOL__ || {}).frame);
+	}, true);
 
 	// A pointer trap is the same failure as a zoom trap: entered, the frame owns
 	// every press, so the canvas would have no way to pan out from under it. The

@@ -101,6 +101,14 @@ interface HotkeySpec {
 	 * frame keeps the plain keys or Esc must leave whatever is held.
 	 */
 	readonly relay?: true | readonly string[];
+	/**
+	 * Relayed only when the frame did not keep it: the shim decides once every
+	 * listener in the frame has had the press, and a frame that called
+	 * preventDefault keeps the key, as one that takes it in a text field does
+	 * (unless the entry answers while `typing`). For keys a prototype may well
+	 * bind itself, ⌥ above all.
+	 */
+	readonly yields?: true;
 }
 
 /** The accel face without its joining `+`: `⌘`, `ctrl`. */
@@ -322,13 +330,51 @@ export const HOTKEYS = [
 		keys: ["shift+arrowleft", "shift+arrowright", "shift+arrowup", "shift+arrowdown"],
 		shown: ["⇧←↑→↓"],
 	},
+	// ⌥ arrows, and vim's hjkl by place under ⌥ (⌥H is ˙ before it is an H):
+	// out here they move the selection, from inside a frame they open the
+	// overview on the way to the next one (DEV-295)
 	{
 		id: "canvas.step",
 		scope: "canvas",
 		group: "Selection",
-		label: "Select the neighbouring frame; the opposite key steps back",
-		keys: ["alt+arrowleft", "alt+arrowright", "alt+arrowup", "alt+arrowdown"],
-		shown: ["⌥←↑→↓"],
+		label: "Step to the neighbouring frame, inside it if you were inside one; the opposite key steps back",
+		keys: ["alt+arrowleft", "alt+arrowright", "alt+arrowup", "alt+arrowdown", "alt+h", "alt+j", "alt+k", "alt+l"],
+		shown: ["⌥←↑→↓", "⌥HJKL"],
+		relay: true,
+		yields: true,
+	},
+	// the same step from a text field, where ⌥ arrows are the caret's
+	{
+		id: "canvas.step-through",
+		scope: "canvas",
+		group: "Selection",
+		label: "Step to the neighbouring frame even from a text field",
+		keys: ["accel+alt+arrowleft", "accel+alt+arrowright", "accel+alt+arrowup", "accel+alt+arrowdown"],
+		shown: () => [`${accelLabel()}⌥←↑→↓`],
+		typing: true,
+		relay: true,
+		yields: true,
+	},
+	// ⌥ alone, held a moment: the camera steps back to show the frames around
+	// this one, arrows pick, letting go goes there. Any other key under ⌥ ends
+	// it unopened, so ⌥2 still types @ on a Swedish board
+	{
+		id: "canvas.overview",
+		scope: "canvas",
+		group: "Selection",
+		label: "See the frames around this one; arrows pick, let go to go there",
+		keys: ["alt"],
+		shown: ["hold ⌥"],
+		repeats: false,
+		relay: true,
+		yields: true,
+	},
+	{
+		id: "canvas.switch",
+		scope: "canvas",
+		group: "Frames",
+		label: "Enter another frame from inside one",
+		gesture: "click it",
 	},
 	{
 		id: "canvas.escape",
@@ -431,6 +477,25 @@ export const HOTKEYS = [
 		label: "Show or hide the threads",
 		keys: ["t"],
 		repeats: false,
+	},
+	// along the flow map, the way a browser's ⌘] and ⌘[ go forward and back;
+	// matched by place, so ⌘¨ and ⌘å on a Swedish board. At a fork ] again
+	// before ⌘ comes up takes the next thread instead
+	{
+		id: "canvas.thread-next",
+		scope: "canvas",
+		group: "Threads",
+		label: "Walk on along the thread; ] again at a fork for the next one",
+		keys: ["accel+bracketright"],
+		relay: true,
+	},
+	{
+		id: "canvas.thread-back",
+		scope: "canvas",
+		group: "Threads",
+		label: "Walk back the way you came",
+		keys: ["accel+bracketleft"],
+		relay: true,
 	},
 
 	// --- Pages: the rail's own keys, while the rail has focus (#229) -------------
@@ -749,6 +814,10 @@ export function listedHotkeys(group: HotkeyGroup): readonly HotkeyEntry[] {
 export interface RelayedHotkey {
 	id: HotkeyId;
 	combos: readonly string[];
+	/** relayed only when the frame did not keep the press (`yields`) */
+	yields: boolean;
+	/** answers from a text field */
+	typing: boolean;
 }
 
 /** What the frame shim relays, in register order. */
@@ -757,7 +826,12 @@ export function relayedHotkeys(): readonly RelayedHotkey[] {
 	for (const entry of HOTKEYS) {
 		if (!("relay" in entry)) continue;
 		const combos = entry.relay === true ? ("keys" in entry ? entry.keys : []) : entry.relay;
-		relayed.push({ id: entry.id, combos });
+		relayed.push({
+			id: entry.id,
+			combos,
+			yields: "yields" in entry && entry.yields === true,
+			typing: "typing" in entry && entry.typing === true,
+		});
 	}
 	return relayed;
 }

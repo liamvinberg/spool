@@ -196,6 +196,29 @@ describe("frame modifier protocol", () => {
 	});
 });
 
+describe("frame hold protocol (DEV-295)", () => {
+	it("accepts a held ⌥ coming up or broken, and the key a frame let go of", () => {
+		const up = { spool: "hold", frame: "host", phase: "up" };
+		const broken = { spool: "hold", frame: "host", phase: "broken" };
+		expect(parseFrameMessage(up)).toEqual(up);
+		expect(parseFrameMessage(broken)).toEqual(broken);
+		expect(parseFrameMessage({ ...up, phase: "down" })).toBeUndefined();
+
+		const step = {
+			spool: "key",
+			frame: "host",
+			id: "canvas.step",
+			metaKey: false,
+			ctrlKey: false,
+			key: "˙",
+			code: "KeyH",
+		};
+		expect(parseFrameMessage(step)).toEqual(step);
+		expect(parseFrameMessage({ ...step, code: 72 })).toBeUndefined();
+		expect(parseFrameMessage({ ...step, key: null })).toBeUndefined();
+	});
+});
+
 describe("in-place edit protocol (#255)", () => {
 	it("accepts the frame's two answers and rejects a shapeless one", () => {
 		const opened = { spool: "edit-open", frame: "cart", id: 4, ok: true, text: "Pay now" };

@@ -131,6 +131,18 @@ export interface FrameModifierMessage {
 }
 
 /**
+ * The ⌥ a frame relayed as held (`canvas.overview`) came up, or something
+ * broke the hold first: another key under it, a key the frame kept, the frame
+ * losing focus. The canvas lands the overview on the first and drops it on
+ * the second.
+ */
+export interface FrameHoldMessage {
+	spool: "hold";
+	frame: string;
+	phase: "up" | "broken";
+}
+
+/**
  * A middle-button drag inside an entered frame, relayed in screen coordinates
  * so the canvas can pan out from under it — the frame owns every other press.
  */
@@ -210,8 +222,10 @@ export type FrameMessage =
 	| { spool: "session?"; frame: string }
 	| { spool: "state"; frame: string; scenario: string; state: Record<string, unknown> }
 	// the modifiers held, for the canvas to read under its own accel rule
-	| { spool: "key"; frame: string; id: HotkeyId; metaKey?: boolean; ctrlKey?: boolean }
+	// and, for a key the frame let go of (`yields`), which key it was
+	| { spool: "key"; frame: string; id: HotkeyId; metaKey?: boolean; ctrlKey?: boolean; key?: string; code?: string }
 	| FrameModifierMessage
+	| FrameHoldMessage
 	| FramePanMessage
 	| FrameZoomMessage
 	| FrameScrollMessage
@@ -260,9 +274,13 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			// a frame may ask only for what the register relays out of it
 			return isRelayedHotkey(m.id) &&
 				(m.metaKey === undefined || typeof m.metaKey === "boolean") &&
-				(m.ctrlKey === undefined || typeof m.ctrlKey === "boolean")
+				(m.ctrlKey === undefined || typeof m.ctrlKey === "boolean") &&
+				(m.key === undefined || typeof m.key === "string") &&
+				(m.code === undefined || typeof m.code === "string")
 				? (m as unknown as FrameMessage)
 				: undefined;
+		case "hold":
+			return m.phase === "up" || m.phase === "broken" ? (m as unknown as FrameMessage) : undefined;
 		case "modifier":
 			return (m.modifier === "Meta" || m.modifier === "Control") && typeof m.held === "boolean"
 				? (m as unknown as FrameMessage)

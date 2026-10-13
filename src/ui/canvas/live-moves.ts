@@ -227,7 +227,12 @@ export function threadNext(at: string, edges: readonly FlowEdge[], fork: ThreadF
 	const out = threadsFrom(at, edges);
 	const [first] = out;
 	if (first === undefined) return { kind: "none", note: "end of the thread" };
-	return { kind: "walk", to: first, fork: out.length > 1 ? { from: at, options: out, index: 0 } : null, replace: false };
+	return {
+		kind: "walk",
+		to: first,
+		fork: out.length > 1 ? { from: at, options: out, index: 0 } : null,
+		replace: false,
+	};
 }
 
 /**

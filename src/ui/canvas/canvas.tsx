@@ -113,7 +113,7 @@ import {
 	pngBytesFromImageBlob,
 	pngFileName,
 } from "./frame-export";
-import { FrameLabel, LabelField } from "./frame-label";
+import { FrameLabel, LabelField, type OverviewRole } from "./frame-label";
 import { createFrameReads } from "./frame-reads";
 import { FrameShell, FrameSlot, ShellClip } from "./frame-shell";
 import {
@@ -151,6 +151,7 @@ import {
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { useFrameLifecycle } from "./lifecycle";
+import { overviewNeighbours, stepDirection } from "./live-moves";
 import { watchMotionStrain } from "./motion-strain";
 import {
 	type ElementPreview,
@@ -163,6 +164,7 @@ import {
 	SelectionOverlay,
 	sourcePathOf,
 } from "./overlays";
+import { OverviewLayer } from "./overview-layer";
 import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import {
@@ -212,12 +214,13 @@ import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
 import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
-import { type SpatialDirection, type SpatialTrail, stepSpatially } from "./spatial-navigation";
+import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
 import { TeammateCompanions, TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
+import { useLiveMoves } from "./use-live-moves";
 import { useFollow, usePresenceSender } from "./use-presence";
 import { WalkLayer, walksOf } from "./walk-layer";
 
@@ -307,7 +310,26 @@ const ENTERED_ONLY_RELAYS: ReadonlySet<HotkeyId> = new Set([
 ]);
 
 /** Relayed keys that are chords under the platform's own accel, never the other modifier. */
-const ACCEL_RELAYS: ReadonlySet<HotkeyId> = new Set(["app.next-tab", "app.previous-tab"]);
+const ACCEL_RELAYS: ReadonlySet<HotkeyId> = new Set([
+	"app.next-tab",
+	"app.previous-tab",
+	"canvas.step-through",
+	"canvas.thread-next",
+	"canvas.thread-back",
+]);
+
+/**
+ * Relayed moves between frames (DEV-295): from the frame that is live, or the
+ * one a move just left, which keeps the keyboard until the one it landed on
+ * has booted. Never from a frame merely running beside it.
+ */
+const LIVE_MOVE_RELAYS: ReadonlySet<HotkeyId> = new Set([
+	"canvas.step",
+	"canvas.step-through",
+	"canvas.overview",
+	"canvas.thread-next",
+	"canvas.thread-back",
+]);
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -345,21 +367,6 @@ function wroteNothing(undo: HeldPatch): boolean {
  * here for what it is out on the canvas.
  */
 type StagedTrash = Staging;
-
-function spatialDirection(key: string): SpatialDirection | undefined {
-	switch (key) {
-		case "ArrowLeft":
-			return "left";
-		case "ArrowRight":
-			return "right";
-		case "ArrowUp":
-			return "up";
-		case "ArrowDown":
-			return "down";
-		default:
-			return undefined;
-	}
-}
 
 /** Opaque sandbox origins identify no frame; its current iframe window does. */
 export function ownsFrameMessage(
@@ -694,6 +701,8 @@ export function ProjectCanvas({
 		setExportError(undefined);
 	}, [exportDialog, exportFrames.length]);
 	const gesture = useRef<Gesture>({ kind: "idle" });
+	// a press on another frame while one was live, which its release enters
+	const clickSwitch = useRef<{ from: string; to: string } | null>(null);
 	// where the camera rests, as the lifecycle's sweep reads it between renders
 	const restCameraRef = useRef(restCamera);
 	restCameraRef.current = restCamera;
@@ -3725,6 +3734,35 @@ export function ProjectCanvas({
 		[recordDeparture, switchToPage, arrivalAt, camera],
 	);
 
+	// moving between frames while live (DEV-295): the ⌥ overview, steps that
+	// land entered, the walk along the threads, and the live chip's landing
+	const live = useLiveMoves({
+		camera,
+		viewportRef,
+		framesRef,
+		allFramesRef,
+		edgesRef,
+		enteredRef,
+		selectedRef,
+		enterFrame,
+		walkTo: (name) => walkTo(name, null),
+		select: (name, trail) => {
+			setSelectedPage(null);
+			setSelected([name]);
+			setPicked([]);
+			spatialTrail.current = trail;
+		},
+		focusFrame: (name) => iframes.current.get(name)?.focus(),
+		selectionIdle: () =>
+			gesture.current.kind === "idle" &&
+			editingRef.current === null &&
+			toolRef.current === "select" &&
+			selectedPageRef.current === null &&
+			pickedRef.current.length === 0,
+	});
+	const liveRef = useRef(live);
+	liveRef.current = live;
+
 	/**
 	 * Land a jump: another page arrives through switchToPage; the same page
 	 * flies, leaving whatever it was standing in. Then the recorded standing is
@@ -4157,6 +4195,7 @@ export function ProjectCanvas({
 					// The tab keys too: a frame left running beside the entered one,
 					// a teammate's on a timer say, must not switch the window's tab.
 					if (ENTERED_ONLY_RELAYS.has(message.id) && enteredRef.current !== message.frame) return;
+					if (LIVE_MOVE_RELAYS.has(message.id) && !liveRef.current.fromLive(message.frame)) return;
 					// the shim matched ⌘⇧] under either modifier; which one is accel is
 					// the canvas's rule, so ctrl+⇧] on a Mac is not the next tab
 					if (
@@ -4164,14 +4203,34 @@ export function ProjectCanvas({
 						!accelPressed({ metaKey: message.metaKey === true, ctrlKey: message.ctrlKey === true })
 					)
 						return;
-					runHotkey(message.id);
+					// a key the frame let go of travels with what it was, so the
+					// entry reads it as it would its own press out here
+					runHotkey(
+						message.id,
+						message.key === undefined
+							? undefined
+							: new KeyboardEvent("keydown", {
+									key: message.key,
+									code: message.code ?? "",
+									altKey: true,
+									metaKey: message.metaKey === true,
+									ctrlKey: message.ctrlKey === true,
+								}),
+					);
+					return;
+				case "hold":
+					// the ⌥ the frame relayed as held came up, or something broke it
+					if (!liveRef.current.fromLive(message.frame)) return;
+					if (message.phase === "up") liveRef.current.release();
+					else liveRef.current.cancel();
 					return;
 				case "modifier":
 					// the frame names the key that moved; which one is accel is the
 					// canvas's rule, so the other platform's modifier is ignored here
-					if (enteredRef.current === message.frame && message.modifier === accelKeyName()) {
-						setAccelDown(message.held);
-					}
+					if (message.modifier !== accelKeyName()) return;
+					// a ⌘ let go anywhere ends a fork's ] again, a fresh one too
+					liveRef.current.accel(message.held, message.held && !accelDownRef.current);
+					if (enteredRef.current === message.frame) setAccelDown(message.held);
 					return;
 				case "pan": {
 					// the middle-button drag the shim kept for us: pan without leaving
@@ -4279,6 +4338,7 @@ export function ProjectCanvas({
 					// a forward walk in the entered state really happened — witness it (#25)
 					if (message.spool === "go") postWalk(project, message.frame, message.target);
 					if (message.id !== undefined) departedFrameDocuments.current.add(message.frame);
+					if (message.spool === "go") liveRef.current.noteWalk(message.frame, message.target);
 					walkTo(message.target, message.session ?? null);
 					if (message.id !== undefined) {
 						source.postMessage(walkAccepted(message.frame, message.id), "*");
@@ -4611,6 +4671,10 @@ export function ProjectCanvas({
 
 	const onPointerDown = (event: React.PointerEvent) => {
 		if (findingRef.current || exportDialogRef.current !== null) return;
+		// a press ends the ⌥ overview where it stands: ⌥ drag and ⌥ click are
+		// gestures of their own (DEV-295)
+		if (live.isOpen()) live.cancel();
+		clickSwitch.current = null;
 		const cam = camera.get();
 		if (cam === null || event.button === 2) return;
 		camera.stop();
@@ -4646,8 +4710,14 @@ export function ProjectCanvas({
 		// accel modifier has borrowed its pointer to reach an element, so that
 		// modifier must not read as leaving.
 		if (enteredRef.current !== null && !accelPressed(event)) {
-			const hit = frameAtWorld(toWorld(p, cam));
-			if (hit === enteredRef.current) return; // the pointer is the frame's now
+			const from = enteredRef.current;
+			const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(toWorld(p, cam));
+			if (hit === from) return; // the pointer is the frame's now
+			// one click on another frame enters that one instead (DEV-295); a drag
+			// is still a move of it, so the switch waits for the release
+			if (hit !== null && event.button === 0 && !event.shiftKey && toolRef.current === "select") {
+				clickSwitch.current = { from, to: hit };
+			}
 			exitEntered();
 		}
 
@@ -5033,6 +5103,18 @@ export function ProjectCanvas({
 				moveBeside(active.grab.subject, beside, active.drop.place);
 			}
 		}
+		// a click on another frame while one was live goes inside it (DEV-295)
+		const switching = clickSwitch.current;
+		clickSwitch.current = null;
+		if (
+			active.kind === "pending" &&
+			switching !== null &&
+			active.names.length === 1 &&
+			active.names[0] === switching.to
+		) {
+			live.landLive(switching.to, null, { leaving: switching.from });
+			return;
+		}
 		// the press never became a drag, so the second click meant the words (#255)
 		const again = pressOnHeld.current;
 		pressOnHeld.current = null;
@@ -5286,6 +5368,27 @@ export function ProjectCanvas({
 			const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
 			nudge(dx, dy);
 		};
+		const stepSelection = (event: KeyboardEvent) => {
+			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
+			event.preventDefault();
+			if (selectedRef.current.length !== 1) return;
+			const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
+			if (current === undefined) return;
+			const direction = stepDirection(event);
+			if (direction === undefined) return;
+			const step = stepSpatially(current, framesRef.current, direction, spatialTrail.current);
+			if (step === undefined) return;
+			const { target } = step;
+			spatialTrail.current = step.trail;
+			setSelected([target.name]);
+			setPicked([]);
+			const viewport = viewportRef.current;
+			const cam = camera.get();
+			if (viewport !== null && cam !== null) {
+				const next = revealCamera(cam, target, viewport.clientWidth, viewport.clientHeight);
+				if (next !== cam) camera.fly(next);
+			}
+		};
 		// every canvas entry in the register answers here, or the map fails to
 		// compile — the handlers gate on state, the register never does
 		const handlers = {
@@ -5293,6 +5396,7 @@ export function ProjectCanvas({
 			// The ref is mirrored from state at render, which is a paint away; the
 			// redraw below reads it now, so this press writes both.
 			"canvas.accel-hold": () => {
+				liveRef.current.accel(true, !accelDownRef.current);
 				if (accelDownRef.current) return;
 				setAccelDown(true);
 				accelDownRef.current = true;
@@ -5434,28 +5538,19 @@ export function ProjectCanvas({
 			// frame — which ⏎ then goes inside (#28).
 			"canvas.nudge": (event) => nudgeArrow(event, 1),
 			"canvas.nudge-far": (event) => nudgeArrow(event, 10),
+			// inside a frame, or with the ⌥ overview up, the step is the live
+			// moves' (use-live-moves.ts); out here it moves the selection
 			"canvas.step": (event) => {
-				if (event === undefined) return;
-				if (enteredRef.current !== null || selectedRef.current.length === 0) return;
-				event.preventDefault();
-				if (selectedRef.current.length !== 1) return;
-				const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
-				if (current === undefined) return;
-				const direction = spatialDirection(event.key);
-				if (direction === undefined) return;
-				const step = stepSpatially(current, framesRef.current, direction, spatialTrail.current);
-				if (step === undefined) return;
-				const { target } = step;
-				spatialTrail.current = step.trail;
-				setSelected([target.name]);
-				setPicked([]);
-				const viewport = viewportRef.current;
-				const cam = camera.get();
-				if (viewport !== null && cam !== null) {
-					const next = revealCamera(cam, target, viewport.clientWidth, viewport.clientHeight);
-					if (next !== cam) camera.fly(next);
-				}
+				if (event === undefined || liveRef.current.step(event, false)) return;
+				stepSelection(event);
 			},
+			"canvas.step-through": (event) => {
+				if (event === undefined || liveRef.current.step(event, true)) return;
+				stepSelection(event);
+			},
+			"canvas.overview": () => liveRef.current.holdDown(),
+			"canvas.thread-next": (event) => liveRef.current.walkOn(event),
+			"canvas.thread-back": (event) => liveRef.current.walkBack(event),
 			// F2: the words of the one element held, and nothing else (#323)
 			"canvas.words": () => openWords(),
 			// ⏎ is Edit's before it is Select's (#339): with an element held, or
@@ -5552,22 +5647,36 @@ export function ProjectCanvas({
 			// releasing accel puts the borrowed Edit down, and the outline it drew
 			// goes from under a pointer that has not moved since (#254, #339)
 			if (event.key === accelKeyName()) {
+				liveRef.current.accel(false, false);
 				setAccelDown(false);
 				accelDownRef.current = false;
 				refreshRings.current();
 			}
+			// letting go of ⌥ lands the overview, or disarms a hold that never opened
+			if (event.key === "Alt") liveRef.current.release();
+		};
+		// any other key under a held ⌥ ends the overview unopened (⌥2 is @ on a
+		// Swedish board); the step keys are what move it
+		const onKeyDownFirst = (event: KeyboardEvent) => {
+			if (event.key === "Alt" || !liveRef.current.isOpen()) return;
+			if (event.altKey && stepDirection(event) !== undefined) return;
+			liveRef.current.cancel();
 		};
 		const clearModifiers = () => {
+			liveRef.current.accel(false, false);
+			liveRef.current.cancel();
 			setAccelDown(false);
 			setSpaceDown(false);
 			setPreview(null);
 		};
+		window.addEventListener("keydown", onKeyDownFirst, true);
 		window.addEventListener("keyup", onKeyUp);
 		window.addEventListener("blur", clearModifiers);
 		return () => {
 			detachDialog();
 			detachFinder();
 			detachCanvas();
+			window.removeEventListener("keydown", onKeyDownFirst, true);
 			window.removeEventListener("keyup", onKeyUp);
 			window.removeEventListener("blur", clearModifiers);
 		};
@@ -5856,6 +5965,24 @@ export function ProjectCanvas({
 		},
 	];
 
+	// what each frame is to the ⌥ overview while it is up (DEV-295)
+	const overviewRoles = (() => {
+		const up = live.overview;
+		if (up === null) return null;
+		const target = visibleFrames.find((frame) => frame.name === up.target);
+		if (target === undefined) return null;
+		const near = new Set(Object.values(overviewNeighbours(target, visibleFrames)).map((frame) => frame.name));
+		return (name: string): OverviewRole => (name === up.target ? "target" : near.has(name) ? "near" : "dim");
+	})();
+	const overviewHint =
+		live.overview === null
+			? undefined
+			: live.overview.mode === "select"
+				? "let go of ⌥ to select"
+				: live.overview.target === live.overview.origin
+					? "let go of ⌥ to stay"
+					: "let go of ⌥ to enter";
+
 	return (
 		<div className="relative flex h-full w-full">
 			<PaneWindow
@@ -6042,6 +6169,18 @@ export function ProjectCanvas({
 										})()}
 										onPlay={() => playFrame(frame.name)}
 										setAside={setAside.label(frame.name)}
+										live={
+											isEntered && live.chip?.frame === frame.name
+												? { ...live.chip, faded: live.overview !== null }
+												: isEntered && live.overview !== null
+													? { at: 0, came: null, note: null, faded: true }
+													: null
+										}
+										clickEnters={
+											entered !== null && !isEntered && isHovered && effectiveTool === "select" && !accelDown
+										}
+										overview={overviewRoles?.(frame.name) ?? null}
+										overviewHint={overviewHint}
 									/>
 								);
 							})}
@@ -6103,7 +6242,16 @@ export function ProjectCanvas({
 								marks={marks}
 								marquee={marquee}
 								dropLine={dropLine}
+								landing={live.chip?.ring === true ? { frame: live.chip.frame, at: live.chip.at } : null}
 							/>
+							{live.overview !== null && (
+								<OverviewLayer
+									camera={camera}
+									frames={visibleFrames}
+									overview={live.overview}
+									finder={live.finder}
+								/>
+							)}
 							{/* the agent's companions (#366), in the same screen space as the furniture
 						    beside them: presence on any visible frame at any zoom, and a ring on
 						    a located mark wherever a document was live enough to be measured */}
