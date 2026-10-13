@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useReducer, useRef } from "react";
+import { flushSync } from "react-dom";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import {
@@ -173,7 +174,14 @@ export function PresenceLayer({
 		};
 		schedule();
 		const unhear = room.subscribe(schedule);
-		const unwatch = camera.subscribe(kick);
+		// everyone here stands in screen pixels, so a camera drawn is drawn here in the same frame, never a
+		// frame or a render behind the names they dock on
+		const unwatch = camera.subscribe(() => {
+			if (room.teammates().length === 0) return;
+			if (frame !== undefined) cancelAnimationFrame(frame);
+			frame = undefined;
+			flushSync(() => step(performance.now()));
+		});
 		return () => {
 			unhear();
 			unwatch();
