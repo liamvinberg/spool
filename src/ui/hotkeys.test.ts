@@ -13,8 +13,22 @@ const OTHER = "Linux x86_64";
 
 describe("combo parsing", () => {
 	it("reads modifiers and the key", () => {
-		expect(parseCombo("accel+shift+z")).toEqual({ accel: true, ctrl: false, shift: true, alt: false, key: "z" });
-		expect(parseCombo("ctrl+o")).toEqual({ accel: false, ctrl: true, shift: false, alt: false, key: "o" });
+		expect(parseCombo("accel+shift+z")).toEqual({
+			accel: true,
+			ctrl: false,
+			shift: true,
+			alt: false,
+			any: false,
+			key: "z",
+		});
+		expect(parseCombo("ctrl+o")).toEqual({
+			accel: false,
+			ctrl: true,
+			shift: false,
+			alt: false,
+			any: false,
+			key: "o",
+		});
 	});
 
 	it("allows a bare accel hold and nothing else keyless", () => {
