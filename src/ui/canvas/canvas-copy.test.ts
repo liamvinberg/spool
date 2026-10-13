@@ -51,6 +51,26 @@ describe("canvas copy, paste and duplicate", () => {
 		expect(bodyOf(asked, "/geometry")).toEqual({ frames: { "shop/home": { x: -50, y: -50, w: 100, h: 100 } } });
 	});
 
+	it("leaves ⌘C to text highlighted in the chrome, with a frame selected", async () => {
+		const { host } = await mountCanvas({});
+		await select(host, "home");
+		const path = document.createElement("span");
+		path.textContent = "frames/home/frame.tsx";
+		host.append(path);
+		const range = document.createRange();
+		range.selectNodeContents(path);
+		window.getSelection()?.removeAllRanges();
+		window.getSelection()?.addRange(range);
+		onTestFinished(() => window.getSelection()?.removeAllRanges());
+
+		let event: KeyboardEvent | undefined;
+		await act(async () => {
+			event = press("c");
+		});
+		expect(event?.defaultPrevented).toBe(false);
+		expect(host.querySelector("[data-pages-copied]")).toBeNull();
+	});
+
 	it("leaves the keys alone with nothing selected", async () => {
 		const { asked } = await mountCanvas({});
 		const event = press("d");

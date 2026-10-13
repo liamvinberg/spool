@@ -5363,6 +5363,8 @@ export function ProjectCanvas({
 			// nothing, the frame behind it is what goes
 			"canvas.copy": (event) => {
 				if (editingRef.current !== null) return;
+				// text highlighted in the chrome (a path row, a label) is what ⌘C means
+				if (window.getSelection()?.isCollapsed === false) return;
 				const targets = verbTarget();
 				if (targets.length === 0) return;
 				event?.preventDefault();
