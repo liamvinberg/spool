@@ -173,6 +173,32 @@ export const HOTKEYS = [
 		keys: ["shift+a"],
 		repeats: false,
 	},
+	// the Pages rail's copy, paste and duplicate (#229), for the frames
+	// selected out on the canvas
+	{
+		id: "canvas.copy",
+		scope: "canvas",
+		group: "Frames",
+		label: "Copy the selected frames",
+		keys: ["accel+c"],
+		repeats: false,
+	},
+	{
+		id: "canvas.paste",
+		scope: "canvas",
+		group: "Frames",
+		label: "Paste frames onto this page",
+		keys: ["accel+v"],
+		repeats: false,
+	},
+	{
+		id: "canvas.duplicate",
+		scope: "canvas",
+		group: "Frames",
+		label: "Duplicate the selected frames",
+		keys: ["accel+d"],
+		repeats: false,
+	},
 	{ id: "canvas.menu", scope: "canvas", group: "Frames", label: "Open the frame menu", gesture: "right-click" },
 	{ id: "canvas.move", scope: "canvas", group: "Frames", label: "Move a frame", gesture: "drag" },
 	{

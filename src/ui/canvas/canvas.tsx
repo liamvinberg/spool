@@ -98,6 +98,7 @@ import {
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { ContextMenu, contextMenuSize } from "./context-menu";
+import { placeCopies } from "./copy-placement";
 import { type Drop, dropAt, moveAsk } from "./element-move";
 import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
@@ -208,7 +209,7 @@ import { useElementTree } from "./rail-elements";
 import { setAsideAsk, useSetAside } from "./set-aside";
 import { ShareSheet } from "./share-sheet";
 import { useCanvasSharing, useSharingAvailable } from "./sharing";
-import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
+import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialDirection, type SpatialTrail, stepSpatially } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
@@ -303,8 +304,6 @@ const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
-/** how far each fresh copy steps off the frame it was made from (#229) */
-const COPY_CASCADE_PX = 24;
 /** how long a hand edit's outgoing document may stand before the still returns */
 const HOLD_PAINT_MS = 3000;
 /**
@@ -1852,28 +1851,21 @@ export function ProjectCanvas({
 	/**
 	 * Fresh copies from the rail (#229), given somewhere to be.
 	 *
-	 * A duplicate copies the geometry sidecar verbatim (#228), so a copy that
-	 * stayed on its original's page would land exactly on top of it. The rail
-	 * made the copies and the canvas owns the plane, so the offset is written
-	 * here: each copy steps a little further off the frame it was made from, and
-	 * they end up selected, the way duplicating out on the canvas would leave
-	 * them. It takes no undo slot — there is nothing to put back, because the
-	 * copies were not anywhere a moment ago.
+	 * The rail made the copies and the canvas owns the plane, so where they
+	 * stand is written here (copy-placement.ts), and they end up selected. It
+	 * takes no undo slot of its own — the rail's mint entry is the one undo, and
+	 * there is nothing to put back, because the copies were not anywhere a
+	 * moment ago.
 	 */
 	const cascadeCopies = useCallback(
-		(copies: readonly FrameCopy[]) => {
-			const rects: Record<string, Geometry> = {};
-			copies.forEach((copy, index) => {
-				const from = allFramesRef.current.find((frame) => frame.name === copy.from);
-				if (from === undefined) return;
-				const step = COPY_CASCADE_PX * (index + 1);
-				rects[copy.to] = {
-					x: Math.round(from.x + step),
-					y: Math.round(from.y + step),
-					w: Math.round(from.w),
-					h: Math.round(from.h),
-				};
-			});
+		(copies: readonly FrameCopy[], beside: boolean) => {
+			const cam = camera.get();
+			const viewport = viewportRef.current;
+			const view =
+				cam === null || viewport === null
+					? null
+					: visibleWorldRect(cam, viewport.clientWidth, viewport.clientHeight, 0);
+			const rects = placeCopies(copies, allFramesRef.current, { beside, viewPage: activePageRef.current, view });
 			if (Object.keys(rects).length > 0) void putGeometry(project, rects);
 			const landed = copies.map((copy) => copy.to);
 			if (landed.length === 0) return;
@@ -1882,8 +1874,11 @@ export function ProjectCanvas({
 			setSelected(landed);
 			frameAnchor.current = landed[0] ?? null;
 		},
-		[holdChain, project],
+		[holdChain, project, camera],
 	);
+
+	/** The rail's copy, paste and duplicate, which the canvas's ⌘C, ⌘V and ⌘D run. */
+	const frameVerbs = useRef<FrameVerbs | null>(null);
 
 	/** What a history entry is checked against: the disk as the canvas has it now. */
 	const liveness = useCallback(
@@ -5359,6 +5354,29 @@ export function ProjectCanvas({
 			"canvas.reload": () => {
 				for (const name of verbTarget()) reloadFrameDocument(name);
 			},
+			// whole frames, through the Pages rail's own verbs: never while a frame
+			// is entered or its words are open, and an element held changes
+			// nothing, the frame behind it is what goes
+			"canvas.copy": (event) => {
+				if (editingRef.current !== null) return;
+				const targets = verbTarget();
+				if (targets.length === 0) return;
+				event?.preventDefault();
+				frameVerbs.current?.copy(targets);
+			},
+			"canvas.paste": (event) => {
+				if (enteredRef.current !== null || editingRef.current !== null || !gestureStill()) return;
+				event?.preventDefault();
+				void frameVerbs.current?.paste();
+			},
+			"canvas.duplicate": (event) => {
+				if (editingRef.current !== null) return;
+				const targets = verbTarget();
+				if (targets.length === 0) return;
+				// ⌘D is the browser's bookmark key
+				event?.preventDefault();
+				if (gestureStill()) void frameVerbs.current?.duplicate(targets);
+			},
 			// ⌫ is the frame's own trash, and an element's own delete when one is
 			// held (#317): the frame behind it is never what the press meant. One
 			// element at a time, and never while its words are open — that press
@@ -5730,6 +5748,7 @@ export function ProjectCanvas({
 					onRevealFrame={landOnFrame}
 					onCopyPath={(name) => copySourcePath(frameSourcePath(name))}
 					onCopiesLanded={cascadeCopies}
+					verbs={frameVerbs}
 					onFramesRenamed={followRenamedFrames}
 					onRefresh={() => void refetchFrames()}
 					onRecord={recordEntry}
