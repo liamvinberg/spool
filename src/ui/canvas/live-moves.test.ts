@@ -122,7 +122,11 @@ describe("the overview", () => {
 	it("enters where it was let go, or stays live where it opened", () => {
 		const opened = openOverview("live", "centre", saved);
 		expect(landOverview(opened)).toEqual({ kind: "stay", target: "centre" });
-		expect(landOverview(moveOverview(opened, frames, "down"))).toEqual({ kind: "enter", target: "down", came: "down" });
+		expect(landOverview(moveOverview(opened, frames, "down"))).toEqual({
+			kind: "enter",
+			target: "down",
+			came: "down",
+		});
 		const selecting = moveOverview(openOverview("select", "centre", saved), frames, "left");
 		expect(landOverview(selecting)).toEqual({ kind: "select", target: "left" });
 	});
@@ -137,13 +141,13 @@ describe("the overview", () => {
 			return sx >= 0 && sx <= 1200 && sy >= 0 && sy <= 800;
 		};
 		expect(camera.k).toBeLessThan(1);
-		for (const corner of [
+		for (const [x, y] of [
 			[-500, 0],
 			[900, 300],
 			[0, -400],
 			[400, 700],
 		] as const)
-			expect(shows(...corner)).toBe(true);
+			expect(shows(x, y)).toBe(true);
 		// never pulls in closer than the camera it opened from
 		const far = { x: 0, y: 0, k: 0.1 };
 		expect(overviewCamera(centre, frames, far, 1200, 800).k).toBe(0.1);
