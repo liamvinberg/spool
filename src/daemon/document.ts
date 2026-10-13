@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { MAX_CAPTURE_OUTPUT_PIXELS, SETTLE_BUDGET_MS } from "../cover";
+import { OVERVIEW_HOLD_MS } from "../ui/canvas/live-moves";
 import { comboMatches, lowerCombo, parseCombo } from "../ui/hotkey-combos";
 import { relayedHotkeys, tabHotkeyCombos } from "../ui/hotkeys";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
@@ -1871,6 +1872,9 @@ const canvasShimJs = `(() => {
 		if (editing || editingKeys.delete(event.key) || stray) {
 			event.stopImmediatePropagation();
 			if (event.key === "Meta" || event.key === "Control") parent.postMessage({ spool: "modifier", frame: (window.__SPOOL__ || {}).frame, modifier: event.key, held: false }, "*");
+			// a ⌥ that went down in the document before this one (a reload
+			// mid-hold) comes up here: the canvas may have an overview open on it
+			if (event.key === "Alt" && window.parent !== window) parent.postMessage({ spool: "hold", frame: (window.__SPOOL__ || {}).frame, phase: "up" }, "*");
 		}
 	}, true);
 
@@ -2281,6 +2285,9 @@ const canvasShimJs = `(() => {
 			event.stopImmediatePropagation();
 			return;
 		}
+		// a key the page made up itself is no press of the person's: it moves
+		// nothing out on the canvas, as a made-up drag drops nothing
+		if (!event.isTrusted) return;
 		// ⌥ held for the overview (DEV-295): any other key under it, the
 		// modifiers included, ends it unopened, so ⌥2 still types @
 		if (event.key === "Alt") {
@@ -2296,6 +2303,9 @@ const canvasShimJs = `(() => {
 			if (!relayMatches(event, relay.match, null)) continue;
 			if (relay.yields) {
 				if (relay.match.hold !== null && event.repeat) return;
+				// accel is ⌘ on a Mac and ctrl elsewhere: ctrl+⌥ arrows on a Mac
+				// are the frame's, and the system's, never spool's
+				if (relay.match.accel && !(appleShim ? event.metaKey : event.ctrlKey)) continue;
 				// the frame's own listeners come first: decide once they all ran
 				if (!relay.typing && typingIn(event)) {
 					if (event.key !== "Alt") breakAlt(frame);
@@ -2318,6 +2328,7 @@ const canvasShimJs = `(() => {
 	// already had there. A press stopped on its way never reaches it, so the
 	// next press clears it away first.
 	var awaiting = null;
+	var appleShim = /Mac|iPhone|iPad|iPod/.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "");
 	var yieldingMatch = (event) => relayKeys.some((relay) => relay.yields && relay.match.hold === null && relayMatches(event, relay.match, null));
 	var typingIn = (event) => {
 		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
@@ -2338,8 +2349,11 @@ const canvasShimJs = `(() => {
 				if (altHeld !== null) breakAlt(frame);
 				return;
 			}
-			if (relay.match.hold === null) event.preventDefault();
-			else altHeld = { broken: false };
+			if (relay.match.hold === null) {
+				event.preventDefault();
+				// a step under the held ⌥ opens the overview at once
+				if (altHeld !== null) altHeld.stepped = true;
+			} else altHeld = { broken: false, stepped: false, since: performance.now() };
 			window.parent.postMessage({
 				spool: "key",
 				frame,
@@ -2362,19 +2376,39 @@ const canvasShimJs = `(() => {
 	};
 	addEventListener("keyup", (event) => {
 		if (window.parent === window || event.key !== "Alt" || altHeld === null) return;
+		const broken = altHeld.broken;
 		altHeld = null;
-		window.parent.postMessage({ spool: "hold", frame: (window.__SPOOL__ || {}).frame, phase: "up" }, "*");
+		// a broken hold was told once already: its overview is gone
+		if (!broken) window.parent.postMessage({ spool: "hold", frame: (window.__SPOOL__ || {}).frame, phase: "up" }, "*");
 	}, true);
 	addEventListener("blur", () => {
 		if (window.parent === window || altHeld === null) return;
 		breakAlt((window.__SPOOL__ || {}).frame);
 		altHeld = null;
 	});
-	// a press under a held ⌥ is a gesture of its own, the frame's or the canvas's
-	addEventListener("pointerdown", () => {
+	// a press under a held ⌥ is a gesture of its own, the frame's or the
+	// canvas's. Once the overview may be open (held past its delay) the camera
+	// has moved under the pointer, so the press is no click on what it lands
+	// on: it only closes the overview, and never reaches the page
+	addEventListener("pointerdown", (event) => {
 		if (window.parent === window || altHeld === null) return;
+		const open = !altHeld.broken && (altHeld.stepped || performance.now() - altHeld.since >= ${OVERVIEW_HOLD_MS});
 		breakAlt((window.__SPOOL__ || {}).frame);
+		if (!open) return;
+		swallowPress = true;
+		event.preventDefault();
+		event.stopImmediatePropagation();
 	}, true);
+	// the rest of a swallowed press goes with it
+	var swallowPress = false;
+	for (const type of ["pointerup", "mousedown", "mouseup", "click", "auxclick", "contextmenu"]) {
+		addEventListener(type, (event) => {
+			if (!swallowPress) return;
+			if (type === "click" || type === "pointerup" && event.pointerType !== "mouse") swallowPress = false;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+		}, true);
+	}
 
 	// A pointer trap is the same failure as a zoom trap: entered, the frame owns
 	// every press, so the canvas would have no way to pan out from under it. The
@@ -2487,8 +2521,9 @@ const canvasShimJs = `(() => {
 	addEventListener("blur", () => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
+		// told as a blur: the key may still be down, the focus only moved on
 		for (const modifier of ["Meta", "Control"]) {
-			window.parent.postMessage({ spool: "modifier", frame, modifier, held: false }, "*");
+			window.parent.postMessage({ spool: "modifier", frame, modifier, held: false, blur: true }, "*");
 		}
 	});
 })();
