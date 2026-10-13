@@ -314,3 +314,26 @@ describe("focusAfterClose", () => {
 		expect(focusAfterClose(roots, "/w/missing")).toBeNull();
 	});
 });
+
+it("dots a tab not focused with who else is in its project, three at most, and never the focused one", async () => {
+	const mate = (name: string, idle = false) => ({ accountId: name, name, color: "#7aa7ff", idle });
+	const here = [mate("ana"), mate("ben"), mate("cleo"), mate("dag", true)];
+	const { host, rerender } = await render({
+		tabs: [
+			{ root: "/w/alpha", name: "alpha", here },
+			{ root: "/w/beta", name: "beta", here },
+			{ root: "/w/gamma", name: "gamma" },
+		],
+	});
+	const dots = (index: number) =>
+		[...(tabOf(host, index)?.querySelectorAll<HTMLElement>("[data-tab-here-dot]") ?? [])].map(
+			(dot) => dot.dataset.tabHereDot,
+		);
+	expect(dots(0)).toEqual([]);
+	expect(dots(1)).toEqual(["ana", "ben", "cleo"]);
+	expect(tabOf(host, 1)?.querySelector("[data-tab-here]")?.textContent).toBe(", ana, ben, cleo, dag here");
+	expect(dots(2)).toEqual([]);
+	await rerender({ focused: "/w/beta" });
+	expect(dots(0)).toEqual(["ana", "ben", "cleo"]);
+	expect(dots(1)).toEqual([]);
+});

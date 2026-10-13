@@ -16,6 +16,7 @@ import { CloseIcon, HomeIcon, PlusIcon } from "./icons";
 import { IconButton } from "./primitives/actions";
 import { ProjectMark } from "./project-icon";
 import { ProjectTabMenu } from "./project-tab-menu";
+import type { TabMate } from "./tab-presence";
 
 /**
  * Home and the open projects, as tabs you can arrange.
@@ -56,7 +57,12 @@ export interface TabProject {
 	teamAddress?: string | undefined;
 	/** The copy's sync is paused, and its team mark is hollow. */
 	paused?: boolean | undefined;
+	/** Who else is in a team project: a dot each after the name while another tab is focused (task 139). */
+	here?: readonly TabMate[] | undefined;
 }
+
+/** The most dots a tab draws after its name; everyone is in the list on its canvas. */
+export const DOTS_SHOWN = 3;
 
 /** how far a press travels before it is a drag rather than a click */
 const SLOP = 4;
@@ -602,6 +608,35 @@ function Backing({ sheet }: { sheet: boolean }) {
 	);
 }
 
+/**
+ * Who else is in a project whose tab isn't focused: a dot each in their colour, three at most, the ones working first
+ * and the idle at the faces' resting ink, on the name's line so they fade with it when the tab is squeezed.
+ */
+function TabDots({ mates }: { mates: readonly TabMate[] }) {
+	const shown = mates.slice(0, DOTS_SHOWN);
+	return (
+		<span data-tab-here="" className="ml-1.5 inline-flex h-4 -translate-y-px items-center align-middle">
+			<span className="sr-only">, {mates.map((mate) => mate.name).join(", ")} here</span>
+			{shown.map((mate, i) => (
+				<span
+					key={mate.accountId}
+					aria-hidden="true"
+					data-tab-here-dot={mate.accountId}
+					className="relative size-1.5 rounded-full"
+					style={{
+						marginLeft: i === 0 ? 0 : -2,
+						background: mate.color,
+						boxShadow: "0 0 0 1.5px var(--color-surface-window)",
+						zIndex: shown.length - i,
+						opacity: mate.idle ? 0.45 : 1,
+						filter: mate.idle ? "saturate(0.2)" : undefined,
+					}}
+				/>
+			))}
+		</span>
+	);
+}
+
 function Name({ children }: { children: React.ReactNode }) {
 	return (
 		<span
@@ -811,7 +846,10 @@ function Tab({
 							cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
 						/>
 					</span>
-					<Name>{tab.name}</Name>
+					<Name>
+						{tab.name}
+						{!active && tab.here !== undefined && tab.here.length > 0 && <TabDots mates={tab.here} />}
+					</Name>
 				</button>
 				<span
 					className={cn(

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { TabPresence } from "../team-sync-protocol";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
 import {
@@ -40,6 +41,7 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { SharedControl, useShares } from "./shares";
+import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { type MoveDone, useMovedToast } from "./team-move";
 import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway, useCoverMoves } from "./team-moves";
@@ -116,6 +118,7 @@ export function App() {
 	}, [bridge, booted, focused, projectsLoaded]);
 
 	const byRoot = useMemo(() => new Map(projects.map((p) => [p.root, p])), [projects]);
+	const { byRoot: tabsHere, heard: heardTabPresence, reset: resetTabPresence } = useTabPresence();
 	const tabs: TabProject[] = useMemo(
 		() =>
 			open
@@ -128,9 +131,10 @@ export function App() {
 						icon: card?.icon,
 						teamAddress: card?.team?.team,
 						paused: card?.syncPaused !== undefined || card?.goneLocal !== undefined,
+						here: tabsHere.get(root),
 					};
 				}),
-		[open, byRoot, forgetting],
+		[open, byRoot, forgetting, tabsHere],
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
 	/** The focused project's shares with outsiders, for the Shared control at the window's top right (DEV-193). */
@@ -273,6 +277,8 @@ export function App() {
 				hello: (data) => {
 					const { latest } = data as { latest?: unknown };
 					if (typeof latest === "string") offerUpdate(latest);
+					// who is in each team project is said again after every hello
+					resetTabPresence();
 				},
 				app: (data) => {
 					const event = data as {
@@ -300,6 +306,11 @@ export function App() {
 						const thumbnail = (data as { thumbnail?: ProjectThumbnail | null }).thumbnail ?? undefined;
 						return setThumbnail(event.root, thumbnail);
 					}
+					// who else is in a team project, for its tab while another is focused
+					if (event.kind === "presence" && typeof event.root === "string") {
+						const { people } = data as { people?: TabPresence[] };
+						return heardTabPresence(event.root, Array.isArray(people) ? people : []);
+					}
 					if (event.kind === "sync" && typeof event.root === "string") {
 						const { paused, goneLocal } = data as { paused?: unknown; goneLocal?: unknown };
 						return patchCard(event.root, (card) =>
@@ -325,7 +336,17 @@ export function App() {
 			// or forgotten in a shell across that gap left no other trace here
 			{ onReconnect: () => void refetch() },
 		);
-	}, [refetch, offerUpdate, remapProject, readAccount, setIcon, setThumbnail, patchCard]);
+	}, [
+		refetch,
+		offerUpdate,
+		remapProject,
+		readAccount,
+		setIcon,
+		setThumbnail,
+		patchCard,
+		heardTabPresence,
+		resetTabPresence,
+	]);
 
 	const startUpgrade = useCallback(async () => {
 		setToast({ kind: "updating", stage: "installing" });
