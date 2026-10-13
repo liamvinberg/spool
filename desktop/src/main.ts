@@ -20,7 +20,16 @@ import { accountItems, type CloudAccountState, followAccount } from "./cloud-acc
 import * as daemon from "./daemon";
 import { directoryDialogOptions } from "./directory-dialog";
 import { log, openLog } from "./log";
-import { type MenuKeys, menuKey, reportedMenuKeys } from "./menu-keys";
+import {
+	answersTabs,
+	closeWindowKey,
+	type MenuKeys,
+	menuKey,
+	reportedMenuKeys,
+	type TabCommand,
+	type TabItem,
+	tabItem,
+} from "./menu-keys";
 import { userPath } from "./path";
 import {
 	BAR_PX,
@@ -782,6 +791,7 @@ export type CanvasCommand =
 	| "app.open-project"
 	| "app.settings"
 	| "app.help"
+	| TabCommand
 	| "canvas.zoom-in"
 	| "canvas.zoom-out"
 	| "canvas.zoom-reset"
@@ -802,6 +812,51 @@ function sendCanvasCommand(command: CanvasCommand): void {
 	window.focus();
 	if (canvasReady) window.webContents.send("spool:canvas-command", command);
 	else pendingCanvasCommand = command;
+}
+
+/**
+ * A tab key from the menu. ⌘W in another of the app's windows closes that
+ * window, as it always has; in the canvas the page decides what closes, and
+ * a canvas not up yet is only a window. ⌘T is the one that brings the canvas
+ * back; the rest mean nothing without it.
+ */
+function sendTabCommand(command: TabCommand): void {
+	if (command === "app.home") {
+		sendCanvasCommand(command);
+		return;
+	}
+	const focused = BrowserWindow.getFocusedWindow();
+	if (command === "app.close-tab" && focused !== null && focused !== window) {
+		focused.close();
+		return;
+	}
+	if (window === undefined || focused !== window) return;
+	if (!canvasReady) {
+		if (command === "app.close-tab") window.close();
+		return;
+	}
+	window.webContents.send("spool:canvas-command", command);
+}
+
+/** File > Close Window, with the key the page leaves it, if any. */
+function closeWindowItem(): MenuItemConstructorOptions {
+	const accelerator = closeWindowKey(menuKeys);
+	// the role would wear its own ⌘W, which is Close Tab's once the page answers tabs
+	return accelerator === undefined
+		? { label: "Close Window", click: () => BrowserWindow.getFocusedWindow()?.close() }
+		: { role: "close", accelerator };
+}
+
+/** The menu items of the tab keys the page reports, each sending its command. */
+function tabItems(items: readonly (TabItem | undefined)[]): MenuItemConstructorOptions[] {
+	return items
+		.filter((item): item is TabItem => item !== undefined)
+		.map(({ command, label, accelerator, visible }) => ({
+			label,
+			accelerator,
+			visible,
+			click: () => sendTabCommand(command),
+		}));
 }
 
 const CANVAS_ZOOM_COMMANDS = [
@@ -846,6 +901,9 @@ function installCanvasChannels(): void {
 		// an accelerator is fixed once built, so the menu is built again around the keys
 		Menu.setApplicationMenu(buildAppMenu());
 		updateCanvasMenu();
+	});
+	ipcMain.on("spool:canvas-close-window", (event) => {
+		if (canvasSender(event)) window?.close();
 	});
 	ipcMain.on("spool:canvas-active", (event, active: unknown) => {
 		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
@@ -909,9 +967,11 @@ export function buildAppMenu(): Menu {
 					click: () => sendCanvasCommand("app.open-project"),
 				},
 				{ type: "separator" },
+				...tabItems([tabItem("app.close-tab", "Close Tab", menuKeys)]),
 				// Closing the window leaves the app running in the menu bar, which
 				// is the whole reason Cmd+W and Cmd+Q are different keys here.
-				{ role: "close" },
+				closeWindowItem(),
+				...tabItems([tabItem("app.reopen-tab", "Reopen Closed Tab", menuKeys)]),
 			],
 		},
 		{ role: "editMenu" },
@@ -932,6 +992,28 @@ export function buildAppMenu(): Menu {
 				{ label: "Developer", submenu: [{ role: "reload" }, { role: "forceReload" }, { role: "toggleDevTools" }] },
 			],
 		},
+		// a browser's Tab menu, once the page answers the keys; ⌘1-9 are kept
+		// off it, the sheet tells them
+		...(answersTabs(menuKeys)
+			? [
+					{
+						label: "Tab",
+						submenu: [
+							...tabItems([
+								tabItem("app.home", "Show Home", menuKeys),
+								tabItem("app.next-tab", "Select Next Tab", menuKeys),
+								tabItem("app.previous-tab", "Select Previous Tab", menuKeys),
+							]),
+							...tabItems([
+								...([1, 2, 3, 4, 5, 6, 7, 8] as const).map((n) =>
+									tabItem(`app.tab-${n}`, `Select Tab ${n}`, menuKeys, false),
+								),
+								tabItem("app.tab-last", "Select Last Tab", menuKeys, false),
+							]),
+						],
+					},
+				]
+			: []),
 		{ role: "windowMenu" },
 		{
 			role: "help",

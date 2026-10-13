@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 	},
 	setCanvasActive: (active: boolean) => ipcRenderer.send("spool:canvas-active", active),
 	setMenuKeys: (keys: Partial<Record<CanvasCommand, string>>) => ipcRenderer.send("spool:canvas-menu-keys", keys),
+	closeWindow: () => ipcRenderer.send("spool:canvas-close-window"),
 	chooseDirectory: (request: DirectoryRequest): Promise<string | null> =>
 		ipcRenderer.invoke("spool:choose-directory", request),
 });
