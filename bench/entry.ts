@@ -222,13 +222,17 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 				const state = (globalThis as unknown as { __bench: BenchState }).__bench;
 				const last = probe.marks.at(-1);
 				if (probe.click === null || last?.entered == null) return false;
-				const loaded = state.loaded.some((entry) => entry.frame === last.entered && entry.t >= (probe.click ?? 0));
-				const faded = probe.marks.find((mark) => mark.entered === last.entered && mark.cover === "0");
+				const loaded = state.loaded.some((entry) => entry.frame === last.entered && entry.t >= (probe.press ?? 0));
+				// a still already gone counts as faded: the first click's selection can
+				// have booted the document before the second click arrived
+				const faded = probe.marks.find(
+					(mark) => mark.entered === last.entered && (mark.cover === "0" || mark.cover === null),
+				);
 				const still = probe.marks.filter((mark) => mark.t >= last.t - 300);
 				return (
 					loaded &&
 					faded !== undefined &&
-					last.t - faded.t >= fade &&
+					last.t - faded.t >= (faded.cover === null ? 0 : fade) &&
 					still.every((mark) => mark.camera === last.camera)
 				);
 			},
@@ -265,9 +269,13 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 			flyEnd = marks[i]?.t as number;
 		}
 	}
-	const loadedAt = state.loaded.find((entry) => entry.frame === frame && entry.t >= click)?.t ?? Number.NaN;
-	const fadeAt = ofFrame.find((mark) => mark.cover === "0")?.t ?? Number.NaN;
-	const liveAt = fadeAt + COVER_FADE_MS;
+	// loaded before the second click is clickable the moment it is entered
+	const loadedAt = Math.max(
+		state.loaded.find((entry) => entry.frame === frame && entry.t >= (probe.press ?? click))?.t ?? Number.NaN,
+		click,
+	);
+	const faded = ofFrame.find((mark) => mark.cover === "0" || mark.cover === null);
+	const liveAt = faded === undefined ? Number.NaN : faded.t + (faded.cover === null ? 0 : COVER_FADE_MS);
 	const end = Math.max(flyEnd, liveAt);
 	return {
 		mode,
