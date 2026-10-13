@@ -1,7 +1,14 @@
 import { type BigIntStats, lstatSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DesignBoundaryError, resolveDesignPath } from "./design-path";
-import { type FolderListing, type FrameSource, type ImportEdge, importCandidates, importKey } from "./nav-sites";
+import {
+	type FolderListing,
+	type FrameSource,
+	type ImportEdge,
+	importCandidates,
+	importKey,
+	type LandingMemory,
+} from "./nav-sites";
 
 /**
  * Proof that a frame's source half is still the one the kept graph holds,
@@ -147,14 +154,62 @@ export function createLooks() {
 		 * this tens of thousands of times.
 		 */
 		landing(designDir: string, edge: ImportEdge): readonly string[] | undefined {
-			const key = `${importKey(edge.from, edge.specifier)}\0${edge.to ?? ""}`;
+			const key = landingKey(edge);
 			if (landings.has(key)) return landings.get(key);
 			const found = landingFolders(designDir, edge, looks);
 			landings.set(key, found);
 			return found;
 		},
+
+		/** A landing an earlier read found, whose folders have not moved since. */
+		landed(edge: ImportEdge, folders: readonly string[]): void {
+			landings.set(landingKey(edge), folders);
+		},
 	};
 	return looks;
+}
+
+const landingKey = (edge: ImportEdge): string => `${importKey(edge.from, edge.specifier)}\0${edge.to ?? ""}`;
+
+/** One import's landing as a read found it, and the folders that decide it as they stood. */
+interface Landed {
+	to: string | undefined;
+	folders: readonly string[];
+	identities: readonly string[];
+}
+
+/**
+ * Landings kept across reads, as a witness keeps a frame: an import lands
+ * where it did while the two folders every candidate lives in stand still, so
+ * a frame read again after a shared file changed resolves nothing it already
+ * resolved. A landing is only kept where a stat can speak for it, with no link
+ * on the way and both folders settled before the read began. A read that
+ * proves everything by its bytes recalls nothing, and learns what it finds.
+ */
+export function createLandingMemory() {
+	const kept = new Map<string, Landed>();
+	return (designDir: string, looks: Looks, since: number | undefined, full: boolean): LandingMemory => ({
+		recall(fromFile, specifier) {
+			if (full) return undefined;
+			const key = importKey(fromFile, specifier);
+			const landed = kept.get(key);
+			if (landed === undefined) return undefined;
+			if (!landed.folders.every((folder, at) => looks.at(folder).identity === landed.identities[at])) {
+				kept.delete(key);
+				return undefined;
+			}
+			looks.landed({ from: fromFile, specifier, to: landed.to }, landed.folders);
+			return { to: landed.to };
+		},
+		learn(fromFile, specifier, to) {
+			if (since === undefined) return;
+			const folders = looks.landing(designDir, { from: fromFile, specifier, to });
+			if (folders === undefined || folders.length === 0) return;
+			const found = folders.map((folder) => looks.at(folder));
+			if (found.some((look) => look.changed >= since - SETTLED_MS)) return;
+			kept.set(importKey(fromFile, specifier), { to, folders, identities: found.map((look) => look.identity) });
+		},
+	});
 }
 
 export type Looks = ReturnType<typeof createLooks>;

@@ -163,7 +163,7 @@ interface FileRead {
  * pass started with, so one derivation sees one consistent project. The next
  * pass reads the edit.
  */
-export function createSourcePass(designDir: string) {
+export function createSourcePass(designDir: string, memory?: LandingMemory) {
 	const files = new Map<string, FileRead>();
 	const specifiers = new Map<string, string | undefined>();
 	const folders = new Map<string, FolderListing>();
@@ -225,7 +225,9 @@ export function createSourcePass(designDir: string) {
 			const key = importKey(fromFile, specifier);
 			const known = specifiers.get(key);
 			if (known !== undefined || specifiers.has(key)) return known;
-			const found = resolveLocalImport(designDir, fromFile, specifier);
+			const recalled = memory?.recall(fromFile, specifier);
+			const found = recalled === undefined ? resolveLocalImport(designDir, fromFile, specifier) : recalled.to;
+			if (recalled === undefined) memory?.learn(fromFile, specifier, found);
 			specifiers.set(key, found);
 			return found;
 		},
@@ -241,6 +243,15 @@ export function createSourcePass(designDir: string) {
 }
 
 export type SourcePass = ReturnType<typeof createSourcePass>;
+
+/**
+ * Where imports landed on earlier reads, for a pass to ask before it resolves
+ * one again (`source-witness.ts`): nothing when the memory cannot vouch for it.
+ */
+export interface LandingMemory {
+	recall(fromFile: string, specifier: string): { to: string | undefined } | undefined;
+	learn(fromFile: string, specifier: string, to: string | undefined): void;
+}
 
 /** Where one import landed, or that it landed nowhere. */
 export interface ImportEdge {

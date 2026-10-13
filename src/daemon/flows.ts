@@ -29,7 +29,15 @@ import {
 	type RenderedTarget,
 	readRenderedText,
 } from "./resolved-targets";
-import { createLooks, diskNow, type Looks, type SourceWitness, witnessHolds, witnessSource } from "./source-witness";
+import {
+	createLandingMemory,
+	createLooks,
+	diskNow,
+	type Looks,
+	type SourceWitness,
+	witnessHolds,
+	witnessSource,
+} from "./source-witness";
 
 /**
  * The link graph (#34, amending #5): the map is read, not walked. Every edge
@@ -477,6 +485,7 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 	const provenFully = new Map<string, number>();
 	const running = new Map<string, Promise<Built>>();
 	const queued = new Map<string, Promise<Built>>();
+	const landings = new Map<string, ReturnType<typeof createLandingMemory>>();
 
 	/**
 	 * One frame's source half, and whether it had to be derived again. A witness
@@ -570,8 +579,11 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 		const frames = [...dirs.keys()];
 		const last = results.get(root);
 		const context = readContext(root, frames, last?.context);
-		const pass = createSourcePass(designDir);
-		const disk: ReadPass = { pass, looks: createLooks(), inside: designPathResolver(designDir), since, full };
+		const looks = createLooks();
+		const memory = landings.get(root) ?? createLandingMemory();
+		landings.set(root, memory);
+		const pass = createSourcePass(designDir, memory(designDir, looks, since, full));
+		const disk: ReadPass = { pass, looks, inside: designPathResolver(designDir), since, full };
 		const entries = kept.get(root) ?? new Map<string, FrameEntry>();
 		kept.set(root, entries);
 		if (!users.has(root)) moved.add(root);
