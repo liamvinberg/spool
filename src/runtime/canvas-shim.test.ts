@@ -203,7 +203,7 @@ describe("the canvas shim", () => {
 			expect(browserReset.defaultPrevented, "browser reset must remain an escape hatch").toBe(false);
 			expect(posted).toEqual([
 				{ spool: "zoom", frame: "host", kind: "wheel", x: 12, y: 34, deltaY: -20, deltaMode: 0 },
-				{ spool: "zoom", frame: "host", kind: "in" },
+				{ spool: "key", frame: "host", id: "canvas.zoom-in" },
 			]);
 		} finally {
 			dispose?.();
@@ -292,6 +292,42 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("relays Esc out under any modifier and leaves it the frame's too (#22)", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+
+			const plain = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" });
+			window.dispatchEvent(plain);
+			const shifted = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				shiftKey: true,
+				key: "Escape",
+			});
+			window.dispatchEvent(shifted);
+
+			expect(plain.defaultPrevented, "the prototype's own esc still runs").toBe(false);
+			expect(posted).toEqual([
+				{ spool: "key", frame: "host", id: "canvas.leave" },
+				{ spool: "key", frame: "host", id: "canvas.leave" },
+			]);
+		} finally {
+			dispose?.();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("relays the jump chords and eats the browser's open-file dialog", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
@@ -318,8 +354,8 @@ describe("the canvas shim", () => {
 			expect(forward.defaultPrevented).toBe(true);
 			expect(plain.defaultPrevented).toBe(false);
 			expect(posted).toEqual([
-				{ spool: "key", frame: "host", key: "ctrl+o" },
-				{ spool: "key", frame: "host", key: "ctrl+i" },
+				{ spool: "key", frame: "host", id: "canvas.jump-back" },
+				{ spool: "key", frame: "host", id: "canvas.jump-forward" },
 			]);
 		} finally {
 			dispose?.();

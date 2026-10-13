@@ -2,6 +2,7 @@ import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
 import { collapsedWords } from "./src/daemon/edit-words";
 import { tagWord, wholeComponent } from "./src/daemon/element-name";
+import { comboMatches } from "./src/ui/hotkey-combos";
 import { buildVendorEntry } from "./src/vendor-entry-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
@@ -16,6 +17,7 @@ const shimHelpers = {
 		wholeComponent: String(wholeComponent),
 		tagWord: String(tagWord),
 		collapsedWords: String(collapsedWords),
+		comboMatches: String(comboMatches),
 	}),
 };
 
