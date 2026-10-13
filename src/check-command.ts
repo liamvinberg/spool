@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { checkProject } from "./check";
+import { altReaders, describeAltReader } from "./check-alt";
 import { describeSlowFrame, slowFrames } from "./check-pace";
 import { realDesignDir } from "./daemon/design-path";
 
@@ -88,6 +89,8 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 			`${count(unnamed.length, "frame")} timed slow (${listed}); name one, as in spool check design/frames/${unnamed[0]}, to see why`,
 		);
 	}
+	// a note, never a failure: a frame may mean to keep ⌥ for itself
+	if (report.ran) for (const reader of altReaders(root, report.frames)) stderr.push(describeAltReader(reader));
 	const errors = report.diagnostics.length;
 	if (!report.ran) return { stderr, stdout: [`not checked: ${count(errors, "error")} stopped it`], ok: false };
 	return {
