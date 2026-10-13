@@ -20,6 +20,45 @@ describe("placeCopies", () => {
 		expect(rects["home-copy-2"]).toEqual({ x: 2 * step, y: 2 * step, w: 390, h: 844 });
 	});
 
+	it("steps a group of copies as one, keeping its layout", () => {
+		const frames = [
+			{ name: "home", x: 0, y: 0, w: 100, h: 100 },
+			{ name: "about", x: 200, y: 0, w: 100, h: 100 },
+		];
+		const rects = placeCopies(
+			[
+				{ from: "home", to: "home-copy" },
+				{ from: "about", to: "about-copy" },
+			],
+			frames,
+			{ beside: true, viewPage: "", view },
+		);
+		expect(rects).toEqual({
+			"home-copy": { x: step, y: step, w: 100, h: 100 },
+			"about-copy": { x: 200 + step, y: step, w: 100, h: 100 },
+		});
+	});
+
+	it("steps the whole group past a spot any of its copies would take", () => {
+		const frames = [
+			{ name: "home", x: 0, y: 0, w: 100, h: 100 },
+			{ name: "about", x: 200, y: 0, w: 100, h: 100 },
+			{ name: "about-copy", x: 200 + step, y: step, w: 100, h: 100 },
+		];
+		const rects = placeCopies(
+			[
+				{ from: "home", to: "home-copy-2" },
+				{ from: "about", to: "about-copy-2" },
+			],
+			frames,
+			{ beside: true, viewPage: "", view },
+		);
+		expect(rects).toEqual({
+			"home-copy-2": { x: 2 * step, y: 2 * step, w: 100, h: 100 },
+			"about-copy-2": { x: 200 + 2 * step, y: 2 * step, w: 100, h: 100 },
+		});
+	});
+
 	it("pastes beside a source that is in view", () => {
 		const frames = [{ name: "home", x: 1100, y: 1100, w: 100, h: 100 }];
 		const rects = placeCopies([{ from: "home", to: "home-copy" }], frames, { beside: false, viewPage: "", view });

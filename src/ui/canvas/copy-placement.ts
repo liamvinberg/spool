@@ -21,9 +21,10 @@ interface Placed {
  * Where fresh copies stand.
  *
  * A duplicate copies the geometry sidecar verbatim (#228), so a copy left
- * where it came from would sit exactly on top of its original. Each copy
- * steps off its source instead, and keeps stepping while a frame already sits
- * on the spot, so a second ⌘D or ⌘V does not land on the first one.
+ * where it came from would sit exactly on top of its original. The copies
+ * step off their sources together, one step for the whole group so its
+ * layout holds, and keep stepping while a frame already sits on any of the
+ * spots, so a second ⌘D or ⌘V does not land on the first one.
  *
  * A paste onto the page in view whose sources are nowhere in sight (another
  * page, or scrolled away) lands in the middle of the view instead, its frames
@@ -61,15 +62,16 @@ export function placeCopies(
 		frames.some(
 			(frame) => (frame.page ?? ROOT_PAGE) === page && Math.round(frame.x) === x && Math.round(frame.y) === y,
 		);
-	const at = (index: number, from: Placed, steps: number) => {
-		const step = COPY_CASCADE_PX * (centred ? steps : index + steps);
+	// the group moves as one, so several copies keep the layout they had
+	const at = (from: Placed, steps: number) => {
+		const step = COPY_CASCADE_PX * steps;
 		return { x: Math.round(from.x + dx + step), y: Math.round(from.y + dy + step) };
 	};
 	let steps = centred ? 0 : 1;
 	while (
 		steps < MAX_STEPS &&
-		sources.some(({ copy, from }, index) => {
-			const spot = at(index, from, steps);
+		sources.some(({ copy, from }) => {
+			const spot = at(from, steps);
 			return taken(copy.page ?? ROOT_PAGE, spot.x, spot.y);
 		})
 	) {
@@ -77,8 +79,8 @@ export function placeCopies(
 	}
 
 	const rects: Record<string, Geometry> = {};
-	sources.forEach(({ copy, from }, index) => {
-		rects[copy.to] = { ...at(index, from, steps), w: Math.round(from.w), h: Math.round(from.h) };
+	sources.forEach(({ copy, from }) => {
+		rects[copy.to] = { ...at(from, steps), w: Math.round(from.w), h: Math.round(from.h) };
 	});
 	return rects;
 }
