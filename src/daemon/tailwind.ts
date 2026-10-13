@@ -5,12 +5,14 @@ import { type ClassScanner, scanCandidates } from "./class-scanner";
 import { designPathResolver, designRelativePath } from "./design-boundary";
 import type { DesignFiles } from "./design-files";
 import { contentDigest, readDesignBytes } from "./design-reads";
+import { frameTheme, rebaseThemeUrls } from "./themes";
 
 /**
  * Serve-time Tailwind (#15): frames receive finished CSS, compiled with the
  * Tailwind pinned inside spool. The stylesheet loader below is the pin —
  * "tailwindcss" imports resolve into spool's own install, never a product's,
- * and tokens.css is the only project entry into the compile.
+ * and the project enters the compile through one stylesheet: tokens.css, or
+ * the theme the frame imports (`themes.ts`).
  */
 
 /**
@@ -54,6 +56,8 @@ export const ROOT_CSS = `@layer theme, base, ${PROJECT_LAYER}, components, utili
 
 export interface FrameCss {
 	css: string;
+	/** The theme the frame imports, which its stylesheet was compiled from in place of tokens.css. */
+	theme?: string;
 	/**
 	 * Project stylesheets the compile read (tokens.css plus its relative
 	 * @imports), each by the digest of the bytes it was compiled from: they are
@@ -88,9 +92,12 @@ export function designStylesheets(
 	designDir: string,
 	files: DesignFiles,
 	tailwind: TailwindStylesheets,
+	theme?: string,
 ): DesignStylesheets {
 	const stylesheets = new Map<string, string>();
 	const resolvePath = designPathResolver(designDir, files);
+	const sharedDir = join(designDir, "shared");
+	const entry = theme === undefined ? "tokens.css" : `design/${designRelativePath(designDir, theme)}`;
 
 	function pinned(id: string, name: string): { path: string; base: string; content: string } {
 		const content = name.startsWith("../") ? undefined : tailwind(name);
@@ -103,9 +110,7 @@ export function designStylesheets(
 		if (id === "tailwindcss") return pinned(id, "index.css");
 		if (id.startsWith("tailwindcss/")) return pinned(id, posix.normalize(id.slice("tailwindcss/".length)));
 		if (!id.startsWith("./") && !id.startsWith("../")) {
-			throw new Error(
-				`unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in tokens.css`,
-			);
+			throw new Error(`unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in ${entry}`);
 		}
 		// Spool's pinned Tailwind is the only non-design stylesheet root
 		if (base === TAILWIND_BASE) return pinned(id, posix.normalize(id));
@@ -113,14 +118,19 @@ export function designStylesheets(
 		const bytes = readDesignBytes(resolvePath, file, files);
 		if (bytes === undefined) throw new Error(`no stylesheet at design/${designRelativePath(designDir, file)}`);
 		stylesheets.set(file, contentDigest(bytes));
-		return { path: file, base: dirname(file), content: bytes.toString("utf8") };
+		const content = bytes.toString("utf8");
+		return {
+			path: file,
+			base: dirname(file),
+			content: theme === undefined ? content : rebaseThemeUrls(content, file, sharedDir),
+		};
 	}
 
 	async function loadModule(): Promise<never> {
-		throw new Error("@plugin and @config are not supported in tokens.css");
+		throw new Error(`@plugin and @config are not supported in ${entry}`);
 	}
 
-	return { base: join(designDir, "shared"), loadStylesheet, loadModule, stylesheets };
+	return { base: sharedDir, loadStylesheet, loadModule, stylesheets };
 }
 
 /** What compiling a frame's stylesheet reads from: the project, Spool's Tailwind, and the scanner. */
@@ -148,19 +158,30 @@ export async function compileFrameCss(
 	sources: CssSource[],
 	{ files, tailwind, scan = scanCandidates }: StylesheetSources,
 ): Promise<FrameCss> {
-	const sheets = designStylesheets(designDir, files, tailwind);
-	const compiler = await compile(ROOT_CSS, {
+	// the bytes the bundle was made of, read as text the way the file would be
+	const texts = sources.map(({ file, bytes }) => ({
+		file,
+		text: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"),
+	}));
+	const theme = frameTheme(designDir, texts);
+	const sheets = designStylesheets(designDir, files, tailwind, theme);
+	const compiler = await compile(theme === undefined ? ROOT_CSS : themeRootCss(designDir, theme), {
 		base: sheets.base,
 		loadStylesheet: sheets.loadStylesheet,
 		loadModule: sheets.loadModule,
 	});
-	// the bytes the bundle was made of, read as text the way the file would be
-	const scanned = sources.map(({ file, bytes }) => ({
-		content: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"),
-		extension: extname(file).slice(1),
-	}));
+	const scanned = texts.map(({ file, text }) => ({ content: text, extension: extname(file).slice(1) }));
 	const stylesheets = [...sheets.stylesheets].map(([file, digest]) => ({ file, digest }));
-	return { css: compiler.build(scan(scanned)), stylesheets };
+	const css = compiler.build(scan(scanned));
+	return theme === undefined ? { css, stylesheets } : { css, stylesheets, theme };
+}
+
+/** ROOT_CSS for a frame with a theme: the same layers, and the theme where Tailwind and tokens.css were. */
+function themeRootCss(designDir: string, theme: string): string {
+	const path = posix.relative("shared", designRelativePath(designDir, theme));
+	return `@layer theme, base, ${PROJECT_LAYER}, components, utilities;
+@import ${JSON.stringify(path.startsWith(".") ? path : `./${path}`)};
+`;
 }
 
 /**

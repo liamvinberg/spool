@@ -18,10 +18,11 @@ import { DesignBoundaryError, designPathResolver, designRelativePath } from "./d
 import type { DesignFiles } from "./design-files";
 import { createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { type DesignResolution, designResolver, RESOLVE_EXTENSIONS } from "./design-resolve";
-import { assembleFrameDocument, escapeInlineScript, mergeImportMap, shimHash } from "./document";
+import { assembleFrameDocument, escapeInlineScript, hoistCssImports, mergeImportMap, shimHash } from "./document";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
+import { isThemeStylesheet } from "./themes";
 import { unstyledClasses } from "./unstyled-classes";
 import { importMapPins } from "./vendor-pins";
 
@@ -303,22 +304,24 @@ export async function compileFrameDocument(
 	);
 
 	const shared = join(designDir, "shared");
-	const { css, stylesheets } = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
-	for (const sheet of stylesheets) reads.noted(sheet.file, sheet.digest);
+	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
+	for (const sheet of compiled.stylesheets) reads.noted(sheet.file, sheet.digest);
+	const resolvePath = designPathResolver(designDir, host.files);
+	// A theme carries its fonts in its stylesheet, in place of fonts.css: its
+	// hosted imports are resolved as fonts.css's are, and its own faces inlined.
+	const themed = compiled.theme === undefined ? undefined : themeStylesheet(designDir, compiled, reads, resolvePath);
+	const css = themed?.css ?? compiled.css;
 	// The stills' fonts (#80): remote faces resolved to this daemon so a
 	// capture can inline them, the file as written whenever that fails. The
 	// project's own faces (#101) then ride the document as data URIs.
-	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
+	const resolvedFonts = await webfonts.resolve(
+		themed === undefined ? reads.text(join(shared, "fonts.css")) : themed.fonts,
+	);
 	// The revision these fonts were resolved at, read before anything else is
 	// awaited: another compile's resolve can move it while this one hashes, and
 	// recording that later revision would keep these fonts past their retirement.
 	const fontsRevision = webfonts.revision();
-	const { css: fonts } = inlineLocalFonts(
-		designDir,
-		resolvedFonts,
-		reads.bytes,
-		designPathResolver(designDir, host.files),
-	);
+	const { css: fonts } = inlineLocalFonts(designDir, resolvedFonts, reads.bytes, resolvePath);
 	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
 
 	// classes the frame names that its stylesheet never built, for a shot to report
@@ -364,6 +367,23 @@ export async function compileFrameDocument(
 		settled,
 		unstyled,
 	};
+}
+
+/**
+ * A theme's compiled stylesheet split for the document: its hosted `@import`s
+ * become the fonts block, where fonts.css's would have been, and its own faces
+ * are carried in the rest as data URIs.
+ */
+function themeStylesheet(
+	designDir: string,
+	compiled: { css: string; theme?: string },
+	reads: DesignReads,
+	resolvePath: (file: string, authored?: string) => string,
+): { css: string; fonts: string | undefined } {
+	const { imports, rest } = hoistCssImports(compiled.css);
+	const label = `design/${designRelativePath(designDir, compiled.theme ?? "")}`;
+	const { css } = inlineLocalFonts(designDir, rest, reads.bytes, resolvePath, label);
+	return { css: css ?? rest, fonts: imports === "" ? undefined : imports };
 }
 
 function frameEntryOptions(
@@ -558,6 +578,9 @@ function spoolBoundaryPlugin(
 							errors: [{ text: `Could not read from file: ${designRelativePath(designDir, args.path)}` }],
 						};
 					}
+					// A theme is Tailwind's to compile (`themes.ts`), never the bundle's:
+					// it stays in the closure, so it is an input, and adds no CSS of its own.
+					if (loader === "css" && isThemeStylesheet(contents.toString("utf8"))) return { contents: "", loader };
 					return { contents, loader };
 				} catch (error) {
 					// The cause rides along in detail, which esbuild hands back to the JS

@@ -385,6 +385,36 @@ export function projectCssParts(css: string): { head: string; layered: string } 
 	return { head, layered: `@layer ${PROJECT_LAYER} {\n${body}\n}\n` };
 }
 
+/**
+ * A compiled stylesheet's leading `@import` statements lifted out of it, and the
+ * rest as it was: the head a browser fetches before any rule, past the
+ * comments and `@charset` and `@layer` statements Tailwind opens a sheet with.
+ * A sheet composed of two can put both heads first this way, and a theme's
+ * hosted imports stand where fonts.css's would.
+ */
+export function hoistCssImports(css: string): { imports: string; rest: string } {
+	let imports = "";
+	let rest = "";
+	let at = 0;
+	while (at < css.length) {
+		const remaining = css.slice(at);
+		const blank = /^(?:\s+|\/\*[\s\S]*?\*\/)+/.exec(remaining);
+		if (blank !== null) {
+			rest += blank[0];
+			at += blank[0].length;
+			continue;
+		}
+		const keyword = /^@(charset|import|layer)\b/i.exec(remaining)?.[1]?.toLowerCase();
+		if (keyword === undefined) break;
+		const end = statementEnd(css, at);
+		if (end === -1) break;
+		if (keyword === "import") imports += `${css.slice(at, end)}\n`;
+		else rest += css.slice(at, end);
+		at = end;
+	}
+	return { imports, rest: rest + css.slice(at) };
+}
+
 /** Where a top-level at-statement ends: the first `;` outside a string, a comment or brackets. */
 function statementEnd(css: string, from: number): number {
 	let depth = 0;
