@@ -138,6 +138,25 @@ describe("a page on the field", () => {
 		expect(host.querySelector('[data-properties-row="path"]')?.textContent).toContain("frames/shop");
 	});
 
+	it("puts a selected frame down on Esc before going up a page", async () => {
+		const host = await mountCanvas(PROJECT);
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
+		});
+		await press(host, screenAt(host, { x: 10, y: 10 }));
+		const checkout = () => host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed");
+		expect(checkout()).toBe("true");
+
+		await keydown({ key: "Escape" });
+		expect(checkout()).toBe("false");
+		// still on the page, its frame drawn and its own object nowhere
+		expect(host.querySelector('[data-frame-label="shop/checkout"]')).not.toBeNull();
+		expect(pageObject(host, "shop")).toBeNull();
+
+		await keydown({ key: "Escape" });
+		await until(() => pageObject(host, "shop") !== null);
+	});
+
 	it("puts a held page down on Esc before going up, and stays put on the root page", async () => {
 		const host = await mountCanvas(PROJECT);
 		await press(host, { x: 410, y: 10 });
