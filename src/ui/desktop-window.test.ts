@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { menuAccelerators } from "./desktop-window";
+import { TAB_COMMANDS as MENU_TAB_COMMANDS } from "../../desktop/src/menu-keys";
+import { menuAccelerators, TAB_COMMANDS } from "./desktop-window";
 
 describe("the Mac app's menu keys", () => {
 	it("are the register's, as the menu has always worn them", () => {
@@ -22,5 +23,9 @@ describe("the Mac app's menu keys", () => {
 			"app.tab-8": "CmdOrCtrl+8",
 			"app.tab-last": "CmdOrCtrl+9",
 		});
+	});
+
+	it("name the same tab commands the Mac app's menu keys", () => {
+		expect([...MENU_TAB_COMMANDS]).toEqual([...TAB_COMMANDS]);
 	});
 });
