@@ -68,6 +68,7 @@ export const HOTKEY_GROUPS = [
 	"Pages",
 	"Panes",
 	"Undo",
+	"Tabs",
 	"Home",
 	"Settings",
 	"Help",
@@ -105,6 +106,22 @@ interface HotkeySpec {
 /** The accel face without its joining `+`: `⌘`, `ctrl`. */
 function accelBare(): string {
 	return accelLabel().replace(/\+$/, "");
+}
+
+type TabNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+/** ⌘N for tab N: unlisted, the sheet tells all eight in one row. */
+function tabKey<N extends TabNumber>(n: N) {
+	return {
+		id: `app.tab-${n}` as `app.tab-${N}`,
+		scope: "app",
+		group: "Tabs",
+		label: "",
+		keys: [`accel+${n}`] as readonly [`accel+${N}`],
+		repeats: false,
+		listed: false,
+		typing: true,
+	} as const;
 }
 
 export const HOTKEYS = [
@@ -569,6 +586,87 @@ export const HOTKEYS = [
 	// --- Undo -------------------------------------------------------------------
 	{ id: "canvas.undo", scope: "canvas", group: "Undo", label: "Undo", keys: ["accel+z"] },
 	{ id: "canvas.redo", scope: "canvas", group: "Undo", label: "Redo", keys: ["accel+shift+z"] },
+
+	// --- Tabs: the strip of Home and the open projects -------------------------
+	// A browser's tab keys, for the Mac app: a plain browser tab keeps ⌘W, ⌘T,
+	// ⌘⇧T, ⌘1-9 and ctrl+Tab for its own tabs, so there these never fire. They
+	// answer from a text field, where none of them means anything to the text.
+	// From an entered frame the Mac menu wears them (desktop-window.ts), all but
+	// the bracket chords, which match by place where a menu matches by glyph
+	// (⌘⇧¨ on Swedish), so the frame relays those.
+	{
+		id: "app.close-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Close the tab, or what is open over it",
+		keys: ["accel+w"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.close-window",
+		scope: "app",
+		group: "Tabs",
+		label: "Close the window",
+		keys: ["accel+shift+w"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.reopen-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Reopen the tab closed last",
+		keys: ["accel+shift+t"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.home",
+		scope: "app",
+		group: "Tabs",
+		label: "Go to Home",
+		keys: ["accel+t"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.next-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Next tab",
+		keys: ["ctrl+tab", "accel+shift+bracketright"],
+		typing: true,
+		relay: ["accel+shift+bracketright"],
+	},
+	{
+		id: "app.previous-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Previous tab",
+		keys: ["ctrl+shift+tab", "accel+shift+bracketleft"],
+		typing: true,
+		relay: ["accel+shift+bracketleft"],
+	},
+	// ⌘1 is Home and ⌘2-8 the project tabs in order: one row on the sheet for
+	// the eight entries the menu and the dispatch need one apiece
+	{
+		id: "app.tab-numbered",
+		scope: "app",
+		group: "Tabs",
+		label: "Go to tab 1 to 8, Home first",
+		shown: () => [`${accelLabel()}1-8`],
+	},
+	...([1, 2, 3, 4, 5, 6, 7, 8] as const).map(tabKey),
+	{
+		id: "app.tab-last",
+		scope: "app",
+		group: "Tabs",
+		label: "Go to the last tab",
+		keys: ["accel+9"],
+		repeats: false,
+		typing: true,
+	},
 
 	// --- Home -------------------------------------------------------------------
 	{ id: "app.new-project", scope: "app", group: "Home", label: "New project", keys: ["accel+n"], repeats: false },

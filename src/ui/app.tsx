@@ -12,6 +12,7 @@ import {
 	postForgetProject,
 	postUpgrade,
 	putActiveTab,
+	putReopenedTab,
 	putSession,
 	putSessionOrder,
 	reloadForNewBundle,
@@ -29,7 +30,7 @@ import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow, menuAccelerators } from "./desktop-window";
 import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
-import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
+import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import type { HotkeyIdFor } from "./hotkeys";
 import { ProjectPicker } from "./picker";
@@ -40,6 +41,16 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { SharedControl, useShares } from "./shares";
+import {
+	type ClosedTab,
+	lastTab,
+	numberedTab,
+	popClosed,
+	pushClosed,
+	reopenedOrder,
+	steppedTab,
+	type TabSlot,
+} from "./tab-keys";
 import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { type MoveDone, useMovedToast } from "./team-move";
@@ -75,6 +86,8 @@ export function App() {
 	const openRef = useRef(open);
 	openRef.current = open;
 	const [focused, setFocused] = useState<string | null>(null);
+	const focusedRef = useRef(focused);
+	focusedRef.current = focused;
 	const [booted, setBooted] = useState(false);
 	/** A team project a link at spool.page handed this page, until it has been opened. */
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
@@ -136,6 +149,9 @@ export function App() {
 		[open, byRoot, forgetting, tabsHere],
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
+	/** The strip as drawn, for the tab keys, which read it when pressed. */
+	const stripRef = useRef<readonly string[]>([]);
+	stripRef.current = tabs.map((tab) => tab.root);
 	/** The focused project's shares with outsiders, for the Shared control at the window's top right (DEV-193). */
 	const focusedName = focusedTab?.name;
 	const tabShares = useMemo(() => (focusedName === undefined ? null : daemonShares(focusedName)), [focusedName]);
@@ -473,14 +489,54 @@ export function App() {
 		putSessionOrder(order);
 	}, []);
 
+	/** The tabs closed this session, last on top, for ⌘⇧T; a reload starts it empty. */
+	const closedTabs = useRef<ClosedTab[]>([]);
 	const closeTab = useCallback(
 		(root: string) => {
+			const slot = openRef.current.indexOf(root);
+			if (slot !== -1) closedTabs.current = pushClosed(closedTabs.current, { root, slot });
 			const next = openRef.current.filter((r) => r !== root);
 			setOpen(next);
 			putSession(root, false);
-			if (focused === root) focusProject(focusAfterClose(openRef.current, root));
+			if (focusedRef.current === root) focusProject(focusAfterClose(openRef.current, root));
 		},
-		[focused, focusProject],
+		[focusProject],
+	);
+
+	/**
+	 * ⌘⇧T: the tab closed last, back in its slot. Its canvas opens on the page
+	 * and camera the daemon kept for it, as any tab does when it is focused.
+	 */
+	const projectsRef = useRef({ byRoot, loaded: projectsLoaded });
+	projectsRef.current = { byRoot, loaded: projectsLoaded };
+	const reopenTab = useCallback(() => {
+		const { byRoot: cards, loaded } = projectsRef.current;
+		// before the cards arrive every project still counts as here
+		const { tab, rest } = popClosed(closedTabs.current, (root) => !loaded || cards.has(root));
+		closedTabs.current = rest;
+		if (tab === undefined) return;
+		if (!openRef.current.includes(tab.root)) {
+			const next = reopenedOrder(openRef.current, tab);
+			setOpen(next);
+			putReopenedTab(tab.root, next);
+		}
+		focusProject(tab.root);
+	}, [focusProject]);
+
+	/** ⌘W: what is on top first, then the focused tab, and on Home the window. */
+	const closeOnTop = useCallback(() => {
+		if (closeTopmost()) return;
+		const root = focusedRef.current;
+		if (root !== null) closeTab(root);
+		else appWindow?.closeWindow?.();
+	}, [closeTab, appWindow]);
+
+	/** A tab key's target, where the strip has one. */
+	const focusSlot = useCallback(
+		(slot: TabSlot | undefined) => {
+			if (slot !== undefined && slot !== focusedRef.current) focusProject(slot);
+		},
+		[focusProject],
 	);
 
 	const forgetProject = useCallback(
@@ -528,9 +584,38 @@ export function App() {
 					event?.preventDefault();
 					openSettings();
 				},
+				"app.close-tab": (event) => {
+					event?.preventDefault();
+					closeOnTop();
+				},
+				"app.close-window": (event) => {
+					event?.preventDefault();
+					appWindow?.closeWindow?.();
+				},
+				"app.reopen-tab": (event) => {
+					event?.preventDefault();
+					reopenTab();
+				},
+				"app.home": (event) => {
+					event?.preventDefault();
+					focusSlot(null);
+				},
+				"app.next-tab": (event) => {
+					event?.preventDefault();
+					focusSlot(steppedTab(stripRef.current, focusedRef.current, 1));
+				},
+				"app.previous-tab": (event) => {
+					event?.preventDefault();
+					focusSlot(steppedTab(stripRef.current, focusedRef.current, -1));
+				},
+				...numberedTabHandlers((n) => focusSlot(numberedTab(stripRef.current, n))),
+				"app.tab-last": (event) => {
+					event?.preventDefault();
+					focusSlot(lastTab(stripRef.current));
+				},
 			} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>,
 		});
-	}, [openSettings]);
+	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot]);
 
 	useEffect(() => {
 		return appWindow?.onCommand((command) => {
@@ -554,11 +639,15 @@ export function App() {
 					setSettingsOpen(false);
 					setKeysOpen(true);
 					break;
+				// the menu's ⌘W puts away a modal surface too, which the page's walk never lets the key reach
+				case "app.close-tab":
+					closeOnTop();
+					break;
 				default:
 					runMenuHotkey(command);
 			}
 		});
-	}, [appWindow, openSettings]);
+	}, [appWindow, openSettings, closeOnTop]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
 	const transfer = useProjectTransfer(async (project) => {
@@ -864,6 +953,28 @@ export function App() {
 			</div>
 		</ProjectTeams.Provider>
 	);
+}
+
+/** ⌘1-8, each its own register entry so the menu can wear it. */
+function numberedTabHandlers(
+	go: (n: number) => void,
+): Record<`app.tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`, HotkeyHandler> {
+	const handler =
+		(n: number): HotkeyHandler =>
+		(event) => {
+			event?.preventDefault();
+			go(n);
+		};
+	return {
+		"app.tab-1": handler(1),
+		"app.tab-2": handler(2),
+		"app.tab-3": handler(3),
+		"app.tab-4": handler(4),
+		"app.tab-5": handler(5),
+		"app.tab-6": handler(6),
+		"app.tab-7": handler(7),
+		"app.tab-8": handler(8),
+	};
 }
 
 function withIcon(card: ProjectCard, icon: ProjectIcon | undefined): ProjectCard {

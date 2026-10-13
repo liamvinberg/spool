@@ -1,12 +1,34 @@
 import { electronAccelerator } from "./hotkey-combos";
 import { hotkeyEntry } from "./hotkeys";
 
+/** The tab keys, which the Mac menu wears once the page says it answers them. */
+export const TAB_COMMANDS = [
+	"app.close-tab",
+	"app.close-window",
+	"app.reopen-tab",
+	"app.home",
+	"app.next-tab",
+	"app.previous-tab",
+	"app.tab-1",
+	"app.tab-2",
+	"app.tab-3",
+	"app.tab-4",
+	"app.tab-5",
+	"app.tab-6",
+	"app.tab-7",
+	"app.tab-8",
+	"app.tab-last",
+] as const;
+
+export type TabCommand = (typeof TAB_COMMANDS)[number];
+
 /** The native canvas window, separate from the app's update bridge. */
 export type DesktopCommand =
 	| "app.new-project"
 	| "app.open-project"
 	| "app.settings"
 	| "app.help"
+	| TabCommand
 	| "canvas.zoom-in"
 	| "canvas.zoom-out"
 	| "canvas.zoom-reset"
@@ -18,6 +40,8 @@ export interface DesktopWindow {
 	setCanvasActive(active: boolean): void;
 	/** the menu's keys, from the register; an older app has no such call */
 	setMenuKeys?(keys: Partial<Record<DesktopCommand, string>>): void;
+	/** close the window the canvas is in; an older app has no such call */
+	closeWindow?(): void;
 	onProjectDownload?(
 		listener: (result: { status: "completed"; filename: string } | { status: "failed"; message: string }) => void,
 	): () => void;
@@ -43,9 +67,15 @@ export function desktopWindow(
 /**
  * The menu items that wear a key in the Mac app. The canvas's own chords stay
  * off the menu: a menu accelerator fires before the page, so it would take
- * them from an entered prototype.
+ * them from an entered prototype. The tab keys are the window's, not the
+ * prototype's, the way a browser's are.
  */
-const MENU_KEYED = ["app.new-project", "app.open-project", "app.settings"] as const satisfies readonly DesktopCommand[];
+const MENU_KEYED = [
+	"app.new-project",
+	"app.open-project",
+	"app.settings",
+	...TAB_COMMANDS,
+] as const satisfies readonly DesktopCommand[];
 
 /** Each keyed menu item's accelerator, read off the register's first combo for it. */
 export function menuAccelerators(): Partial<Record<DesktopCommand, string>> {

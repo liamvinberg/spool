@@ -12,14 +12,24 @@ function relayed(event: ComboEvent): string | undefined {
 }
 
 describe("what reaches out of an entered frame", () => {
-	it("is Esc, the jump chords and the zoom chords, as the shim always relayed", () => {
+	it("is Esc, the jump chords and the zoom chords, as the shim always relayed, and the tab brackets", () => {
 		expect(relayedHotkeys().map(({ id }) => id)).toEqual([
 			"canvas.leave",
 			"canvas.zoom-in",
 			"canvas.zoom-out",
 			"canvas.jump-back",
 			"canvas.jump-forward",
+			"app.next-tab",
+			"app.previous-tab",
 		]);
+	});
+
+	it("takes the tab brackets by place, which the Mac menu cannot, and leaves it the rest", () => {
+		expect(relayed(press({ key: "^", code: "BracketRight", metaKey: true, shiftKey: true }))).toBe("app.next-tab");
+		expect(relayed(press({ key: "Å", code: "BracketLeft", metaKey: true, shiftKey: true }))).toBe("app.previous-tab");
+		expect(relayed(press({ key: "Tab", code: "Tab", ctrlKey: true }))).toBeUndefined();
+		expect(relayed(press({ key: "w", code: "KeyW", metaKey: true }))).toBeUndefined();
+		expect(relayed(press({ key: "1", code: "Digit1", metaKey: true }))).toBeUndefined();
 	});
 
 	it("leaves on Esc whatever else is held (#22)", () => {
