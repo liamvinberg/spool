@@ -55,7 +55,6 @@ export default defineConfig([
 		splitting: false,
 		target: "es2022",
 		tsconfig: "tsconfig.runtime.json",
-		define: { __SPOOL_PUBLICATION_BUILD__: "false" },
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
 		esbuildPlugins: [licenses],
 		// spool.page/vendor: the same modules, with the pinned React, for a host that is not the daemon
@@ -84,19 +83,5 @@ export default defineConfig([
 		platform: "neutral",
 		target: "es2022",
 		splitting: false,
-	},
-	{
-		entry: { "publication-runtime": "src/runtime/frame-runtime.ts" },
-		format: "esm",
-		platform: "browser",
-		splitting: false,
-		target: "es2022",
-		tsconfig: "tsconfig.runtime.json",
-		minify: true,
-		define: { __SPOOL_PUBLICATION_BUILD__: "true" },
-		// Published pages have always imported motion through the project's import
-		// map; bundled, it would drop out unused and change what they load.
-		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client", "motion", "motion/react"],
-		esbuildPlugins: [licenses],
 	},
 ]);

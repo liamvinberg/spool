@@ -8,7 +8,6 @@ import { describe, expect, it } from "vitest";
 import {
 	type CompileHost,
 	compileFrameDocument,
-	compilePublication,
 	ESBUILD_VERSION,
 	inProcessStylesheets,
 	memoryDesignFiles,
@@ -17,7 +16,6 @@ import {
 } from "./compile-entry";
 import { createFrameCompiler } from "./daemon/compile";
 import { realDesignDir } from "./daemon/design-path";
-import { buildPublicationPlayer } from "./daemon/play";
 import { makeTempDir } from "./test-helpers";
 
 /**
@@ -116,26 +114,6 @@ describe("the compile entry, with the files in memory and esbuild-wasm", () => {
 			version: VERSION,
 		});
 		expect(cart.source).not.toBe(cloud.source);
-	});
-
-	it("compiles the publication byte for byte as the daemon does", { timeout: 60_000 }, async () => {
-		const disk = onDisk();
-		const memory = inMemory();
-
-		const daemon = await buildPublicationPlayer(disk.designDir, FRAMES, VERSION);
-		const cloud = await compilePublication(memory.host, {
-			designDir: memory.designDir,
-			frames: FRAMES,
-			version: VERSION,
-		});
-
-		expect({ ...cloud.bundle, chunks: [...cloud.bundle.chunks] }).toEqual({
-			...daemon.bundle,
-			chunks: [...daemon.bundle.chunks],
-		});
-		expect(cloud.inputs.map((file) => relative(memory.designDir, file)).sort()).toEqual(
-			daemon.inputs.map((file) => relative(disk.designDir, file)).sort(),
-		);
 	});
 });
 

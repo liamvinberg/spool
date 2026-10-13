@@ -23,7 +23,6 @@ export async function buildFrameStyleClosure(
 	designDir: string,
 	ref: FrameStyleRef,
 	reads: DesignReads,
-	publication = false,
 ): Promise<{ css: string; inputs: string[] }> {
 	const folder = frameFolder(ref.name);
 	const frame = await buildDesignEntry(host.esbuild, {
@@ -32,7 +31,6 @@ export async function buildFrameStyleClosure(
 		sourcefile: STYLESHEET_ENTRY,
 		contents: `import frame from ${JSON.stringify("./frame.tsx")};\nexport default frame;\n`,
 		label: `frame "${ref.name}"`,
-		...(publication ? { publication: true } : {}),
 		files: host.files,
 		reads: () => reads,
 	});

@@ -88,7 +88,6 @@ export interface DesignBundle {
 }
 
 export interface DesignEntryOptions {
-	publication?: true;
 	designDir: string;
 	/** Where the entry's relative imports resolve from. */
 	resolveDir: string;
@@ -169,10 +168,7 @@ function loaderOf(path: string, loaders: Readonly<Record<string, Loader>>): Load
  */
 export function designBuildOptions(options: DesignEntryOptions): BuildOptions & { metafile: true; write: false } {
 	const { designDir, resolveDir, sourcefile, contents, label, imageBudget, files, reads } = options;
-	const loader: Record<string, Loader> =
-		options.publication === true
-			? { ...TEXT_LOADERS, ".woff2": "dataurl", ".woff": "dataurl", ".ttf": "dataurl", ".otf": "dataurl" }
-			: TEXT_LOADERS;
+	const loader: Record<string, Loader> = TEXT_LOADERS;
 	return {
 		stdin: { contents, resolveDir, loader: "js", sourcefile },
 		bundle: true,
@@ -180,9 +176,8 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		platform: "browser",
 		target: "es2022",
 		jsx: "automatic",
-		jsxDev: options.publication !== true,
-		jsxImportSource: options.publication === true ? "react" : "spool",
-		...(options.publication === true ? { minify: true, legalComments: "none" as const } : {}),
+		jsxDev: true,
+		jsxImportSource: "spool",
 		...(options.sourcemap === true ? { sourcemap: "external" as const, sourcesContent: false } : {}),
 		loader,
 		tsconfigRaw: PINNED_TSCONFIG,
@@ -197,7 +192,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		plugins: [
 			sharedImportPlugin(designDir, files),
 			spoolBoundaryPlugin(designDir, { ...DEFAULT_LOADERS, ...loader }, reads),
-			spoolAssetPlugin(designDir, label, imageBudget, options.publication === true, files, reads),
+			spoolAssetPlugin(designDir, label, imageBudget, files, reads),
 			// last, so the plugins above answer what is theirs first
 			designResolvePlugin(designDir, files),
 		],
@@ -218,7 +213,7 @@ export function designEntryKey(options: Pick<DesignEntryOptions, "designDir" | "
 /**
  * The file behind one `metafile.inputs` key. esbuild drops a `?raw` or `#hash`
  * suffix to find a file no name carries, but keeps it on the key; a reader of
- * the key (the cache hash, the publication capture) wants the file.
+ * the key (the cache hash) wants the file.
  */
 export function designInputFile(designDir: string, input: string, files: DesignFiles): string {
 	const file = resolve(designDir, input);
@@ -604,7 +599,6 @@ function spoolAssetPlugin(
 	designDir: string,
 	label: string,
 	budget: number | undefined,
-	publication: boolean,
 	files: DesignFiles,
 	readsOf: () => DesignReads | undefined,
 ): Plugin {
@@ -619,7 +613,7 @@ function spoolAssetPlugin(
 			// URLs stay the author's business and pass straight through.
 			build.onResolve({ filter: ASSET_FILTER }, (args) => {
 				const local = !args.path.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(args.path);
-				if (args.kind !== "url-token" || !local || publication) return null;
+				if (args.kind !== "url-token" || !local) return null;
 				return {
 					errors: [
 						{
@@ -645,7 +639,6 @@ function spoolAssetPlugin(
 				if (bytes === undefined) {
 					return { errors: [{ text: `Could not read from file: ${designRelativePath(designDir, args.path)}` }] };
 				}
-				if (publication) return { contents: bytes, loader: "dataurl" };
 				const url = `data:${type};base64,${bytes.toString("base64")}`;
 				spent += url.length;
 				if (budget !== undefined && spent > budget) {

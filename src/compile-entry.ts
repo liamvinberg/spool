@@ -17,10 +17,9 @@
  *   stylesheets (`TAILWIND_STYLESHEETS`, from the `tailwindcss` package this
  *   one depends on).
  *
- * Two compiles: `compileFrameDocument`, the canvas's document for one frame
- * (stamped for the picker, the dev dialect), and `compilePublication`, the
- * player's composition built for a destination. Each answers with the hash of
- * its inputs, the same for the same files wherever they are compiled. A frame
+ * The compile: `compileFrameDocument`, the canvas's document for one frame
+ * (stamped for the picker, the dev dialect). It answers with the hash of its
+ * inputs, the same for the same files wherever they are compiled. A frame
  * that does not compile throws, and `describeCompileError` says why with file
  * and line; `errorDocument` is the page the canvas shows in its place.
  *
@@ -50,12 +49,6 @@ export { errorDocument } from "./daemon/document";
 export { inertWebfonts, type WebfontFile, type Webfonts } from "./daemon/font-faces";
 /** The policy every frame document is served under, given the origin it is served from. */
 export { servedFrameCsp } from "./daemon/frame-csp";
-export {
-	compilePublication,
-	type PlayerBundle,
-	type PlayerFrameRef,
-	type PublicationRequest,
-} from "./daemon/player-compile";
 export {
 	type CssSource,
 	type FrameCss,

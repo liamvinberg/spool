@@ -7,7 +7,6 @@ import { isFramePath } from "../page-path";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
 import { accelChord } from "./platform-keys";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
-import { publicationEnvironment } from "./publication-environment";
 import type { SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
@@ -65,9 +64,7 @@ declare global {
 	}
 }
 
-declare const __SPOOL_PUBLICATION_BUILD__: boolean;
-const publication = __SPOOL_PUBLICATION_BUILD__ ? publicationEnvironment() : undefined;
-const play = __SPOOL_PUBLICATION_BUILD__ ? publication?.config : window.__SPOOL_PLAY__;
+const play = window.__SPOOL_PLAY__;
 const config =
 	play === undefined
 		? window.__SPOOL__
@@ -107,7 +104,7 @@ let sendPlayerMessage: ((message: Record<string, unknown>) => void) | undefined;
  * native port methods before authored code can patch their prototype, and
  * transfers the other end exactly once. Neither port is placed on window.
  */
-if (!__SPOOL_PUBLICATION_BUILD__ && play?.shell === true && embedded) {
+if (play?.shell === true && embedded) {
 	const channel = new MessageChannel();
 	const port = channel.port1;
 	const postMessage = port.postMessage.bind(port);
@@ -183,21 +180,16 @@ function postPlayerMessage(message: Record<string, unknown>): void {
  * a walk in flight turns one of these into the player's error screen.
  */
 function reportRuntimeError(value: unknown): void {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		publication?.error(value instanceof Error ? value.message : String(value));
-		return;
-	} else {
-		const error =
-			value instanceof Error
-				? value.stack || value.message
-				: typeof value === "string"
-					? value
-					: "the authored runtime failed";
-		postPlayerMessage({ spool: "player-runtime-error", error: error.slice(0, 100_000) });
-	}
+	const error =
+		value instanceof Error
+			? value.stack || value.message
+			: typeof value === "string"
+				? value
+				: "the authored runtime failed";
+	postPlayerMessage({ spool: "player-runtime-error", error: error.slice(0, 100_000) });
 }
 
-if (!__SPOOL_PUBLICATION_BUILD__ && play?.shell === true && embedded) {
+if (play?.shell === true && embedded) {
 	addEventListener("error", (event) => {
 		if (thrownByAnExtension(event.filename, event.error)) return;
 		reportRuntimeError(event.error ?? event.message);
@@ -263,41 +255,35 @@ function clipboardRequestId(): number | undefined {
 }
 
 function copy(text: string): Promise<void> {
-	if (__SPOOL_PUBLICATION_BUILD__)
-		return publication === undefined
-			? Promise.reject(new Error("Publication is unavailable."))
-			: publication.copy(text);
-	else {
-		if (typeof text !== "string") return Promise.reject(new TypeError("ui.copy text must be a string"));
-		if (!embedded) {
-			return Promise.reject(new DOMException("Clipboard writes require the canvas or player", "NotSupportedError"));
-		}
-		if (play !== undefined && play.shell !== true) {
-			return Promise.reject(new DOMException("Clipboard writes require the canvas or player", "NotSupportedError"));
-		}
-		if (
-			(play?.shell === true && pendingMount !== undefined) ||
-			(play === undefined && embeddedWalkPending !== undefined)
-		) {
-			return Promise.reject(new DOMException("Clipboard request interrupted by navigation", "AbortError"));
-		}
-		if (pendingClipboardWrites.size >= MAX_PENDING_CLIPBOARD_WRITES) {
-			return Promise.reject(new DOMException("Too many pending clipboard writes", "QuotaExceededError"));
-		}
-		const id = clipboardRequestId();
-		if (id === undefined) {
-			return Promise.reject(new DOMException("Could not allocate a clipboard request", "OperationError"));
-		}
-		const frame = play === undefined ? doc.frame : currentFrame;
-		return new Promise<void>((resolve, reject) => {
-			pendingClipboardWrites.set(id, { frame, resolve, reject });
-			if (play?.shell === true) {
-				postPlayerMessage({ spool: "copy", frame, id, text });
-			} else {
-				window.parent.postMessage({ spool: "copy", frame, id, text }, "*");
-			}
-		});
+	if (typeof text !== "string") return Promise.reject(new TypeError("ui.copy text must be a string"));
+	if (!embedded) {
+		return Promise.reject(new DOMException("Clipboard writes require the canvas or player", "NotSupportedError"));
 	}
+	if (play !== undefined && play.shell !== true) {
+		return Promise.reject(new DOMException("Clipboard writes require the canvas or player", "NotSupportedError"));
+	}
+	if (
+		(play?.shell === true && pendingMount !== undefined) ||
+		(play === undefined && embeddedWalkPending !== undefined)
+	) {
+		return Promise.reject(new DOMException("Clipboard request interrupted by navigation", "AbortError"));
+	}
+	if (pendingClipboardWrites.size >= MAX_PENDING_CLIPBOARD_WRITES) {
+		return Promise.reject(new DOMException("Too many pending clipboard writes", "QuotaExceededError"));
+	}
+	const id = clipboardRequestId();
+	if (id === undefined) {
+		return Promise.reject(new DOMException("Could not allocate a clipboard request", "OperationError"));
+	}
+	const frame = play === undefined ? doc.frame : currentFrame;
+	return new Promise<void>((resolve, reject) => {
+		pendingClipboardWrites.set(id, { frame, resolve, reject });
+		if (play?.shell === true) {
+			postPlayerMessage({ spool: "copy", frame, id, text });
+		} else {
+			window.parent.postMessage({ spool: "copy", frame, id, text }, "*");
+		}
+	});
 }
 
 function settleClipboardWrite(result: ClipboardCopyResult): void {
@@ -322,7 +308,7 @@ function abortClipboardWrites(): void {
 	pendingClipboardWrites.clear();
 }
 
-if (!__SPOOL_PUBLICATION_BUILD__ && play === undefined) {
+if (play === undefined) {
 	addEventListener("message", (event) => {
 		if (event.source !== window.parent) return;
 		const result = parseClipboardCopyResult(event.data);
@@ -348,7 +334,7 @@ if (!__SPOOL_PUBLICATION_BUILD__ && play === undefined) {
 		}
 	});
 }
-if (!__SPOOL_PUBLICATION_BUILD__) addEventListener("pagehide", abortClipboardWrites);
+addEventListener("pagehide", abortClipboardWrites);
 // --- reactive state ---------------------------------------------------------
 
 const stateTarget: SpoolState = {};
@@ -360,11 +346,9 @@ let playerBooted = false;
 function notify(): void {
 	version++;
 	for (const listener of listeners) listener();
-	if (!__SPOOL_PUBLICATION_BUILD__) {
-		if (playerBooted && play?.shell === true) postPlayerState();
-		schedulePersist();
-		scheduleShare();
-	}
+	if (playerBooted && play?.shell === true) postPlayerState();
+	schedulePersist();
+	scheduleShare();
 }
 
 // --- page session -----------------------------------------------------------
@@ -639,33 +623,28 @@ async function loadScenario(name: string): Promise<Scenario> {
  * storage: the handshake record plays the stored session's part.
  */
 async function start(): Promise<void> {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		seedState(publication?.seed ?? {});
-		return;
-	} else {
-		if (play !== undefined) {
-			// the player seeds fresh every load: the URL names the scenario, and
-			// reload is just restart spelled by the browser
-			scenarioName = play.scenario;
-			const scenario = await loadScenario(scenarioName);
-			seedState(scenario.state);
-			return;
-		}
-		const requested = queryScenario();
-		const record = (await requestHostSession()) ?? loadSession();
-		const resume =
-			record !== undefined && (requested === undefined || requested === record.scenario) ? record : undefined;
-		scenarioName = resume?.scenario ?? requested ?? "default";
+	if (play !== undefined) {
+		// the player seeds fresh every load: the URL names the scenario, and
+		// reload is just restart spelled by the browser
+		scenarioName = play.scenario;
 		const scenario = await loadScenario(scenarioName);
-		if (resume === undefined) {
-			seedState(scenario.state);
-		} else {
-			seedState(resume.state);
-			stack.push(...resume.stack);
-		}
-		persist();
-		started = true;
+		seedState(scenario.state);
+		return;
 	}
+	const requested = queryScenario();
+	const record = (await requestHostSession()) ?? loadSession();
+	const resume =
+		record !== undefined && (requested === undefined || requested === record.scenario) ? record : undefined;
+	scenarioName = resume?.scenario ?? requested ?? "default";
+	const scenario = await loadScenario(scenarioName);
+	if (resume === undefined) {
+		seedState(scenario.state);
+	} else {
+		seedState(resume.state);
+		stack.push(...resume.stack);
+	}
+	persist();
+	started = true;
 }
 
 // --- navigation -------------------------------------------------------------
@@ -746,55 +725,50 @@ async function walkTo(target: string, commit?: () => void): Promise<void> {
 }
 
 function navigate(target: string, patch?: Record<string, unknown>, transition?: string): void {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		void publicationNavigate(target, patch, transition);
+	if (!isFramePath(target)) {
+		console.error(`spool: not a frame name: "${target}"`);
 		return;
-	} else {
-		if (!isFramePath(target)) {
-			console.error(`spool: not a frame name: "${target}"`);
-			return;
-		}
-		if (play !== undefined && deferPlayerAction(() => navigate(target, patch, transition))) return;
-		// the patch is a write like any other: it lands in the stay it belongs to,
-		// and rolls up into this hop's changed keys
-		if (patch !== undefined) Object.assign(state, patch);
-		if (play === undefined && embedded && !reserveEmbeddedWalk("go")) return;
-		if (play !== undefined) {
-			// the composition is the map: a target outside it is loud but harmless,
-			// exactly like a frame document's failed probe (#5)
-			if (!Object.hasOwn(play.frames, target)) {
-				console.error(`spool: no frame "${target}" to walk to`);
-				return;
-			}
-			// A screen not yet in the document is fetched first and the walk retaken
-			// whole once it is: the patch above lands twice and means the same both
-			// times, and nothing below it happens until the screen can mount.
-			if (!screenLoaded(target) || !frameStyleLoaded(target)) {
-				void loadScreen(target).then(() => navigate(target, patch, transition));
-				return;
-			}
-			abortClipboardWrites();
-			const from = currentFrame;
-			stack.push(from);
-			reportWalk(from, target);
-			currentFrame = target;
-			requestScreenSwap(from, "forward", transition);
-			return;
-		}
-		if (embedded) {
-			// the host owns embedded walks; the snapshot rides along so it can
-			// seed the target frame's boot with this session
-			abortClipboardWrites();
-			postEmbeddedWalk({ spool: "go", target, session: sessionSnapshot([...stack, doc.frame]) });
-			return;
-		}
-		// the push commits only when the walk really happens, so a typo'd target
-		// can never corrupt what ui.back() means
-		void walkTo(target, () => {
-			stack.push(doc.frame);
-			persist();
-		});
 	}
+	if (play !== undefined && deferPlayerAction(() => navigate(target, patch, transition))) return;
+	// the patch is a write like any other: it lands in the stay it belongs to,
+	// and rolls up into this hop's changed keys
+	if (patch !== undefined) Object.assign(state, patch);
+	if (play === undefined && embedded && !reserveEmbeddedWalk("go")) return;
+	if (play !== undefined) {
+		// the composition is the map: a target outside it is loud but harmless,
+		// exactly like a frame document's failed probe (#5)
+		if (!Object.hasOwn(play.frames, target)) {
+			console.error(`spool: no frame "${target}" to walk to`);
+			return;
+		}
+		// A screen not yet in the document is fetched first and the walk retaken
+		// whole once it is: the patch above lands twice and means the same both
+		// times, and nothing below it happens until the screen can mount.
+		if (!screenLoaded(target) || !frameStyleLoaded(target)) {
+			void loadScreen(target).then(() => navigate(target, patch, transition));
+			return;
+		}
+		abortClipboardWrites();
+		const from = currentFrame;
+		stack.push(from);
+		reportWalk(from, target);
+		currentFrame = target;
+		requestScreenSwap(from, "forward", transition);
+		return;
+	}
+	if (embedded) {
+		// the host owns embedded walks; the snapshot rides along so it can
+		// seed the target frame's boot with this session
+		abortClipboardWrites();
+		postEmbeddedWalk({ spool: "go", target, session: sessionSnapshot([...stack, doc.frame]) });
+		return;
+	}
+	// the push commits only when the walk really happens, so a typo'd target
+	// can never corrupt what ui.back() means
+	void walkTo(target, () => {
+		stack.push(doc.frame);
+		persist();
+	});
 }
 
 function go(target: string, patch?: Record<string, unknown>): void {
@@ -802,37 +776,32 @@ function go(target: string, patch?: Record<string, unknown>): void {
 }
 
 function back(): void {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		publication?.back();
-		return;
-	} else {
-		if (deferPlayerAction(back)) return;
-		const target = stack.at(-1);
-		if (target === undefined) return;
-		if (play !== undefined) {
-			if (!screenLoaded(target) || !frameStyleLoaded(target)) {
-				void loadScreen(target).then(back);
-				return;
-			}
-			stack.pop();
-			abortClipboardWrites();
-			const from = currentFrame;
-			currentFrame = target;
-			requestScreenSwap(from, "back");
-			return;
-		}
-		if (embedded && !reserveEmbeddedWalk("back")) return;
-		// the pop stays committed even if the frame vanished mid-session: backing
-		// past a deleted frame beats retrying it forever
-		if (embedded) {
-			abortClipboardWrites();
-			postEmbeddedWalk({ spool: "back", target, session: sessionSnapshot(stack.slice(0, -1)) });
+	if (deferPlayerAction(back)) return;
+	const target = stack.at(-1);
+	if (target === undefined) return;
+	if (play !== undefined) {
+		if (!screenLoaded(target) || !frameStyleLoaded(target)) {
+			void loadScreen(target).then(back);
 			return;
 		}
 		stack.pop();
-		persist();
-		void walkTo(target);
+		abortClipboardWrites();
+		const from = currentFrame;
+		currentFrame = target;
+		requestScreenSwap(from, "back");
+		return;
 	}
+	if (embedded && !reserveEmbeddedWalk("back")) return;
+	// the pop stays committed even if the frame vanished mid-session: backing
+	// past a deleted frame beats retrying it forever
+	if (embedded) {
+		abortClipboardWrites();
+		postEmbeddedWalk({ spool: "back", target, session: sessionSnapshot(stack.slice(0, -1)) });
+		return;
+	}
+	stack.pop();
+	persist();
+	void walkTo(target);
 }
 
 /**
@@ -886,46 +855,31 @@ function bindDataGo(): void {
 
 /** Plain web anchors leave through the owning Spool surface, never through a screen. */
 function bindExternalLinks(): void {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		document.addEventListener("click", (event) => {
-			if (event.defaultPrevented || !(event.target instanceof Element)) return;
-			const anchor = event.target.closest("a[href]");
-			if (
-				anchor instanceof HTMLAnchorElement &&
-				anchor.target === "" &&
-				/^https?:$/.test(anchor.protocol) &&
-				anchor.origin !== location.origin
-			)
-				anchor.target = "_top";
-		});
-		return;
-	} else {
-		window.document.addEventListener("click", (event) => {
-			if (event.defaultPrevented) return;
-			if (!(event.target instanceof Element)) return;
-			const anchor = event.target.closest("a[href]");
-			if (!(anchor instanceof HTMLAnchorElement)) return;
-			const href = anchor.getAttribute("href");
-			if (href === null || href.startsWith("#")) return;
-			let url: URL;
-			try {
-				url = new URL(href, window.location.href);
-			} catch {
-				return;
-			}
-			if (url.protocol !== "http:" && url.protocol !== "https:") return;
-			if (play === undefined && !embedded) return;
-			url.username = "";
-			url.password = "";
-			event.preventDefault();
-			if (play !== undefined) {
-				externalHref = url.href;
-				notifyPlay();
-			} else {
-				post({ spool: "external", href: url.href });
-			}
-		});
-	}
+	window.document.addEventListener("click", (event) => {
+		if (event.defaultPrevented) return;
+		if (!(event.target instanceof Element)) return;
+		const anchor = event.target.closest("a[href]");
+		if (!(anchor instanceof HTMLAnchorElement)) return;
+		const href = anchor.getAttribute("href");
+		if (href === null || href.startsWith("#")) return;
+		let url: URL;
+		try {
+			url = new URL(href, window.location.href);
+		} catch {
+			return;
+		}
+		if (url.protocol !== "http:" && url.protocol !== "https:") return;
+		if (play === undefined && !embedded) return;
+		url.username = "";
+		url.password = "";
+		event.preventDefault();
+		if (play !== undefined) {
+			externalHref = url.href;
+			notifyPlay();
+		} else {
+			post({ spool: "external", href: url.href });
+		}
+	});
 }
 
 // --- player (#24) -----------------------------------------------------------
@@ -942,7 +896,7 @@ let playerReady = play?.shell !== true;
 function notifyPlay(): void {
 	playVersion++;
 	for (const listener of playListeners) listener();
-	if (!__SPOOL_PUBLICATION_BUILD__ && play?.shell === true) postPlayerState();
+	if (play?.shell === true) postPlayerState();
 }
 
 /** Activate exactly the stylesheet closure owned by the screen React is about to commit. */
@@ -981,35 +935,14 @@ async function loadFrameStyle(frame: string): Promise<void> {
 	const name = play.styles[frame];
 	if (name === undefined) return;
 	const load = (async () => {
-		if (__SPOOL_PUBLICATION_BUILD__) {
-			const link = document.createElement("link");
-			link.rel = "stylesheet";
-			link.media = "not all";
-			link.dataset.spoolFrameStyle = frame;
-			link.dataset.spoolStyleResource = name;
-			link.href = publication?.resource(name) ?? name;
-			await new Promise<void>((resolve, reject) => {
-				link.onload = () => resolve();
-				link.onerror = () => {
-					link.remove();
-					reject(new Error(`The stylesheet for frame "${frame}" could not be loaded.`));
-				};
-				document.head.append(link);
-			});
-		} else {
-			const response = await nativeFetch(
-				__SPOOL_PUBLICATION_BUILD__
-					? (publication?.resource(name) ?? name)
-					: `/play/${encodeURIComponent(play.project)}/-/${name}`,
-			);
-			if (!response.ok) throw new Error(`the stylesheet for frame "${frame}" could not be loaded`);
-			const style = document.createElement("style");
-			style.media = "not all";
-			style.dataset.spoolFrameStyle = frame;
-			style.dataset.spoolStyleResource = name;
-			style.textContent = await response.text();
-			document.head.append(style);
-		}
+		const response = await nativeFetch(`/play/${encodeURIComponent(play.project)}/-/${name}`);
+		if (!response.ok) throw new Error(`the stylesheet for frame "${frame}" could not be loaded`);
+		const style = document.createElement("style");
+		style.media = "not all";
+		style.dataset.spoolFrameStyle = frame;
+		style.dataset.spoolStyleResource = name;
+		style.textContent = await response.text();
+		document.head.append(style);
 	})();
 	frameStyleLoads.set(frame, load);
 	try {
@@ -1071,40 +1004,33 @@ function replayDeferredPlayerActions(): void {
 
 /** A viewport resize cannot join a View Transition without filming stale pixels. */
 function requestScreenSwap(fromFrame: string, direction: SwapDirection, transition?: string): void {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		mountedFrame = currentFrame;
-		const resized = publication?.resize(mountedFrame) === true;
-		swapScreen(direction, transition, undefined, resized);
+	if (pendingMount?.mounted === true) pendingMount = undefined;
+	const from = play?.frames[fromFrame];
+	const to = play?.frames[currentFrame];
+	navigationGeneration++;
+	if (play?.shell === true && embedded && from !== undefined && to !== undefined) {
+		pendingMount = {
+			generation: navigationGeneration,
+			from: fromFrame,
+			to: currentFrame,
+			w: to.w,
+			h: to.h,
+			mounted: false,
+			direction,
+			transition,
+		};
+		postPlayerMessage({
+			spool: "player-navigate",
+			generation: pendingMount.generation,
+			from: pendingMount.from,
+			to: pendingMount.to,
+			w: window.innerWidth,
+			h: window.innerHeight,
+		});
 		return;
-	} else {
-		if (pendingMount?.mounted === true) pendingMount = undefined;
-		const from = play?.frames[fromFrame];
-		const to = play?.frames[currentFrame];
-		navigationGeneration++;
-		if (play?.shell === true && embedded && from !== undefined && to !== undefined) {
-			pendingMount = {
-				generation: navigationGeneration,
-				from: fromFrame,
-				to: currentFrame,
-				w: to.w,
-				h: to.h,
-				mounted: false,
-				direction,
-				transition,
-			};
-			postPlayerMessage({
-				spool: "player-navigate",
-				generation: pendingMount.generation,
-				from: pendingMount.from,
-				to: pendingMount.to,
-				w: window.innerWidth,
-				h: window.innerHeight,
-			});
-			return;
-		}
-		mountedFrame = currentFrame;
-		swapScreen(direction, transition);
 	}
+	mountedFrame = currentFrame;
+	swapScreen(direction, transition);
 }
 
 /**
@@ -1116,14 +1042,7 @@ function requestScreenSwap(fromFrame: string, direction: SwapDirection, transiti
  * motion off: the swap lands bare — reduce-motion means never starting a
  * transition at all.
  */
-function settlePublicationTransition(value: unknown): void {
-	if (typeof value !== "object" || value === null) return;
-	// Resize, overlap and reduced-motion changes can skip a transition without failing the screen update.
-	if ("ready" in value) void Promise.resolve(value.ready).catch(() => {});
-	if ("finished" in value) void Promise.resolve(value.finished).catch(() => {});
-}
-
-function swapScreen(direction: SwapDirection, transition?: string, committed?: () => void, immediate = false): void {
+function swapScreen(direction: SwapDirection, transition?: string, committed?: () => void): void {
 	arrival++;
 	externalHref = null;
 	const update = () => {
@@ -1138,20 +1057,18 @@ function swapScreen(direction: SwapDirection, transition?: string, committed?: (
 	).startViewTransition?.bind(window.document);
 	// A startup auto-walk can land before the shell has ever revealed the
 	// source. Commit it directly: there are no visible old pixels to film.
-	if (immediate || !motionOn || !playerReady || startViewTransition === undefined) {
+	if (!motionOn || !playerReady || startViewTransition === undefined) {
 		update();
 		return;
 	}
 	const types = transition === undefined ? [direction] : [direction, transition];
 	try {
-		const result = startViewTransition({ update, types });
-		if (__SPOOL_PUBLICATION_BUILD__) settlePublicationTransition(result);
+		startViewTransition({ update, types });
 	} catch {
 		// a View Transitions v1 engine: plain callback, default crossfade —
 		// and whatever the engine does, the swap itself must always land
 		try {
-			const result = startViewTransition(update);
-			if (__SPOOL_PUBLICATION_BUILD__) settlePublicationTransition(result);
+			startViewTransition(update);
 		} catch {
 			update();
 		}
@@ -1683,16 +1600,7 @@ const playerController: PlayerController = {
  * composition code reaches for it, authored frames have no business with it.
  */
 export function brokenFrame(details: { frame: string; file: string; error: string }): ComponentType {
-	if (__SPOOL_PUBLICATION_BUILD__)
-		return () =>
-			createElement(
-				"div",
-				{ role: "alert", style: { padding: 24, font: "16px/1.5 system-ui" } },
-				"This screen could not be loaded. Reload the website to try again.",
-			);
-	else {
-		return () => createElement(BrokenFrame, details);
-	}
+	return () => createElement(BrokenFrame, details);
 }
 
 /**
@@ -1730,21 +1638,17 @@ function loadScreen(frame: string, withStyle = true): Promise<void> {
 			screens[frame] = module.default;
 		},
 		(error: unknown) => {
-			if (__SPOOL_PUBLICATION_BUILD__) {
-				throw error;
-			} else {
-				screens[frame] = brokenFrame({
-					frame,
-					file: __SPOOL_PUBLICATION_BUILD__ ? "" : `design/frames/${frame}/frame.tsx`,
-					error: `the screen could not be loaded — ${String(error)}. Reload the player.`,
-				});
-				// A module that throws as it evaluates is the author's code failing,
-				// and it failed inside an import, where no `error` event carries it.
-				// Told the same way a throw at any other moment is: the stand-in keeps
-				// this screen's place, and the shell says so when it was the screen
-				// the session was waiting on.
-				reportRuntimeError(error);
-			}
+			screens[frame] = brokenFrame({
+				frame,
+				file: `design/frames/${frame}/frame.tsx`,
+				error: `the screen could not be loaded — ${String(error)}. Reload the player.`,
+			});
+			// A module that throws as it evaluates is the author's code failing,
+			// and it failed inside an import, where no `error` event carries it.
+			// Told the same way a throw at any other moment is: the stand-in keeps
+			// this screen's place, and the shell says so when it was the screen
+			// the session was waiting on.
+			reportRuntimeError(error);
 		},
 	);
 	screenLoads.set(frame, load);
@@ -1799,85 +1703,41 @@ export function bootPlayer(frames: Record<string, ScreenSource>): void {
 }
 
 function mountPlayer(config: PlayerConfig): void {
-	if (__SPOOL_PUBLICATION_BUILD__) {
-		motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		const root = document.getElementById("root");
-		if (root === null) throw new Error("The website has no root element.");
-		activateFrameStyles(mountedFrame);
-		createRoot(root).render(createElement(PlayerDocument));
-		playerReady = true;
-		publication?.follow(async (target, back) => {
-			const generation = ++publicationNavigation;
-			await loadScreen(target);
-			if (generation !== publicationNavigation) return;
-			const from = currentFrame;
-			currentFrame = target;
-			requestScreenSwap(from, back ? "back" : "forward");
+	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const root = window.document.getElementById("root");
+	if (root === null) throw new Error("spool: the player document has no #root");
+	followGeometry();
+	playerBooted = true;
+	if (config.shell === true) {
+		const playerRoot = createRoot(root);
+		flushSync(() => playerRoot.render(createElement(PlayerDocument)));
+		postPlayerState();
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				const geometry = config.frames[mountedFrame];
+				if (geometry === undefined) return;
+				playerReady = true;
+				postPlayerMessage({
+					spool: "player-ready",
+					generation: navigationGeneration,
+					frame: mountedFrame,
+					w: window.innerWidth,
+					h: window.innerHeight,
+				});
+				warmScreens(Object.keys(config.frames));
+			});
 		});
 		return;
-	} else {
-		motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		const root = window.document.getElementById("root");
-		if (root === null) throw new Error("spool: the player document has no #root");
-		followGeometry();
-		playerBooted = true;
-		if (config.shell === true) {
-			const playerRoot = createRoot(root);
-			flushSync(() => playerRoot.render(createElement(PlayerDocument)));
-			postPlayerState();
-			requestAnimationFrame(() => {
-				requestAnimationFrame(() => {
-					const geometry = config.frames[mountedFrame];
-					if (geometry === undefined) return;
-					playerReady = true;
-					postPlayerMessage({
-						spool: "player-ready",
-						generation: navigationGeneration,
-						frame: mountedFrame,
-						w: window.innerWidth,
-						h: window.innerHeight,
-					});
-					warmScreens(Object.keys(config.frames));
-				});
-			});
-			return;
-		}
-		createRoot(root).render(
-			createElement(Player, { project: config.project, frames: screens, controller: playerController }),
-		);
-		requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 	}
+	createRoot(root).render(
+		createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+	);
+	requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 }
 
 function subscribePlay(listener: () => void): () => void {
 	playListeners.add(listener);
 	return () => playListeners.delete(listener);
-}
-
-let publicationNavigation = 0;
-async function publicationNavigate(
-	target: string,
-	patch?: Record<string, unknown>,
-	transition?: string,
-): Promise<void> {
-	if (publication === undefined) return;
-	if (typeof target !== "string" || !publication.allowed(currentFrame, target)) {
-		publication.error(`Navigation to "${String(target)}" is not included from this frame.`);
-		return;
-	}
-	const generation = ++publicationNavigation;
-	try {
-		await loadScreen(target);
-		if (generation !== publicationNavigation) return;
-		publication.clearError();
-		if (patch !== undefined) Object.assign(state, patch);
-		const from = currentFrame;
-		currentFrame = target;
-		publication.push(target);
-		requestScreenSwap(from, "forward", transition);
-	} catch (error) {
-		publication.error(error instanceof Error ? error.message : "This screen could not be loaded.");
-	}
 }
 
 function PlayerDocument() {
