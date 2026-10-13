@@ -662,6 +662,11 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 		framesUsing(root: string, path: string): string[] | undefined {
 			return users.get(root)?.get(path);
 		},
+
+		/** Whether a build has indexed this project's shared files yet, which `framesUsing` alone cannot say. */
+		indexed(root: string): boolean {
+			return users.has(root);
+		},
 	};
 }
 

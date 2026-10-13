@@ -115,6 +115,16 @@ export async function readRungs(
 		held.reads = readElements(source, held.at, held.rel);
 		held.fingerprint = fingerprintOf(source);
 	}
+	// asked once per shared file, however many of the ancestry are written in it
+	const shared = new Map<string, Promise<{ frames?: string[] }>>();
+	const sharedOf = (rel: string) => {
+		let use = shared.get(rel);
+		if (use === undefined) {
+			use = sharedUse(deps, rel);
+			shared.set(rel, use);
+		}
+		return use;
+	};
 	const taken = new Map<string, number>();
 	const rungs: RungRead[] = [];
 	for (const [index, stamp] of stamps.entries()) {
@@ -136,7 +146,7 @@ export async function readRungs(
 			path: `design/${stamp.rel}`,
 			line: stamp.line,
 			...(read.words === undefined ? {} : { words: read.words }),
-			...(stamp.rel.startsWith(folder) ? {} : { shared: await sharedUse(deps, stamp.rel) }),
+			...(stamp.rel.startsWith(folder) ? {} : { shared: await sharedOf(stamp.rel) }),
 			...(held?.fingerprint === undefined ? {} : { fingerprint: held.fingerprint }),
 		});
 	}
