@@ -244,6 +244,15 @@ export function FrameIcon({ className }: { className?: string }) {
 	);
 }
 
+export function ClockIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" aria-hidden="true">
+			<circle cx="8" cy="8" r="6.25" strokeWidth="1.3" />
+			<path d="M8 4.5V8l2.5 1.5" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
 export function ArrowRightIcon({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" aria-hidden="true">

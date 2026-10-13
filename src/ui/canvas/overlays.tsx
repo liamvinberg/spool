@@ -90,7 +90,7 @@ const SIDES = ["n", "e", "s", "w"] as const;
 const SCREEN_KEYS = ["left", "top", "width", "height", "borderRadius"] as const;
 
 /** A piece of furniture's box for one camera, in CSS pixels. */
-type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>>;
+export type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>>;
 
 /**
  * One piece of screen-space furniture, following the camera on its own (#81).
@@ -102,7 +102,7 @@ type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>>;
  * `style` cannot name them, so a render can never put back a box the camera
  * has already left.
  */
-function Follow({
+export function Follow({
 	camera,
 	screen,
 	...rest
@@ -142,7 +142,7 @@ function inFrame(camera: Camera, rect: Box): Box {
 }
 
 /** A frame's ring, 3px outside it, its corner the shell's own two pixels out. */
-function ringBox(camera: Camera, frame: Box): ScreenBox {
+export function ringBox(camera: Camera, frame: Box): ScreenBox {
 	const rect = toScreen(frame, camera);
 	return {
 		left: rect.x - 3,
@@ -186,7 +186,13 @@ export function SelectionOverlay({
 	marks,
 	marquee,
 	dropLine = null,
+	landing = null,
+	overview = false,
 }: {
+	/** a move between frames while live just landed here (DEV-295): its ring flashes once */
+	landing?: { frame: string; at: number } | null;
+	/** the ⌥ overview is up, and rings the frames itself */
+	overview?: boolean;
 	/** The furniture follows the camera rather than rendering with it (#81). */
 	camera: CameraStore;
 	frames: ProjectedFrame[];
@@ -235,7 +241,9 @@ export function SelectionOverlay({
 	const elementBox = (at: Camera, frame: ProjectedFrame, rect: Box): Box =>
 		toScreen({ x: frame.x + rect.x, y: frame.y + rect.y, w: rect.w, h: rect.h }, at);
 
-	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
+	// with the ⌥ overview up the frame entered is one of its frames like any
+	// other, ringed by the overview alone: a neighbour's thin ring, or none
+	const ringed = [...new Set(entered === null || overview ? selected : [...selected, entered])];
 	const hoveredFrame =
 		hovered !== null && !ringed.includes(hovered.frame)
 			? frames.find((frame) => frame.name === hovered.frame)
@@ -299,10 +307,37 @@ export function SelectionOverlay({
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)
+						data-frame-ring={name}
 						className={`absolute border-[1.5px] border-accent ${lit === name || lit === WHOLE_SELECTION ? "bg-accent/10" : ""}`}
 					/>
 				);
 			})}
+
+			{landing !== null &&
+				!overview &&
+				landing.frame === entered &&
+				(() => {
+					const frame = frames.find((f) => f.name === landing.frame);
+					if (frame === undefined) return null;
+					return (
+						<Follow
+							key={`land-${landing.at}`}
+							camera={camera}
+							screen={(at) => {
+								const rect = toScreen(frame, at);
+								return {
+									left: rect.x - 4,
+									top: rect.y - 4,
+									width: rect.w + 8,
+									height: rect.h + 8,
+									borderRadius: shellRadiusOnScreen(at.k) + 3,
+								};
+							}}
+							data-land-ring={frame.name}
+							className="absolute animate-live-land-ring border-2 border-accent"
+						/>
+					);
+				})()}
 
 			{single !== undefined && (
 				<>

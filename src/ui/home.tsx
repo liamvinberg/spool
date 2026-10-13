@@ -1,19 +1,50 @@
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { type HerePerson, type ProjectCard, thumbnailUrl } from "./api";
+import { type HerePerson, type ProjectCard, type TeamProjectOnMac, thumbnailUrl } from "./api";
 import { cn } from "./cn";
+import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, type Sort, useFoundPlace } from "./home-find";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
 import { tilde } from "./paths";
 import { Button, IconButton, SplitButton } from "./primitives/actions";
-import { Count } from "./primitives/display";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
-import { SearchField, SelectTrigger } from "./primitives/inputs";
+import { SearchField } from "./primitives/inputs";
 import { NavItem } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { ProjectIconView, useMarkTeam } from "./project-icon";
 import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
+
+/** A team's project this Mac doesn't hold, as the search finds it. */
+export interface AwayFound {
+	team: string;
+	project: TeamProjectOnMac;
+}
+
+/**
+ * Once this account is in a team: one search over every place and Recent, above the switcher, and Recent where Home
+ * opens. Which of them stands in the page is the team switcher's to keep, since going to a place puts them away.
+ */
+export interface Everywhere {
+	/** Recent stands in the page. */
+	recent: boolean;
+	onRecent: () => void;
+	query: string;
+	onQuery: (query: string) => void;
+	/** Your projects, from the nav under the switcher. */
+	onOwn: () => void;
+	/** Every project on this Mac, a team's local copies included. */
+	projects: readonly ProjectCard[];
+	/** This account's teams, in the switcher's order: the results' places after Your projects. */
+	teams: readonly { address: string; name: string }[];
+	/** The teams' projects this Mac doesn't hold. */
+	away: readonly AwayFound[];
+	/** Those of them the search found, as dimmed covers that sit in the results' grid. */
+	drawAway: (found: readonly AwayFound[]) => ReactNode;
+}
+
+/** The key of the place a project on this Mac belongs to among the results: its team's, or Your projects. */
+const YOURS = "";
 
 export function Home({
 	projects,
@@ -34,6 +65,7 @@ export function Home({
 	switcher,
 	notice,
 	team,
+	everywhere,
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
@@ -61,16 +93,23 @@ export function Home({
 	notice?: ReactNode;
 	/** While a team is chosen in the switcher: its nav and its page, in place of your own projects. */
 	team?: { nav: ReactNode; main: ReactNode } | undefined;
+	/** Search and Recent across every place, once this account is in a team. */
+	everywhere?: Everywhere | undefined;
 }) {
-	const [query, setQuery] = useState("");
+	const [ownQuery, setOwnQuery] = useState("");
 	const [sort, setSort] = useState<Sort>("Recent");
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
-	const [headMenu, setHeadMenu] = useState<"sort" | "start" | null>(null);
+	const [headMenu, setHeadMenu] = useState<"start" | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
+	// with Search in the sidebar, the page has none of its own
+	const query = everywhere?.query ?? ownQuery;
+	const setQuery = everywhere?.onQuery ?? setOwnQuery;
 	const needle = query.trim().toLowerCase();
+	const searching = everywhere !== undefined && needle !== "";
+	const recent = everywhere?.recent === true && !searching;
 	const covers = coversOf(projects);
 	const visible = covers
-		.filter((project) => project.name.toLowerCase().includes(needle) || project.root.toLowerCase().includes(needle))
+		.filter((project) => finds(everywhere ? "" : needle, project.name, project.root))
 		.sort((a, b) =>
 			sort === "Name" ? a.name.localeCompare(b.name) : Date.parse(b.openedAt) - Date.parse(a.openedAt),
 		);
@@ -91,9 +130,206 @@ export function Home({
 			}),
 		[],
 	);
+	const grid = (shown: readonly ProjectCover[], extra?: ReactNode) => (
+		<ProjectGrid
+			projects={shown}
+			query={needle}
+			menu={menuRoot}
+			onMenu={setMenuRoot}
+			onOpenProject={onOpenProject}
+			onForgetProject={onForgetProject}
+			onTrashProject={onTrashProject}
+			onRenameProject={onRenameProject}
+			{...(onExportProject === undefined ? {} : { onExportProject })}
+			{...(moveItems === undefined ? {} : { moveItems })}
+			{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
+			{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
+			{...(onRemoveThumbnail === undefined ? {} : { onRemoveThumbnail })}
+			extra={extra}
+		/>
+	);
+	const start = (
+		<div className="relative">
+			<SplitButton
+				size="lg"
+				icon={<PlusIcon />}
+				onClick={onStart}
+				menuLabel="More ways to start"
+				menuOpen={headMenu === "start"}
+				onMenu={() => setHeadMenu(headMenu === "start" ? null : "start")}
+			>
+				New project…
+			</SplitButton>
+			{headMenu === "start" && (
+				<>
+					<MenuBackdrop onClose={() => setHeadMenu(null)} />
+					<Menu aria-label="Start a project" className="absolute top-full right-0 z-20 mt-1">
+						<MenuItem
+							label="New project…"
+							shortcut={hotkeyKey("app.new-project")}
+							onClick={() => {
+								setHeadMenu(null);
+								onStart();
+							}}
+						/>
+						<MenuSeparator />
+						<MenuItem
+							label="Open folder…"
+							shortcut={hotkeyKey("app.open-project")}
+							onClick={() => {
+								setHeadMenu(null);
+								onFolder();
+							}}
+						/>
+						{onImport && (
+							<MenuItem
+								label="Import .spool file…"
+								onClick={() => {
+									setHeadMenu(null);
+									onImport();
+								}}
+							/>
+						)}
+					</Menu>
+				</>
+			)}
+		</div>
+	);
+	const welcome = (
+		<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
+			{notice && <div className="w-[650px] max-w-full">{notice}</div>}
+			<EmptyState
+				className="pj-welcome mt-[-50px] w-[650px] max-w-full [@media(max-width:720px)]:m-0"
+				heading="h1"
+				align="start"
+				title="Start with an idea."
+				description="Your next project can start here, or in a folder you already have."
+				actions={
+					<div className="grid w-[650px] max-w-full grid-cols-2 gap-[22px] text-left [@media(max-width:720px)]:grid-cols-1">
+						<button
+							type="button"
+							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
+							onClick={onStart}
+						>
+							<PlusIcon />
+							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
+								New project…
+								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
+							</strong>
+							<small className="mt-[10px] text-secondary type-control">
+								Open a blank canvas.
+								<br />
+								spool saves the project on your Mac.
+							</small>
+						</button>
+						<button
+							type="button"
+							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
+							onClick={onFolder}
+						>
+							<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
+							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
+								Open…
+								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
+							</strong>
+							<small className="mt-[10px] text-secondary type-control">
+								Bring your codebase.
+								<br />
+								Keep the design beside your code.
+							</small>
+						</button>
+						<button
+							type="button"
+							className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
+							onClick={onImport}
+						>
+							<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
+							<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
+								Import…
+								<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
+							</strong>
+							<small className="mt-[10px] text-secondary type-control">Open a .spool project file.</small>
+						</button>
+					</div>
+				}
+			/>
+		</main>
+	);
+	const page = searching ? (
+		<main className={HOME_MAIN}>
+			<Found everywhere={everywhere} needle={needle} query={query} grid={grid} />
+		</main>
+	) : recent && everywhere ? (
+		everywhere.projects.length === 0 ? (
+			welcome
+		) : (
+			<main className={HOME_MAIN}>
+				<ProjectsHead title="Recent" count={{ total: coversOf(everywhere.projects).length }} actions={start} />
+				{notice && <div className="mb-[24px]">{notice}</div>}
+				{grid(coversOf(everywhere.projects))}
+			</main>
+		)
+	) : team ? (
+		<main className={HOME_MAIN}>{team.main}</main>
+	) : projects.length === 0 && needle === "" ? (
+		welcome
+	) : (
+		<main className={HOME_MAIN}>
+			<ProjectsHead
+				title="Projects"
+				count={
+					needle === "" || everywhere ? { total: covers.length } : { total: covers.length, shown: visible.length }
+				}
+				sort={{ value: sort, onChange: setSort }}
+				search={
+					everywhere ? undefined : (
+						<SearchField
+							className="w-menu"
+							value={query}
+							onValueChange={setQuery}
+							placeholder="Search projects"
+							inputProps={{ ref: searchRef }}
+						/>
+					)
+				}
+				actions={start}
+			/>
+			{notice && <div className="mb-[24px]">{notice}</div>}
+			{visible.length === 0 ? (
+				<EmptyState
+					className="min-h-[420px] justify-center p-[35px]"
+					art={<EmptyFrames />}
+					title={`Nothing matches “${query}”`}
+					description="Try a project name or part of its path."
+					actions={
+						<Button size="lg" onClick={() => setQuery("")}>
+							Clear search
+						</Button>
+					}
+				/>
+			) : (
+				grid(visible)
+			)}
+		</main>
+	);
 	return (
 		<HomeShell
-			switcher={switcher}
+			switcher={
+				everywhere ? (
+					<>
+						<FindNav
+							query={everywhere.query}
+							onQuery={everywhere.onQuery}
+							inputRef={searchRef}
+							recent={everywhere.recent}
+							onRecent={everywhere.onRecent}
+						/>
+						{switcher}
+					</>
+				) : (
+					switcher
+				)
+			}
 			nav={
 				team ? (
 					team.nav
@@ -101,203 +337,75 @@ export function Home({
 					<NavItem
 						icon={<FrameIcon />}
 						label="Projects"
-						current
+						current={!recent && !searching}
 						className={NARROW_NAV}
-						onClick={() => setQuery("")}
+						onClick={() => (everywhere ? everywhere.onOwn() : setQuery(""))}
 					/>
 				)
 			}
 			foot={<>{account ?? <span>On this Mac</span>}</>}
 		>
-			{team ? (
-				<main className={HOME_MAIN}>{team.main}</main>
-			) : loading ? (
-				<main aria-busy="true" />
-			) : projects.length === 0 && needle === "" ? (
-				<main className="pj-welcome-main flex flex-col items-center justify-center p-[48px] [@media(max-width:1050px)]:p-[32px]">
-					{notice && <div className="w-[650px] max-w-full">{notice}</div>}
-					<EmptyState
-						className="pj-welcome mt-[-50px] w-[650px] max-w-full [@media(max-width:720px)]:m-0"
-						heading="h1"
-						align="start"
-						title="Start with an idea."
-						description="Your next project can start here, or in a folder you already have."
-						actions={
-							<div className="grid w-[650px] max-w-full grid-cols-2 gap-[22px] text-left [@media(max-width:720px)]:grid-cols-1">
-								<button
-									type="button"
-									className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none [&>svg]:mb-[32px] [&>svg]:h-[23px] [&>svg]:w-[23px] [&>svg]:text-accent"
-									onClick={onStart}
-								>
-									<PlusIcon />
-									<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-										New project…
-										<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-									</strong>
-									<small className="mt-[10px] text-secondary type-control">
-										Open a blank canvas.
-										<br />
-										spool saves the project on your Mac.
-									</small>
-								</button>
-								<button
-									type="button"
-									className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-									onClick={onFolder}
-								>
-									<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
-									<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-										Open…
-										<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-									</strong>
-									<small className="mt-[10px] text-secondary type-control">
-										Bring your codebase.
-										<br />
-										Keep the design beside your code.
-									</small>
-								</button>
-								<button
-									type="button"
-									className="flex flex-col items-start rounded-lg border border-line-strong bg-surface-panel px-[24px] py-[27px] text-left [transition:border-color_140ms_ease,background_140ms_ease] [&:hover]:bg-surface-control [&:hover]:border-secondary disabled:opacity-50 disabled:cursor-wait motion-reduce:transition-none"
-									onClick={onImport}
-								>
-									<FolderIcon className="mb-[32px] h-[23px] w-[23px] text-secondary" />
-									<strong className="flex w-full items-center justify-between [font:var(--type-heading)] [&]:font-[400]">
-										Import…
-										<ArrowRightIcon className="home-arrow h-[16px] w-[16px] shrink-0" />
-									</strong>
-									<small className="mt-[10px] text-secondary type-control">Open a .spool project file.</small>
-								</button>
-							</div>
-						}
-					/>
-				</main>
-			) : (
-				<main className={HOME_MAIN}>
-					<header className="pj-heading mb-[31px] flex items-center justify-between gap-[25px] [@media(max-width:1050px)]:flex-wrap">
-						<div className="flex items-baseline gap-3">
-							<h1 className="type-page font-medium">Projects</h1>
-							<Count
-								aria-label={
-									needle === ""
-										? `${covers.length} ${covers.length === 1 ? "project" : "projects"}`
-										: `${visible.length} of ${covers.length} projects`
-								}
-								value={needle === "" ? covers.length : `${visible.length} of ${covers.length}`}
-							/>
-						</div>
-						<div className="flex items-center gap-2 [@media(max-width:720px)]:flex-wrap">
-							<div className="relative">
-								<SelectTrigger
-									// the trigger's own face is a toolbar's; in the head it matches the search beside it
-									value={<span className="type-control">{SORT_LABEL[sort]}</span>}
-									open={headMenu === "sort"}
-									aria-haspopup="menu"
-									aria-label={`Sort projects: ${SORT_LABEL[sort]}`}
-									className="h-control-lg px-2"
-									onClick={() => setHeadMenu(headMenu === "sort" ? null : "sort")}
-								/>
-								{headMenu === "sort" && (
-									<Menu aria-label="Sort projects" className="absolute top-full left-0 z-20 mt-1">
-										{SORTS.map((choice) => (
-											<MenuItem
-												key={choice}
-												label={SORT_LABEL[choice]}
-												checked={sort === choice}
-												onClick={() => {
-													setSort(choice);
-													setHeadMenu(null);
-												}}
-											/>
-										))}
-									</Menu>
-								)}
-							</div>
-							<SearchField
-								className="w-menu"
-								value={query}
-								onValueChange={setQuery}
-								placeholder="Search projects"
-								inputProps={{ ref: searchRef }}
-							/>
-							<div className="relative">
-								<SplitButton
-									size="lg"
-									icon={<PlusIcon />}
-									onClick={onStart}
-									menuLabel="More ways to start"
-									menuOpen={headMenu === "start"}
-									onMenu={() => setHeadMenu(headMenu === "start" ? null : "start")}
-								>
-									New project…
-								</SplitButton>
-								{headMenu === "start" && (
-									<Menu aria-label="Start a project" className="absolute top-full right-0 z-20 mt-1">
-										<MenuItem
-											label="New project…"
-											shortcut={hotkeyKey("app.new-project")}
-											onClick={() => {
-												setHeadMenu(null);
-												onStart();
-											}}
-										/>
-										<MenuSeparator />
-										<MenuItem
-											label="Open folder…"
-											shortcut={hotkeyKey("app.open-project")}
-											onClick={() => {
-												setHeadMenu(null);
-												onFolder();
-											}}
-										/>
-										{onImport && (
-											<MenuItem
-												label="Import .spool file…"
-												onClick={() => {
-													setHeadMenu(null);
-													onImport();
-												}}
-											/>
-										)}
-									</Menu>
-								)}
-							</div>
-						</div>
-						{headMenu !== null && <MenuBackdrop onClose={() => setHeadMenu(null)} />}
-					</header>
-					{notice && <div className="mb-[24px]">{notice}</div>}
-					{visible.length === 0 ? (
-						<EmptyState
-							className="min-h-[420px] justify-center p-[35px]"
-							art={<EmptyFrames />}
-							title={`Nothing matches “${query}”`}
-							description="Try a project name or part of its path."
-							actions={
-								<Button size="lg" onClick={() => setQuery("")}>
-									Clear search
-								</Button>
-							}
-						/>
-					) : (
-						<ProjectGrid
-							projects={visible}
-							query={needle}
-							menu={menuRoot}
-							onMenu={setMenuRoot}
-							onOpenProject={onOpenProject}
-							onForgetProject={onForgetProject}
-							onTrashProject={onTrashProject}
-							onRenameProject={onRenameProject}
-							{...(onExportProject === undefined ? {} : { onExportProject })}
-							{...(moveItems === undefined ? {} : { moveItems })}
-							{...(onChangeIcon === undefined ? {} : { onChangeIcon })}
-							{...(onRemoveIcon === undefined ? {} : { onRemoveIcon })}
-							{...(onRemoveThumbnail === undefined ? {} : { onRemoveThumbnail })}
-						/>
-					)}
-				</main>
-			)}
+			{loading && (team === undefined || recent || searching) ? <main aria-busy="true" /> : page}
 		</HomeShell>
+	);
+}
+
+/**
+ * What the one search found: the projects on this Mac it finds, newest opened first, then the teams' projects not on
+ * it, dimmed, in one grid, with a tab per place to narrow them to one.
+ */
+function Found({
+	everywhere,
+	needle,
+	query,
+	grid,
+}: {
+	everywhere: Everywhere;
+	needle: string;
+	query: string;
+	grid: (covers: readonly ProjectCover[], extra?: ReactNode) => ReactNode;
+}) {
+	const teams = new Set(everywhere.teams.map((team) => team.address));
+	const placeOf = (project: ProjectCard) =>
+		project.team !== undefined && teams.has(project.team.team) ? project.team.team : YOURS;
+	const here = coversOf(everywhere.projects).filter((project) => finds(needle, project.name, project.root));
+	const away = everywhere.away.filter((found) => finds(needle, found.project.name));
+	const places = [{ address: YOURS, name: "Your projects" }, ...everywhere.teams]
+		.map((place) => ({
+			key: place.address,
+			name: place.name,
+			count:
+				here.filter((project) => placeOf(project) === place.address).length +
+				away.filter((found) => found.team === place.address).length,
+		}))
+		.filter((place) => place.count > 0);
+	const [only, setOnly] = useFoundPlace(places);
+	if (places.length === 0)
+		return (
+			<>
+				<FoundHead places={places} only={null} onOnly={setOnly} />
+				<EmptyState
+					className="min-h-[420px] justify-center p-[35px]"
+					art={<EmptyFrames />}
+					title={`Nothing matches “${query}”`}
+					description="It looked in your projects and in every team you’re in."
+					actions={
+						<Button size="lg" onClick={() => everywhere.onQuery("")}>
+							Clear search
+						</Button>
+					}
+				/>
+			</>
+		);
+	const shownAway = away.filter((found) => only === null || found.team === only);
+	return (
+		<>
+			<FoundHead places={places} only={only} onOnly={setOnly} />
+			{grid(
+				here.filter((project) => only === null || placeOf(project) === only),
+				shownAway.length > 0 ? everywhere.drawAway(shownAway) : undefined,
+			)}
+		</>
 	);
 }
 
@@ -439,6 +547,7 @@ export function ProjectGrid({
 	onRemoveIcon,
 	onRemoveThumbnail,
 	here,
+	extra,
 }: {
 	projects: readonly ProjectCover[];
 	/** The search, lowercase: a cover it finds only by its path shows the path. */
@@ -457,6 +566,8 @@ export function ProjectGrid({
 	onRemoveThumbnail?: (project: { root: string; name: string }) => void;
 	/** Who is inside each team project now, by its name in the team. */
 	here?: ReadonlyMap<string, readonly HerePerson[]>;
+	/** More covers after these in the same grid, such as the dimmed ones of projects not on this Mac. */
+	extra?: ReactNode;
 }) {
 	return (
 		<>
@@ -486,6 +597,7 @@ export function ProjectGrid({
 							: { onRemoveThumbnail: () => onRemoveThumbnail(project) })}
 					/>
 				))}
+				{extra}
 			</div>
 			{menu !== null && <MenuBackdrop onClose={() => onMenu(null)} />}
 		</>
@@ -859,10 +971,6 @@ export function MenuBackdrop({ onClose }: { onClose: () => void }) {
 	);
 }
 
-type Sort = "Recent" | "Name";
-const SORTS: readonly Sort[] = ["Recent", "Name"];
-const SORT_LABEL: Record<Sort, string> = { Recent: "Last opened", Name: "A to Z" };
-
 /** How close to the window's edge a cover's menu may sit before it opens upwards. */
 const MENU_MARGIN = 8;
 const MENU_WIDTH = 200;
@@ -885,10 +993,6 @@ export function menuPlace(tile: DOMRect, manage: DOMRect, height: number): MenuP
 		up,
 	};
 }
-
-/** a narrow window keeps the sidebar's icons and drops their words */
-const NARROW_NAV =
-	"[@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0 [@media(max-width:720px)]:[&>span]:hidden";
 
 /**
  * A removal reflows every card after it. Where the browser can morph that (view

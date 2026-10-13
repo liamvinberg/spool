@@ -1,10 +1,36 @@
 import { type ReactNode, useMemo, useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
+import { cn } from "../cn";
 import { bucketOf } from "./bucket";
 import type { Box, NearScreen } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
+import type { SpatialDirection } from "./spatial-navigation";
 import { UnseenMark } from "./unseen-mark";
+
+/**
+ * The live chip's landing (DEV-295): a move between frames while live slides
+ * the chip in from the side it came from, and says what the move has to say
+ * (a fork's next thread, the end of one). Keyed by when it landed, so each
+ * landing plays once.
+ */
+export interface LiveChip {
+	at: number;
+	came: SpatialDirection | null;
+	note: string | null;
+	/** the ⌥ overview is up and the frame letting go would leave */
+	faded?: boolean;
+}
+
+const CHIP_IN: Record<SpatialDirection, string> = {
+	left: "animate-live-chip-left",
+	right: "animate-live-chip-right",
+	up: "animate-live-chip-up",
+	down: "animate-live-chip-down",
+};
+
+/** What a frame is to the ⌥ overview: where letting go lands, one arrow away, or neither. */
+export type OverviewRole = "target" | "near" | "dim";
 
 /**
  * How many drawn frames a label's width may trail a zoom by while the camera
@@ -28,8 +54,19 @@ export function FrameLabel({
 	unseen,
 	onPlay,
 	setAside,
+	live,
+	clickEnters = false,
+	overview = null,
+	overviewHint,
 }: {
 	name: string;
+	/** the entered frame's chip, as a move between frames landed it */
+	live?: LiveChip | null | undefined;
+	/** another frame is live and a click here enters this one instead */
+	clickEnters?: boolean;
+	overview?: OverviewRole | null;
+	/** what letting go of ⌥ does, beside the target's name */
+	overviewHint?: string | undefined;
 	/** the frame the label names, in world units */
 	frame: Box;
 	/** The label holds one size on screen through the zoom, so it follows the camera (#81). */
@@ -93,6 +130,7 @@ export function FrameLabel({
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);
+	const hinted = overview === "target" && overviewHint !== undefined;
 
 	return (
 		<div ref={place} className="pointer-events-none absolute top-0 left-0 h-0">
@@ -101,26 +139,47 @@ export function FrameLabel({
 				data-frame-label={name}
 				className="pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
 			>
-				{entered ? (
+				{entered && overview !== "target" ? (
 					<div className="flex items-center pb-2.5">
-						<span className="rounded-xs bg-accent-strong px-2 py-[3px] text-on-accent type-detail">
-							live · esc exits
+						<span
+							key={live?.at ?? 0}
+							data-live-chip={name}
+							className={cn(
+								"rounded-xs px-2 py-[3px] type-detail transition-colors duration-fast",
+								live?.faded === true ? "bg-surface-control text-secondary" : "bg-accent-strong text-on-accent",
+								live?.came != null && CHIP_IN[live.came],
+							)}
+						>
+							{live?.note ?? "live · esc exits"}
 						</span>
 					</div>
 				) : (
-					<div className="flex w-full min-w-0 items-center gap-1.5 pb-2.5">
+					<div
+						className={cn(
+							"flex w-full min-w-0 items-center gap-1.5 transition-opacity duration-fast",
+							// the overview's hint stands on its own line under the name, so a
+							// phone-narrow frame keeps its name whole and the hint truncates
+							hinted ? "pb-0.5" : "pb-2.5",
+							overview === "dim" && "opacity-40",
+						)}
+					>
 						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 						<span
 							className={`min-w-0 truncate type-value ${
-								selected
+								selected || overview === "target"
 									? "text-accent-strong"
-									: hovered || unseen !== undefined
+									: hovered || unseen !== undefined || overview === "near"
 										? "text-primary"
 										: "text-secondary"
 							}`}
 						>
 							{leaf}
 						</span>
+						{clickEnters && overview === null && (
+							<span data-click-enters={name} className="shrink-0 animate-find-in text-tertiary type-detail">
+								click enters
+							</span>
+						)}
 						{/* the selection's own verb, at the far end of its own row: no
 					    travelling to a corner of the chrome to act on what is right
 					    here. Ghost until wanted — the label is not a toolbar. */}
@@ -142,6 +201,14 @@ export function FrameLabel({
 								play
 							</button>
 						)}
+					</div>
+				)}
+				{hinted && (
+					<div
+						data-overview-hint={name}
+						className="w-full min-w-0 animate-find-in truncate pb-2.5 text-secondary type-detail"
+					>
+						{overviewHint}
 					</div>
 				)}
 			</div>

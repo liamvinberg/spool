@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Box, entryCamera, fitCamera } from "./camera";
+import { type Box, entryCamera, fitCamera, revealCamera } from "./camera";
 
 /** A tall page: taller than any viewport, the frame the old fit hurt most. */
 const page: Box = { x: 0, y: 0, w: 800, h: 6000 };
@@ -60,5 +60,21 @@ describe("entryCamera", () => {
 		const chip: Box = { x: 900, y: 900, w: 120, h: 90 };
 		const entered = entryCamera({ x: 0, y: 0, k: 0.1 }, chip, VW, VH);
 		expect(entered.k).toBe(1);
+	});
+});
+
+describe("revealCamera", () => {
+	const camera = { x: 0, y: 0, k: 0.5 };
+
+	it("leaves the camera alone when the box is wholly on screen", () => {
+		expect(revealCamera(camera, { x: 100, y: 100, w: 400, h: 300 }, 800, 600)).toBe(camera);
+	});
+
+	it("pans to center a box cut by the edge, keeping the zoom", () => {
+		expect(revealCamera(camera, { x: 1500, y: 100, w: 400, h: 300 }, 800, 600)).toEqual({
+			k: 0.5,
+			x: 400 - 1700 * 0.5,
+			y: 300 - 250 * 0.5,
+		});
 	});
 });

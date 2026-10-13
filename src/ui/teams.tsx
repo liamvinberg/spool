@@ -6,14 +6,17 @@ import {
 	type CloudTeamInvite,
 	type CloudTeamsState,
 	daemonTeams,
+	fetchTeamProjects,
 	type HerePerson,
 	type NewTeamStart,
 	type PeopleBilling,
 	type TeamPeople,
+	type TeamProjectOnMac,
 	type TeamRole,
 } from "./api";
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
+import { ProjectsHead, type Sort } from "./home-find";
 import { ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
@@ -302,6 +305,9 @@ export function TeamProjects({
 	onOpen,
 	cycle,
 	empty = `${team.name} has no projects on this Mac yet`,
+	count,
+	sort,
+	search,
 }: {
 	team: CloudTeam;
 	/**
@@ -323,25 +329,36 @@ export function TeamProjects({
 	onBilling?: (() => void) | undefined;
 	/** Where the setup list is drawn, for a new team's admins; no list without it. */
 	setup?: SetupHost | undefined;
+	/** How many projects the team has, on this Mac or not, once that is known; with a search, how many it finds. */
+	count?: { total: number; shown?: number } | undefined;
+	/** The order of the covers, where they have one to choose: on a Mac, by when each was last opened. */
+	sort?: { value: Sort; onChange: (sort: Sort) => void } | undefined;
+	/** The page's own search, where the sidebar has none. */
+	search?: ReactNode;
 }) {
 	const [listing, setListing] = useState(false);
 	const [refusing, setRefusing] = useState(false);
 	const lapsed = team.billing?.state === "lapsed";
 	return (
 		<>
-			<header className="pj-heading mb-[31px] flex h-[35px] items-center justify-between gap-[25px]">
-				<h1 className="type-page font-medium">Projects</h1>
-				{onNewProject && (
-					<Button
-						size="lg"
-						variant="primary"
-						icon={<PlusIcon />}
-						onClick={lapsed ? () => setRefusing(true) : onNewProject}
-					>
-						New project…
-					</Button>
-				)}
-			</header>
+			<ProjectsHead
+				title="Projects"
+				count={count}
+				sort={sort}
+				search={search}
+				actions={
+					onNewProject && (
+						<Button
+							size="lg"
+							variant="primary"
+							icon={<PlusIcon />}
+							onClick={lapsed ? () => setRefusing(true) : onNewProject}
+						>
+							New project…
+						</Button>
+					)
+				}
+			/>
 			{refusing && lapsed && (
 				<LapsedNewProject team={team} onBilling={onBilling} onClose={() => setRefusing(false)} />
 			)}
@@ -1011,6 +1028,33 @@ export function useTeamHere(address: string | null): TeamHere {
 }
 
 /** Where Home's team is kept between reloads: a team's address, or null for Your projects. */
+/**
+ * Every team's projects as spool.page lists them, each on this Mac already or not, read again whenever this Mac's
+ * team copies change: Home's search finds the ones not here, and a team's page counts them.
+ */
+export function useTeamLists(teams: readonly CloudTeam[], copies: string) {
+	const [lists, setLists] = useState<ReadonlyMap<string, readonly TeamProjectOnMac[]>>(new Map());
+	const [asked, setAsked] = useState(0);
+	const addresses = teams.map((team) => team.address).join("\n");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the copies and a refresh are why it reads again
+	useEffect(() => {
+		let current = true;
+		const each = addresses === "" ? [] : addresses.split("\n");
+		void Promise.all(each.map(async (address) => [address, await fetchTeamProjects(address)] as const)).then(
+			(read) => {
+				if (!current) return;
+				const next = new Map<string, readonly TeamProjectOnMac[]>();
+				for (const [address, projects] of read) if (projects !== undefined) next.set(address, projects);
+				setLists(next);
+			},
+		);
+		return () => {
+			current = false;
+		};
+	}, [addresses, copies, asked]);
+	return { lists, refresh: () => setAsked((n) => n + 1) };
+}
+
 const HOME_TEAM = "home.team";
 const isAddress = (value: unknown): value is string => typeof value === "string";
 
@@ -1025,7 +1069,9 @@ export function useTeamHome(
 	shown: string | null,
 	projects?: {
 		/** The covers of a team's projects on this Mac, by its address, saying who is inside each; nothing for none. */
-		covers: (address: string, here: TeamHere) => ReactNode;
+		covers: (address: string, here: TeamHere, sort: Sort) => ReactNode;
+		/** This Mac's team copies, said as one string: when it changes, every team's list is read again. */
+		copies?: string;
 		/** New project, started in this team. */
 		onNewProject: (team: CloudTeam) => void;
 		/** The team's projects not on this Mac yet, to Get, among every team of this account's. */
@@ -1049,6 +1095,13 @@ export function useTeamHome(
 	}, [scope]);
 	const [page, setPage] = useState<TeamPage>("projects");
 	const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+	// Home opens on Recent, unless a link handed over a team to show; going to any place puts Recent and the search away
+	const [recent, setRecent] = useState(shown === null);
+	const [query, setQuery] = useState("");
+	const [sort, setSort] = useState<Sort>("Recent");
+	const away = recent || query.trim() !== "";
+	const listed = teams.state === "ready" ? teams.teams : NO_TEAMS;
+	const { lists, refresh: refreshLists } = useTeamLists(listed, projects?.copies ?? "");
 	const [creating, setCreating] = useState(false);
 	const { toast, onSetUp } = useSetUpToast((team) => {
 		setScope(team.address);
@@ -1074,6 +1127,8 @@ export function useTeamHome(
 		setScope(address);
 		setPage("projects");
 		setSettingsTab("general");
+		setRecent(false);
+		setQuery("");
 	};
 	if (!ready)
 		return {
@@ -1085,6 +1140,10 @@ export function useTeamHome(
 			all: NO_TEAMS,
 			toast: undefined,
 			show: select,
+			everywhere: undefined,
+			lists,
+			refreshLists,
+			origin: "",
 		};
 	const switcher = (
 		<>
@@ -1124,15 +1183,18 @@ export function useTeamHome(
 				))}
 			</div>
 		) : undefined;
+	const total = current === null ? undefined : lists.get(current.address)?.length;
 	const team = current
 		? {
 				nav: (
 					<TeamNav
 						team={current}
-						page={page}
+						page={away ? null : page}
 						onPage={(to) => {
 							setPage(to);
 							setSettingsTab("general");
+							setRecent(false);
+							setQuery("");
 						}}
 					/>
 				),
@@ -1167,7 +1229,9 @@ export function useTeamHome(
 									notice
 								)
 							}
-							covers={projects?.covers(current.address, here)}
+							covers={projects?.covers(current.address, here, sort)}
+							count={total === undefined ? undefined : { total }}
+							sort={{ value: sort, onChange: setSort }}
 							away={projects?.away?.(current, here, ready.teams)}
 							onNewProject={projects && (() => projects.onNewProject(current))}
 							onBilling={
@@ -1205,5 +1269,24 @@ export function useTeamHome(
 		toast,
 		/** Home shows a team's page, by its address, or Your projects. */
 		show: select,
+		/** Every team's projects as spool.page lists them, by address, and a way to read them again. */
+		lists,
+		refreshLists,
+		/** spool.page, where a team's projects open in a browser. */
+		origin: ready.origin,
+		/** Search and Recent across every place, once this account is in a team. */
+		everywhere:
+			ready.teams.length === 0
+				? undefined
+				: {
+						recent,
+						onRecent: () => {
+							setRecent(true);
+							setQuery("");
+						},
+						query,
+						onQuery: setQuery,
+						onOwn: () => select(null),
+					},
 	};
 }

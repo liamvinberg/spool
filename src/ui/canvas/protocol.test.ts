@@ -125,8 +125,20 @@ describe("external link protocol", () => {
 	});
 });
 
+describe("relayed keys", () => {
+	it("runs only what the register relays out of a frame", () => {
+		const leave = { spool: "key", frame: "host", id: "canvas.leave" };
+		expect(parseFrameMessage(leave)).toEqual(leave);
+		expect(parseFrameMessage({ spool: "key", frame: "host", id: "canvas.trash" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "key", frame: "host", key: "Escape" })).toBeUndefined();
+		const tab = { spool: "key", frame: "host", id: "app.next-tab", metaKey: true, ctrlKey: false };
+		expect(parseFrameMessage(tab)).toEqual(tab);
+		expect(parseFrameMessage({ ...tab, metaKey: "yes" })).toBeUndefined();
+	});
+});
+
 describe("frame zoom protocol", () => {
-	it("accepts entered-frame pinch and shortcut intents", () => {
+	it("accepts entered-frame pinch intents", () => {
 		const wheel = {
 			spool: "zoom",
 			frame: "host",
@@ -136,10 +148,7 @@ describe("frame zoom protocol", () => {
 			deltaY: -20,
 			deltaMode: 0,
 		};
-		const shortcut = { spool: "zoom", frame: "host", kind: "out" };
-
 		expect(parseFrameMessage(wheel)).toEqual(wheel);
-		expect(parseFrameMessage(shortcut)).toEqual(shortcut);
 	});
 
 	it("rejects malformed zoom intents", () => {
@@ -184,6 +193,29 @@ describe("frame modifier protocol", () => {
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta" })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Shift", held: true })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta", held: "true" })).toBeUndefined();
+	});
+});
+
+describe("frame hold protocol (DEV-295)", () => {
+	it("accepts a held ⌥ coming up or broken, and the key a frame let go of", () => {
+		const up = { spool: "hold", frame: "host", phase: "up" };
+		const broken = { spool: "hold", frame: "host", phase: "broken" };
+		expect(parseFrameMessage(up)).toEqual(up);
+		expect(parseFrameMessage(broken)).toEqual(broken);
+		expect(parseFrameMessage({ ...up, phase: "down" })).toBeUndefined();
+
+		const step = {
+			spool: "key",
+			frame: "host",
+			id: "canvas.step",
+			metaKey: false,
+			ctrlKey: false,
+			key: "˙",
+			code: "KeyH",
+		};
+		expect(parseFrameMessage(step)).toEqual(step);
+		expect(parseFrameMessage({ ...step, code: 72 })).toBeUndefined();
+		expect(parseFrameMessage({ ...step, key: null })).toBeUndefined();
 	});
 });
 

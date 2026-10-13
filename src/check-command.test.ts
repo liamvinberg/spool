@@ -144,4 +144,34 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			expect.stringMatching(/^design\/frames\/open\/frame\.tsx:\d+:\d+ TS1003: (?!Source syntax)/),
 		]);
 	});
+
+	it("notes a frame whose own source reads the ⌥ key, without failing the check (DEV-295)", async () => {
+		const root = project();
+		writeFrame(root, "home", FRAME);
+		writeFrame(
+			root,
+			"editor",
+			[
+				"// altKey in a comment is no read",
+				"export default function Frame() {",
+				"\treturn <main onKeyDown={(event) => event.altKey && event.preventDefault()} />;",
+				"}",
+				"",
+			].join("\n"),
+		);
+		writeDesignFile(root, "frames/board/frame.tsx", FRAME);
+		writeDesignFile(
+			root,
+			"frames/board/keys.ts",
+			'/* a comment\n   saying "Alt" */\nexport const held = (e: KeyboardEvent) => e.getModifierState("Alt");\n',
+		);
+
+		const all = await runCheck(root, root, []);
+		expect(all.ok).toBe(true);
+		expect(all.stderr).toEqual([
+			"design/frames/board/keys.ts:3 reads the ⌥ key: inside a live frame ⌥ arrows and a held ⌥ move between frames unless the frame calls preventDefault on them",
+			"design/frames/editor/frame.tsx:3 reads the ⌥ key: inside a live frame ⌥ arrows and a held ⌥ move between frames unless the frame calls preventDefault on them",
+		]);
+		expect((await runCheck(root, root, ["design/frames/home"])).stderr).toEqual([]);
+	});
 });

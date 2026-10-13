@@ -281,6 +281,48 @@ it("says a refusal on the element, with the door to the agent, and lets it go", 
 	expect(note()).toBeNull();
 });
 
+// ⌘C, ⌘D and ⌘V on frames (DEV-294): whole frames only, and never while the
+// keys belong to the prototype or to words being typed
+
+it("copies the frame behind an element held, whole", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await press("e");
+	await clickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["screen > footer > pay"]);
+
+	expect(chord("c").defaultPrevented).toBe(true);
+	await until(() => host.querySelector("[data-pages-copied]")?.textContent === "1 copied");
+});
+
+it("leaves ⌘C, ⌘D and ⌘V to a frame that is entered", async () => {
+	const { host, canvas } = await readyCanvas();
+	await clickAt(canvas, 40, 40);
+	expect(chord("c").defaultPrevented).toBe(true); // something on the clipboard to paste
+	await until(() => host.querySelector("[data-pages-copied]") !== null);
+
+	await doubleClickAt(canvas, 40, 40);
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
+	for (const key of ["c", "d", "v"]) expect(chord(key).defaultPrevented).toBe(false);
+	await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+	expect(duplicates()).toEqual([]);
+});
+
+it("leaves ⌘C, ⌘D and ⌘V to words being typed", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await press("e");
+	await clickAt(canvas, 40, 40);
+	await frame.answer(WORDS);
+	expect(chord("c").defaultPrevented).toBe(true);
+	await until(() => host.querySelector("[data-pages-copied]") !== null);
+
+	await press("Enter");
+	expect(frame.lastAsk("edit")).toMatchObject({ selector: "screen > footer > pay" });
+	for (const key of ["c", "d", "v"]) expect(chord(key).defaultPrevented).toBe(false);
+	await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+	expect(duplicates()).toEqual([]);
+});
+
 // --- the harness -------------------------------------------------------------
 
 interface FramePlayer {
@@ -416,6 +458,21 @@ async function press(key: string, modifiers: Record<string, boolean> = {}): Prom
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...modifiers }));
 	});
+}
+
+/** An accel chord on a letter, handed back so a test can see whether spool claimed it. */
+function chord(key: string): KeyboardEvent {
+	const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...ACCEL });
+	act(() => {
+		window.dispatchEvent(event);
+	});
+	return event;
+}
+
+/** Every copy the canvas asked the daemon for. */
+function duplicates(): unknown[] {
+	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+	return calls.filter(([input]) => String(input).endsWith("/frames/duplicate"));
 }
 
 /** Every selection the canvas has served, oldest first. */

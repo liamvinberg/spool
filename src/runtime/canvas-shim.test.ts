@@ -11,10 +11,28 @@ import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
  * document and run in the happy-dom realm — its answers are behavior, not text.
  */
 
+// happy-dom has no isTrusted, which the shim reads: an event here is the
+// person's own unless a test marks it made up, as a page's dispatchEvent is
+const madeUp = new WeakSet<Event>();
+Object.defineProperty(Event.prototype, "isTrusted", {
+	configurable: true,
+	get(this: Event) {
+		return !madeUp.has(this);
+	},
+});
+
 const frameTsx = `export default function Frame() {
 	return <p>shim host</p>;
 }
 `;
+
+/** The shim reads the platform as it starts: ⌘ is accel for this test. */
+function onMac(): void {
+	Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+	onTestFinished(() => {
+		delete (navigator as { platform?: string }).platform;
+	});
+}
 
 async function servedShim(): Promise<string> {
 	const spoolDir = join(makeTempDir(), ".spool");
@@ -146,8 +164,8 @@ describe("the canvas shim", () => {
 				{ spool: "modifier", frame: "host", modifier: "Control", held: true },
 				{ spool: "modifier", frame: "host", modifier: "Control", held: false },
 				// blur releases both candidates so neither platform's can stick
-				{ spool: "modifier", frame: "host", modifier: "Meta", held: false },
-				{ spool: "modifier", frame: "host", modifier: "Control", held: false },
+				{ spool: "modifier", frame: "host", modifier: "Meta", held: false, blur: true },
+				{ spool: "modifier", frame: "host", modifier: "Control", held: false, blur: true },
 			]);
 		} finally {
 			dispose?.();
@@ -203,7 +221,7 @@ describe("the canvas shim", () => {
 			expect(browserReset.defaultPrevented, "browser reset must remain an escape hatch").toBe(false);
 			expect(posted).toEqual([
 				{ spool: "zoom", frame: "host", kind: "wheel", x: 12, y: 34, deltaY: -20, deltaMode: 0 },
-				{ spool: "zoom", frame: "host", kind: "in" },
+				{ spool: "key", frame: "host", id: "canvas.zoom-in", metaKey: true, ctrlKey: false },
 			]);
 		} finally {
 			dispose?.();
@@ -292,6 +310,326 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("relays Esc out under any modifier and leaves it the frame's too (#22)", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+
+			const plain = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" });
+			window.dispatchEvent(plain);
+			const shifted = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				shiftKey: true,
+				key: "Escape",
+			});
+			window.dispatchEvent(shifted);
+
+			expect(plain.defaultPrevented, "the prototype's own esc still runs").toBe(false);
+			expect(posted).toEqual([
+				{ spool: "key", frame: "host", id: "canvas.leave", metaKey: false, ctrlKey: false },
+				{ spool: "key", frame: "host", id: "canvas.leave", metaKey: false, ctrlKey: false },
+			]);
+		} finally {
+			dispose?.();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
+	it("holds the window's tab keys back while the frame's words are being edited", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentStub = { postMessage: (message: unknown) => posted.push(message) };
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", { configurable: true, value: parentStub });
+		// the canvas's origin, the one door an edit may come through; the frame runtime's own type does not name it
+		window.__SPOOL__ = {
+			project: "project",
+			frame: "host",
+			projectCapability: "project-capability",
+			...{ controlOrigin: "http://control.test" },
+		};
+		const words = document.createElement("p");
+		words.id = "words";
+		words.textContent = "Pay now";
+		document.body.append(words);
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+			const press = (init: KeyboardEventInit) => {
+				const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+				words.dispatchEvent(event);
+				return event.defaultPrevented;
+			};
+			// no edit open: the menu's ⌘W is the window's to have
+			expect(press({ key: "w", metaKey: true })).toBe(false);
+
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: { spool: "edit", selector: "#words", x: 0, y: 0, id: 1 },
+					origin: "http://control.test",
+					source: parentStub as unknown as Window,
+				}),
+			);
+			await beat();
+			expect(posted).toContainEqual(expect.objectContaining({ spool: "edit-open", ok: true }));
+
+			expect(press({ key: "w", metaKey: true }), "⌘W waits for the edit").toBe(true);
+			expect(press({ key: "2", metaKey: true })).toBe(true);
+			expect(press({ key: "Tab", ctrlKey: true })).toBe(true);
+			// the text's own chords stay the text's
+			expect(press({ key: "z", metaKey: true })).toBe(false);
+			expect(press({ key: "a", metaKey: true })).toBe(false);
+		} finally {
+			dispose?.();
+			words.remove();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
+	it("relays ⌥ steps and ⌥ held only where the frame did not keep them (DEV-295)", async () => {
+		onMac();
+		const shim = await servedShim();
+		const posted: Array<Record<string, unknown>> = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		const field = document.createElement("input");
+		const area = document.createElement("textarea");
+		const editable = document.createElement("div");
+		editable.contentEditable = "true";
+		const button = document.createElement("button");
+		document.body.append(field, area, editable, button);
+		// a prototype's own listener on the window, added after the shim's, as
+		// a vanilla script would: it keeps ⌥↓ for itself
+		const keeps = (event: KeyboardEvent) => {
+			if (event.key === "ArrowDown" && event.altKey) event.preventDefault();
+		};
+		let dispose: (() => void) | undefined;
+		const press = (target: EventTarget, init: KeyboardEventInit, type = "keydown") => {
+			const event = new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init });
+			target.dispatchEvent(event);
+			return event;
+		};
+		const ids = () =>
+			posted
+				.filter((message) => message.spool !== "modifier")
+				.map((message) => (message.spool === "key" ? message.id : `${message.spool}:${message.phase}`));
+
+		try {
+			dispose = runShim(shim);
+			window.addEventListener("keydown", keeps);
+
+			// a plain ⌥ arrow and ⌥ hjkl by place (⌥H is ˙) go to the canvas, the
+			// key told so the canvas knows which way, the browser's meaning eaten
+			const right = press(button, { key: "ArrowRight", code: "ArrowRight", altKey: true });
+			const h = press(button, { key: "˙", code: "KeyH", altKey: true });
+			expect(right.defaultPrevented).toBe(true);
+			expect(h.defaultPrevented).toBe(true);
+			expect(posted).toEqual([
+				{
+					spool: "key",
+					frame: "host",
+					id: "canvas.step",
+					metaKey: false,
+					ctrlKey: false,
+					key: "ArrowRight",
+					code: "ArrowRight",
+				},
+				{ spool: "key", frame: "host", id: "canvas.step", metaKey: false, ctrlKey: false, key: "˙", code: "KeyH" },
+			]);
+			posted.length = 0;
+
+			// the frame's own handler kept it: spool leaves it be, wherever the
+			// handler sat, before the shim's listener or after it
+			press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true });
+			const onElement = (event: Event) => event.preventDefault();
+			button.addEventListener("keydown", onElement);
+			press(button, { key: "ArrowUp", code: "ArrowUp", altKey: true });
+			button.removeEventListener("keydown", onElement);
+			// one that stops it on its way up keeps it too, and the next press is
+			// not mistaken for it
+			const stops = (event: Event) => event.stopPropagation();
+			button.addEventListener("keydown", stops);
+			press(button, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+			button.removeEventListener("keydown", stops);
+			expect(posted).toEqual([]);
+			press(button, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+			expect(ids()).toEqual(["canvas.step"]);
+			posted.length = 0;
+
+			// in a text field plain ⌥ keys are the caret's; ⌘⌥ arrows still step
+			for (const typing of [field, area, editable]) {
+				expect(press(typing, { key: "ArrowLeft", code: "ArrowLeft", altKey: true }).defaultPrevented).toBe(false);
+				press(typing, { key: "˙", code: "KeyH", altKey: true });
+				press(typing, { key: "Alt", code: "AltLeft", altKey: true });
+			}
+			expect(posted).toEqual([]);
+			press(field, { key: "ArrowRight", code: "ArrowRight", altKey: true, metaKey: true });
+			expect(ids()).toEqual(["canvas.step-through"]);
+			posted.length = 0;
+
+			// ⌥ alone: held, then let go
+			press(button, { key: "Alt", code: "AltLeft", altKey: true });
+			press(button, { key: "Alt", code: "AltLeft", altKey: true, repeat: true });
+			press(button, { key: "Alt", code: "AltLeft" }, "keyup");
+			expect(ids()).toEqual(["canvas.overview", "hold:up"]);
+			posted.length = 0;
+
+			// ⌥2 is @ on a Swedish board: the hold breaks, once, and 2 is the frame's
+			press(button, { key: "Alt", code: "AltLeft", altKey: true });
+			const at = press(button, { key: "@", code: "Digit2", altKey: true });
+			press(button, { key: "£", code: "Digit3", altKey: true });
+			press(button, { key: "Alt", code: "AltLeft" }, "keyup");
+			expect(at.defaultPrevented).toBe(false);
+			// broken is the last word: the overview is already gone
+			expect(ids()).toEqual(["canvas.overview", "hold:broken"]);
+			posted.length = 0;
+
+			// a ⌥ step the frame kept breaks the hold; one spool takes does not
+			press(button, { key: "Alt", code: "AltLeft", altKey: true });
+			press(button, { key: "ArrowRight", code: "ArrowRight", altKey: true });
+			press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true });
+			window.dispatchEvent(new Event("blur"));
+			expect(ids()).toEqual(["canvas.overview", "canvas.step", "hold:broken"]);
+		} finally {
+			window.removeEventListener("keydown", keeps);
+			dispose?.();
+			field.remove();
+			area.remove();
+			editable.remove();
+			button.remove();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
+	it("keeps the ⌥ moves to the person's own presses, their ⌘ and their clicks (DEV-295)", async () => {
+		onMac();
+		const shim = await servedShim();
+		const posted: Array<Record<string, unknown>> = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		const button = document.createElement("button");
+		document.body.append(button);
+		let clicked = 0;
+		button.addEventListener("pointerdown", () => clicked++);
+		button.addEventListener("click", () => clicked++);
+		const press = (init: KeyboardEventInit, type = "keydown", trusted = true) => {
+			const event = new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init });
+			if (!trusted) madeUp.add(event);
+			button.dispatchEvent(event);
+			return event;
+		};
+		const click = () => {
+			const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, altKey: true });
+			button.dispatchEvent(down);
+			button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerType: "mouse" }));
+			button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+			return down;
+		};
+		const told = () => posted.filter((message) => message.spool !== "presence");
+		let dispose: (() => void) | undefined;
+		try {
+			dispose = runShim(shim);
+
+			// a page's own made-up ⌥ arrow moves nothing
+			expect(press({ key: "ArrowRight", code: "ArrowRight", altKey: true }, "keydown", false).defaultPrevented).toBe(
+				false,
+			);
+			expect(told()).toEqual([]);
+
+			// ctrl+⌥ arrows on a Mac are the system's: not spool's, not eaten
+			const ctrl = press({ key: "ArrowRight", code: "ArrowRight", altKey: true, ctrlKey: true });
+			expect(ctrl.defaultPrevented).toBe(false);
+			expect(told().filter((message) => message.spool === "key")).toEqual([]);
+			posted.length = 0;
+
+			// losing the focus says the ⌘ may still be down
+			window.dispatchEvent(new Event("blur"));
+			expect(told()).toEqual([
+				{ spool: "modifier", frame: "host", modifier: "Meta", held: false, blur: true },
+				{ spool: "modifier", frame: "host", modifier: "Control", held: false, blur: true },
+			]);
+			posted.length = 0;
+
+			// ⌥ held a moment then a click: the overview is open, the camera moved
+			// under the pointer, so the press is swallowed whole and only ends it
+			const now = performance.now();
+			const clock = Object.getOwnPropertyDescriptor(performance, "now");
+			let at = now;
+			Object.defineProperty(performance, "now", { configurable: true, value: () => at });
+			try {
+				press({ key: "Alt", code: "AltLeft", altKey: true });
+				at = now + 50;
+				expect(click().defaultPrevented, "an ⌥ click before the overview is the frame's").toBe(false);
+				expect(clicked).toBe(2);
+				press({ key: "Alt", code: "AltLeft" }, "keyup");
+				press({ key: "Alt", code: "AltLeft", altKey: true });
+				at = now + 300;
+				expect(click().defaultPrevented).toBe(true);
+				expect(clicked).toBe(2);
+				press({ key: "Alt", code: "AltLeft" }, "keyup");
+				// a step opens it at once, so a click straight after is swallowed too
+				press({ key: "Alt", code: "AltLeft", altKey: true });
+				press({ key: "ArrowRight", code: "ArrowRight", altKey: true });
+				expect(click().defaultPrevented).toBe(true);
+				expect(clicked).toBe(2);
+				press({ key: "Alt", code: "AltLeft" }, "keyup");
+				// and the next click is the frame's again
+				click();
+				expect(clicked).toBe(4);
+			} finally {
+				if (clock === undefined) delete (performance as { now?: unknown }).now;
+				else Object.defineProperty(performance, "now", clock);
+			}
+			expect(
+				told()
+					.filter((message) => message.spool === "key" || message.spool === "hold")
+					.map((message) => (message.spool === "key" ? message.id : `hold:${message.phase}`)),
+			).toEqual([
+				"canvas.overview",
+				"hold:broken",
+				"canvas.overview",
+				"hold:broken",
+				"canvas.overview",
+				"canvas.step",
+				"hold:broken",
+			]);
+			posted.length = 0;
+
+			// a ⌥ that went down in the document before a reload comes up here,
+			// and the overview opened on it hears so
+			const fresh = new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: "Alt", code: "AltRight" });
+			button.dispatchEvent(fresh);
+			expect(told()).toEqual([{ spool: "hold", frame: "host", phase: "up" }]);
+		} finally {
+			dispose?.();
+			button.remove();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("relays the jump chords and eats the browser's open-file dialog", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
@@ -318,8 +656,8 @@ describe("the canvas shim", () => {
 			expect(forward.defaultPrevented).toBe(true);
 			expect(plain.defaultPrevented).toBe(false);
 			expect(posted).toEqual([
-				{ spool: "key", frame: "host", key: "ctrl+o" },
-				{ spool: "key", frame: "host", key: "ctrl+i" },
+				{ spool: "key", frame: "host", id: "canvas.jump-back", metaKey: false, ctrlKey: true },
+				{ spool: "key", frame: "host", id: "canvas.jump-forward", metaKey: false, ctrlKey: true },
 			]);
 		} finally {
 			dispose?.();

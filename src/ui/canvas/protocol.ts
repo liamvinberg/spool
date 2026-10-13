@@ -7,6 +7,7 @@ import type { SessionRecord } from "../../runtime/frame-runtime";
 import type { AccelKeyName } from "../../runtime/platform-keys";
 import { isWalkId } from "../../runtime/walk-protocol";
 import type { MovePlace } from "../api";
+import { type HotkeyId, isRelayedHotkey } from "../hotkeys";
 import type { Box } from "./camera";
 
 /**
@@ -101,7 +102,7 @@ interface FrameWheelZoomMessage {
 	deltaMode: number;
 }
 
-export type FrameZoomMessage = FrameWheelZoomMessage | { spool: "zoom"; frame: string; kind: "in" | "out" };
+export type FrameZoomMessage = FrameWheelZoomMessage;
 
 /**
  * A plain wheel the entered frame could not scroll with: nothing under the
@@ -127,6 +128,20 @@ export interface FrameModifierMessage {
 	frame: string;
 	modifier: AccelKeyName;
 	held: boolean;
+	/** the release came of the frame losing focus, not of the key coming up */
+	blur?: true;
+}
+
+/**
+ * The ⌥ a frame relayed as held (`canvas.overview`) came up, or something
+ * broke the hold first: another key under it, a key the frame kept, the frame
+ * losing focus. The canvas lands the overview on the first and drops it on
+ * the second.
+ */
+export interface FrameHoldMessage {
+	spool: "hold";
+	frame: string;
+	phase: "up" | "broken";
 }
 
 /**
@@ -208,8 +223,11 @@ export type FrameMessage =
 	| CaptureSourceReply
 	| { spool: "session?"; frame: string }
 	| { spool: "state"; frame: string; scenario: string; state: Record<string, unknown> }
-	| { spool: "key"; frame: string; key: string }
+	// the modifiers held, for the canvas to read under its own accel rule
+	// and, for a key the frame let go of (`yields`), which key it was
+	| { spool: "key"; frame: string; id: HotkeyId; metaKey?: boolean; ctrlKey?: boolean; key?: string; code?: string }
 	| FrameModifierMessage
+	| FrameHoldMessage
 	| FramePanMessage
 	| FrameZoomMessage
 	| FrameScrollMessage
@@ -255,7 +273,16 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as CaptureSourceReply)
 				: undefined;
 		case "key":
-			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
+			// a frame may ask only for what the register relays out of it
+			return isRelayedHotkey(m.id) &&
+				(m.metaKey === undefined || typeof m.metaKey === "boolean") &&
+				(m.ctrlKey === undefined || typeof m.ctrlKey === "boolean") &&
+				(m.key === undefined || typeof m.key === "string") &&
+				(m.code === undefined || typeof m.code === "string")
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "hold":
+			return m.phase === "up" || m.phase === "broken" ? (m as unknown as FrameMessage) : undefined;
 		case "modifier":
 			return (m.modifier === "Meta" || m.modifier === "Control") && typeof m.held === "boolean"
 				? (m as unknown as FrameMessage)
@@ -265,9 +292,6 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "zoom":
-			if (m.kind === "in" || m.kind === "out") {
-				return m as unknown as FrameMessage;
-			}
 			return m.kind === "wheel" &&
 				finite(m.x) &&
 				finite(m.y) &&

@@ -134,3 +134,57 @@ it("asks spool.page and the daemon for a move at the same path, and reads either
 		'POST /api/cloud/teams/tidemark/projects/site/move {"to":"northlight","name":"site"}',
 	]);
 });
+
+it("searches every team from the sidebar, a tab per team, and puts the search away on going to a place", async () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => new Response(null, { status: 404 })),
+	);
+	history.replaceState(null, "", "/tidemark");
+	const fake = fakeTeamsSource({
+		teams: [team("tidemark", "Tidemark", "admin"), team("northlight", "Northlight", "viewer")],
+		projects: {
+			tidemark: [
+				{ name: "site", url: "https://spool.page/tidemark/site", repo: null },
+				{ name: "app", url: "https://spool.page/tidemark/app", repo: null },
+			],
+			northlight: [{ name: "careers-site", url: "https://spool.page/northlight/careers-site", repo: null }],
+		},
+	});
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	act(() =>
+		root.render(
+			createElement(BrowserHome, { config: { account: "ada@tidemark.app" }, source: fake.source, account: ACCOUNT }),
+		),
+	);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+	});
+	await settle();
+	expect(host.querySelector('[aria-label="2 projects"]')).not.toBeNull();
+	const input = host.querySelector<HTMLInputElement>('.pj-find input[type="search"]');
+	await act(async () => {
+		Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "site");
+		input?.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	await settle();
+	expect(host.querySelector("main h1")?.textContent).toBe("Search");
+	expect(Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent)).toEqual([
+		"All 2",
+		"Tidemark 1",
+		"Northlight 1",
+	]);
+	expect(Array.from(host.querySelectorAll("a[aria-label^='Open ']")).map((link) => link.getAttribute("href"))).toEqual(
+		["/northlight/careers-site", "/tidemark/site"],
+	);
+	const people = Array.from(host.querySelectorAll("nav button")).find((node) =>
+		node.textContent?.startsWith("People"),
+	);
+	await act(async () => (people as HTMLButtonElement).click());
+	expect(host.querySelector<HTMLInputElement>('.pj-find input[type="search"]')?.value).toBe("");
+});

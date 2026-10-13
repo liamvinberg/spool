@@ -68,6 +68,7 @@ export const HOTKEY_GROUPS = [
 	"Pages",
 	"Panes",
 	"Undo",
+	"Tabs",
 	"Home",
 	"Settings",
 	"Help",
@@ -93,11 +94,42 @@ interface HotkeySpec {
 	readonly listed?: false;
 	/** true: answers even from a text field, for chords that mean nothing to text */
 	readonly typing?: true;
+	/**
+	 * Reaches out of an entered frame: the frame shim relays it to the canvas,
+	 * which runs the entry (daemon/document.ts). `true` relays the entry's own
+	 * keys; a list names the combos that do from inside a frame, where the
+	 * frame keeps the plain keys or Esc must leave whatever is held.
+	 */
+	readonly relay?: true | readonly string[];
+	/**
+	 * Relayed only when the frame did not keep it: the shim decides once every
+	 * listener in the frame has had the press, and a frame that called
+	 * preventDefault keeps the key, as one that takes it in a text field does
+	 * (unless the entry answers while `typing`). For keys a prototype may well
+	 * bind itself, ⌥ above all.
+	 */
+	readonly yields?: true;
 }
 
 /** The accel face without its joining `+`: `⌘`, `ctrl`. */
 function accelBare(): string {
 	return accelLabel().replace(/\+$/, "");
+}
+
+type TabNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+/** ⌘N for tab N: unlisted, the sheet tells all eight in one row. */
+function tabKey<N extends TabNumber>(n: N) {
+	return {
+		id: `app.tab-${n}` as `app.tab-${N}`,
+		scope: "app",
+		group: "Tabs",
+		label: "",
+		keys: [`accel+${n}`] as readonly [`accel+${N}`],
+		repeats: false,
+		listed: false,
+		typing: true,
+	} as const;
 }
 
 export const HOTKEYS = [
@@ -118,6 +150,28 @@ export const HOTKEYS = [
 		label: "Leave the frame you are inside",
 		keys: ["accel+escape"],
 		shown: () => ["esc", `${accelLabel()}esc`],
+		// Esc must still exit (#22), whatever else is held
+		relay: ["any+escape"],
+	},
+	// pages (#265) go in and out the way frames do, and the way Finder's
+	// folders do: ⌘↓ and ⌘↑ beside ⏎ and the last Esc
+	{
+		id: "canvas.page-in",
+		scope: "canvas",
+		group: "Frames",
+		label: "Go inside the selected page",
+		keys: ["accel+arrowdown"],
+		shown: () => ["⏎", `${accelLabel()}↓`],
+		gesture: "double-click",
+		repeats: false,
+	},
+	{
+		id: "canvas.page-up",
+		scope: "canvas",
+		group: "Frames",
+		label: "Go up to the page holding this one",
+		keys: ["accel+arrowup"],
+		shown: () => ["esc", `${accelLabel()}↑`],
 	},
 	{
 		id: "canvas.play",
@@ -151,6 +205,32 @@ export const HOTKEYS = [
 		group: "Frames",
 		label: "Tidy the frames",
 		keys: ["shift+a"],
+		repeats: false,
+	},
+	// the Pages rail's copy, paste and duplicate (#229), for the frames
+	// selected out on the canvas
+	{
+		id: "canvas.copy",
+		scope: "canvas",
+		group: "Frames",
+		label: "Copy the selected frames",
+		keys: ["accel+c"],
+		repeats: false,
+	},
+	{
+		id: "canvas.paste",
+		scope: "canvas",
+		group: "Frames",
+		label: "Paste frames onto this page",
+		keys: ["accel+v"],
+		repeats: false,
+	},
+	{
+		id: "canvas.duplicate",
+		scope: "canvas",
+		group: "Frames",
+		label: "Duplicate the selected frames",
+		keys: ["accel+d"],
 		repeats: false,
 	},
 	{ id: "canvas.menu", scope: "canvas", group: "Frames", label: "Open the frame menu", gesture: "right-click" },
@@ -250,13 +330,51 @@ export const HOTKEYS = [
 		keys: ["shift+arrowleft", "shift+arrowright", "shift+arrowup", "shift+arrowdown"],
 		shown: ["⇧←↑→↓"],
 	},
+	// ⌥ arrows, and vim's hjkl by place under ⌥ (⌥H is ˙ before it is an H):
+	// out here they move the selection, from inside a frame they open the
+	// overview on the way to the next one (DEV-295)
 	{
 		id: "canvas.step",
 		scope: "canvas",
 		group: "Selection",
-		label: "Select the neighbouring frame",
-		keys: ["alt+arrowleft", "alt+arrowright", "alt+arrowup", "alt+arrowdown"],
-		shown: ["⌥←↑→↓"],
+		label: "Step to the neighbouring frame, inside it if you were inside one; the opposite key steps back",
+		keys: ["alt+arrowleft", "alt+arrowright", "alt+arrowup", "alt+arrowdown", "alt+h", "alt+j", "alt+k", "alt+l"],
+		shown: ["⌥←↑→↓", "⌥HJKL"],
+		relay: true,
+		yields: true,
+	},
+	// the same step from a text field, where ⌥ arrows are the caret's
+	{
+		id: "canvas.step-through",
+		scope: "canvas",
+		group: "Selection",
+		label: "Step to the neighbouring frame even from a text field",
+		keys: ["accel+alt+arrowleft", "accel+alt+arrowright", "accel+alt+arrowup", "accel+alt+arrowdown"],
+		shown: () => [`${accelLabel()}⌥←↑→↓`],
+		typing: true,
+		relay: true,
+		yields: true,
+	},
+	// ⌥ alone, held a moment: the camera steps back to show the frames around
+	// this one, arrows pick, letting go goes there. Any other key under ⌥ ends
+	// it unopened, so ⌥2 still types @ on a Swedish board
+	{
+		id: "canvas.overview",
+		scope: "canvas",
+		group: "Selection",
+		label: "See the frames around this one; arrows pick, let go to go there",
+		keys: ["alt"],
+		shown: ["hold ⌥"],
+		repeats: false,
+		relay: true,
+		yields: true,
+	},
+	{
+		id: "canvas.switch",
+		scope: "canvas",
+		group: "Frames",
+		label: "Enter another frame from inside one",
+		gesture: "click it",
 	},
 	{
 		id: "canvas.escape",
@@ -274,6 +392,8 @@ export const HOTKEYS = [
 		label: "Zoom in",
 		keys: ["accel+plus", "accel+equals", "plus", "equals"],
 		shown: () => [`${accelLabel()}+`],
+		// the browser's zoom chords, so a focused frame cannot zoom the page into a trap
+		relay: ["accel+plus", "accel+equals"],
 	},
 	{
 		id: "canvas.zoom-out",
@@ -282,6 +402,7 @@ export const HOTKEYS = [
 		label: "Zoom out",
 		keys: ["accel+minus", "minus"],
 		shown: () => [`${accelLabel()}-`],
+		relay: ["accel+minus"],
 	},
 	{ id: "canvas.zoom-reset", scope: "canvas", group: "Camera", label: "Zoom to 100%", keys: ["0"] },
 	{ id: "canvas.fit-all", scope: "canvas", group: "Camera", label: "Zoom to fit every frame", keys: ["shift+1"] },
@@ -336,6 +457,8 @@ export const HOTKEYS = [
 		group: "Find and jump",
 		label: "Jump back to where you were",
 		keys: ["ctrl+o"],
+		// owed mid-walk, inside a frame, on every platform (#166)
+		relay: true,
 	},
 	{
 		id: "canvas.jump-forward",
@@ -343,6 +466,7 @@ export const HOTKEYS = [
 		group: "Find and jump",
 		label: "Jump forward again",
 		keys: ["ctrl+i"],
+		relay: true,
 	},
 
 	// --- Threads ----------------------------------------------------------------
@@ -353,6 +477,25 @@ export const HOTKEYS = [
 		label: "Show or hide the threads",
 		keys: ["t"],
 		repeats: false,
+	},
+	// along the flow map, the way a browser's ⌘] and ⌘[ go forward and back;
+	// matched by place, so ⌘¨ and ⌘å on a Swedish board. At a fork ] again
+	// before ⌘ comes up takes the next thread instead
+	{
+		id: "canvas.thread-next",
+		scope: "canvas",
+		group: "Threads",
+		label: "Walk on along the thread; ] again at a fork for the next one",
+		keys: ["accel+bracketright"],
+		relay: true,
+	},
+	{
+		id: "canvas.thread-back",
+		scope: "canvas",
+		group: "Threads",
+		label: "Walk back the way you came",
+		keys: ["accel+bracketleft"],
+		relay: true,
 	},
 
 	// --- Pages: the rail's own keys, while the rail has focus (#229) -------------
@@ -509,6 +652,87 @@ export const HOTKEYS = [
 	{ id: "canvas.undo", scope: "canvas", group: "Undo", label: "Undo", keys: ["accel+z"] },
 	{ id: "canvas.redo", scope: "canvas", group: "Undo", label: "Redo", keys: ["accel+shift+z"] },
 
+	// --- Tabs: the strip of Home and the open projects -------------------------
+	// A browser's tab keys, for the Mac app: a plain browser tab keeps ⌘W, ⌘T,
+	// ⌘⇧T, ⌘1-9 and ctrl+Tab for its own tabs, so there these never fire. They
+	// answer from a text field, where none of them means anything to the text.
+	// From an entered frame the Mac menu wears them (desktop-window.ts), all but
+	// the bracket chords, which match by place where a menu matches by glyph
+	// (⌘⇧¨ on Swedish), so the frame relays those.
+	{
+		id: "app.close-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Close the tab, or what is open over it",
+		keys: ["accel+w"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.close-window",
+		scope: "app",
+		group: "Tabs",
+		label: "Close the window",
+		keys: ["accel+shift+w"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.reopen-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Reopen the tab closed last",
+		keys: ["accel+shift+t"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.home",
+		scope: "app",
+		group: "Tabs",
+		label: "Go to Home",
+		keys: ["accel+t"],
+		repeats: false,
+		typing: true,
+	},
+	{
+		id: "app.next-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Next tab",
+		keys: ["ctrl+tab", "accel+shift+bracketright"],
+		typing: true,
+		relay: ["accel+shift+bracketright"],
+	},
+	{
+		id: "app.previous-tab",
+		scope: "app",
+		group: "Tabs",
+		label: "Previous tab",
+		keys: ["ctrl+shift+tab", "accel+shift+bracketleft"],
+		typing: true,
+		relay: ["accel+shift+bracketleft"],
+	},
+	// ⌘1 is Home and ⌘2-8 the project tabs in order: one row on the sheet for
+	// the eight entries the menu and the dispatch need one apiece
+	{
+		id: "app.tab-numbered",
+		scope: "app",
+		group: "Tabs",
+		label: "Go to tab 1 to 8, Home first",
+		shown: () => [`${accelLabel()}1-8`],
+	},
+	...([1, 2, 3, 4, 5, 6, 7, 8] as const).map(tabKey),
+	{
+		id: "app.tab-last",
+		scope: "app",
+		group: "Tabs",
+		label: "Go to the last tab",
+		keys: ["accel+9"],
+		repeats: false,
+		typing: true,
+	},
+
 	// --- Home -------------------------------------------------------------------
 	{ id: "app.new-project", scope: "app", group: "Home", label: "New project", keys: ["accel+n"], repeats: false },
 	{
@@ -519,7 +743,7 @@ export const HOTKEYS = [
 		keys: ["accel+o"],
 		repeats: false,
 	},
-	{ id: "home.search", scope: "home", group: "Home", label: "Search your projects", keys: ["slash"] },
+	{ id: "home.search", scope: "home", group: "Home", label: "Search projects", keys: ["slash"] },
 	{ id: "home.close-menu", scope: "home", group: "Home", label: "", keys: ["escape"], listed: false },
 
 	// --- Settings ---------------------------------------------------------------
@@ -584,4 +808,44 @@ export function hotkeyChips(entry: HotkeyEntry): { keys: readonly string[]; gest
 /** The sheet's rows: listed entries of one group, in register order. */
 export function listedHotkeys(group: HotkeyGroup): readonly HotkeyEntry[] {
 	return HOTKEYS.filter((entry) => entry.group === group && !("listed" in entry && entry.listed === false));
+}
+
+/** An entry that reaches out of an entered frame, with the combos that carry it out. */
+export interface RelayedHotkey {
+	id: HotkeyId;
+	combos: readonly string[];
+	/** relayed only when the frame did not keep the press (`yields`) */
+	yields: boolean;
+	/** answers from a text field */
+	typing: boolean;
+}
+
+/** What the frame shim relays, in register order. */
+export function relayedHotkeys(): readonly RelayedHotkey[] {
+	const relayed: RelayedHotkey[] = [];
+	for (const entry of HOTKEYS) {
+		if (!("relay" in entry)) continue;
+		const combos = entry.relay === true ? ("keys" in entry ? entry.keys : []) : entry.relay;
+		relayed.push({
+			id: entry.id,
+			combos,
+			yields: "yields" in entry && entry.yields === true,
+			typing: "typing" in entry && entry.typing === true,
+		});
+	}
+	return relayed;
+}
+
+/** Whether a frame may ask the canvas to run this id: only what the register relays. */
+export function isRelayedHotkey(id: unknown): id is HotkeyId {
+	return relayedHotkeys().some((relayed) => relayed.id === id);
+}
+
+/**
+ * The window's tab keys, every combo: a frame whose words are being edited
+ * holds them back from the Mac menu, since closing or leaving the tab then
+ * would take the open edit with it (daemon/document.ts).
+ */
+export function tabHotkeyCombos(): readonly string[] {
+	return HOTKEYS.flatMap((entry) => (entry.group === "Tabs" && "keys" in entry ? entry.keys : []));
 }

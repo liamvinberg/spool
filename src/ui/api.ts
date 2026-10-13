@@ -175,6 +175,14 @@ export function putSessionOrder(order: readonly string[]): void {
 	void client.api.session.order.$put({ json: { order: [...order] } });
 }
 
+/** A closed tab opened again in its slot: the order follows the open, since it opens nothing itself. */
+export function putReopenedTab(root: string, order: readonly string[]): void {
+	void client.api.session.$put({ json: { root, open: true } }).then(
+		() => putSessionOrder(order),
+		() => undefined,
+	);
+}
+
 export async function fetchProjection(project: string): Promise<Projection | undefined> {
 	const res = await client.api.p[":project"].frames.$get({ param: { project } });
 	if (!res.ok) return undefined;

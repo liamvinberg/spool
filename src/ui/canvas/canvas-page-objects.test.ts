@@ -112,6 +112,62 @@ describe("a page on the field", () => {
 		expect(pageObject(host, "shop")).toBeNull();
 	});
 
+	it.each([
+		["⏎", { key: "Enter" }],
+		["⌘↓", { key: "ArrowDown", metaKey: true }],
+	])("goes inside on %s when it is held", async (_, key) => {
+		const host = await mountCanvas(PROJECT);
+		await press(host, { x: 410, y: 10 });
+		await keydown(key);
+		expect(host.querySelector('[data-frame-label="shop/checkout"]')).not.toBeNull();
+		expect(pageObject(host, "shop")).toBeNull();
+	});
+
+	it.each([
+		["the last Esc", { key: "Escape" }],
+		["⌘↑", { key: "ArrowUp", metaKey: true }],
+	])("goes back up on %s, landing with the page it came out of held", async (_, key) => {
+		const host = await mountCanvas(PROJECT);
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
+		});
+		expect(pageObject(host, "shop")).toBeNull();
+		await keydown(key);
+		await until(() => pageObject(host, "shop") !== null);
+		expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
+		expect(host.querySelector('[data-properties-row="path"]')?.textContent).toContain("frames/shop");
+	});
+
+	it("puts a selected frame down on Esc before going up a page", async () => {
+		const host = await mountCanvas(PROJECT);
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
+		});
+		await press(host, screenAt(host, { x: 10, y: 10 }));
+		const checkout = () => host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed");
+		expect(checkout()).toBe("true");
+
+		await keydown({ key: "Escape" });
+		expect(checkout()).toBe("false");
+		// still on the page, its frame drawn and its own object nowhere
+		expect(host.querySelector('[data-frame-label="shop/checkout"]')).not.toBeNull();
+		expect(pageObject(host, "shop")).toBeNull();
+
+		await keydown({ key: "Escape" });
+		await until(() => pageObject(host, "shop") !== null);
+	});
+
+	it("puts a held page down on Esc before going up, and stays put on the root page", async () => {
+		const host = await mountCanvas(PROJECT);
+		await press(host, { x: 410, y: 10 });
+		expect(host.querySelector('[data-properties-row="path"]')).not.toBeNull();
+		await keydown({ key: "Escape" });
+		expect(host.querySelector('[data-properties-row="path"]')).toBeNull();
+		await keydown({ key: "Escape" });
+		expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
+		expect(pageObject(host, "shop")).not.toBeNull();
+	});
+
 	it("says so on a page nobody has written into, and never on a page of pages", async () => {
 		const host = await mountCanvas({
 			pages: ["shop", "fresh"],
@@ -185,6 +241,12 @@ describe("a page holding only pages", () => {
 		expect(pageObject(host, "explore/agent")?.querySelector("span.border-accent")).not.toBeNull();
 	});
 });
+
+async function keydown(init: KeyboardEventInit): Promise<void> {
+	await act(async () => {
+		window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init }));
+	});
+}
 
 /** where a world point lands on the glass under the camera as it stands */
 function screenAt(host: HTMLElement, world: { x: number; y: number }): { x: number; y: number } {

@@ -13,8 +13,22 @@ const OTHER = "Linux x86_64";
 
 describe("combo parsing", () => {
 	it("reads modifiers and the key", () => {
-		expect(parseCombo("accel+shift+z")).toEqual({ accel: true, ctrl: false, shift: true, alt: false, key: "z" });
-		expect(parseCombo("ctrl+o")).toEqual({ accel: false, ctrl: true, shift: false, alt: false, key: "o" });
+		expect(parseCombo("accel+shift+z")).toEqual({
+			accel: true,
+			ctrl: false,
+			shift: true,
+			alt: false,
+			any: false,
+			key: "z",
+		});
+		expect(parseCombo("ctrl+o")).toEqual({
+			accel: false,
+			ctrl: true,
+			shift: false,
+			alt: false,
+			any: false,
+			key: "o",
+		});
 	});
 
 	it("allows a bare accel hold and nothing else keyless", () => {
@@ -151,5 +165,15 @@ describe("the register", () => {
 	it("lists rows for every group it names", () => {
 		expect(listedHotkeys("Frames").map((entry) => entry.id)).toContain("canvas.enter");
 		expect(listedHotkeys("Help").map((entry) => entry.id)).toContain("app.help");
+	});
+
+	it("tells the page keys beside the frame ones, ⏎ and Esc with Finder's ⌘↓ and ⌘↑", () => {
+		const frames = listedHotkeys("Frames");
+		const into = frames.find((entry) => entry.id === "canvas.page-in");
+		const up = frames.find((entry) => entry.id === "canvas.page-up");
+		expect(into && hotkeyChips(into).keys[0]).toBe("⏎");
+		expect(into && hotkeyChips(into).keys[1]).toMatch(/↓$/);
+		expect(up && hotkeyChips(up).keys[0]).toBe("esc");
+		expect(up && hotkeyChips(up).keys[1]).toMatch(/↑$/);
 	});
 });

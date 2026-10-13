@@ -170,6 +170,49 @@ describe("FrameLabel", () => {
 	});
 });
 
+describe("FrameLabel in the ⌥ overview", () => {
+	it("keeps the target's name on its row and gives the hint a line of its own, which truncates first", () => {
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+		});
+		// a phone, zoomed out to 146px on screen
+		act(() =>
+			root.render(
+				createElement(FrameLabel, {
+					name: "checkout--payment-sheet",
+					frame: { ...AT, w: 292, h: 632 },
+					camera: cameraAt({ x: 0, y: 0, k: 0.5 }),
+					near: ON_SCREEN,
+					entered: false,
+					selected: false,
+					hovered: false,
+					overview: "target",
+					overviewHint: "let go of ⌥ to enter",
+				}),
+			),
+		);
+		// at rest, where every label has its width
+		act(() => vi.advanceTimersByTime(REST_MS));
+		const el = host.querySelector<HTMLElement>("[data-frame-label]");
+		expect(el?.style.width).toBe("146px");
+		const name = [...(el?.querySelectorAll("span") ?? [])].find(
+			(span) => span.textContent === "checkout--payment-sheet",
+		);
+		const hint = el?.querySelector<HTMLElement>('[data-overview-hint="checkout--payment-sheet"]');
+		expect(name?.className).toContain("text-accent-strong");
+		expect(hint?.textContent).toBe("let go of ⌥ to enter");
+		// not beside the name, where it could not shrink and pushed the name out
+		expect(hint?.parentElement).toBe(el);
+		expect(name?.parentElement?.contains(hint ?? null)).toBe(false);
+		expect(hint?.className).toContain("truncate");
+		expect(hint?.className).toContain("min-w-0");
+	});
+});
+
 describe("LabelField", () => {
 	it("carries its labels by the camera's translation alone, so they keep their size", () => {
 		const camera = cameraAt({ x: 30, y: -10, k: 0.25 });

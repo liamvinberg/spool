@@ -244,6 +244,68 @@
 	--animate-agent-breathe: agent-breathe 2400ms cubic-bezier(0.65, 0, 0.35, 1) infinite alternate;
 	--animate-agent-ring-open: agent-ring-open 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
 
+	/* moving between frames while live (DEV-295): landing, the live chip slides in
+	 * from the side you came from and the frame's ring flashes once; in the ⌥
+	 * overview a press toward nothing leaves a stop mark that fades */
+	--animate-live-land-ring: live-land-ring 720ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--animate-live-chip-left: live-chip-left 260ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-live-chip-right: live-chip-right 260ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-live-chip-up: live-chip-up 260ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-live-chip-down: live-chip-down 260ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-overview-stop: overview-stop 900ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+
+	@keyframes live-land-ring {
+		0% {
+			opacity: 0;
+			transform: scale(1.012);
+		}
+		25% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+
+	@keyframes live-chip-left {
+		from {
+			opacity: 0;
+			transform: translateX(14px);
+		}
+	}
+
+	@keyframes live-chip-right {
+		from {
+			opacity: 0;
+			transform: translateX(-14px);
+		}
+	}
+
+	@keyframes live-chip-up {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+	}
+
+	@keyframes live-chip-down {
+		from {
+			opacity: 0;
+			transform: translateY(-8px);
+		}
+	}
+
+	@keyframes overview-stop {
+		0%,
+		60% {
+			opacity: 1;
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+
 	/* a teammate arriving on a team canvas (presence): their pointer and face come up out
 	 * of nothing, at the pace the prototype's take settled on; leaving is the reverse,
 	 * drawn as a transition because it starts from wherever they were */
@@ -768,6 +830,20 @@
 
 	.animate-boot-in {
 		animation: none;
+	}
+
+	/* a landing is the chip in place, and the flash is simply not drawn; the stop
+	 * mark stands still until the overview moves on or closes */
+	.animate-live-chip-left,
+	.animate-live-chip-right,
+	.animate-live-chip-up,
+	.animate-live-chip-down,
+	.animate-overview-stop {
+		animation: none;
+	}
+
+	.animate-live-land-ring {
+		display: none;
 	}
 
 	/* the fade under a thread row's close is a cut rather than a slide */

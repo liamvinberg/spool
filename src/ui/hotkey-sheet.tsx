@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { learnKeyboardLayout } from "./hotkey-combos";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { HOTKEY_GROUPS, type HotkeyEntry, type HotkeyIdFor, hotkeyChips, listedHotkeys } from "./hotkeys";
 import { Kbd } from "./primitives/display";
@@ -26,6 +27,18 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 			} satisfies Record<HotkeyIdFor<"help">, HotkeyHandler>,
 		});
 	}, [onClose]);
+
+	// keys matched by place wear this layout's glyph (⌘¨ on Swedish) once read
+	const [, setLayoutRead] = useState(false);
+	useEffect(() => {
+		let open = true;
+		void learnKeyboardLayout().then((learned) => {
+			if (open && learned) setLayoutRead(true);
+		});
+		return () => {
+			open = false;
+		};
+	}, []);
 
 	return (
 		<>

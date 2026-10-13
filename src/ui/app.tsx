@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { accelPressed } from "../runtime/platform-keys";
 import type { TabPresence } from "../team-sync-protocol";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
@@ -12,6 +13,7 @@ import {
 	postForgetProject,
 	postUpgrade,
 	putActiveTab,
+	putReopenedTab,
 	putSession,
 	putSessionOrder,
 	reloadForNewBundle,
@@ -26,12 +28,13 @@ import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
-import { desktopWindow } from "./desktop-window";
+import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
+import { keep, letGo } from "./gone-projects";
 import { handedOver } from "./handover";
 import { coversOf, Home, ProjectGrid } from "./home";
-import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
+import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
-import type { HotkeyIdFor } from "./hotkeys";
+import type { HotkeyId, HotkeyIdFor } from "./hotkeys";
 import { ProjectPicker } from "./picker";
 import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
@@ -40,10 +43,27 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { SharedControl, useShares } from "./shares";
+import {
+	type ClosedTab,
+	lastTab,
+	numberedTab,
+	popClosed,
+	pushClosed,
+	reopenedOrder,
+	steppedTab,
+	type TabSlot,
+} from "./tab-keys";
 import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { type MoveDone, useMovedToast } from "./team-move";
-import { MoveCommitLine, MoveToTeamDialog, moveCommitNote, TeamProjectsAway, useCoverMoves } from "./team-moves";
+import {
+	FoundAway,
+	MoveCommitLine,
+	MoveToTeamDialog,
+	moveCommitNote,
+	TeamProjectsAway,
+	useCoverMoves,
+} from "./team-moves";
 import { useTeamHome } from "./teams";
 import { TrashProjectDialog } from "./trash-project-dialog";
 import { prepareForUpdate, reloadCanvas } from "./update-lifecycle";
@@ -75,6 +95,8 @@ export function App() {
 	const openRef = useRef(open);
 	openRef.current = open;
 	const [focused, setFocused] = useState<string | null>(null);
+	const focusedRef = useRef(focused);
+	focusedRef.current = focused;
 	const [booted, setBooted] = useState(false);
 	/** A team project a link at spool.page handed this page, until it has been opened. */
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
@@ -136,6 +158,9 @@ export function App() {
 		[open, byRoot, forgetting, tabsHere],
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
+	/** The strip as drawn, for the tab keys, which read it when pressed. */
+	const stripRef = useRef<readonly string[]>([]);
+	stripRef.current = tabs.map((tab) => tab.root);
 	/** The focused project's shares with outsiders, for the Shared control at the window's top right (DEV-193). */
 	const focusedName = focusedTab?.name;
 	const tabShares = useMemo(() => (focusedName === undefined ? null : daemonShares(focusedName)), [focusedName]);
@@ -440,6 +465,8 @@ export function App() {
 	 */
 	const openTab = useCallback(
 		(project: TabProject, focus = true) => {
+			// a project forgotten earlier and opened again is kept like any other
+			keep(project.root);
 			if (!openRef.current.includes(project.root)) {
 				const next = [...openRef.current, project.root];
 				setOpen(next);
@@ -473,20 +500,71 @@ export function App() {
 		putSessionOrder(order);
 	}, []);
 
+	/** The tabs closed this session, last on top, for ⌘⇧T; a reload starts it empty. */
+	const closedTabs = useRef<ClosedTab[]>([]);
 	const closeTab = useCallback(
 		(root: string) => {
+			const slot = openRef.current.indexOf(root);
+			if (slot !== -1) closedTabs.current = pushClosed(closedTabs.current, { root, slot });
 			const next = openRef.current.filter((r) => r !== root);
 			setOpen(next);
 			putSession(root, false);
-			if (focused === root) focusProject(focusAfterClose(openRef.current, root));
+			if (focusedRef.current === root) focusProject(focusAfterClose(openRef.current, root));
 		},
-		[focused, focusProject],
+		[focusProject],
+	);
+
+	/**
+	 * ⌘⇧T: the tab closed last, back in its slot. Its canvas opens on the page
+	 * and camera the daemon kept for it, as any tab does when it is focused.
+	 */
+	const projectsRef = useRef({ byRoot, loaded: projectsLoaded });
+	projectsRef.current = { byRoot, loaded: projectsLoaded };
+	const reopenTab = useCallback(() => {
+		const { byRoot: cards, loaded } = projectsRef.current;
+		// before the cards arrive every project still counts as here
+		const { tab, rest } = popClosed(closedTabs.current, (root) => !loaded || cards.has(root));
+		closedTabs.current = rest;
+		if (tab === undefined) return;
+		if (!openRef.current.includes(tab.root)) {
+			const next = reopenedOrder(openRef.current, tab);
+			setOpen(next);
+			putReopenedTab(tab.root, next);
+		}
+		focusProject(tab.root);
+	}, [focusProject]);
+
+	/**
+	 * ⌘W: what is on top first, then the focused tab, and on Home the window.
+	 * False when nothing closed: on Home in an app too old to be asked to close
+	 * its window, whose own menu then closes it.
+	 */
+	const closeOnTop = useCallback((): boolean => {
+		if (closeTopmost()) return true;
+		const root = focusedRef.current;
+		if (root !== null) {
+			closeTab(root);
+			return true;
+		}
+		if (appWindow?.closeWindow === undefined) return false;
+		appWindow.closeWindow();
+		return true;
+	}, [closeTab, appWindow]);
+
+	/** A tab key's target, where the strip has one. */
+	const focusSlot = useCallback(
+		(slot: TabSlot | undefined) => {
+			if (slot !== undefined && slot !== focusedRef.current) focusProject(slot);
+		},
+		[focusProject],
 	);
 
 	const forgetProject = useCallback(
 		async (project: TabProject) => {
+			letGo(project.root);
 			setForgetting((roots) => new Set([...roots, project.root]));
 			const ok = await postForgetProject(project.root);
+			if (!ok) keep(project.root);
 			if (ok) {
 				// Replace the cards before lifting the hide, and discard reads begun
 				// before the write so an older registry cannot bring the card back.
@@ -509,28 +587,61 @@ export function App() {
 	}, []);
 	const closeSettings = useCallback(() => setSettingsOpen(false), []);
 	useEffect(() => {
+		const handlers = {
+			"app.new-project": (event) => {
+				event?.preventDefault();
+				setPicking("new");
+			},
+			"app.open-project": (event) => {
+				event?.preventDefault();
+				setPicking("folder");
+			},
+			"app.help": () => {
+				setSettingsOpen(false);
+				setKeysOpen(true);
+			},
+			"app.settings": (event) => {
+				event?.preventDefault();
+				openSettings();
+			},
+			"app.close-tab": (event) => {
+				if (closeOnTop()) event?.preventDefault();
+			},
+			"app.close-window": (event) => {
+				if (appWindow?.closeWindow === undefined) return;
+				event?.preventDefault();
+				appWindow.closeWindow();
+			},
+			"app.reopen-tab": (event) => {
+				event?.preventDefault();
+				reopenTab();
+			},
+			"app.home": (event) => {
+				event?.preventDefault();
+				focusSlot(null);
+			},
+			"app.next-tab": (event) => {
+				if (!tabStepKey(event)) return;
+				event?.preventDefault();
+				focusSlot(steppedTab(stripRef.current, focusedRef.current, 1));
+			},
+			"app.previous-tab": (event) => {
+				if (!tabStepKey(event)) return;
+				event?.preventDefault();
+				focusSlot(steppedTab(stripRef.current, focusedRef.current, -1));
+			},
+			...numberedTabHandlers((n) => focusSlot(numberedTab(stripRef.current, n))),
+			"app.tab-last": (event) => {
+				event?.preventDefault();
+				focusSlot(lastTab(stripRef.current));
+			},
+		} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>;
+		// the tab keys are the Mac app's: a browser tab leaves them, ⌘1-9 too, to the browser's own tabs
 		return attachHotkeyLayer({
 			scope: "app",
-			handlers: {
-				"app.new-project": (event) => {
-					event?.preventDefault();
-					setPicking("new");
-				},
-				"app.open-project": (event) => {
-					event?.preventDefault();
-					setPicking("folder");
-				},
-				"app.help": () => {
-					setSettingsOpen(false);
-					setKeysOpen(true);
-				},
-				"app.settings": (event) => {
-					event?.preventDefault();
-					openSettings();
-				},
-			} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>,
+			handlers: appWindow === undefined ? withoutTabKeys(handlers) : handlers,
 		});
-	}, [openSettings]);
+	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot]);
 
 	useEffect(() => {
 		return appWindow?.onCommand((command) => {
@@ -554,11 +665,15 @@ export function App() {
 					setSettingsOpen(false);
 					setKeysOpen(true);
 					break;
+				// the menu's ⌘W puts away a modal surface too, which the page's walk never lets the key reach
+				case "app.close-tab":
+					closeOnTop();
+					break;
 				default:
 					runMenuHotkey(command);
 			}
 		});
-	}, [appWindow, openSettings]);
+	}, [appWindow, openSettings, closeOnTop]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
 	const transfer = useProjectTransfer(async (project) => {
@@ -566,10 +681,11 @@ export function App() {
 		openTab(project);
 	});
 	const teamHome = useTeamHome(account, openExternally, handed?.team ?? null, {
-		covers: (address, here) => {
+		covers: (address, here, sort) => {
 			const covers = coversOf(
 				projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
 			);
+			if (sort === "Name") covers.sort((a, b) => a.name.localeCompare(b.name));
 			return covers.length === 0 ? undefined : (
 				<ProjectGrid
 					projects={covers}
@@ -613,6 +729,10 @@ export function App() {
 		own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
 		onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
 		revision: (address) => projects.filter((project) => project.team?.team === address).length,
+		copies: projects
+			.filter((project) => project.team !== undefined)
+			.map((project) => project.root)
+			.join("\n"),
 		note: moveNote === null ? undefined : <MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />,
 	});
 	/** "Move to team…" on a project in no team, while this account edits in a team. */
@@ -624,6 +744,7 @@ export function App() {
 		movedToast.say(done.toast);
 		if (done.note !== undefined) setMoveNote(done.note);
 		if (done.show !== undefined) teamHome.show(done.show);
+		teamHome.refreshLists();
 		void refetch();
 	};
 	const coverMoves = useCoverMoves({ teams: teamHome.all, onMoveIn: moveToTeam, onDone: moveDone });
@@ -641,6 +762,9 @@ export function App() {
 		trashRequest === null &&
 		moving === null &&
 		!transfer.confirming;
+	useEffect(() => {
+		appWindow?.setMenuKeys?.(menuAccelerators());
+	}, [appWindow]);
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);
@@ -728,6 +852,30 @@ export function App() {
 									)
 								}
 								team={teamHome.team}
+								everywhere={
+									teamHome.everywhere && {
+										...teamHome.everywhere,
+										projects: projects.filter((project) => !forgetting.has(project.root)),
+										teams: teamHome.all,
+										away: teamHome.all.flatMap((team) =>
+											(teamHome.lists.get(team.address) ?? [])
+												.filter((project) => project.copies.length === 0)
+												.map((project) => ({ team: team.address, project })),
+										),
+										drawAway: (found) => (
+											<FoundAway
+												found={found}
+												teams={teamHome.all}
+												origin={teamHome.origin}
+												onGot={(project) => {
+													void refetch();
+													openTab(project);
+												}}
+												onOpen={openExternally}
+											/>
+										),
+									}
+								}
 								account={
 									<AccountFoot
 										account={account}
@@ -830,7 +978,13 @@ export function App() {
 					<TrashProjectDialog
 						project={trashRequest}
 						onTrash={async () => {
-							await trashProject(trashRequest.root);
+							letGo(trashRequest.root);
+							try {
+								await trashProject(trashRequest.root);
+							} catch (error) {
+								keep(trashRequest.root);
+								throw error;
+							}
 							projectRevision.current += 1;
 							setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
 							setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
@@ -861,6 +1015,43 @@ export function App() {
 			</div>
 		</ProjectTeams.Provider>
 	);
+}
+
+/** The app's handlers without the tab keys, for a page in a browser tab. */
+function withoutTabKeys(handlers: Partial<Record<HotkeyId, HotkeyHandler>>): Partial<Record<HotkeyId, HotkeyHandler>> {
+	const tabKeys: ReadonlySet<string> = new Set(TAB_COMMANDS);
+	return Object.fromEntries(Object.entries(handlers).filter(([id]) => !tabKeys.has(id)));
+}
+
+/**
+ * Whether a press is the tab-stepping key it matched: ctrl+Tab, or ⌘⇧] and
+ * ⌘⇧[ under the platform's own accel, so ctrl+⇧] on a Mac is not one. A run
+ * without a press (a menu click, a relay) was decided where it came from.
+ */
+function tabStepKey(event: KeyboardEvent | undefined): boolean {
+	return event === undefined || event.key === "Tab" || accelPressed(event);
+}
+
+/** ⌘1-8, each its own register entry so the menu can wear it. */
+function numberedTabHandlers(
+	go: (n: number) => void,
+): Record<`app.tab-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`, HotkeyHandler> {
+	const handler =
+		(n: number): HotkeyHandler =>
+		(event) => {
+			event?.preventDefault();
+			go(n);
+		};
+	return {
+		"app.tab-1": handler(1),
+		"app.tab-2": handler(2),
+		"app.tab-3": handler(3),
+		"app.tab-4": handler(4),
+		"app.tab-5": handler(5),
+		"app.tab-6": handler(6),
+		"app.tab-7": handler(7),
+		"app.tab-8": handler(8),
+	};
 }
 
 function withIcon(card: ProjectCard, icon: ProjectIcon | undefined): ProjectCard {

@@ -1,7 +1,8 @@
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { accelChord } from "./accel-chord";
 import { ExternalLinkDialog } from "./external-link-dialog";
-import { accelChord, accelLabel } from "./platform-keys";
+import { accelLabel } from "./platform-keys";
 import {
 	barLayout,
 	DESK_BAR_PX,

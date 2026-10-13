@@ -7,6 +7,8 @@ export const MAX_SPATIAL_DISTANCE = 640;
 
 interface Candidate {
 	frame: ProjectedFrame;
+	near: boolean;
+	distance: number;
 	aligned: boolean;
 	forwardGap: number;
 	lateralGap: number;
@@ -17,6 +19,8 @@ interface Candidate {
  * The next frame in a direction: candidates in the perpendicular beam win,
  * then the nearest facing edge. A center half-plane keeps overlapping frames
  * directional, while the final name comparison makes equal layouts stable.
+ * Past MAX_SPATIAL_DISTANCE the key is never dead: with nothing in the local
+ * group that way, the nearest frame beyond it is taken.
  */
 export function nextSpatialFrame(
 	from: ProjectedFrame,
@@ -44,9 +48,11 @@ export function nextSpatialFrame(
 		const lateralGap = intervalGap(fromLateralStart, fromLateralEnd, lateralStart, lateralEnd);
 		const forwardGap =
 			sign > 0 ? Math.max(0, forwardStart - fromForwardEnd) : Math.max(0, fromForwardStart - forwardEnd);
-		if (Math.hypot(forwardGap, lateralGap) > MAX_SPATIAL_DISTANCE) continue;
+		const distance = Math.hypot(forwardGap, lateralGap);
 		candidates.push({
 			frame,
+			near: distance <= MAX_SPATIAL_DISTANCE,
+			distance,
 			aligned: lateralGap === 0,
 			forwardGap,
 			lateralGap,
@@ -56,6 +62,8 @@ export function nextSpatialFrame(
 
 	candidates.sort(
 		(a, b) =>
+			Number(b.near) - Number(a.near) ||
+			(a.near ? 0 : a.distance - b.distance) ||
 			Number(b.aligned) - Number(a.aligned) ||
 			a.forwardGap - b.forwardGap ||
 			a.lateralGap - b.lateralGap ||
@@ -63,6 +71,45 @@ export function nextSpatialFrame(
 			a.frame.name.localeCompare(b.frame.name),
 	);
 	return candidates[0]?.frame;
+}
+
+/**
+ * The way back along ⌥-arrow steps: `at` is the frame the last step landed on,
+ * `back` the frames it came from, newest last, each with the direction left in.
+ */
+export interface SpatialTrail {
+	at: string;
+	back: readonly { name: string; direction: SpatialDirection }[];
+}
+
+const OPPOSITE: Record<SpatialDirection, SpatialDirection> = {
+	left: "right",
+	right: "left",
+	up: "down",
+	down: "up",
+};
+
+/**
+ * One ⌥-arrow step. Reversing the last step returns to the frame it came
+ * from (→ then ← lands where you started) whatever the geometry says; any
+ * other step goes to the spatial neighbour and extends the trail. A trail not
+ * standing on `from` is stale (the selection moved some other way) and starts over.
+ */
+export function stepSpatially(
+	from: ProjectedFrame,
+	frames: readonly ProjectedFrame[],
+	direction: SpatialDirection,
+	trail: SpatialTrail | null,
+): { target: ProjectedFrame; trail: SpatialTrail } | undefined {
+	const back = trail?.at === from.name ? trail.back : [];
+	const last = back.at(-1);
+	if (last !== undefined && last.direction === OPPOSITE[direction]) {
+		const target = frames.find((frame) => frame.name === last.name);
+		if (target !== undefined) return { target, trail: { at: target.name, back: back.slice(0, -1) } };
+	}
+	const target = nextSpatialFrame(from, frames, direction);
+	if (target === undefined) return undefined;
+	return { target, trail: { at: target.name, back: [...back, { name: from.name, direction }] } };
 }
 
 function intervalGap(a1: number, a2: number, b1: number, b2: number): number {

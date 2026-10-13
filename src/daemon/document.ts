@@ -1,27 +1,49 @@
 import { createHash } from "node:crypto";
 import { MAX_CAPTURE_OUTPUT_PIXELS, SETTLE_BUDGET_MS } from "../cover";
+import { OVERVIEW_HOLD_MS } from "../ui/canvas/live-moves";
+import { comboMatches, lowerCombo, parseCombo } from "../ui/hotkey-combos";
+import { relayedHotkeys, tabHotkeyCombos } from "../ui/hotkeys";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 import { collapsedWords } from "./edit-words";
 import { tagWord, wholeComponent } from "./element-name";
 import { PROJECT_LAYER } from "./tailwind";
 
 /**
- * The source of the three helpers the canvas shim carries, written and tested once in TypeScript
- * (`element-name.ts`, `edit-words.ts`). The release build prints them once and bakes the text in here
+ * The source of the helpers the canvas shim carries, written and tested once in TypeScript
+ * (`element-name.ts`, `edit-words.ts`, `ui/hotkey-combos.ts`). The release build prints them once and bakes the text in here
  * (tsup.config.ts), so every copy of this module carries the same bytes however it is bundled again: a
  * Worker that bundles `spool.page/compile` renames and reprints what it bundles, and a function's own
  * `toString()` would then compile a different document from the daemon's. Run from source, they are read off
  * the functions themselves.
  */
-declare const __SPOOL_SHIM_HELPERS__: { wholeComponent: string; tagWord: string; collapsedWords: string } | undefined;
+declare const __SPOOL_SHIM_HELPERS__:
+	| { wholeComponent: string; tagWord: string; collapsedWords: string; comboMatches: string }
+	| undefined;
 const shimHelpers =
 	typeof __SPOOL_SHIM_HELPERS__ === "undefined"
 		? {
 				wholeComponent: wholeComponent.toString(),
 				tagWord: tagWord.toString(),
 				collapsedWords: collapsedWords.toString(),
+				comboMatches: comboMatches.toString(),
 			}
 		: __SPOOL_SHIM_HELPERS__;
+
+/**
+ * The keys an entered frame hands back to the canvas, from the register's
+ * `relay` entries: each lowered combo, the entry it runs, and whether the
+ * browser's own meaning is eaten (a chord under ctrl or ⌘ has one; Esc stays
+ * the frame's too, its own modals included).
+ */
+const relayKeys = relayedHotkeys().flatMap(({ id, combos, yields, typing }) =>
+	combos.map((combo) => {
+		const parsed = parseCombo(combo);
+		return { id, match: lowerCombo(parsed), prevent: parsed.accel || parsed.ctrl, yields, typing };
+	}),
+);
+
+/** The tab keys, which an open edit of a frame's words keeps from the window. */
+const editHeldKeys = tabHotkeyCombos().map((combo) => lowerCombo(parseCombo(combo)));
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -1880,6 +1902,9 @@ const canvasShimJs = `(() => {
 		if (editing || editingKeys.delete(event.key) || stray) {
 			event.stopImmediatePropagation();
 			if (event.key === "Meta" || event.key === "Control") parent.postMessage({ spool: "modifier", frame: (window.__SPOOL__ || {}).frame, modifier: event.key, held: false }, "*");
+			// a ⌥ that went down in the document before this one (a reload
+			// mid-hold) comes up here: the canvas may have an overview open on it
+			if (event.key === "Alt" && window.parent !== window) parent.postMessage({ spool: "hold", frame: (window.__SPOOL__ || {}).frame, phase: "up" }, "*");
 		}
 	}, true);
 
@@ -2251,8 +2276,13 @@ const canvasShimJs = `(() => {
   }
  });
 
-	// Esc must still exit (#22); browser zoom shortcuts become the canvas's
-	// shortcuts so a focused frame cannot zoom the whole page into a trap.
+	// What reaches out of an entered frame is the register's to say (its \`relay\`
+	// entries, ui/hotkeys.ts): Esc must still exit (#22), the jump chords are
+	// owed mid-walk (#166), and browser zoom chords become the canvas's so a
+	// focused frame cannot zoom the whole page into a trap.
+	var relayKeys = ${JSON.stringify(relayKeys)};
+	var relayMatches = ${shimHelpers.comboMatches};
+	var editHeldKeys = ${JSON.stringify(editHeldKeys)};
 	addEventListener("keydown", (event) => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
@@ -2277,34 +2307,138 @@ const canvasShimJs = `(() => {
 				try { document.execCommand("insertText", false, " "); } catch {}
 				return;
 			}
+			// the window's tab keys wait for the edit to end: let through, the Mac
+			// menu would close or leave the tab and the words with it
+			for (const held of editHeldKeys) {
+				if (relayMatches(event, held, null)) { event.preventDefault(); break; }
+			}
 			event.stopImmediatePropagation();
 			return;
 		}
+		// a key the page made up itself is no press of the person's: it moves
+		// nothing out on the canvas, as a made-up drag drops nothing
+		if (!event.isTrusted) return;
+		// ⌥ held for the overview (DEV-295): any other key under it, the
+		// modifiers included, ends it unopened, so ⌥2 still types @
+		if (event.key === "Alt") {
+			if (!event.repeat) altHeld = null;
+		} else if (altHeld !== null && !yieldingMatch(event)) breakAlt(frame);
 		// which key is the accel modifier is the canvas's rule, not the frame's:
 		// report the key that moved and let the canvas decide it counts
 		if (event.key === "Meta" || event.key === "Control") {
 			window.parent.postMessage({ spool: "modifier", frame, modifier: event.key, held: true }, "*");
 			return;
 		}
-		if (event.key === "Escape") {
-			window.parent.postMessage({ spool: "key", frame, key: "Escape" }, "*");
+		for (const relay of relayKeys) {
+			if (!relayMatches(event, relay.match, null)) continue;
+			if (relay.yields) {
+				if (relay.match.hold !== null && event.repeat) return;
+				// accel is ⌘ on a Mac and ctrl elsewhere: ctrl+⌥ arrows on a Mac
+				// are the frame's, and the system's, never spool's
+				if (relay.match.accel && !(appleShim ? event.metaKey : event.ctrlKey)) continue;
+				// the frame's own listeners come first: decide once they all ran
+				if (!relay.typing && typingIn(event)) {
+					if (event.key !== "Alt") breakAlt(frame);
+					return;
+				}
+				awaitFrame(event, relay, frame);
+				return;
+			}
+			if (relay.prevent) event.preventDefault();
+			window.parent.postMessage({ spool: "key", frame, id: relay.id, metaKey: event.metaKey, ctrlKey: event.ctrlKey }, "*");
 			return;
 		}
-		// the jump chords are the canvas's on every platform (#166): relay the
-		// literal control chord and eat the browser's open-file dialog
-		if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.key === "o" || event.key === "i")) {
-			event.preventDefault();
-			window.parent.postMessage({ spool: "key", frame, key: "ctrl+" + event.key }, "*");
-			return;
-		}
-		if (!event.metaKey && !event.ctrlKey) return;
-		let kind;
-		if (event.key === "+" || event.key === "=") kind = "in";
-		else if (event.key === "-") kind = "out";
-		else return;
-			event.preventDefault();
-			window.parent.postMessage({ spool: "zoom", frame, kind }, "*");
 		}, true);
+
+	// A key a prototype may well bind itself (\`yields\` in the register: ⌥
+	// arrows, ⌥ hjkl, ⌥ held) is the frame's first. Spool takes it only when no
+	// listener in the frame called preventDefault (or stopped it on its way
+	// up), which it can know only once every one of them ran: the window's
+	// bubble listener added now, mid-dispatch, runs after every one the frame
+	// already had there. A press stopped on its way never reaches it, so the
+	// next press clears it away first.
+	var awaiting = null;
+	var appleShim = /Mac|iPhone|iPad|iPod/.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "");
+	var yieldingMatch = (event) => relayKeys.some((relay) => relay.yields && relay.match.hold === null && relayMatches(event, relay.match, null));
+	var typingIn = (event) => {
+		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+		const el = path[0] instanceof Element ? path[0] : event.target;
+		if (!(el instanceof HTMLElement)) return false;
+		if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+		if (el.tagName !== "INPUT") return false;
+		return !["button", "checkbox", "radio", "submit", "reset", "range", "color", "file", "image", "hidden"].includes(el.type);
+	};
+	var awaitFrame = (event, relay, frame) => {
+		if (awaiting !== null) removeEventListener("keydown", awaiting.decide);
+		const decide = (seen) => {
+			if (seen !== event) return;
+			removeEventListener("keydown", decide);
+			awaiting = null;
+			if (event.defaultPrevented) {
+				// the frame keeps it, and a ⌥ it kept is no hold of spool's
+				if (altHeld !== null) breakAlt(frame);
+				return;
+			}
+			if (relay.match.hold === null) {
+				event.preventDefault();
+				// a step under the held ⌥ opens the overview at once
+				if (altHeld !== null) altHeld.stepped = true;
+			} else altHeld = { broken: false, stepped: false, since: performance.now() };
+			window.parent.postMessage({
+				spool: "key",
+				frame,
+				id: relay.id,
+				metaKey: event.metaKey,
+				ctrlKey: event.ctrlKey,
+				key: event.key,
+				code: event.code,
+			}, "*");
+		};
+		awaiting = { decide };
+		addEventListener("keydown", decide);
+	};
+	// the ⌥ held that spool was told of, once per hold; null while none is
+	var altHeld = null;
+	var breakAlt = (frame) => {
+		if (altHeld === null || altHeld.broken) return;
+		altHeld.broken = true;
+		window.parent.postMessage({ spool: "hold", frame, phase: "broken" }, "*");
+	};
+	addEventListener("keyup", (event) => {
+		if (window.parent === window || event.key !== "Alt" || altHeld === null) return;
+		const broken = altHeld.broken;
+		altHeld = null;
+		// a broken hold was told once already: its overview is gone
+		if (!broken) window.parent.postMessage({ spool: "hold", frame: (window.__SPOOL__ || {}).frame, phase: "up" }, "*");
+	}, true);
+	addEventListener("blur", () => {
+		if (window.parent === window || altHeld === null) return;
+		breakAlt((window.__SPOOL__ || {}).frame);
+		altHeld = null;
+	});
+	// a press under a held ⌥ is a gesture of its own, the frame's or the
+	// canvas's. Once the overview may be open (held past its delay) the camera
+	// has moved under the pointer, so the press is no click on what it lands
+	// on: it only closes the overview, and never reaches the page
+	addEventListener("pointerdown", (event) => {
+		if (window.parent === window || altHeld === null) return;
+		const open = !altHeld.broken && (altHeld.stepped || performance.now() - altHeld.since >= ${OVERVIEW_HOLD_MS});
+		breakAlt((window.__SPOOL__ || {}).frame);
+		if (!open) return;
+		swallowPress = true;
+		event.preventDefault();
+		event.stopImmediatePropagation();
+	}, true);
+	// the rest of a swallowed press goes with it
+	var swallowPress = false;
+	for (const type of ["pointerup", "mousedown", "mouseup", "click", "auxclick", "contextmenu"]) {
+		addEventListener(type, (event) => {
+			if (!swallowPress) return;
+			if (type === "click" || type === "pointerup" && event.pointerType !== "mouse") swallowPress = false;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+		}, true);
+	}
 
 	// A pointer trap is the same failure as a zoom trap: entered, the frame owns
 	// every press, so the canvas would have no way to pan out from under it. The
@@ -2417,8 +2551,9 @@ const canvasShimJs = `(() => {
 	addEventListener("blur", () => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
+		// told as a blur: the key may still be down, the focus only moved on
 		for (const modifier of ["Meta", "Control"]) {
-			window.parent.postMessage({ spool: "modifier", frame, modifier, held: false }, "*");
+			window.parent.postMessage({ spool: "modifier", frame, modifier, held: false, blur: true }, "*");
 		}
 	});
 })();

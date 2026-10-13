@@ -191,7 +191,7 @@ export default function Hostile() {
 			ui.go("next");
 			return;
 		}
-		window.parent.postMessage({ spool: "key", frame: "next", key: "Escape" }, "*");
+		window.parent.postMessage({ spool: "key", frame: "next", id: "canvas.leave" }, "*");
 		setTimeout(() => ui.go("next"), 50);
 	}
 
