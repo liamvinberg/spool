@@ -6257,6 +6257,7 @@ export function ProjectCanvas({
 								marquee={marquee}
 								dropLine={dropLine}
 								landing={live.chip?.ring === true ? { frame: live.chip.frame, at: live.chip.at } : null}
+								overview={live.overview !== null}
 							/>
 							{live.overview !== null && (
 								<OverviewLayer

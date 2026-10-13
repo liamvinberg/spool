@@ -127,6 +127,7 @@ describe("moving between frames while live", () => {
 		const { host } = await openCanvas();
 		await enter(host, "welcome");
 		const entered = cameraTransform(host);
+		expect(host.querySelector('[data-frame-ring="welcome"]')).not.toBeNull();
 
 		await relay(host, "welcome", step("ArrowRight"));
 		expect(overviewTarget(host)).toBe("sign-up");
@@ -138,6 +139,9 @@ describe("moving between frames while live", () => {
 		expect(labelText(host, "sign-up")).toContain("let go of ⌥ to enter");
 		// still live where it opened, its chip faded
 		expect(liveChip(host)).toBe("welcome");
+		expect(host.querySelector('[data-live-chip="welcome"]')?.className).toContain("bg-surface-control");
+		// and ringed only as the neighbour it is: no accent ring of its own as well
+		expect(host.querySelector('[data-frame-ring="welcome"]')).toBeNull();
 
 		// ⌥L is ¬ on a Mac: by place, it is right
 		await relay(host, "welcome", step("¬", "KeyL"));
@@ -151,6 +155,7 @@ describe("moving between frames while live", () => {
 		// the chip slides in from the side it came from, the ring flashes once
 		expect(host.querySelector('[data-live-chip="verify"]')?.className).toContain("animate-live-chip-right");
 		expect(host.querySelector('[data-land-ring="verify"]')).not.toBeNull();
+		expect(host.querySelector('[data-frame-ring="verify"]')).not.toBeNull();
 		// back at the zoom it was live at
 		expect(cameraScale(host)).toBe(2);
 		expect(cameraTransform(host)).not.toBe(entered);
