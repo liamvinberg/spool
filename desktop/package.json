@@ -3,7 +3,7 @@
 	"private": true,
 	"version": "0.0.0",
 	"description": "Spool for macOS: an Electron window on the local daemon.",
-	"license": "MIT",
+	"license": "FSL-1.1-MIT",
 	"main": "dist/index.js",
 	"scripts": {
 		"build": "rm -rf dist && tsc",

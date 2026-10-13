@@ -1731,7 +1731,7 @@ export function boot(): void {
 	installPlayChannels();
 	installUpdateChannels();
 	installCanvasChannels();
-	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "MIT" });
+	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "FSL-1.1-MIT" });
 
 	app.on("window-all-closed", () => {
 		// Deliberately nothing. Closing the window leaves the app in the menu bar
