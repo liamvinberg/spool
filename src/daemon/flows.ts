@@ -425,13 +425,16 @@ interface ReadPass {
 }
 
 /**
- * The longest a build holds the thread over frames it only proves. A frame
- * proven by its witness or its bytes costs a few stats or reads, and a turn
- * apiece made a busy daemon's every other caller part of a build's wall time:
- * each turn waits for whatever else is queued. A frame derived again still
- * gets a turn of its own.
+ * The longest a build holds the thread before it hands it back, and the most
+ * frames it derives again in one turn. A turn apiece made a busy daemon's every
+ * other caller part of a build's wall time, since each turn waits for whatever
+ * else is queued: one shared file edited on Spool's own canvas derives 165
+ * frames again, about a millisecond each on an M1 Pro, and a turn per frame
+ * doubled the time a hand's next read waited on them. A frame proven by its
+ * witness or its bytes costs a few stats or reads, and shares its turn too.
  */
 const TURN_MS = 4;
+const DERIVED_PER_TURN = 4;
 
 /**
  * How often a project's frames are proven by their bytes whatever their
@@ -592,6 +595,7 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 		const edges: FlowEdge[] = [];
 		const unreadable: FlowUnreadable[] = [];
 		let turnFrom = performance.now();
+		let derivedInTurn = 0;
 		for (const [frame, dir] of dirs) {
 			const { entry, derived } = entryFor(root, disk, entries, frame, dir);
 			if (entry === undefined) {
@@ -616,11 +620,11 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			}
 			edges.push(...entry.derived.edges);
 			unreadable.push(...entry.derived.unreadable);
-			// a derived frame is one turn: 5.5 ms of work is what makes the yield
-			// sound; a proven one is microseconds, and shares its turn
-			if (derived || performance.now() - turnFrom >= TURN_MS) {
+			if (derived) derivedInTurn++;
+			if (derivedInTurn === DERIVED_PER_TURN || performance.now() - turnFrom >= TURN_MS) {
 				await handBack();
 				turnFrom = performance.now();
+				derivedInTurn = 0;
 			}
 		}
 		for (const frame of [...entries.keys()]) if (!dirs.has(frame) && entries.delete(frame)) moved.add(root);

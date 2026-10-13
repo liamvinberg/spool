@@ -32,8 +32,9 @@ import type { Flows } from "./flows";
  * 4.6 ms off; macOS's FSEvents shows no difference). That is the watcher's cost,
  * not the handler's, and it has its own ticket (#245).
  *
- * Two readings, because they fail differently. The turn count is exact: one turn
- * per frame is the yield itself, and no machine load can take a turn away. The
+ * Two readings, because they fail differently. The turn count is exact: a turn
+ * for every four frames derived is the yield itself, and no machine load can
+ * take a turn away. The
  * millisecond figure is wall clock, and the suite runs test files in parallel, so
  * a saturated machine stretches gaps that the handler did not cause. The time
  * budget therefore runs only with test:performance, which measures these suites
@@ -53,7 +54,7 @@ const BUDGET_MS = 10;
 interface ThreadReading {
 	/** The longest the loop went without a turn, in milliseconds. */
 	longest: number;
-	/** How many turns it got — one per frame is the yield, in a form no
+	/** How many turns it got — one per four frames is the yield, in a form no
 	 * loaded machine can distort. */
 	turns: number;
 }
@@ -149,8 +150,8 @@ export default function Frame() {
 		"frame-2",
 		`frame-${1 + 2 + ROUNDS}`,
 	]);
-	// the thread came back once per frame, every round — the guarantee itself,
-	// which no amount of machine load can inflate away
-	expect(turns).toBeGreaterThanOrEqual(FRAMES);
+	// the thread came back at least once per four frames, every round — the
+	// guarantee itself, which no amount of machine load can inflate away
+	expect(turns).toBeGreaterThanOrEqual(FRAMES / 4);
 	expectTiming("flows longest thread hold", held, BUDGET_MS);
 });
