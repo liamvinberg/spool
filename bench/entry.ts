@@ -43,8 +43,10 @@ import {
  * at the overview camera, into a different frame, so every one boots a
  * document nobody has opened in that tab.
  *
- * `--trace <file>` records the first entry as a Chrome trace with screenshots,
- * for Perfetto or DevTools.
+ * `--trace <file>` records one entry as a Chrome trace, for Perfetto or
+ * DevTools: the second by default (`--trace-entry`), because the first in a
+ * fresh browser also pays its GPU process's first pipeline compiles, which
+ * a browser in use has long since paid.
  *
  *   pnpm build && node bench/entry.ts --project <path> --page app --headed
  *   node bench/entry.ts --project <path> --page app --zoom 0.16 --entries 8 --throttle 1,4 --headed
@@ -60,6 +62,8 @@ interface Options {
 	throttle: number[];
 	headed: boolean;
 	trace: string | undefined;
+	/** Which entry the trace records, from 1. */
+	traceEntry: number;
 	out: string | undefined;
 }
 
@@ -72,6 +76,7 @@ function parseArgs(argv: string[]): Options {
 		throttle: [1],
 		headed: false,
 		trace: undefined,
+		traceEntry: 2,
 		out: undefined,
 	};
 	for (let i = 0; i < argv.length; i++) {
@@ -86,6 +91,7 @@ function parseArgs(argv: string[]): Options {
 		else if (arg === "--entries") options.entries = Number(next);
 		else if (arg === "--throttle") options.throttle = next.split(",").map(Number);
 		else if (arg === "--trace") options.trace = resolve(next);
+		else if (arg === "--trace-entry") options.traceEntry = Number(next);
 		else if (arg === "--out") options.out = resolve(next);
 		else throw new Error(`unknown argument ${arg}`);
 		if (arg !== "--headed" && arg !== "--headless") i++;
@@ -293,8 +299,8 @@ async function measure(
 				await tab.waitForTimeout(600);
 				const target = (await targets(tab, options.entries))[index];
 				if (target === undefined) throw new Error(`no frame ${index + 1} on screen to enter`);
-				const trace = index === 0 && rate === options.throttle[0] ? options.trace : undefined;
-				if (trace !== undefined) await browser.startTracing(tab, { path: trace, screenshots: true });
+				const trace = index + 1 === options.traceEntry && rate === options.throttle[0] ? options.trace : undefined;
+				if (trace !== undefined) await browser.startTracing(tab, { path: trace });
 				const entry = await enterOnce(tab, target, rate);
 				if (trace !== undefined) {
 					await browser.stopTracing();
@@ -335,8 +341,11 @@ function table(entries: Entry[], rates: number[]): string {
 		`| double-click to shell shown | ${cell((e) => e.slotShown)} |`,
 		`| double-click to document loaded (clickable) | ${cell((e) => e.loaded)} |`,
 		`| double-click to live (still faded) | ${cell((e) => e.live)} |`,
-		`| flight p95 / worst interval | ${cell((e) => e.fly.p95)} / ${cell((e) => e.fly.worst)} |`,
-		`| entry p95 / worst interval | ${cell((e) => e.entry.p95)} / ${cell((e) => e.entry.worst)} |`,
+		`| flight frames drawn | ${count((e) => e.fly.frames)} |`,
+		`| flight p95 interval | ${cell((e) => e.fly.p95)} |`,
+		`| flight worst interval | ${cell((e) => e.fly.worst)} |`,
+		`| entry p95 interval | ${cell((e) => e.entry.p95)} |`,
+		`| entry worst interval | ${cell((e) => e.entry.worst)} |`,
 		`| entry intervals > ${RARE_INTERVAL_MS} ms | ${count((e) => e.entry.rareIntervals)} |`,
 		`| entry long-animation frames | ${count((e) => e.entry.loafs)} |`,
 		`| entry worst LoAF blocking | ${cell((e) => e.entry.loafWorstBlocking)} |`,
