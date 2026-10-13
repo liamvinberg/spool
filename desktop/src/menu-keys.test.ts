@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { answersTabs, closeWindowKey, DEFAULT_MENU_KEYS, menuKey, reportedMenuKeys, tabItem } from "./menu-keys";
+import {
+	answersTabs,
+	closeWindowKey,
+	DEFAULT_MENU_KEYS,
+	menuKey,
+	nextMenuKeys,
+	reportedMenuKeys,
+	tabItem,
+} from "./menu-keys";
 
 test("the menu wears the keys the page reports from its register", () => {
 	const reported = reportedMenuKeys({ "app.new-project": "CmdOrCtrl+Shift+N", "app.settings": "CmdOrCtrl+," });
@@ -64,4 +72,18 @@ test("a page answering the tab keys gives ⌘W to Close Tab and Close Window its
 
 test("Close Window wears no key when the page answers tabs but names none for it", () => {
 	assert.equal(closeWindowKey(reportedMenuKeys({ "app.close-tab": "CmdOrCtrl+W" })), undefined);
+});
+
+test("a page navigated away takes its tab keys with it, so an older page's ⌘W is Close Window again", () => {
+	const answering = nextMenuKeys({}, { "app.close-tab": "CmdOrCtrl+W", "app.close-window": "CmdOrCtrl+Shift+W" });
+	assert.ok(answering !== undefined);
+	assert.equal(closeWindowKey(answering), "CmdOrCtrl+Shift+W");
+	// navigating reports nothing
+	const navigated = nextMenuKeys(answering, undefined);
+	assert.deepEqual(navigated, {});
+	assert.equal(closeWindowKey(navigated ?? answering), "CmdOrCtrl+W");
+	assert.equal(answersTabs(navigated ?? answering), false);
+	// and the same report twice builds the menu once
+	assert.equal(nextMenuKeys({}, undefined), undefined);
+	assert.equal(nextMenuKeys(answering, { ...answering }), undefined);
 });

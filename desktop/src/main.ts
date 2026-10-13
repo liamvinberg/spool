@@ -25,7 +25,7 @@ import {
 	closeWindowKey,
 	type MenuKeys,
 	menuKey,
-	reportedMenuKeys,
+	nextMenuKeys,
 	type TabCommand,
 	type TabItem,
 	tabItem,
@@ -289,6 +289,8 @@ function createWindow(): BrowserWindow {
 		canvasReady = false;
 		workspaceReady = false;
 		canvasActive = false;
+		// the page that loads may be an older daemon's, which answers no tab key
+		wearMenuKeys(undefined);
 		updateCanvasMenu();
 	});
 	// a canvas that could not load, or whose page crashed, is only the window's
@@ -894,13 +896,7 @@ function installCanvasChannels(): void {
 		event.returnValue = window?.isFullScreen() ?? false;
 	});
 	ipcMain.on("spool:canvas-menu-keys", (event, keys: unknown) => {
-		if (!canvasSender(event)) return;
-		const next = reportedMenuKeys(keys);
-		if (JSON.stringify(next) === JSON.stringify(menuKeys)) return;
-		menuKeys = next;
-		// an accelerator is fixed once built, so the menu is built again around the keys
-		Menu.setApplicationMenu(buildAppMenu());
-		updateCanvasMenu();
+		if (canvasSender(event)) wearMenuKeys(keys);
 	});
 	ipcMain.on("spool:canvas-close-window", (event) => {
 		if (canvasSender(event)) window?.close();
@@ -918,6 +914,16 @@ function installCanvasChannels(): void {
 			sendCanvasCommand(command);
 		}
 	});
+}
+
+/** The menu's keys as the page reports them; nothing reported is the defaults, and no tab items. */
+function wearMenuKeys(reported: unknown): void {
+	const next = nextMenuKeys(menuKeys, reported);
+	if (next === undefined) return;
+	menuKeys = next;
+	// an accelerator is fixed once built, so the menu is built again around the keys
+	Menu.setApplicationMenu(buildAppMenu());
+	updateCanvasMenu();
 }
 
 export function buildAppMenu(): Menu {
