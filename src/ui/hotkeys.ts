@@ -93,6 +93,13 @@ interface HotkeySpec {
 	readonly listed?: false;
 	/** true: answers even from a text field, for chords that mean nothing to text */
 	readonly typing?: true;
+	/**
+	 * Reaches out of an entered frame: the frame shim relays it to the canvas,
+	 * which runs the entry (daemon/document.ts). `true` relays the entry's own
+	 * keys; a list names the combos that do from inside a frame, where the
+	 * frame keeps the plain keys or Esc must leave whatever is held.
+	 */
+	readonly relay?: true | readonly string[];
 }
 
 /** The accel face without its joining `+`: `⌘`, `ctrl`. */
@@ -118,6 +125,8 @@ export const HOTKEYS = [
 		label: "Leave the frame you are inside",
 		keys: ["accel+escape"],
 		shown: () => ["esc", `${accelLabel()}esc`],
+		// Esc must still exit (#22), whatever else is held
+		relay: ["any+escape"],
 	},
 	{
 		id: "canvas.play",
@@ -274,6 +283,8 @@ export const HOTKEYS = [
 		label: "Zoom in",
 		keys: ["accel+plus", "accel+equals", "plus", "equals"],
 		shown: () => [`${accelLabel()}+`],
+		// the browser's zoom chords, so a focused frame cannot zoom the page into a trap
+		relay: ["accel+plus", "accel+equals"],
 	},
 	{
 		id: "canvas.zoom-out",
@@ -282,6 +293,7 @@ export const HOTKEYS = [
 		label: "Zoom out",
 		keys: ["accel+minus", "minus"],
 		shown: () => [`${accelLabel()}-`],
+		relay: ["accel+minus"],
 	},
 	{ id: "canvas.zoom-reset", scope: "canvas", group: "Camera", label: "Zoom to 100%", keys: ["0"] },
 	{ id: "canvas.fit-all", scope: "canvas", group: "Camera", label: "Zoom to fit every frame", keys: ["shift+1"] },
@@ -336,6 +348,8 @@ export const HOTKEYS = [
 		group: "Find and jump",
 		label: "Jump back to where you were",
 		keys: ["ctrl+o"],
+		// owed mid-walk, inside a frame, on every platform (#166)
+		relay: true,
 	},
 	{
 		id: "canvas.jump-forward",
@@ -343,6 +357,7 @@ export const HOTKEYS = [
 		group: "Find and jump",
 		label: "Jump forward again",
 		keys: ["ctrl+i"],
+		relay: true,
 	},
 
 	// --- Threads ----------------------------------------------------------------
@@ -584,4 +599,26 @@ export function hotkeyChips(entry: HotkeyEntry): { keys: readonly string[]; gest
 /** The sheet's rows: listed entries of one group, in register order. */
 export function listedHotkeys(group: HotkeyGroup): readonly HotkeyEntry[] {
 	return HOTKEYS.filter((entry) => entry.group === group && !("listed" in entry && entry.listed === false));
+}
+
+/** An entry that reaches out of an entered frame, with the combos that carry it out. */
+export interface RelayedHotkey {
+	id: HotkeyId;
+	combos: readonly string[];
+}
+
+/** What the frame shim relays, in register order. */
+export function relayedHotkeys(): readonly RelayedHotkey[] {
+	const relayed: RelayedHotkey[] = [];
+	for (const entry of HOTKEYS) {
+		if (!("relay" in entry)) continue;
+		const combos = entry.relay === true ? ("keys" in entry ? entry.keys : []) : entry.relay;
+		relayed.push({ id: entry.id, combos });
+	}
+	return relayed;
+}
+
+/** Whether a frame may ask the canvas to run this id: only what the register relays. */
+export function isRelayedHotkey(id: unknown): id is HotkeyId {
+	return relayedHotkeys().some((relayed) => relayed.id === id);
 }
