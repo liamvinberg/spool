@@ -58,7 +58,7 @@ import {
 import { desktopBridge } from "../desktop-bridge";
 import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
-import type { HotkeyIdFor } from "../hotkeys";
+import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
 import { AgentIcon, FolderIcon, PropertiesIcon } from "../icons";
 import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
@@ -296,6 +296,17 @@ interface ResizePaint {
 }
 
 const SETTLE_PERSIST_MS = 600;
+
+/** Relayed keys that count only from the frame that is entered. */
+const ENTERED_ONLY_RELAYS: ReadonlySet<HotkeyId> = new Set([
+	"canvas.zoom-in",
+	"canvas.zoom-out",
+	"app.next-tab",
+	"app.previous-tab",
+]);
+
+/** Relayed keys that are chords under the platform's own accel, never the other modifier. */
+const ACCEL_RELAYS: ReadonlySet<HotkeyId> = new Set(["app.next-tab", "app.previous-tab"]);
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -4142,9 +4153,14 @@ export function ProjectCanvas({
 					// thing (#28). The zoom chords only ever moved the camera for the
 					// frame that is entered. Each runs its register entry, so the relay
 					// can never drift from what the same key does out here.
+					// The tab keys too: a frame left running beside the entered one,
+					// a teammate's on a timer say, must not switch the window's tab.
+					if (ENTERED_ONLY_RELAYS.has(message.id) && enteredRef.current !== message.frame) return;
+					// the shim matched ⌘⇧] under either modifier; which one is accel is
+					// the canvas's rule, so ctrl+⇧] on a Mac is not the next tab
 					if (
-						(message.id === "canvas.zoom-in" || message.id === "canvas.zoom-out") &&
-						enteredRef.current !== message.frame
+						ACCEL_RELAYS.has(message.id) &&
+						!accelPressed({ metaKey: message.metaKey === true, ctrlKey: message.ctrlKey === true })
 					)
 						return;
 					runHotkey(message.id);

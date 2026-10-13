@@ -203,7 +203,7 @@ describe("the canvas shim", () => {
 			expect(browserReset.defaultPrevented, "browser reset must remain an escape hatch").toBe(false);
 			expect(posted).toEqual([
 				{ spool: "zoom", frame: "host", kind: "wheel", x: 12, y: 34, deltaY: -20, deltaMode: 0 },
-				{ spool: "key", frame: "host", id: "canvas.zoom-in" },
+				{ spool: "key", frame: "host", id: "canvas.zoom-in", metaKey: true, ctrlKey: false },
 			]);
 		} finally {
 			dispose?.();
@@ -318,8 +318,8 @@ describe("the canvas shim", () => {
 
 			expect(plain.defaultPrevented, "the prototype's own esc still runs").toBe(false);
 			expect(posted).toEqual([
-				{ spool: "key", frame: "host", id: "canvas.leave" },
-				{ spool: "key", frame: "host", id: "canvas.leave" },
+				{ spool: "key", frame: "host", id: "canvas.leave", metaKey: false, ctrlKey: false },
+				{ spool: "key", frame: "host", id: "canvas.leave", metaKey: false, ctrlKey: false },
 			]);
 		} finally {
 			dispose?.();
@@ -354,8 +354,8 @@ describe("the canvas shim", () => {
 			expect(forward.defaultPrevented).toBe(true);
 			expect(plain.defaultPrevented).toBe(false);
 			expect(posted).toEqual([
-				{ spool: "key", frame: "host", id: "canvas.jump-back" },
-				{ spool: "key", frame: "host", id: "canvas.jump-forward" },
+				{ spool: "key", frame: "host", id: "canvas.jump-back", metaKey: false, ctrlKey: true },
+				{ spool: "key", frame: "host", id: "canvas.jump-forward", metaKey: false, ctrlKey: true },
 			]);
 		} finally {
 			dispose?.();

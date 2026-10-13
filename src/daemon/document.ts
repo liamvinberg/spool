@@ -2281,7 +2281,7 @@ const canvasShimJs = `(() => {
 		for (const relay of relayKeys) {
 			if (!relayMatches(event, relay.match, null)) continue;
 			if (relay.prevent) event.preventDefault();
-			window.parent.postMessage({ spool: "key", frame, id: relay.id }, "*");
+			window.parent.postMessage({ spool: "key", frame, id: relay.id, metaKey: event.metaKey, ctrlKey: event.ctrlKey }, "*");
 			return;
 		}
 		}, true);

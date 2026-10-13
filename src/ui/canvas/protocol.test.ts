@@ -131,6 +131,9 @@ describe("relayed keys", () => {
 		expect(parseFrameMessage(leave)).toEqual(leave);
 		expect(parseFrameMessage({ spool: "key", frame: "host", id: "canvas.trash" })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "key", frame: "host", key: "Escape" })).toBeUndefined();
+		const tab = { spool: "key", frame: "host", id: "app.next-tab", metaKey: true, ctrlKey: false };
+		expect(parseFrameMessage(tab)).toEqual(tab);
+		expect(parseFrameMessage({ ...tab, metaKey: "yes" })).toBeUndefined();
 	});
 });
 
