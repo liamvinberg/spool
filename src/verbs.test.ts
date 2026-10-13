@@ -210,6 +210,16 @@ describe("skill", () => {
 		}
 	});
 
+	it("sends sharing to the canvas's page menu, with no publishing verbs left", () => {
+		const sharing = skillText("sharing");
+		expect(sharing).toContain("right-click a page in the Pages panel and choose Share…");
+		expect(sharing).toContain("spool login");
+		const all = skillText(
+			...["frames", "flows", "sharing", "team", "history", "scenarios", "styling", "shaders", "verbs"],
+		);
+		expect(all).not.toMatch(/spool cloud|spool build|--entry|publish/);
+	});
+
 	it("tells an agent frames are https-only, how to fake a backend, and that a phone frame owns its safe areas", () => {
 		const frames = skillText("frames");
 		expect(frames).toContain("Frames are https-only");
@@ -236,7 +246,7 @@ describe("skill", () => {
 	it("says which verbs fetch a team project's design/, and that skill doesn't", () => {
 		expect(skillText()).not.toContain("any verb");
 		expect(skillText()).toContain("skill never does");
-		expect(skillText("team")).toContain("so do check, build and the read verbs; skill doesn't");
+		expect(skillText("team")).toContain("so do check and the read verbs; skill doesn't");
 	});
 
 	it("puts a driver for interaction checks in the overview, on spool's own browser", () => {
@@ -288,8 +298,6 @@ describe("skill", () => {
 
 		const flows = skillText("flows");
 		expect(flows).toContain("Shared components may own data-go attributes");
-		expect(flows).toContain("spool flows --entry <frame>");
-		expect(flows).toContain("export const links");
 		expect(flows).toContain("pass a callback");
 	});
 
