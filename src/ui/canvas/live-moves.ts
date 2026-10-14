@@ -130,6 +130,15 @@ export function moveOverview(
 	return { ...overview, target: step.target.name, trail: step.trail, came: direction };
 }
 
+/**
+ * The pointer on a frame while the overview is up: that frame is the target,
+ * reached by no arrow, so the way back by arrows starts over from it.
+ */
+export function pointOverview(overview: Overview, name: string): Overview {
+	if (name === overview.target) return overview;
+	return { ...overview, target: name, trail: null, bump: null, came: null };
+}
+
 export type OverviewLanding =
 	| { kind: "enter"; target: string; came: SpatialDirection | null }
 	| { kind: "stay"; target: string }

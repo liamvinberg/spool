@@ -10,6 +10,7 @@ import {
 	openOverview,
 	overviewCamera,
 	overviewNeighbours,
+	pointOverview,
 	sideOf,
 	stepDirection,
 	threadBack,
@@ -129,6 +130,16 @@ describe("the overview", () => {
 		});
 		const selecting = moveOverview(openOverview("select", "centre", saved), frames, "left");
 		expect(landOverview(selecting)).toEqual({ kind: "select", target: "left" });
+	});
+
+	it("takes the frame the pointer is on as its target, the arrows' way back starting over", () => {
+		const stepped = moveOverview(moveOverview(openOverview("live", "centre", saved), frames, "up"), frames, "up");
+		expect(stepped.bump).not.toBeNull();
+		const pointed = pointOverview(stepped, "left");
+		expect(pointed).toMatchObject({ target: "left", trail: null, bump: null, came: null, origin: "centre" });
+		expect(landOverview(pointed)).toEqual({ kind: "enter", target: "left", came: null });
+		expect(pointOverview(pointed, "left")).toBe(pointed);
+		expect(landOverview(pointOverview(pointed, "centre"))).toEqual({ kind: "stay", target: "centre" });
 	});
 
 	it("steps back far enough to hold the target and its nearest neighbour each way", () => {

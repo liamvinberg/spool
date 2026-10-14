@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { Kbd } from "../primitives/display";
@@ -15,6 +16,75 @@ import type { SpatialDirection } from "./spatial-navigation";
  * and says so.
  * The names are the labels' own (frame-label.tsx).
  */
+
+/**
+ * The pointer while the overview is up: one transparent sheet over the whole
+ * viewport, frames and prototypes included, so every hover and press is the
+ * overview's and none reaches a frame's page. Hovering a frame makes it the
+ * target; a click (a press that stays within `slop`) picks the frame under
+ * it, or nothing; a drag does nothing. The wheel passes through to the
+ * canvas, which zooms the overview's camera.
+ */
+export function OverviewCatcher({
+	frameAt,
+	slop,
+	onPoint,
+	onPick,
+}: {
+	/** the frame under a point on screen, in client pixels */
+	frameAt: (clientX: number, clientY: number) => string | null;
+	slop: number;
+	onPoint: (name: string) => void;
+	onPick: (name: string | null) => void;
+}) {
+	const press = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: a pointer sheet for the held ⌥, whose keyboard path is the arrows
+		<div
+			data-overview-catcher=""
+			className="absolute inset-0"
+			onPointerDown={(event) => {
+				event.stopPropagation();
+				if (event.button !== 0) return;
+				press.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+				event.currentTarget.setPointerCapture?.(event.pointerId);
+			}}
+			// the focus stays in the frame that is live, whose shim hears ⌥ come up
+			onMouseDown={(event) => {
+				event.stopPropagation();
+				event.preventDefault();
+			}}
+			onPointerMove={(event) => {
+				event.stopPropagation();
+				const held = press.current;
+				if (
+					held !== null &&
+					held.id === event.pointerId &&
+					Math.hypot(event.clientX - held.x, event.clientY - held.y) >= slop
+				)
+					held.moved = true;
+				const name = frameAt(event.clientX, event.clientY);
+				if (name !== null) onPoint(name);
+			}}
+			onPointerUp={(event) => {
+				event.stopPropagation();
+				const held = press.current;
+				press.current = null;
+				if (held === null || held.id !== event.pointerId || held.moved) return;
+				onPick(frameAt(event.clientX, event.clientY));
+			}}
+			onPointerCancel={(event) => {
+				event.stopPropagation();
+				press.current = null;
+			}}
+			onDoubleClick={(event) => event.stopPropagation()}
+			onContextMenu={(event) => {
+				event.stopPropagation();
+				event.preventDefault();
+			}}
+		/>
+	);
+}
 
 const ARROW: Record<SpatialDirection, string> = { left: "←", right: "→", up: "↑", down: "↓" };
 

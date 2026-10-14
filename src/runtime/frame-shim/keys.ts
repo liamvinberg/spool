@@ -148,7 +148,10 @@ export function relayKeysOut(): void {
 	// a press under a held ⌥ is a gesture of its own, the frame's or the
 	// canvas's. Once the overview may be open (held past its delay) the camera
 	// has moved under the pointer, so the press is no click on what it lands
-	// on: it only closes the overview, and never reaches the page
+	// on: it only closes the overview, and never reaches the page. Once the
+	// overview is up the canvas lays its catcher over every frame, so this is
+	// the press that beat it here, over the live frame itself, where a click
+	// on the overview stays anyway
 	addEventListener(
 		"pointerdown",
 		(event) => {

@@ -14,6 +14,7 @@ import {
 	type Overview,
 	openOverview,
 	overviewCamera,
+	pointOverview,
 	sideOf,
 	stepDirection,
 	type ThreadFork,
@@ -179,29 +180,69 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		if (current.mode === "live") depsRef.current.focusFrame(current.origin);
 	}, [hold, setOverview]);
 
-	/** Letting go of ⌥: fly in and enter the target, back in where it opened, or select it. */
+	/** Where the overview lands: fly in and enter the target, back in where it opened, or select it. */
+	const land = useCallback(
+		(current: Overview) => {
+			setOverview(null);
+			const landing = landOverview(current);
+			const { camera, select, focusFrame } = depsRef.current;
+			const target = frameNamed(landing.target);
+			const size = viewSize();
+			if (landing.kind === "stay" || target === undefined || size === null) {
+				camera.fly(current.saved);
+				if (current.mode === "live") focusFrame(current.origin);
+				return;
+			}
+			if (landing.kind === "enter") {
+				landLive(landing.target, landing.came, { camera: current.saved });
+				liveTrail.current = current.trail;
+				return;
+			}
+			select(landing.target, current.trail);
+			camera.fly(revealCamera(current.saved, target, size.w, size.h));
+		},
+		[setOverview, frameNamed, viewSize, landLive],
+	);
+
+	/** Letting go of ⌥: the overview lands on its target. */
 	const release = useCallback(() => {
 		hold.up();
 		const current = overviewRef.current;
-		if (current === null) return;
-		setOverview(null);
-		const landing = landOverview(current);
-		const { camera, select, focusFrame } = depsRef.current;
-		const target = frameNamed(landing.target);
-		const size = viewSize();
-		if (landing.kind === "stay" || target === undefined || size === null) {
-			camera.fly(current.saved);
-			if (current.mode === "live") focusFrame(current.origin);
-			return;
-		}
-		if (landing.kind === "enter") {
-			landLive(landing.target, landing.came, { camera: current.saved });
-			liveTrail.current = current.trail;
-			return;
-		}
-		select(landing.target, current.trail);
-		camera.fly(revealCamera(current.saved, target, size.w, size.h));
-	}, [hold, setOverview, frameNamed, viewSize, landLive]);
+		if (current !== null) land(current);
+	}, [hold, land]);
+
+	/**
+	 * The pointer over a frame while the overview is up makes it the target,
+	 * where the camera stands: the pointer is already on it, so nothing flies.
+	 */
+	const point = useCallback(
+		(name: string) => {
+			const current = overviewRef.current;
+			if (current === null || frameNamed(name) === undefined) return;
+			const next = pointOverview(current, name);
+			if (next !== current) setOverview(next);
+		},
+		[frameNamed, setOverview],
+	);
+
+	/**
+	 * A click while the overview is up: on a frame it lands there at once, as
+	 * letting go would; on the empty canvas it closes, flying back. ⌥ is still
+	 * down, so the hold ends here and its keyup finds nothing open.
+	 */
+	const pick = useCallback(
+		(name: string | null) => {
+			const current = overviewRef.current;
+			if (current === null) return;
+			if (name === null || frameNamed(name) === undefined) {
+				cancel();
+				return;
+			}
+			hold.cancel();
+			land(pointOverview(current, name));
+		},
+		[hold, cancel, frameNamed, land],
+	);
 
 	/**
 	 * ⌥ arrows and ⌥ hjkl. With the overview up they move its target; inside a
@@ -374,6 +415,8 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		},
 		release,
 		cancel,
+		point,
+		pick,
 		step,
 		walkOn,
 		walkBack,

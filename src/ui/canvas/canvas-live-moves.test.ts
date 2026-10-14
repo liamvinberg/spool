@@ -289,7 +289,7 @@ describe("moving between frames while live", () => {
 	});
 
 	it("closes an overview whose frame reloads, or stops being live, flying back", async () => {
-		const { host, canvas } = await openCanvas();
+		const { host } = await openCanvas();
 		await enter(host, "welcome");
 		const entered = cameraTransform(host);
 
@@ -306,29 +306,6 @@ describe("moving between frames while live", () => {
 		await relay(host, "welcome", { spool: "key", id: "canvas.leave", metaKey: false, ctrlKey: false });
 		expect(liveChip(host)).toBeNull();
 		expect(overviewTarget(host)).toBeNull();
-		expect(cameraTransform(host)).toBe(entered);
-
-		// a press on the canvas with it up only closes it: nothing selected, the
-		// frame still live
-		await enter(host, "welcome");
-		await relay(host, "welcome", step("ArrowRight"));
-		const camera = cameraOf(host);
-		const down = new PointerEvent("pointerdown", {
-			bubbles: true,
-			cancelable: true,
-			button: 0,
-			pointerId: 1,
-			clientX: 230 * camera.k + camera.x,
-			clientY: 50 * camera.k + camera.y,
-		});
-		await act(async () => {
-			canvas.dispatchEvent(down);
-			canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1 }));
-		});
-		expect(down.defaultPrevented).toBe(true);
-		expect(overviewTarget(host)).toBeNull();
-		expect(liveChip(host)).toBe("welcome");
-		expect(labelClass(host, "sign-up")).not.toContain("text-accent");
 		expect(cameraTransform(host)).toBe(entered);
 	});
 
@@ -386,7 +363,7 @@ describe("moving between frames while live", () => {
 		expect(host.querySelector('[data-live-chip="sign-up"]')?.className).toContain("animate-live-chip-right");
 	});
 
-	it("works on a frame selected out on the canvas: letting go selects, a press of the pointer ends it", async () => {
+	it("works on a frame selected out on the canvas: letting go or a click selects, a click on nothing ends it", async () => {
 		const { host, canvas } = await openCanvas();
 		// welcome sits at screen 0..200
 		await act(async () => {
@@ -415,33 +392,120 @@ describe("moving between frames while live", () => {
 		expect(labelClass(host, "sign-up")).toContain("text-accent");
 		expect(liveChip(host)).toBeNull();
 
-		// ⌥ drag and ⌥ click are gestures of their own
+		// a click picks: on a frame it selects it at once, on nothing it closes
 		await key("keydown", { key: "Alt", code: "AltLeft", altKey: true });
 		await wait(OVERVIEW_HOLD_MS + 40);
 		expect(overviewTarget(host)).toBe("sign-up");
-		await act(async () => {
-			canvas.dispatchEvent(
-				new PointerEvent("pointerdown", {
-					bubbles: true,
-					button: 0,
-					clientX: 900,
-					clientY: 700,
-					pointerId: 1,
-					altKey: true,
-				}),
-			);
-		});
+		await click(host, onScreen(host, 410, 230));
 		expect(overviewTarget(host)).toBeNull();
+		expect(labelClass(host, "plan")).toContain("text-accent");
+		expect(labelClass(host, "sign-up")).not.toContain("text-accent");
+		await key("keyup", { key: "Alt", code: "AltLeft" });
+		expect(labelClass(host, "plan")).toContain("text-accent");
+
+		await key("keydown", { key: "Alt", code: "AltLeft", altKey: true });
+		await wait(OVERVIEW_HOLD_MS + 40);
+		expect(overviewTarget(host)).toBe("plan");
+		await click(host, onScreen(host, 140, 230));
+		expect(overviewTarget(host)).toBeNull();
+		expect(labelClass(host, "plan")).toContain("text-accent");
 		await key("keyup", { key: "Alt", code: "AltLeft" });
 
 		// and any other key under ⌥ disarms it
-		await act(async () => {
-			canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1 }));
-		});
 		await key("keydown", { key: "Alt", code: "AltLeft", altKey: true });
 		await key("keydown", { key: "@", code: "Digit2", altKey: true });
 		await wait(OVERVIEW_HOLD_MS + 40);
 		expect(overviewTarget(host)).toBeNull();
+	});
+});
+
+describe("the pointer under a held ⌥", () => {
+	async function overviewFromWelcome() {
+		const opened = await openCanvas();
+		await enter(opened.host, "welcome");
+		const entered = cameraTransform(opened.host);
+		await relay(opened.host, "welcome", step("ArrowRight"));
+		expect(overviewTarget(opened.host)).toBe("sign-up");
+		return { ...opened, entered };
+	}
+
+	it("lays one sheet over every frame while it is up, so no press reaches a prototype", async () => {
+		const { host, canvas } = await overviewFromWelcome();
+		const catchers = host.querySelectorAll("[data-overview-catcher]");
+		expect(catchers).toHaveLength(1);
+		const catcher = catchers[0] as Element;
+		// over the viewport, after (above) every frame's document
+		expect(catcher.parentElement?.closest('[role="application"]')).toBe(canvas);
+		expect(catcher.className).toContain("inset-0");
+		for (const frame of host.querySelectorAll("iframe")) {
+			expect(frame.compareDocumentPosition(catcher) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		}
+		// the press keeps the focus in the live frame, whose shim hears ⌥ come up
+		const mouse = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+		catcher.dispatchEvent(mouse);
+		expect(mouse.defaultPrevented).toBe(true);
+		await relay(host, "welcome", { spool: "hold", phase: "up" });
+		expect(host.querySelector("[data-overview-catcher]")).toBeNull();
+	});
+
+	it("makes the frame it hovers the target, and letting go enters it", async () => {
+		const { host } = await overviewFromWelcome();
+		await pointer(host, "pointermove", onScreen(host, 410, 230));
+		expect(overviewTarget(host)).toBe("plan");
+		// its neighbours are plan's now
+		expect(host.querySelector('[data-overview-near="verify"]')).not.toBeNull();
+		expect(host.querySelector('[data-overview-near="welcome"]')).toBeNull();
+		expect(labelText(host, "plan")).toContain("let go of ⌥ to enter");
+		// the empty field keeps the target
+		await pointer(host, "pointermove", onScreen(host, 140, 230));
+		expect(overviewTarget(host)).toBe("plan");
+
+		await relay(host, "welcome", { spool: "hold", phase: "up" });
+		expect(liveChip(host)).toBe("plan");
+		expect(host.querySelector('[data-land-ring="plan"]')).not.toBeNull();
+		expect(cameraScale(host)).toBe(2);
+	});
+
+	it("enters a clicked frame at once, the way letting go would", async () => {
+		const { host } = await overviewFromWelcome();
+		await click(host, onScreen(host, 410, 230));
+		expect(overviewTarget(host)).toBeNull();
+		expect(liveChip(host)).toBe("plan");
+		expect(host.querySelector('[data-land-ring="plan"]')).not.toBeNull();
+		expect(cameraScale(host)).toBe(2);
+		// ⌥ coming up afterwards lands nothing more
+		await relay(host, "welcome", { spool: "hold", phase: "up" });
+		expect(liveChip(host)).toBe("plan");
+		// and the next ⌥ held opens again
+		await relay(host, "plan", holdAlt);
+		await wait(OVERVIEW_HOLD_MS + 40);
+		expect(overviewTarget(host)).toBe("plan");
+	});
+
+	it("stays on a click on the frame it is live in, and flies back on a click on nothing", async () => {
+		const { host, entered } = await overviewFromWelcome();
+		await click(host, onScreen(host, 50, 50));
+		expect(overviewTarget(host)).toBeNull();
+		expect(liveChip(host)).toBe("welcome");
+		expect(host.querySelector('[data-land-ring="welcome"]')).toBeNull();
+		expect(cameraTransform(host)).toBe(entered);
+
+		await relay(host, "welcome", step("ArrowRight"));
+		expect(overviewTarget(host)).toBe("sign-up");
+		await click(host, onScreen(host, 140, 230));
+		expect(overviewTarget(host)).toBeNull();
+		expect(liveChip(host)).toBe("welcome");
+		expect(cameraTransform(host)).toBe(entered);
+	});
+
+	it("takes a press that moves for no click", async () => {
+		const { host } = await overviewFromWelcome();
+		const from = onScreen(host, 410, 230);
+		await pointer(host, "pointerdown", from);
+		await pointer(host, "pointermove", { clientX: from.clientX + 20, clientY: from.clientY });
+		await pointer(host, "pointerup", { clientX: from.clientX + 20, clientY: from.clientY });
+		expect(overviewTarget(host)).toBe("plan");
+		expect(liveChip(host)).toBe("welcome");
 	});
 });
 
@@ -547,6 +611,26 @@ describe("the overview over readable frames", () => {
 		expect(documents(host)).toEqual([...live, "s5"]);
 	});
 });
+
+/** Where a world point is on screen now. */
+function onScreen(host: HTMLElement, x: number, y: number): { clientX: number; clientY: number } {
+	const camera = cameraOf(host);
+	return { clientX: x * camera.k + camera.x, clientY: y * camera.k + camera.y };
+}
+
+/** The pointer on the overview's catcher. */
+function pointer(host: HTMLElement, type: string, at: { clientX: number; clientY: number }) {
+	return act(async () => {
+		host
+			.querySelector("[data-overview-catcher]")
+			?.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...at }));
+	});
+}
+
+async function click(host: HTMLElement, at: { clientX: number; clientY: number }): Promise<void> {
+	await pointer(host, "pointerdown", at);
+	await pointer(host, "pointerup", at);
+}
 
 async function until(done: () => boolean, ms = 2000): Promise<void> {
 	const deadline = Date.now() + ms;

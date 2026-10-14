@@ -177,7 +177,7 @@ import {
 	SelectionOverlay,
 	sourcePathOf,
 } from "./overlays";
-import { OverviewLayer } from "./overview-layer";
+import { OverviewCatcher, OverviewLayer } from "./overview-layer";
 import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt } from "./page-objects";
 import {
@@ -4689,12 +4689,13 @@ export function ProjectCanvas({
 
 	const onPointerDown = (event: React.PointerEvent) => {
 		if (store.get().finding || store.get().exportDialog !== null) return;
-		// a press ends the ⌥ overview where it stands: ⌥ drag and ⌥ click are
+		// a press ends a ⌥ hold that has not opened: ⌥ drag and ⌥ click are
 		// gestures of their own (DEV-295)
 		clickSwitch.current = null;
 		if (live.isShown()) {
-			// the camera moved under the pointer: the press only closes it, and
-			// never selects, drags or leaves the frame that was live
+			// the overview's catcher takes the presses over the field; one that
+			// reaches it anyway only closes it, and never selects, drags or leaves
+			// the frame that was live
 			event.preventDefault();
 			event.stopPropagation();
 			live.cancel();
@@ -6329,6 +6330,19 @@ export function ProjectCanvas({
 									frames={visibleFrames}
 									page={activePage}
 									taken={companionRoom}
+								/>
+							)}
+							{/* the pointer is the overview's while it is up (DEV-295): over every
+						    frame, so no press or hover reaches a prototype */}
+							{live.overview !== null && (
+								<OverviewCatcher
+									frameAt={(clientX, clientY) => {
+										const cam = camera.get();
+										return cam === null ? null : frameAtWorld(toWorld(localPoint({ clientX, clientY }), cam));
+									}}
+									slop={DRAG_THRESHOLD_PX}
+									onPoint={live.point}
+									onPick={live.pick}
 								/>
 							)}
 						</>
