@@ -82,6 +82,25 @@ async function assertFrameExists(daemonUrl: string, name: string, frame: string,
 	}
 }
 
+/**
+ * What an agent's command on a team project says first (DEV-261): each file that didn't travel and why, and a
+ * pause, each once. Nothing when the daemon can't say, as an older one can't: the verb itself goes on.
+ */
+export async function readUntold(daemonUrl: string, name: string, controlToken: string): Promise<string[]> {
+	try {
+		const res = await fetch(`${daemonUrl}/api/p/${encodeURIComponent(name)}/sync/untold`, {
+			method: "POST",
+			headers: { "X-Spool-Control": controlToken },
+			signal: AbortSignal.timeout(5_000),
+		});
+		if (!res.ok) return [];
+		const { lines } = (await res.json()) as { lines?: unknown };
+		return Array.isArray(lines) ? lines.filter((line): line is string => typeof line === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
 async function apiJson(url: string, controlToken: string): Promise<unknown> {
 	const res = await fetch(url, { headers: { "X-Spool-Control": controlToken } });
 	if (!res.ok) throw await refusalOf(res, url);
