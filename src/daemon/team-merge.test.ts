@@ -1,5 +1,8 @@
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mergeText } from "./team-merge";
+import { makeTempDir } from "../test-helpers";
+import { baseOf, keepBase, mergeText, pruneBases } from "./team-merge";
 
 const b = (text: string) => Buffer.from(text, "utf8");
 const merged = (base: string, mine: string, team: string) => mergeText(b(base), b(mine), b(team))?.toString("utf8");
@@ -52,5 +55,19 @@ describe("mergeText", () => {
 
 	it("keeps a file without a final newline as it was", () => {
 		expect(merged("a\nb\nc", "A\nb\nc", "a\nb\nC")).toBe("A\nb\nC");
+	});
+});
+
+describe("kept versions", () => {
+	it("keeps, reads and prunes nothing once the design folder is gone, without throwing", () => {
+		const design = join(makeTempDir(), "design");
+		mkdirSync(design);
+		keepBase(design, "a", b("one\n"));
+		expect(baseOf(design, "a")?.toString("utf8")).toBe("one\n");
+		rmSync(design, { recursive: true });
+		expect(() => keepBase(design, "b", b("two\n"))).not.toThrow();
+		expect(baseOf(design, "a")).toBeUndefined();
+		expect(() => pruneBases(design, new Set())).not.toThrow();
+		expect(existsSync(design)).toBe(false);
 	});
 });
