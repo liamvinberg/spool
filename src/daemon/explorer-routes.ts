@@ -32,7 +32,7 @@ const nameList = (value: unknown): string[] | undefined =>
  * the wire and the handler requires one of them to be there, so a caller that
  * only ever deletes frames writes what it always wrote.
  */
-interface TrashBody {
+export interface TrashBody {
 	frames?: string[];
 	pages?: string[];
 }
