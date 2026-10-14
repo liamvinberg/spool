@@ -1,4 +1,5 @@
 import type { DesignProjection } from "../../daemon/design-projection";
+import { reconnectBackoff } from "../../reconnect-backoff";
 import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
 import { type Presence, type PresenceState, readPresence } from "../../team-sync-protocol";
 
@@ -93,8 +94,8 @@ const PING_MS = 15_000;
 const SILENT_MS = 10_000;
 
 /**
- * Hold a WebSocket to an address on the page's own origin open for as long as the canvas is, connecting again with
- * a growing wait when it drops. It asks whether it is still there every `PING_MS`, and straight away when the
+ * Hold a WebSocket to an address on the page's own origin open for as long as the canvas is, connecting again after
+ * a spread-out, growing wait when it drops (`reconnectBackoff`). It asks whether it is still there every `PING_MS`, and straight away when the
  * page comes back into view or the network returns; one that stays silent past `SILENT_MS` died without a close,
  * as one does when the laptop sleeps, and is dropped and opened again rather than waited on.
  */
@@ -108,7 +109,7 @@ function keepOpen(
 	let ping: ReturnType<typeof setInterval> | undefined;
 	let deadline: ReturnType<typeof setTimeout> | undefined;
 	let retry: ReturnType<typeof setTimeout> | undefined;
-	let wait = 1000;
+	const backoff = reconnectBackoff();
 	let stopped = false;
 	const quiet = () => {
 		clearInterval(ping);
@@ -123,8 +124,7 @@ function keepOpen(
 		quiet();
 		if (stopped) return;
 		on.dropped?.();
-		retry = setTimeout(connect, wait);
-		wait = Math.min(wait * 2, 15_000);
+		retry = setTimeout(connect, backoff.next());
 	};
 	const awaitWord = (from: WebSocket) => {
 		deadline ??= setTimeout(() => {
@@ -147,7 +147,7 @@ function keepOpen(
 			if (socket !== opening) return;
 			clearTimeout(deadline);
 			deadline = undefined;
-			wait = 1000;
+			backoff.connected();
 			ping = setInterval(ask, PING_MS);
 			on.opened?.(opening);
 		});

@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { chooseInitTarget, describeChoice, initDestination, initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
 import { readRegistry, registerProject, teamProjects } from "../registry";
@@ -1618,5 +1618,77 @@ describe("the sync socket", () => {
 		});
 		await until(() => said.includes("close"), 2_000);
 		expect(said).toEqual(["close"]);
+	});
+});
+
+describe("a dropped copy", () => {
+	/** A copy whose every connection the test opens and drops by hand, on the fake clock; when each one was tried. */
+	async function droppable() {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const { root } = await initTeamProject(repo(), join(makeTempDir(), ".spool"), {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+		});
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+		vi.setSystemTime(0);
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const tries: number[] = [];
+		let live: SyncSocketEvents | undefined;
+		const copy = followLocalCopy({
+			root,
+			origin: TEAM_ORIGIN,
+			vault: { read: async () => "token" },
+			notice: () => {},
+			openSocket: (_url, _token, events) => {
+				tries.push(Date.now());
+				live = events;
+				return { send: () => {}, close: () => {} };
+			},
+		});
+		onTestFinished(() => copy.close());
+		await vi.advanceTimersByTimeAsync(0);
+		/** The connection opens, holds for `held` ms, and drops: how long the copy waits before it tries again. */
+		const dropAfter = async (held: number) => {
+			const count = tries.length;
+			live?.open();
+			const caughtUp = encodeFrame({ type: "caught-up", head: 0 });
+			live?.message(typeof caughtUp === "string" ? caughtUp : caughtUp.slice().buffer);
+			await vi.advanceTimersByTimeAsync(held);
+			const dropped = Date.now();
+			live?.close();
+			while (tries.length === count) await vi.advanceTimersByTimeAsync(100);
+			return (tries.at(-1) as number) - dropped;
+		};
+		return { dropAfter };
+	}
+
+	it("waits longer each time it is dropped within a minute of connecting, and about 1 s once it held a minute", async () => {
+		const { dropAfter } = await droppable();
+		const first = await dropAfter(1_000);
+		expect(first).toBeGreaterThanOrEqual(1_000);
+		expect(first).toBeLessThanOrEqual(2_100);
+		const second = await dropAfter(30_000);
+		expect(second).toBeGreaterThanOrEqual(2_000);
+		const third = await dropAfter(59_000);
+		expect(third).toBeGreaterThanOrEqual(4_000);
+		await dropAfter(1_000);
+		await dropAfter(1_000);
+		const capped = await dropAfter(1_000);
+		expect(capped).toBeLessThanOrEqual(30_100);
+		const after = await dropAfter(60_000);
+		expect(after).toBeGreaterThanOrEqual(1_000);
+		expect(after).toBeLessThanOrEqual(2_100);
+	});
+
+	it("does not start over at caught-up when the connection drops soon after", async () => {
+		const { dropAfter } = await droppable();
+		await dropAfter(1_000);
+		const later = await dropAfter(5_000);
+		expect(later).toBeGreaterThanOrEqual(2_000);
 	});
 });
