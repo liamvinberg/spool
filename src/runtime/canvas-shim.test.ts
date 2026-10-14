@@ -501,12 +501,46 @@ describe("the canvas shim", () => {
 			expect(ids()).toEqual(["canvas.overview", "hold:broken"]);
 			posted.length = 0;
 
-			// a ⌥ step the frame kept breaks the hold; one spool takes does not
-			press(button, { key: "Alt", code: "AltLeft", altKey: true });
-			press(button, { key: "ArrowRight", code: "ArrowRight", altKey: true });
-			press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true });
-			window.dispatchEvent(new Event("blur"));
-			expect(ids()).toEqual(["canvas.overview", "canvas.step", "hold:broken"]);
+			// before the overview is up, a ⌥ step the frame kept breaks the hold
+			const now = performance.now();
+			const clock = Object.getOwnPropertyDescriptor(performance, "now");
+			let clockAt = now;
+			Object.defineProperty(performance, "now", { configurable: true, value: () => clockAt });
+			try {
+				press(button, { key: "Alt", code: "AltLeft", altKey: true });
+				expect(press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true }).defaultPrevented).toBe(true);
+				press(button, { key: "Alt", code: "AltLeft" }, "keyup");
+				expect(ids()).toEqual(["canvas.overview", "hold:broken"]);
+				posted.length = 0;
+
+				// once it is up, opened by a step or by the hold, the steps move it:
+				// a tree in focus that takes arrows whatever the ⌥ never sees them
+				let seen = 0;
+				const tree = () => seen++;
+				button.addEventListener("keydown", tree);
+				press(button, { key: "Alt", code: "AltLeft", altKey: true });
+				press(button, { key: "ArrowRight", code: "ArrowRight", altKey: true });
+				expect(press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true }).defaultPrevented).toBe(true);
+				press(button, { key: "Alt", code: "AltLeft" }, "keyup");
+				press(button, { key: "Alt", code: "AltLeft", altKey: true });
+				clockAt = now + 300;
+				press(button, { key: "ArrowDown", code: "ArrowDown", altKey: true });
+				window.dispatchEvent(new Event("blur"));
+				button.removeEventListener("keydown", tree);
+				expect(seen, "only the ⌥ presses and the step that opened it reach the frame").toBe(3);
+				expect(ids()).toEqual([
+					"canvas.overview",
+					"canvas.step",
+					"canvas.step",
+					"hold:up",
+					"canvas.overview",
+					"canvas.step",
+					"hold:broken",
+				]);
+			} finally {
+				if (clock === undefined) delete (performance as { now?: unknown }).now;
+				else Object.defineProperty(performance, "now", clock);
+			}
 		} finally {
 			window.removeEventListener("keydown", keeps);
 			dispose?.();
