@@ -1545,12 +1545,20 @@ export async function fetchAgentLogin(
  * `agent-model.ts` owns the shape, so a daemon on another version costs the menu its
  * rows rather than the rail its render. Undefined where the door said no, which is not
  * the same fact as a machine with nothing to pick — the footer keeps what it had.
+ *
+ * `signal` gives up an ask nobody waits for: the request is held open until the spawn
+ * answers, and the browser holds six at once to the daemon, two of them its event streams.
  */
-export async function agentModelOffer(project: string, thread: string, engine?: AgentEngineId): Promise<unknown> {
-	const res = await client.api.p[":project"].agent.threads[":thread"].models.$get({
-		param: { project, thread },
-		query: engine === undefined ? {} : { engine },
-	});
+export async function agentModelOffer(
+	project: string,
+	thread: string,
+	engine?: AgentEngineId,
+	signal?: AbortSignal,
+): Promise<unknown> {
+	const res = await client.api.p[":project"].agent.threads[":thread"].models.$get(
+		{ param: { project, thread }, query: engine === undefined ? {} : { engine } },
+		signal === undefined ? {} : { init: { signal } },
+	);
 	return res.ok ? await res.json() : undefined;
 }
 

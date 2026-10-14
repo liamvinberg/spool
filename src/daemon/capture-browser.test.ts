@@ -111,10 +111,15 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 		bootJs: `
 			const heavyText = "x".repeat(65_535) + "😀" + "x".repeat(1_034_463);
 			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><img class="capture-asset-probe" alt="" src="data:image/svg+xml;base64,${VIOLET_SVG}"><span class="capture-asset-css-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
+			// drawn again when restored, as a frame must: a busy Mac's Chrome loses canvas contexts, blank until then
 			document.querySelectorAll("canvas").forEach((canvas, index) => {
-				const context = canvas.getContext("2d");
-				context.fillStyle = index === 0 ? "#fff" : "#000";
-				context.fillRect(0, 0, canvas.width, canvas.height);
+				const paint = () => {
+					const context = canvas.getContext("2d");
+					context.fillStyle = index === 0 ? "#fff" : "#000";
+					context.fillRect(0, 0, canvas.width, canvas.height);
+				};
+				paint();
+				canvas.addEventListener("contextrestored", paint);
 			});
 			window.__captureIframeMutations = 0;
 			new MutationObserver((records) => {
@@ -514,6 +519,12 @@ it.each(["css", "web", "pseudo", "canvas"])("exports the visible state of a %s a
 		}
 		await Promise.all(document.getAnimations().map((animation) => animation.finished));
 	}, kind);
+	// a capture of a canvas whose context is lost is as blank as the canvas: wait out a loss
+	await authored.waitForFunction(() =>
+		Array.from(document.querySelectorAll("canvas")).every(
+			(canvas) => canvas.getContext("2d")?.isContextLost() === false,
+		),
+	);
 	const origin = new URL(served.controlOrigin);
 	origin.hostname = CAPTURE_HOST;
 	const exported = await requestCapture(page, origin.origin);

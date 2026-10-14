@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { addAgentsLine } from "./agents-line";
 import { writeAtomic } from "./atomic-write";
@@ -407,9 +407,19 @@ async function linkTracked(root: string): Promise<boolean> {
 	return existsSync(join(root, PROJECT_LINK)) && (await tracked(root, PROJECT_LINK));
 }
 
-/** `<projects location>/<team>/<name>`. */
+/**
+ * `<projects location>/<team>/<name>`, under the location's real path where it is there: every root this Mac
+ * registers is resolved, so a location behind a symlink (macOS's /var is /private/var) must be too.
+ */
 function home(options: Pick<TeamMoveOptions, "location">, team: string, name: string): string {
-	return join(expandHome(options.location), team, name);
+	const location = expandHome(options.location);
+	let real = location;
+	try {
+		real = realpathSync(location);
+	} catch {
+		// not made yet: nothing under it is a registered root either
+	}
+	return join(real, team, name);
 }
 
 /** Whether a copy sits in no repo at exactly `<projects location>/<old team>/<old name>`: such a folder moves with it. */

@@ -56,6 +56,27 @@ it("clears another agent's offer immediately and ignores a late choice from that
 	expect(host.textContent).not.toContain("Fable");
 });
 
+it("gives up the ask for a thread the rail moved on from", async () => {
+	vi.mocked(agentModelOffer).mockReturnValue(new Promise(() => {}));
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.resetAllMocks();
+	});
+	function Harness({ thread, engine }: { thread: string; engine?: AgentEngineId }) {
+		useAgentModel("project", thread, engine);
+		return null;
+	}
+	await act(async () => root.render(createElement(Harness, { thread: "first" })));
+	await act(async () => root.render(createElement(Harness, { thread: "first", engine: "claude" })));
+	await act(async () => root.render(createElement(Harness, { thread: "second", engine: "claude" })));
+	const signals = vi.mocked(agentModelOffer).mock.calls.map((call) => call[3]?.aborted);
+	expect(signals).toEqual([true, true, false]);
+});
+
 function deferred() {
 	let resolve = (_value: unknown) => {};
 	const promise = new Promise<unknown>((done) => {

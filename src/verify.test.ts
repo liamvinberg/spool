@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
@@ -298,7 +298,8 @@ describe("a shot's block", () => {
 
 describe("verify records", () => {
 	it("mirror the frame's path, keep other times, and retire the old encoded names", () => {
-		const root = makeTempDir();
+		// a project's root is registered resolved, and a shot is named under it (macOS's temp dir is behind /var)
+		const root = realpathSync(makeTempDir());
 		writeFrame(root, "home", "export default function Home() { return <main /> }\n");
 		const verify = join(root, "design", ".spool", "verify");
 		writeDesignFile(root, ".spool/verify/shop%2Fcheckout.png", "old");
@@ -329,7 +330,7 @@ describe("verify records", () => {
 	});
 
 	it("name a scrolled shot its own file, which a shot from the top never retires", () => {
-		const root = makeTempDir();
+		const root = realpathSync(makeTempDir());
 		writeFrame(root, "home", "export default function Home() { return <main /> }\n");
 		const verify = join(root, "design", ".spool", "verify");
 		const record = (scroll: number | undefined, shots: { at?: number; pngs: Buffer[] }[]) =>

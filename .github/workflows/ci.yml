@@ -92,7 +92,8 @@ jobs:
     # demand. Publishing checks the macOS-only cases after full Linux CI.
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
-    timeout-minutes: 15
+    # the suite alone takes 13 to 14 minutes on a hosted Mac
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
