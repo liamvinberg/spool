@@ -78,6 +78,8 @@ export function zoomAt(camera: Camera, cx: number, cy: number, factor: number): 
 
 /** The breathing room a canvas fit leaves around what it framed. */
 const FIT_INSET = 128;
+/** That breathing room on each side. */
+export const FIT_MARGIN = FIT_INSET / 2;
 
 /** Frame the given bounds inside vw×vh with breathing room, never past 100%. */
 export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
@@ -96,11 +98,14 @@ export function centerOn(camera: Camera, box: Box, vw: number, vh: number): Came
 
 /**
  * Bring a box into view at the same zoom: the camera as it is when the whole
- * box is already on screen, else centered on it. ⌥-arrow steps use it, so
- * walking a group that fits never moves the view.
+ * box is already on screen, `margin` screen pixels in from its edges, else
+ * centered on it. ⌥-arrow steps use it, so walking a group that fits never
+ * moves the view.
  */
-export function revealCamera(camera: Camera, box: Box, vw: number, vh: number): Camera {
-	const view = visibleWorldRect(camera, vw, vh, 0);
+export function revealCamera(camera: Camera, box: Box, vw: number, vh: number, margin = 0): Camera {
+	const m = margin / camera.k;
+	const all = visibleWorldRect(camera, vw, vh, 0);
+	const view = { x: all.x + m, y: all.y + m, w: all.w - 2 * m, h: all.h - 2 * m };
 	const inside =
 		box.x >= view.x && box.y >= view.y && box.x + box.w <= view.x + view.w && box.y + box.h <= view.y + view.h;
 	return inside ? camera : centerOn(camera, box, vw, vh);
@@ -134,7 +139,7 @@ export function moveCamera(camera: Camera, box: Box, vw: number, vh: number): Ca
 	const fit = fitCamera(box, vw, vh);
 	if (camera.k < fit.k) return fit;
 	const { k } = camera;
-	const margin = FIT_INSET / 2;
+	const margin = FIT_MARGIN;
 	const w = box.w * k;
 	const h = box.h * k;
 	return {

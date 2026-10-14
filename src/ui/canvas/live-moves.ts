@@ -1,7 +1,14 @@
 import { pageName } from "../../page-path";
 import type { Camera, FlowEdge, ProjectedFrame } from "../api";
-import { type Box, boundsOf, fitCamera } from "./camera";
-import { nextSpatialFrame, type SpatialDirection, type SpatialTrail, stepSpatially } from "./spatial-navigation";
+import { type Box, boundsOf, centerOn, clamp, FIT_MARGIN, fitCamera, revealCamera } from "./camera";
+import {
+	MAX_SPATIAL_DISTANCE,
+	nextSpatialFrame,
+	type SpatialDirection,
+	type SpatialTrail,
+	spatialGap,
+	stepSpatially,
+} from "./spatial-navigation";
 
 /**
  * Moving between frames while one is live (DEV-295), as plain data: the ⌥
@@ -164,10 +171,31 @@ export function overviewNeighbours(
 	return around;
 }
 
+/** The neighbours a fit takes in: those within the arrows' local reach, not the far ones a step jumps to. */
+function withinReach(target: ProjectedFrame, frames: readonly ProjectedFrame[]): ProjectedFrame[] {
+	return Object.values(overviewNeighbours(target, frames)).filter(
+		(frame) => spatialGap(target, frame) <= MAX_SPATIAL_DISTANCE,
+	);
+}
+
 /**
- * Where the overview stands: the target and its nearest neighbour each way,
- * fitted, and never closer than the camera it stepped back from.
+ * The overview's zoom, fixed when it opens: the target and its neighbours
+ * within reach fitted, but never closer than the camera it stepped back from,
+ * and never further out than half of it. A neighbour past that stays off
+ * screen, told at the edge instead.
  */
+export function overviewZoom(
+	target: ProjectedFrame,
+	frames: readonly ProjectedFrame[],
+	saved: Camera,
+	vw: number,
+	vh: number,
+): number {
+	const fit = fitCamera(boundsOf([target, ...withinReach(target, frames)]), vw, vh);
+	return clamp(fit.k, saved.k / 2, saved.k);
+}
+
+/** Where the overview opens: at its zoom, the target and its near neighbours centred, the target in view. */
 export function overviewCamera(
 	target: ProjectedFrame,
 	frames: readonly ProjectedFrame[],
@@ -175,15 +203,14 @@ export function overviewCamera(
 	vw: number,
 	vh: number,
 ): Camera {
-	const boxes: Box[] = [target, ...Object.values(overviewNeighbours(target, frames))];
-	const fit = fitCamera(boundsOf(boxes), vw, vh);
-	if (fit.k <= saved.k) return fit;
-	// already far enough out: stay at this zoom, the target in the middle
-	return {
-		k: saved.k,
-		x: vw / 2 - (target.x + target.w / 2) * saved.k,
-		y: vh / 2 - (target.y + target.h / 2) * saved.k,
-	};
+	const k = overviewZoom(target, frames, saved, vw, vh);
+	const group = centerOn({ x: 0, y: 0, k }, boundsOf([target, ...withinReach(target, frames)]), vw, vh);
+	return overviewPan(group, target, vw, vh);
+}
+
+/** The overview's camera when its target moves: the zoom it stands at, panned only so the target is in view. */
+export function overviewPan(camera: Camera, target: ProjectedFrame, vw: number, vh: number): Camera {
+	return revealCamera(camera, target, vw, vh, FIT_MARGIN);
 }
 
 /** The side of `from` that `to` lies on, for a chip that slides in from where you came. */

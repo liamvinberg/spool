@@ -112,6 +112,11 @@ export function stepSpatially(
 	return { target, trail: { at: target.name, back: [...back, { name: from.name, direction }] } };
 }
 
+/** The gap between two frames, corner to corner: what MAX_SPATIAL_DISTANCE measures. */
+export function spatialGap(a: ProjectedFrame, b: ProjectedFrame): number {
+	return Math.hypot(intervalGap(a.x, a.x + a.w, b.x, b.x + b.w), intervalGap(a.y, a.y + a.h, b.y, b.y + b.h));
+}
+
 function intervalGap(a1: number, a2: number, b1: number, b2: number): number {
 	return Math.max(0, a1 - b2, b1 - a2);
 }

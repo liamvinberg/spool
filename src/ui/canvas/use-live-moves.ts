@@ -14,6 +14,7 @@ import {
 	type Overview,
 	openOverview,
 	overviewCamera,
+	overviewPan,
 	pointOverview,
 	sideOf,
 	stepDirection,
@@ -134,13 +135,22 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		[frameNamed, landed],
 	);
 
+	/**
+	 * The overview's camera: on opening, out to its zoom; on a move of its
+	 * target, panned at the zoom it is headed for (its own, or one the wheel
+	 * chose), only as far as brings the target into view.
+	 */
 	const flyOverview = useCallback(
-		(next: Overview) => {
+		(next: Overview, opening: boolean) => {
 			const target = frameNamed(next.target);
 			const size = viewSize();
-			if (target === undefined || size === null) return;
-			const frames = visibleFramesOf(depsRef.current.store.get());
-			depsRef.current.camera.fly(overviewCamera(target, frames, next.saved, size.w, size.h), OVERVIEW_OPEN_MS);
+			const { camera, store } = depsRef.current;
+			const from = camera.aim();
+			if (target === undefined || size === null || from === null) return;
+			const to = opening
+				? overviewCamera(target, visibleFramesOf(store.get()), next.saved, size.w, size.h)
+				: overviewPan(from, target, size.w, size.h);
+			camera.fly(to, OVERVIEW_OPEN_MS);
 		},
 		[frameNamed, viewSize],
 	);
@@ -163,7 +173,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		if (from === null || saved === null) return null;
 		const next = openOverview(from.mode, from.origin, saved);
 		setOverview(next);
-		flyOverview(next);
+		flyOverview(next, true);
 		return next;
 	}, [overviewOrigin, setOverview, flyOverview]);
 
@@ -260,7 +270,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 				event.preventDefault();
 				const next = moveOverview(current, frames, direction);
 				setOverview(next);
-				if (next.target !== current.target) flyOverview(next);
+				if (next.target !== current.target) flyOverview(next, false);
 				return true;
 			}
 			// the arrow is another key: a ⌥ held this long no longer opens anything
@@ -282,7 +292,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			if (opened !== null) {
 				const next = moveOverview(opened, frames, direction);
 				setOverview(next);
-				flyOverview(next);
+				flyOverview(next, false);
 			}
 			return true;
 		},

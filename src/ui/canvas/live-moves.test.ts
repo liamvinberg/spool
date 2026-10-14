@@ -10,6 +10,8 @@ import {
 	openOverview,
 	overviewCamera,
 	overviewNeighbours,
+	overviewPan,
+	overviewZoom,
 	pointOverview,
 	sideOf,
 	stepDirection,
@@ -142,7 +144,7 @@ describe("the overview", () => {
 		expect(landOverview(pointOverview(pointed, "centre"))).toEqual({ kind: "stay", target: "centre" });
 	});
 
-	it("steps back far enough to hold the target and its nearest neighbour each way", () => {
+	it("steps back to hold the target and its nearest neighbour each way, never in and never past half", () => {
 		const centre = frames[0] as ProjectedFrame;
 		expect(Object.keys(overviewNeighbours(centre, frames)).sort()).toEqual(["down", "left", "right", "up"]);
 		const camera = overviewCamera(centre, frames, saved, 1200, 800);
@@ -152,6 +154,7 @@ describe("the overview", () => {
 			return sx >= 0 && sx <= 1200 && sy >= 0 && sy <= 800;
 		};
 		expect(camera.k).toBeLessThan(1);
+		expect(camera.k).toBe(overviewZoom(centre, frames, saved, 1200, 800));
 		for (const [x, y] of [
 			[-500, 0],
 			[900, 300],
@@ -160,8 +163,39 @@ describe("the overview", () => {
 		] as const)
 			expect(shows(x, y)).toBe(true);
 		// never pulls in closer than the camera it opened from
-		const far = { x: 0, y: 0, k: 0.1 };
-		expect(overviewCamera(centre, frames, far, 1200, 800).k).toBe(0.1);
+		expect(overviewZoom(centre, frames, { x: 0, y: 0, k: 0.1 }, 1200, 800)).toBe(0.1);
+		// and from close up, steps back no further than half
+		expect(overviewZoom(centre, frames, { x: 0, y: 0, k: 4 }, 1200, 800)).toBe(2);
+		expect(overviewZoom(centre, frames, { x: 0, y: 0, k: 1.2 }, 1200, 800)).toBeCloseTo(672 / 1100);
+	});
+
+	it("leaves a neighbour past the arrows' reach out of the fit", () => {
+		// a pair, and one frame on its own far down to the left: down reaches it, from any distance
+		const pair = [frame("a", 0, 0), frame("b", 500, 0), frame("lost", -8000, 3000)];
+		const a = pair[0] as ProjectedFrame;
+		expect(overviewNeighbours(a, pair).down?.name).toBe("lost");
+		// the pair alone, fitted: 900 across in 600 less the inset
+		expect(overviewZoom(a, pair, saved, 600, 400)).toBeCloseTo(472 / 900);
+		const camera = overviewCamera(a, pair, saved, 600, 400);
+		expect(camera.k).toBeCloseTo(472 / 900);
+		// so lost stays off screen
+		expect(-8000 * camera.k + camera.x + 400 * camera.k).toBeLessThan(0);
+	});
+
+	it("holds its zoom while the target moves, panning only to bring the target in", () => {
+		const centre = frames[0] as ProjectedFrame;
+		const far = frames[5] as ProjectedFrame;
+		const right = frames[2] as ProjectedFrame;
+		const camera = overviewCamera(centre, frames, saved, 1200, 800);
+		// right is in view already: nothing moves
+		expect(overviewPan(camera, right, 1200, 800)).toEqual(camera);
+		// far is not: the same zoom, panned so the whole of it shows
+		const panned = overviewPan(camera, far, 1200, 800);
+		expect(panned.k).toBe(camera.k);
+		expect(far.x * panned.k + panned.x).toBeGreaterThanOrEqual(0);
+		expect((far.x + far.w) * panned.k + panned.x).toBeLessThanOrEqual(1200);
+		expect(far.y * panned.k + panned.y).toBeGreaterThanOrEqual(0);
+		expect((far.y + far.h) * panned.k + panned.y).toBeLessThanOrEqual(800);
 	});
 
 	it("tells the side a frame lies on", () => {
