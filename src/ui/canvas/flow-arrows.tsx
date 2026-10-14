@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useSyncExternalStore } from "react";
 import type { FlowEdge, ProjectedFrame } from "../api";
 import { clamp } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
@@ -53,6 +53,35 @@ export interface RoutedArrow {
 
 /** Frame-local site boxes by frame name, as the shims answered them. */
 export type SiteBoxesByFrame = Record<string, SiteBoxes>;
+
+/**
+ * The site boxes, kept outside React: a document answering where its sites
+ * are redraws the arrows and nothing else, where it used to render the whole
+ * canvas, at every boot of every document with a thread (DEV-303).
+ */
+export interface SiteBoxStore {
+	get(): SiteBoxesByFrame;
+	set(frame: string, boxes: SiteBoxes): void;
+	subscribe(listener: () => void): () => void;
+}
+
+export function createSiteBoxStore(): SiteBoxStore {
+	let all: SiteBoxesByFrame = {};
+	const listeners = new Set<() => void>();
+	return {
+		get: () => all,
+		set(frame, boxes) {
+			all = { ...all, [frame]: boxes };
+			for (const listener of [...listeners]) listener();
+		},
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+	};
+}
 
 interface TouchPoint {
 	/** Cross-axis coordinate along the edge; mutated by the spread pass. */
@@ -263,11 +292,12 @@ export function FlowArrows({
 }: {
 	frames: ProjectedFrame[];
 	edges: FlowEdge[];
-	siteBoxes: SiteBoxesByFrame;
+	siteBoxes: SiteBoxStore;
 	/** The weight, the head and the bow are screen measures, so the drawing follows the camera (#81). */
 	camera: CameraStore;
 }) {
-	const arrows = useMemo(() => placeArrows(edges, frames, siteBoxes), [edges, frames, siteBoxes]);
+	const boxes = useSyncExternalStore(siteBoxes.subscribe, siteBoxes.get);
+	const arrows = useMemo(() => placeArrows(edges, frames, boxes), [edges, frames, boxes]);
 	const layer = useRef<SVGSVGElement | null>(null);
 	const changed = useChanged();
 	// Rendered once per route and drawn here once per zoom step: the groups are

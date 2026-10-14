@@ -104,7 +104,7 @@ import { type Drop, dropAt, moveAsk } from "./element-move";
 import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
-import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
+import { anchorKeyOf, createSiteBoxStore, FlowArrows } from "./flow-arrows";
 import {
 	buildFramePdf,
 	type CapturedFrame,
@@ -418,7 +418,7 @@ export function ProjectCanvas({
 	const arrowsOn = useSetting("canvas.threads") ?? SETTINGS["canvas.threads"].fallback;
 	const writeSetting = useWriteSetting();
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
-	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
+	const [siteBoxes] = useState(createSiteBoxStore);
 	const [loaded, setLoaded] = useState(false);
 	/**
 	 * The camera as React knows it: there from the moment it is, and moved only
@@ -4208,7 +4208,7 @@ export function ProjectCanvas({
 					// superseded document must not re-anchor arrows to dead geometry
 					if (siteBoxExpected.current.get(message.frame) !== message.id) return;
 					siteBoxExpected.current.delete(message.frame);
-					setSiteBoxes((current) => ({ ...current, [message.frame]: message.boxes }));
+					siteBoxes.set(message.frame, message.boxes);
 					// a write this document can show is a write this frame gets a mark for,
 					// and one it renders nothing of answers null and gets none (#214)
 					for (const write of armedWrites.current.values()) {
@@ -4388,6 +4388,7 @@ export function ProjectCanvas({
 		zoomAtPoint,
 		panBy,
 		requestSiteBoxes,
+		siteBoxes,
 		strike,
 		releaseHold,
 		finishEdit,
