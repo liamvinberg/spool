@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeAtomic } from "../atomic-write";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import {
+	applySpan,
 	type EditedNode,
 	type ElementRead,
 	fingerprintOf,
@@ -559,7 +561,7 @@ function stampIn(root: string, source: string): { stamp: Stamp | undefined } | {
  * — `canvas.json` and `.spool/` are spool's, and no patch has any business in
  * them.
  */
-export function revertTarget(root: string, path: string): { file: string } | { status: 400 | 404; message: string } {
+function revertTarget(root: string, path: string): { file: string } | { status: 400 | 404; message: string } {
 	if (!path.startsWith("design/frames/") && !path.startsWith("design/shared/")) {
 		return { status: 400, message: "a revert puts back frame source" };
 	}
@@ -572,4 +574,54 @@ export function revertTarget(root: string, path: string): { file: string } | { s
 		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
 		throw error;
 	}
+}
+
+/** A patch that puts a hand edit back (#314): the run, and the fingerprint of the file it was taken of. */
+export interface RevertAsk {
+	path: string;
+	start: number;
+	end: number;
+	text: string;
+	fingerprint: string;
+}
+
+/**
+ * Undo and redo (#314): the characters put back, and refused rather than
+ * clobbered if the file moved since. Its own inverse comes back, so a redo is
+ * the same call again.
+ */
+export function revertSpan(
+	root: string,
+	{ path, start, end, text, fingerprint }: RevertAsk,
+):
+	| {
+			kind: "ok";
+			path: string;
+			fingerprint: string;
+			shifts: StampShift[] | null;
+			undo: RevertAsk;
+	  }
+	| { kind: "refusal"; refusal: PatchRefusal }
+	| { kind: "error"; status: 400 | 404; message: string } {
+	const target = revertTarget(root, path);
+	if ("message" in target) return { kind: "error", ...target };
+	let source: string;
+	try {
+		source = readFileSync(target.file, "utf8");
+	} catch {
+		return { kind: "error", status: 404, message: `no ${path} to put back` };
+	}
+	if (fingerprintOf(source) !== fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	if (end > source.length) return { kind: "error", status: 400, message: "not a span in this file" };
+	const patch = { start, end, text };
+	const next = applySpan(source, patch);
+	if (next !== source) writeAtomic(target.file, next);
+	const after = fingerprintOf(next);
+	return {
+		kind: "ok",
+		path,
+		fingerprint: after,
+		shifts: shiftsOf(source, [patch]),
+		undo: { path, start, end: start + text.length, text: source.slice(start, end), fingerprint: after },
+	};
 }
