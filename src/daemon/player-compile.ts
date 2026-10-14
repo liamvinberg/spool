@@ -169,7 +169,16 @@ export async function compilePlayer(
 
 	const shared = join(designDir, "shared");
 	const kept = context.styles;
-	const current = (file: string) => contentDigest(reads.bytes(file));
+	// every frame's key names the same shared files: digest each read once
+	const currentDigests = new Map<string, string>();
+	const current = (file: string) => {
+		let digest = currentDigests.get(file);
+		if (digest === undefined) {
+			digest = contentDigest(reads.bytes(file));
+			currentDigests.set(file, digest);
+		}
+		return digest;
+	};
 	const listings = new Map<string, string>();
 	const list = (folder: string) => {
 		const known = listings.get(folder);
