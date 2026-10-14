@@ -102,6 +102,11 @@ export interface FrameStyle {
 	css: string;
 	/** Compiled from a theme the frame imports, which carries its own fonts. */
 	themed: boolean;
+	/**
+	 * The chunk last served for it, with the fonts it rode with: hashing every
+	 * frame's sheet again held the daemon's loop on every rebuild.
+	 */
+	chunk?: { fonts: string | undefined; css: string; name: string };
 }
 
 /**
@@ -185,7 +190,15 @@ export async function compilePlayer(
 		// keyed by the bytes it was built from, which for a stylesheet Tailwind read
 		// is the digest its worker noted, never a later read of the file
 		const built = (file: string) => reads.digests().get(file) ?? current(file);
-		kept.set(ref.name, { inputs, key: styleKey(designDir, inputs, built, list), css, themed });
+		// a rebuild that comes back with the same sheet, as most edits do, keeps its chunk
+		const chunk = last?.css === css ? last.chunk : undefined;
+		kept.set(ref.name, {
+			inputs,
+			key: styleKey(designDir, inputs, built, list),
+			css,
+			themed,
+			...(chunk === undefined ? {} : { chunk }),
+		});
 		return { name: ref.name, css, themed };
 	});
 	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
@@ -212,10 +225,21 @@ export async function compilePlayer(
 	const { entry, chunks, screens } = composed.composition;
 	const styles = new Map<string, string>();
 	for (const frame of frameStyles) {
-		const css = perFrame && !frame.themed ? withFonts(projectFonts, frame.css) : frame.css;
-		const name = `styles/frame-${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`;
-		styles.set(frame.name, name);
-		chunks.set(name, css);
+		const riding = perFrame && !frame.themed ? projectFonts : undefined;
+		const style = kept.get(frame.name);
+		const own = style !== undefined && style.css === frame.css ? style : undefined;
+		let chunk = own?.chunk;
+		if (chunk === undefined || chunk.fonts !== riding) {
+			const css = withFonts(riding, frame.css);
+			chunk = {
+				fonts: riding,
+				css,
+				name: `styles/frame-${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`,
+			};
+			if (own !== undefined) own.chunk = chunk;
+		}
+		styles.set(frame.name, chunk.name);
+		chunks.set(chunk.name, chunk.css);
 	}
 	// A bundle a file moved under while it compiled (a stylesheet two frames read
 	// differently) is named by its own contents, as a frame document is by its

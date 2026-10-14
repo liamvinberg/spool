@@ -189,6 +189,45 @@ describe("the player", () => {
 		expect(leadingCssImports(style("plain"))).toEqual(["https://fonts.example/project.css"]);
 	});
 
+	it("serves a frame's chunk again while its sheet and fonts hold, and a new one when either moves", async () => {
+		const root = themedProject();
+		const player = createPlayerCompiler("0.0.0-test");
+		const styles = async () => {
+			const compiled = await player.getBundle(root, listProjectFrames(root).frames);
+			if (compiled.kind !== "ok") throw new Error(compiled.message);
+			const { bundle } = compiled;
+			const of = (frame: string) => {
+				const name = bundle.styles.get(frame) ?? "";
+				return { name, css: bundle.chunks.get(name) ?? "" };
+			};
+			return { plain: of("plain"), vercel: of("vercel") };
+		};
+		const first = await styles();
+
+		// words alone: every sheet comes back the same
+		writeFrame(
+			root,
+			"plain",
+			'import { Button } from "shared/ui/button";\nexport default () => <div><Button /></div>;\n',
+		);
+		const words = await styles();
+		expect(words).toEqual(first);
+
+		// the project's fonts ride only the frame without a theme
+		writeDesignFile(root, "shared/assets/fonts/project.woff2", "another-face");
+		const fonts = await styles();
+		expect(fonts.vercel).toEqual(first.vercel);
+		expect(fonts.plain.name).not.toBe(first.plain.name);
+		expect(fonts.plain.css).toContain(dataOf("another-face"));
+
+		// a class the sheet builds anew
+		writeFrame(root, "plain", 'export default () => <p className="text-primary underline">plain</p>;\n');
+		const classes = await styles();
+		expect(classes.plain.name).not.toBe(fonts.plain.name);
+		expect(classes.plain.css).toContain("underline");
+		expect(classes.plain.css).toContain(dataOf("another-face"));
+	});
+
 	it("keeps the project's fonts one block for the walk when no frame has a theme", async () => {
 		const root = themedProject();
 		const frames = listProjectFrames(root).frames.filter((ref) => ref.name === "plain");
