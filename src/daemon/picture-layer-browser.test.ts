@@ -523,7 +523,9 @@ it("keeps every paint's uploads within its share, past it only by the one textur
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	// a page whose stills all land at once, more than one paint's share of them,
-	// each drawn large enough to bring a halving along with its square
+	// each drawn large enough to bring a halving along with its square: 24
+	// halvings of 800×533 are past a resting paint's bytes, so the share is
+	// spent however fast the GPU uploads (a Mac's takes them all inside its time)
 	for (let i = 0; i < 24; i += 1) {
 		const name = `big-${String(i).padStart(2, "0")}`;
 		writeFrame(project.root, name, "export default function Frame() { return <main />; }");
@@ -534,8 +536,8 @@ it("keeps every paint's uploads within its share, past it only by the one textur
 		);
 		writeCover(project.root, name, Buffer.from(solidPng(1600, 1066, [40 + i * 8, 120, 200 - i * 6])));
 	}
-	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 10, y: 10, k: 0.55 } })}\n`);
-	const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 2 });
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 10, y: 10, k: 0.7 } })}\n`);
+	const context = await browser.newContext({ viewport: { width: 1800, height: 900 }, deviceScaleFactor: 2 });
 	const page = await context.newPage();
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await expect
