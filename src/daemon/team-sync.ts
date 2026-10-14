@@ -8,6 +8,7 @@ import { account, type CloudRequestOptions, CloudSignedOut, type CloudVault, ses
 import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { checkoutOf } from "../git-remote";
+import { reconnectBackoff } from "../reconnect-backoff";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
 	CANVAS_PATH,
@@ -253,13 +254,10 @@ const SETTLE_MS = 50;
 /** A file this big must have been still for longer before it is read: it may be being written in many pieces. */
 const BIG_FILE_BYTES = 1_000_000;
 const BIG_FILE_STILL_MS = 500;
-const RECONNECT_MIN_MS = 1_000;
 /** How many versions are kept to merge with before those out of the record go. */
 const PRUNE_EVERY = 200;
 /** What spool.page answers, by name, when an account is out of a project: the only 404s that can end a copy. */
 const OUT_OF_PROJECT = new Set(["team_not_found", "project_not_found"]);
-/** The longest a dropped copy waits between tries: back on the team, and on its canvas, soon after the network is. */
-const RECONNECT_MAX_MS = 15_000;
 /** How long a turn's last writes are given to reach the watcher before its end is said after them. */
 const TURN_SETTLE_MS = 500;
 /** The longest git may hold its index lock before what it left is looked at anyway: a crashed git leaves one. */
@@ -353,7 +351,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let socket: SyncSocket | undefined;
 	let caughtUp = false;
 	let failure: Error | undefined;
-	let retryMs = RECONNECT_MIN_MS;
+	const backoff = reconnectBackoff();
 	let retry: NodeJS.Timeout | undefined;
 	let refs = 0;
 	/** Saves sent and not yet answered, by their ref, with the bytes a set-aside mark keeps. */
@@ -871,7 +869,6 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			toldSignedOut = false;
 			toldOther = undefined;
 			recordAccount();
-			retryMs = RECONNECT_MIN_MS;
 			prune();
 			checkEverything();
 			ownWork = false;
@@ -942,6 +939,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			open: () => {
 				burst = randomUUID();
 				opened = true;
+				backoff.connected();
 				connectedWith = presented;
 				socket?.send(
 					encodeFrame({
@@ -997,9 +995,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	const reconnect = () => {
 		if (closed || retry !== undefined) return;
-		retry = setTimeout(() => void connect(), retryMs);
+		retry = setTimeout(() => void connect(), backoff.next());
 		retry.unref?.();
-		retryMs = Math.min(retryMs * 2, RECONNECT_MAX_MS);
 	};
 
 	/**
