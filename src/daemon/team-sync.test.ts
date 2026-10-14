@@ -19,12 +19,13 @@ import { chooseInitTarget, describeChoice, initDestination, initTeamProject } fr
 import { fetchLocalCopy, openProject } from "../open";
 import { readRegistry, registerProject, teamProjects } from "../registry";
 import { removeProject } from "../remove";
+import { encodeFrame } from "../team-sync-protocol";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { SOLO_GITIGNORE } from "../templates";
 import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 import { historyEnabled } from "./history";
-import { openWebSocket, openWebSocketWith } from "./team-sync";
+import { followLocalCopy, openWebSocket, openWebSocketWith, type SyncSocketEvents } from "./team-sync";
 import { watchFolder } from "./watch-tree";
 
 /**
@@ -1530,6 +1531,43 @@ describe("the sync socket", () => {
 		state.answering = false;
 		await until(() => said.includes("close"), 2_000);
 		expect(said).toEqual(["open", "close"]);
+	});
+
+	it("leaves a frame that arrives after the copy stopped alone, even with its folder gone", async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const { root } = await initTeamProject(repo(), join(makeTempDir(), ".spool"), {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+		});
+		let late: SyncSocketEvents | undefined;
+		const copy = followLocalCopy({
+			root,
+			origin: TEAM_ORIGIN,
+			vault: ana.cloud.vault,
+			openSocket: (url, token, events) => {
+				late = events;
+				return ana.openSocket(url, token, events);
+			},
+		});
+		await copy.idle();
+		copy.close();
+		const frame = (path: string) =>
+			encodeFrame(
+				{ type: "file", path, version: 99, deleted: false },
+				new TextEncoder().encode("export default () => null;\n"),
+			);
+		const deliver = (path: string) => {
+			const framed = frame(path);
+			late?.message(typeof framed === "string" ? framed : framed.slice().buffer);
+		};
+		deliver("frames/late/frame.tsx");
+		expect(existsSync(join(root, "design/frames/late"))).toBe(false);
+		rmSync(join(root, "design"), { recursive: true });
+		expect(() => deliver("frames/later/frame.tsx")).not.toThrow();
+		expect(existsSync(join(root, "design"))).toBe(false);
 	});
 
 	it("gives up a handshake that never finishes, so the copy tries again", async () => {

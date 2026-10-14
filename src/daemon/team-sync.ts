@@ -849,6 +849,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	};
 
 	const handle = (data: string | ArrayBuffer) => {
+		// a frame the socket had in hand when this copy stopped is for nobody: its folder may be gone already
+		if (closed) return;
 		const framed = decodeFrame(data);
 		if (framed === null) return;
 		const { message, bytes } = framed;

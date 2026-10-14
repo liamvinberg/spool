@@ -17,8 +17,16 @@ import { resolveDesignPath } from "./design-path";
 /** Bigger files than this are never merged, nor kept to merge with: a frame's source is a few kilobytes. */
 export const MERGE_LIMIT_BYTES = 512_000;
 
-function basesDir(designDir: string): string {
-	return resolveDesignPath(designDir, join(designDir, ".spool", "base"));
+/**
+ * Where kept versions live, or nothing where they can't be: the design folder is gone, or its `.spool` leads out of
+ * it. Nothing is kept or read there then, and a later merge asks its person instead.
+ */
+function basesDir(designDir: string): string | undefined {
+	try {
+		return resolveDesignPath(designDir, join(designDir, ".spool", "base"));
+	} catch {
+		return undefined;
+	}
 }
 
 /** A file's text, or nothing where it isn't text, or is too big to merge. */
@@ -33,15 +41,18 @@ function textOf(bytes: Uint8Array): string | undefined {
 
 /** Keep the team's bytes of a file under their hash, to merge with later; only text is kept. */
 export function keepBase(designDir: string, hash: string, bytes: Uint8Array): void {
-	if (textOf(bytes) === undefined) return;
-	const file = join(basesDir(designDir), hash);
+	const dir = basesDir(designDir);
+	if (dir === undefined || textOf(bytes) === undefined) return;
+	const file = join(dir, hash);
 	if (!existsSync(file)) writeAtomic(file, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 }
 
 /** The kept bytes of a version, by its hash. */
 export function baseOf(designDir: string, hash: string): Buffer | undefined {
+	const dir = basesDir(designDir);
+	if (dir === undefined) return undefined;
 	try {
-		return readFileSync(join(basesDir(designDir), hash));
+		return readFileSync(join(dir, hash));
 	} catch {
 		return undefined;
 	}
@@ -50,6 +61,7 @@ export function baseOf(designDir: string, hash: string): Buffer | undefined {
 /** Let go of every kept version but these. */
 export function pruneBases(designDir: string, keep: ReadonlySet<string>): void {
 	const dir = basesDir(designDir);
+	if (dir === undefined) return;
 	let names: string[];
 	try {
 		names = readdirSync(dir);

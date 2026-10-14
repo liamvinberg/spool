@@ -57,6 +57,8 @@ async function team() {
 		port: 0,
 		uiDir: await builtUi(),
 		agentExecutor: agent.executor,
+		// an agent counts as installed whatever is on PATH, so the third action asks it rather than copying a prompt
+		agentLook: () => true,
 		cloud: ben.cloud,
 		teamNotice: () => {},
 	});
