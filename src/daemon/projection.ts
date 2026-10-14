@@ -1,5 +1,5 @@
-import { type Dirent, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { closeSync, constants, type Dirent, lstatSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { type FileHandle, lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
 import type { Rect } from "../page-box";
@@ -13,9 +13,9 @@ import { type Footprint, parseGeometry, parseSidecar, readSidecar, type Sidecar,
 import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
-import { type Unseen, unseenNow } from "./seen";
+import { type Unseen, unseenNow, unseenNowAwaited } from "./seen";
 import { type PlaceholderNote, parsePlaceholder } from "./sidecar";
-import { readCoverAwaited, scanCovers } from "./thumbs";
+import { readCoverAwaited, scanCovers, scanCoversAwaited } from "./thumbs";
 
 export { frameFolder } from "../page-path";
 export { pageObjectBox, placePages } from "./placement";
@@ -394,6 +394,16 @@ function placeholdersOf(discovery: Discovery): ProjectedPlaceholder[] {
 	return found;
 }
 
+/** What placing a project's frames reads of each one, gathered blocking or not. */
+interface FrameReads {
+	covers: Map<string, Cover>;
+	sidecars: Map<string, Sidecar>;
+	/** The folder's birth, for a frame whose sidecar already places it. */
+	born: (frame: DiscoveredFrame) => number | undefined;
+	/** Present when the caller asked for seen-state. */
+	unseen?: () => Map<string, Unseen>;
+}
+
 /**
  * Every frame, placed. `seen` decorates each one with whether it has been
  * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
@@ -403,19 +413,63 @@ function placeholdersOf(discovery: Discovery): ProjectedPlaceholder[] {
  */
 export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
 	const discovery = discover(root);
-	if (discovery === undefined) return { root, pages: [], places: {}, frames: [], placeholders: [] };
-
+	if (discovery === undefined) return emptyProjection(root);
 	// one sweep of the cover store answers every frame from immutable image names,
 	// so this costs a readdir per frame folder and opens no image
 	const covers = readCovers(root);
+	const sidecars = new Map(
+		discovery.frames.map((frame) => [frame.name, readFrameSidecar(frame.dir, discovery.designDir)]),
+	);
+	return placeFrames(root, discovery, {
+		covers,
+		sidecars,
+		born: (frame) => folderBorn(frame.dir),
+		...(options.seen === true ? { unseen: () => unseenNow(root, discovery.frames) } : {}),
+	});
+}
 
+/**
+ * `listProjectFrames` with its reads off the event loop: the canvas asks for
+ * the projection after every change, and walking a large project's folders,
+ * sidecars and cover store in one turn held every other request behind it. A
+ * frame with no place yet is still placed and written in one turn, as there.
+ */
+export async function listProjectFramesAwaited(root: string, options: { seen?: boolean } = {}): Promise<Projection> {
+	const discovery = await discoverAwaited(root);
+	if (discovery === undefined) return emptyProjection(root);
+	const [covers, sidecars, borns, unseen] = await Promise.all([
+		readCoversAwaited(root),
+		Promise.all(
+			discovery.frames.map(
+				async (frame) => [frame.name, await readFrameSidecarAwaited(frame.dir, discovery.designDir)] as const,
+			),
+		),
+		Promise.all(discovery.frames.map(async (frame) => [frame.name, await folderBornAwaited(frame.dir)] as const)),
+		options.seen === true ? unseenNowAwaited(root, discovery.frames) : undefined,
+	]);
+	const born = new Map(borns);
+	return placeFrames(root, discovery, {
+		covers,
+		sidecars: new Map(sidecars),
+		born: (frame) => born.get(frame.name),
+		...(unseen === undefined ? {} : { unseen: () => unseen }),
+	});
+}
+
+function emptyProjection(root: string): Projection {
+	return { root, pages: [], places: {}, frames: [], placeholders: [] };
+}
+
+function placeFrames(root: string, discovery: Discovery, reads: FrameReads): Projection {
+	const { covers } = reads;
 	const placed: ProjectedFrame[] = [];
 	// a frame awaiting a position carries the size it will get it at: the one its
 	// sidecar states, else the default (#113)
 	const unplaced: { frame: DiscoveredFrame; footprint: Footprint }[] = [];
 	for (const frame of discovery.frames) {
-		const sidecar = readSidecar(join(frame.dir, "frame.json"), discovery.designDir);
-		if (sidecar.kind === "placed") placed.push(projected(frame, sidecar.geometry, covers.get(frame.name)));
+		const sidecar = reads.sidecars.get(frame.name) ?? { kind: "none" };
+		if (sidecar.kind === "placed")
+			placed.push(projected(frame, sidecar.geometry, covers.get(frame.name), reads.born(frame)));
 		else {
 			const footprint = sidecar.kind === "sized" ? sidecar.footprint : DEFAULT_FOOTPRINT;
 			unplaced.push({ frame, footprint });
@@ -439,22 +493,24 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 			field.push({ ...at, ...box });
 		}
 		const geometry = { ...besideField(field), ...footprint };
+		// its birth is read once its sidecar is written, which on a filesystem
+		// keeping no birth time moves the folder's mtime it stands in for
 		try {
 			const persisted = writePlacement(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {
-				placed.push(projected(frame, persisted, covers.get(frame.name)));
+				placed.push(projected(frame, persisted, covers.get(frame.name), folderBorn(frame.dir)));
 				continue;
 			}
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 			// read-only checkout: placement stays deterministic within this daemon run
 		}
-		placed.push(projected(frame, geometry, covers.get(frame.name)));
+		placed.push(projected(frame, geometry, covers.get(frame.name), folderBorn(frame.dir)));
 	}
 
 	placed.sort((a, b) => a.name.localeCompare(b.name));
-	if (options.seen === true) {
-		const marks = unseenNow(root, discovery.frames);
+	if (reads.unseen !== undefined) {
+		const marks = reads.unseen();
 		for (const frame of placed) {
 			const mark = marks.get(frame.name);
 			if (mark !== undefined) frame.unseen = mark;
@@ -488,8 +544,8 @@ function projected(
 	frame: DiscoveredFrame,
 	geometry: { x: number; y: number; w: number; h: number },
 	cover: Cover | undefined,
+	born: number | undefined,
 ): ProjectedFrame {
-	const born = folderBorn(frame.dir);
 	return {
 		name: frame.name,
 		...(frame.page === undefined ? {} : { page: frame.page }),
@@ -508,6 +564,71 @@ function folderBorn(dir: string): number | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/** The same, read without blocking. */
+async function folderBornAwaited(dir: string): Promise<number | undefined> {
+	try {
+		const stat = await lstat(dir);
+		const millis = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+		return Math.round(millis);
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * A discovered frame's sidecar. Its folder came from a directory entry under
+ * the resolved frames/ folder, so only the sidecar itself could lead out of
+ * design/: one that opens without following a link needs no resolving, which
+ * spares a `realpath` walk per frame on every projection. A link, or anything
+ * else that will not open plainly, takes `readSidecar`'s full road and its
+ * refusals.
+ */
+function readFrameSidecar(frameDir: string, designDir: string): Sidecar {
+	const file = join(frameDir, "frame.json");
+	if (NO_FOLLOW === undefined) return readSidecar(file, designDir);
+	let fd: number;
+	try {
+		fd = openSync(file, constants.O_RDONLY | NO_FOLLOW);
+	} catch (error) {
+		if (isMissing(error)) return { kind: "none" };
+		return readSidecar(file, designDir);
+	}
+	try {
+		return parseSidecar(JSON.parse(readFileSync(fd, "utf8")));
+	} catch {
+		return { kind: "none" };
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/** The same, read without blocking. */
+async function readFrameSidecarAwaited(frameDir: string, designDir: string): Promise<Sidecar> {
+	const file = join(frameDir, "frame.json");
+	if (NO_FOLLOW === undefined) return readSidecar(file, designDir);
+	let handle: FileHandle;
+	try {
+		handle = await open(file, constants.O_RDONLY | NO_FOLLOW);
+	} catch (error) {
+		if (isMissing(error)) return { kind: "none" };
+		return readSidecar(file, designDir);
+	}
+	try {
+		return parseSidecar(JSON.parse(await handle.readFile("utf8")));
+	} catch {
+		return { kind: "none" };
+	} finally {
+		await handle.close();
+	}
+}
+
+/** Where the platform can open a file without following a link; nowhere on Windows. */
+const NO_FOLLOW: number | undefined = constants.O_NOFOLLOW;
+
+function isMissing(error: unknown): boolean {
+	return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
 }
 
 /** Every frame name, sorted; undefined when frames/ is unreadable. */
@@ -535,6 +656,15 @@ export function frameDirectories(root: string): Map<string, string> {
 function readCovers(root: string): Map<string, Cover> {
 	try {
 		return scanCovers(root);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return new Map();
+	}
+}
+
+async function readCoversAwaited(root: string): Promise<Map<string, Cover>> {
+	try {
+		return await scanCoversAwaited(root);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return new Map();

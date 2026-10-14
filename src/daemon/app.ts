@@ -68,7 +68,14 @@ import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
 import { withProject } from "./project-route";
 import { createThumbnailWatch, readProjectThumbnail } from "./project-thumbnail";
-import { FRAME_BIRTH, frameExists, frameGeometry, frameNames, listProjectFrames } from "./projection";
+import {
+	FRAME_BIRTH,
+	frameExists,
+	frameGeometry,
+	frameNames,
+	listProjectFrames,
+	listProjectFramesAwaited,
+} from "./projection";
 import { createResolvePass } from "./resolve-pass";
 import {
 	CAPTURE_HOST,
@@ -388,7 +395,7 @@ export function createDaemonApp({
 				return;
 			}
 			waitingSince = undefined;
-			void playerCompiler.getBundle(root, listProjectFrames(root).frames);
+			void listProjectFramesAwaited(root).then((listing) => playerCompiler.getBundle(root, listing.frames));
 		};
 		const arm = () => {
 			waitingSince ??= Date.now();
