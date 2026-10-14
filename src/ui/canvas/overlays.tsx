@@ -1,7 +1,7 @@
 import { type CSSProperties, type HTMLAttributes, useLayoutEffect, useRef } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
-import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
+import { type Box, shellRadiusOnScreen, tooSmall, toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
 import { type Glide, useGlide } from "./glide";
 import type { ShownRefusal } from "./hand-edit";
@@ -85,13 +85,20 @@ export const HANDLE_CURSORS: Record<Handle, string> = {
 
 const CORNERS = ["nw", "ne", "sw", "se"] as const;
 
+/** How furniture that stands aside leaves and comes back: a fade, and no pointer while it is gone. */
+export const STANDS_ASIDE =
+	"transition-opacity duration-fast ease-out data-away:pointer-events-none data-away:opacity-0";
+
 const SIDES = ["n", "e", "s", "w"] as const;
 
 /** The five properties a piece of furniture's box is written as. */
 const SCREEN_KEYS = ["left", "top", "width", "height", "borderRadius"] as const;
 
-/** A piece of furniture's box for one camera, in CSS pixels. */
-export type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>>;
+/** A piece of furniture's box for one camera, in CSS pixels, and whether it stands aside. */
+export type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>> & {
+	/** fade out and stop taking the pointer, as furniture does round a frame too small to work on */
+	away?: boolean;
+};
 
 /**
  * One piece of screen-space furniture, following the camera on its own (#81).
@@ -123,6 +130,13 @@ export function Follow({
 		for (const key of SCREEN_KEYS) {
 			const value = sized[key];
 			if (value !== undefined) el.style[key] = `${value}px`;
+		}
+		if (sized.away !== undefined) {
+			const away = sized.away ? "" : undefined;
+			if (el.dataset.away !== away) {
+				if (away === undefined) delete el.dataset.away;
+				else el.dataset.away = away;
+			}
 		}
 	};
 	useCameraFollow(camera, write, [screen]);
@@ -358,14 +372,17 @@ export function SelectionOverlay({
 							// invisible 10px bands along the ring, inset past the corner zones
 							screen={(at) => {
 								const rect = toScreen(single, at);
+								const away = tooSmall(single, at.k);
 								return side === "n" || side === "s"
 									? {
+											away,
 											left: rect.x + 5,
 											width: Math.max(rect.w - 10, 0),
 											top: side === "n" ? rect.y - 8 : rect.y + rect.h - 2,
 											height: 10,
 										}
 									: {
+											away,
 											top: rect.y + 5,
 											height: Math.max(rect.h - 10, 0),
 											left: side === "w" ? rect.x - 8 : rect.x + rect.w - 2,
@@ -373,7 +390,7 @@ export function SelectionOverlay({
 										};
 							}}
 							data-handle={side}
-							className="pointer-events-auto absolute"
+							className="pointer-events-auto absolute data-away:pointer-events-none"
 							style={{ cursor: HANDLE_CURSORS[side] }}
 						/>
 					))}
@@ -385,10 +402,10 @@ export function SelectionOverlay({
 								const rect = toScreen(single, at);
 								const cx = corner.includes("w") ? rect.x - 3 : rect.x + rect.w + 3;
 								const cy = corner.includes("n") ? rect.y - 3 : rect.y + rect.h + 3;
-								return { left: cx - 8, top: cy - 8 };
+								return { left: cx - 8, top: cy - 8, away: tooSmall(single, at.k) };
 							}}
 							data-handle={corner}
-							className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
+							className={`pointer-events-auto absolute flex h-4 w-4 items-center justify-center ${STANDS_ASIDE}`}
 							style={{ cursor: HANDLE_CURSORS[corner] }}
 						>
 							<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-accent bg-on-accent" />
@@ -398,9 +415,9 @@ export function SelectionOverlay({
 						camera={camera}
 						screen={(at) => {
 							const rect = toScreen(single, at);
-							return { left: rect.x + rect.w / 2, top: rect.y + rect.h + 14 };
+							return { left: rect.x + rect.w / 2, top: rect.y + rect.h + 14, away: tooSmall(single, at.k) };
 						}}
-						className="absolute flex items-center justify-center rounded-xs bg-accent-strong px-2 py-[3px]"
+						className={`absolute flex items-center justify-center rounded-xs bg-accent-strong px-2 py-[3px] ${STANDS_ASIDE}`}
 						style={{ transform: "translateX(-50%)" }}
 					>
 						<span className="text-on-accent type-detail">{`${Math.round(single.w)} × ${Math.round(single.h)}`}</span>

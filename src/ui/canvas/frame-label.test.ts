@@ -72,6 +72,16 @@ function element({ name, frameWidth, camera, near = ON_SCREEN, selected = false 
 }
 
 describe("FrameLabel", () => {
+	it("lets its verbs go when the frame is drawn too small to carry them, and brings them back", () => {
+		const camera = cameraAt({ x: 0, y: 0, k: 0.02 });
+		// 393 × 800 at k 0.02 is a phone drawn 8 px wide
+		const { el } = label({ name: "phone", frameWidth: 393, camera, selected: true });
+		expect(el.dataset.away).toBe("");
+		act(() => camera.set({ x: 0, y: 0, k: 0.5 }));
+		act(() => vi.advanceTimersByTime(REST_MS + 50));
+		expect(el.dataset.away).toBeUndefined();
+	});
+
 	it("truncates within the frame's rendered width when zoomed out", () => {
 		const { el } = label({
 			name: "landing--thread-refined",

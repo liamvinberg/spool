@@ -166,3 +166,16 @@ const WHEEL_ZOOM_RATE = 0.011;
 export function wheelZoomFactor(delta: number, mode: number, pageSize: number): number {
 	return clamp(Math.exp(-wheelPixels(delta, mode, pageSize) * WHEEL_ZOOM_RATE), 0.5, 2);
 }
+
+/**
+ * Below this many screen pixels on its shorter side a selected frame is a dot
+ * on an overview: its handles, its size and the verbs on its label would be
+ * bigger than it is, so they fade out the way its name truncates away, and
+ * come back as the camera brings it near.
+ */
+export const FURNITURE_MIN_PX = 56;
+
+/** The frame is drawn too small at this zoom to carry its furniture. */
+export function tooSmall(frame: { w: number; h: number }, k: number): boolean {
+	return Math.min(frame.w, frame.h) * k < FURNITURE_MIN_PX;
+}

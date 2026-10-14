@@ -3,7 +3,7 @@ import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { cn } from "../cn";
 import { bucketOf } from "./bucket";
-import type { Box, NearScreen } from "./camera";
+import { type Box, type NearScreen, tooSmall } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { SpatialDirection } from "./spatial-navigation";
 import { UnseenMark } from "./unseen-mark";
@@ -128,8 +128,13 @@ export function FrameLabel({
 				placed.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
 			const width = `${frame.w * at.k}px`;
 			if (moving) moves.current += 1;
-			if (el.style.width !== width && (!moving || exact || (moves.current + turn) % WIDTH_TURNS === 0))
+			if (el.style.width !== width && (!moving || exact || (moves.current + turn) % WIDTH_TURNS === 0)) {
 				el.style.width = width;
+				// the verbs on a label go with the furniture round a frame too small
+				// to carry it, while the name truncates away on its own
+				if (tooSmall(frame, at.k)) el.dataset.away = "";
+				else delete el.dataset.away;
+			}
 		},
 		[frame.x, frame.y, frame.w, frame.h, near, exact],
 	);
@@ -142,7 +147,7 @@ export function FrameLabel({
 			<div
 				ref={label}
 				data-frame-label={name}
-				className="pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
+				className="group/label pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
 			>
 				{entered && overview !== "target" ? (
 					<div className="flex items-center pb-2.5">
@@ -181,7 +186,10 @@ export function FrameLabel({
 							{leaf}
 						</span>
 						{clickEnters && overview === null && (
-							<span data-click-enters={name} className="shrink-0 animate-find-in text-tertiary type-detail">
+							<span
+								data-click-enters={name}
+								className="shrink-0 animate-find-in text-tertiary type-detail transition-opacity duration-fast ease-out group-data-away/label:pointer-events-none group-data-away/label:opacity-0"
+							>
 								click enters
 							</span>
 						)}
@@ -192,7 +200,7 @@ export function FrameLabel({
 							<button
 								type="button"
 								aria-label={`Play ${leaf}`}
-								className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-colors hover:text-accent-strong type-detail"
+								className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-[color,opacity] duration-fast ease-out hover:text-accent-strong group-data-away/label:pointer-events-none group-data-away/label:opacity-0 type-detail"
 								onPointerDown={(event) => {
 									event.stopPropagation();
 									onPlay();
