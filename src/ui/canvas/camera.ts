@@ -69,9 +69,13 @@ export function boundsOf(boxes: Box[]): Box {
 	return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
 }
 
-/** The camera after zooming by factor with the screen point (cx, cy) pinned. */
-export function zoomAt(camera: Camera, cx: number, cy: number, factor: number): Camera {
-	const k = clamp(camera.k * factor, K_MIN, K_MAX);
+/**
+ * The camera after zooming by factor with the screen point (cx, cy) pinned,
+ * never out past `floor` (zoomFloor). A camera already further out than the
+ * floor may zoom in from there but not further out: it is never snapped in.
+ */
+export function zoomAt(camera: Camera, cx: number, cy: number, factor: number, floor = K_MIN): Camera {
+	const k = clamp(camera.k * factor, Math.min(Math.max(floor, K_MIN), camera.k), K_MAX);
 	const r = k / camera.k;
 	return { k, x: cx - (cx - camera.x) * r, y: cy - (cy - camera.y) * r };
 }
@@ -80,6 +84,24 @@ export function zoomAt(camera: Camera, cx: number, cy: number, factor: number): 
 const FIT_INSET = 128;
 /** That breathing room on each side. */
 export const FIT_MARGIN = FIT_INSET / 2;
+
+/**
+ * However small the page, zooming out reaches at least this far (DEV-289): a
+ * page of one frame still steps back to see it whole and small.
+ */
+export const SMALL_PAGE_FLOOR = 0.25;
+
+/**
+ * The furthest a page lets you zoom out (DEV-289): where the whole page fits
+ * the view with a fit's margin, so it never shrinks to a speck in an empty
+ * field. A small page still reaches SMALL_PAGE_FLOOR, and no page goes below
+ * the canvas's own 2%. An empty page (null bounds) has only that 2%.
+ */
+export function zoomFloor(bounds: Box | null, vw: number, vh: number): number {
+	if (bounds === null || bounds.w <= 0 || bounds.h <= 0) return K_MIN;
+	const fit = Math.min((vw - FIT_INSET) / bounds.w, (vh - FIT_INSET) / bounds.h);
+	return Math.max(K_MIN, Math.min(fit, SMALL_PAGE_FLOOR));
+}
 
 /** Frame the given bounds inside vw×vh with breathing room, never past 100%. */
 export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
