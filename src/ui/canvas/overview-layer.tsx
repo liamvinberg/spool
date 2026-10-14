@@ -10,28 +10,22 @@ import type { SpatialDirection } from "./spatial-navigation";
 /**
  * The ⌥ overview's furniture (DEV-295), in screen pixels over the frames: the
  * target in the accent ring, each frame one arrow away from it in a thin ring
- * wearing the key that reaches it on the edge that faces the target, the rest
- * under a veil, and four corners marking what the screen holds once ⌥ comes
- * up. A press toward nothing leaves a stop mark on that side, and says so.
+ * wearing the key that reaches it on the edge that faces the target, and the
+ * rest under a veil. A press toward nothing leaves a stop mark on that side,
+ * and says so.
  * The names are the labels' own (frame-label.tsx).
  */
 
 const ARROW: Record<SpatialDirection, string> = { left: "←", right: "→", up: "↑", down: "↓" };
 
-/** the corner arms of the viewfinder, in screen pixels */
-const ARM = 22;
-
 export function OverviewLayer({
 	camera,
 	frames,
 	overview,
-	finder,
 }: {
 	camera: CameraStore;
 	frames: readonly ProjectedFrame[];
 	overview: Overview;
-	/** the world the screen holds once ⌥ comes up */
-	finder: Box | null;
 }) {
 	const target = frames.find((frame) => frame.name === overview.target);
 	if (target === undefined) return null;
@@ -83,23 +77,6 @@ export function OverviewLayer({
 					</Kbd>
 				</Follow>
 			))}
-			{finder !== null &&
-				CORNERS.map((corner) => (
-					<Follow
-						key={corner.id}
-						camera={camera}
-						screen={(at) => {
-							const box = toScreen(finder, at);
-							return {
-								left: corner.right ? box.x + box.w - ARM : box.x,
-								top: corner.bottom ? box.y + box.h - ARM : box.y,
-								width: ARM,
-								height: ARM,
-							};
-						}}
-						className={cn("absolute animate-find-in border-accent", corner.className)}
-					/>
-				))}
 			{bump !== null && (
 				<Follow
 					key={`stop-${bump.n}`}
@@ -113,13 +90,6 @@ export function OverviewLayer({
 		</div>
 	);
 }
-
-const CORNERS = [
-	{ id: "tl", right: false, bottom: false, className: "rounded-tl-md border-t-2 border-l-2" },
-	{ id: "tr", right: true, bottom: false, className: "rounded-tr-md border-t-2 border-r-2" },
-	{ id: "bl", right: false, bottom: true, className: "rounded-bl-md border-b-2 border-l-2" },
-	{ id: "br", right: true, bottom: true, className: "rounded-br-md border-r-2 border-b-2" },
-] as const;
 
 function opposite(direction: SpatialDirection): SpatialDirection {
 	return direction === "left" ? "right" : direction === "right" ? "left" : direction === "up" ? "down" : "up";

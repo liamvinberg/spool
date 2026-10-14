@@ -1,7 +1,7 @@
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import type { Camera } from "../api";
 import { formatCombo } from "../hotkey-combos";
-import { type Box, moveCamera, revealCamera, visibleWorldRect } from "./camera";
+import { revealCamera } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { type CanvasStore, useCanvasState, visibleFramesOf } from "./canvas-store";
 import type { LiveChip } from "./frame-label";
@@ -365,25 +365,8 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		}
 	}, [entered, hold, setOverview]);
 
-	/** The world the screen holds once ⌥ comes up, for the viewfinder. */
-	const finder = useMemo((): Box | null => {
-		if (overview === null) return null;
-		const target = frameNamed(overview.target);
-		const size = viewSize();
-		if (target === undefined || size === null) return null;
-		const landing = landOverview(overview);
-		const lands =
-			landing.kind === "stay"
-				? overview.saved
-				: landing.kind === "enter"
-					? moveCamera(overview.saved, target, size.w, size.h)
-					: revealCamera(overview.saved, target, size.w, size.h);
-		return visibleWorldRect(lands, size.w, size.h, 0);
-	}, [overview, frameNamed, viewSize]);
-
 	return {
 		overview,
-		finder,
 		chip,
 		/** ⌥ alone went down (canvas.overview): armed, open once held */
 		holdDown: () => {

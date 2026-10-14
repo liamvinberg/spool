@@ -138,6 +138,11 @@ describe("moving between frames while live", () => {
 		expect(host.querySelector('[data-overview-near="welcome"]')).not.toBeNull();
 		expect(host.querySelector('[data-overview-near="verify"]')).not.toBeNull();
 		expect(labelText(host, "sign-up")).toContain("let go of ⌥ to enter");
+		// the target's ring is the one mark of where it goes: no viewfinder corners
+		expect(host.querySelectorAll("[data-overview] .border-accent")).toHaveLength(1);
+		expect(host.querySelector("[data-overview] .border-accent")?.getAttribute("data-overview-target")).toBe(
+			"sign-up",
+		);
 		// still live where it opened, its chip faded
 		expect(liveChip(host)).toBe("welcome");
 		expect(host.querySelector('[data-live-chip="welcome"]')?.className).toContain("bg-surface-control");
