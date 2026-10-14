@@ -99,6 +99,7 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 	await act(() => {
 		lifecycle?.onIframe(frame.name, iframe);
 		lifecycle?.noteLoaded(frame.name);
+		lifecycle?.noteArrived(frame.name);
 		lifecycle?.sweep();
 	});
 	if (lifecycle === undefined) throw new Error("lifecycle did not update");
@@ -276,10 +277,11 @@ describe("delivering the freeze", () => {
 		expect(freezes(post)).toEqual([held]);
 
 		await act(() => lifecycle.noteLoaded("landing"));
+		await act(() => lifecycle.noteArrived("landing"));
 		expect(freezes(post)).toEqual([held, held]);
 	});
 
-	it("tells a document nothing before it reports loaded, and holds it the moment it does", async () => {
+	it("tells a document nothing until it has loaded and arrived, and holds it the moment it has", async () => {
 		const { lifecycle, iframe, post } = await mountLive();
 		await act(() => lifecycle.onIframe("landing", null));
 		await act(() => lifecycle.onIframe("landing", iframe));
@@ -289,7 +291,12 @@ describe("delivering the freeze", () => {
 		await act(() => lifecycle.noteCameraMoving(true));
 		expect(freezes(post)).toEqual([]);
 
+		// nor while it arrives: a held entrance would settle early, and its cover
+		// let go on the entrance's first frame (#177)
 		await act(() => lifecycle.noteLoaded("landing"));
+		expect(freezes(post)).toEqual([]);
+
+		await act(() => lifecycle.noteArrived("landing"));
 		expect(freezes(post)).toEqual([held]);
 	});
 
@@ -345,6 +352,7 @@ describe("delivering the freeze", () => {
 		await act(() => lifecycle.onIframe("landing", null));
 		await act(() => lifecycle.onIframe("landing", iframe));
 		await act(() => lifecycle.noteLoaded("landing"));
+		await act(() => lifecycle.noteArrived("landing"));
 		await wait(0);
 		await wait(IDLE_FREEZE_MS - 1);
 		expect(freezes(post), "the frame that just arrived gets to finish arriving").toEqual([held]);

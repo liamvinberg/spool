@@ -381,11 +381,14 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 */
 	const postFreeze = useCallback((frame: string, on: boolean) => {
 		const sourceWindow = iframes.current.get(frame)?.contentWindow;
-		// a document that left took its freeze with it, and one that has not
-		// reported loaded may not be listening yet: a freeze posted then is lost,
-		// and counting it held would keep the real one from ever being sent.
-		// Its loaded report applies the freeze it arrived into (`noteLoaded`).
-		if (sourceWindow == null || !readyRef.current.has(frame)) {
+		// A document that left took its freeze with it. One that has not reported
+		// loaded may not be listening yet: a freeze posted then is lost, and
+		// counting it held would keep the real one from ever being sent. And one
+		// still arriving is let finish (#177): a freeze then pauses the entrance
+		// its settle is waiting out, so it settles early and its cover lets go on
+		// the entrance's first frame. The end of the arrival applies whatever
+		// freeze it arrived into (`endArrival`).
+		if (sourceWindow == null || !readyRef.current.has(frame) || arrivalTimers.current.has(frame)) {
 			frozen.current.delete(frame);
 			return;
 		}
@@ -521,14 +524,18 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, []);
 
 	/** The frame's arrival is over: it said so, or its deadline said so for it. */
-	const endArrival = useCallback((frame: string) => {
-		const timer = arrivalTimers.current.get(frame);
-		if (timer !== undefined) {
-			clearTimeout(timer);
-			arrivalTimers.current.delete(frame);
-		}
-		setSettled((current) => (current.has(frame) ? current : new Set(current).add(frame)));
-	}, []);
+	const endArrival = useCallback(
+		(frame: string) => {
+			const timer = arrivalTimers.current.get(frame);
+			if (timer !== undefined) {
+				clearTimeout(timer);
+				arrivalTimers.current.delete(frame);
+			}
+			setSettled((current) => (current.has(frame) ? current : new Set(current).add(frame)));
+			applyFreeze();
+		},
+		[applyFreeze],
+	);
 
 	/** The document said it has arrived — routed in by the canvas's message listener. */
 	const noteArrived = useCallback((frame: string) => endArrival(frame), [endArrival]);
@@ -617,9 +624,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			readyRef.current = next;
 			setReady(next);
 			askArrival(frame);
-			applyFreeze();
 		},
-		[askArrival, applyFreeze],
+		[askArrival],
 	);
 
 	/**
