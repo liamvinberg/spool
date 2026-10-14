@@ -1,7 +1,7 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Camera } from "../api";
 import { formatCombo } from "../hotkey-combos";
-import { type Box, entryCamera, revealCamera, visibleWorldRect } from "./camera";
+import { type Box, moveCamera, revealCamera, visibleWorldRect } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { type CanvasStore, useCanvasState, visibleFramesOf } from "./canvas-store";
 import type { LiveChip } from "./frame-label";
@@ -31,9 +31,9 @@ export interface LiveMoveDeps {
 	viewportRef: RefObject<HTMLDivElement | null>;
 	/** what the canvas holds: the frame live, the selection, the threads and the frames */
 	store: CanvasStore;
-	/** go inside a frame, the way a double-click does */
-	enterFrame: (name: string) => void;
-	/** walk to a frame the way its data-go would: fresh boot, its page if it is on another */
+	/** go inside a frame, the way a double-click does, the camera flown on moveCamera from `from` */
+	enterFrame: (name: string, from: Camera | null) => void;
+	/** walk to a frame the way its data-go would: fresh boot, its page if it is on another; the camera on moveCamera */
 	walkTo: (name: string) => void;
 	/** select one frame out on the canvas, as a click does */
 	select: (name: string, trail: SpatialTrail | null) => void;
@@ -115,7 +115,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		setChip({ frame: to, at: performance.now(), came, note, ring: true });
 	}, []);
 
-	/** Into a frame from the one entered now, by a step, the overview or a click. */
+	/** Into a frame from the one entered now, by a step, the overview or a click: the target brought to you. */
 	const landLive = useCallback(
 		(target: string, came: SpatialDirection | null, from: { camera?: Camera; leaving?: string } = {}) => {
 			const { enterFrame, camera, store } = depsRef.current;
@@ -126,12 +126,11 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			if (at !== null && at !== target) taken.current = [...taken.current, { from: at, to: target }];
 			fork.current = null;
 			const was = at === null ? undefined : frameNamed(at);
-			enterFrame(target);
-			const size = viewSize();
-			if (from.camera !== undefined && size !== null) camera.fly(entryCamera(from.camera, frame, size.w, size.h));
+			// one flight, from the camera the move started at: the overview's saved one, else where it stands
+			enterFrame(target, from.camera ?? camera.get());
 			landed(at, target, came ?? (was === undefined ? null : sideOf(was, frame)), null);
 		},
-		[frameNamed, viewSize, landed],
+		[frameNamed, landed],
 	);
 
 	const flyOverview = useCallback(
@@ -377,7 +376,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			landing.kind === "stay"
 				? overview.saved
 				: landing.kind === "enter"
-					? entryCamera(overview.saved, target, size.w, size.h)
+					? moveCamera(overview.saved, target, size.w, size.h)
 					: revealCamera(overview.saved, target, size.w, size.h);
 		return visibleWorldRect(lands, size.w, size.h, 0);
 	}, [overview, frameNamed, viewSize]);

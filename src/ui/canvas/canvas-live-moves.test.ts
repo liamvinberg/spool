@@ -35,13 +35,14 @@ const VIEW = { w: 1000, h: 800 };
 
 async function openCanvas(
 	world: { frames: Array<Record<string, unknown>>; edges: unknown[]; pages: string[] } = { frames, edges, pages: [] },
+	start: { x: number; y: number; k: number } = START,
 ): Promise<{ host: HTMLElement; canvas: HTMLElement }> {
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/events")) return openEventStream();
-			if (url.pathname.endsWith("/state")) return Response.json({ camera: START });
+			if (url.pathname.endsWith("/state")) return Response.json({ camera: start });
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({ root: "/project", pages: world.pages, frames: world.frames });
 			}
@@ -82,8 +83,8 @@ async function openCanvas(
 		vi.restoreAllMocks();
 	});
 	await act(async () => root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} })));
-	await until(() => cameraTransform(host) === "translate(0px, 0px) scale(2)");
-	await until(() => host.querySelector('[data-frame-label="welcome"]') !== null);
+	await until(() => cameraTransform(host) === `translate(${start.x}px, ${start.y}px) scale(${start.k})`);
+	await until(() => host.querySelector(`[data-frame-label="${String(world.frames[0]?.name)}"]`) !== null);
 	const canvas = host.querySelector<HTMLElement>('[role="application"]');
 	if (canvas === null) throw new Error("no canvas");
 	return { host, canvas };
@@ -436,6 +437,71 @@ describe("moving between frames while live", () => {
 		await key("keydown", { key: "@", code: "Digit2", altKey: true });
 		await wait(OVERVIEW_HOLD_MS + 40);
 		expect(overviewTarget(host)).toBeNull();
+	});
+});
+
+/**
+ * Design-system pages side by side (DEV-295's tall case), zoomed out so the
+ * row shows: each 1000 screen pixels tall at this zoom, taller than the view,
+ * so entering one keeps the camera, and moving to the next must still bring
+ * it over, its top at a fit's margin.
+ */
+describe("moving between tall frames while live", () => {
+	const pages = ["tokens", "type", "colour"].map((name, i) => ({ name, x: i * 1600, y: 0, w: 1440, h: 5000 }));
+	const world = { frames: pages, edges: [edge("tokens", "type"), edge("type", "colour")], pages: [] };
+	const ROW = { x: 0, y: 0, k: 0.2 };
+
+	/** Where a page stands on screen now: its middle across, and its top. */
+	function placed(host: HTMLElement, name: string) {
+		const page = pages.find((candidate) => candidate.name === name);
+		if (page === undefined) throw new Error(name);
+		const camera = cameraOf(host);
+		return { k: camera.k, middle: (page.x + page.w / 2) * camera.k + camera.x, top: page.y * camera.k + camera.y };
+	}
+	const broughtIn = { k: 0.2, middle: VIEW.w / 2, top: 64 };
+
+	it("brings the next page in on ⌘⌥ arrows, where entering kept the camera", async () => {
+		const { host } = await openCanvas(world, ROW);
+		await enter(host, "tokens");
+		expect(cameraOf(host)).toEqual(ROW);
+		await relay(host, "tokens", { ...step("ArrowRight"), id: "canvas.step-through", metaKey: true });
+		expect(liveChip(host)).toBe("type");
+		expect(placed(host, "type")).toEqual(broughtIn);
+	});
+
+	it("brings a clicked page in", async () => {
+		const { host, canvas } = await openCanvas(world, ROW);
+		await enter(host, "tokens");
+		const at = { clientX: placed(host, "type").middle, clientY: 400 };
+		await act(async () => {
+			for (const type of ["pointerdown", "pointerup"]) {
+				canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, ...at }));
+			}
+		});
+		expect(liveChip(host)).toBe("type");
+		expect(placed(host, "type")).toEqual(broughtIn);
+	});
+
+	it("lands the overview's target from the camera it stepped back from", async () => {
+		const { host } = await openCanvas(world, ROW);
+		await enter(host, "tokens");
+		await relay(host, "tokens", step("ArrowRight"));
+		expect(overviewTarget(host)).toBe("type");
+		await relay(host, "tokens", { spool: "hold", phase: "up" });
+		expect(liveChip(host)).toBe("type");
+		expect(placed(host, "type")).toEqual(broughtIn);
+	});
+
+	it("brings the page a thread walks to in, either way", async () => {
+		const { host } = await openCanvas(world, ROW);
+		await enter(host, "tokens");
+		await relay(host, "tokens", thread("canvas.thread-next"));
+		expect(liveChip(host)).toBe("type");
+		expect(placed(host, "type")).toEqual(broughtIn);
+		await relay(host, "type", thread("canvas.thread-next"));
+		expect(placed(host, "colour")).toEqual(broughtIn);
+		await relay(host, "colour", thread("canvas.thread-back"));
+		expect(placed(host, "type")).toEqual(broughtIn);
 	});
 });
 

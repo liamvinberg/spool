@@ -85,6 +85,7 @@ import {
 	fitCamera,
 	intersects,
 	K_STEP,
+	moveCamera,
 	type NearScreen,
 	revealCamera,
 	toWorld,
@@ -1562,9 +1563,13 @@ export function ProjectCanvas({
 		if (from !== undefined) jumpList.current = recordJump(jumpList.current, from);
 	}, [jumpSpot]);
 
-	/** Enter one frame as a fresh preview root: no carried session, no witnessed edge. */
+	/**
+	 * Enter one frame as a fresh preview root: no carried session, no witnessed edge.
+	 * A move from another live frame (DEV-295) says so with the camera it moves
+	 * from, and lands on moveCamera rather than entryCamera.
+	 */
 	const enterFrame = useCallback(
-		(target: string) => {
+		(target: string, move?: { from: Camera | null }) => {
 			const frame = visibleFramesOf(store.get()).find((candidate) => candidate.name === target);
 			if (frame === undefined) return;
 			departedFrameDocuments.current.delete(target);
@@ -1582,7 +1587,10 @@ export function ProjectCanvas({
 			const viewport = viewportRef.current;
 			const cam = camera.get();
 			if (viewport === null || cam === null) return;
-			const next = entryCamera(cam, frame, viewport.clientWidth, viewport.clientHeight);
+			const next =
+				move === undefined
+					? entryCamera(cam, frame, viewport.clientWidth, viewport.clientHeight)
+					: moveCamera(move.from ?? cam, frame, viewport.clientWidth, viewport.clientHeight);
 			// standing still is not a flight: a 220ms animation to where you
 			// already are would fight a wheel that arrives inside it
 			if (next.x !== cam.x || next.y !== cam.y || next.k !== cam.k) camera.fly(next);
@@ -3684,7 +3692,7 @@ export function ProjectCanvas({
 	 * walk (#39): cross-page links are legal, journeys hand off to each other.
 	 */
 	const walkTo = useCallback(
-		(target: string, session: SessionRecord | null) => {
+		(target: string, session: SessionRecord | null, aim: typeof centerOn = centerOn) => {
 			recordDeparture();
 			const across = store.get().frames.find((f) => f.name === target);
 			// a frame on another page is the arrival's to place, not this flight's
@@ -3705,7 +3713,7 @@ export function ProjectCanvas({
 			const viewport = viewportRef.current;
 			const cam = camera.get();
 			if (frame !== undefined && viewport !== null && cam !== null) {
-				camera.fly(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
+				camera.fly(aim(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
 			// The reboot must not read as a reload (#28), and nothing stands between
 			// the click and it (#110): the arrival's cover is the target's *stored*
@@ -3726,8 +3734,8 @@ export function ProjectCanvas({
 		camera,
 		viewportRef,
 		store,
-		enterFrame,
-		walkTo: (name) => walkTo(name, null),
+		enterFrame: (name, from) => enterFrame(name, { from }),
+		walkTo: (name) => walkTo(name, null, moveCamera),
 		select: (name, trail) => {
 			setSelectedPage(null);
 			setSelected([name]);
