@@ -227,6 +227,44 @@ export function isFrameAttended(input: {
 }
 
 /**
+ * How many documents the ring mounts in one animation frame, nearest the
+ * middle of the viewport first. A camera coming to rest beside several
+ * readable frames mounted all of them in one task, which was 61 ms of the
+ * canvas's main thread at every stop (DEV-303); the frame you went inside, a
+ * selection and an export still mount at once.
+ */
+export const MOUNTS_PER_FRAME = 1;
+
+/**
+ * The sweep's decision, with the ring's new documents let in a few at a time:
+ * of the frames the ring alone mounts from their picture, only the `limit`
+ * nearest the viewport's middle go live now, and the rest stay what they were
+ * for a later step. `waiting` says whether any were left for one.
+ */
+export function admitMounts(
+	input: SweepInput,
+	decided: Readonly<Record<string, FrameState>>,
+	limit: number,
+): { states: Record<string, FrameState>; waiting: boolean } {
+	const { frames, entered, selectionTargets, held, states, camera, viewport } = input;
+	const arriving = frames.filter(
+		(frame) =>
+			decided[frame.name] === "live" &&
+			(states[frame.name] ?? "picture") === "picture" &&
+			frame.name !== entered &&
+			frame.name !== held &&
+			!selectionTargets.has(frame.name),
+	);
+	const next = { ...decided };
+	if (arriving.length <= limit || camera == null || viewport == null) return { states: next, waiting: false };
+	const cx = (viewport.width / 2 - camera.x) / camera.k;
+	const cy = (viewport.height / 2 - camera.y) / camera.k;
+	const away = (frame: ProjectedFrame) => Math.hypot(frame.x + frame.w / 2 - cx, frame.y + frame.h / 2 - cy);
+	for (const frame of arriving.sort((a, b) => away(a) - away(b)).slice(limit)) next[frame.name] = "picture";
+	return { states: next, waiting: true };
+}
+
+/**
  * Which frames hold a document and which have reported in, kept outside React
  * (DEV-303). A document's loaded and arrived reports, and every step of a
  * sweep, change one frame's shell and nothing else of the canvas: each used to
@@ -752,10 +790,14 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[noteShot],
 	);
 
-	// The decision function: runs on a sweep interval and on urgent intent changes.
+	/** The next step of a sweep that left documents waiting, one animation frame on. */
+	const step = useRef<number | undefined>(undefined);
+
+	// The decision function: runs on a sweep interval, on urgent intent changes,
+	// and a frame after a sweep that left the ring's documents waiting.
 	const compute = useCallback(() => {
 		const now = performance.now();
-		const result = sweepLifecycle({
+		const input: SweepInput = {
 			frames: framesRef.current,
 			entered: enteredRef.current,
 			selectionTargets: selectionTargetsRef.current,
@@ -766,12 +808,24 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				viewportRef.current === null
 					? null
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
-		});
-		if (result.changed) store.set({ states: result.states });
+		};
+		const result = sweepLifecycle(input);
+		const { states, waiting } = result.changed
+			? admitMounts(input, result.states, MOUNTS_PER_FRAME)
+			: { states: result.states, waiting: false };
+		if (result.changed) store.set({ states });
+		if (waiting && step.current === undefined) {
+			step.current = requestAnimationFrame(() => {
+				step.current = undefined;
+				compute();
+			});
+		}
 		// against the states this sweep just decided, not last render's: a frame
 		// handed back from an export becomes freezable as soon as it is live again
-		applyFreeze(result.states, now);
+		applyFreeze(states, now);
 	}, [store, framesRef, cameraRef, viewportRef, applyFreeze]);
+
+	useEffect(() => () => cancelAnimationFrame(step.current ?? 0), []);
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
