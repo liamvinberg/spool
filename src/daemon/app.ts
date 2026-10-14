@@ -38,12 +38,11 @@ import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
-import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
-import { parsePlaces, writePlaces } from "./canvas-places";
+import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
 import { createFrameCompiler } from "./compile";
-import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { DesignBoundaryError } from "./design-path";
 import {
 	captureWorkerCsp,
 	captureWorkerDocument,
@@ -56,14 +55,12 @@ import {
 } from "./document";
 import { createChangeHub } from "./events";
 import { explorerRoutes } from "./explorer-routes";
-import { createFlowGraph, recordWalk } from "./flows";
+import { createFlowGraph } from "./flows";
 import { servedFrameCsp } from "./frame-csp";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
-import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
 import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
-import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { watchForMoves } from "./moved-in";
@@ -81,8 +78,6 @@ import {
 	removeProjectIcon,
 	writeProjectIcon,
 } from "./project-icon";
-import { answeringDiskRefusals } from "./project-route";
-import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
 	createThumbnailWatch,
 	findProjectThumbnail,
@@ -95,12 +90,10 @@ import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./
 import {
 	describeMissingFrame,
 	FRAME_BIRTH,
-	frameDirectories,
 	frameExists,
 	frameGeometry,
 	frameNames,
 	listProjectFrames,
-	lookupFrame,
 	type ProjectCard,
 	summarizeProject,
 } from "./projection";
@@ -116,8 +109,7 @@ import {
 	RENDER_HOST,
 	renderOriginFor,
 } from "./security";
-import { markSeen } from "./seen";
-import { createSelectionStore, parseSelectionPut } from "./selection";
+import { createSelectionStore } from "./selection";
 import {
 	type AppEvent,
 	type MachineStateWatchAdapter,
@@ -1737,28 +1729,18 @@ export function createDaemonApp({
 				return c.json({ thumbnail: null });
 			},
 		)
-		.get("/api/p/:project/frames", (c) => {
-			const name = c.req.param("project");
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			try {
-				const projection = listProjectFrames(project.root, { seen: true });
-				return c.json({
-					...projection,
-					frames: projection.frames.map((frame) => {
-						// This read is the moment a canvas learns a frame has no cover
-						// to show, and a frame with none renders its placeholder and
-						// asks for nothing (#111). So its picture is owed from here
-						// rather than waiting for a request that will never come.
-						if (frame.cover === undefined) owePicture(project.root, name, frame.name);
-						return frame;
-					}),
-				});
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-		})
+		.route(
+			"/api/p",
+			canvasRoutes({
+				resolve: resolveProject,
+				owePicture,
+				flowGraph,
+				resolvePass,
+				origin: () => selfOrigin,
+				hub,
+				selections,
+			}),
+		)
 		.get("/covers/:project/:frame/:hash", async (c) => {
 			// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
 			// carry the control header, and an immutable cache key, so a warm
@@ -1789,35 +1771,6 @@ export function createDaemonApp({
 			if (exists) owePicture(project.root, name, frame);
 			return c.text("no such cover", 404);
 		})
-		.get("/api/p/:project/state", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json(readCanvasState(project.root));
-		})
-		.put(
-			"/api/p/:project/state",
-			validator("json", (value, c) => {
-				const state = parseCanvasState(value);
-				if (state === undefined) {
-					return c.text(
-						"canvas state must be an object without mode; supported fields are camera, arrows, activePage, and pageCameras",
-						400,
-					);
-				}
-				return state;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				try {
-					writeCanvasState(project.root, c.req.valid("json"));
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				return c.body(null, 204);
-			},
-		)
 		/*
 		 * What one open canvas shows, for the booth's order (#81): the frames on
 		 * screen are photographed first, then the rest of their page. Sent at
@@ -1844,163 +1797,6 @@ export function createDaemonApp({
 				if (open.scheme !== scheme) {
 					open.scheme = scheme;
 					if (booth.setScheme(scheme)) void restale(boothWatches.keys());
-				}
-				return c.body(null, 204);
-			},
-		)
-		/*
-		 * Manual order (#228), beside the camera because both are arrangement —
-		 * and in a different file, because this one is the canvas rather than
-		 * this machine's view of it: canvas.json is committed and cloned where
-		 * .spool/ is per-machine ephemera.
-		 *
-		 * What is stored is advisory. A name in it can be stale, can name a
-		 * frame that has since moved page, and can be missing one born a second
-		 * ago, so a PUT is never refused for naming a frame the projection does
-		 * not have and a read never rewrites the file to agree — the client
-		 * merges the two, and cleaning here would drop the place a frame an
-		 * agent is halfway through writing is about to come back to.
-		 */
-		.get("/api/p/:project/order", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			// the document rather than the daemon's reading of it: a flat project's
-			// pages are the bare list they have always been (#231)
-			const order = answeringDiskRefusals(c, () => storedOrder(readOrder(project.root)));
-			if ("response" in order) return order.response;
-			return c.json(order.value);
-		})
-		.put(
-			"/api/p/:project/order",
-			validator("json", (value, c) => {
-				const order = parseOrder(value);
-				if (order === undefined) {
-					return c.text(
-						'order must be { "pages": [page, ...] or { "<page>": [page, ...] }, "frames": { "<page>": [frame, ...] } }',
-						400,
-					);
-				}
-				return order;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const written = answeringDiskRefusals(c, () => writeOrder(project.root, c.req.valid("json")));
-				if ("response" in written) return written.response;
-				return c.body(null, 204);
-			},
-		)
-		/**
-		 * Where each page stands on the field holding it (#265).
-		 *
-		 * The second thing about this canvas a hand arranged, and it goes in the
-		 * same committed file for the same reason. There is no GET beside this
-		 * one: a page's place arrives on the projection, already completed for
-		 * every page that had none, so a second read would only be able to say
-		 * less.
-		 */
-		.put(
-			"/api/p/:project/places",
-			validator("json", (value, c) => {
-				const places = parsePlaces(value);
-				if (places === undefined) {
-					return c.text('places must be { "<page>": { "x": number, "y": number } }', 400);
-				}
-				return places;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const written = answeringDiskRefusals(c, () => writePlaces(project.root, c.req.valid("json")));
-				if ("response" in written) return written.response;
-				return c.body(null, 204);
-			},
-		)
-		.get("/api/p/:project/flows", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json(await flowGraph.flows(project.root));
-		})
-		.post("/api/p/:project/flows/resolve", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			// the pass dials this daemon: before the server binds there is no
-			// origin to render from, and in-process app.request() never binds one
-			if (selfOrigin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
-			const listing = listProjectFrames(project.root);
-			const frames = listing.frames.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
-			try {
-				const result = await resolvePass.run({
-					root: project.root,
-					project: c.req.param("project"),
-					origin: selfOrigin,
-					frames,
-				});
-				return c.json({ ...result, ran: true });
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-		})
-		.post(
-			"/api/p/:project/walked",
-			validator("json", (value, c) => {
-				const { from, to } = (value ?? {}) as { from?: unknown; to?: unknown };
-				if (typeof from !== "string" || !isFramePath(from) || typeof to !== "string" || !isFramePath(to)) {
-					return c.text('a walk is { "from": "<frame>", "to": "<frame>" }', 400);
-				}
-				return { from, to };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { from, to } = c.req.valid("json");
-				// only witness walks between frames that really exist — a session
-				// racing a delete records nothing
-				for (const frame of [from, to]) {
-					if (!frameExists(project.root, frame)) {
-						return c.text(`no frame "${frame}" to walk`, 404);
-					}
-				}
-				// a mark that records moves the flows payload; a discarded walk is
-				// silent — the map never claims more than source (#34)
-				try {
-					if (recordWalk(project.root, from, to)) hub.publish(project.root, { kind: "walked" });
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				return c.body(null, 204);
-			},
-		)
-		/**
-		 * These frames have been looked at (seen.ts). The canvas says so when a
-		 * frame has held enough of the viewport long enough to have been read, and
-		 * when one is pressed. Names the project does not hold are ignored rather
-		 * than refused: a browser one beat behind a delete is not an error.
-		 */
-		.post(
-			"/api/p/:project/seen",
-			validator("json", (value, c) => {
-				const { frames } = (value ?? {}) as { frames?: unknown };
-				if (!Array.isArray(frames) || frames.some((name) => typeof name !== "string" || !isFramePath(name))) {
-					return c.text('seen is { "frames": ["<frame>", ...] }', 400);
-				}
-				return { frames: frames as string[] };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				try {
-					const dirs = frameDirectories(project.root);
-					markSeen(
-						project.root,
-						[...dirs].map(([name, dir]) => ({ name, dir })),
-						c.req.valid("json").frames,
-					);
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
 				}
 				return c.body(null, 204);
 			},
@@ -2126,96 +1922,6 @@ export function createDaemonApp({
 						clearInterval(beat);
 					}
 				});
-			},
-		)
-		.post(
-			"/api/p/:project/locate",
-			validator("json", (value, c) => {
-				const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-				const { path, find } = body;
-				if (typeof path !== "string" || path === "") return c.text('locate must be { "path", "find": [...] }', 400);
-				if (!Array.isArray(find) || !find.every((one): one is string => typeof one === "string")) {
-					return c.text('locate must be { "path", "find": [...] }', 400);
-				}
-				return { path, find };
-			}),
-			(c) => {
-				// where one write landed (#214): the canvas has the strings the edit was made
-				// of and only this side owns the file, so the line range comes from here
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { path, find } = c.req.valid("json");
-				// nothing found is an answer rather than an error: a file the agent has
-				// already moved on from is the ordinary case, and it costs a mark, not a turn
-				return c.json({ range: locateInDesign(project.root, path, find) ?? null });
-			},
-		)
-		.get("/api/p/:project/selection", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json({ selection: selections.get(project.root) });
-		})
-		.put(
-			"/api/p/:project/selection",
-			validator("json", (value, c) => {
-				const put = parseSelectionPut(value);
-				if (put === undefined) {
-					return c.text('selection must be { "frames": [name, ...] } or { "element": { ... } }', 400);
-				}
-				return put;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				selections.set(project.root, c.req.valid("json"));
-				// the enriched list comes straight back, because the composer's chips are
-				// the promise of what the prompt will carry and only this side knows the
-				// paths, the sizes, the line ranges and the excerpts (#116)
-				return c.json({ selection: selections.get(project.root) });
-			},
-		)
-		.put(
-			"/api/p/:project/geometry",
-			validator("json", (value, c) => {
-				const frames =
-					typeof value === "object" && value !== null ? (value as { frames?: unknown }).frames : undefined;
-				if (typeof frames !== "object" || frames === null || Array.isArray(frames)) {
-					return c.text('geometry must be { "frames": { "<name>": { x, y, w, h } } }', 400);
-				}
-				const parsed: Record<string, Geometry> = {};
-				for (const [name, raw] of Object.entries(frames)) {
-					const geometry = parseGeometry(raw);
-					if (!isFramePath(name) || geometry === undefined || geometry.w <= 0 || geometry.h <= 0) {
-						return c.text(`not a placeable geometry for "${name}"`, 400);
-					}
-					parsed[name] = geometry;
-				}
-				return { frames: parsed };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { frames } = c.req.valid("json");
-				// all-or-nothing: every frame resolved before the first sidecar write
-				const sidecars = new Map<string, string>();
-				const designDir = realDesignDir(project.root);
-				try {
-					for (const name of Object.keys(frames)) {
-						const found = lookupFrame(project.root, name);
-						if (found.kind !== "found") return c.text(`no frame "${name}" to place`, 404);
-						sidecars.set(name, resolveDesignPath(designDir, sidecarFileIn(found.dir)));
-					}
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				for (const [name, geometry] of Object.entries(frames)) {
-					const sidecar = sidecars.get(name);
-					if (sidecar === undefined) continue;
-					writeGeometry(sidecar, geometry, designDir);
-					hub.publish(project.root, { kind: "geometry", frame: name });
-				}
-				return c.body(null, 204);
 			},
 		)
 		.route("/api/p", handRoutes({ resolve: resolveProject, lastReaders: lastReadersIn }))
