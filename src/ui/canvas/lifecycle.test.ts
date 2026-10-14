@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
-import { sweepLifecycle } from "./lifecycle";
+import { admitMounts, sweepLifecycle } from "./lifecycle";
 
 /**
  * The lifecycle decision function (#40, #112): fabricated frames in, per-sweep
@@ -300,5 +300,49 @@ describe("a readable frame", () => {
 
 		expect(s.sweep(frames, { selectionTargets: new Set(["a"]), ...at(1) }).states.a).toBe("live");
 		expect(s.sweep(frames, at(1)).states.a).toBe("picture");
+	});
+});
+
+describe("the ring's documents, a few a frame (DEV-303)", () => {
+	// at k = 4 on a 1000px viewport, a's middle is the viewport's: 50,50 of
+	// the world is 200,200 on screen with the camera here
+	const view = { camera: { x: 300, y: 300, k: 4 }, viewport: { width: 1000, height: 1000 } };
+	const row = [frame("far", 220, 0), frame("a", 50, 50), frame("near", 120, 0)];
+	const input = (states: Record<string, FrameState>, more: Partial<SweepInput> = {}): SweepInput => ({
+		frames: row,
+		entered: null,
+		selectionTargets: new Set(),
+		held: null,
+		states,
+		...view,
+		...more,
+	});
+
+	it("mounts the frame nearest the viewport's middle first, then the next, one step each", () => {
+		let states: Record<string, FrameState> = {};
+		const order: string[][] = [];
+		for (let step = 0; step < 4; step++) {
+			const decided = sweepLifecycle(input(states)).states;
+			const admitted = admitMounts(input(states), decided, 1);
+			order.push(mounted(admitted.states));
+			states = admitted.states;
+			if (!admitted.waiting) break;
+		}
+		expect(order).toEqual([["a"], ["a", "near"], ["a", "far", "near"]]);
+	});
+
+	it("mounts the frame you went inside and a selection at once, whatever the ring is waiting on", () => {
+		const states = {};
+		const more = { entered: "far", selectionTargets: new Set(["near"]) };
+		const admitted = admitMounts(input(states, more), sweepLifecycle(input(states, more)).states, 1);
+		expect(mounted(admitted.states)).toEqual(["a", "far", "near"]);
+		expect(admitted.waiting).toBe(false);
+	});
+
+	it("lets a document go at once", () => {
+		const states: Record<string, FrameState> = { far: "live", a: "live", near: "live" };
+		const away = { camera: { x: 900_000, y: 0, k: 4 } };
+		const admitted = admitMounts(input(states, away), sweepLifecycle(input(states, away)).states, 1);
+		expect(mounted(admitted.states)).toEqual([]);
 	});
 });

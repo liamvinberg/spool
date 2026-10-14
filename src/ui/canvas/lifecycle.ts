@@ -1,5 +1,5 @@
-import type { RefObject } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LIVE_MIN_CSS_PX, SETTLE_BUDGET_MS } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
@@ -226,6 +226,117 @@ export function isFrameAttended(input: {
 	return cameraMoving || entered || selected || hovered;
 }
 
+/**
+ * How many documents the ring mounts in one animation frame, nearest the
+ * middle of the viewport first. A camera coming to rest beside several
+ * readable frames mounted all of them in one task, which was 61 ms of the
+ * canvas's main thread at every stop (DEV-303); the frame you went inside, a
+ * selection and an export still mount at once.
+ */
+export const MOUNTS_PER_FRAME = 1;
+
+/**
+ * The sweep's decision, with the ring's new documents let in a few at a time:
+ * of the frames the ring alone mounts from their picture, only the `limit`
+ * nearest the viewport's middle go live now, and the rest stay what they were
+ * for a later step. `waiting` says whether any were left for one.
+ */
+export function admitMounts(
+	input: SweepInput,
+	decided: Readonly<Record<string, FrameState>>,
+	limit: number,
+): { states: Record<string, FrameState>; waiting: boolean } {
+	const { frames, entered, selectionTargets, held, states, camera, viewport } = input;
+	const arriving = frames.filter(
+		(frame) =>
+			decided[frame.name] === "live" &&
+			(states[frame.name] ?? "picture") === "picture" &&
+			frame.name !== entered &&
+			frame.name !== held &&
+			!selectionTargets.has(frame.name),
+	);
+	const next = { ...decided };
+	if (arriving.length <= limit || camera == null || viewport == null) return { states: next, waiting: false };
+	const cx = (viewport.width / 2 - camera.x) / camera.k;
+	const cy = (viewport.height / 2 - camera.y) / camera.k;
+	const away = (frame: ProjectedFrame) => Math.hypot(frame.x + frame.w / 2 - cx, frame.y + frame.h / 2 - cy);
+	for (const frame of arriving.sort((a, b) => away(a) - away(b)).slice(limit)) next[frame.name] = "picture";
+	return { states: next, waiting: true };
+}
+
+/**
+ * Which frames hold a document and which have reported in, kept outside React
+ * (DEV-303). A document's loaded and arrived reports, and every step of a
+ * sweep, change one frame's shell and nothing else of the canvas: each used to
+ * be a render of the whole canvas, 4 to 15 ms of main thread a report. The
+ * shells read their own frame from here (`FrameLife`), and so does whatever
+ * else needs to know.
+ */
+export interface LifecycleStore {
+	readonly states: Readonly<Record<string, FrameState>>;
+	/** When each frame reported loaded, not merely that it did. */
+	readonly ready: ReadonlyMap<string, number>;
+	/** Frames whose document has finished arriving (#177). */
+	readonly settled: ReadonlySet<string>;
+	subscribe(listener: () => void): () => void;
+}
+
+interface WritableLifecycleStore extends LifecycleStore {
+	set(next: Partial<Pick<LifecycleStore, "states" | "ready" | "settled">>): void;
+}
+
+function createLifecycleStore(): WritableLifecycleStore {
+	const listeners = new Set<() => void>();
+	const store: WritableLifecycleStore = {
+		states: {},
+		ready: new Map<string, number>(),
+		settled: new Set<string>(),
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		set(next) {
+			Object.assign(store, next);
+			for (const listener of [...listeners]) listener();
+		},
+	};
+	return store;
+}
+
+/** One frame's lifecycle, rendered as it changes and without the canvas around it. */
+export function FrameLife({
+	store,
+	name,
+	children,
+}: {
+	store: LifecycleStore;
+	name: string;
+	children: (life: { state: FrameState; ready: boolean; settled: boolean }) => ReactNode;
+}): ReactNode {
+	const state = useSyncExternalStore(store.subscribe, () => store.states[name] ?? "picture");
+	const ready = useFrameReady(store, name);
+	const settled = useSyncExternalStore(store.subscribe, () => store.settled.has(name));
+	return children({ state, ready, settled });
+}
+
+/** Whether one frame's document has reported loaded; false for no frame. */
+export function useFrameReady(store: LifecycleStore, name: string | null): boolean {
+	return useSyncExternalStore(store.subscribe, () => name !== null && store.ready.has(name));
+}
+
+/**
+ * Whether any of these frames' documents is booting: mounted and not yet
+ * reported loaded. The picture layer holds the rest of the page's stills back
+ * until none is (#81).
+ */
+export function useDocumentsBooting(store: LifecycleStore, frames: readonly ProjectedFrame[]): boolean {
+	return useSyncExternalStore(store.subscribe, () =>
+		frames.some((frame) => (store.states[frame.name] ?? "picture") !== "picture" && !store.ready.has(frame.name)),
+	);
+}
+
 export interface SweepResult {
 	states: Record<string, FrameState>;
 	changed: boolean;
@@ -288,21 +399,12 @@ export interface LifecycleDeps {
 export function useFrameLifecycle(deps: LifecycleDeps) {
 	const { framesRef, entered, selectionTargets, selected, hovered, editing, cameraRef, viewportRef } = deps;
 
-	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: the export and
-	// the cover fade both wait on a document that has really booted
-	const [ready, setReady] = useState<ReadonlyMap<string, number>>(new Map<string, number>());
-	/**
-	 * Frames whose document has finished arriving (#177) — its own settle done,
-	 * or ARRIVE_DEADLINE_MS spent waiting to hear so. What the cover of a frame
-	 * nobody went inside waits for, because loaded is mid-arrival.
-	 */
-	const [settled, setSettled] = useState<ReadonlySet<string>>(new Set<string>());
-
-	const statesRef = useRef(states);
-	statesRef.current = states;
-	const readyRef = useRef(ready);
-	readyRef.current = ready;
+	// the cover fade both wait on a document that has really booted. Settled
+	// is the frames whose own settle is done, or ARRIVE_DEADLINE_MS spent
+	// waiting to hear so: what the cover of a frame nobody went inside waits
+	// for, because loaded is mid-arrival (#177).
+	const [store] = useState(createLifecycleStore);
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
 	const selectionTargetsRef = useRef(selectionTargets);
@@ -379,24 +481,27 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 * hard against exactly this (frame-shell.tsx), and a gesture that re-rendered
 	 * them would reload every iframe it touched.
 	 */
-	const postFreeze = useCallback((frame: string, on: boolean) => {
-		const sourceWindow = iframes.current.get(frame)?.contentWindow;
-		// A document that left took its freeze with it. One that has not reported
-		// loaded may not be listening yet: a freeze posted then is lost, and
-		// counting it held would keep the real one from ever being sent. And one
-		// still arriving is let finish (#177): a freeze then pauses the entrance
-		// its settle is waiting out, so it settles early and its cover lets go on
-		// the entrance's first frame. The end of the arrival applies whatever
-		// freeze it arrived into (`endArrival`).
-		if (sourceWindow == null || !readyRef.current.has(frame) || arrivalTimers.current.has(frame)) {
-			frozen.current.delete(frame);
-			return;
-		}
-		if (frozen.current.has(frame) === on) return;
-		sourceWindow.postMessage(freezeMessage(on), "*");
-		if (on) frozen.current.add(frame);
-		else frozen.current.delete(frame);
-	}, []);
+	const postFreeze = useCallback(
+		(frame: string, on: boolean) => {
+			const sourceWindow = iframes.current.get(frame)?.contentWindow;
+			// A document that left took its freeze with it. One that has not reported
+			// loaded may not be listening yet: a freeze posted then is lost, and
+			// counting it held would keep the real one from ever being sent. And one
+			// still arriving is let finish (#177): a freeze then pauses the entrance
+			// its settle is waiting out, so it settles early and its cover lets go on
+			// the entrance's first frame. The end of the arrival applies whatever
+			// freeze it arrived into (`endArrival`).
+			if (sourceWindow == null || !store.ready.has(frame) || arrivalTimers.current.has(frame)) {
+				frozen.current.delete(frame);
+				return;
+			}
+			if (frozen.current.has(frame) === on) return;
+			sourceWindow.postMessage(freezeMessage(on), "*");
+			if (on) frozen.current.add(frame);
+			else frozen.current.delete(frame);
+		},
+		[store],
+	);
 
 	/**
 	 * Roll the idle clocks forward and tell each frame where that leaves it. Runs
@@ -405,7 +510,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 * after them passes without anybody sending anything.
 	 */
 	const applyFreeze = useCallback(
-		(states: Readonly<Record<string, FrameState>> = statesRef.current, now = performance.now()) => {
+		(states: Readonly<Record<string, FrameState>> = store.states, now = performance.now()) => {
 			const entered = enteredRef.current;
 			const alive = new Set<string>();
 			for (const frame of framesRef.current) {
@@ -440,7 +545,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			for (const name of [...attendedAt.current.keys()]) if (!alive.has(name)) attendedAt.current.delete(name);
 			for (const name of [...crowded.current]) if (!alive.has(name)) crowded.current.delete(name);
 		},
-		[framesRef, postFreeze, attentionTo, attendedNow],
+		[store, framesRef, postFreeze, attentionTo, attendedNow],
 	);
 
 	useEffect(
@@ -454,9 +559,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					return framesRef.current
 						.map((frame) => frame.name)
 						.filter((name) => {
-							const loaded = readyRef.current.get(name);
+							const loaded = store.ready.get(name);
 							return (
-								statesRef.current[name] === "live" &&
+								store.states[name] === "live" &&
 								!frozen.current.has(name) &&
 								!attendedNow(name) &&
 								loaded !== undefined &&
@@ -473,7 +578,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					applyFreeze();
 				},
 			}),
-		[framesRef, attendedNow, applyFreeze],
+		[store, framesRef, attendedNow, applyFreeze],
 	);
 
 	/** The camera started or stopped moving — the canvas already detects both. */
@@ -531,29 +636,30 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				clearTimeout(timer);
 				arrivalTimers.current.delete(frame);
 			}
-			setSettled((current) => (current.has(frame) ? current : new Set(current).add(frame)));
+			if (!store.settled.has(frame)) store.set({ settled: new Set(store.settled).add(frame) });
 			applyFreeze();
 		},
-		[applyFreeze],
+		[store, applyFreeze],
 	);
 
 	/** The document said it has arrived — routed in by the canvas's message listener. */
 	const noteArrived = useCallback((frame: string) => endArrival(frame), [endArrival]);
 
 	/** The document that was arriving left. Its successor arrives on its own. */
-	const forgetArrival = useCallback((frame: string) => {
-		const timer = arrivalTimers.current.get(frame);
-		if (timer !== undefined) {
-			clearTimeout(timer);
-			arrivalTimers.current.delete(frame);
-		}
-		setSettled((current) => {
-			if (!current.has(frame)) return current;
-			const next = new Set(current);
+	const forgetArrival = useCallback(
+		(frame: string) => {
+			const timer = arrivalTimers.current.get(frame);
+			if (timer !== undefined) {
+				clearTimeout(timer);
+				arrivalTimers.current.delete(frame);
+			}
+			if (!store.settled.has(frame)) return;
+			const next = new Set(store.settled);
 			next.delete(frame);
-			return next;
-		});
-	}, []);
+			store.set({ settled: next });
+		},
+		[store],
+	);
 
 	/**
 	 * The boot reported loaded, which is where arrival starts rather than ends
@@ -605,27 +711,24 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 			iframes.current.delete(frame);
 			// unmount (or reload) drops the boot: the cover returns until the next loaded report
-			setReady((current) => {
-				if (!current.has(frame)) return current;
-				const next = new Map(current);
+			if (store.ready.has(frame)) {
+				const next = new Map(store.ready);
 				next.delete(frame);
-				return next;
-			});
+				store.set({ ready: next });
+			}
 			forgetArrival(frame);
 		},
-		[forgetArrival, noteShot],
+		[store, forgetArrival, noteShot],
 	);
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
 	const noteLoaded = useCallback(
 		(frame: string) => {
-			if (readyRef.current.has(frame)) return;
-			const next = new Map(readyRef.current).set(frame, performance.now());
-			readyRef.current = next;
-			setReady(next);
+			if (store.ready.has(frame)) return;
+			store.set({ ready: new Map(store.ready).set(frame, performance.now()) });
 			askArrival(frame);
 		},
-		[askArrival],
+		[store, askArrival],
 	);
 
 	/**
@@ -664,7 +767,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		(frame: string): Promise<ExportRaster | undefined> => {
 			const el = iframes.current.get(frame);
 			const sourceWindow = el?.contentWindow;
-			if (sourceWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
+			if (sourceWindow == null || !store.ready.has(frame)) return Promise.resolve(undefined);
 			if (captureWaiters.current.has(frame)) return Promise.resolve(undefined);
 			return new Promise((resolve) => {
 				const id = captureRequestId();
@@ -687,7 +790,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				sourceWindow.postMessage(captureMessage(id, SETTLE_BUDGET_MS), "*");
 			});
 		},
-		[noteShot, postFreeze],
+		[store, noteShot, postFreeze],
 	);
 
 	useEffect(
@@ -697,26 +800,42 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[noteShot],
 	);
 
-	// The decision function: runs on a sweep interval and on urgent intent changes.
+	/** The next step of a sweep that left documents waiting, one animation frame on. */
+	const step = useRef<number | undefined>(undefined);
+
+	// The decision function: runs on a sweep interval, on urgent intent changes,
+	// and a frame after a sweep that left the ring's documents waiting.
 	const compute = useCallback(() => {
 		const now = performance.now();
-		const result = sweepLifecycle({
+		const input: SweepInput = {
 			frames: framesRef.current,
 			entered: enteredRef.current,
 			selectionTargets: selectionTargetsRef.current,
 			held: exportFrame.current,
-			states: statesRef.current,
+			states: store.states,
 			camera: cameraRef.current,
 			viewport:
 				viewportRef.current === null
 					? null
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
-		});
-		if (result.changed) setStates(result.states);
+		};
+		const result = sweepLifecycle(input);
+		const { states, waiting } = result.changed
+			? admitMounts(input, result.states, MOUNTS_PER_FRAME)
+			: { states: result.states, waiting: false };
+		if (result.changed) store.set({ states });
+		if (waiting && step.current === undefined) {
+			step.current = requestAnimationFrame(() => {
+				step.current = undefined;
+				compute();
+			});
+		}
 		// against the states this sweep just decided, not last render's: a frame
 		// handed back from an export becomes freezable as soon as it is live again
-		applyFreeze(result.states, now);
-	}, [framesRef, cameraRef, viewportRef, applyFreeze]);
+		applyFreeze(states, now);
+	}, [store, framesRef, cameraRef, viewportRef, applyFreeze]);
+
+	useEffect(() => () => cancelAnimationFrame(step.current ?? 0), []);
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
@@ -731,11 +850,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			exportFrame.current = frame;
 			let mountPromise: Promise<boolean> | undefined;
 			if (
-				!isExportMountReady(
-					statesRef.current[frame],
-					readyRef.current.has(frame),
-					iframes.current.get(frame)?.contentWindow,
-				)
+				!isExportMountReady(store.states[frame], store.ready.has(frame), iframes.current.get(frame)?.contentWindow)
 			) {
 				mountPromise = new Promise((resolve) => {
 					const timeout = setTimeout(() => finishExportMount(frame, false), EXPORT_MOUNT_TIMEOUT_MS);
@@ -753,22 +868,26 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				compute();
 			}
 		},
-		[compute, finishExportMount, framesRef, requestCapture],
+		[store, compute, finishExportMount, framesRef, requestCapture],
 	);
 
-	useEffect(() => {
-		const waiter = exportMountWaiter.current;
-		if (
-			waiter !== null &&
-			isExportMountReady(
-				states[waiter.frame],
-				ready.has(waiter.frame),
-				iframes.current.get(waiter.frame)?.contentWindow,
-			)
-		) {
-			finishExportMount(waiter.frame, true);
-		}
-	}, [finishExportMount, ready, states]);
+	useEffect(
+		() =>
+			store.subscribe(() => {
+				const waiter = exportMountWaiter.current;
+				if (
+					waiter !== null &&
+					isExportMountReady(
+						store.states[waiter.frame],
+						store.ready.has(waiter.frame),
+						iframes.current.get(waiter.frame)?.contentWindow,
+					)
+				) {
+					finishExportMount(waiter.frame, true);
+				}
+			}),
+		[store, finishExportMount],
+	);
 
 	useEffect(
 		() => () => {
@@ -815,9 +934,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, [compute]);
 
 	return {
-		states,
-		ready,
-		settled,
+		store: store as LifecycleStore,
 		onIframe,
 		noteLoaded,
 		noteArrived,

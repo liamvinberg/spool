@@ -86,7 +86,7 @@ async function exporting() {
 	await act(async () => {
 		exported = current().captureExport("landing");
 	});
-	expect(current().states.landing).toBe("held");
+	expect(current().store.states.landing).toBe("held");
 	// the held document mounts and reports loaded, which is what the export was waiting for
 	const iframe = document.createElement("iframe");
 	mounted.append(iframe);
@@ -130,7 +130,7 @@ describe("an export", () => {
 			finish?.(sheet);
 			await expect(exported).resolves.toEqual(sheet);
 		});
-		expect(current().states.landing).toBe("picture");
+		expect(current().store.states.landing).toBe("picture");
 	});
 
 	it("asks the frame for a full-size copy, after its own settle", async () => {
