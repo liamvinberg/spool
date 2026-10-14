@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.42.2
+
+### Patch Changes
+
+- 2ad2d52: Moving from one live frame to another now always brings the new frame to you. A tall frame lands at its top, centered, instead of the camera staying put. Holding ⌥ over many frames no longer starts every frame the overview passes over, so stepping through it stays smooth.
+
 ## 0.42.1
 
 ### Patch Changes
