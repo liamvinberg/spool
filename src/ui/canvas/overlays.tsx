@@ -314,7 +314,6 @@ export function SelectionOverlay({
 						key={`ring-${name}`}
 						camera={camera}
 						screen={(at) => ringBox(at, frame)}
-						data-frame-ring={name}
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)
