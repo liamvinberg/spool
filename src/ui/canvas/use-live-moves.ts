@@ -1,9 +1,9 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Camera, FlowEdge, ProjectedFrame } from "../api";
+import type { Camera, FlowEdge } from "../api";
 import { formatCombo } from "../hotkey-combos";
 import { type Box, entryCamera, revealCamera, visibleWorldRect } from "./camera";
 import type { CameraStore } from "./camera-store";
-import type { CanvasStore } from "./canvas-store";
+import { type CanvasStore, visibleFramesOf } from "./canvas-store";
 import type { LiveChip } from "./frame-label";
 import {
 	createAltHold,
@@ -29,13 +29,9 @@ const NOTE_MS = 1800;
 export interface LiveMoveDeps {
 	camera: CameraStore;
 	viewportRef: RefObject<HTMLDivElement | null>;
-	/** the frames on the page the canvas shows */
-	framesRef: RefObject<readonly ProjectedFrame[]>;
-	/** every frame, for a thread that runs onto another page */
-	allFramesRef: RefObject<readonly ProjectedFrame[]>;
 	edgesRef: RefObject<readonly FlowEdge[]>;
 	enteredRef: RefObject<string | null>;
-	/** what the canvas holds: the selection */
+	/** what the canvas holds: the selection, the frames on the page shown and every page's */
 	store: CanvasStore;
 	/** go inside a frame, the way a double-click does */
 	enterFrame: (name: string) => void;
@@ -83,7 +79,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const frameNamed = useCallback(
-		(name: string) => depsRef.current.framesRef.current?.find((frame) => frame.name === name),
+		(name: string) => visibleFramesOf(depsRef.current.store.get()).find((frame) => frame.name === name),
 		[],
 	);
 	const viewSize = useCallback(() => {
@@ -145,7 +141,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			const target = frameNamed(next.target);
 			const size = viewSize();
 			if (target === undefined || size === null) return;
-			const frames = depsRef.current.framesRef.current ?? [];
+			const frames = visibleFramesOf(depsRef.current.store.get());
 			depsRef.current.camera.fly(overviewCamera(target, frames, next.saved, size.w, size.h), OVERVIEW_OPEN_MS);
 		},
 		[frameNamed, viewSize],
@@ -220,7 +216,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		(event: KeyboardEvent, through: boolean): boolean => {
 			const direction = stepDirection(event);
 			if (direction === undefined) return false;
-			const frames = depsRef.current.framesRef.current ?? [];
+			const frames = visibleFramesOf(depsRef.current.store.get());
 			const current = overviewRef.current;
 			if (current !== null && !through) {
 				event.preventDefault();
@@ -289,7 +285,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 				...(move.replace ? taken.current.slice(0, -1) : taken.current),
 				{ from: origin, to: move.to },
 			];
-			const all = depsRef.current.allFramesRef.current ?? [];
+			const all = depsRef.current.store.get().frames;
 			const was = all.find((frame) => frame.name === origin);
 			const to = all.find((frame) => frame.name === move.to);
 			walkTo(move.to);
@@ -313,7 +309,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 				return;
 			}
 			taken.current = move.taken;
-			const all = depsRef.current.allFramesRef.current ?? [];
+			const all = depsRef.current.store.get().frames;
 			const was = all.find((frame) => frame.name === entered);
 			const to = all.find((frame) => frame.name === move.to);
 			walkTo(move.to);

@@ -1,5 +1,10 @@
 import { type Dispatch, type SetStateAction, useLayoutEffect, useReducer, useRef, useState } from "react";
+import type { ProjectedPlaceholder } from "../../daemon/projection";
+import { ROOT_PAGE } from "../../page-path";
+import type { Place, ProjectedFrame } from "../api";
 import type { PickedSelection } from "./overlays";
+import { type PageObject, pageObjectsOn } from "./page-objects";
+import { pageOf } from "./pages";
 
 /**
  * What the canvas holds, kept outside React (DEV-304).
@@ -18,6 +23,20 @@ export interface CanvasState {
 	picked: PickedSelection[];
 	/** the page object held, which is never held with frames */
 	selectedPage: string | null;
+	/** the whole projection, every page's frames */
+	frames: ProjectedFrame[];
+	/** the frames on their way: designers' placeholders, drawn dashed where their frames will land (#369) */
+	placeholders: readonly ProjectedPlaceholder[];
+	/** where each page stands on the field holding it (#265), the whole project's */
+	places: Readonly<Record<string, Place>>;
+	/** the named pages on disk (#39) */
+	pages: string[];
+	/** the page the canvas shows */
+	activePage: string;
+	/** frames staged for the Trash, gone from the canvas while the toast stands */
+	hidden: ReadonlySet<string>;
+	/** pages staged for the Trash, with everything inside them (#229) */
+	hiddenPages: ReadonlySet<string>;
 }
 
 export interface CanvasStore {
@@ -33,7 +52,19 @@ export interface CanvasStore {
 }
 
 export function createCanvasStore(initial: Partial<CanvasState> = {}): CanvasStore {
-	let state: CanvasState = { selected: [], picked: [], selectedPage: null, ...initial };
+	let state: CanvasState = {
+		selected: [],
+		picked: [],
+		selectedPage: null,
+		frames: [],
+		placeholders: [],
+		places: {},
+		pages: [],
+		activePage: ROOT_PAGE,
+		hidden: new Set<string>(),
+		hiddenPages: new Set<string>(),
+		...initial,
+	};
 	const listeners = new Set<() => void>();
 	return {
 		get: () => state,
@@ -89,6 +120,14 @@ export function useCanvasField<K extends keyof CanvasState>(
 	return [value, set];
 }
 
+/** One field's setter, for a field the component writes and never draws. */
+export function useCanvasSetter<K extends keyof CanvasState>(
+	store: CanvasStore,
+	key: K,
+): Dispatch<SetStateAction<CanvasState[K]>> {
+	return useState(() => setterOf(store, key))[0];
+}
+
 /** A `useState`-shaped setter for one field. */
 export function setterOf<K extends keyof CanvasState>(
 	store: CanvasStore,
@@ -101,3 +140,62 @@ export function setterOf<K extends keyof CanvasState>(
 			return { [key]: next } as unknown as Partial<CanvasState>;
 		});
 }
+
+/**
+ * A value worked out from parts of the state, once for each set of parts
+ * however many readers ask: the same parts hand back the same value, which is
+ * what lets a reader select it. The first part is an object, and the memo
+ * lives as long as it does.
+ */
+function derived<P extends readonly [object, ...unknown[]], R>(
+	parts: (state: CanvasState) => P,
+	work: (parts: P) => R,
+): (state: CanvasState) => R {
+	const memo = new WeakMap<object, { parts: P; value: R }>();
+	return (state) => {
+		const now = parts(state);
+		const hit = memo.get(now[0]);
+		if (hit?.parts.every((part, index) => Object.is(part, now[index]))) return hit.value;
+		const value = work(now);
+		memo.set(now[0], { parts: now, value });
+		return value;
+	};
+}
+
+/** The frames the canvas shows: the active page's, less any staged for the Trash. */
+export const visibleFramesOf = derived(
+	(state) => [state.frames, state.activePage, state.hidden] as const,
+	([frames, page, hidden]) => frames.filter((frame) => pageOf(frame) === page && !hidden.has(frame.name)),
+);
+
+/** The placeholders on the active page. */
+export const visiblePlaceholdersOf = derived(
+	(state) => [state.placeholders, state.activePage] as const,
+	([placeholders, page]) => placeholders.filter((one) => (one.page ?? ROOT_PAGE) === page),
+);
+
+/** Every frame not staged for the Trash, on any page. */
+export const navigatorFramesOf = derived(
+	(state) => [state.frames, state.hidden] as const,
+	([frames, hidden]) => frames.filter((frame) => !hidden.has(frame.name)),
+);
+
+/** Every page not staged for the Trash. */
+export const navigatorPagesOf = derived(
+	(state) => [state.pages, state.hiddenPages] as const,
+	([pages, hidden]) => pages.filter((page) => !hidden.has(page)),
+);
+
+/**
+ * The pages standing on the field, composed from the projection (#265).
+ *
+ * Nothing is fetched and nothing is baked: every frame under a page is
+ * already in hand with its geometry and its cover, so the picture is a read
+ * of what this side holds and a frame edited two pages down redraws the
+ * object above it as soon as the projection lands.
+ */
+export const pageObjectsOf: (state: CanvasState) => PageObject[] = derived(
+	(state) =>
+		[navigatorFramesOf(state), navigatorPagesOf(state), state.places, state.placeholders, state.activePage] as const,
+	([frames, pages, places, placeholders, page]) => pageObjectsOn(page, pages, frames, places, placeholders),
+);
