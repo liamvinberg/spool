@@ -10,6 +10,7 @@ import { SpoolError } from "../errors";
 import { checkoutOf } from "../git-remote";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
+	CANVAS_PATH,
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNAVAILABLE,
@@ -35,6 +36,7 @@ import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
+import { baseOf, keepBase, mergeText, pruneBases } from "./team-merge";
 import { rescanAfterWatchStarts, type TreeWatch, watchTree } from "./watch-tree";
 
 /**
@@ -252,6 +254,8 @@ const SETTLE_MS = 50;
 const BIG_FILE_BYTES = 1_000_000;
 const BIG_FILE_STILL_MS = 500;
 const RECONNECT_MIN_MS = 1_000;
+/** How many versions are kept to merge with before those out of the record go. */
+const PRUNE_EVERY = 200;
 /** What spool.page answers, by name, when an account is out of a project: the only 404s that can end a copy. */
 const OUT_OF_PROJECT = new Set(["team_not_found", "project_not_found"]);
 /** The longest a dropped copy waits between tries: back on the team, and on its canvas, soon after the network is. */
@@ -625,7 +629,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const known = state.files[path];
 		if (hash !== (known?.hash ?? null) && gitWrote(path, bytes)) return restore(path, bytes);
 		held.delete(path);
-		if (hash === (known?.hash ?? null)) return;
+		if (hash === (known?.hash ?? null)) {
+			// the team's version, as it is here: kept to merge with, for copies that synced before bases were kept
+			if (bytes !== undefined && hash !== null) keep(hash, bytes);
+			return;
+		}
 		if (untilRoom() > 0) return wait(path);
 		send(path, bytes);
 	};
@@ -780,16 +788,53 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			persistSoon();
 			return;
 		}
-		yielding.delete(path);
+		// this copy's save was set aside: where the two changed different lines, both stand, and go up as a new save
+		const merged =
+			yielding.delete(path) && here !== incoming
+				? mergedWith(path, state.files[path]?.hash ?? null, local, bytes)
+				: undefined;
 		restoring.delete(path);
 		// the team's version first, so the watcher reads this write as the team's and never sends it back
 		state.files[path] = { version, hash: incoming };
 		persistSoon();
+		if (bytes !== undefined && incoming !== null) keep(incoming, bytes);
 		if (here === incoming) return;
 		if (bytes === undefined) {
 			rmSync(target, { force: true });
 			pruneEmpty(designDir, dirname(target));
-		} else writeAtomic(target, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+			return;
+		}
+		if (merged === undefined) {
+			writeAtomic(target, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+			return;
+		}
+		writeAtomic(target, merged);
+		if (forgetMarks(designDir, { path })) options.onMarks?.();
+		notice(`merged your change to ${path} with a teammate's`);
+		check(path);
+	};
+
+	/** Kept versions taken out of the record go every so often, and at each catch-up. */
+	let kept = 0;
+	const prune = () => {
+		kept = 0;
+		pruneBases(designDir, new Set(Object.values(state.files).flatMap(({ hash }) => (hash === null ? [] : [hash]))));
+	};
+	const keep = (hash: string, bytes: Uint8Array) => {
+		keepBase(designDir, hash, bytes);
+		if (++kept >= PRUNE_EVERY) prune();
+	};
+
+	/** This copy's side of a set-aside file merged onto the team's, from the version both were built on. */
+	const mergedWith = (
+		path: string,
+		built: string | null,
+		mine: Buffer | undefined,
+		team: Uint8Array | undefined,
+	): Buffer | undefined => {
+		if (team === undefined || built === null || mine === undefined || path === CANVAS_PATH) return undefined;
+		const base = baseOf(designDir, built);
+		return base === undefined ? undefined : mergeText(base, mine, team);
 	};
 
 	/** A collision this copy lost, kept for the canvas to mark. */
@@ -825,6 +870,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			toldOther = undefined;
 			recordAccount();
 			retryMs = RECONNECT_MIN_MS;
+			prune();
 			checkEverything();
 			ownWork = false;
 			// what git did while nobody watched has been put back; from here the guard sees git as it goes
@@ -850,6 +896,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (message.type === "saved" && typeof message.version === "number") {
 				state.files[sent.path] = { version: message.version, hash: sent.hash };
 				persistSoon();
+				if (sent.bytes !== undefined && sent.hash !== null) keep(sent.hash, sent.bytes);
 				options.onSaved?.(sent.path);
 				// this copy's own save of a marked file reached the team, and is the answer to the mark
 				if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();

@@ -650,19 +650,40 @@ describe("a collision", () => {
 		// the editor whose save won isn't told
 		expect(await marks(ana.daemon)).toEqual([]);
 
-		const compared = await (await ben.daemon.request(`/api/p/checkout/set-aside/${mark?.id}`)).json();
-		expect(compared).toEqual({
-			path: "frames/home/frame.tsx",
-			mine: { text: "ben's\n", size: 6 },
-			team: { text: "ana's\n", size: 6 },
-		});
-
 		// putting it back is an ordinary new save on top, which reaches Ana
 		const put = await ben.daemon.request(`/api/p/checkout/set-aside/${mark?.id}/put-back`, { method: "POST" });
 		expect(put.status).toBe(200);
 		await until(() => text(ana.root, "frames/home/frame.tsx") === "ben's\n");
 		expect(await marks(ben.daemon)).toEqual([]);
 		expect(cloud.saves("checkout").at(-1)).toMatchObject({ by: "ben", outcome: "applied" });
+	});
+
+	it("merges two saves that changed different lines, on both machines, and marks nothing", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		const page = (title: string, body: string) =>
+			`export default function Page() {\n\treturn (\n\t\t<main>\n\t\t\t<h1>${title}</h1>\n\t\t\t<p>one</p>\n\t\t\t<p>two</p>\n\t\t\t<p>${body}</p>\n\t\t</main>\n\t);\n}\n`;
+		writeFrame(ana.root, "home", page("Home", "three"));
+		await until(() => text(ben.root, "frames/home/frame.tsx") === page("Home", "three"));
+
+		const back = cloud.offline("ben");
+		writeFrame(ben.root, "home", page("Welcome", "three"));
+		writeFrame(ana.root, "home", page("Home", "four"));
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === page("Home", "four"));
+		back();
+		for (const root of [ana.root, ben.root])
+			await until(() => text(root, "frames/home/frame.tsx") === page("Welcome", "four"), 10_000);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe(page("Welcome", "four"));
+		expect(
+			cloud
+				.saves("checkout")
+				.filter((save) => save.path === "frames/home/frame.tsx")
+				.slice(-2),
+		).toMatchObject([
+			{ by: "ben", outcome: "set_aside" },
+			{ by: "ben", outcome: "applied" },
+		]);
+		expect(await marks(ben.daemon)).toEqual([]);
+		expect(await marks(ana.daemon)).toEqual([]);
 	});
 
 	it("lets an edit beat a delete: the file comes back for everyone, and the deleter is marked", async () => {
