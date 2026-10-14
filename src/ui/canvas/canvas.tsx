@@ -153,6 +153,7 @@ import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from ".
 import { FrameLife, type LifecycleStore, useDocumentsBooting, useFrameLifecycle, useFrameReady } from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
 import { watchMotionStrain } from "./motion-strain";
+import { NoticeStack } from "./notice-stack";
 import {
 	type ElementPreview,
 	type FrameHover,
@@ -216,7 +217,7 @@ import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
 import { TeammateCompanions, TeammatePlaceholder, teammateOf } from "./teammate-agents";
-import { type Notice, Toast } from "./toast";
+import { type Notice, NoticeToast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
 import { useLiveMoves } from "./use-live-moves";
@@ -625,30 +626,50 @@ export function ProjectCanvas({
 	const deck = useAgentThreads(project, preferredEngine, root);
 	const turn = deck.turn;
 	const permissions = useAgentPermissions(project, deck.open, turn.phase, agentDefaults.mode);
-	/**
-	 * A set-aside mark's Hand to agent: one press is a turn on the open thread, or the next one
-	 * if a turn is running, with both sides of the file. The rail opens on it. Where the rail has
-	 * nowhere to put words yet, the composer holds them for the person to send.
-	 */
-	const { running: turnRunning, queue: queueTurn, send: sendTurn } = turn;
-	const handSetAside = useCallback(
-		(mark: ShownSetAside) => {
-			const text = setAsideAsk(mark);
-			const took = turnRunning() ? queueTurn(text) : sendTurn(text);
-			setAgentRequest({
-				id: crypto.randomUUID(),
-				thread: deck.open,
-				...(took ? {} : { prepared: { intent: `set-aside ${mark.path}`, text, selection: [] } }),
-			});
-		},
-		[deck.open, turnRunning, queueTurn, sendTurn],
-	);
-	const setAside = useSetAside(project, handSetAside);
 	const syncState = useSyncState(project);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
 	const install = useAgentInstall(project, deck.engine, deck.open);
+	/**
+	 * Clashes' Ask agent to fix: one press opens a new thread and sends it every clashed file, with
+	 * where both sides are. The rail opens on it. Where the rail has nowhere to put words yet, the
+	 * composer holds them for the person to send. With no agent on this machine, the prompt is copied.
+	 */
+	const { running: turnRunning, queue: queueTurn, send: sendTurn } = turn;
+	const fixing = useRef<{ text: string; from: string } | null>(null);
+	const onNewThread = deck.onNew;
+	const noAgent = install.none;
+	const fixClashes = useMemo(
+		() => ({
+			label: noAgent ? "Copy prompt" : "Ask agent to fix",
+			run: (marks: readonly ShownSetAside[]) => {
+				const text = setAsideAsk(marks);
+				if (noAgent) {
+					void navigator.clipboard
+						?.writeText(text)
+						.then(() => setNotice({ kind: "success", message: "Prompt copied: paste it into your agent" }));
+					return;
+				}
+				fixing.current = { text, from: deck.open };
+				onNewThread();
+			},
+		}),
+		[noAgent, onNewThread, deck.open],
+	);
+	useEffect(() => {
+		const asked = fixing.current;
+		// the new thread is open: the words go to it
+		if (asked === null || asked.from === deck.open) return;
+		fixing.current = null;
+		const took = turnRunning() ? queueTurn(asked.text) : sendTurn(asked.text);
+		setAgentRequest({
+			id: crypto.randomUUID(),
+			thread: deck.open,
+			...(took ? {} : { prepared: { intent: "set-aside", text: asked.text, selection: [] } }),
+		});
+	}, [deck.open, turnRunning, queueTurn, sendTurn]);
+	const setAside = useSetAside(project, fixClashes);
 	// which machine is answering, asked of that machine rather than shipped (#118, #199).
 	// Keyed on the open thread, because that is what the answer is about: the rows are the
 	// binary's and the same for every thread, and which of them is answering is not.
@@ -6252,7 +6273,6 @@ export function ProjectCanvas({
 										hovered={isHovered}
 										unseen={unseen.get(frame.name)}
 										onPlay={() => playFrame(frame.name)}
-										setAside={setAside.label(frame.name)}
 										live={
 											isEntered && live.chip?.frame === frame.name
 												? { ...live.chip, faded: live.overview !== null }
@@ -6462,18 +6482,21 @@ export function ProjectCanvas({
 						/>
 					)}
 
-					{notice !== null ? <Toast notice={notice} /> : null}
-
-					{pendingTrash !== null && (
-						<TrashToast
-							// a new entry is a new undo window, so its drain starts again
-							key={`${pendingTrash.page}\n${pendingTrash.frames.join("\n")}`}
-							frames={pendingTrash.frames}
-							page={pendingTrash.page}
-							undoMs={TRASH_UNDO_MS}
-							onUndo={undoTrash}
-						/>
-					)}
+					<NoticeStack>
+						{syncState}
+						{setAside}
+						{pendingTrash !== null && (
+							<TrashToast
+								// a new entry is a new undo window, so its drain starts again
+								key={`${pendingTrash.page}\n${pendingTrash.frames.join("\n")}`}
+								frames={pendingTrash.frames}
+								page={pendingTrash.page}
+								undoMs={TRASH_UNDO_MS}
+								onUndo={undoTrash}
+							/>
+						)}
+						{notice !== null ? <NoticeToast notice={notice} /> : null}
+					</NoticeStack>
 					{/* The agent rail stays available beside an empty canvas. The path also
 				    lets somebody use an agent in their own terminal. */}
 					{/* the wait before the projection lands (#244): the field used to render
@@ -6536,8 +6559,6 @@ export function ProjectCanvas({
 					onClose={() => setSharingPage(null)}
 				/>
 			)}
-			{setAside.node}
-			{syncState}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

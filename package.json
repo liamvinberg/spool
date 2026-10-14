@@ -83,6 +83,7 @@
 		"@types/react": "19.2.17",
 		"@types/react-dom": "19.2.3",
 		"esbuild": "0.28.1",
+		"node-diff3": "3.2.1",
 		"playwright-core": "^1.61.1",
 		"react": "19.2.7",
 		"react-dom": "19.2.7",

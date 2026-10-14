@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { type Context, Hono } from "hono";
 import { writeAtomic } from "../atomic-write";
@@ -27,21 +27,12 @@ export interface ShownSetAside {
 	together: number;
 }
 
-/** One side of a compare: the file's text, or only its size where it isn't text. Null for a delete. */
-export type ComparedSide = { text: string | null; size: number } | null;
-
-export interface SetAsideCompare {
-	path: string;
-	mine: ComparedSide;
-	team: ComparedSide;
-}
-
 /** How long a team's addresses are trusted before spool.page is asked again. */
 const NAMES_MS = 5 * 60_000;
 
 /**
- * The canvas's side of set-aside marks (`set-aside.ts`): list them with the frames each one is on, compare a
- * mark's two sides, put this machine's side back, or let the mark go. Putting it back is an ordinary write, which
+ * The canvas's side of set-aside marks (`set-aside.ts`): list them with the frames each one is on, put this
+ * machine's side back, or let the mark go. Putting it back is an ordinary write, which
  * the sync sends as a new save on top of the team's version. Handing it to the agent is the canvas's own turn,
  * started only when pressed.
  */
@@ -111,16 +102,6 @@ export function setAsideRoutes(deps: {
 				});
 			return c.json({ marks });
 		})
-		.get("/:project/set-aside/:id", (c) =>
-			withMark(c, (_root, designDir, mark) => {
-				const compared: SetAsideCompare = {
-					path: mark.path,
-					mine: side(markBytes(designDir, mark)),
-					team: side(readDesign(designDir, mark.path)),
-				};
-				return c.json(compared);
-			}),
-		)
 		.post("/:project/set-aside/:id/put-back", (c) =>
 			withMark(c, (root, designDir, mark) => {
 				const target = resolveDesignPath(designDir, join(designDir, ...mark.path.split("/")), mark.path);
@@ -142,21 +123,4 @@ export function setAsideRoutes(deps: {
 				return c.json({});
 			}),
 		);
-}
-
-/** The team's side, as it is on disk: the sync wrote it there. */
-function readDesign(designDir: string, path: string): Buffer | undefined {
-	const file = resolveDesignPath(designDir, join(designDir, ...path.split("/")), path);
-	return lstatSync(file, { throwIfNoEntry: false })?.isFile() === true ? readFileSync(file) : undefined;
-}
-
-function side(bytes: Buffer | undefined): ComparedSide {
-	if (bytes === undefined) return null;
-	let text: string | null = null;
-	try {
-		if (!bytes.includes(0)) text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-	} catch {
-		// an image or any other file that isn't text is compared by size
-	}
-	return { text, size: bytes.byteLength };
 }
