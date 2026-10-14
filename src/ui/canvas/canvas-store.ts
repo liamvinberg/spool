@@ -89,7 +89,7 @@ export interface CanvasStore {
 	subscribe(listener: () => void): () => void;
 }
 
-export function createCanvasStore(initial: Partial<CanvasState> = {}): CanvasStore {
+export function createCanvasStore(): CanvasStore {
 	let state: CanvasState = {
 		selected: [],
 		picked: [],
@@ -115,7 +115,6 @@ export function createCanvasStore(initial: Partial<CanvasState> = {}): CanvasSto
 		exportDialog: null,
 		exporting: false,
 		finding: false,
-		...initial,
 	};
 	const listeners = new Set<() => void>();
 	return {

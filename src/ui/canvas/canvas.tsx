@@ -95,6 +95,7 @@ import {
 } from "./camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import {
+	type CanvasContextMenu,
 	createCanvasStore,
 	navigatorFramesOf,
 	navigatorPagesOf,
@@ -257,13 +258,6 @@ export interface CanvasChrome {
 interface Point {
 	x: number;
 	y: number;
-}
-
-interface CanvasContextMenu {
-	x: number;
-	y: number;
-	frame: string;
-	selection: "frames" | "element";
 }
 
 type Gesture =
@@ -5388,8 +5382,7 @@ export function ProjectCanvas({
 		// compile — the handlers gate on state, the register never does
 		const handlers = {
 			// Held keys repeat, and only the first press changes what a ring means.
-			// The ref is mirrored from state at render, which is a paint away; the
-			// redraw below reads it now, so this press writes both.
+			// The redraw below reads the store, which this press has already set.
 			"canvas.accel-hold": () => {
 				liveRef.current.accel(true, !store.get().accelDown);
 				if (store.get().accelDown) return;
