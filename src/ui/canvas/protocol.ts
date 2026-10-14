@@ -1,7 +1,7 @@
 import { captureRasterSize } from "../../cover";
 import type { StampShift } from "../../daemon/hand-write";
 
-export { parseStampRef, type StampRef } from "../../stamp";
+export { parseStampRef } from "../../stamp";
 
 import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runtime/clipboard-protocol";
 import type { SessionRecord } from "../../runtime/frame-runtime";
@@ -103,14 +103,14 @@ interface FrameWheelZoomMessage {
 	deltaMode: number;
 }
 
-export type FrameZoomMessage = FrameWheelZoomMessage;
+type FrameZoomMessage = FrameWheelZoomMessage;
 
 /**
  * A plain wheel the entered frame could not scroll with: nothing under the
  * cursor had room left in that direction, so the shim chains it out to the
  * canvas as a pan, the way a browser chains a scroll to the parent page.
  */
-export interface FrameScrollMessage {
+interface FrameScrollMessage {
 	spool: "scroll";
 	frame: string;
 	deltaX: number;
@@ -124,7 +124,7 @@ export interface FrameScrollMessage {
  * one is the platform's accel modifier — it names what happened and the canvas
  * applies the rule, so the platform question stays in one place.
  */
-export interface FrameModifierMessage {
+interface FrameModifierMessage {
 	spool: "modifier";
 	frame: string;
 	modifier: AccelKeyName;
@@ -139,7 +139,7 @@ export interface FrameModifierMessage {
  * losing focus. The canvas lands the overview on the first and drops it on
  * the second.
  */
-export interface FrameHoldMessage {
+interface FrameHoldMessage {
 	spool: "hold";
 	frame: string;
 	phase: "up" | "broken";
@@ -149,7 +149,7 @@ export interface FrameHoldMessage {
  * A middle-button drag inside an entered frame, relayed in screen coordinates
  * so the canvas can pan out from under it — the frame owns every other press.
  */
-export interface FramePanMessage {
+interface FramePanMessage {
 	spool: "pan";
 	frame: string;
 	phase: "start" | "move" | "end";
@@ -163,7 +163,7 @@ export interface FramePanMessage {
  * pixels: none of it crosses the iframe boundary, and the canvas says it to
  * the team.
  */
-export interface FramePresenceMessage {
+interface FramePresenceMessage {
 	spool: "presence";
 	frame: string;
 	x: number | null;
@@ -205,7 +205,7 @@ export interface CaptureSourceMessage {
 	dpr: number;
 }
 
-export interface CaptureSourceErrorMessage {
+interface CaptureSourceErrorMessage {
 	spool: "capture-source";
 	frame: string;
 	id: string;

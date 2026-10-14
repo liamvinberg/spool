@@ -28,7 +28,7 @@ export const freshBrowser = () => {
 };
 
 /** `receipt` sits one page over, which is the normal case: a thread is not bound to a page */
-export const PROJECTION = {
+const PROJECTION = {
 	root: "/project",
 	pages: ["site"],
 	frames: [
@@ -38,7 +38,7 @@ export const PROJECTION = {
 };
 
 /** one message of a turn, as the daemon reads it off the wire */
-export interface Said {
+interface Said {
 	readonly prompt: string;
 	readonly selection?: readonly { readonly frame: string }[];
 	readonly attachments?: { media: string; data: string }[];
@@ -54,7 +54,7 @@ export interface Stream {
 	readonly aborted: () => boolean;
 }
 
-export interface Turn {
+interface Turn {
 	/** every message of every turn, flattened: a turn is one press or a queue that fired */
 	readonly prompts: string[];
 	/** whatever rode with those words, which so far is a reference image (#119) */
@@ -72,7 +72,7 @@ export interface Turn {
 }
 
 /** the threads the daemon has stored, and what the rail writes back to it (#120, #200) */
-export interface Stored {
+interface Stored {
 	/** what a mount reads: null is a project that has never had a thread */
 	served: ServedThread[] | null;
 	/** the read held open, so a test can press Enter before the rail has a thread (#234) */
@@ -91,12 +91,12 @@ export interface Stored {
  * reading of the canvas out here. Left null, the stub enriches what was put the way
  * the daemon would.
  */
-export interface Pointed {
+interface Pointed {
 	served: SelectionEntry[] | null;
 	readonly puts: { frames?: string[]; elements?: { selector: string }[] }[];
 }
 
-export function enrich(put: { frames?: string[]; elements?: { frame: string; selector: string }[] }): SelectionEntry[] {
+function enrich(put: { frames?: string[]; elements?: { frame: string; selector: string }[] }): SelectionEntry[] {
 	if (put.elements !== undefined) {
 		return put.elements.map((element) => ({
 			kind: "element" as const,
@@ -117,7 +117,7 @@ export function enrich(put: { frames?: string[]; elements?: { frame: string; sel
 }
 
 /** an SSE body a test can write into, which is both of the canvas's live streams */
-export function sse() {
+function sse() {
 	const encoder = new TextEncoder();
 	let ctrl: ReadableStreamDefaultController<Uint8Array> | undefined;
 	let open = true;
@@ -635,7 +635,7 @@ export async function press(element: Element | null | undefined) {
 }
 
 /** the list, dropped if it is not already: a row exists only while the list is up */
-export async function listed(host: HTMLElement) {
+async function listed(host: HTMLElement) {
 	if (threadList(host) === null) await press(titleButton(host));
 	return threadList(host);
 }

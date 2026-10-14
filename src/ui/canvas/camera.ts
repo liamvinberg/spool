@@ -18,8 +18,8 @@ export interface Point {
 	y: number;
 }
 
-export const K_MIN = 0.02;
-export const K_MAX = 32;
+const K_MIN = 0.02;
+const K_MAX = 32;
 
 /**
  * One press of the zoom keys. Doubling, not nudging: tldraw's ladder

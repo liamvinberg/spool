@@ -53,7 +53,7 @@ export const engineName = (engine: string | undefined): string =>
 	engine === undefined ? "" : isAgentEngineId(engine) ? ENGINES[engine].name : engine;
 
 /** the line that updates an agent too old to run, or its install line where it has none */
-export const updateLine = (engine: AgentEngineId): string => ENGINES[engine].update ?? ENGINES[engine].install;
+const updateLine = (engine: AgentEngineId): string => ENGINES[engine].update ?? ENGINES[engine].install;
 
 /**
  * An agent's install line under its name, to copy into a terminal; for one that is there

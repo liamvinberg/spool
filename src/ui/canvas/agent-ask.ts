@@ -15,7 +15,7 @@ import type { CallInput } from "./agent-nouns";
  */
 
 /** one of the two-to-four choices a question offers, in the agent's own words */
-export interface AskOption {
+interface AskOption {
 	readonly label: string;
 	/**
 	 * What the choice costs, in the agent's own sentence or three.

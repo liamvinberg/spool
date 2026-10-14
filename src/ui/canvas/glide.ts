@@ -28,7 +28,7 @@ export interface Glide {
 type Spring = { p: number; v: number };
 
 /** The rate, in radians a second, at which a spring is within 1% of its goal `ms` after it set off. */
-export function rateFor(ms: number): number {
+function rateFor(ms: number): number {
 	// a critically damped spring is off by (1 + wt)e^(-wt) of its distance; that is 1% at wt = 6.64
 	return 6.64 / (ms / 1000);
 }
@@ -108,7 +108,7 @@ export function createGlide(ms: () => number): Glide {
  * stillness that zeroes the scale stills it too. A page carrying no theme, as a
  * unit test's, has no scale and nothing glides.
  */
-export function themeDuration(name: "quick" | "fast" | "base"): number {
+function themeDuration(name: "quick" | "fast" | "base"): number {
 	if (typeof document === "undefined" || typeof getComputedStyle !== "function") return 0;
 	const value = getComputedStyle(document.documentElement).getPropertyValue(`--transition-duration-${name}`).trim();
 	if (value === "") return 0;

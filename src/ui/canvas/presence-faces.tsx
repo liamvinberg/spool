@@ -12,7 +12,7 @@ import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate 
  */
 
 /** The faces drawn before the rest collapse into `+N`. */
-export const FACES_SHOWN = 4;
+const FACES_SHOWN = 4;
 const SIZE = 22;
 const STEP = 17;
 /** How wide the chip opens into its list. */
@@ -21,7 +21,7 @@ const LIST_W = 248;
 const CHIP_EDGE = 4 * 2 + 2;
 
 /** What the who's-here list says a page is called: its path, and `frames` for the root page, which is that folder. */
-export function pageLabel(page: string): string {
+function pageLabel(page: string): string {
 	return page === ROOT_PAGE ? "frames" : page;
 }
 
@@ -53,12 +53,12 @@ export function useRoomDrawn(room: PresenceRoom): void {
 }
 
 /** Working people first, then the idle, each in the order they arrived: the order the faces and the list take. */
-export function hereInOrder(mates: readonly Teammate[], now: number): Teammate[] {
+function hereInOrder(mates: readonly Teammate[], now: number): Teammate[] {
 	return [...mates.filter((mate) => !idle(mate, now)), ...mates.filter((mate) => idle(mate, now))];
 }
 
 /** The closed chip's width: its padding, the faces' run, the `+N`, the chevron. Every part is a fixed size. */
-export function chipWidth(here: number): number {
+function chipWidth(here: number): number {
 	const faces = here > FACES_SHOWN ? FACES_SHOWN - 1 : here;
 	const more = here > FACES_SHOWN ? 5 + Math.max(26, String(here - faces).length * 7 + 12) : 0;
 	return CHIP_EDGE + 8 + (faces - 1) * STEP + SIZE + more + 4 + 16 + 4;

@@ -73,7 +73,7 @@ export interface PictureFrame {
 }
 
 /** What the layer drew for one frame, read back by tests and benches (`report`). */
-export interface DrawnPicture {
+interface DrawnPicture {
 	name: string;
 	/** The still drawn: the frame's own, or the one it replaced while its own loads. */
 	still: string;

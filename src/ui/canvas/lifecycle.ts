@@ -68,7 +68,7 @@ export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
  * forever is a frame you can never see, which is worse than the seam this is
  * fixing.
  */
-export const ARRIVE_DEADLINE_MS = SETTLE_BUDGET_MS + 600;
+const ARRIVE_DEADLINE_MS = SETTLE_BUDGET_MS + 600;
 /**
  * The measurement hook (#108, #112), and the only temporary code the canvas
  * carries. `globalThis.__spoolBench` is `{ freeze }`: whether live frames ever
@@ -80,7 +80,7 @@ export const ARRIVE_DEADLINE_MS = SETTLE_BUDGET_MS + 600;
  * ever writes it.
  */
 const benchHooks = (globalThis as unknown as { __spoolBench?: { freeze?: boolean } }).__spoolBench;
-export const FREEZE_ENABLED = benchHooks?.freeze !== false;
+const FREEZE_ENABLED = benchHooks?.freeze !== false;
 /**
  * How long a live frame goes unattended before it holds its animations (#172).
  *
@@ -115,7 +115,7 @@ const CROWD_SETTLE_MS = 1000;
  * ring is what hides the boot: a
  * frame that only mounts once it is on screen is a frame you watch arrive.
  */
-export const LIVE_MARGIN = 0.25;
+const LIVE_MARGIN = 0.25;
 
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];

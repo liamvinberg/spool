@@ -19,10 +19,10 @@ import {
  */
 
 export type SideId = "left" | "right";
-export const SIDES: readonly SideId[] = ["left", "right"];
+const SIDES: readonly SideId[] = ["left", "right"];
 export const other = (side: SideId): SideId => (side === "left" ? "right" : "left");
 
-export interface Group {
+interface Group {
 	/** pane ids, in tab order */
 	readonly tabs: readonly string[];
 	/** the tab showing */
@@ -128,13 +128,13 @@ const clampTo = (side: Side, width: number) => Math.min(maxOf(side), Math.max(mi
 /** the narrowest side `id` may be drawn at as the layout stands */
 export const sideMin = (layout: Layout, id: SideId): number => minOf(layout[id]);
 /** the width side `id` opens at */
-export const widthOf = (side: Side): number => clampTo(side, side.width ?? naturalOf(side));
+const widthOf = (side: Side): number => clampTo(side, side.width ?? naturalOf(side));
 
 const hasPanes = (side: Side) => side.groups.length > 0;
 const wantsOpen = (side: Side) => side.open && hasPanes(side);
 const outerOf = (side: Side, open: boolean) => (open ? widthOf(side) : hasPanes(side) ? RAIL_WIDTH : 0);
 
-export interface SideFit {
+interface SideFit {
 	readonly open: boolean;
 	/** the width it opens at, open or not: contents are laid out at it and clipped */
 	readonly width: number;

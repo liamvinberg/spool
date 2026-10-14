@@ -21,7 +21,7 @@ import { nameCall } from "./agent-nouns";
 export type CompanionAct = "new" | "landed" | "read" | "edit" | "shot" | "delete" | "ask" | "idle";
 
 /** a designer's placeholder frame before its frame lands there: the spot event's own shape */
-export type CompanionSpot = Pick<AgentSpot, "name" | "x" | "y" | "w" | "h">;
+type CompanionSpot = Pick<AgentSpot, "name" | "x" | "y" | "w" | "h">;
 
 export interface AgentCompanion {
 	/** "" for the agent the person talks to, the delegating call for a designer */

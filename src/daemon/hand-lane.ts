@@ -256,7 +256,7 @@ export function textSite(root: string, frame: string, ask: TextAsk): WriteSite {
  */
 export type ElementAsk = DeleteAsk | MoveAsk;
 
-export interface DeleteAsk {
+interface DeleteAsk {
 	act: "delete";
 	/**
 	 * The stamps the gesture is about (#323).

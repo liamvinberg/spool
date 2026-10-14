@@ -18,8 +18,6 @@
  * what keeps the fast boot from flashing something nobody asked to see.
  */
 export const GATE_MS = 160;
-/** the curtain arriving, once the gate has passed */
-export const ENTER_MS = 180;
 /**
  * The least time a curtain that did appear stays on screen before it starts to
  * leave. The gate alone leaves a band where the projection lands a few

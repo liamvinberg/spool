@@ -189,7 +189,7 @@ export function TurnFoot({
 const FRAME_PATH = /(?:^|[\s'"/=])design\/frames\/[a-z0-9]/i;
 
 /** an approval about a frame: what it would let through reaches into `design/frames/` */
-export function aboutFrame(entry: AskEntry): boolean {
+function aboutFrame(entry: AskEntry): boolean {
 	return FRAME_PATH.test(entry.detail ?? "");
 }
 

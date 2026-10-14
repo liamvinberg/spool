@@ -69,7 +69,7 @@ export type RowState = "pending" | "running" | "done" | "failed" | "stopped";
  * request out was cut rather than errored, which is the distinction `stopped` already
  * carries for a call the wire never answered.
  */
-export type WaitState = Extract<RowState, "running" | "done" | "stopped">;
+type WaitState = Extract<RowState, "running" | "done" | "stopped">;
 
 /**
  * How long something took, in the log's own words.
@@ -101,7 +101,7 @@ export function duration(ms: number): string {
  * answer, where the agent read the silence and picked for itself. Measured, it thinks
  * for five beats and carries on with the cautious option.
  */
-export type AskState = "arriving" | "open" | "allowed" | "always" | "denied" | "answered" | "dropped";
+type AskState = "arriving" | "open" | "allowed" | "always" | "denied" | "answered" | "dropped";
 
 /**
  * A picture a call handed back, inline (#117).
@@ -184,7 +184,7 @@ export interface AgentRow {
  * it starts, so `pending` is reachable here and nowhere else — and nothing about a plan
  * fails or is stopped, because a task is an intention rather than a call.
  */
-export type TaskState = Extract<RowState, "pending" | "running" | "done">;
+type TaskState = Extract<RowState, "pending" | "running" | "done">;
 
 /**
  * One task of the plan, in whichever of the agent's two phrasings its state calls for.
@@ -193,7 +193,7 @@ export type TaskState = Extract<RowState, "pending" | "running" | "done">;
  * task and a different object: one is something the agent wrote down, the other is
  * something it handed off.
  */
-export interface AgentPlanTask {
+interface AgentPlanTask {
 	readonly key: string;
 	readonly name: string;
 	readonly state: TaskState;
@@ -231,7 +231,7 @@ export interface AgentPlan {
  * - `done`: nothing is happening to it.
  * - `deleted`: the turn deleted it, and `source` is what Put back writes back.
  */
-export type TileState = "reading" | "drawing" | "fresh" | "editing" | "shooting" | "done" | "deleted";
+type TileState = "reading" | "drawing" | "fresh" | "editing" | "shooting" | "done" | "deleted";
 
 /** a line of source as the grid draws it: how far in it sits, and how long it runs, as a share */
 export type SourceLine = readonly [indent: number, run: number];
@@ -281,12 +281,12 @@ export function sourceShape(source: string): SourceLine[] {
 }
 
 /** a tile's state once nothing is happening to it: a frame that just landed or changed is done */
-export function settledState(state: TileState): TileState {
+function settledState(state: TileState): TileState {
 	return state === "fresh" || state === "editing" || state === "shooting" ? "done" : state;
 }
 
 /** a tile with nothing happening to it any more */
-export function settleTile<T extends Pick<AgentTile, "state">>(tile: T): T {
+function settleTile<T extends Pick<AgentTile, "state">>(tile: T): T {
 	const state = settledState(tile.state);
 	return state === tile.state ? tile : { ...tile, state };
 }

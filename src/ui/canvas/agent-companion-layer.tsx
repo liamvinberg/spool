@@ -190,7 +190,7 @@ function placeOf(one: AgentCompanion, frames: Map<string, ProjectedFrame>, stood
  * one name the row says: the last of them, furthest left, carries `3 designers`, and the
  * rest carry none. A companion alone on its frame has no entry.
  */
-export function fansOf(placed: readonly AgentCompanion[]): Map<string, { slot: number; label: string | null }> {
+function fansOf(placed: readonly AgentCompanion[]): Map<string, { slot: number; label: string | null }> {
 	const byFrame = new Map<string, AgentCompanion[]>();
 	for (const one of placed) {
 		if (one.frame === null) continue;

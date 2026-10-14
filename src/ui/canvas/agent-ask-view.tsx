@@ -188,7 +188,7 @@ function Disclosure({ label, detail }: { label: string; detail: string }) {
 }
 
 /** a button of the same weight as its neighbours: no answer to an ask is the default */
-export function AskButton({
+function AskButton({
 	label,
 	option,
 	title,
@@ -399,7 +399,7 @@ export function OptionList({ ask }: { ask: AskState }) {
 }
 
 /** the one quiet line an answered ask folds to, where it was asked */
-export function Folded({ children, mark = "done" }: { children: ReactNode; mark?: "done" | "stopped" | "failed" }) {
+function Folded({ children, mark = "done" }: { children: ReactNode; mark?: "done" | "stopped" | "failed" }) {
 	return (
 		<div data-agent-folded={mark} className="flex min-h-[26px] items-center gap-2">
 			<EndMark ending={mark} />
@@ -489,7 +489,7 @@ export function AskCard({
 }
 
 /** whatever the ask is, inside a card: an approval's reason and answers, or a question's options */
-export function AskInside({
+function AskInside({
 	entry,
 	ask,
 	permissions,

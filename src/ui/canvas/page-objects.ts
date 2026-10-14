@@ -14,7 +14,7 @@ import type { Place, ProjectedFrame } from "../api";
  */
 
 /** One frame inside a page object, placed in the object's own space. */
-export interface PageObjectFrame extends Rect {
+interface PageObjectFrame extends Rect {
 	readonly name: string;
 	/** The frame's cover hash, absent while it has no picture yet. */
 	readonly hash?: string;

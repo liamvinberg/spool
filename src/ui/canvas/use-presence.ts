@@ -5,12 +5,12 @@ import type { CameraStore } from "./camera-store";
 import { DRAG_SLOP, followCamera, type PresenceRoom } from "./presence";
 
 /** At most one presence in this many milliseconds is sent; the receiving canvas smooths between them. */
-export const PRESENCE_SEND_MS = 50;
+const PRESENCE_SEND_MS = 50;
 /** How quickly a follower's camera eases onto the view it follows, per second. */
 const FOLLOW_RATE = 8;
 
 /** What the frame this person is inside live tells the canvas about them: none of it crosses the iframe. */
-export interface InsideFrame {
+interface InsideFrame {
 	/** The pointer in world coordinates, or null while the frame hasn't seen it yet, and whether it's pressed. */
 	pointer(at: { x: number; y: number } | null, pressed: boolean): void;
 	/** Everything in it scrolled so far, added up. */
