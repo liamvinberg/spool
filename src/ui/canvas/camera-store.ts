@@ -39,6 +39,8 @@ export interface CameraStore {
 	fly(to: Camera, ms?: number): void;
 	/** End a flight where it stands. */
 	stop(): void;
+	/** Where the camera is headed: a flight's end, else where it is. */
+	aim(): Camera | null;
 	/** Where the camera last came to rest: drawn, then left alone for `REST_MS`. */
 	rest(): Camera | null;
 	/**
@@ -126,6 +128,7 @@ export function createCameraStore(): CameraStore {
 		stop() {
 			flight = null;
 		},
+		aim: () => flight?.to ?? camera,
 		rest: () => rested,
 		subscribe(listener) {
 			listeners.add(listener);

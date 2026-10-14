@@ -145,6 +145,19 @@ describe("the camera store", () => {
 		expect(store.get()).toEqual({ x: 40, y: 40, k: 1 });
 	});
 
+	it("aims at a flight's end while it flies, and at where it stands otherwise", () => {
+		const store = createCameraStore();
+		expect(store.aim()).toBeNull();
+		store.set({ x: 0, y: 0, k: 1 });
+		frame();
+		store.fly({ x: 100, y: 0, k: 0.5 }, 200);
+		frame(clock + 100);
+		expect(store.get()?.k).not.toBe(0.5);
+		expect(store.aim()).toEqual({ x: 100, y: 0, k: 0.5 });
+		store.set({ x: 40, y: 40, k: 2 });
+		expect(store.aim()).toEqual({ x: 40, y: 40, k: 2 });
+	});
+
 	it("has nothing to fly from before there is a camera, and nothing to draw while there is none", () => {
 		const store = createCameraStore();
 		const drawn = listen(store);
