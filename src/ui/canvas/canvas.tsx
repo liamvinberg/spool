@@ -150,7 +150,7 @@ import {
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { useFrameLifecycle } from "./lifecycle";
+import { FrameLife, type LifecycleStore, useDocumentsBooting, useFrameLifecycle, useFrameReady } from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
 import { watchMotionStrain } from "./motion-strain";
 import {
@@ -940,20 +940,14 @@ export function ProjectCanvas({
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
-	// a document is booting from its mount to its loaded report; the picture
-	// layer holds the rest of the page's stills back until none is (#81)
-	const documentsBooting = useMemo(
-		() =>
-			visibleFrames.some(
-				(frame) => (lifecycle.states[frame.name] ?? "picture") !== "picture" && !lifecycle.ready.has(frame.name),
-			),
-		[visibleFrames, lifecycle.states, lifecycle.ready],
-	);
+	// which frames hold a document and which have reported in, read without a render of the canvas
+	const frameLife = lifecycle.store;
 	const sweepLifecycle = lifecycle.sweep;
 	const noteCameraMoving = lifecycle.noteCameraMoving;
 	const contentRequest = useRef(0);
 	const contentSize = useRef<{ frame: string; width: number; height: number } | null>(null);
 	const resizingWidth = frames.find((frame) => frame.name === resizingFrame)?.w;
+	const resizingReady = useFrameReady(frameLife, resizingFrame);
 	useEffect(() => {
 		contentRequest.current += 1;
 		if (resizingFrame === null || resizingWidth === undefined) {
@@ -961,11 +955,11 @@ export function ProjectCanvas({
 			return;
 		}
 		if (contentSize.current?.width !== Math.round(resizingWidth)) contentSize.current = null;
-		if (!lifecycle.ready.has(resizingFrame)) return;
+		if (!resizingReady) return;
 		iframes.current
 			.get(resizingFrame)
 			?.contentWindow?.postMessage({ spool: "content-size", id: contentRequest.current }, "*");
-	}, [resizingFrame, resizingWidth, lifecycle.ready]);
+	}, [resizingFrame, resizingWidth, resizingReady]);
 
 	/** The held document lets go: the one behind it has arrived, or given up. */
 	const releaseHold = useCallback((frame: string) => {
@@ -1441,14 +1435,22 @@ export function ProjectCanvas({
 	// a walk marker must not outlive its walk: a frame dropped back to its
 	// picture before its boot ever reported loaded is borrowed again later, and
 	// that boot is honest — only the current walk target keeps its marker (#28)
-	useEffect(() => {
-		setWalkArrivals((current) => {
-			const alive = [...current].filter(
-				(name) => name === walkTarget.current || (lifecycle.states[name] ?? "picture") !== "picture",
-			);
-			return alive.length === current.size ? current : new Set(alive);
-		});
-	}, [lifecycle.states]);
+	const walkArrivalsRef = useRef(walkArrivals);
+	walkArrivalsRef.current = walkArrivals;
+	useEffect(
+		() =>
+			frameLife.subscribe(() => {
+				const alive = (name: string) =>
+					name === walkTarget.current || (frameLife.states[name] ?? "picture") !== "picture";
+				// asked of the last render's first, so a report is no render of the canvas
+				if ([...walkArrivalsRef.current].every(alive)) return;
+				setWalkArrivals((current) => {
+					const kept = [...current].filter(alive);
+					return kept.length === current.size ? current : new Set(kept);
+				});
+			}),
+		[frameLife],
+	);
 
 	// no stored camera: fit the field once both viewport and field exist
 	useLayoutEffect(() => {
@@ -6155,69 +6157,75 @@ export function ProjectCanvas({
 					)}
 					{/* every frame standing as its picture, on the GPU (#81): over the
 				    arrows and pages, under every shell, label and tag */}
-					<PictureCanvas
+					<Pictures
 						camera={camera}
 						frames={pictureFrames}
 						claims={pictureClaims}
-						booting={documentsBooting}
+						lifecycle={frameLife}
+						documents={visibleFrames}
 					/>
 					{framed && (
 						<CameraField camera={camera}>
-							{visibleFrames.map((frame) => {
-								const state = lifecycle.states[frame.name] ?? "picture";
-								const isEntered = entered === frame.name;
-								// a picture with a still is the picture layer's to draw; a shell
-								// is for a document, or for a frame with nothing to draw but its
-								// placeholder
-								if (
-									state === "picture" &&
-									!isEntered &&
-									frame.cover !== undefined &&
-									externalLink?.frame !== frame.name
-								) {
-									return null;
-								}
-								return (
-									<FrameSlot key={frame.name} name={frame.name} frame={frame} claims={pictureClaims}>
-										<ShellClip camera={camera} near={near} frame={frame}>
-											<FrameShell
-												project={project}
-												name={frame.name}
-												state={state}
-												ready={lifecycle.ready.has(frame.name)}
-												settled={lifecycle.settled.has(frame.name)}
-												entered={isEntered}
-												active={selectionTargets.has(frame.name)}
-												// ⌘ borrows an entered frame's pointer to reach an element under it
-												// an open in-place edit gives the frame its pointer back, so
-												// the words can be typed into the element itself (#255) —
-												// once it is open: for one double-click interval the canvas
-												// still hears the second half of the click that opened it.
-												// ⌘ borrows an entered frame's pointer to reach an element
-												// under it; an open edit is already inside one
-												interactive={
-													editing?.frame === frame.name && editing.phase === "open"
-														? true
-														: isEntered && !accelDown
-												}
-												pointerOnly={editing?.frame === frame.name ? editedBox : null}
-												docNonce={docNonces[frame.name] ?? 0}
-												holdNonce={heldPaint[frame.name] ?? null}
-												cover={frame.cover}
-												walkArrival={walkArrivals.has(frame.name)}
-												onIframe={onIframe}
-											/>
-											{externalLink?.frame === frame.name && (
-												<ExternalLinkDialog
-													href={externalLink.href}
-													onStay={() => setExternalLink(null)}
-													onOpen={() => setExternalLink(null)}
-												/>
-											)}
-										</ShellClip>
-									</FrameSlot>
-								);
-							})}
+							{visibleFrames.map((frame) => (
+								// each shell renders as its own frame's lifecycle changes, never
+								// with the canvas around it (DEV-303)
+								<FrameLife key={frame.name} store={frameLife} name={frame.name}>
+									{({ state, ready, settled }) => {
+										const isEntered = entered === frame.name;
+										// a picture with a still is the picture layer's to draw; a shell
+										// is for a document, or for a frame with nothing to draw but its
+										// placeholder
+										if (
+											state === "picture" &&
+											!isEntered &&
+											frame.cover !== undefined &&
+											externalLink?.frame !== frame.name
+										) {
+											return null;
+										}
+										return (
+											<FrameSlot name={frame.name} frame={frame} claims={pictureClaims}>
+												<ShellClip camera={camera} near={near} frame={frame}>
+													<FrameShell
+														project={project}
+														name={frame.name}
+														state={state}
+														ready={ready}
+														settled={settled}
+														entered={isEntered}
+														active={selectionTargets.has(frame.name)}
+														// ⌘ borrows an entered frame's pointer to reach an element under it
+														// an open in-place edit gives the frame its pointer back, so
+														// the words can be typed into the element itself (#255) —
+														// once it is open: for one double-click interval the canvas
+														// still hears the second half of the click that opened it.
+														// ⌘ borrows an entered frame's pointer to reach an element
+														// under it; an open edit is already inside one
+														interactive={
+															editing?.frame === frame.name && editing.phase === "open"
+																? true
+																: isEntered && !accelDown
+														}
+														pointerOnly={editing?.frame === frame.name ? editedBox : null}
+														docNonce={docNonces[frame.name] ?? 0}
+														holdNonce={heldPaint[frame.name] ?? null}
+														cover={frame.cover}
+														walkArrival={walkArrivals.has(frame.name)}
+														onIframe={onIframe}
+													/>
+													{externalLink?.frame === frame.name && (
+														<ExternalLinkDialog
+															href={externalLink.href}
+															onStay={() => setExternalLink(null)}
+															onOpen={() => setExternalLink(null)}
+														/>
+													)}
+												</ShellClip>
+											</FrameSlot>
+										);
+									}}
+								</FrameLife>
+							))}
 						</CameraField>
 					)}
 					{/* Labels share one layer above every frame. A transformed frame is
@@ -6607,6 +6615,23 @@ function normalizedRect(a: Point, b: Point): Box {
 
 function sameNames(a: readonly string[], b: readonly string[]): boolean {
 	return a.length === b.length && a.every((name, i) => name === b[i]);
+}
+
+/**
+ * The picture layer, told which documents are booting by the lifecycle rather
+ * than by a render of the canvas: a mount and a loaded report change it, and
+ * neither is the canvas's to render (DEV-303).
+ */
+function Pictures({
+	lifecycle,
+	documents,
+	...layer
+}: Omit<Parameters<typeof PictureCanvas>[0], "booting"> & {
+	lifecycle: LifecycleStore;
+	/** The frames whose documents count: the page's. */
+	documents: readonly ProjectedFrame[];
+}) {
+	return <PictureCanvas {...layer} booting={useDocumentsBooting(lifecycle, documents)} />;
 }
 
 /** The frame names without one of them — same set back when it is absent. */
