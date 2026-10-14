@@ -4373,7 +4373,10 @@ export function ProjectCanvas({
 			setMenu(null);
 			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
 			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
-			if (event.ctrlKey || event.metaKey) {
+			// with the ⌥ overview up every wheel zooms its camera, for ⌘ would end
+			// it: out further to reach any frame, and letting go still lands from
+			// the camera it opened on (DEV-295)
+			if (event.ctrlKey || event.metaKey || liveRef.current.isShown()) {
 				const rect = el.getBoundingClientRect();
 				zoomAtPoint(
 					event.clientX - rect.left,

@@ -507,6 +507,23 @@ describe("the pointer under a held ⌥", () => {
 		expect(overviewTarget(host)).toBe("plan");
 		expect(liveChip(host)).toBe("welcome");
 	});
+
+	it("zooms the overview's camera on the wheel, and still lands from the one it opened on", async () => {
+		const { host } = await overviewFromWelcome();
+		const k = cameraScale(host);
+		// happy-dom's WheelEvent takes no place on screen: give it the middle
+		const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
+		Object.defineProperties(wheel, { clientX: { value: 500 }, clientY: { value: 400 } });
+		await act(async () => {
+			host.querySelector("[data-overview-catcher]")?.dispatchEvent(wheel);
+		});
+		expect(wheel.defaultPrevented).toBe(true);
+		expect(cameraScale(host)).toBeLessThan(k);
+		expect(overviewTarget(host)).toBe("sign-up");
+		await relay(host, "welcome", { spool: "hold", phase: "up" });
+		expect(liveChip(host)).toBe("sign-up");
+		expect(cameraScale(host)).toBe(2);
+	});
 });
 
 /**
