@@ -1,55 +1,45 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, join } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, stream, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
-import { writeAtomic } from "../atomic-write";
-import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachments } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
 import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
-import { SpoolError } from "../errors";
-import { checkoutOf } from "../git-remote";
-import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves } from "../move-in";
-import { fetchLocalCopy, openProject } from "../open";
+import { fetchLocalCopy } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
-import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
+import { lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, themeInline } from "../settings/registry";
 import { finishOwedCommits } from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
-import { parseAgentReply } from "./agent-control";
-import { AGENT_PERMISSIONS, type AgentPermissions, createAgentDefaults } from "./agent-defaults";
-import { type AgentEngine, type AgentEngineId, type EngineDeps, isAgentEngineId, LEGACY_ENGINE } from "./agent-engine";
+import { createAgentDefaults } from "./agent-defaults";
+import type { AgentEngine, AgentEngineId, EngineDeps } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
 import { createCodexEngine } from "./agent-engine-codex";
 import { createPiEngine } from "./agent-engine-pi";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
-import { createPlaceholderLedger, FrameStandsError, frameStands, putFrameBack, witnessFrames } from "./agent-frames";
-import { type AgentHeld, createAgentTurns } from "./agent-live";
-import { acceptedModelChoice, createAgentModelPreferences } from "./agent-model-preferences";
-import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
-import { agentPictureEnding } from "./agent-picture";
+import { createPlaceholderLedger } from "./agent-frames";
+import { createAgentTurns } from "./agent-live";
+import { createAgentModelPreferences } from "./agent-model-preferences";
 import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
-import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
+import { agentRoutes } from "./agent-routes";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
-import { CanvasFileError } from "./canvas-file";
-import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
-import { parsePlaces, writePlaces } from "./canvas-places";
+import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
 import { createFrameCompiler } from "./compile";
-import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { DesignBoundaryError } from "./design-path";
 import {
 	captureWorkerCsp,
 	captureWorkerDocument,
@@ -61,67 +51,24 @@ import {
 	playerLoadErrorDocument,
 } from "./document";
 import { createChangeHub } from "./events";
-import {
-	createPage,
-	duplicateFrames,
-	duplicatePage,
-	forgetPages,
-	moveFrames,
-	movePages,
-	pageDir,
-	type Refusal,
-	renameFrame,
-	renamePage,
-} from "./explorer";
-import { createFlowGraph, recordWalk } from "./flows";
+import { explorerRoutes } from "./explorer-routes";
+import { createFlowGraph } from "./flows";
 import { servedFrameCsp } from "./frame-csp";
-import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
-import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
+import { refreshIndex } from "./fs-list";
 import { createGoReader } from "./go-reader";
-import { elementSite, type MoveAsk, readRungs, revertTarget, STALE_FILE, textSite, type WriteSite } from "./hand-lane";
-import { uncaughtNotice } from "./hand-notice";
-import { applySpan, fingerprintOf, parseEditedNodes, parseStamps, shiftsOf, spanBetween } from "./hand-write";
+import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
-import { locateInDesign } from "./locate";
+import { homeRoutes } from "./home-routes";
 import { isLoopbackHost } from "./loopback";
+import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { watchForMoves } from "./moved-in";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
-import {
-	createIconWatch,
-	findProjectIcon,
-	ICON_MAX_BYTES,
-	ICON_REFUSALS,
-	IconRefused,
-	iconType,
-	isIconHash,
-	readProjectIcon,
-	removeProjectIcon,
-	writeProjectIcon,
-} from "./project-icon";
-import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
-import {
-	createThumbnailWatch,
-	findProjectThumbnail,
-	readProjectThumbnail,
-	removeProjectThumbnail,
-	setThumbnailFromFrame,
-	ThumbnailRefused,
-} from "./project-thumbnail";
-import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
-import {
-	describeMissingFrame,
-	FRAME_BIRTH,
-	frameDirectories,
-	frameExists,
-	frameGeometry,
-	frameNames,
-	listProjectFrames,
-	lookupFrame,
-	type ProjectCard,
-	summarizeProject,
-} from "./projection";
+import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
+import { withProject } from "./project-route";
+import { createThumbnailWatch, readProjectThumbnail } from "./project-thumbnail";
+import { FRAME_BIRTH, frameExists, frameGeometry, frameNames, listProjectFrames } from "./projection";
 import { createResolvePass } from "./resolve-pass";
 import {
 	CAPTURE_HOST,
@@ -134,34 +81,16 @@ import {
 	RENDER_HOST,
 	renderOriginFor,
 } from "./security";
-import { markSeen } from "./seen";
-import { createSelectionStore, parseSelectionEntries, parseSelectionPut, type SelectionEntry } from "./selection";
-import { selectionBlock } from "./selection-block";
-import {
-	type AppEvent,
-	type MachineStateWatchAdapter,
-	orderSession,
-	readSession,
-	updateSession,
-	visitProject,
-	watchMachineState,
-} from "./session";
+import { createSelectionStore } from "./selection";
+import { type AppEvent, type MachineStateWatchAdapter, watchMachineState } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
-import type { PlaceholderAuthor } from "./sidecar";
+import { beatWhileOpen } from "./sse-beat";
 import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
-import {
-	createTeamSync,
-	endedWith,
-	followedLink,
-	goneLocalWith,
-	movedOutOf,
-	type OpenSyncSocket,
-	settleMovedOut,
-} from "./team-sync";
+import { createTeamSync, followedLink, movedOutOf, type OpenSyncSocket, settleMovedOut } from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -317,157 +246,6 @@ const PLAYER_WARM_MS = 1_500;
  * short of the minutes a whole unpictured project takes.
  */
 const PLAYER_BOOTH_PATIENCE_MS = 30_000;
-
-/** A JSON body as fields to read, whatever arrived. */
-const bodyFields = (value: unknown): Record<string, unknown> =>
-	typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-
-/** A `[name, ...]` field, or nothing when it is not one. */
-const nameList = (value: unknown): string[] | undefined =>
-	Array.isArray(value) && value.every((name): name is string => typeof name === "string") ? value : undefined;
-
-/**
- * What a trash names (#228): frames, pages, or both. Both sides are optional on
- * the wire and the handler requires one of them to be there, so a caller that
- * only ever deletes frames writes what it always wrote.
- */
-interface TrashBody {
-	frames?: string[];
-	pages?: string[];
-}
-
-/**
- * A design/ read or write, with the two refusals it can throw already answered
- * (#228): a path that resolves out of design/, and a canvas.json spool will not
- * overwrite because it cannot read what overwriting it would lose.
- */
-/**
- * A model or effort pick as the agent menu sends it, for the machine's choice and a
- * thread's alike (#118, #199). A leading dash is refused here rather than reasoned about
- * downstream: an offered model never starts with one, and a value that does is a value
- * handed to argv where a flag would go. An effort is one lowercase word, the shape a level
- * has to have to be an argument at all; which levels exist is the model's own claim, and
- * the offer's round trip is what refuses one the engine will not take.
- */
-function modelChoice(value: unknown, c: Context): Response | AgentAsk {
-	const body = (typeof value === "object" && value !== null ? value : {}) as { value?: unknown; effort?: unknown };
-	if (body.value !== undefined && !isModelShaped(body.value))
-		return c.text('"value" is one of the choices the engine offered', 400);
-	if (body.effort !== undefined && !isEffortShaped(body.effort))
-		return c.text('"effort" is one of the levels the model said it supports', 400);
-	if (body.value === undefined && body.effort === undefined)
-		return c.text('a choice is { "value": "…" } or { "effort": "…" }', 400);
-	return {
-		...(body.value === undefined ? {} : { value: body.value as string }),
-		...(body.effort === undefined ? {} : { effort: body.effort }),
-	};
-}
-
-function answeringDiskRefusals<T>(c: Context, work: () => T): { value: T } | { response: Response } {
-	try {
-		return { value: work() };
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) return { response: c.text(error.message, 400) };
-		if (error instanceof CanvasFileError) return { response: c.text(error.message, 500) };
-		throw error;
-	}
-}
-
-const isRefusal = (outcome: { kind: string }): outcome is Refusal => outcome.kind === "refused";
-
-/**
- * One explorer verb, answered (#228): the disk's refusals first, then the
- * operation's own — which already carries the status it wants said — and what
- * is left is the verb having happened, which only the route can phrase.
- */
-function explorerVerb<T extends { kind: string }, R extends Response>(
-	c: Context,
-	work: () => T | Refusal,
-	done: (value: T) => R,
-): R | Response {
-	const outcome = answeringDiskRefusals(c, work);
-	if ("response" in outcome) return outcome.response;
-	if (isRefusal(outcome.value)) return c.text(outcome.value.message, outcome.value.status);
-	return done(outcome.value);
-}
-
-/** Both renames read one body; only what they move differs. */
-const renameBody = validator("json", (value: unknown, c: Context) => {
-	const { from, to } = bodyFields(value);
-	if (typeof from !== "string" || typeof to !== "string") {
-		return c.text('a rename is { "from": "…", "to": "…" }', 400);
-	}
-	return { from, to };
-});
-
-/**
- * How often a long-lived stream says something while nothing is happening.
- *
- * A comment rather than an event: it is bytes on the wire and nothing more, so
- * every parser drops it and no handler has to know it exists. What it buys is
- * the one thing a quiet stream cannot tell you by itself — that it is still
- * there. A connection the network dropped under a sleeping laptop reads exactly
- * like a project nobody is editing, and a browser waits on that forever.
- */
-const SSE_HEARTBEAT_MS = 15_000;
-
-/**
- * Keep one stream audible. The returned stop is for a handler that ends of its
- * own accord; a client that hangs up is covered by the abort.
- */
-function beatWhileOpen(stream: SSEStreamingApi): () => void {
-	const timer = setInterval(() => {
-		// a write to a stream that has already gone is nothing to report
-		void stream.write(": beat\n\n").catch(() => {});
-	}, SSE_HEARTBEAT_MS);
-	timer.unref?.();
-	const stop = () => clearInterval(timer);
-	stream.onAbort(stop);
-	return stop;
-}
-
-/**
- * One view of a held turn, which is what both doors return (#211).
- *
- * The turn is not this response's to end. A client that goes away closes its own read and
- * leaves the process where it was — which is the whole of what #211 changed, and it is one
- * line: `onAbort` closes the view rather than abandoning the turn.
- *
- * It opens by saying what is being read: the name the rail's stop has to quote, whether
- * the process is still up, and how many events are already in the log. That last one is
- * what lets the rail draw the replay whole and pace only what arrives after it — the same
- * rule a picture off disk is under, since neither of them is happening now.
- */
-function attachTurn(c: Context, held: AgentHeld, from: number) {
-	return streamSSE(c, async (stream) => {
-		const view = held.watch(from);
-		stream.onAbort(() => view.close());
-		const stopBeat = beatWhileOpen(stream);
-		try {
-			await stream.writeSSE({
-				event: "attached",
-				data: JSON.stringify({
-					...(held.id === undefined ? {} : { turn: held.id }),
-					running: held.running,
-					from,
-					logged: held.logged,
-					elapsed: held.elapsed,
-				}),
-			});
-			for await (const { id, event } of view) {
-				try {
-					await stream.writeSSE({ event: "agent", data: JSON.stringify(event), id: String(id) });
-				} catch {
-					// the client hung up mid-write — stop reading, and leave the turn running
-					break;
-				}
-			}
-		} finally {
-			stopBeat();
-			view.close();
-		}
-	});
-}
 
 /**
  * The daemon's Hono app, the primary seam: everything observable rides
@@ -639,18 +417,6 @@ export function createDaemonApp({
 	/** the placeholder frames running turns hold for their designers, and the ones a last run left go (#369) */
 	const placeholders = createPlaceholderLedger(join(spoolDir, "placeholders.json"));
 	placeholders.sweep();
-	/**
-	 * Who this Mac is signed in to spool.page as, which the placeholders its designers make on a team project
-	 * name (#378). Asked again as each turn there starts and the last answer kept, so making one never waits.
-	 */
-	let signedInAs: PlaceholderAuthor | undefined;
-	const askWhoIsSignedIn = (): void =>
-		void account(spoolDir, { ...cloud, origin: originOf(cloud) }).then(
-			(one) => {
-				signedInAs = { accountId: one.accountId, name: one.email.split("@")[0] || one.email };
-			},
-			() => {},
-		);
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -682,202 +448,6 @@ export function createDaemonApp({
 			flowGraph.indexed(root) ? flowGraph.framesUsing(root, path) : framesUsingIn(root).framesUsing(path),
 	});
 
-	/**
-	 * A planned write, landed (#314, #317).
-	 *
-	 * Every hand write answers the same three things, so they are said in one
-	 * place: where it went, what the file hashes to now, how the stamps on the
-	 * patched lines moved, and the patch that takes it back. A write that says
-	 * what the file already said writes nothing at all.
-	 */
-	const written = (root: string, site: Extract<WriteSite, { kind: "ok" }>) => {
-		const undo = site.undo ?? spanBetween(site.source, site.text);
-		if (site.text !== site.source) writeAtomic(site.file, site.text);
-		const after = fingerprintOf(site.text);
-		return {
-			ok: true as const,
-			path: site.path,
-			fingerprint: after,
-			shifts: site.shifts,
-			undo: { path: site.path, ...undo, fingerprint: after },
-			// the one project with nothing catching a hand edit hears so once
-			...(site.text !== site.source && uncaughtNotice(root) ? { uncaught: true as const } : {}),
-		};
-	};
-
-	/** The selection's read (#256): one frame, and the ancestry's stamps, root first. */
-	const rungsBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const sources = parseStamps(body.sources);
-		if (typeof body.frame !== "string" || !isFramePath(body.frame) || sources === undefined) {
-			return c.text('a read is { "frame", "sources": [ "frames/…/frame.tsx:12:4" ] }', 400);
-		}
-		return { frame: body.frame, sources };
-	});
-
-	/**
-	 * A text commit (#314): one element's words as the frame has them now,
-	 * addressed by its stamp and measured against the file the element was read
-	 * from. A stamp is a place in a file the daemon is about to open, so the
-	 * shape is strict.
-	 */
-	const textBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const stamps = parseStamps([body.source, ...(body.owner === undefined ? [] : [body.owner])]);
-		const nodes = parseEditedNodes(body.nodes);
-		if (
-			typeof body.frame !== "string" ||
-			!isFramePath(body.frame) ||
-			stamps === undefined ||
-			nodes === undefined ||
-			typeof body.fingerprint !== "string"
-		) {
-			return c.text('a text edit is { "frame", "source", "nodes", "owner"?, "fingerprint" }', 400);
-		}
-		if (body.ownerFingerprint !== undefined && typeof body.ownerFingerprint !== "string") {
-			return c.text("a call site carries the fingerprint it was read at", 400);
-		}
-		const [source, owner] = stamps;
-		if (source === undefined) return c.text("a text edit names the element it is on", 400);
-		return {
-			frame: body.frame,
-			source,
-			nodes,
-			fingerprint: body.fingerprint,
-			...(owner === undefined ? {} : { owner }),
-			...(typeof body.ownerFingerprint === "string" ? { ownerFingerprint: body.ownerFingerprint } : {}),
-		};
-	});
-
-	/**
-	 * A structural change (#317): a delete.
-	 *
-	 * The same shape as a text commit and for the same reasons — a stamp is a
-	 * place in a file the daemon is about to open, and the fingerprint is the
-	 * file the surface formed the gesture against. No call site rides along:
-	 * a delete of something that is all of a component refuses, and deleting
-	 * the call instead is its own gesture on the call's own stamp (#317).
-	 */
-	const elementBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const stamps = parseStamps(body.sources);
-		const says = 'an element write is { "frame", "act": "delete" | "move", "sources": [ "…:12:4" ], "fingerprint" }';
-		if (
-			typeof body.frame !== "string" ||
-			!isFramePath(body.frame) ||
-			(body.act !== "delete" && body.act !== "move") ||
-			stamps === undefined ||
-			typeof body.fingerprint !== "string"
-		) {
-			return c.text(says, 400);
-		}
-		if (body.act === "move") {
-			const move = moveOf(body, stamps);
-			if (typeof move === "string") return c.text(move, 400);
-			return { frame: body.frame, fingerprint: body.fingerprint, ...move };
-		}
-		// A multi-pick deletes as one write, so its stamps are one file's: one
-		// write is one fingerprint and one span, which is what makes it one
-		// press of undo (#323).
-		const files = new Set(stamps.map((stamped) => stamped.replace(/:\d+:\d+$/, "")));
-		if (files.size > 1) return c.text("an element write is one file's", 400);
-		// The row a delete is about (#324): the stamp of the JSX a `.map()`
-		// renders, where in the array it stood, and the fingerprint of that
-		// stamp's own file. A body carrying half of one has not decided.
-		const held = typeof body.item === "object" && body.item !== null ? (body.item as Record<string, unknown>) : null;
-		let item: { source: string; index: number; fingerprint: string } | undefined;
-		if (held !== null) {
-			const index = held.index;
-			if (
-				typeof held.source !== "string" ||
-				parseStamps([held.source]) === undefined ||
-				typeof index !== "number" ||
-				!Number.isInteger(index) ||
-				index < 0 ||
-				typeof held.fingerprint !== "string" ||
-				held.fingerprint === ""
-			) {
-				return c.text('a delete of one row is { "item": { "source", "index", "fingerprint" } }', 400);
-			}
-			item = { source: held.source, index, fingerprint: held.fingerprint };
-		}
-		return {
-			frame: body.frame,
-			act: "delete" as const,
-			sources: stamps,
-			fingerprint: body.fingerprint,
-			...(item === undefined ? {} : { item }),
-		};
-	});
-
-	/**
-	 * A reorder (#340): one element held, the sibling it lands beside and which
-	 * side, or a row of a list and the row it lands beside. The call one owner
-	 * up rides along for each, because only the frame knows it, and the lane
-	 * moves the call when the element is the whole of what a component returns.
-	 */
-	const moveOf = (body: Record<string, unknown>, stamps: string[]): string | Omit<MoveAsk, "fingerprint"> => {
-		const says = 'a move is { "sources": [ one ], "place": "before" | "after", "target" | "item" }';
-		const place = body.place;
-		if (stamps.length !== 1 || (place !== "before" && place !== "after")) return says;
-		const record = (value: unknown) =>
-			typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
-		const stamped = (value: unknown): value is string =>
-			typeof value === "string" && parseStamps([value]) !== undefined;
-		const index = (value: unknown): value is number =>
-			typeof value === "number" && Number.isInteger(value) && value >= 0;
-		const owner = record(body.owner);
-		if (body.owner !== undefined && (!stamped(owner?.source) || typeof owner?.fingerprint !== "string")) {
-			return 'a move\'s call is { "owner": { "source", "fingerprint" } }';
-		}
-		const item = record(body.item);
-		if (item !== undefined) {
-			if (
-				!stamped(item.source) ||
-				!index(item.index) ||
-				!index(item.target) ||
-				typeof item.fingerprint !== "string" ||
-				item.fingerprint === ""
-			) {
-				return 'a move of one row is { "item": { "source", "index", "target", "fingerprint" } }';
-			}
-			return {
-				act: "move",
-				sources: stamps,
-				place,
-				item: { source: item.source, index: item.index, target: item.target, fingerprint: item.fingerprint },
-			};
-		}
-		const target = record(body.target);
-		if (!stamped(target?.source) || (target.owner !== undefined && !stamped(target.owner))) {
-			return 'a move names its sibling: { "target": { "source", "owner"? } }';
-		}
-		return {
-			act: "move",
-			sources: stamps,
-			place,
-			target: { source: target.source, ...(typeof target.owner === "string" ? { owner: target.owner } : {}) },
-			...(owner !== undefined && stamped(owner.source) && typeof owner.fingerprint === "string"
-				? { owner: { source: owner.source, fingerprint: owner.fingerprint } }
-				: {}),
-		};
-	};
-
-	/**
-	 * The patch that puts a hand edit back (#314): the run, and the file it
-	 * was taken of.
-	 */
-	const revertBody = validator("json", (value, c) => {
-		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-		const { path, start, end, text, fingerprint } = body;
-		const spans = typeof start === "number" && typeof end === "number" && Number.isInteger(start);
-		if (typeof path !== "string" || !spans || typeof text !== "string" || typeof fingerprint !== "string") {
-			return c.text('a revert is { "path", "start", "end", "text", "fingerprint" }', 400);
-		}
-		if (!Number.isInteger(end) || start < 0 || end < start) return c.text("not a span", 400);
-		return { path, start, end, text, fingerprint };
-	});
-
 	const frameAuthority = (root: string) => ({
 		projectCapability: projectCapability(root),
 		controlOrigin,
@@ -902,8 +472,6 @@ export function createDaemonApp({
 	const settings = createSettingsStore(spoolDir);
 	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
-	const projectTransfers = new Map<string, AbortController>();
-	const cancelledTransfers = new Map<string, number>();
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 
 	// the app-level channel: registry and session changes, fanned to every page
@@ -1221,27 +789,6 @@ export function createDaemonApp({
 	const agentDefaults = createAgentDefaults(spoolDir, () => engines.values());
 	const projectRenames = new Set<string>();
 
-	/** the engine this daemon runs under an id, or none for an id it doesn't know or doesn't run */
-	function engineById(id: unknown): AgentEngine | undefined {
-		return isAgentEngineId(id) ? engines.get(id) : undefined;
-	}
-
-	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
-		if (thread !== undefined && !isThreadId(thread))
-			return { response: c.text("a thread is named by its uuid", 400) };
-		if (requested !== undefined && !isAgentEngineId(requested)) return { response: c.text("unknown engine", 400) };
-		const saved = thread === undefined ? undefined : readThread(spoolDir, root, thread);
-		// the bundled engine's threads are read-only: their picture stays, and nothing continues them
-		if (saved?.engine === LEGACY_ENGINE) return { response: c.text("this thread's engine was removed", 409) };
-		if (saved !== undefined && requested !== undefined && requested !== saved.engine) {
-			return { response: c.text("a thread's engine cannot change", 409) };
-		}
-		// a thread with no model session yet takes the machine's choice, never a guess of its own
-		const id = saved?.engine ?? requested ?? agentDefaults.read().engine;
-		const engine = id === undefined ? undefined : engines.get(id);
-		if (engine === undefined) return { response: c.text(`engine "${id ?? "none"}" is unavailable`, 503) };
-		return { engine, session: saved?.session ?? { id: thread ?? "" } };
-	}
 	/**
 	 * Every turn this daemon is holding, by the conversation it belongs to (#211).
 	 *
@@ -1254,11 +801,6 @@ export function createDaemonApp({
 	 */
 	const liveTurns = createAgentTurns();
 	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
-	/** a running turn started on another mode than the machine's: the pick waits for its next turn */
-	function pendingMode(root: string, thread: string, mode: AgentPermissions): boolean {
-		const held = liveTurns.get(root, thread);
-		return held?.running === true && held.mode !== mode;
-	}
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -1323,24 +865,6 @@ export function createDaemonApp({
 		c.header("cache-control", "private, max-age=31536000, immutable");
 		c.header("content-type", type);
 		c.header("x-content-type-options", "nosniff");
-	}
-
-	/** Body of the picker's POSTs: { path } — anything else is a 400. */
-	function requestedPath(value: unknown, c: Context): { path: string } | Response {
-		const path = (value as { path?: unknown }).path;
-		if (typeof path !== "string" || path === "") {
-			return c.json({ error: 'expected { "path": "/abs/dir" }' }, 400);
-		}
-		return { path };
-	}
-
-	/** Body of the picker's create: { path, name } — the folder to make it in, and what to call it. */
-	function requestedNewProject(value: unknown, c: Context): { path: string; name: string } | Response {
-		const parsed = z.object({ path: z.string().min(1), name: z.string() }).safeParse(value);
-		if (!parsed.success) {
-			return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
-		}
-		return parsed.data;
 	}
 
 	type HostClass = "control" | "alias" | "render" | "capture" | "unexpected";
@@ -1527,137 +1051,17 @@ export function createDaemonApp({
 			if (!outcome.ok) return c.json({ error: outcome.error }, 409);
 			return c.json({ started: true }, 202);
 		})
-		.get("/api/cloud/account", async (c) => c.json(await cloudAccount.read()))
-		.post("/api/cloud/account/sign-in", async (c) => {
-			cloudAccount.signIn();
-			return c.json(await cloudAccount.read(), 202);
-		})
-		.post("/api/cloud/account/reopen", (c) => c.json({ reopened: cloudAccount.reopen() }))
-		.post("/api/cloud/account/cancel", (c) => {
-			cloudAccount.cancel();
-			return c.body(null, 204);
-		})
-		.post("/api/cloud/account/changed", (c) => {
-			cloudAccount.changed();
-			return c.body(null, 204);
-		})
-		.post("/api/cloud/account/sign-out", async (c) => {
-			try {
-				await cloudAccount.signOut();
-			} catch (error) {
-				return c.text(error instanceof Error ? error.message : "could not sign out", 503);
-			}
-			return c.json(await cloudAccount.read());
-		})
-		.get("/api/session", (c) => c.json(readSession(spoolDir)))
-		.put(
-			"/api/session",
-			validator("json", (value, c) => {
-				const { root, open } = value as { root?: unknown; open?: unknown };
-				if (typeof root !== "string" || typeof open !== "boolean") {
-					return c.text('session mutation must be { "root": string, "open": boolean }', 400);
-				}
-				return { root, open };
+		.route(
+			"/api",
+			machineRoutes({
+				resolve: resolveProject,
+				spoolDir,
+				cloudAccount,
+				settings,
+				machineStateWatch,
+				emitAppEvent,
+				historyChanged: () => history.keeping(registeredRoots()),
 			}),
-			(c) => {
-				const { root, open } = c.req.valid("json");
-				const result = updateSession(spoolDir, root, open);
-				if (result.kind === "unregistered") {
-					return c.text(`not a registered project root: ${result.root}`, 400);
-				}
-				machineStateWatch.acknowledgeSession(result.session);
-				emitAppEvent({ kind: "session" });
-				return c.body(null, 204);
-			},
-		)
-		// the tab this page landed on or switched to: recent is where you were last
-		// on this Mac. The page that said so updates its own cards; the others hear
-		// nothing, so a tab switch costs no page a walk of every project.
-		.put(
-			"/api/session/active",
-			validator("json", (value, c) => {
-				const { root } = value as { root?: unknown };
-				if (typeof root !== "string") return c.text('an active tab must be { "root": string }', 400);
-				return { root };
-			}),
-			(c) => {
-				const result = visitProject(spoolDir, c.req.valid("json").root);
-				if (result.kind === "unregistered") {
-					return c.text(`not a registered project root: ${result.root}`, 400);
-				}
-				machineStateWatch.acknowledgeRegistry(result.registry);
-				return c.json({ openedAt: result.openedAt });
-			},
-		)
-		// tabs dragged into an arrangement: the list is the whole mutation, and it
-		// opens and closes nothing — a root it no longer names stays open
-		.put(
-			"/api/session/order",
-			validator("json", (value, c) => {
-				const { order } = value as { order?: unknown };
-				if (!Array.isArray(order) || order.some((root) => typeof root !== "string")) {
-					return c.text('a tab arrangement must be { "order": string[] }', 400);
-				}
-				return { order: order as string[] };
-			}),
-			(c) => {
-				const session = orderSession(spoolDir, c.req.valid("json").order);
-				machineStateWatch.acknowledgeSession(session);
-				emitAppEvent({ kind: "session" });
-				return c.body(null, 204);
-			},
-		)
-		// #281: the settings registry with its values, for one project or for none.
-		// A project setting asked for without a project reads as its default.
-		.get("/api/settings", (c) => {
-			const name = c.req.query("project");
-			if (name === undefined || name === "") return c.json(settings.read());
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			return c.json(settings.read(project.root));
-		})
-		.put(
-			"/api/settings",
-			validator("json", (value, c) => {
-				// one write, or several under `writes`; several are checked as a set
-				// and land as one, which is what a theme of ten tokens needs
-				const shape =
-					'a setting write is { "key", "value", "project"? } or { "writes": [{ "key", "value" }], "project"? }';
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					key?: unknown;
-					value?: unknown;
-					writes?: unknown;
-					project?: unknown;
-				};
-				if (body.project !== undefined && typeof body.project !== "string") return c.text(shape, 400);
-				if (Array.isArray(body.writes)) {
-					for (const write of body.writes as unknown[]) {
-						const { key } = (typeof write === "object" && write !== null ? write : {}) as { key?: unknown };
-						if (typeof key !== "string") return c.text(shape, 400);
-					}
-					return body as { writes: { key: string; value: unknown }[]; project?: string };
-				}
-				if (typeof body.key !== "string") return c.text(shape, 400);
-				return body as { key: string; value: unknown; project?: string };
-			}),
-			(c) => {
-				const body = c.req.valid("json");
-				let root: string | undefined;
-				if (body.project !== undefined) {
-					const project = resolveProject(c, body.project);
-					if ("response" in project) return project.response;
-					root = project.root;
-				}
-				const one = !("writes" in body);
-				const writes = "writes" in body ? body.writes : [{ key: body.key, value: body.value }];
-				const written = settings.writeMany(writes, root);
-				if (!written.ok) return c.text(written.reason, written.status);
-				// history reads its flag off canvas.json at every window, but a project
-				// switched on has to be picked up now rather than at the next arrival
-				if (writes.some((write) => write.key === "history")) history.keeping(registeredRoots());
-				emitAppEvent({ kind: "settings" });
-				return c.json(one ? written.readings[0] : written.readings);
-			},
 		)
 		.get("/api/events", (c) => {
 			return streamSSE(c, async (stream) => {
@@ -1684,544 +1088,98 @@ export function createDaemonApp({
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
 		})
-		.get("/api/fs/list", (c) => {
-			const path = c.req.query("path");
-			const listing = listDirectory(path);
-			if (listing === undefined) return c.json({ error: "no such directory" }, 404);
-			// no path is the picker opening: the moment to walk home again behind the index that stands (#277)
-			if (path === undefined) void refreshIndex(fsIndex);
-			return c.json(listing);
-		})
-		.post("/api/fs/create", validator("json", requestedNewProject), (c) => {
-			try {
-				const { path, name } = c.req.valid("json");
-				return c.json(createDirectory(path, name));
-			} catch (error) {
-				if (!(error instanceof SpoolError)) throw error;
-				return c.json({ error: error.message }, 409);
-			}
-		})
-		.get("/api/fs/search", async (c) => {
-			// one indexed walk of home, answered under the folder asked for: the browse is what an empty query still shows
-			const found = await searchDirectories(c.req.query("q") ?? "", { ...fsIndex, under: c.req.query("under") });
-			if (found === undefined) return c.json({ error: "not under home" }, 400);
-			return c.json(found);
-		})
-		.post(
-			"/api/projects/export",
-			validator("json", (value, c) => {
-				const root = typeof value === "object" && value !== null ? (value as { root?: unknown }).root : undefined;
-				return typeof root === "string" ? { root } : c.json({ error: "A project root is required." }, 400);
+		.route(
+			"/api",
+			homeRoutes({
+				resolve: resolveProject,
+				spoolDir,
+				settings,
+				fsIndex,
+				projectRenames,
+				trashingProjects,
+				liveTurns,
+				hub,
+				selections,
+				machineStateWatch,
+				emitAppEvent,
+				registeredRoots,
+				trash: trashImpl,
+				teamSync,
+				iconWatch,
+				thumbnailWatch,
 			}),
-			async (c) => {
-				try {
-					const { root } = c.req.valid("json");
-					const bytes = await exportProject(root, spoolDir, c.req.raw.signal);
-					c.header("Content-Type", "application/zip");
-					c.header(
-						"Content-Disposition",
-						`attachment; filename="project.spool"; filename*=UTF-8''${encodeURIComponent(basename(root))}.spool`,
-					);
-					return c.body(Buffer.from(bytes));
-				} catch (error) {
-					return c.json({ error: error instanceof Error ? error.message : "Export failed." }, 400);
-				}
-			},
 		)
-		.post(
-			"/api/projects/transfer/cancel",
-			validator("json", (value, c) => {
-				const transfer =
-					typeof value === "object" && value !== null ? (value as { transfer?: unknown }).transfer : undefined;
-				return typeof transfer === "string" ? { transfer } : c.json({ error: "A transfer id is required." }, 400);
-			}),
-			(c) => {
-				const transfer = c.req.valid("json").transfer;
-				for (const [id, at] of cancelledTransfers) if (Date.now() - at > 300_000) cancelledTransfers.delete(id);
-				if (cancelledTransfers.size >= 1000)
-					cancelledTransfers.delete(cancelledTransfers.keys().next().value ?? "");
-				cancelledTransfers.set(transfer, Date.now());
-				projectTransfers.get(transfer)?.abort();
-				return c.json({ cancelled: true });
-			},
-		)
-		.post("/api/projects/import", async (c) => {
-			const transfer = c.req.query("transfer");
-			if (!transfer || !/^[a-zA-Z0-9-]{1,100}$/.test(transfer))
-				return c.json({ error: "A transfer id is required." }, 400);
-			if (projectTransfers.has(transfer)) return c.json({ error: "This transfer is already running." }, 409);
-			const controller = new AbortController();
-			const cancelledAt = cancelledTransfers.get(transfer);
-			cancelledTransfers.delete(transfer);
-			if (cancelledAt !== undefined && Date.now() - cancelledAt <= 300_000) controller.abort();
-			projectTransfers.set(transfer, controller);
-			try {
-				const declared = Number(c.req.header("content-length"));
-				if (declared > TRANSFER_LIMITS.compressedBytes)
-					throw new TransferError("The archive exceeds the compressed size limit.");
-				const reader = c.req.raw.body?.getReader();
-				if (!reader) throw new TransferError("Choose a Spool project file.");
-				const cancelUpload = () => {
-					void reader.cancel().catch(() => {});
-				};
-				controller.signal.addEventListener("abort", cancelUpload, { once: true });
-				const chunks: Uint8Array[] = [];
-				let length = 0;
-				try {
-					for (;;) {
-						controller.signal.throwIfAborted();
-						const chunk = await reader.read();
-						if (chunk.done) break;
-						length += chunk.value.length;
-						if (length > TRANSFER_LIMITS.compressedBytes)
-							throw new TransferError("The archive exceeds the compressed size limit.");
-						chunks.push(chunk.value);
-					}
-				} finally {
-					controller.signal.removeEventListener("abort", cancelUpload);
-					await reader.cancel();
-				}
-				const location = settings.read().entries.find((entry) => entry.key === "projects.location");
-				return c.json(
-					await importProject(
-						Buffer.concat(chunks),
-						String(location?.value ?? "~/spool"),
-						spoolDir,
-						controller.signal,
-					),
-				);
-			} catch (error) {
-				if (controller.signal.aborted) return c.json({ error: "Import cancelled.", cancelled: true }, 409);
-				return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
-			} finally {
-				projectTransfers.delete(transfer);
-			}
-		})
-		.post("/api/projects/open", validator("json", requestedPath), (c) => {
-			try {
-				const { root } = openProject(c.req.valid("json").path, spoolDir);
-				return c.json({ root, name: basename(root) });
-			} catch (error) {
-				if (!(error instanceof SpoolError)) throw error;
-				// nothing found by walk-up: the picker's next move is offering init
-				return c.json({ error: error.message, offerInit: true }, 404);
-			}
-		})
-		.post("/api/projects/init", validator("json", requestedPath), (c) => {
-			try {
-				const { root } = initProject(c.req.valid("json").path, spoolDir);
-				return c.json({ root, name: basename(root) });
-			} catch (error) {
-				if (!(error instanceof SpoolError)) throw error;
-				return c.json({ error: error.message }, 409);
-			}
-		})
-		.post("/api/projects/start", (c) => {
-			try {
-				const location = settings.read().entries.find((entry) => entry.key === "projects.location");
-				const { root } = startProject(String(location?.value ?? "~/spool"), spoolDir);
-				return c.json({ root, name: basename(root) });
-			} catch (error) {
-				if (!(error instanceof SpoolError)) throw error;
-				return c.json({ error: error.message }, 409);
-			}
-		})
-		.post(
-			"/api/projects/rename",
-			validator("json", (value, c) => {
-				const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
-			}),
-			async (c) => {
-				const { root, name } = c.req.valid("json");
-				const target = join(dirname(root), name.trim());
-				if (projectRenames.has(root) || projectRenames.has(target))
-					return c.json({ error: "Project change is in progress." }, 409);
-				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
-					return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
-				}
-				projectRenames.add(root);
-				projectRenames.add(target);
-				try {
-					const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
-					if (result.root !== root) {
-						hub.forget(root);
-						liveTurns.relocate(root, result.root);
-						selections.relocate(root, result.root);
-					}
-					machineStateWatch.acknowledgeRegistry(result.registry);
-					machineStateWatch.acknowledgeSession(result.session);
-					emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
-					return c.json({ root: result.root, name: result.name });
-				} catch (error) {
-					if (!(error instanceof SpoolError)) throw error;
-					return c.json({ error: error.message }, 409);
-				} finally {
-					projectRenames.delete(root);
-					projectRenames.delete(target);
-				}
-			},
-		)
-		.post("/api/projects/create", validator("json", requestedNewProject), (c) => {
-			try {
-				const { path, name } = c.req.valid("json");
-				// the "+" (#242): mkdir, then the same scaffold init runs
-				const { root } = createProject(path, name, spoolDir);
-				return c.json({ root, name: basename(root) });
-			} catch (error) {
-				if (!(error instanceof SpoolError)) throw error;
-				return c.json({ error: error.message }, 409);
-			}
-		})
-		.post(
-			"/api/projects/forget",
-			validator("json", (value, c) => {
-				const root = (value as { root?: unknown }).root;
-				if (typeof root !== "string" || root === "") {
-					return c.json({ error: 'expected { "root": "/abs/dir" }' }, 400);
-				}
-				return { root };
-			}),
-			(c) => {
-				// home's remove (#13): the registry forgets, the folder is untouched —
-				// and its open tab closes in the same machine-state mutation
-				const { root } = c.req.valid("json");
-				const result = forgetResolvedProject(spoolDir, root);
-				if (result.removed) {
-					machineStateWatch.acknowledgeRegistry(result.registry);
-					emitAppEvent({ kind: "registry" });
-				}
-				if (result.sessionChanged) {
-					machineStateWatch.acknowledgeSession(result.session);
-					emitAppEvent({ kind: "session" });
-				}
-				if (!result.removed) {
-					return c.json({ error: `not a registered project root: ${root}` }, 404);
-				}
-				return c.body(null, 204);
-			},
-		)
-		.post(
-			"/api/projects/trash",
-			validator("json", (value, c) => {
-				const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
-			}),
-			async (c) => {
-				const { root } = c.req.valid("json");
-				const roots = registeredRoots();
-				if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
-				if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
-				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
-					return c.json({ error: "Let the agent finish or stop its turn before trashing this project." }, 409);
-				}
-				const stateRoot = realpathSync(spoolDir);
-				if (
-					root === resolve(root, "..") ||
-					roots.some((held) => held.startsWith(`${root}${sep}`)) ||
-					stateRoot === root ||
-					stateRoot.startsWith(`${root}${sep}`)
-				) {
-					return c.json(
-						{ error: "This folder contains another Spool project or its app data. Hide it instead." },
-						409,
-					);
-				}
-				trashingProjects.add(root);
-				let moved = false;
-				try {
-					if (!lstatSync(root).isDirectory() || realpathSync(root) !== root) {
-						return c.json(
-							{ error: "The project folder has changed. Open its folder again before trashing it." },
-							409,
-						);
-					}
-					await trashImpl([root]);
-					moved = true;
-					const result = forgetResolvedProject(spoolDir, root);
-					hub.forget(root);
-					if (result.removed) {
-						machineStateWatch.acknowledgeRegistry(result.registry);
-						emitAppEvent({ kind: "registry" });
-					}
-					if (result.sessionChanged) {
-						machineStateWatch.acknowledgeSession(result.session);
-						emitAppEvent({ kind: "session" });
-					}
-					return c.body(null, 204);
-				} catch (error) {
-					const detail = error instanceof Error ? error.message : String(error);
-					return c.json(
-						{
-							error: moved
-								? `The folder moved to the trash, but Spool could not remove it from the list. Hide it instead. ${detail}`
-								: `Could not trash the project: ${detail}`,
-						},
-						409,
-					);
-				} finally {
-					trashingProjects.delete(root);
-				}
-			},
-		)
-		.get("/api/projects", async (c) => {
-			// the app waits on this before it shows anything, and every card is a
-			// walk of a project's design folder — so they run together (#13)
-			const projects: ProjectCard[] = await Promise.all(
-				readRegistry(spoolDir).projects.map(async (project) => {
-					const link = followedLink(project.root);
-					const ended = endedWith(project.root);
-					const movedOut = ended === undefined ? undefined : movedOutOf(project.root);
-					const paused = link === undefined ? null : teamSync.state(project.root).paused;
-					const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
-					const [summary, icon, thumbnail, inRepo] = await Promise.all([
-						summarizeProject(project.root),
-						findProjectIcon(project.root),
-						findProjectThumbnail(project.root),
-						link === undefined ? false : checkoutOf(project.root).then((found) => found !== undefined),
-					]);
-					return {
-						name: basename(project.root),
-						root: project.root,
-						openedAt: project.openedAt,
-						...(link === undefined
-							? {}
-							: { team: { url: link.url, team: link.team, project: link.project, inRepo } }),
-						...(ended === undefined ? {} : { ended }),
-						...(movedOut === undefined ? {} : { movedOut }),
-						...(icon === undefined ? {} : { icon }),
-						...(thumbnail === undefined ? {} : { thumbnail }),
-						...(paused === null ? {} : { syncPaused: paused }),
-						...(goneLocal === undefined ? {} : { goneLocal }),
-						...summary,
-					};
-				}),
-			);
-			// the registry appends a project the first time it is opened, so of two
-			// opened in the same millisecond the later entry is the more recent
-			projects.reverse();
-			projects.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
-			return c.json({ projects });
-		})
 		/*
 		 * A project's icon: its chosen file or its repo's favicon. The hash is the content, so the address is the
 		 * credential an <img> cannot carry as a header and an immutable cache key, as a cover's is. Read-only, and
 		 * only ever the file the project's icon resolves to now. An SVG opened on its own runs nothing here: it is
 		 * served sandboxed, with no script and nothing fetched.
 		 */
-		.get("/icons/:project/:hash", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const hash = c.req.param("hash");
-			if (!isIconHash(hash)) return c.text("no such icon", 404);
-			const found = await readProjectIcon(project.root);
-			if (found === undefined || found.icon.hash !== hash) return c.text("no such icon", 404);
-			immutableCover(c, iconType(found.icon.path));
-			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-			return c.body(new Uint8Array(found.bytes));
-		})
+		.get("/icons/:project/:hash", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				const hash = c.req.param("hash");
+				if (!isIconHash(hash)) return c.text("no such icon", 404);
+				const found = await readProjectIcon(root);
+				if (found === undefined || found.icon.hash !== hash) return c.text("no such icon", 404);
+				immutableCover(c, iconType(found.icon.path));
+				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+				return c.body(new Uint8Array(found.bytes));
+			}),
+		)
 		// a project's thumbnail, by its content, exactly as its icon is served
-		.get("/thumbnails/:project/:hash", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const hash = c.req.param("hash");
-			if (!isIconHash(hash)) return c.text("no such thumbnail", 404);
-			const found = await readProjectThumbnail(project.root);
-			if (found === undefined || found.thumbnail.hash !== hash) return c.text("no such thumbnail", 404);
-			immutableCover(c, iconType(found.thumbnail.path));
-			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-			return c.body(new Uint8Array(found.bytes));
-		})
-		// "Change icon…": the chosen image becomes design/shared/icon.<ext>, the only icon.* there
-		.post("/api/projects/icon", async (c) => {
-			const root = c.req.query("root");
-			if (root === undefined || !registeredRoots().includes(root))
-				return c.json({ error: "This project is no longer registered." }, 404);
-			if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
-			if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-			// read no further than the cap, whatever the request says it carries
-			const tooBig = () => c.json({ error: ICON_REFUSALS.size }, 413);
-			if (Number(c.req.header("content-length")) > ICON_MAX_BYTES) return tooBig();
-			const chunks: Uint8Array[] = [];
-			let length = 0;
-			const reader = c.req.raw.body?.getReader();
-			for (;;) {
-				const chunk = await reader?.read();
-				if (chunk === undefined || chunk.done) break;
-				length += chunk.value.length;
-				if (length > ICON_MAX_BYTES) {
-					await reader?.cancel();
-					return tooBig();
-				}
-				chunks.push(chunk.value);
-			}
-			const bytes = Buffer.concat(chunks);
-			try {
-				const icon = writeProjectIcon(root, bytes);
-				iconWatch.saw(root, icon);
-				emitAppEvent({ kind: "icon", root, icon });
-				return c.json({ icon });
-			} catch (error) {
-				if (error instanceof IconRefused) return c.json({ error: error.message }, 400);
-				if (error instanceof DesignBoundaryError) return c.json({ error: error.message }, 400);
-				return c.json({ error: `Could not save the icon: ${(error as Error).message}` }, 409);
-			}
-		})
-		// "Remove icon": design/shared/icon.* goes, and the favicon or the letter comes back
-		.post(
-			"/api/projects/icon/remove",
-			validator("json", (value, c) => {
-				const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
+		.get("/thumbnails/:project/:hash", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				const hash = c.req.param("hash");
+				if (!isIconHash(hash)) return c.text("no such thumbnail", 404);
+				const found = await readProjectThumbnail(root);
+				if (found === undefined || found.thumbnail.hash !== hash) return c.text("no such thumbnail", 404);
+				immutableCover(c, iconType(found.thumbnail.path));
+				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+				return c.body(new Uint8Array(found.bytes));
 			}),
-			async (c) => {
-				const { root } = c.req.valid("json");
-				if (!registeredRoots().includes(root))
-					return c.json({ error: "This project is no longer registered." }, 404);
-				if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
-				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-				try {
-					removeProjectIcon(root);
-				} catch (error) {
-					return c.json({ error: `Could not remove the icon: ${(error as Error).message}` }, 409);
-				}
-				const icon = await findProjectIcon(root);
-				iconWatch.saw(root, icon);
-				emitAppEvent({ kind: "icon", root, icon: icon ?? null });
-				return c.json({ icon: icon ?? null });
-			},
 		)
-		// "Set as thumbnail": the frame's still as it is now becomes design/shared/thumbnail.<ext>, the only one there
-		.post(
-			"/api/p/:project/thumbnail",
-			validator("json", (value, c) => {
-				const parsed = z.object({ frame: z.string().min(1) }).safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: "Expected a frame." }, 400);
+		.route(
+			"/api/p",
+			canvasRoutes({
+				resolve: resolveProject,
+				owePicture,
+				flowGraph,
+				resolvePass,
+				origin: () => selfOrigin,
+				hub,
+				selections,
 			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { root } = project;
-				const { frame } = c.req.valid("json");
-				try {
-					if (!frameExists(root, frame)) return c.json({ error: describeMissingFrame(frame) }, 404);
-					const thumbnail = setThumbnailFromFrame(root, frame);
-					thumbnailWatch.saw(root, thumbnail);
-					emitAppEvent({ kind: "thumbnail", root, thumbnail });
-					return c.json({ thumbnail });
-				} catch (error) {
-					if (error instanceof ThumbnailRefused) return c.json({ error: error.message }, 409);
-					if (error instanceof DesignBoundaryError) return c.json({ error: error.message }, 400);
-					return c.json({ error: `Could not set the thumbnail: ${(error as Error).message}` }, 409);
-				}
-			},
 		)
-		// "Remove thumbnail": design/shared/thumbnail.* goes, and the card shows its top-left frame again
-		.post(
-			"/api/projects/thumbnail/remove",
-			validator("json", (value, c) => {
-				const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
-				return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
-			}),
-			(c) => {
-				const { root } = c.req.valid("json");
-				if (!registeredRoots().includes(root))
-					return c.json({ error: "This project is no longer registered." }, 404);
-				if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
-				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-				try {
-					removeProjectThumbnail(root);
-				} catch (error) {
-					return c.json({ error: `Could not remove the thumbnail: ${(error as Error).message}` }, 409);
-				}
-				thumbnailWatch.saw(root, undefined);
-				emitAppEvent({ kind: "thumbnail", root, thumbnail: null });
-				return c.json({ thumbnail: null });
-			},
-		)
-		.get("/api/p/:project/frames", (c) => {
-			const name = c.req.param("project");
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			try {
-				const projection = listProjectFrames(project.root, { seen: true });
-				return c.json({
-					...projection,
-					frames: projection.frames.map((frame) => {
-						// This read is the moment a canvas learns a frame has no cover
-						// to show, and a frame with none renders its placeholder and
-						// asks for nothing (#111). So its picture is owed from here
-						// rather than waiting for a request that will never come.
-						if (frame.cover === undefined) owePicture(project.root, name, frame.name);
-						return frame;
-					}),
-				});
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-		})
 		.get("/covers/:project/:frame/:hash", async (c) => {
-			// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
-			// carry the control header, and an immutable cache key, so a warm
-			// reload fetches none of them.
 			const name = c.req.param("project");
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			const hash = c.req.param("hash");
-			if (!isFramePath(frame) || !isCoverHash(hash)) {
-				return c.text("no such cover", 404);
-			}
-			let exists = false;
-			try {
-				exists = frameExists(project.root, frame);
-				const image = exists ? readCoverImage(project.root, frame, hash) : undefined;
-				if (image !== undefined) {
-					immutableCover(c, image.type);
-					return c.body(new Uint8Array(image.bytes));
+			return withProject(c, resolveProject, async (root) => {
+				// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
+				// carry the control header, and an immutable cache key, so a warm
+				// reload fetches none of them.
+				const frame = c.req.param("frame");
+				const hash = c.req.param("hash");
+				if (!isFramePath(frame) || !isCoverHash(hash)) {
+					return c.text("no such cover", 404);
 				}
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-			// The address named a cover this frame does not have. The booth owes it
-			// a picture: the cover lands, the thumb event carries the new image, and
-			// the canvas asks again at the address that now exists.
-			if (exists) owePicture(project.root, name, frame);
-			return c.text("no such cover", 404);
-		})
-		.get("/api/p/:project/state", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json(readCanvasState(project.root));
-		})
-		.put(
-			"/api/p/:project/state",
-			validator("json", (value, c) => {
-				const state = parseCanvasState(value);
-				if (state === undefined) {
-					return c.text(
-						"canvas state must be an object without mode; supported fields are camera, arrows, activePage, and pageCameras",
-						400,
-					);
-				}
-				return state;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
+				let exists = false;
 				try {
-					writeCanvasState(project.root, c.req.valid("json"));
+					exists = frameExists(root, frame);
+					const image = exists ? readCoverImage(root, frame, hash) : undefined;
+					if (image !== undefined) {
+						immutableCover(c, image.type);
+						return c.body(new Uint8Array(image.bytes));
+					}
 				} catch (error) {
 					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 					throw error;
 				}
-				return c.body(null, 204);
-			},
-		)
+				// The address named a cover this frame does not have. The booth owes it
+				// a picture: the cover lands, the thumb event carries the new image, and
+				// the canvas asks again at the address that now exists.
+				if (exists) owePicture(root, name, frame);
+				return c.text("no such cover", 404);
+			});
+		})
 		/*
 		 * What one open canvas shows, for the booth's order (#81): the frames on
 		 * screen are photographed first, then the rest of their page. Sent at
@@ -2235,841 +1193,56 @@ export function createDaemonApp({
 				const parsed = canvasView.safeParse(value);
 				return parsed.success ? parsed.data : c.text('a view is { "view", "page", "frames", "scheme" }', 400);
 			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { view, page, frames, scheme } = c.req.valid("json");
-				const open = views.get(view);
-				if (open?.root !== project.root) return c.body(null, 204);
-				sittings.view(view, { root: project.root, page, frames });
-				// Only a canvas whose own scheme changed moves the booth, so two
-				// canvases in different schemes do not trade it back and forth on
-				// every pan: the one that changed last is the one being looked at.
-				if (open.scheme !== scheme) {
-					open.scheme = scheme;
-					if (booth.setScheme(scheme)) void restale(boothWatches.keys());
-				}
-				return c.body(null, 204);
-			},
-		)
-		/*
-		 * Manual order (#228), beside the camera because both are arrangement —
-		 * and in a different file, because this one is the canvas rather than
-		 * this machine's view of it: canvas.json is committed and cloned where
-		 * .spool/ is per-machine ephemera.
-		 *
-		 * What is stored is advisory. A name in it can be stale, can name a
-		 * frame that has since moved page, and can be missing one born a second
-		 * ago, so a PUT is never refused for naming a frame the projection does
-		 * not have and a read never rewrites the file to agree — the client
-		 * merges the two, and cleaning here would drop the place a frame an
-		 * agent is halfway through writing is about to come back to.
-		 */
-		.get("/api/p/:project/order", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			// the document rather than the daemon's reading of it: a flat project's
-			// pages are the bare list they have always been (#231)
-			const order = answeringDiskRefusals(c, () => storedOrder(readOrder(project.root)));
-			if ("response" in order) return order.response;
-			return c.json(order.value);
-		})
-		.put(
-			"/api/p/:project/order",
-			validator("json", (value, c) => {
-				const order = parseOrder(value);
-				if (order === undefined) {
-					return c.text(
-						'order must be { "pages": [page, ...] or { "<page>": [page, ...] }, "frames": { "<page>": [frame, ...] } }',
-						400,
-					);
-				}
-				return order;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const written = answeringDiskRefusals(c, () => writeOrder(project.root, c.req.valid("json")));
-				if ("response" in written) return written.response;
-				return c.body(null, 204);
-			},
-		)
-		/**
-		 * Where each page stands on the field holding it (#265).
-		 *
-		 * The second thing about this canvas a hand arranged, and it goes in the
-		 * same committed file for the same reason. There is no GET beside this
-		 * one: a page's place arrives on the projection, already completed for
-		 * every page that had none, so a second read would only be able to say
-		 * less.
-		 */
-		.put(
-			"/api/p/:project/places",
-			validator("json", (value, c) => {
-				const places = parsePlaces(value);
-				if (places === undefined) {
-					return c.text('places must be { "<page>": { "x": number, "y": number } }', 400);
-				}
-				return places;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const written = answeringDiskRefusals(c, () => writePlaces(project.root, c.req.valid("json")));
-				if ("response" in written) return written.response;
-				return c.body(null, 204);
-			},
-		)
-		.get("/api/p/:project/flows", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json(await flowGraph.flows(project.root));
-		})
-		.post("/api/p/:project/flows/resolve", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			// the pass dials this daemon: before the server binds there is no
-			// origin to render from, and in-process app.request() never binds one
-			if (selfOrigin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
-			const listing = listProjectFrames(project.root);
-			const frames = listing.frames.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
-			try {
-				const result = await resolvePass.run({
-					root: project.root,
-					project: c.req.param("project"),
-					origin: selfOrigin,
-					frames,
-				});
-				return c.json({ ...result, ran: true });
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-		})
-		.post(
-			"/api/p/:project/walked",
-			validator("json", (value, c) => {
-				const { from, to } = (value ?? {}) as { from?: unknown; to?: unknown };
-				if (typeof from !== "string" || !isFramePath(from) || typeof to !== "string" || !isFramePath(to)) {
-					return c.text('a walk is { "from": "<frame>", "to": "<frame>" }', 400);
-				}
-				return { from, to };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { from, to } = c.req.valid("json");
-				// only witness walks between frames that really exist — a session
-				// racing a delete records nothing
-				for (const frame of [from, to]) {
-					if (!frameExists(project.root, frame)) {
-						return c.text(`no frame "${frame}" to walk`, 404);
+			(c) =>
+				withProject(c, resolveProject, (root) => {
+					const { view, page, frames, scheme } = c.req.valid("json");
+					const open = views.get(view);
+					if (open?.root !== root) return c.body(null, 204);
+					sittings.view(view, { root: root, page, frames });
+					// Only a canvas whose own scheme changed moves the booth, so two
+					// canvases in different schemes do not trade it back and forth on
+					// every pan: the one that changed last is the one being looked at.
+					if (open.scheme !== scheme) {
+						open.scheme = scheme;
+						if (booth.setScheme(scheme)) void restale(boothWatches.keys());
 					}
-				}
-				// a mark that records moves the flows payload; a discarded walk is
-				// silent — the map never claims more than source (#34)
-				try {
-					if (recordWalk(project.root, from, to)) hub.publish(project.root, { kind: "walked" });
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				return c.body(null, 204);
-			},
-		)
-		/**
-		 * These frames have been looked at (seen.ts). The canvas says so when a
-		 * frame has held enough of the viewport long enough to have been read, and
-		 * when one is pressed. Names the project does not hold are ignored rather
-		 * than refused: a browser one beat behind a delete is not an error.
-		 */
-		.post(
-			"/api/p/:project/seen",
-			validator("json", (value, c) => {
-				const { frames } = (value ?? {}) as { frames?: unknown };
-				if (!Array.isArray(frames) || frames.some((name) => typeof name !== "string" || !isFramePath(name))) {
-					return c.text('seen is { "frames": ["<frame>", ...] }', 400);
-				}
-				return { frames: frames as string[] };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				try {
-					const dirs = frameDirectories(project.root);
-					markSeen(
-						project.root,
-						[...dirs].map(([name, dir]) => ({ name, dir })),
-						c.req.valid("json").frames,
-					);
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				return c.body(null, 204);
-			},
-		)
-		/*
-		 * The two ways there is no agent to talk to, one door each (#201).
-		 *
-		 * They are two doors because they are two questions, and `agent-preflight.ts` is
-		 * where that split is argued. What the shape of these routes carries is when each is
-		 * allowed to be asked: the `which` is free and stable, so the rail asks it on open,
-		 * and the login costs a process inside somebody else's product, so it is only ever
-		 * opened by a hand on `check again`.
-		 */
-
-		/*
-		 * The machine's agent choice (#361): the same in every project, saved before it is
-		 * answered, so what comes back is what the next thread will really use.
-		 */
-		.get("/api/p/:project/agent/engines", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const choice = agentDefaults.read();
-			return c.json({
-				preferred: choice.engine ?? null,
-				mode: choice.mode,
-				engines: [...engines.values()].map((engine) => ({
-					id: engine.id,
-					installed: engine.installed(),
-					...(engine.outdated?.() === true ? { outdated: true } : {}),
-				})),
-			});
-		})
-		.put(
-			"/api/p/:project/agent/engines",
-			validator("json", (value, c) => {
-				const engine = (typeof value === "object" && value !== null ? value : {}) as { preferred?: unknown };
-				if (!isAgentEngineId(engine.preferred) || !engines.has(engine.preferred))
-					return c.text('a choice is { "preferred": "<engine>" }, one this daemon runs', 400);
-				return { preferred: engine.preferred };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const choice = agentDefaults.setEngine(c.req.valid("json").preferred);
-				emitAppEvent({ kind: "settings" });
-				return c.json({ preferred: choice.engine ?? null, mode: choice.mode });
-			},
-		)
-		.get("/api/p/:project/agent-app", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json({ available: agentAppLauncher.available() });
-		})
-		.post("/api/p/:project/agent-app", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			try {
-				await agentAppLauncher.open(project.root);
-				return c.body(null, 204);
-			} catch (error) {
-				return c.text(error instanceof Error ? error.message : "Could not open ChatGPT.", 409);
-			}
-		})
-		.get(
-			"/api/p/:project/agent/installed",
-			validator("query", (value) =>
-				z.object({ engine: z.string().optional(), thread: z.string().optional() }).parse(value),
-			),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const selected = engineFor(c, project.root, c.req.query("thread"));
-				if ("response" in selected) return selected.response;
-				const { engine } = selected;
-				return c.json({
-					installed: engine.installed(),
-					...(engine.outdated?.() === true ? { outdated: true } : {}),
-				});
-			},
-		)
-		.get(
-			"/api/p/:project/agent/login",
-			validator("query", (value) =>
-				z.object({ engine: z.string().optional(), thread: z.string().optional() }).parse(value),
-			),
-			async (c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				// the probe is this request's process and nobody else's, so it goes when the
-				// request does: a page navigated off mid-check would otherwise leave a whole
-				// binary running for the length of its own timeout with nobody to hear it
-				const selected = engineFor(c, project.root, c.req.query("thread"));
-				if ("response" in selected) return selected.response;
-				return c.json(await selected.engine.account(project.root, c.req.raw.signal));
-			},
-		)
-		.post(
-			"/api/p/:project/agent/turn",
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					said?: unknown;
-					recovery?: unknown;
-					turn?: unknown;
-					thread?: unknown;
-					engine?: unknown;
-					session?: unknown;
-				};
-				// a turn is what the human said, which is one message when they pressed Enter
-				// against a quiet rail and several when a queue fired as one turn (#170)
-				if (!Array.isArray(body.said) || body.said.length === 0) {
-					return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
-				}
-				if (body.turn !== undefined && (typeof body.turn !== "string" || body.turn === "")) {
-					return c.text('"turn" is the id a stop names this turn by', 400);
-				}
-				// the conversation this turn belongs to, which is the agent's own session id
-				// (#120): spool mints it before there is a process, so it is never optional and
-				// never anything but the uuid shape the binary takes
-				if (!isThreadId(body.thread)) {
-					return c.text('"thread" is the uuid this conversation runs under', 400);
-				}
-				if (body.session !== undefined || (body.engine !== undefined && !isAgentEngineId(body.engine))) {
-					return c.text("choose an engine; session references belong to the daemon", 400);
-				}
-				const said: { prompt: string; selection?: SelectionEntry[]; attachments?: readonly Attachment[] }[] = [];
-				for (const raw of body.said) {
-					const one = (typeof raw === "object" && raw !== null ? raw : {}) as {
-						prompt?: unknown;
-						selection?: unknown;
-						attachments?: unknown;
-					};
-					if (typeof one.prompt !== "string" || one.prompt.trim() === "") {
-						return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
-					}
-					// an attachment is optional and never guessed at: a picture spool cannot
-					// send is said out loud rather than dropped out of the message (#119)
-					const attached = one.attachments === undefined ? undefined : parseAttachments(one.attachments);
-					if (one.attachments !== undefined && attached === undefined) {
-						return c.text(
-							`an attachment is { "media": "image/png", "data": "<base64>" } — png, jpeg, gif or webp under ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`,
-							400,
-						);
-					}
-					// a message that captured its own selection at Enter hands it back here;
-					// one that did not is asking for what the hands are pointing at now (#170)
-					const captured = one.selection === undefined ? undefined : parseSelectionEntries(one.selection);
-					if (one.selection !== undefined && captured === undefined) {
-						return c.text('"selection" is the entry list this daemon served the rail', 400);
-					}
-					said.push({
-						prompt: one.prompt,
-						...(captured === undefined ? {} : { selection: captured }),
-						...(attached === undefined ? {} : { attachments: attached }),
-					});
-				}
-				if (body.recovery !== undefined && typeof body.recovery !== "string")
-					return c.text("Invalid recovery", 400);
-				return {
-					...(typeof body.recovery === "string" ? { recovery: body.recovery } : {}),
-					said,
-					thread: body.thread,
-					...(body.engine === undefined ? {} : { engine: body.engine as AgentEngineId }),
-					turn: typeof body.turn === "string" ? body.turn : undefined,
-				};
-			}),
-			(c) => {
-				// one turn, streamed as it arrives (#191): the prompt goes down the
-				// binary's stdin and its events come back over this response in the
-				// order the wire sent them
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { said, thread, engine: requested, turn: named, recovery } = c.req.valid("json");
-				/*
-				 * One turn per conversation, refused rather than replaced (#211).
-				 *
-				 * A thread holding a running turn is a thread with a process standing in the repo,
-				 * and a second one would be two agents writing the same files against a prompt
-				 * neither of them can see. The rail queues into a running turn rather than sending,
-				 * so this only ever catches a client that lost its stream and came back without
-				 * attaching — and saying so is what sends it to the door below.
-				 */
-				if (liveTurns.get(project.root, thread)?.running === true) {
-					return c.text(
-						`a turn is already running in thread "${thread}" — attach to it rather than starting a second`,
-						409,
-					);
-				}
-				const selected = engineFor(c, project.root, thread, requested);
-				if ("response" in selected) return selected.response;
-				const ask = modelPreferences.read(project.root, thread, selected.engine.id);
-				modelPreferences.keep(project.root, thread, selected.engine.id, ask);
-				// Claim ownership before starting: a picture save may race the first turn.
-				if (readThread(spoolDir, project.root, thread) === undefined) {
-					putThread(spoolDir, project.root, thread, {
-						engine: selected.engine.id,
-						ask: said[0]?.prompt ?? "",
-						life: "running",
-						at: Date.now(),
-						entries: said.map((one, index) => ({
-							key: `user:${index}`,
-							kind: "user",
-							text: one.prompt,
-							context: null,
-							attached: one.attachments ?? [],
-						})),
-						kept: said.length,
-						plan: null,
-						queued: [],
-						draft: "",
-					});
-				}
-				const mode = agentDefaults.read().mode;
-				const engineTurn = selected.engine.start({
-					...(recovery === undefined ? {} : { recovery }),
-					root: project.root,
-					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
-					permissions: mode,
-					said: said.map((one) => ({
-						prompt: one.prompt,
-						selection: selectionBlock(one.selection ?? selections.get(project.root)),
-						...(one.attachments === undefined ? {} : { attachments: one.attachments }),
-					})),
-					ask,
-				});
-				// the frames the turn makes, however it writes them, are read off design/ (#365)
-				const team = followedLink(project.root) !== undefined;
-				if (team) askWhoIsSignedIn();
-				const turn = witnessFrames(engineTurn, {
-					root: project.root,
-					hub,
-					placeholders,
-					...(team ? { author: () => signedInAs } : {}),
-				});
-				const picture = readThread(spoolDir, project.root, thread);
-				const pictured = picture ? agentPictureEnding(spoolDir, project.root, picture) : undefined;
-				const held = liveTurns.hold({
-					onEnded: (events) => {
-						pictured?.(events);
-						// the turn's saves are done: the pages they touched settle for whoever they are shared with
-						teamSync.copy(project.root)?.turnEnded();
-						projectShares.turnEnded(project.root);
-					},
-					root: project.root,
-					thread,
-					turn,
-					witness: turn,
-					mode,
-					...(named === undefined ? {} : { id: named }),
-				});
-				if (team) agentPresence.follow(held);
-				return attachTurn(c, held, 0);
-			},
-		)
-		/*
-		 * The same turn, read again from wherever a client left off (#211).
-		 *
-		 * A refresh, a lid, a dropped socket: the browser loses the response and the turn goes
-		 * on, so what a returning rail needs is not a new turn but the one it was reading. It
-		 * asks for the turn in this thread, says how much of it it has, and gets the rest —
-		 * the log from that point, and then everything that arrives after.
-		 *
-		 * From zero by default, which is what a fresh page asks for: the fold from the event
-		 * union to the drawing is the rail's and it is pure, so handing back every event the
-		 * turn has produced rebuilds exactly what was on screen. Nothing down here folds
-		 * anything, which is #120's seam kept where it was.
-		 */
-		.get(
-			"/api/p/:project/agent/turn/:thread",
-			validator("query", (value) => {
-				// how much of the turn the client already has, which is the id it wants first.
-				// Anything that is not a whole number is a client that has nothing, and that is a
-				// replay rather than a refusal: a bad query must cost the read no events, never
-				// the turn
-				const said = (value as { from?: unknown }).from;
-				const from = Number.parseInt(typeof said === "string" ? said : "", 10);
-				return { from: Number.isInteger(from) && from > 0 ? from : 0 };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const thread = c.req.param("thread");
-				if (!isThreadId(thread)) {
-					return c.text("a thread is named by the uuid its session runs under", 400);
-				}
-				const held = liveTurns.get(project.root, thread);
-				// nothing is being held for this conversation: it ended long enough ago to have
-				// been let go of, or it never ran here. Both are the same fact from here, and the
-				// picture on disk is the whole of what the rail can draw for one of them
-				if (held === undefined) return c.text(`no turn to read in thread "${thread}"`, 404);
-				return attachTurn(c, held, c.req.valid("query").from);
-			},
-		)
-		/*
-		 * The permission mode, which is the machine's and never refused (#361).
-		 *
-		 * A pick is saved at once and is what every new turn spawns with. A turn already
-		 * running keeps the mode it started on until its next turn boundary, so `pending`
-		 * says the menu's pick is waiting on that turn rather than in force. It used to be
-		 * applied to the running process first and saved only if that worked, and every
-		 * refusal there (a spawn or host not ready yet, a second pick while the first was
-		 * waiting, a turn ending) left the old mode saved and the menu reading it back.
-		 */
-		.get("/api/p/:project/agent/threads/:thread/permissions", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const thread = c.req.param("thread");
-			if (!isThreadId(thread)) return c.text("a thread is named by its uuid", 400);
-			const mode = agentDefaults.read().mode;
-			return c.json({ mode, pending: pendingMode(project.root, thread, mode) });
-		})
-		.put(
-			"/api/p/:project/agent/threads/:thread/permissions",
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as { mode?: unknown };
-				const mode = AGENT_PERMISSIONS.find((one) => one === body.mode);
-				return mode === undefined ? c.text(`"mode" must be one of ${AGENT_PERMISSIONS.join(", ")}`, 400) : { mode };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const thread = c.req.param("thread");
-				if (!isThreadId(thread)) return c.text("a thread is named by its uuid", 400);
-				const { mode } = agentDefaults.setMode(c.req.valid("json").mode);
-				emitAppEvent({ kind: "settings" });
-				return c.json({ mode, pending: pendingMode(project.root, thread, mode) });
-			},
-		)
-		.post(
-			"/api/p/:project/agent/interrupt",
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as { turn?: unknown };
-				if (typeof body.turn !== "string" || body.turn === "") {
-					return c.text('a stop is { "turn": "…" }', 400);
-				}
-				return { turn: body.turn };
-			}),
-			(c) => {
-				/*
-				 * The way out of a turn that is already running (#165).
-				 *
-				 * Its own door for the reason an answer has one: the turn's stream is a
-				 * response the client is reading and has no way back up. The turn names
-				 * itself when it starts, so a project holding two of them stops the one the
-				 * hands are looking at rather than both.
-				 *
-				 * What goes down the wire is a request rather than a kill. The process
-				 * survives it and ends the turn itself, which is why this answers with
-				 * nothing: everything there is to say arrives on the stream.
-				 */
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { turn: named } = c.req.valid("json");
-				for (const held of liveTurns.of(project.root)) {
-					if (held.id === named && held.interrupt()) return c.body(null, 204);
-				}
-				// nothing is running under that name: it ended on its own, or it was never
-				// this project's. Both are the same fact from here, and both mean stopped
-				return c.text(`no turn "${named}" to stop`, 404);
-			},
-		)
-		.post(
-			"/api/p/:project/agent/put-back",
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					thread?: unknown;
-					frame?: unknown;
-					source?: unknown;
-					sidecar?: unknown;
-				};
-				if (typeof body.thread !== "string" || typeof body.frame !== "string" || body.frame === "")
-					return c.text('a put back is { "thread": "…", "frame": "…" }', 400);
-				return {
-					thread: body.thread,
-					frame: body.frame,
-					source: typeof body.source === "string" ? body.source : undefined,
-					sidecar: typeof body.sidecar === "string" ? body.sidecar : null,
-				};
-			}),
-			(c) => {
-				/*
-				 * Put back a frame a turn deleted (#365).
-				 *
-				 * Only into the thread it was deleted in. A turn this daemon still holds kept the
-				 * deleted source, and is the one word on what it deleted: a frame not in its log
-				 * is refused, whatever the rail sends. A turn already let go of has only the log
-				 * the rail kept, which carries the same source, so the rail's copy stands in for
-				 * a thread that is on disk.
-				 */
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { thread, frame, source, sidecar } = c.req.valid("json");
-				if (!isThreadId(thread)) return c.text("a thread is named by the uuid its session runs under", 400);
-				if (!isFramePath(frame)) return c.text(`"${frame}" is not a frame name`, 400);
-				const held = liveTurns.get(project.root, thread);
-				if (held === undefined && readThread(spoolDir, project.root, thread) === undefined)
-					return c.text(`no thread "${thread}" in this project`, 404);
-				const witness = held?.witness;
-				const kept =
-					witness !== undefined ? witness.kept(frame) : source === undefined ? undefined : { source, sidecar };
-				if (kept === undefined) {
-					if (frameStands(project.root, frame)) return c.text(`a frame "${frame}" stands there`, 409);
-					return c.text(`no deleted frame "${frame}" kept in thread "${thread}"`, 404);
-				}
-				try {
-					putFrameBack(project.root, { frame, source: kept.source, sidecar: kept.sidecar });
-				} catch (error) {
-					if (error instanceof FrameStandsError) return c.text(error.message, 409);
-					return c.text(error instanceof Error ? error.message : String(error), 400);
-				}
-				witness?.restored(frame, kept.source);
-				hub.publish(project.root, { kind: "frame", frame });
-				return c.body(null, 204);
-			},
-		)
-		.post(
-			"/api/p/:project/agent/answer",
-			validator("json", (value, c) => {
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					request?: unknown;
-					reply?: unknown;
-				};
-				const reply = parseAgentReply(body.reply);
-				if (typeof body.request !== "string" || body.request === "" || reply === undefined) {
-					return c.text(
-						'an answer is { "request": "…", "reply": { "kind": "allow" | "always" | "deny" | "said" | "picked" } }',
-						400,
-					);
-				}
-				return { request: body.request, reply };
-			}),
-			(c) => {
-				/*
-				 * The answer to a request the turn is parked on (#121, #145).
-				 *
-				 * It is its own door rather than a second body on the turn's stream, because
-				 * that stream is a response the client is reading and has no way back up. The
-				 * request's own id is the address, so nothing here has to name a turn: a
-				 * project can hold several and exactly one of them is holding this request.
-				 */
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { request, reply } = c.req.valid("json");
-				for (const held of liveTurns.of(project.root)) {
-					if (held.answer(request, reply)) return c.body(null, 204);
-				}
-				// nobody is waiting on it: the turn ended, it was answered already, or it
-				// belongs to another project. All three are the same fact from here
-				return c.text(`no waiting request "${request}"`, 404);
-			},
-		)
-		/*
-		 * The threads of this project, as they survive (#120, #136, #200).
-		 *
-		 * The picture is the rail's and the disk is the daemon's, which is the whole seam:
-		 * the fold from the event union to what is drawn lives in the rail, so the rail is
-		 * what writes the drawing, and nothing down here has a second opinion about the
-		 * vocabulary. What the daemon adds is the two facts only it can answer — whether a
-		 * thread's process was taken by a restart, and whether the agent's own session is
-		 * still there to continue.
-		 */
-		.get("/api/p/:project/agent/threads", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const threads = await Promise.all(
-				serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }).map(async (thread) => {
-					const engine = engineById(thread.engine);
-					let continuable = false;
-					try {
-						continuable =
-							engine?.installed() === true && (await engine.continuable(project.root, thread.session));
-					} catch {
-						/* A missing session or host never hides saved history. */
-					}
-					const held = liveTurns.get(project.root, thread.id);
-					const live =
-						held !== undefined &&
-						(held.running || thread.life === "running" || (thread.life === "waiting" && !thread.recovery));
-					return { ...thread, live, continuable };
+					return c.body(null, 204);
 				}),
-			);
-			return c.json({ threads });
-		})
-		.put(
-			"/api/p/:project/agent/threads/:thread",
-			validator("json", (value, c) => {
-				const put = parseThreadPut(value);
-				if (put === undefined) {
-					return c.text('a thread is { "ask": "…", "life": "read", "entries": [] }', 400);
-				}
-				return put;
+		)
+		.route(
+			"/api/p",
+			agentRoutes({
+				resolve: resolveProject,
+				spoolDir,
+				engines,
+				agentDefaults,
+				modelPreferences,
+				liveTurns,
+				projectRenames,
+				selections,
+				hub,
+				placeholders,
+				teamSync,
+				projectShares,
+				agentPresence,
+				agentAppLauncher,
+				emitAppEvent,
+				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
 			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const thread = c.req.param("thread");
-				if (!isThreadId(thread)) {
-					return c.text("a thread is named by the uuid its session runs under", 400);
-				}
-				if (!putThread(spoolDir, project.root, thread, c.req.valid("json"))) {
-					return c.text("a thread's engine cannot change", 409);
-				}
-				return c.body(null, 204);
-			},
 		)
-		/*
-		 * Closing a thread, which is a tidy rather than a delete (#136).
-		 *
-		 * It leaves the strip and it leaves nothing else: not the agent's own session, and
-		 * not spool's stored picture. Spool does not throw away a readable record because a
-		 * tab was put away, so this writes one flag and touches no bytes of the drawing.
-		 */
-		.post("/api/p/:project/agent/threads/:thread/close", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const thread = c.req.param("thread");
-			if (!closeThread(spoolDir, project.root, thread)) {
-				return c.text(`no thread "${thread}" to close`, 404);
-			}
-			return c.body(null, 204);
-		})
-		/*
-		 * What this thread may pick, and what is answering (#118, #199).
-		 *
-		 * Asked of the binary every time rather than cached, because the answer is the
-		 * installed CLI's: a new model appears because the developer updated it, and a table
-		 * spool shipped would be a release behind on the day that happened. It costs one
-		 * spawn, no turn and no token — `list_models` is a control request and a bare
-		 * `/model` is answered before the model ever sees it.
-		 *
-		 * Under the thread rather than beside it, because `current` is a fact about one
-		 * conversation: the rows are the binary's and the same for all of them, and which of
-		 * those rows is answering is not.
-		 */
-		/*
-		 * What one engine offers a new chat, for the agent menu's other groups (#364). The
-		 * thread routes below answer for the thread's own engine; these answer for any engine
-		 * this daemon runs, against the machine's choice for it, so the menu can list every
-		 * installed agent's models and a pick on one carries to the next chat that uses it.
-		 */
-		.get("/api/p/:project/agent/engines/:engine/models", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const id = c.req.param("engine");
-			const engine = engineById(id);
-			if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
-			return c.json(
-				await engine.offer({
-					root: project.root,
-					session: { id: "" },
-					ask: agentDefaults.model(engine.id),
-					signal: c.req.raw.signal,
-				}),
-			);
-		})
-		.post("/api/p/:project/agent/engines/:engine/model", validator("json", modelChoice), async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const id = c.req.param("engine");
-			const engine = engineById(id);
-			if (engine === undefined) return c.text(`engine "${id}" is unavailable`, 404);
-			const held = agentDefaults.model(engine.id);
-			const offer = await engine.offer({
-				root: project.root,
-				session: { id: "" },
-				ask: held,
-				choose: c.req.valid("json"),
-			});
-			if (offer.current.value !== null) agentDefaults.setModel(engine.id, acceptedModelChoice(engine, offer, held));
-			return c.json(offer);
-		})
-		.get(
-			"/api/p/:project/agent/threads/:thread/models",
-			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
-			async (c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const thread = c.req.param("thread");
-				if (!isThreadId(thread)) {
-					return c.text("a thread is named by the uuid its session runs under", 400);
-				}
-				const selected = engineFor(c, project.root, thread);
-				if ("response" in selected) return selected.response;
-				const held = modelPreferences.read(project.root, thread, selected.engine.id);
-				const offer = await selected.engine.offer({
-					root: project.root,
-					session: selected.session,
-					ask: held,
-					signal: c.req.raw.signal,
-				});
-				if (
-					projectRenames.has(project.root) ||
-					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
-				)
-					return c.text("Project changed while reading models.", 409);
-				if (offer.current.value !== null) {
-					modelPreferences.keep(
-						project.root,
-						thread,
-						selected.engine.id,
-						acceptedModelChoice(selected.engine, offer, held),
-					);
-				}
-				return c.json(offer);
-			},
+		.get("/api/p/:project/verify/:frame", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				// the agent's compile probe (#25): shot and logs branch on this JSON —
+				// ok hands the closure etag (the log cache key), error the text verbatim
+				const frame = c.req.param("frame");
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
+				if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
+				// the scheme a boot would render in now, the log cache's third key
+				await booth.schemeKnown();
+				return c.json({ kind: "ok", etag: doc.etag, scheme: booth.scheme });
+			}),
 		)
-		.post(
-			"/api/p/:project/agent/threads/:thread/model",
-			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
-			validator("json", modelChoice),
-			async (c) => {
-				/*
-				 * Choosing one, which is sending the message (#118, #199).
-				 *
-				 * The menu is a shortcut for `/model haiku` and never a second source of truth,
-				 * so this sends that message and answers with what came back. What spool keeps
-				 * is only the ask the binary confirmed: an alias it resolved to nothing, or an
-				 * effort the environment holds, leaves the readout exactly where it was,
-				 * because nothing moved.
-				 */
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const thread = c.req.param("thread");
-				if (!isThreadId(thread)) {
-					return c.text("a thread is named by the uuid its session runs under", 400);
-				}
-				const wanted = c.req.valid("json");
-				const selected = engineFor(c, project.root, thread);
-				if ("response" in selected) return selected.response;
-				const held = modelPreferences.read(project.root, thread, selected.engine.id);
-				const offer = await selected.engine.offer({
-					session: selected.session,
-					root: project.root,
-					ask: held,
-					choose: wanted,
-				});
-				if (
-					projectRenames.has(project.root) ||
-					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
-				)
-					return c.text("Project changed while choosing a model.", 409);
-				if (offer.current.value !== null) {
-					modelPreferences.keep(
-						project.root,
-						thread,
-						selected.engine.id,
-						acceptedModelChoice(selected.engine, offer, held),
-						true,
-					);
-				}
-				return c.json(offer);
-			},
-		)
-		.get("/api/p/:project/verify/:frame", async (c) => {
-			// the agent's compile probe (#25): shot and logs branch on this JSON —
-			// ok hands the closure etag (the log cache key), error the text verbatim
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
-			if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
-			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
-			// the scheme a boot would render in now, the log cache's third key
-			await booth.schemeKnown();
-			return c.json({ kind: "ok", etag: doc.etag, scheme: booth.scheme });
-		})
 		.post(
 			"/api/p/:project/boot/:frame",
 			validator("json", (value, c) => {
@@ -3159,386 +1332,25 @@ export function createDaemonApp({
 				});
 			},
 		)
-		.post(
-			"/api/p/:project/locate",
-			validator("json", (value, c) => {
-				const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-				const { path, find } = body;
-				if (typeof path !== "string" || path === "") return c.text('locate must be { "path", "find": [...] }', 400);
-				if (!Array.isArray(find) || !find.every((one): one is string => typeof one === "string")) {
-					return c.text('locate must be { "path", "find": [...] }', 400);
-				}
-				return { path, find };
+		.route("/api/p", handRoutes({ resolve: resolveProject, lastReaders: lastReadersIn }))
+		.route("/api/p", explorerRoutes({ resolve: resolveProject, trash: trashImpl }))
+		.get("/p/:project/frames/:frame", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				const frame = c.req.param("frame");
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				if (doc.kind === "missing") return c.text(doc.message, 404);
+				if (doc.kind === "error") return c.html(doc.document, 500);
+				// A frame document changes whenever its source does, and the etag is the
+				// whole of how a browser learns that. Without this the browser is free to
+				// guess a freshness lifetime from nothing, so say it: ask every time, and
+				// the ask is a 304 for as long as the source stands still.
+				c.header("cache-control", "no-cache");
+				if (c.req.header("if-none-match") === doc.etag) return c.body(null, 304);
+				c.header("etag", doc.etag);
+				c.header("x-spool-cache", doc.cache);
+				return c.html(doc.document);
 			}),
-			(c) => {
-				// where one write landed (#214): the canvas has the strings the edit was made
-				// of and only this side owns the file, so the line range comes from here
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { path, find } = c.req.valid("json");
-				// nothing found is an answer rather than an error: a file the agent has
-				// already moved on from is the ordinary case, and it costs a mark, not a turn
-				return c.json({ range: locateInDesign(project.root, path, find) ?? null });
-			},
 		)
-		.get("/api/p/:project/selection", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			return c.json({ selection: selections.get(project.root) });
-		})
-		.put(
-			"/api/p/:project/selection",
-			validator("json", (value, c) => {
-				const put = parseSelectionPut(value);
-				if (put === undefined) {
-					return c.text('selection must be { "frames": [name, ...] } or { "element": { ... } }', 400);
-				}
-				return put;
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				selections.set(project.root, c.req.valid("json"));
-				// the enriched list comes straight back, because the composer's chips are
-				// the promise of what the prompt will carry and only this side knows the
-				// paths, the sizes, the line ranges and the excerpts (#116)
-				return c.json({ selection: selections.get(project.root) });
-			},
-		)
-		.put(
-			"/api/p/:project/geometry",
-			validator("json", (value, c) => {
-				const frames =
-					typeof value === "object" && value !== null ? (value as { frames?: unknown }).frames : undefined;
-				if (typeof frames !== "object" || frames === null || Array.isArray(frames)) {
-					return c.text('geometry must be { "frames": { "<name>": { x, y, w, h } } }', 400);
-				}
-				const parsed: Record<string, Geometry> = {};
-				for (const [name, raw] of Object.entries(frames)) {
-					const geometry = parseGeometry(raw);
-					if (!isFramePath(name) || geometry === undefined || geometry.w <= 0 || geometry.h <= 0) {
-						return c.text(`not a placeable geometry for "${name}"`, 400);
-					}
-					parsed[name] = geometry;
-				}
-				return { frames: parsed };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { frames } = c.req.valid("json");
-				// all-or-nothing: every frame resolved before the first sidecar write
-				const sidecars = new Map<string, string>();
-				const designDir = realDesignDir(project.root);
-				try {
-					for (const name of Object.keys(frames)) {
-						const found = lookupFrame(project.root, name);
-						if (found.kind !== "found") return c.text(`no frame "${name}" to place`, 404);
-						sidecars.set(name, resolveDesignPath(designDir, sidecarFileIn(found.dir)));
-					}
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				for (const [name, geometry] of Object.entries(frames)) {
-					const sidecar = sidecars.get(name);
-					if (sidecar === undefined) continue;
-					writeGeometry(sidecar, geometry, designDir);
-					hub.publish(project.root, { kind: "geometry", frame: name });
-				}
-				return c.body(null, 204);
-			},
-		)
-		/*
-		 * The read half (#256). The properties rail draws an element before
-		 * anybody touches it, so it asks the same file the write lane parses:
-		 * the name the author wrote, where it is written, and the fingerprint a
-		 * write is measured against. Nothing here writes, and a stamp that hits
-		 * nothing is part of the answer rather than an error.
-		 */
-		.post("/api/p/:project/rungs", rungsBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { frame, sources } = c.req.valid("json");
-			const read = await readRungs(project.root, frame, sources, lastReadersIn(project.root));
-			if (read.kind === "error") return c.text(read.message, read.status);
-			return c.json({ rungs: read.rungs });
-		})
-		/*
-		 * The write half of a text edit (#314). The frame already shows the
-		 * words; this puts them in the file, once, and answers with the patch
-		 * that takes them out again and how the stamps on that line moved. A
-		 * refusal is the lane's own no and comes back as one.
-		 */
-		.post("/api/p/:project/text", textBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { frame, ...ask } = c.req.valid("json");
-			const site = textSite(project.root, frame, ask);
-			if (site.kind === "error") return c.text(site.message, site.status);
-			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
-			return c.json(written(project.root, site));
-		})
-		/*
-		 * The structural write (#317, #340): a delete or a move.
-		 * The frame already shows what happened; this puts it in the file, once,
-		 * and answers with the patch that takes it back.
-		 */
-		.post("/api/p/:project/element", elementBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { frame, ...ask } = c.req.valid("json");
-			const site = elementSite(project.root, frame, ask);
-			if (site.kind === "error") return c.text(site.message, site.status);
-			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
-			return c.json(written(project.root, site));
-		})
-		/*
-		 * Undo and redo (#314): the characters put back, and refused rather
-		 * than clobbered if the file moved since. Its own inverse comes back,
-		 * so a redo is the same call again.
-		 */
-		.post("/api/p/:project/revert", revertBody, async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { path, start, end, text, fingerprint } = c.req.valid("json");
-			const target = revertTarget(project.root, path);
-			if ("message" in target) return c.text(target.message, target.status);
-			let source: string;
-			try {
-				source = readFileSync(target.file, "utf8");
-			} catch {
-				return c.text(`no ${path} to put back`, 404);
-			}
-			if (fingerprintOf(source) !== fingerprint) return c.json({ ok: false, refusal: STALE_FILE }, 409);
-			if (end > source.length) return c.text("not a span in this file", 400);
-			const patch = { start, end, text };
-			const next = applySpan(source, patch);
-			if (next !== source) writeAtomic(target.file, next);
-			const after = fingerprintOf(next);
-			return c.json({
-				ok: true,
-				path,
-				fingerprint: after,
-				shifts: shiftsOf(source, [patch]),
-				undo: { path, start, end: start + text.length, text: source.slice(start, end), fingerprint: after },
-			});
-		})
-		/*
-		 * The explorer's verbs (#228). Every one of them moves or copies a
-		 * folder, so the law that the canvas never writes frame source stands: a
-		 * rename leaves the `data-go` literals naming the old name exactly as
-		 * the author wrote them, and the flow map re-derives and reports a
-		 * target it can no longer find, which is where that fix belongs.
-		 *
-		 * None of them publishes an event. Each is a folder move under design/
-		 * that the watcher sees and names for itself — unlike a geometry write,
-		 * which the watcher classifies as a move rather than an edit and which
-		 * the API says early so a drag reaches another browser at once.
-		 */
-		.post("/api/p/:project/frames/rename", renameBody, (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { from, to } = c.req.valid("json");
-			return explorerVerb(
-				c,
-				() => renameFrame(project.root, from, to),
-				() => c.body(null, 204),
-			);
-		})
-		.post("/api/p/:project/pages/rename", renameBody, (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const { from, to } = c.req.valid("json");
-			return explorerVerb(
-				c,
-				() => renamePage(project.root, from, to),
-				() => c.body(null, 204),
-			);
-		})
-		.post(
-			"/api/p/:project/frames/move",
-			validator("json", (value, c) => {
-				const body = bodyFields(value);
-				const frames = nameList(body.frames);
-				const { page } = body;
-				if (frames === undefined || typeof page !== "string") {
-					return c.text('a move is { "frames": [name, ...], "page": "…" }, "" being the root page', 400);
-				}
-				return { frames, page };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { frames, page } = c.req.valid("json");
-				return explorerVerb(
-					c,
-					() => moveFrames(project.root, frames, page),
-					() => c.body(null, 204),
-				);
-			},
-		)
-		.post(
-			"/api/p/:project/pages/move",
-			validator("json", (value, c) => {
-				const body = bodyFields(value);
-				const pages = nameList(body.pages);
-				const { page } = body;
-				if (pages === undefined || typeof page !== "string") {
-					return c.text('a page move is { "pages": [page, ...], "page": "…" }, "" being the root page', 400);
-				}
-				return { pages, page };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { pages, page } = c.req.valid("json");
-				return explorerVerb(
-					c,
-					() => movePages(project.root, pages, page),
-					() => c.body(null, 204),
-				);
-			},
-		)
-		.post(
-			"/api/p/:project/frames/duplicate",
-			validator("json", (value, c) => {
-				const body = bodyFields(value);
-				const frames = nameList(body.frames);
-				const { page } = body;
-				if (frames === undefined || (page !== undefined && typeof page !== "string")) {
-					return c.text('a duplicate is { "frames": [name, ...], "page"?: "…" }', 400);
-				}
-				return { frames, page };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { frames, page } = c.req.valid("json");
-				// the minted names come straight back: only this side knows them, and
-				// the rail has copies to select the moment it hears they exist
-				return explorerVerb(
-					c,
-					() => duplicateFrames(project.root, frames, page),
-					(done) => c.json({ frames: done.copies }),
-				);
-			},
-		)
-		.post(
-			"/api/p/:project/pages/duplicate",
-			validator("json", (value, c) => {
-				const { name } = bodyFields(value);
-				if (typeof name !== "string") return c.text('a page duplicate is { "name": "…" }', 400);
-				return { name };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				return explorerVerb(
-					c,
-					() => duplicatePage(project.root, c.req.valid("json").name),
-					(done) => c.json({ page: done.page, frames: done.copies }),
-				);
-			},
-		)
-		.post(
-			"/api/p/:project/pages/create",
-			validator("json", (value, c) => {
-				const { name } = bodyFields(value);
-				if (typeof name !== "string") return c.text('a page is { "name": "…" }', 400);
-				return { name };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				return explorerVerb(
-					c,
-					() => createPage(project.root, c.req.valid("json").name),
-					() => c.body(null, 204),
-				);
-			},
-		)
-		.post(
-			"/api/p/:project/trash",
-			validator("json", (value, c) => {
-				const body = bodyFields(value);
-				const frames = body.frames === undefined ? [] : nameList(body.frames);
-				const pages = body.pages === undefined ? [] : nameList(body.pages);
-				if (frames === undefined || pages === undefined || frames.length + pages.length === 0) {
-					return c.text('trash must be { "frames": [name, ...] } or { "pages": [name, ...] }', 400);
-				}
-				const named: TrashBody = { frames, pages };
-				return named;
-			}),
-			async (c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				// the wire's shape, not the validator's: both sides are optional so a
-				// frames-only caller keeps the body it always wrote, and the validator
-				// has already refused anything either side is not a list of names
-				const { frames = [], pages = [] } = c.req.valid("json");
-				const dirs: string[] = [];
-				const pageDirs: string[] = [];
-				try {
-					const designDir = realDesignDir(project.root);
-					const held: string[] = [];
-					for (const page of pages) {
-						const found = pageDir(project.root, page);
-						if (found.kind === "refused") return c.text(found.message, found.status);
-						held.push(found.dir);
-					}
-					// a page inside a page being trashed rides along inside its folder, so
-					// naming both is one move rather than a move and a miss (#231)
-					for (const dir of held) {
-						if (!held.some((outer) => dir.startsWith(`${outer}${sep}`))) pageDirs.push(dir);
-					}
-					for (const name of frames) {
-						if (!isFramePath(name)) return c.text(`not a frame name: "${name}"`, 400);
-						const found = lookupFrame(project.root, name);
-						if (found.kind !== "found") return c.text(`no frame "${name}" to trash`, 404);
-						const dir = resolveDesignPath(designDir, found.dir);
-						// a frame inside a page being trashed rides along inside its folder,
-						// so naming both is one move rather than a move and a miss (#228)
-						if (!pageDirs.some((pageFolder) => dir.startsWith(`${pageFolder}${sep}`))) dirs.push(dir);
-					}
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				// the whole folder moves; the OS Trash owns restore from here (#7)
-				await trashImpl([...pageDirs, ...dirs]);
-				// a page that is gone leaves the canvas nowhere to be, and its camera
-				// and its place in the rail nothing to describe (#228)
-				if (pages.length > 0) {
-					try {
-						forgetPages(project.root, pages);
-					} catch {
-						// bookkeeping is not worth un-saying the move for: order is advisory
-						// and state validates on read, so a cleanup that threw heals the next
-						// time either is read, where answering 500 from here would claim
-						// folders that have already gone had never moved at all
-					}
-				}
-				return c.body(null, 204);
-			},
-		)
-		.get("/p/:project/frames/:frame", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
-			if (doc.kind === "missing") return c.text(doc.message, 404);
-			if (doc.kind === "error") return c.html(doc.document, 500);
-			// A frame document changes whenever its source does, and the etag is the
-			// whole of how a browser learns that. Without this the browser is free to
-			// guess a freshness lifetime from nothing, so say it: ask every time, and
-			// the ask is a 304 for as long as the source stands still.
-			c.header("cache-control", "no-cache");
-			if (c.req.header("if-none-match") === doc.etag) return c.body(null, 304);
-			c.header("etag", doc.etag);
-			c.header("x-spool-cache", doc.cache);
-			return c.html(doc.document);
-		})
 		.get(
 			"/play/:project",
 			validator("query", (value, c) => {
@@ -3633,22 +1445,25 @@ export function createDaemonApp({
 				return c.html(assemblePlayerDocument(config, compiled.bundle));
 			},
 		)
-		.get("/play/:project/-/*", (c) => {
-			// The composition's modules (#24): named by content, so a name is the
-			// module and may be cached for good. They answer only for a project this
-			// daemon has already composed — the document that imports them is what
-			// composes it — and a name from a bundle since retired still answers for
-			// as long as a tab served with it might walk to it.
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
-			const chunk = playerCompiler.getChunk(project.root, name);
-			if (chunk === undefined) return c.text("not found", 404);
-			c.header("access-control-allow-origin", "*");
-			c.header("cache-control", "public, max-age=31536000, immutable");
-			c.header("content-type", name.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8");
-			return c.body(chunk);
-		})
+		.get("/play/:project/-/*", (c) =>
+			withProject(c, resolveProject, (root) => {
+				// The composition's modules (#24): named by content, so a name is the
+				// module and may be cached for good. They answer only for a project this
+				// daemon has already composed — the document that imports them is what
+				// composes it — and a name from a bundle since retired still answers for
+				// as long as a tab served with it might walk to it.
+				const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
+				const chunk = playerCompiler.getChunk(root, name);
+				if (chunk === undefined) return c.text("not found", 404);
+				c.header("access-control-allow-origin", "*");
+				c.header("cache-control", "public, max-age=31536000, immutable");
+				c.header(
+					"content-type",
+					name.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8",
+				);
+				return c.body(chunk);
+			}),
+		)
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
 		.get("/api/p/:project/scenarios/:name", (c) => {
 			const project = resolveProjectData(c);
@@ -3795,11 +1610,11 @@ export function createDaemonApp({
 	);
 	app.route("/api/p", projectShares.routes);
 	/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
-	app.get("/api/p/:project/sync", (c) => {
-		const project = resolveProject(c, c.req.param("project"));
-		if ("response" in project) return project.response;
-		return c.json(teamSync.state(project.root));
-	});
+	app.get("/api/p/:project/sync", (c) =>
+		withProject(c, resolveProject, (root) => {
+			return c.json(teamSync.state(root));
+		}),
+	);
 	app.route(
 		"/api/p",
 		setAsideRoutes({
@@ -3814,14 +1629,14 @@ export function createDaemonApp({
 	 * Presence on a team canvas: where this machine's person is, from the canvas, as it changes. It goes to the
 	 * team through the local copy's sync connection and nowhere else: never to disk, never into history.
 	 */
-	app.put("/api/p/:project/presence", async (c) => {
-		const project = resolveProject(c, c.req.param("project"));
-		if ("response" in project) return project.response;
-		const state = readPresenceState(((await c.req.json().catch(() => undefined)) as { state?: unknown })?.state);
-		if (state === undefined) return c.text("presence must be { state: { page, pointer, ... } | null }", 400);
-		teamSync.presence(project.root, state);
-		return c.body(null, 204);
-	});
+	app.put("/api/p/:project/presence", async (c) =>
+		withProject(c, resolveProject, async (root) => {
+			const state = readPresenceState(((await c.req.json().catch(() => undefined)) as { state?: unknown })?.state);
+			if (state === undefined) return c.text("presence must be { state: { page, pointer, ... } | null }", 400);
+			teamSync.presence(root, state);
+			return c.body(null, 204);
+		}),
+	);
 
 	/**
 	 * Tell one canvas who else is on its team canvas: everyone there now, then each change. Its person leaves

@@ -153,7 +153,7 @@ function inFrame(camera: Camera, rect: Box): Box {
 }
 
 /** A frame's ring, 3px outside it, its corner the shell's own two pixels out. */
-export function ringBox(camera: Camera, frame: Box): ScreenBox {
+function ringBox(camera: Camera, frame: Box): ScreenBox {
 	const rect = toScreen(frame, camera);
 	return {
 		left: rect.x - 3,

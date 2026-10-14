@@ -3,7 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import type { Download } from "playwright-core";
 import { expect, it } from "vitest";
 import { writeDesignFile, writeFrame } from "../test-helpers";
-import { handCanvas } from "./hand-browser-helpers";
+import { handCanvas } from "./hand-browser.test-helpers";
 
 it("downloads PNGs and a PDF from the canvas export menu", { timeout: 120_000 }, async () => {
 	const source = `export default function Frame() { return <main style={{width: "100%", height: "100%", background: "#f5391a"}}>Export me</main>; }`;

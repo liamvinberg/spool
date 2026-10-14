@@ -39,7 +39,7 @@ export type HandOp =
 /** Which side of the sibling a move lands on (#340). */
 export type Place = "before" | "after";
 
-export type RefusalCode =
+type RefusalCode =
 	| "stale-stamp"
 	| "expression-text"
 	| "no-text"
@@ -106,7 +106,7 @@ export interface SpanPatch {
 export type EditedNode = { text: string } | { tag: string; nodes: readonly EditedNode[] };
 
 /** The inline tags an editable element may hold, each passing the same rule. */
-export const INLINE_TAGS: ReadonlySet<string> = new Set(["span", "i", "b", "em", "strong", "a", "small", "code"]);
+const INLINE_TAGS: ReadonlySet<string> = new Set(["span", "i", "b", "em", "strong", "a", "small", "code"]);
 
 const NODE_CAP = 256;
 const NODE_DEPTH = 8;

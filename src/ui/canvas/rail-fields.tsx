@@ -21,10 +21,9 @@ import { PropertyRow } from "../primitives/structure";
 
 /** Shared app roles for the rail's values and asides */
 export const VALUE = "type-value";
-export const FAINT = "text-secondary type-detail";
 
 /** How far the pointer travels for one step of a scrub. */
-export const SCRUB_PX = 4;
+const SCRUB_PX = 4;
 
 /**
  * One sample of a scrub: the whole steps the pointer crossed, and the pixels

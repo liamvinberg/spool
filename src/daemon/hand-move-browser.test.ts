@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { apiRequests, handCanvas } from "./hand-browser-helpers";
+import { apiRequests, handCanvas } from "./hand-browser.test-helpers";
 
 /**
  * Reorder by hand (#340).

@@ -87,7 +87,7 @@ export function createAltHold(onHold: () => void, holdMs = OVERVIEW_HOLD_MS): Al
 }
 
 /** A press toward nothing: the target shoves that way and says so. */
-export interface OverviewBump {
+interface OverviewBump {
 	direction: SpatialDirection;
 	at: string;
 	n: number;

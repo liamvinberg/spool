@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { handCanvas } from "./hand-browser-helpers";
+import { handCanvas } from "./hand-browser.test-helpers";
 
 /**
  * Several elements held at once (#323).

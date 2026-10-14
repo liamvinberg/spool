@@ -1,6 +1,6 @@
 import { expect, it, onTestFinished } from "vitest";
 import { sseReader } from "../test-helpers";
-import { handCanvas } from "./hand-browser-helpers";
+import { handCanvas } from "./hand-browser.test-helpers";
 
 /**
  * Shared components, edited from one frame and shown in every frame (#318).

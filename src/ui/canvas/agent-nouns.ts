@@ -153,7 +153,7 @@ export interface AgentWrite {
  * carries a list of edits and the other a cell rather than a string, so naming a single
  * block from either would be spool guessing which of several changes to point at.
  */
-export function writeOf(id: string, tool: string, input: CallInput): AgentWrite | null {
+function writeOf(id: string, tool: string, input: CallInput): AgentWrite | null {
 	const path = readField(input, "file_path", true);
 	if (path === null || path === "") return null;
 	if (tool === "Write") {
@@ -338,7 +338,7 @@ export function nameOf(path: string): string {
 }
 
 /** the project-relative form, which is the useful one behind a disclosure */
-export function relativeTo(path: string, root: string): string {
+function relativeTo(path: string, root: string): string {
 	const prefix = root === "" ? "" : root.endsWith("/") ? root : `${root}/`;
 	return prefix !== "" && path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
@@ -469,7 +469,7 @@ export function nameCall(call: {
 }
 
 /** a verb as what someone is doing: `read` → `reading`, `plan` → `planning`, `write` → `writing` */
-export function participle(verb: string): string {
+function participle(verb: string): string {
 	const word = verb.toLowerCase();
 	if (word.endsWith("ing")) return word;
 	if (word.endsWith("ie")) return `${word.slice(0, -2)}ying`;

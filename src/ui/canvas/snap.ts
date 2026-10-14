@@ -20,7 +20,7 @@ import type { Box } from "./camera";
  */
 
 /** A matched gap: a segment, so it needs both ends and a perpendicular place. */
-export interface Span {
+interface Span {
 	/** The axis the gap is measured along — an x gap draws as a horizontal bar. */
 	axis: "x" | "y";
 	/** The gap's near end along the axis. */

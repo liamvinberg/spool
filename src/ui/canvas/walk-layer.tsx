@@ -62,13 +62,13 @@ const NUB_STEP = 6;
 const NUB_LEN = 10;
 
 /** A tag is the label row's line box, so a tag and a name read as one family. */
-export const TAG_HEIGHT = 18;
+const TAG_HEIGHT = 18;
 
 /** The hairline's one strength — the leader is coaching-layer ink, never the accent. */
 const HAIRLINE = "color-mix(in srgb, var(--color-primary) 30%, transparent)";
 
 /** One walk, from its frame's coordinates into the canvas's. */
-export interface PlacedWalk {
+interface PlacedWalk {
 	key: string;
 	walk: Walk;
 	/** The anchor dot, on the wall. */
@@ -96,7 +96,7 @@ export interface FrameWalks {
  * wider than the rectangle they belong to. A 390-wide frame reaches it at 30%,
  * under the 41% a page is read at and well over the 15% one is surveyed at.
  */
-export function walkSize(frameWidth: number, k: number): FrameWalks["size"] {
+function walkSize(frameWidth: number, k: number): FrameWalks["size"] {
 	return frameWidth * k >= WIDEST_TAG ? "readable" : "nub";
 }
 

@@ -26,7 +26,7 @@ import { Dialog, Popover } from "../primitives/overlays";
  */
 
 /** More marks than this arriving together are one summary. */
-export const SET_ASIDE_HANDFUL = 3;
+const SET_ASIDE_HANDFUL = 3;
 
 /** What the agent is asked when a mark is handed to it: both sides, by path, and what to do with them. */
 export function setAsideAsk(mark: ShownSetAside): string {

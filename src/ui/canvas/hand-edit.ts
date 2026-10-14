@@ -111,7 +111,7 @@ export function restamped(source: string, file: string, shifts: readonly StampSh
  * where it lands; one across lines lands whatever followed its run as far
  * past the run it wrote, and moves the lines under it.
  */
-export function shiftedPlace(at: LineColumn, shift: StampShift): LineColumn | undefined {
+function shiftedPlace(at: LineColumn, shift: StampShift): LineColumn | undefined {
 	const across = shift.across;
 	if (across === undefined) {
 		if (shift.line !== at.line || shift.column + shift.taken > at.column) return at;

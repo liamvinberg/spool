@@ -28,10 +28,10 @@ import type { Box } from "./camera";
  */
 
 /** How much of the viewport one direction of a frame must fill. */
-export const PROMINENCE = 0.5;
+const PROMINENCE = 0.5;
 
 /** How much of what could be shown in each direction has to be. */
-export const WHOLENESS = 0.5;
+const WHOLENESS = 0.5;
 
 /** How long a frame must hold both, in ms. */
 export const DWELL_MS = 900;

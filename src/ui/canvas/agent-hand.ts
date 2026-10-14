@@ -76,7 +76,7 @@ export interface LocatedMark {
  * companion still on that edit must find its box. Nothing draws the mark by itself: the
  * ring is the companion's, and this is only when the canvas stops holding the box for it.
  */
-export const MARK_MS = 6000;
+const MARK_MS = 6000;
 
 /**
  * How long an arm waits for a document to answer before letting go.
@@ -86,7 +86,7 @@ export const MARK_MS = 6000;
  * waiting to strike the next time something unrelated reloads. Nothing lands
  * retroactively — that is the degrade, stated.
  */
-export const ARM_MS = 8000;
+const ARM_MS = 8000;
 
 /** the mark one write leaves on one frame, which is the pair that must not be drawn twice */
 export function markKeyOf(frame: string, write: string): string {

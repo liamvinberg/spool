@@ -47,7 +47,7 @@ import { STRIP_WIDTH, useRailDrag } from "./rail-width";
  * carried to the other side keeps its state, its drafts and its scroll.
  */
 
-export interface PaneContext {
+interface PaneContext {
 	readonly side: SideId;
 	/** the side's settled width, which the pane is laid out at whatever the side's edge is doing */
 	readonly width: number;

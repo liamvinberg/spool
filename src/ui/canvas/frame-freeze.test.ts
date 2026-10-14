@@ -268,12 +268,29 @@ describe("delivering the freeze", () => {
 		await act(() => lifecycle.noteCameraMoving(true));
 		expect(freezes(post)).toHaveLength(1);
 
-		// the reload took the freeze with it; the replacement has to be told again
+		// the reload took the freeze with it; the replacement has to be told again,
+		// once it is there to hear it
 		await act(() => lifecycle.onIframe("landing", null));
 		await act(() => lifecycle.onIframe("landing", iframe));
 		await act(() => lifecycle.sweep());
+		expect(freezes(post)).toEqual([held]);
 
+		await act(() => lifecycle.noteLoaded("landing"));
 		expect(freezes(post)).toEqual([held, held]);
+	});
+
+	it("tells a document nothing before it reports loaded, and holds it the moment it does", async () => {
+		const { lifecycle, iframe, post } = await mountLive();
+		await act(() => lifecycle.onIframe("landing", null));
+		await act(() => lifecycle.onIframe("landing", iframe));
+
+		// a freeze posted before the document listens is lost, so it is not sent,
+		// and not counted as held either
+		await act(() => lifecycle.noteCameraMoving(true));
+		expect(freezes(post)).toEqual([]);
+
+		await act(() => lifecycle.noteLoaded("landing"));
+		expect(freezes(post)).toEqual([held]);
 	});
 
 	it("holds a frame the canvas has left alone for the minute", async () => {
@@ -327,6 +344,7 @@ describe("delivering the freeze", () => {
 		// a source edit lands as a fresh document on a canvas nobody is at
 		await act(() => lifecycle.onIframe("landing", null));
 		await act(() => lifecycle.onIframe("landing", iframe));
+		await act(() => lifecycle.noteLoaded("landing"));
 		await wait(0);
 		await wait(IDLE_FREEZE_MS - 1);
 		expect(freezes(post), "the frame that just arrived gets to finish arriving").toEqual([held]);

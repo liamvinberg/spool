@@ -31,7 +31,7 @@ export function idOf(entry: SelectionEntry): string {
 }
 
 /** every entry names the same frame, so the chips need not repeat it */
-export function sharesFrame(entries: readonly SelectionEntry[]): boolean {
+function sharesFrame(entries: readonly SelectionEntry[]): boolean {
 	const first = entries[0];
 	if (first === undefined) return false;
 	return entries.every((entry) => entry.frame === first.frame);
@@ -43,7 +43,7 @@ export function sharesFrame(entries: readonly SelectionEntry[]): boolean {
  * element is the noun the source gave it and its lines, prefixed by its frame only
  * when the selection spans more than one.
  */
-export function chipLabel(entry: SelectionEntry, shared: boolean): string {
+function chipLabel(entry: SelectionEntry, shared: boolean): string {
 	if (entry.kind === "frame") return entry.frame;
 	const lines = `${entry.lines[0]}-${entry.lines[1]}`;
 	return shared ? `${entry.name} · ${lines}` : `${entry.frame} · ${entry.name} · ${lines}`;

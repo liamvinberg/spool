@@ -42,7 +42,7 @@ export type TreeRow =
 	| { readonly kind: "map"; readonly key: string; readonly depth: number; readonly count: number };
 
 /** Each element's children, by index; the top-level elements under -1. */
-export function childrenByParent(nodes: readonly ElementNode[]): ReadonlyMap<number, readonly number[]> {
+function childrenByParent(nodes: readonly ElementNode[]): ReadonlyMap<number, readonly number[]> {
 	const out = new Map<number, number[]>();
 	nodes.forEach((node, index) => {
 		const list = out.get(node.parent) ?? [];
@@ -53,7 +53,7 @@ export function childrenByParent(nodes: readonly ElementNode[]): ReadonlyMap<num
 }
 
 /** `shared/ui/site/opening.tsx` → `opening.tsx` */
-export const fileName = (file: string): string => file.split("/").at(-1) ?? file;
+const fileName = (file: string): string => file.split("/").at(-1) ?? file;
 
 /**
  * The rows the rail draws: every top-level element, and under each open one
