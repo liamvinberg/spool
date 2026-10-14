@@ -421,12 +421,17 @@ export function ProjectCanvas({
 	const [siteBoxes] = useState(createSiteBoxStore);
 	const [loaded, setLoaded] = useState(false);
 	/**
-	 * The camera as React knows it: there from the moment it is, and moved only
-	 * once it has come to rest. What is decided at rest reads this — which
-	 * documents mount, where the camera is remembered — and nothing that is
-	 * drawn does, because a render is far too late for a camera in motion.
+	 * Where the camera rests: there from the moment it is, and moved only once
+	 * it has come to rest. What is decided at rest reads this — which documents
+	 * mount, where the camera is remembered — and nothing that is drawn does,
+	 * because a render is far too late for a camera in motion. Nor is a rest a
+	 * render: what it decides it does in the store's own callback (`rested`),
+	 * where a render of the canvas at every stop was most of a 61 ms task
+	 * (DEV-303).
 	 */
-	const [restCamera, setRestCamera] = useState<Camera | null>(null);
+	const restCameraRef = useRef<Camera | null>(null);
+	/** Whether there is a camera: the fields stand only while there is one to draw them from. */
+	const [framed, setFramed] = useState(false);
 	/**
 	 * Put the camera somewhere without flying there. The field only stands while
 	 * there is a camera to draw it from, so arriving at one or losing it is a
@@ -436,7 +441,10 @@ export function ProjectCanvas({
 		(next: Camera | null) => {
 			const was = camera.get();
 			camera.set(next);
-			if ((was === null) !== (next === null)) setRestCamera(next);
+			if ((was === null) !== (next === null)) {
+				restCameraRef.current = next;
+				setFramed(next !== null);
+			}
 		},
 		[camera],
 	);
@@ -702,9 +710,6 @@ export function ProjectCanvas({
 	const gesture = useRef<Gesture>({ kind: "idle" });
 	// a press on another frame while one was live, which its release enters
 	const clickSwitch = useRef<{ from: string; to: string } | null>(null);
-	// where the camera rests, as the lifecycle's sweep reads it between renders
-	const restCameraRef = useRef(restCamera);
-	restCameraRef.current = restCamera;
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, exits, editor paths
@@ -1447,7 +1452,7 @@ export function ProjectCanvas({
 
 	// no stored camera: fit the field once both viewport and field exist
 	useLayoutEffect(() => {
-		if (restCamera !== null || !loaded) return;
+		if (framed || !loaded) return;
 		const viewport = viewportRef.current;
 		if (viewport === null) return;
 		const boxes = fieldBoxes();
@@ -1456,7 +1461,7 @@ export function ProjectCanvas({
 				? { x: 0, y: 0, k: 1 }
 				: fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight),
 		);
-	}, [restCamera, loaded, fieldBoxes, placeCamera]);
+	}, [framed, loaded, fieldBoxes, placeCamera]);
 
 	/**
 	 * The camera a page switch lands on, held until the switch has rendered.
@@ -3906,8 +3911,8 @@ export function ProjectCanvas({
 	}, [tellView]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a page switch and frames arriving are triggers too — the report reads both through refs
 	useEffect(() => {
-		if (restCamera !== null && loaded) tellView();
-	}, [restCamera, loaded, activePage, visibleFrames, tellView]);
+		if (framed && loaded) tellView();
+	}, [framed, loaded, activePage, visibleFrames, tellView]);
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
@@ -4428,15 +4433,19 @@ export function ProjectCanvas({
 
 	// Camera motion is drawn and never rendered. Every drawn frame is the camera
 	// moving, which is the whole of what live frames hold their animations
-	// across (#171); the store's rest ends it, and is the one moment React hears
-	// the camera, so frames mount where it came to rest rather than throughout
-	// the gesture.
+	// across (#171); the store's rest ends it, and is the one moment the canvas
+	// acts on the camera, so frames mount where it came to rest rather than
+	// throughout the gesture. It acts without a render: what a rest decides is
+	// in `rested`, set below once everything it calls is.
+	const rested = useRef(() => {});
 	useEffect(
 		() =>
 			camera.subscribe((at, moving) => {
 				if (at === null) return;
 				noteCameraMoving(moving);
-				if (!moving) setRestCamera(at);
+				if (moving) return;
+				restCameraRef.current = at;
+				rested.current();
 			}),
 		[camera, noteCameraMoving],
 	);
@@ -4449,10 +4458,10 @@ export function ProjectCanvas({
 	 * land rather than a quiet window and a sweep later.
 	 */
 	useEffect(() => {
-		if (restCamera !== null && loaded) sweepLifecycle();
-	}, [restCamera, loaded, sweepLifecycle]);
+		if (framed && loaded) sweepLifecycle();
+	}, [framed, loaded, sweepLifecycle]);
 
-	const readyForUpdate = loaded && restCamera !== null;
+	const readyForUpdate = loaded && framed;
 	useEffect(() => {
 		if (readyForUpdate) desktopBridge()?.ready?.();
 	}, [readyForUpdate]);
@@ -4484,8 +4493,8 @@ export function ProjectCanvas({
 	// A tab closed or left before the settle still keeps where it was:
 	// the write that was waiting goes out as the canvas goes.
 	const unsettled = useRef<(() => void) | null>(null);
-	useEffect(() => {
-		if (restCamera === null) return;
+	const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const armPersist = useCallback(() => {
 		const persist = () => {
 			unsettled.current = null;
 			const cam = camera.get();
@@ -4497,9 +4506,21 @@ export function ProjectCanvas({
 			});
 		};
 		unsettled.current = persist;
-		const settle = setTimeout(persist, SETTLE_PERSIST_MS);
-		return () => clearTimeout(settle);
-	}, [restCamera, project, activePage, camera]);
+		clearTimeout(settle.current);
+		settle.current = setTimeout(persist, SETTLE_PERSIST_MS);
+	}, [project, activePage, camera]);
+	useEffect(() => {
+		if (!framed) return;
+		armPersist();
+		return () => clearTimeout(settle.current);
+	}, [framed, armPersist]);
+	rested.current = () => {
+		if (loaded) {
+			sweepLifecycle();
+			tellView();
+		}
+		armPersist();
+	};
 	// unless the canvas closed because its project was forgotten or trashed:
 	// nobody reads that camera again, and a forgotten folder is not written to
 	const rootRef = useRef(root);
@@ -6086,7 +6107,7 @@ export function ProjectCanvas({
 					onDoubleClick={onDoubleClick}
 					onContextMenu={onContextMenu}
 				>
-					{restCamera !== null && (
+					{framed && (
 						<CameraField camera={camera} layer="under">
 							{/* the threads live under the frames: the map, never a hit target */}
 							{arrowsOn && (
@@ -6140,7 +6161,7 @@ export function ProjectCanvas({
 						claims={pictureClaims}
 						booting={documentsBooting}
 					/>
-					{restCamera !== null && (
+					{framed && (
 						<CameraField camera={camera}>
 							{visibleFrames.map((frame) => {
 								const state = lifecycle.states[frame.name] ?? "picture";
@@ -6203,7 +6224,7 @@ export function ProjectCanvas({
 				    its own stacking context, so keeping its label inside would let a
 				    later neighboring frame paint over the label regardless of the
 				    label's own z-index. */}
-					{restCamera !== null && (
+					{framed && (
 						<LabelField camera={camera}>
 							{visibleFrames.map((frame) => {
 								const isEntered = entered === frame.name;
@@ -6241,7 +6262,7 @@ export function ProjectCanvas({
 							})}
 						</LabelField>
 					)}
-					{restCamera !== null && (
+					{framed && (
 						<CameraField camera={camera} layer="over">
 							{pageObjects.map((object) => (
 								<PageObjectLabel
@@ -6260,7 +6281,7 @@ export function ProjectCanvas({
 						</CameraField>
 					)}
 
-					{restCamera !== null && (
+					{framed && (
 						<>
 							<SelectionOverlay
 								camera={camera}
