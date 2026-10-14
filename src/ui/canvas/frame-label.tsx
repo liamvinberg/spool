@@ -40,6 +40,12 @@ export type OverviewRole = "target" | "near" | "dim";
  * is drawn in, a turn spread over the page by its name: a few milliseconds
  * behind its frame at most, where it stands never behind, and at rest every
  * width exact.
+ *
+ * Not a label anyone is looking at (DEV-301). The selected, hovered or entered
+ * one, or one carrying a control at its far end, is laid out every frame: the
+ * play button rides the width, and a width a turn behind threw it back and
+ * forth across the frame's corner through every zoom. One or two labels a
+ * frame is no cost; the thousand are what the turns are for.
  */
 const WIDTH_TURNS = 4;
 
@@ -92,6 +98,8 @@ export function FrameLabel({
 	const label = useRef<HTMLDivElement | null>(null);
 	const changed = useChanged();
 	const turn = useMemo(() => bucketOf(name, WIDTH_TURNS), [name]);
+	// looked at, or carrying something to press at its far end: never a turn behind
+	const exact = selected || hovered || entered || setAside != null;
 	// the frames this label was drawn in while the camera moved, which its turn counts
 	const moves = useRef(0);
 	// hidden for skipping a zoom while off screen (below)
@@ -123,10 +131,10 @@ export function FrameLabel({
 				placed.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
 			const width = `${frame.w * at.k}px`;
 			if (moving) moves.current += 1;
-			if (el.style.width !== width && (!moving || (moves.current + turn) % WIDTH_TURNS === 0))
+			if (el.style.width !== width && (!moving || exact || (moves.current + turn) % WIDTH_TURNS === 0))
 				el.style.width = width;
 		},
-		[frame.x, frame.y, frame.w, frame.h, near],
+		[frame.x, frame.y, frame.w, frame.h, near, exact],
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);
@@ -147,7 +155,7 @@ export function FrameLabel({
 							className={cn(
 								"rounded-xs px-2 py-[3px] type-detail transition-colors duration-fast",
 								live?.faded === true ? "bg-surface-control text-secondary" : "bg-accent-strong text-on-accent",
-								live?.came != null && CHIP_IN[live.came],
+								live?.came != null ? CHIP_IN[live.came] : "animate-chrome-in",
 							)}
 						>
 							{live?.note ?? "live · esc exits"}
@@ -165,7 +173,7 @@ export function FrameLabel({
 					>
 						{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 						<span
-							className={`min-w-0 truncate type-value ${
+							className={`min-w-0 truncate transition-colors duration-fast ease-out type-value ${
 								selected || overview === "target"
 									? "text-accent-strong"
 									: hovered || unseen !== undefined || overview === "near"

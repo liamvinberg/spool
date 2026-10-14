@@ -32,7 +32,13 @@ function cameraAt(camera: Camera): CameraStore {
 /** a label on screen, whatever the camera */
 const ON_SCREEN: NearScreen = () => true;
 
-function label(props: { name: string; frameWidth: number; camera: CameraStore; near?: NearScreen }): {
+function label(props: {
+	name: string;
+	frameWidth: number;
+	camera: CameraStore;
+	near?: NearScreen;
+	selected?: boolean;
+}): {
 	el: HTMLElement;
 	root: Root;
 } {
@@ -52,15 +58,16 @@ function label(props: { name: string; frameWidth: number; camera: CameraStore; n
 /** where every label's frame stands in these tests, in world units */
 const AT = { x: 100, y: 50 };
 
-function element({ name, frameWidth, camera, near = ON_SCREEN }: Parameters<typeof label>[0]) {
+function element({ name, frameWidth, camera, near = ON_SCREEN, selected = false }: Parameters<typeof label>[0]) {
 	return createElement(FrameLabel, {
 		name,
 		frame: { ...AT, w: frameWidth, h: 800 },
 		camera,
 		near,
 		entered: false,
-		selected: false,
+		selected,
 		hovered: false,
+		onPlay: () => {},
 	});
 }
 
@@ -110,6 +117,18 @@ describe("FrameLabel", () => {
 
 		act(() => vi.advanceTimersByTime(REST_MS));
 		expect(el.style.width).toBe("240px");
+	});
+
+	it("keeps the selected label's width, and the play button at its end, exact through every frame of a zoom", () => {
+		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
+		act(() => vi.advanceTimersByTime(REST_MS));
+		const { el } = label({ name: "landing", frameWidth: 1000, camera, selected: true });
+		expect(el.querySelector('button[aria-label="Play landing"]')).not.toBeNull();
+
+		for (const k of [0.21, 0.22, 0.23, 0.24]) {
+			act(() => camera.set({ x: 0, y: 0, k }));
+			expect(el.style.width).toBe(`${1000 * k}px`);
+		}
 	});
 
 	it("writes nothing on a pan, which the field carries for every label at once", () => {

@@ -1,8 +1,9 @@
-import { type CSSProperties, type HTMLAttributes, useRef } from "react";
+import { type CSSProperties, type HTMLAttributes, useLayoutEffect, useRef } from "react";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
+import { type Glide, useGlide } from "./glide";
 import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
@@ -105,25 +106,35 @@ export type ScreenBox = Partial<Record<(typeof SCREEN_KEYS)[number], number>>;
 export function Follow({
 	camera,
 	screen,
+	glide,
 	...rest
 }: {
 	camera: CameraStore;
 	screen: (camera: Camera) => ScreenBox;
+	/** what `screen` reads besides the camera, when it moves between the camera's frames */
+	glide?: Glide | undefined;
 	style?: Omit<CSSProperties, (typeof SCREEN_KEYS)[number]>;
 } & Omit<HTMLAttributes<HTMLDivElement>, "style">) {
 	const box = useRef<HTMLDivElement | null>(null);
-	useCameraFollow(
-		camera,
-		(at) => {
-			const el = box.current;
-			if (el === null) return;
-			const sized = screen(at);
-			for (const key of SCREEN_KEYS) {
-				const value = sized[key];
-				if (value !== undefined) el.style[key] = `${value}px`;
-			}
-		},
-		[screen],
+	const write = (at: Camera) => {
+		const el = box.current;
+		if (el === null) return;
+		const sized = screen(at);
+		for (const key of SCREEN_KEYS) {
+			const value = sized[key];
+			if (value !== undefined) el.style[key] = `${value}px`;
+		}
+	};
+	useCameraFollow(camera, write, [screen]);
+	const latest = useRef(write);
+	latest.current = write;
+	useLayoutEffect(
+		() =>
+			glide?.listen(() => {
+				const at = camera.get();
+				if (at !== null) latest.current(at);
+			}),
+		[glide, camera],
 	);
 	return <div ref={box} {...rest} />;
 }
@@ -288,11 +299,10 @@ export function SelectionOverlay({
 					camera={camera}
 					screen={(at) => ringBox(at, hoveredFrame)}
 					data-frame-hover={hoveredFrame.name}
-					className="absolute border border-line-strong"
-					style={{
-						opacity: hovered?.visible === true ? 1 : 0,
-						transition: hovered?.visible === true ? "none" : "opacity 80ms ease-out",
-					}}
+					// at once under the pointer, and let go of slowly enough to see it go
+					className={`absolute border border-line-strong ${
+						hovered?.visible === true ? "" : "opacity-0 transition-opacity duration-quick ease-out"
+					}`}
 				/>
 			)}
 
@@ -304,6 +314,7 @@ export function SelectionOverlay({
 						key={`ring-${name}`}
 						camera={camera}
 						screen={(at) => ringBox(at, frame)}
+						data-frame-ring={name}
 						// the ring's own strength is the system page's law and does not move; the
 						// cursor on this frame's chip fills the box instead, which is the same
 						// thing a lit element outline does one level down (#116)
@@ -401,63 +412,22 @@ export function SelectionOverlay({
 			{pickedFrames.map((name) => {
 				const frame = frames.find((f) => f.name === name);
 				if (frame === undefined) return null;
-				const group = picked.filter((pick) => pick.frame === name);
-				// the ring is the element's own lines (#321)
-				const drawn = group.map((pick) => ({ pick, rects: lineBoxes(pick) }));
 				return (
-					<Follow
+					<HeldIn
 						key={`picked-${name}`}
 						camera={camera}
-						screen={(at) => clipBox(at, frame)}
-						data-frame-clip={name}
-						className="absolute overflow-hidden"
-					>
-						<Follow camera={camera} screen={(at) => frameInClip(at, frame)} className="absolute">
-							{drawn.flatMap(({ pick, rects }) => {
-								const key = pickKey(pick.frame, pick.selector);
-								return rects.map((box) => (
-									<ElementOutline
-										key={`${key}\u0000${box.y}\u0000${box.x}`}
-										mark
-										camera={camera}
-										rect={box}
-										radius={pick.radius}
-										lit={lit === key || lit === WHOLE_SELECTION}
-									/>
-								));
-							})}
-							{group.flatMap((pick) =>
-								(pick.spills ?? []).map((side) => (
-									<SpillMark
-										key={`${pickKey(pick.frame, pick.selector)}\u0000${side}`}
-										camera={camera}
-										rect={pick.rect}
-										side={side}
-									/>
-								)),
-							)}
-							{group.length < 2 ? null : (
-								// what several held elements are, as one box (#323): the ring
-								// says the extent of the selection
-								<Follow
-									camera={camera}
-									screen={(at) => {
-										const box = inFrame(at, unionOf(drawn.flatMap((one) => one.rects)));
-										return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
-									}}
-									data-element-union=""
-									className="absolute border border-accent border-dashed opacity-60"
-								/>
-							)}
-							<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
-							{named !== undefined &&
+						frame={frame}
+						group={picked.filter((pick) => pick.frame === name)}
+						lit={lit}
+						named={
+							named !== undefined &&
 							named.frame === name &&
 							named.name !== undefined &&
-							!(editing?.frame === named.frame && editing.selector === named.selector) ? (
-								<NameLabel camera={camera} name={named.name} rect={unionOf(lineBoxes(named))} />
-							) : null}
-						</Follow>
-					</Follow>
+							!(editing?.frame === named.frame && editing.selector === named.selector)
+								? named
+								: undefined
+						}
+					/>
 				);
 			})}
 
@@ -465,21 +435,7 @@ export function SelectionOverlay({
 				(() => {
 					const frame = frames.find((f) => f.name === previewShown.frame);
 					if (frame === undefined) return null;
-					return (
-						<Follow camera={camera} screen={(at) => clipBox(at, frame)} className="absolute overflow-hidden">
-							<Follow camera={camera} screen={(at) => frameInClip(at, frame)} className="absolute">
-								{lineBoxes(previewShown).map((box) => (
-									<ElementOutline
-										key={`${box.y}-${box.x}`}
-										camera={camera}
-										rect={box}
-										radius={previewShown.radius}
-										faded
-									/>
-								))}
-							</Follow>
-						</Follow>
-					);
+					return <PreviewIn key={`preview-${frame.name}`} camera={camera} frame={frame} preview={previewShown} />;
 				})()}
 
 			{refused !== null &&
@@ -563,6 +519,136 @@ export function SelectionOverlay({
 }
 
 /**
+ * What is held in one frame (#323): each element's outline, drawn inside the
+ * frame's own clipped box, with what says more about it — where it spills,
+ * the box several held come to, the edge it runs past, and its name.
+ *
+ * One element held, drawn as one box, is the selection most clicks make, and
+ * its ring glides from the element held before to this one rather than
+ * jumping (DEV-301): one ring, kept, so the eye follows it across.
+ */
+function HeldIn({
+	camera,
+	frame,
+	group,
+	lit,
+	named,
+}: {
+	camera: CameraStore;
+	frame: ProjectedFrame;
+	/** the picks in this frame */
+	group: readonly PickedSelection[];
+	lit: string | null;
+	/** the one held element that wears its name, when it is in this frame */
+	named: PickedSelection | undefined;
+}) {
+	// the ring is the element's own lines (#321)
+	const drawn = group.map((pick) => ({ pick, rects: lineBoxes(pick) }));
+	const only = drawn.length === 1 && drawn[0]?.rects.length === 1 ? drawn[0] : undefined;
+	const glide = useGlide(only?.rects[0] ?? null, "base");
+	return (
+		<Follow
+			camera={camera}
+			screen={(at) => clipBox(at, frame)}
+			data-frame-clip={frame.name}
+			className="absolute overflow-hidden"
+		>
+			<Follow camera={camera} screen={(at) => frameInClip(at, frame)} className="absolute">
+				{only !== undefined ? (
+					<ElementOutline
+						key="held"
+						mark
+						camera={camera}
+						rect={only.rects[0] ?? only.pick.rect}
+						glide={glide}
+						radius={only.pick.radius}
+						lit={lit === pickKey(only.pick.frame, only.pick.selector) || lit === WHOLE_SELECTION}
+					/>
+				) : (
+					drawn.flatMap(({ pick, rects }) => {
+						const key = pickKey(pick.frame, pick.selector);
+						return rects.map((box) => (
+							<ElementOutline
+								key={`${key}\u0000${box.y}\u0000${box.x}`}
+								mark
+								camera={camera}
+								rect={box}
+								radius={pick.radius}
+								lit={lit === key || lit === WHOLE_SELECTION}
+							/>
+						));
+					})
+				)}
+				{group.flatMap((pick) =>
+					(pick.spills ?? []).map((side) => (
+						<SpillMark
+							key={`${pickKey(pick.frame, pick.selector)}\u0000${side}`}
+							camera={camera}
+							rect={pick.rect}
+							side={side}
+						/>
+					)),
+				)}
+				{group.length < 2 ? null : (
+					// what several held elements are, as one box (#323): the ring
+					// says the extent of the selection
+					<Follow
+						camera={camera}
+						screen={(at) => {
+							const box = inFrame(at, unionOf(drawn.flatMap((one) => one.rects)));
+							return { left: box.x - 4, top: box.y - 4, width: box.w + 8, height: box.h + 8 };
+						}}
+						data-element-union=""
+						className="absolute border border-accent border-dashed opacity-60"
+					/>
+				)}
+				<ClippedEdges frame={frame} rects={drawn.flatMap((one) => one.rects)} />
+				{named?.name !== undefined ? (
+					<NameLabel
+						camera={camera}
+						name={named.name}
+						rect={unionOf(lineBoxes(named))}
+						glide={only?.pick === named ? glide : undefined}
+					/>
+				) : null}
+			</Follow>
+		</Follow>
+	);
+}
+
+/**
+ * The element a click would take, outlined faintly (#339), gliding from the
+ * one the pointer left when it is one box, quicker than the ring: it follows
+ * the hand.
+ */
+function PreviewIn({
+	camera,
+	frame,
+	preview,
+}: {
+	camera: CameraStore;
+	frame: ProjectedFrame;
+	preview: ElementPreview;
+}) {
+	const rects = lineBoxes(preview);
+	const only = rects.length === 1 ? rects[0] : undefined;
+	const glide = useGlide(only ?? null, "quick");
+	return (
+		<Follow camera={camera} screen={(at) => clipBox(at, frame)} className="absolute overflow-hidden">
+			<Follow camera={camera} screen={(at) => frameInClip(at, frame)} className="absolute">
+				{only !== undefined ? (
+					<ElementOutline key="preview" camera={camera} rect={only} glide={glide} radius={preview.radius} faded />
+				) : (
+					rects.map((box) => (
+						<ElementOutline key={`${box.y}-${box.x}`} camera={camera} rect={box} radius={preview.radius} faded />
+					))
+				)}
+			</Follow>
+		</Follow>
+	);
+}
+
+/**
  * The canvas's spacing mark: a bar the exact length of the distance between
  * two frames, ticked at both ends, no fill and no number of its own.
  */
@@ -599,12 +685,24 @@ function SpanBar({ camera, span }: { camera: CameraStore; span: SnapMarks["spans
  * reads it (`daemon/element-name.ts`). Not a chip, which is the composer's
  * word for a selection entry.
  */
-function NameLabel({ camera, name, rect }: { camera: CameraStore; name: string; rect: Box }) {
+function NameLabel({
+	camera,
+	name,
+	rect,
+	glide,
+}: {
+	camera: CameraStore;
+	name: string;
+	rect: Box;
+	/** the ring's glide, which the name rides when it is the ring's own */
+	glide?: Glide | undefined;
+}) {
 	return (
 		<Follow
 			camera={camera}
+			glide={glide}
 			screen={(at) => {
-				const box = inFrame(at, rect);
+				const box = inFrame(at, glide?.at() ?? rect);
 				return { left: box.x - 2, top: box.y - 2 };
 			}}
 			data-name-label={name}
@@ -715,10 +813,13 @@ function ElementOutline({
 	faded,
 	lit,
 	mark,
+	glide,
 }: {
 	camera: CameraStore;
 	/** the element's line box, frame-local */
 	rect: Box;
+	/** where the box is drawn on its way to `rect`, when it glides there */
+	glide?: Glide | undefined;
 	/** the element's own corner radius, in its document's pixels */
 	radius: number;
 	faded?: boolean;
@@ -729,8 +830,9 @@ function ElementOutline({
 	return (
 		<Follow
 			camera={camera}
+			glide={glide}
 			screen={(at) => {
-				const box = inFrame(at, rect);
+				const box = inFrame(at, glide?.at() ?? rect);
 				return {
 					left: box.x - 2,
 					top: box.y - 2,
