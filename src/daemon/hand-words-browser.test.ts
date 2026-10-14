@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { handCanvas } from "./hand-browser-helpers";
+import { handCanvas } from "./hand-browser.test-helpers";
 
 /**
  * Opening the words of the element held (#323, #339).

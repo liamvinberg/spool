@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { expectTiming } from "../test-performance";
-import { apiRequests, handCanvas } from "./hand-browser-helpers";
+import { apiRequests, handCanvas } from "./hand-browser.test-helpers";
 
 /**
  * Editing text in the frame, on a real landing page (#314).

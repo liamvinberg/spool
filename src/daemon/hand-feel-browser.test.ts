@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { handCanvas, VEIL_FILES, VEIL_PAGE } from "./hand-browser-helpers";
+import { handCanvas, VEIL_FILES, VEIL_PAGE } from "./hand-browser.test-helpers";
 
 /**
  * The Edit tool on a real landing page (#321, #339).
