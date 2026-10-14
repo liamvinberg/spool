@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AGENTS_LINE } from "../agents-line";
@@ -78,9 +78,12 @@ function mac(cloud: Cloud, who: string, roles: { tidemark?: Role; northlight?: R
 	const machine = cloud.machine(who, roles.tidemark ?? null);
 	if (roles.northlight !== undefined) cloud.role(who, roles.northlight, "northlight");
 	const state = join(makeTempDir(), ".spool");
+	// the location as the setting says it is behind a symlink, the way macOS's temp dir is, on every platform
 	const location = join(makeTempDir(), "spool");
+	const real = join(makeTempDir(), "spool");
 	mkdirSync(state, { recursive: true });
-	mkdirSync(location, { recursive: true });
+	mkdirSync(real, { recursive: true });
+	symlinkSync(real, location);
 	createSettingsStore(state).write("projects.location", location);
 	const trashed: string[] = [];
 	const daemon = makeApp(state, {
