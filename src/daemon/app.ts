@@ -62,6 +62,7 @@ import { createGoReader } from "./go-reader";
 import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
 import { isLoopbackHost } from "./loopback";
+import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
 import { watchForMoves } from "./moved-in";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
@@ -110,15 +111,7 @@ import {
 	renderOriginFor,
 } from "./security";
 import { createSelectionStore } from "./selection";
-import {
-	type AppEvent,
-	type MachineStateWatchAdapter,
-	orderSession,
-	readSession,
-	updateSession,
-	visitProject,
-	watchMachineState,
-} from "./session";
+import { type AppEvent, type MachineStateWatchAdapter, watchMachineState } from "./session";
 import { setAsideRoutes } from "./set-aside-routes";
 import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
@@ -1115,137 +1108,17 @@ export function createDaemonApp({
 			if (!outcome.ok) return c.json({ error: outcome.error }, 409);
 			return c.json({ started: true }, 202);
 		})
-		.get("/api/cloud/account", async (c) => c.json(await cloudAccount.read()))
-		.post("/api/cloud/account/sign-in", async (c) => {
-			cloudAccount.signIn();
-			return c.json(await cloudAccount.read(), 202);
-		})
-		.post("/api/cloud/account/reopen", (c) => c.json({ reopened: cloudAccount.reopen() }))
-		.post("/api/cloud/account/cancel", (c) => {
-			cloudAccount.cancel();
-			return c.body(null, 204);
-		})
-		.post("/api/cloud/account/changed", (c) => {
-			cloudAccount.changed();
-			return c.body(null, 204);
-		})
-		.post("/api/cloud/account/sign-out", async (c) => {
-			try {
-				await cloudAccount.signOut();
-			} catch (error) {
-				return c.text(error instanceof Error ? error.message : "could not sign out", 503);
-			}
-			return c.json(await cloudAccount.read());
-		})
-		.get("/api/session", (c) => c.json(readSession(spoolDir)))
-		.put(
-			"/api/session",
-			validator("json", (value, c) => {
-				const { root, open } = value as { root?: unknown; open?: unknown };
-				if (typeof root !== "string" || typeof open !== "boolean") {
-					return c.text('session mutation must be { "root": string, "open": boolean }', 400);
-				}
-				return { root, open };
+		.route(
+			"/api",
+			machineRoutes({
+				resolve: resolveProject,
+				spoolDir,
+				cloudAccount,
+				settings,
+				machineStateWatch,
+				emitAppEvent,
+				historyChanged: () => history.keeping(registeredRoots()),
 			}),
-			(c) => {
-				const { root, open } = c.req.valid("json");
-				const result = updateSession(spoolDir, root, open);
-				if (result.kind === "unregistered") {
-					return c.text(`not a registered project root: ${result.root}`, 400);
-				}
-				machineStateWatch.acknowledgeSession(result.session);
-				emitAppEvent({ kind: "session" });
-				return c.body(null, 204);
-			},
-		)
-		// the tab this page landed on or switched to: recent is where you were last
-		// on this Mac. The page that said so updates its own cards; the others hear
-		// nothing, so a tab switch costs no page a walk of every project.
-		.put(
-			"/api/session/active",
-			validator("json", (value, c) => {
-				const { root } = value as { root?: unknown };
-				if (typeof root !== "string") return c.text('an active tab must be { "root": string }', 400);
-				return { root };
-			}),
-			(c) => {
-				const result = visitProject(spoolDir, c.req.valid("json").root);
-				if (result.kind === "unregistered") {
-					return c.text(`not a registered project root: ${result.root}`, 400);
-				}
-				machineStateWatch.acknowledgeRegistry(result.registry);
-				return c.json({ openedAt: result.openedAt });
-			},
-		)
-		// tabs dragged into an arrangement: the list is the whole mutation, and it
-		// opens and closes nothing — a root it no longer names stays open
-		.put(
-			"/api/session/order",
-			validator("json", (value, c) => {
-				const { order } = value as { order?: unknown };
-				if (!Array.isArray(order) || order.some((root) => typeof root !== "string")) {
-					return c.text('a tab arrangement must be { "order": string[] }', 400);
-				}
-				return { order: order as string[] };
-			}),
-			(c) => {
-				const session = orderSession(spoolDir, c.req.valid("json").order);
-				machineStateWatch.acknowledgeSession(session);
-				emitAppEvent({ kind: "session" });
-				return c.body(null, 204);
-			},
-		)
-		// #281: the settings registry with its values, for one project or for none.
-		// A project setting asked for without a project reads as its default.
-		.get("/api/settings", (c) => {
-			const name = c.req.query("project");
-			if (name === undefined || name === "") return c.json(settings.read());
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			return c.json(settings.read(project.root));
-		})
-		.put(
-			"/api/settings",
-			validator("json", (value, c) => {
-				// one write, or several under `writes`; several are checked as a set
-				// and land as one, which is what a theme of ten tokens needs
-				const shape =
-					'a setting write is { "key", "value", "project"? } or { "writes": [{ "key", "value" }], "project"? }';
-				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					key?: unknown;
-					value?: unknown;
-					writes?: unknown;
-					project?: unknown;
-				};
-				if (body.project !== undefined && typeof body.project !== "string") return c.text(shape, 400);
-				if (Array.isArray(body.writes)) {
-					for (const write of body.writes as unknown[]) {
-						const { key } = (typeof write === "object" && write !== null ? write : {}) as { key?: unknown };
-						if (typeof key !== "string") return c.text(shape, 400);
-					}
-					return body as { writes: { key: string; value: unknown }[]; project?: string };
-				}
-				if (typeof body.key !== "string") return c.text(shape, 400);
-				return body as { key: string; value: unknown; project?: string };
-			}),
-			(c) => {
-				const body = c.req.valid("json");
-				let root: string | undefined;
-				if (body.project !== undefined) {
-					const project = resolveProject(c, body.project);
-					if ("response" in project) return project.response;
-					root = project.root;
-				}
-				const one = !("writes" in body);
-				const writes = "writes" in body ? body.writes : [{ key: body.key, value: body.value }];
-				const written = settings.writeMany(writes, root);
-				if (!written.ok) return c.text(written.reason, written.status);
-				// history reads its flag off canvas.json at every window, but a project
-				// switched on has to be picked up now rather than at the next arrival
-				if (writes.some((write) => write.key === "history")) history.keeping(registeredRoots());
-				emitAppEvent({ kind: "settings" });
-				return c.json(one ? written.readings[0] : written.readings);
-			},
 		)
 		.get("/api/events", (c) => {
 			return streamSSE(c, async (stream) => {
