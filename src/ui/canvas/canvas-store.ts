@@ -1,7 +1,11 @@
 import { type Dispatch, type SetStateAction, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { ProjectedPlaceholder } from "../../daemon/projection";
+import type { Unseen } from "../../daemon/seen";
 import { ROOT_PAGE } from "../../page-path";
-import type { Place, ProjectedFrame } from "../api";
+import type { FlowEdge, Place, ProjectedFrame } from "../api";
+import type { CanvasTool } from "./canvas-tools";
+import type { HandEdit } from "./hand-edit";
+import type { Staging } from "./history";
 import type { PickedSelection } from "./overlays";
 import { type PageObject, pageObjectsOn } from "./page-objects";
 import { pageOf } from "./pages";
@@ -37,6 +41,40 @@ export interface CanvasState {
 	hidden: ReadonlySet<string>;
 	/** pages staged for the Trash, with everything inside them (#229) */
 	hiddenPages: ReadonlySet<string>;
+	/** the frame that is live, whose document owns the pointer and the keyboard */
+	entered: string | null;
+	/** the in-place text edit that is open (#314), which is what hands the frame its pointer */
+	editing: HandEdit | null;
+	/** the tool picked (#321) */
+	tool: CanvasTool;
+	/** whether Space is held, which borrows the Hand */
+	spaceDown: boolean;
+	/** whether ⌘ is held, which borrows Edit in Select (#339) */
+	accelDown: boolean;
+	/** each frame's document's generation: a new one is a fresh boot */
+	docNonces: Record<string, number>;
+	/** frames whose current boot is a walk arrival (#28): quiet cover, no veil */
+	walkArrivals: ReadonlySet<string>;
+	/** the threads between frames (#34) */
+	edges: FlowEdge[];
+	/** the entry on the trash toast, until it commits (#23) */
+	pendingTrash: Staging | null;
+	/** frames marked read here whose read has not come back in the projection yet */
+	read: ReadonlySet<string>;
+	/** the right-click menu that is open */
+	menu: CanvasContextMenu | null;
+	/** the frames the export dialog is choosing a format for (#7) */
+	exportDialog: readonly string[] | null;
+	exporting: boolean;
+	/** whether the frame finder (/) is open */
+	finding: boolean;
+}
+
+export interface CanvasContextMenu {
+	x: number;
+	y: number;
+	frame: string;
+	selection: "frames" | "element";
 }
 
 export interface CanvasStore {
@@ -63,6 +101,20 @@ export function createCanvasStore(initial: Partial<CanvasState> = {}): CanvasSto
 		activePage: ROOT_PAGE,
 		hidden: new Set<string>(),
 		hiddenPages: new Set<string>(),
+		entered: null,
+		editing: null,
+		tool: "select",
+		spaceDown: false,
+		accelDown: false,
+		docNonces: {},
+		walkArrivals: new Set<string>(),
+		edges: [],
+		pendingTrash: null,
+		read: new Set<string>(),
+		menu: null,
+		exportDialog: null,
+		exporting: false,
+		finding: false,
 		...initial,
 	};
 	const listeners = new Set<() => void>();
@@ -198,4 +250,23 @@ export const pageObjectsOf: (state: CanvasState) => PageObject[] = derived(
 	(state) =>
 		[navigatorFramesOf(state), navigatorPagesOf(state), state.places, state.placeholders, state.activePage] as const,
 	([frames, pages, places, placeholders, page]) => pageObjectsOn(page, pages, frames, places, placeholders),
+);
+
+/** The tool in hand: Space borrows the Hand for as long as it is held. */
+export const toolOf = (state: Pick<CanvasState, "tool" | "spaceDown">): CanvasTool =>
+	state.spaceDown ? "hand" : state.tool;
+
+/**
+ * What nobody has looked at (seen.ts), as the projection says minus what this
+ * canvas has just cleared.
+ */
+export const unseenOf = derived(
+	(state) => [state.frames, state.read] as const,
+	([frames, read]) => {
+		const marks = new Map<string, Unseen>();
+		for (const frame of frames) {
+			if (frame.unseen !== undefined && !read.has(frame.name)) marks.set(frame.name, frame.unseen);
+		}
+		return marks;
+	},
 );
