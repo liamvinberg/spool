@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { Agent } from "undici";
 import { installAutostart, removeAutostart } from "./autostart";
 import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkStart, runCheck } from "./check-command";
@@ -514,9 +515,11 @@ program
 
 program
 	.command("move")
-	.description("move a team project to another team, out of its team, or into a checkout; asks first")
+	.description(
+		"move a project into a team, a team project to another team, out of its team, or into a checkout; asks first",
+	)
 	.argument("[project]", "<team>/<project>, to move one that isn't on this Mac to another team")
-	.option("--team <address>", "the team it goes to")
+	.option("--team <address>", "the team it goes to; a project on this Mac only moves into it")
 	.option("--name <name>", "its name there, when the one it has is taken")
 	.option("--out", "move it out of its team: design/ goes back into git here")
 	.option("--into <checkout>", "move a project in no repo into a checkout")
@@ -527,32 +530,34 @@ program
 			options: { team?: string; name?: string; out?: boolean; into?: string; yes?: boolean },
 		) => {
 			const asks = process.stdin.isTTY === true && process.stderr.isTTY === true;
+			const patient = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 			const daemon = await ensureDaemon(spoolDir);
 			warnGoneSource(daemon.pid);
-			await runMove(
-				{ project, ...options },
-				{
-					here: async () => {
-						await fetchFirst(process.cwd());
-						const { root } = resolveRegisteredProject(spoolDir, process.cwd());
-						const link = followedLink(root);
-						if (link === undefined)
-							throw new SpoolError(
-								`${root} isn't a local copy of a team project; Move to team in the app moves it into one`,
-							);
-						return { root, link };
+			try {
+				await runMove(
+					{ project, ...options },
+					{
+						here: async () => {
+							await fetchFirst(process.cwd());
+							const { root } = resolveRegisteredProject(spoolDir, process.cwd());
+							return { root, link: followedLink(root) };
+						},
+						request: (path, init) =>
+							fetch(`${daemon.url}/api/cloud${path}`, {
+								// a move in uploads the whole project before it answers, which can take longer than fetch waits
+								dispatcher: patient,
+								method: init?.method ?? "GET",
+								headers: { [CONTROL_HEADER]: daemon.controlToken, "content-type": "application/json" },
+								...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+							} as RequestInit),
+						confirm: asks ? confirmOnTty : undefined,
+						print: (line) => process.stdout.write(`${line}\n`),
+						cwd: process.cwd(),
 					},
-					request: (path, init) =>
-						fetch(`${daemon.url}/api/cloud${path}`, {
-							method: init?.method ?? "GET",
-							headers: { [CONTROL_HEADER]: daemon.controlToken, "content-type": "application/json" },
-							...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-						}),
-					confirm: asks ? confirmOnTty : undefined,
-					print: (line) => process.stdout.write(`${line}\n`),
-					cwd: process.cwd(),
-				},
-			);
+				);
+			} finally {
+				await patient.close();
+			}
 		},
 	);
 

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createSettingsStore } from "./daemon/settings";
-import { initTeamProject } from "./init";
+import { initProject, initTeamProject } from "./init";
 import { runMove } from "./move-verb";
 import { parseProjectLink } from "./team-project";
 import { fakeTeam, TEAM_ORIGIN } from "./team-sync-test-harness";
@@ -56,8 +56,11 @@ async function ada() {
 	writeFrame(root, "home", "export default () => <h1>Home</h1>;\n");
 	await until(() => cloud.file("site", "frames/home/frame.tsx") !== undefined, 10_000);
 	const printed: string[] = [];
-	const deps = (confirm?: (question: string) => Promise<boolean>) => ({
-		here: async () => ({ root: realpathSync(root), link }),
+	const deps = (
+		confirm?: (question: string) => Promise<boolean>,
+		here: { root: string; link?: typeof link } = { root: realpathSync(root), link },
+	) => ({
+		here: async () => here,
 		request: async (path: string, init?: { method: string; body?: unknown }) =>
 			await daemon.controlRequest(`/api/cloud${path}`, {
 				method: init?.method ?? "GET",
@@ -68,7 +71,7 @@ async function ada() {
 		print: (line: string) => void printed.push(line),
 		cwd: root,
 	});
-	return { cloud, root: realpathSync(root), deps, printed };
+	return { cloud, state, root: realpathSync(root), deps, printed };
 }
 
 describe("spool move", () => {
@@ -151,5 +154,69 @@ describe("spool move", () => {
 		await runMove({ project: "tidemark/pitch", team: "northlight", yes: true }, elsewhere());
 		expect(again.forward("tidemark/pitch")).toBe("northlight/pitch");
 		expect(said.at(-1)).toBe(`moved tidemark/pitch to ${TEAM_ORIGIN}/northlight/pitch`);
+	});
+
+	it("moves a project on this Mac only into a team, asking first", { timeout: 30_000 }, async () => {
+		const { cloud, state, deps, printed } = await ada();
+		const solo = join(makeTempDir(), "pitch");
+		mkdirSync(solo);
+		git(solo, "init", "--quiet", "--initial-branch=main", ".");
+		git(solo, "config", "commit.gpgsign", "false");
+		initProject(solo, state, {});
+		writeFrame(solo, "home", "export default () => <h1>Pitch</h1>;\n");
+		git(solo, "add", "-A");
+		git(solo, "commit", "--quiet", "-m", "start");
+		const root = realpathSync(solo);
+		const here = { root };
+
+		await expect(
+			runMove(
+				{ team: "northlight" },
+				deps(async () => false, here),
+			),
+		).rejects.toThrow("nothing moved");
+		expect(printed).toEqual([
+			`moves ${root} into Northlight as northlight/pitch: spool uploads the whole project, then makes one commit on its current branch that takes design/ out of git and adds spool.json and the AGENTS.md line; nothing is pushed, and everyone who pulls gets the change`,
+			"history before the move stays in git",
+		]);
+		expect(cloud.file("pitch", "frames/home/frame.tsx")).toBeUndefined();
+		await expect(runMove({ team: "northlight" }, deps(undefined, here))).rejects.toThrow(
+			"nothing moved: spool move asks first",
+		);
+
+		printed.length = 0;
+		await runMove({ team: "Northlight", yes: true }, deps(undefined, here));
+		expect(printed.slice(-2)).toEqual([
+			`moved ${root} to ${TEAM_ORIGIN}/northlight/pitch`,
+			`committed the move in ${root}`,
+		]);
+		expect(git(root, "log", "-1", "--format=%s")).toBe("design: moved to Spool Cloud");
+		const named = JSON.parse(readFileSync(join(root, "spool.json"), "utf8")) as { project: string };
+		expect(named.project).toBe(`${TEAM_ORIGIN}/northlight/pitch`);
+	});
+
+	it("lists the account's teams when --team is missing or names a team it isn't in", { timeout: 30_000 }, async () => {
+		const { cloud, state, deps } = await ada();
+		const solo = join(makeTempDir(), "pitch");
+		mkdirSync(solo);
+		initProject(solo, state, {});
+		const here = { root: realpathSync(solo) };
+		const teams = "Your teams: tidemark (Tidemark), northlight (Northlight).";
+		await expect(runMove({}, deps(undefined, here))).rejects.toThrow(
+			`say where it goes: one of \`--team <address>\`, \`--out\` and \`--into <checkout>\`. ${teams}`,
+		);
+		await expect(runMove({ out: true }, deps(undefined, here))).rejects.toThrow(
+			`${here.root} isn't a team project: \`--team <address>\` moves it into one. ${teams}`,
+		);
+		await expect(runMove({ team: "harbour", yes: true }, deps(undefined, here))).rejects.toThrow(
+			`You're not in a team at harbour. ${teams}`,
+		);
+		await expect(runMove({ team: "harbour", yes: true }, deps())).rejects.toThrow(
+			`You're not in a team at harbour. ${teams}`,
+		);
+		cloud.role("ada", "viewer", "northlight");
+		await expect(runMove({ team: "northlight", yes: true }, deps(undefined, here))).rejects.toThrow(
+			"You're a viewer of Northlight. Only its editors and admins can move a project into it.",
+		);
 	});
 });
