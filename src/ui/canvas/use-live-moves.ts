@@ -3,6 +3,7 @@ import type { Camera, FlowEdge, ProjectedFrame } from "../api";
 import { formatCombo } from "../hotkey-combos";
 import { type Box, entryCamera, revealCamera, visibleWorldRect } from "./camera";
 import type { CameraStore } from "./camera-store";
+import type { CanvasStore } from "./canvas-store";
 import type { LiveChip } from "./frame-label";
 import {
 	createAltHold,
@@ -34,7 +35,8 @@ export interface LiveMoveDeps {
 	allFramesRef: RefObject<readonly ProjectedFrame[]>;
 	edgesRef: RefObject<readonly FlowEdge[]>;
 	enteredRef: RefObject<string | null>;
-	selectedRef: RefObject<readonly string[]>;
+	/** what the canvas holds: the selection */
+	store: CanvasStore;
 	/** go inside a frame, the way a double-click does */
 	enterFrame: (name: string) => void;
 	/** walk to a frame the way its data-go would: fresh boot, its page if it is on another */
@@ -151,10 +153,10 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 
 	/** Where the overview opens from right now: the entered frame, else the one frame selected. */
 	const overviewOrigin = useCallback((): { mode: Overview["mode"]; origin: string } | null => {
-		const { enteredRef, selectedRef, selectionIdle } = depsRef.current;
+		const { enteredRef, store, selectionIdle } = depsRef.current;
 		const entered = enteredRef.current;
 		if (entered !== null) return frameNamed(entered) === undefined ? null : { mode: "live", origin: entered };
-		const selected = selectedRef.current ?? [];
+		const selected = store.get().selected;
 		const [only] = selected;
 		if (selected.length !== 1 || only === undefined || !selectionIdle() || frameNamed(only) === undefined)
 			return null;
@@ -256,9 +258,9 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	/** ⌘]: on along the thread, entered, or the selection along it out on the canvas. */
 	const walkOn = useCallback(
 		(event?: KeyboardEvent) => {
-			const { enteredRef, selectedRef, edgesRef, walkTo, select, camera } = depsRef.current;
+			const { enteredRef, store, edgesRef, walkTo, select, camera } = depsRef.current;
 			const entered = enteredRef.current;
-			const selected = selectedRef.current ?? [];
+			const selected = store.get().selected;
 			const at = entered ?? (selected.length === 1 ? (selected[0] ?? null) : null);
 			if (at === null) return;
 			event?.preventDefault();
