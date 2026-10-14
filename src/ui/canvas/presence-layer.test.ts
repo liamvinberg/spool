@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AgentCompanion } from "./agent-companion";
 import { dockRoom } from "./agent-companion-layer";
-import { pillSlots, pillWidth } from "./presence-layer";
+import { pillSlots as dock, pillWidth } from "./presence-layer";
+
+const pillSlots = (...args: Parameters<typeof dock>) => dock(...args).pills;
 
 /**
  * Where teammates' pills dock on a frame's name row (DEV-196), and that they step aside left of an
@@ -100,5 +102,58 @@ describe("pills on a frame's name", () => {
 		const narrow = { ...HOME, w: pillWidth("ben") + 6 + pillWidth("ada lovelace") + 40 };
 		const slots = pillSlots([narrow], () => [ben, ada], flat);
 		expect([slots.get("ben")?.dotted, slots.get("ada")?.dotted]).toEqual([true, true]);
+	});
+
+	it("line up by the width they're drawn at, an even gap between each", () => {
+		const drawn: Record<string, number> = { ben: 31.5, ada: 80.25 };
+		const slots = pillSlots(
+			[HOME],
+			() => [ben, ada],
+			flat,
+			undefined,
+			(key) => drawn[key] ?? 0,
+		);
+		expect(slots.get("ben")?.x).toBe(500 - 31.5);
+		expect(slots.get("ada")?.x).toBe(500 - 31.5 - 6 - 80.25);
+	});
+
+	const cleo = { id: "cleo", name: "cleo" };
+	const dan = { id: "dan", name: "dan" };
+	const eve = { id: "eve", name: "eve" };
+	const WIDE = { ...HOME, x: -1000, w: 1500 };
+
+	it("name up to three people side by side", () => {
+		const { pills, more } = dock([WIDE], () => [ben, ada, cleo], flat);
+		expect(more).toEqual([]);
+		expect([...pills.values()].map((pill) => pill.folded)).toEqual([false, false, false]);
+		expect(pills.get("cleo")?.x).toBe(500 - pillWidth("ben") - 6 - pillWidth("ada lovelace") - 6 - pillWidth("cleo"));
+	});
+
+	it("name the first two of four or more, and count the rest in a third pill that names them", () => {
+		const { pills, more } = dock([WIDE], () => [ben, ada, cleo, dan, eve], flat);
+		const x = 500 - pillWidth("ben") - 6 - pillWidth("ada lovelace") - 6 - pillWidth("+3");
+		expect(more).toEqual([{ frame: "home", x, y: 73, names: ["cleo", "dan", "eve"] }]);
+		expect(pills.get("ada")).toMatchObject({ folded: false });
+		// the rest stand where the count is, drawn as none
+		for (const id of ["cleo", "dan", "eve"]) expect(pills.get(id)).toMatchObject({ x, y: 73, folded: true });
+	});
+
+	it("line the count up by its own drawn width", () => {
+		const widths = (key: string) => (key === "more:home" ? 24 : 40);
+		const { more } = dock([WIDE], () => [ben, ada, cleo, dan], flat, undefined, widths);
+		expect(more[0]?.x).toBe(500 - 40 - 6 - 40 - 6 - 24);
+	});
+
+	it("stack everyone inside as dots when zoomed out, however many, with no count", () => {
+		const far = (x: number, y: number) => ({ x: x / 8, y: y / 8 });
+		const { pills, more } = dock([HOME], () => [ben, ada, cleo, dan], far);
+		expect(more).toEqual([]);
+		expect([...pills.values()].map((pill) => [pill.dotted, pill.folded])).toEqual([
+			[true, false],
+			[true, false],
+			[true, false],
+			[true, false],
+		]);
+		expect(pills.get("dan")?.dot.x).toBe(500 / 8 - 10 - 3 * 7);
 	});
 });

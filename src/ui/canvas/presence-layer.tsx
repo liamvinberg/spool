@@ -1,5 +1,6 @@
 import { type CSSProperties, useEffect, useLayoutEffect, useReducer, useRef } from "react";
 import { flushSync } from "react-dom";
+import { Count } from "../primitives/display";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import {
@@ -40,6 +41,8 @@ const DOCK_W = 10;
 const IDLE_INK = 1 / 3;
 /** A pill's height, and the gap between pills lined up on one name. */
 const PILL_H = 18;
+/** A pill's padding either side of its name. */
+const PILL_PAD = 7;
 const PILL_GAP = 6;
 /** Above a frame's top edge, where its name's row is. */
 const NAME_ROW = 27;
@@ -49,10 +52,16 @@ const NAME_ROOM = 56;
 const DOT = 10;
 const DOT_STEP = 7;
 
-/** A pill's width at 11px medium, near enough to line pills up by. */
+/** A pill's width at 11px medium, near enough to line pills up by until it is drawn and measured. */
 export function pillWidth(name: string): number {
-	return Math.round(name.length * 6.5 + 14);
+	return Math.round(name.length * 6.5 + 2 * PILL_PAD);
 }
+
+/** The most pills one frame's name holds side by side; past it, the last one says how many more are inside. */
+export const MAX_PILLS = 3;
+
+/** The key a frame's "+N" pill is measured by, beside the people's own. */
+export const moreKey = (frame: string) => `more:${frame}`;
 
 /** Where a pill docked on a frame's name stands, in screen pixels, as a pill and shrunk to a dot. */
 export interface PillSlot {
@@ -62,38 +71,72 @@ export interface PillSlot {
 	dot: { x: number; y: number };
 	/** The pills on this name don't fit beside it, so they are dots. */
 	dotted: boolean;
+	/** Too many are inside to name them all: this one is counted in the "+N" pill, and drawn as none. */
+	folded: boolean;
+}
+
+/** The pill that counts the people inside a frame past the first names on it. */
+export interface MorePill {
+	frame: string;
+	x: number;
+	y: number;
+	/** Who it counts, in the order they went inside. */
+	names: string[];
+}
+
+/** Every pill docked on the frames' names: each person's, by account id, and each frame's "+N". */
+export interface Docked {
+	pills: Map<string, PillSlot>;
+	more: MorePill[];
 }
 
 /**
  * Where each pill docked on a frame's name stands, in screen pixels: right-aligned on the frame's
- * top-right corner, right to left in the order their people went inside, and stepped aside left of
- * the room an agent's companion takes on that row (#373). Once the pills would crowd the frame's
- * own name, as when zoomed out, they shrink to dots overlapping one another in the same order.
+ * top-right corner, right to left in the order their people went inside, an even gap between each by
+ * their drawn width (`width`, by person or `moreKey`, the estimate until measured), and stepped aside left
+ * of the room an agent's companion takes on that row (#373). Never more than `MAX_PILLS` stand there: with
+ * more people inside, the first names and a "+N" pill counting the rest. Once the pills would crowd the
+ * frame's own name, as when zoomed out, everyone inside shrinks to a dot, overlapping in the same order.
  */
 export function pillSlots(
 	frames: readonly (Box & { name: string })[],
 	inside: (frame: string) => readonly { id: string; name: string }[],
 	toScreen: (x: number, y: number) => { x: number; y: number },
 	taken?: ReadonlyMap<string, number>,
-): Map<string, PillSlot> {
-	const slots = new Map<string, PillSlot>();
+	width: (key: string, label: string) => number = (_, label) => pillWidth(label),
+): Docked {
+	const pills = new Map<string, PillSlot>();
+	const more: MorePill[] = [];
 	for (const frame of frames) {
+		const mates = inside(frame.name);
+		if (mates.length === 0) continue;
 		const corner = toScreen(frame.x + frame.w, frame.y);
 		const room = taken?.get(frame.name) ?? 0;
 		const start = room > 0 ? corner.x - room - PILL_GAP : corner.x;
-		const mates = inside(frame.name);
-		const row = mates.reduce((sum, mate, i) => sum + pillWidth(mate.name) + (i > 0 ? PILL_GAP : 0), 0);
+		const folding = mates.length > MAX_PILLS;
+		const named = folding ? mates.slice(0, MAX_PILLS - 1) : mates;
+		const rest = folding ? mates.slice(MAX_PILLS - 1) : [];
+		const widths = named.map((mate) => width(mate.id, mate.name));
+		if (folding) widths.push(width(moreKey(frame.name), `+${rest.length}`));
+		const row = widths.reduce((sum, w) => sum + w, 0) + PILL_GAP * (widths.length - 1);
 		const left = toScreen(frame.x, frame.y).x;
-		const dotted = mates.length > 0 && start - row < left + NAME_ROOM;
+		const dotted = start - row < left + NAME_ROOM;
+		const y = corner.y - NAME_ROW;
+		const dot = (i: number) => ({ x: start - DOT - i * DOT_STEP, y: y + (PILL_H - DOT) / 2 });
 		let right = start;
-		mates.forEach((mate, i) => {
-			const width = pillWidth(mate.name);
-			const dot = { x: start - DOT - i * DOT_STEP, y: corner.y - NAME_ROW + (PILL_H - DOT) / 2 };
-			slots.set(mate.id, { x: right - width, y: corner.y - NAME_ROW, dot, dotted });
-			right -= width + PILL_GAP;
+		named.forEach((mate, i) => {
+			const w = widths[i] ?? 0;
+			pills.set(mate.id, { x: right - w, y, dot: dot(i), dotted, folded: false });
+			right -= w + PILL_GAP;
+		});
+		if (!folding) continue;
+		const x = right - (widths[named.length] ?? 0);
+		if (!dotted) more.push({ frame: frame.name, x, y, names: rest.map((mate) => mate.name) });
+		rest.forEach((mate, i) => {
+			pills.set(mate.id, { x, y, dot: dot(named.length + i), dotted, folded: !dotted });
 		});
 	}
-	return slots;
+	return { pills, more };
 }
 
 interface Motion {
@@ -124,6 +167,13 @@ export function PresenceLayer({
 }) {
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
 	const motions = useRef(new Map<string, Motion>());
+	// each docked pill's drawn width, by person or `moreKey`, so they line up by it rather than the estimate
+	const widths = useRef(new Map<string, number>());
+	const measured = useRef((key: string, width: number) => {
+		if (width <= 0 || Math.abs((widths.current.get(key) ?? 0) - width) < 0.5) return;
+		widths.current.set(key, width);
+		redraw();
+	}).current;
 	const docked = useRef(new Map<string, string | null>());
 	const kicked = useRef(() => {});
 	// what each person's pointer is doing inside their frame: clicks, a drag, a scroll
@@ -207,7 +257,7 @@ export function PresenceLayer({
 
 	// the pills docked on each frame's name, right to left in the order their people went inside
 	const byName = new Map(frames.map((frame) => [frame.name, frame]));
-	const slots = pillSlots(
+	const { pills: slots, more } = pillSlots(
 		frames,
 		(name) =>
 			here
@@ -216,6 +266,7 @@ export function PresenceLayer({
 				.map((mate) => ({ id: mate.person.accountId, name: mate.person.name })),
 		toScreen,
 		taken,
+		(key, label) => widths.current.get(key) ?? pillWidth(label),
 	);
 
 	for (const id of [...motions.current.keys()])
@@ -289,9 +340,32 @@ export function PresenceLayer({
 					slot={slots.get(mate.person.accountId)}
 					toScreen={toScreen}
 					gesture={gestures.current.get(mate.person.accountId)}
+					measured={measured}
 				/>
 			))}
+			{more.map((pill) => (
+				<More key={pill.frame} pill={pill} measured={measured} />
+			))}
 		</div>
+	);
+}
+
+/** The pill after the first names on a frame's, counting the rest inside; its title names them. */
+function More({ pill, measured }: { pill: MorePill; measured: (key: string, width: number) => void }) {
+	const ref = useRef<HTMLSpanElement>(null);
+	useLayoutEffect(() => {
+		if (ref.current !== null) measured(moreKey(pill.frame), ref.current.getBoundingClientRect().width);
+	});
+	return (
+		<Count
+			ref={ref}
+			value={`+${pill.names.length}`}
+			tone="pill"
+			title={pill.names.join(", ")}
+			data-presence-more={pill.frame}
+			className="pointer-events-auto absolute top-0 left-0 animate-presence-in"
+			style={{ height: PILL_H, paddingInline: PILL_PAD, transform: `translate(${pill.x}px, ${pill.y}px)` }}
+		/>
 	);
 }
 
@@ -302,8 +376,11 @@ function Cursor({
 	slot,
 	toScreen,
 	gesture,
+	measured,
 }: {
 	gesture: PointerGesture | undefined;
+	/** Told the pill's drawn width as a name, which the layer lines docked pills up by. */
+	measured: (key: string, width: number) => void;
 	mate: Teammate;
 	now: number;
 	motion: Motion | undefined;
@@ -312,6 +389,7 @@ function Cursor({
 }) {
 	// the pill's own width as a pill, measured, so shrinking to a dot starts from it
 	const pillRef = useRef<HTMLSpanElement>(null);
+	const nameRef = useRef<HTMLSpanElement>(null);
 	const natural = useRef(pillWidth(mate.person.name));
 	const { person, state } = mate;
 	const gone = mate.left !== null;
@@ -331,6 +409,9 @@ function Cursor({
 			: { x: docked.x + (docked.dot.x - docked.x) * dotted, y: docked.y + (docked.dot.y - docked.y) * dotted };
 	useLayoutEffect(() => {
 		if (dotted === 0 && pillRef.current !== null) natural.current = pillRef.current.offsetWidth;
+		// the name with the pill's padding either side: its width as a pill, whatever rides beside it out on the canvas
+		if (nameRef.current !== null)
+			measured(person.accountId, nameRef.current.getBoundingClientRect().width + 2 * PILL_PAD);
 	});
 	const docking = home !== null && dock > 0.01;
 	const hand = at === null ? null : { x: at.x + 13, y: at.y + 17 };
@@ -384,22 +465,26 @@ function Cursor({
 					data-presence-pill={person.accountId}
 					data-presence-docked={slot === undefined ? undefined : (state.inside ?? undefined)}
 					data-presence-dot={slot?.dotted ? "" : undefined}
+					data-presence-folded={slot?.folded ? "" : undefined}
 					data-presence-said={said > 0 ? "" : undefined}
 					className="absolute top-0 left-0 flex items-center overflow-hidden whitespace-nowrap rounded-full font-medium text-[11px] leading-none transition-[opacity,filter] duration-300"
 					style={{
 						height: PILL_H + (DOT - PILL_H) * dotted,
 						width: dotted === 0 ? undefined : natural.current + (DOT - natural.current) * dotted,
-						paddingInline: 7 * (1 - dotted),
+						paddingInline: PILL_PAD * (1 - dotted),
 						transform: `translate(${pill.x}px, ${pill.y}px)`,
 						background: person.color,
 						color: "#0e0e0e",
 						// dots stacked on one name stand apart by a ring of the canvas behind them
 						boxShadow: dotted === 0 ? undefined : `0 0 0 ${1.5 * dotted}px var(--color-surface-canvas)`,
-						opacity: gone ? 0 : said,
+						// counted in its name's "+N" pill, it flies there and fades into it
+						opacity: gone || slot?.folded ? 0 : said,
 						filter: slot !== undefined && resting ? "saturate(0.2)" : undefined,
 					}}
 				>
-					<span style={{ opacity: Math.max(0, 1 - dotted * 2.5) }}>{person.name}</span>
+					<span ref={nameRef} style={{ opacity: Math.max(0, 1 - dotted * 2.5) }}>
+						{person.name}
+					</span>
 					{/* out on the canvas, what their agent is doing rides beside their name (#378) */}
 					{slot === undefined && says !== null ? (
 						<span data-presence-agent="" className="opacity-70">

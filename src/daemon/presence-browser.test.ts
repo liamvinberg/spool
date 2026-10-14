@@ -21,6 +21,8 @@ import { syncUrl } from "./team-sync";
 
 const BEN = { accountId: "ben", name: "ben", color: "#eaa94a" };
 const CLEO = { accountId: "cleo", name: "cleo", color: "#4cc495" };
+const DAN = { accountId: "dan", name: "dan", color: "#7a9cf0" };
+const EVE = { accountId: "eve", name: "eve", color: "#e07ab8" };
 const HOME = { x: 0, y: 0, w: 640, h: 400 };
 const MENU = { x: 800, y: 0, w: 640, h: 400 };
 
@@ -247,7 +249,8 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	await page.waitForTimeout(800);
 	const ben = await box(page, '[data-presence-pill="ben"]');
 	const cleo = await box(page, '[data-presence-pill="cleo"]');
-	expect(cleo.x + cleo.width).toBeLessThanOrEqual(ben.x);
+	// by the width each is drawn at, an even gap between them
+	expect(ben.x - (cleo.x + cleo.width)).toBeCloseTo(6, 0);
 	expect(Math.abs(cleo.y - ben.y)).toBeLessThan(1);
 	say(CLEO, at(200, 100, { inside: "home" }), 5 * 60_000);
 	await page.waitForTimeout(400);
@@ -299,6 +302,49 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 			{ timeout: 5_000 },
 		)
 		.toBeLessThan(2);
+});
+
+it("names no more than three on a frame: the first two and a count of the rest that names them", {
+	timeout: 120_000,
+}, async () => {
+	const { page, say } = await teamCanvas();
+	for (const person of [BEN, CLEO, DAN]) {
+		say(person, at(300, 200, { inside: "home" }));
+		await expect
+			.poll(() => page.locator(`[data-presence-pill="${person.accountId}"]`).getAttribute("data-presence-docked"))
+			.toBe("home");
+	}
+	expect(await page.locator("[data-presence-more]").count()).toBe(0);
+
+	say(EVE, at(300, 200, { inside: "home" }));
+	const more = page.locator('[data-presence-more="home"]');
+	await more.waitFor();
+	expect(await more.textContent()).toBe("+2");
+	expect(await more.getAttribute("title")).toBe("dan, eve");
+	await page.waitForTimeout(800);
+	const ben = await box(page, '[data-presence-pill="ben"]');
+	const cleo = await box(page, '[data-presence-pill="cleo"]');
+	const count = await box(page, '[data-presence-more="home"]');
+	expect(ben.x - (cleo.x + cleo.width)).toBeCloseTo(6, 0);
+	expect(cleo.x - (count.x + count.width)).toBeCloseTo(6, 0);
+	expect(Math.abs(count.y - ben.y)).toBeLessThan(1);
+	for (const id of ["dan", "eve"])
+		expect(
+			Number(
+				await page.locator(`[data-presence-pill="${id}"]`).evaluate((element) => getComputedStyle(element).opacity),
+			),
+		).toBe(0);
+
+	// one stepping out leaves three, all named again
+	say(EVE, at(300, 600));
+	await expect.poll(() => more.count()).toBe(0);
+	await expect
+		.poll(async () =>
+			Number(
+				await page.locator('[data-presence-pill="dan"]').evaluate((element) => getComputedStyle(element).opacity),
+			),
+		)
+		.toBe(1);
 });
 
 it("closes a dragging teammate's pointer into a hand, and outlines what they move in their colour", {
