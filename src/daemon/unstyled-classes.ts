@@ -101,6 +101,24 @@ export function namedClasses(source: string): string[] {
 	return strings.flatMap((text) => text.split(/\s+/)).filter((name) => name !== "");
 }
 
+/**
+ * The classes each source file named when last read, by path: a shared
+ * component is a source of every frame that draws it, and a save that
+ * recompiles those frames would read its classes again for each.
+ */
+const namedByFile = new Map<string, { text: string; names: string[] }>();
+/** Past this many files the memory starts over, so a daemon serving many projects holds no more than this. */
+const NAMED_FILES = 4000;
+
+function namedClassesOf(file: string, text: string): string[] {
+	const known = namedByFile.get(file);
+	if (known !== undefined && known.text === text) return known.names;
+	const names = namedClasses(text);
+	if (known === undefined && namedByFile.size >= NAMED_FILES) namedByFile.clear();
+	namedByFile.set(file, { text, names });
+	return names;
+}
+
 /** The utility a class is of, past its variants and modifiers, when it is one held to the theme. */
 function themedUtility(name: string): boolean {
 	if (/[[\](){}$'"`]/.test(name)) return false;
@@ -186,7 +204,7 @@ export function unstyledClasses(files: ReadonlyArray<{ file: string; text: strin
 	let styled: ((name: string) => boolean) | undefined;
 	for (const { file, text } of files) {
 		if (!SOURCE.test(file)) continue;
-		for (const name of namedClasses(text)) {
+		for (const name of namedClassesOf(file, text)) {
 			if (missing.has(name) || !themedUtility(name)) continue;
 			styled ??= styledIndex(css);
 			if (!styled(name)) missing.add(name);
