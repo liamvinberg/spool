@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.42.0
+
+### Minor Changes
+
+- 2dc5570: ⌘C, ⌘V and ⌘D now copy, paste and duplicate the frames selected on the canvas, not only in the Pages list. A paste lands beside its source when that is in view, otherwise in the middle of the view, and each one undoes with a single ⌘Z.
+- 3a18303: When you and a teammate change the same file in a team project at once, Spool now merges the two line by line, the way git does, so both changes stand and nobody is asked anything. Only when you both changed the same lines are you told, in one notice at the foot of the canvas instead of a mark on every frame: Use theirs, Use mine, or Ask agent to fix, which opens a new agent thread with every clashed file (or copies the prompt when there's no agent on this Mac). Sync messages such as "Sync paused" moved to the same place and can be closed.
+- 9030872: Stepping between frames with ⌥ and the arrow keys is more reliable. The opposite arrow takes you back to the frame you came from, the keys reach the nearest frame even when it sits far away, and the view keeps its zoom and only moves when the next frame is off screen.
+- a2a80f1: Home has one search for all your projects once you are in a team. It sits at the top of the sidebar and finds projects in your own list and in every team, including team projects that aren't on this Mac yet. Tabs narrow the results to one place. Under it, Recent lists every project you opened, whichever team it is in, and Home opens there. A team's Projects page now shows how many projects the team has and sorts them like your own. On spool.page, the same search finds projects in every team you're in.
+- 5705cd3: Every shortcut now comes from one list. The keys that still work inside an entered frame, the player's leave key and the Mac app's menu keys all read from it, so they can no longer disagree with the shortcut sheet. Bracket keys are matched by where they sit on the keyboard, and the sheet shows them as your layout prints them.
+- c1f4396: Move between frames without leaving them. Inside a live frame, ⌥ arrows (or ⌥ H J K L) open an overview of the frames around it, and letting go of ⌥ enters the one you picked; holding ⌥ alone shows the same overview. ⌘⌥ arrows step straight to the neighbour, even from a text field. ⌘] and ⌘[ walk along the threads and back, with ] again choosing the next branch at a fork, and one click on another frame enters it. A frame that handles ⌥ itself keeps the key by calling preventDefault, and `spool check` notes frames that read it.
+- 527b8a5: Pages now open from the keyboard. Select a page on the canvas and press Return or ⌘↓ to go inside it. Press Esc with nothing selected, or ⌘↑, to go back up to the page holding it, with the page you left selected.
+- bc98d81: The Mac app has tab keys. ⌘W closes whatever is open on top, then the tab, and on Home the window. ⌘⇧W always closes the window, and ⌘⇧T brings back the tabs you closed, each in its old place and on the page and view you left. ⌘1 is Home, ⌘2 to ⌘8 the tabs after it and ⌘9 the last one. Ctrl+Tab and ⌘⇧] go to the next tab, Ctrl+⇧Tab and ⌘⇧[ to the one before, and ⌘T goes to Home. They work inside an entered frame too, and the File menu and a new Tab menu show them. In a browser tab the browser keeps these keys for its own tabs.
+
+### Patch Changes
+
+- ff88c54: Deleting, moving or typing into an element straight after clicking it no longer refuses with "the file was never read". The gesture waits for the element's file to be read, and that read is now much faster.
+- 9f2e44e: The selection ring glides from one element to the next instead of jumping, and the faint outline under the pointer follows it the same way. The live chip on a frame's name fades in, and the frame's name eases between its colours on hover and selection. All of it stops when your system asks for reduced motion.
+- ba5c95c: Deleting an element, and undoing or redoing that delete, now changes the frame at once instead of reloading it. The frame still reloads when the deleted element is drawn more than once on the page, or when it is a row of a list.
+- f791906: A live frame that was still loading when you started panning or zooming now pauses its animations like the others once it has finished arriving. Before, it could keep animating through every pan until it reloaded.
+- 627b4ba: The play button on a selected frame's name stays put while you zoom. It used to jump back and forth along the name.
+- 785476c: The canvas stays quick after you save a file many frames import. Selecting a frame and opening its flows no longer waits seconds while Spool reads the project again.
+- 714d22e: The canvas stays smooth when the camera stops. The frames around where it lands come alive one at a time instead of all at once, and a frame finishing its load no longer redraws the whole canvas.
+- 2a07ba6: On a team canvas, teammates' pointers and names move with the canvas as you pan and zoom, instead of trailing a frame behind.
+
 ## 0.41.0
 
 ### Minor Changes
