@@ -36,7 +36,10 @@ const at = (x: number, y: number, more: Partial<PresenceState> = {}): PresenceSt
 	...more,
 });
 
-async function teamCanvas() {
+/** A frame far off, so the page is big enough to zoom out to where docked names crowd a frame's own name. */
+const FAR = { x: 40_000, y: 0, w: 640, h: 400 };
+
+async function teamCanvas(options: { far?: boolean } = {}) {
 	const cloud = fakeTeam();
 	const ana = cloud.machine("ana");
 	const ben = cloud.machine("ben");
@@ -53,6 +56,7 @@ async function teamCanvas() {
 	for (const [name, box] of [
 		["home", HOME],
 		["menu", MENU],
+		...(options.far === true ? ([["far", FAR]] as const) : []),
 	] as const) {
 		// a list that scrolls inside the frame, the way a phone screen's does
 		writeFrame(
@@ -217,7 +221,7 @@ it("draws a teammate's named pointer, holds the name after they stop, and dims a
 it("docks the name on a frame's label while they're inside it, lines several up, and flies it back", {
 	timeout: 120_000,
 }, async () => {
-	const { page, say } = await teamCanvas();
+	const { page, say } = await teamCanvas({ far: true });
 	say(BEN, at(300, 200, { inside: "home" }));
 	const pill = page.locator('[data-presence-pill="ben"]');
 	await expect.poll(() => pill.getAttribute("data-presence-docked")).toBe("home");
