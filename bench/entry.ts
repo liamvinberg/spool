@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Browser, chromium, type Page } from "playwright-core";
 import {
@@ -45,10 +45,14 @@ import {
  * at the overview camera, into a different frame, so every one boots a
  * document nobody has opened in that tab.
  *
- * `--trace <file>` records one entry as a Chrome trace, for Perfetto or
- * DevTools: the second by default (`--trace-entry`), because the first in a
- * fresh browser also pays its GPU process's first pipeline compiles, which
- * a browser in use has long since paid.
+ * `--trace <file>` records one entry at each rate as a Chrome trace, for
+ * Perfetto or DevTools, and lists the canvas's long main-thread tasks in it:
+ * the second by default (`--trace-entry`), because the first in a fresh
+ * browser also pays its GPU process's first pipeline compiles, which a
+ * browser in use has long since paid.
+ *
+ * The landing is the second after the flight's last frame: the camera's rest,
+ * the render it sets off and the neighbouring documents that mount at it.
  *
  *   pnpm build && node bench/entry.ts --project <path> --page app --headed
  *   node bench/entry.ts --project <path> --page app --zoom 0.16 --entries 8 --throttle 1,4 --headed
@@ -62,8 +66,6 @@ interface Options {
 	zoom: number;
 	entries: number;
 	throttle: number[];
-	/** Experimental arms: each one's `__spoolBench.entry`, "+" joining several. */
-	modes: string[];
 	headed: boolean;
 	trace: string | undefined;
 	/** Which entry the trace records, from 1. */
@@ -78,7 +80,6 @@ function parseArgs(argv: string[]): Options {
 		zoom: DEFAULT_ZOOM,
 		entries: 6,
 		throttle: [1],
-		modes: ["base"],
 		headed: false,
 		trace: undefined,
 		traceEntry: 2,
@@ -95,7 +96,6 @@ function parseArgs(argv: string[]): Options {
 		else if (arg === "--zoom") options.zoom = Number(next);
 		else if (arg === "--entries") options.entries = Number(next);
 		else if (arg === "--throttle") options.throttle = next.split(",").map(Number);
-		else if (arg === "--modes") options.modes = next.split(",");
 		else if (arg === "--trace") options.trace = resolve(next);
 		else if (arg === "--trace-entry") options.traceEntry = Number(next);
 		else if (arg === "--out") options.out = resolve(next);
@@ -179,9 +179,13 @@ const ENTRY_TIMEOUT_MS = 8000;
 /** A double-click as a hand makes one: each press held this long, this far apart. */
 const CLICK_HOLD_MS = 60;
 const CLICK_GAP_MS = 90;
+/**
+ * How long after the flight's last frame the landing is watched: the camera
+ * store's 100 ms rest, the render it sets off and the neighbours it mounts.
+ */
+const LANDING_MS = 1000;
 
 interface Entry {
-	mode: string;
 	rate: number;
 	frame: string;
 	/** From the double-click, in ms. */
@@ -195,11 +199,15 @@ interface Entry {
 	between: GestureStats;
 	fly: GestureStats;
 	entry: GestureStats;
+	/** The camera's rest and what it mounts: LANDING_MS from the flight's last frame. */
+	landing: GestureStats;
+	/** The longest animation frame of the landing, 0 with none over 50 ms. */
+	landingLoaf: number;
 	/** Documents mounted once the entry was over, the entered one included. */
 	mountedAfter: number;
 }
 
-async function enterOnce(page: Page, target: { x: number; y: number }, rate: number, mode: string): Promise<Entry> {
+async function enterOnce(page: Page, target: { x: number; y: number }, rate: number): Promise<Entry> {
 	await page.evaluate(installProbe);
 	// a person's double-click, not playwright's instant one: the first click
 	// selects the frame, and what that starts has the gap to get going in
@@ -253,6 +261,8 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 		probe.stop = true;
 		return probe;
 	});
+	// the landing runs on past the entry: the neighbours the rest mounts
+	await page.waitForTimeout(LANDING_MS);
 	const state = await read(page);
 	const click = probe.click as number;
 	const marks = probe.marks.filter((mark) => mark.t >= click);
@@ -277,8 +287,8 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 	const faded = ofFrame.find((mark) => mark.cover === "0" || mark.cover === null);
 	const liveAt = faded === undefined ? Number.NaN : faded.t + (faded.cover === null ? 0 : COVER_FADE_MS);
 	const end = Math.max(flyEnd, liveAt);
+	const landing = windowStats(state, flyEnd, flyEnd + LANDING_MS);
 	return {
-		mode,
 		rate,
 		frame,
 		flyStart,
@@ -290,6 +300,10 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 		between: windowStats(state, probe.press as number, click),
 		fly: windowStats(state, click, flyEnd),
 		entry: windowStats(state, click, end),
+		landing,
+		landingLoaf: state.loaf
+			.filter((entry) => entry.t >= flyEnd && entry.t <= flyEnd + LANDING_MS)
+			.reduce((worst, entry) => Math.max(worst, entry.duration), 0),
 		mountedAfter: marks.at(-1)?.iframes ?? 0,
 	};
 }
@@ -329,59 +343,95 @@ async function measure(
 	options: Options,
 ): Promise<Entry[]> {
 	const entries: Entry[] = [];
-	for (const mode of options.modes)
-		for (const rate of options.throttle) {
-			for (let index = 0; index < options.entries; index++) {
-				writeCamera(subject.root, camera, page);
-				const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-				try {
-					await context.addInitScript(collector);
-					await context.addInitScript(
-						(entry) => {
-							(globalThis as unknown as { __spoolBench: { entry: string } }).__spoolBench = { entry };
-						},
-						mode.replaceAll("+", ","),
-					);
-					const tab = await context.newPage();
-					tab.on("pageerror", (error) =>
-						process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`),
-					);
-					const cdp = await context.newCDPSession(tab);
-					await cdp.send("Emulation.setCPUThrottlingRate", { rate });
-					await tab.goto(subject.url, { waitUntil: "domcontentloaded" });
-					await settleOnFrames(tab, 1000, 30_000);
-					await waitForMountedFramesLoaded(tab, 60_000);
-					await tab.waitForTimeout(600);
-					const target = (await targets(tab, options.entries))[index];
-					if (target === undefined) throw new Error(`no frame ${index + 1} on screen to enter`);
-					const trace =
-						index + 1 === options.traceEntry && rate === options.throttle[0]
-							? options.trace?.replace(/\.json$/, `-${mode}.json`)
-							: undefined;
-					if (trace !== undefined) await browser.startTracing(tab, { path: trace });
-					const entry = await enterOnce(tab, target, rate, mode);
-					if (trace !== undefined) {
-						await browser.stopTracing();
-						process.stderr.write(`bench: wrote the trace to ${trace}\n`);
-					}
-					entries.push(entry);
-					process.stderr.write(
-						`bench:   ${mode} ${rate}x ${entry.frame}: fly ${ms(entry.flyStart)}–${ms(entry.flyEnd)}, loaded ${ms(entry.loaded)}, live ${ms(entry.live)}, ` +
-							`entry p95 ${ms(entry.entry.p95)} worst ${ms(entry.entry.worst)}\n`,
-					);
-				} finally {
-					await context.close();
+	for (const rate of options.throttle) {
+		for (let index = 0; index < options.entries; index++) {
+			writeCamera(subject.root, camera, page);
+			const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+			try {
+				await context.addInitScript(collector);
+				const tab = await context.newPage();
+				tab.on("pageerror", (error) =>
+					process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`),
+				);
+				const cdp = await context.newCDPSession(tab);
+				await cdp.send("Emulation.setCPUThrottlingRate", { rate });
+				await tab.goto(subject.url, { waitUntil: "domcontentloaded" });
+				await settleOnFrames(tab, 1000, 30_000);
+				await waitForMountedFramesLoaded(tab, 60_000);
+				await tab.waitForTimeout(600);
+				const target = (await targets(tab, options.entries))[index];
+				if (target === undefined) throw new Error(`no frame ${index + 1} on screen to enter`);
+				const trace =
+					index + 1 === options.traceEntry && options.trace !== undefined
+						? options.trace.replace(/\.json$/, `-${rate}x.json`)
+						: undefined;
+				if (trace !== undefined) await browser.startTracing(tab, { path: trace });
+				const entry = await enterOnce(tab, target, rate);
+				if (trace !== undefined) {
+					await browser.stopTracing();
+					process.stderr.write(`bench: wrote the trace to ${trace}\n${longTasks(trace)}`);
 				}
-				// the canvas saves its camera on settle: let that land before the next plan
-				await new Promise((wait) => setTimeout(wait, 1500));
+				entries.push(entry);
+				process.stderr.write(
+					`bench:   ${rate}x ${entry.frame}: fly ${ms(entry.flyStart)}–${ms(entry.flyEnd)}, loaded ${ms(entry.loaded)}, live ${ms(entry.live)}, ` +
+						`entry p95 ${ms(entry.entry.p95)} worst ${ms(entry.entry.worst)}\n`,
+				);
+			} finally {
+				await context.close();
 			}
+			// the canvas saves its camera on settle: let that land before the next plan
+			await new Promise((wait) => setTimeout(wait, 1500));
 		}
+	}
 	return entries;
 }
 
-function table(entries: Entry[], modes: string[], rateList: number[]): string {
-	const rates = modes.flatMap((mode) => rateList.map((rate) => `${mode} ${rate}`));
-	const column = (key: string) => entries.filter((entry) => `${entry.mode} ${entry.rate}` === key);
+interface TraceEvent {
+	name: string;
+	ph: string;
+	pid: number;
+	tid: number;
+	ts: number;
+	dur?: number;
+	args?: { data?: { type?: string } };
+}
+
+/** A task this long on the canvas's main thread is listed from a trace. */
+const TRACE_TASK_MS = 8;
+
+/**
+ * The canvas's own main-thread tasks over TRACE_TASK_MS from the double-click
+ * on, from a trace: the thread is the one that dispatched the double-click,
+ * and each row is the task's start after it and its length.
+ */
+function longTasks(path: string): string {
+	const { traceEvents } = JSON.parse(readFileSync(path, "utf8")) as { traceEvents: TraceEvent[] };
+	const click = traceEvents.find((event) => event.name === "EventDispatch" && event.args?.data?.type === "dblclick");
+	if (click === undefined) return "bench: no double-click in the trace\n";
+	const tasks = traceEvents.filter(
+		(event) =>
+			event.ph === "X" &&
+			event.pid === click.pid &&
+			event.tid === click.tid &&
+			event.ts >= click.ts &&
+			(event.name === "ThreadControllerImpl::RunTask" || event.name === "RunTask") &&
+			(event.dur ?? 0) / 1000 >= TRACE_TASK_MS,
+	);
+	// a task is often traced twice, the scheduler's span around the thread's
+	// own: one inside another is the same task
+	const rows: string[] = [];
+	let end = Number.NEGATIVE_INFINITY;
+	for (const task of tasks.sort((a, b) => a.ts - b.ts || (b.dur ?? 0) - (a.dur ?? 0))) {
+		if (task.ts < end) continue;
+		end = task.ts + (task.dur ?? 0);
+		rows.push(`bench:     +${ms((task.ts - click.ts) / 1000)} ms  ${ms((task.dur ?? 0) / 1000)} ms\n`);
+	}
+	return `bench:   canvas tasks over ${TRACE_TASK_MS} ms, from the double-click:\n${rows.join("")}`;
+}
+
+function table(entries: Entry[], rateList: number[]): string {
+	const rates = rateList.map(String);
+	const column = (key: string) => entries.filter((entry) => String(entry.rate) === key);
 	const cell = (pick: (entry: Entry) => number) =>
 		rates
 			.map((rate) => {
@@ -409,6 +459,9 @@ function table(entries: Entry[], modes: string[], rateList: number[]): string {
 		`| entry intervals > ${RARE_INTERVAL_MS} ms | ${count((e) => e.entry.rareIntervals)} |`,
 		`| entry long-animation frames | ${count((e) => e.entry.loafs)} |`,
 		`| entry worst LoAF blocking | ${cell((e) => e.entry.loafWorstBlocking)} |`,
+		`| landing worst interval | ${cell((e) => e.landing.worst)} |`,
+		`| landing intervals > ${RARE_INTERVAL_MS} ms | ${count((e) => e.landing.rareIntervals)} |`,
+		`| landing longest animation frame | ${cell((e) => e.landingLoaf)} |`,
 		`| documents mounted after | ${count((e) => e.mountedAfter)} |`,
 	].join("\n");
 }
@@ -430,7 +483,7 @@ async function main(): Promise<void> {
 			await prepareCurrentCovers(browser, subject.daemon, subject.url, subject.root, measured.frames);
 			const entries = await measure(browser, subject, camera, measured.page, options);
 			process.stdout.write(
-				`entry from k=${options.zoom} on page "${measured.page}"\n\n${table(entries, options.modes, options.throttle)}\n`,
+				`entry from k=${options.zoom} on page "${measured.page}"\n\n${table(entries, options.throttle)}\n`,
 			);
 			if (options.out !== undefined) writeFileSync(options.out, `${JSON.stringify(entries, null, 2)}\n`);
 		} finally {
