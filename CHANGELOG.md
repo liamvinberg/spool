@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.42.1
+
+### Patch Changes
+
+- 1ad7040: Spool no longer crashes when a team project's design folder goes away while it syncs, or when a save comes back after sync stopped.
+- 8f1e8b3: A selected frame zoomed out too far to work on no longer carries its corner handles, its size and its play button over the frames around it: they fade out with its name and come back as you zoom in.
+
 ## 0.42.0
 
 ### Minor Changes
