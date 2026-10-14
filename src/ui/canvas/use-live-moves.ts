@@ -1,8 +1,9 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Camera, FlowEdge, ProjectedFrame } from "../api";
+import type { Camera } from "../api";
 import { formatCombo } from "../hotkey-combos";
 import { type Box, entryCamera, revealCamera, visibleWorldRect } from "./camera";
 import type { CameraStore } from "./camera-store";
+import { type CanvasStore, useCanvasState, visibleFramesOf } from "./canvas-store";
 import type { LiveChip } from "./frame-label";
 import {
 	createAltHold,
@@ -28,13 +29,8 @@ const NOTE_MS = 1800;
 export interface LiveMoveDeps {
 	camera: CameraStore;
 	viewportRef: RefObject<HTMLDivElement | null>;
-	/** the frames on the page the canvas shows */
-	framesRef: RefObject<readonly ProjectedFrame[]>;
-	/** every frame, for a thread that runs onto another page */
-	allFramesRef: RefObject<readonly ProjectedFrame[]>;
-	edgesRef: RefObject<readonly FlowEdge[]>;
-	enteredRef: RefObject<string | null>;
-	selectedRef: RefObject<readonly string[]>;
+	/** what the canvas holds: the frame live, the selection, the threads and the frames */
+	store: CanvasStore;
 	/** go inside a frame, the way a double-click does */
 	enterFrame: (name: string) => void;
 	/** walk to a frame the way its data-go would: fresh boot, its page if it is on another */
@@ -81,7 +77,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const frameNamed = useCallback(
-		(name: string) => depsRef.current.framesRef.current?.find((frame) => frame.name === name),
+		(name: string) => visibleFramesOf(depsRef.current.store.get()).find((frame) => frame.name === name),
 		[],
 	);
 	const viewSize = useCallback(() => {
@@ -122,9 +118,9 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	/** Into a frame from the one entered now, by a step, the overview or a click. */
 	const landLive = useCallback(
 		(target: string, came: SpatialDirection | null, from: { camera?: Camera; leaving?: string } = {}) => {
-			const { enterFrame, camera, enteredRef } = depsRef.current;
+			const { enterFrame, camera, store } = depsRef.current;
 			// a click has already put the frame it left down by the time it lands
-			const at = from.leaving ?? enteredRef.current;
+			const at = from.leaving ?? store.get().entered;
 			const frame = frameNamed(target);
 			if (frame === undefined) return;
 			if (at !== null && at !== target) taken.current = [...taken.current, { from: at, to: target }];
@@ -143,7 +139,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			const target = frameNamed(next.target);
 			const size = viewSize();
 			if (target === undefined || size === null) return;
-			const frames = depsRef.current.framesRef.current ?? [];
+			const frames = visibleFramesOf(depsRef.current.store.get());
 			depsRef.current.camera.fly(overviewCamera(target, frames, next.saved, size.w, size.h), OVERVIEW_OPEN_MS);
 		},
 		[frameNamed, viewSize],
@@ -151,10 +147,10 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 
 	/** Where the overview opens from right now: the entered frame, else the one frame selected. */
 	const overviewOrigin = useCallback((): { mode: Overview["mode"]; origin: string } | null => {
-		const { enteredRef, selectedRef, selectionIdle } = depsRef.current;
-		const entered = enteredRef.current;
+		const { store, selectionIdle } = depsRef.current;
+		const entered = store.get().entered;
 		if (entered !== null) return frameNamed(entered) === undefined ? null : { mode: "live", origin: entered };
-		const selected = selectedRef.current ?? [];
+		const selected = store.get().selected;
 		const [only] = selected;
 		if (selected.length !== 1 || only === undefined || !selectionIdle() || frameNamed(only) === undefined)
 			return null;
@@ -218,7 +214,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		(event: KeyboardEvent, through: boolean): boolean => {
 			const direction = stepDirection(event);
 			if (direction === undefined) return false;
-			const frames = depsRef.current.framesRef.current ?? [];
+			const frames = visibleFramesOf(depsRef.current.store.get());
 			const current = overviewRef.current;
 			if (current !== null && !through) {
 				event.preventDefault();
@@ -230,7 +226,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			// the arrow is another key: a ⌥ held this long no longer opens anything
 			if (current !== null) cancel();
 			hold.cancel();
-			const entered = depsRef.current.enteredRef.current;
+			const entered = depsRef.current.store.get().entered;
 			if (entered === null) return false;
 			event.preventDefault();
 			if (through) {
@@ -256,13 +252,13 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	/** ⌘]: on along the thread, entered, or the selection along it out on the canvas. */
 	const walkOn = useCallback(
 		(event?: KeyboardEvent) => {
-			const { enteredRef, selectedRef, edgesRef, walkTo, select, camera } = depsRef.current;
-			const entered = enteredRef.current;
-			const selected = selectedRef.current ?? [];
+			const { store, walkTo, select, camera } = depsRef.current;
+			const entered = store.get().entered;
+			const selected = store.get().selected;
 			const at = entered ?? (selected.length === 1 ? (selected[0] ?? null) : null);
 			if (at === null) return;
 			event?.preventDefault();
-			const move = threadNext(at, edgesRef.current ?? [], fork.current);
+			const move = threadNext(at, store.get().edges, fork.current);
 			if (move.kind === "none") {
 				if (entered !== null) say(entered, move.note);
 				return;
@@ -287,7 +283,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 				...(move.replace ? taken.current.slice(0, -1) : taken.current),
 				{ from: origin, to: move.to },
 			];
-			const all = depsRef.current.allFramesRef.current ?? [];
+			const all = depsRef.current.store.get().frames;
 			const was = all.find((frame) => frame.name === origin);
 			const to = all.find((frame) => frame.name === move.to);
 			walkTo(move.to);
@@ -300,18 +296,18 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	/** ⌘[: back the way you came while live. */
 	const walkBack = useCallback(
 		(event?: KeyboardEvent) => {
-			const { enteredRef, edgesRef, walkTo } = depsRef.current;
-			const entered = enteredRef.current;
+			const { store, walkTo } = depsRef.current;
+			const entered = store.get().entered;
 			if (entered === null) return;
 			event?.preventDefault();
 			fork.current = null;
-			const move = threadBack(entered, taken.current, edgesRef.current ?? []);
+			const move = threadBack(entered, taken.current, store.get().edges);
 			if (move.kind === "none") {
 				say(entered, move.note);
 				return;
 			}
 			taken.current = move.taken;
-			const all = depsRef.current.allFramesRef.current ?? [];
+			const all = depsRef.current.store.get().frames;
 			const was = all.find((frame) => frame.name === entered);
 			const to = all.find((frame) => frame.name === move.to);
 			walkTo(move.to);
@@ -340,7 +336,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		const left = leftLive.current;
 		// the landed frame speaking means it holds the keyboard now
 		if (left !== null && frame === left.to) leftLive.current = null;
-		return frame === depsRef.current.enteredRef.current || frame === leftLive.current?.from;
+		return frame === depsRef.current.store.get().entered || frame === leftLive.current?.from;
 	}, []);
 
 	/**
@@ -359,7 +355,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 
 	// the overview opened inside a frame goes when that frame stops being live
 	// some other way (Esc, a click on the field)
-	const entered = deps.enteredRef.current;
+	const entered = useCanvasState(deps.store, (state) => state.entered);
 	useEffect(() => {
 		const current = overviewRef.current;
 		if (entered === null) leftLive.current = null;

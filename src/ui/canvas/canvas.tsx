@@ -3,8 +3,6 @@ import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { StampShift } from "../../daemon/hand-write";
-import type { ProjectedPlaceholder } from "../../daemon/projection";
-import type { Unseen } from "../../daemon/seen";
 import { pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
@@ -15,7 +13,6 @@ import type { Presence, PresenceState } from "../../team-sync-protocol";
 import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
-	FlowEdge,
 	FrameCopy,
 	Geometry,
 	HeldPatch,
@@ -97,6 +94,20 @@ import {
 	zoomAt,
 } from "./camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
+import {
+	type CanvasContextMenu,
+	createCanvasStore,
+	navigatorFramesOf,
+	navigatorPagesOf,
+	pageObjectsOf,
+	toolOf,
+	unseenOf,
+	useCanvasField,
+	useCanvasSetter,
+	useCanvasState,
+	visibleFramesOf,
+	visiblePlaceholdersOf,
+} from "./canvas-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { placeCopies } from "./copy-placement";
@@ -167,7 +178,7 @@ import {
 } from "./overlays";
 import { OverviewLayer } from "./overview-layer";
 import { PageObjectLabel, PageObjectView } from "./page-object";
-import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
+import { pageIsBare, pageObjectAt } from "./page-objects";
 import {
 	camerasFromState,
 	frameFolderRel,
@@ -248,13 +259,6 @@ export interface CanvasChrome {
 interface Point {
 	x: number;
 	y: number;
-}
-
-interface CanvasContextMenu {
-	x: number;
-	y: number;
-	frame: string;
-	selection: "frames" | "element";
 }
 
 type Gesture =
@@ -401,6 +405,8 @@ export function ProjectCanvas({
 	 * by whatever follows it. A wheel tick moves it and renders nothing.
 	 */
 	const [camera] = useState(createCameraStore);
+	/** What the canvas holds and every handler reads (DEV-304): one value outside React, read where it is drawn. */
+	const [store] = useState(createCanvasStore);
 	// pages shared with outsiders through spool.page (DEV-193), started from a page's right-click
 	const pageShares = useMemo(() => daemonShares(project), [project]);
 	const { shares: projectShares } = useShares(pageShares);
@@ -408,12 +414,12 @@ export function ProjectCanvas({
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	// on the document rather than the viewport, which a booting canvas has not drawn yet
 	useEffect(() => watchMotionStrain(camera, document.documentElement), [camera]);
-	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
+	const [frames, setFrames] = useCanvasField(store, "frames");
 	// the frames on their way: designers' placeholders, drawn dashed where their frames will land (#369)
-	const [placeholders, setPlaceholders] = useState<readonly ProjectedPlaceholder[]>([]);
+	const [placeholders, setPlaceholders] = useCanvasField(store, "placeholders");
 	// every read of the frame list, and the covers heard between them (frame-reads.ts)
 	const [frameReads] = useState(createFrameReads);
-	const [edges, setEdges] = useState<FlowEdge[]>([]);
+	const [edges, setEdges] = useCanvasField(store, "edges");
 	// the threads (#34): the arrows and the docked walks, one machine setting
 	// rather than a top-bar switch, default on because the map is spool's identity
 	const arrowsOn = useSetting("canvas.threads") ?? SETTINGS["canvas.threads"].fallback;
@@ -449,39 +455,35 @@ export function ProjectCanvas({
 		},
 		[camera],
 	);
-	const [tool, setTool] = useState<CanvasTool>("select");
-	const [selected, setSelected] = useState<string[]>([]);
-	const [picked, setPicked] = useState<PickedSelection[]>([]);
-	const [entered, setEntered] = useState<string | null>(null);
+	const [tool, setTool] = useCanvasField(store, "tool");
+	const [selected, setSelected] = useCanvasField(store, "selected");
+	const [picked, setPicked] = useCanvasField(store, "picked");
+	const [entered, setEntered] = useCanvasField(store, "entered");
 	const [hovered, setHovered] = useState<FrameHover | null>(null);
 	// the hover preview (#37, #339): the element a click would take
 	const [preview, setPreview] = useState<ElementPreview | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
-	const [accelDown, setAccelDown] = useState(false);
-	const [spaceDown, setSpaceDown] = useState(false);
+	const [accelDown, setAccelDown] = useCanvasField(store, "accelDown");
+	const [spaceDown, setSpaceDown] = useCanvasField(store, "spaceDown");
 	const [panning, setPanning] = useState(false);
 	const [resizeCursor, setResizeCursor] = useState<string | null>(null);
 	const [resizingFrame, setResizingFrame] = useState<string | null>(null);
 	const [marks, setMarks] = useState<SnapMarks>(NO_MARKS);
 	const [marquee, setMarquee] = useState<Box | null>(null);
-	const [menu, setMenu] = useState<CanvasContextMenu | null>(null);
-	const [exportDialog, setExportDialog] = useState<readonly string[] | null>(null);
+	const [menu, setMenu] = useCanvasField(store, "menu");
+	const [exportDialog, setExportDialog] = useCanvasField(store, "exportDialog");
 	const [exportReturnMenu, setExportReturnMenu] = useState<CanvasContextMenu | null>(null);
-	const [exporting, setExporting] = useState(false);
+	const [exporting, setExporting] = useCanvasField(store, "exporting");
 	const [exportError, setExportError] = useState<string | undefined>(undefined);
 	const [notice, setNotice] = useState<Notice | null>(null);
-	const exportDialogRef = useRef(exportDialog);
-	exportDialogRef.current = exportDialog;
 	// the frame finder (/): a palette over the viewport, and the page its pick lights
-	const [finding, setFinding] = useState(false);
+	const [finding, setFinding] = useCanvasField(store, "finding");
 	const [findLit, setFindLit] = useState<string | null>(null);
-	const findingRef = useRef(finding);
-	findingRef.current = finding;
-	const [pendingTrash, setPendingTrash] = useState<StagedTrash | null>(null);
-	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set<string>());
+	const [pendingTrash, setPendingTrash] = useCanvasField(store, "pendingTrash");
+	const setHidden = useCanvasSetter(store, "hidden");
 	// a page staged for the Trash leaves the rail with everything inside it, and
 	// comes back whole if the toast is undone (#229)
-	const [hiddenPages, setHiddenPages] = useState<ReadonlySet<string>>(new Set<string>());
+	const [hiddenPages, setHiddenPages] = useCanvasField(store, "hiddenPages");
 	/**
 	 * Where the agent rail stands, and so which rail the right column is showing
 	 * (#256).
@@ -490,20 +492,18 @@ export function ProjectCanvas({
 	 * and the agent is reached by pressing its edge. A width somebody dragged
 	 * outlives the reload, as every rail's does.
 	 */
-	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
-	const docNoncesRef = useRef(docNonces);
-	docNoncesRef.current = docNonces;
+	const [docNonces, setDocNonces] = useCanvasField(store, "docNonces");
 	// the document each frame keeps on screen while its replacement boots
 	// (#253's no blink): only a reload the canvas caused ever gets one
 	const [heldPaint, setHeldPaint] = useState<Record<string, number>>({});
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
-	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
+	const [walkArrivals, setWalkArrivals] = useCanvasField(store, "walkArrivals");
 	// the reason the last hand gesture was refused, drawn on the element it was about
 	const [refused, setRefused] = useState<ShownRefusal | null>(null);
 	// where an element being dragged would land (#340), as the line drawn there
 	const [dropLine, setDropLine] = useState<{ frame: string; box: Box } | null>(null);
 	// the in-place text edit that is open (#314), which is what hands the frame its pointer
-	const [editing, setEditing] = useState<HandEdit | null>(null);
+	const [editing, setEditing] = useCanvasField(store, "editing");
 	// how many times the hand has saved each frame without reloading it (#314):
 	// a save rewrites the very file the element was read out of, so it is a fresh
 	// read too, and the read has to carry the fingerprint the next write needs
@@ -512,8 +512,8 @@ export function ProjectCanvas({
 	const [agentHandoff, setAgentHandoff] = useState(false);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
-	const [pages, setPages] = useState<string[]>([]);
-	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
+	const [pages, setPages] = useCanvasField(store, "pages");
+	const [activePage, setActivePage] = useCanvasField(store, "activePage");
 	/**
 	 * Who else is on a team project's canvas (DEV-196), as the event stream tells it, and whose view this
 	 * canvas is following. A project of one's own has nobody and says nothing.
@@ -540,7 +540,7 @@ export function ProjectCanvas({
 	 * field, so switching page changes which of these are on screen and none of
 	 * what they say. The projection arrives with one for every page.
 	 */
-	const [places, setPlaces] = useState<Readonly<Record<string, Place>>>({});
+	const setPlaces = useCanvasSetter(store, "places");
 	/**
 	 * The page object the hand is holding, if any.
 	 *
@@ -548,21 +548,13 @@ export function ProjectCanvas({
 	 * the selection never holds both. One page rather than a list — multi-select
 	 * across pages and frames is not in this.
 	 */
-	const [selectedPage, setSelectedPage] = useState<string | null>(null);
+	const [selectedPage, setSelectedPage] = useCanvasField(store, "selectedPage");
 	const [hoveredPage, setHoveredPage] = useState<string | null>(null);
 
 	// the active page is the canvas: only its frames mount — and frames staged
 	// for the Trash vanish instantly; the disk move waits on the toast
-	const visibleFrames = useMemo(
-		() => frames.filter((f) => pageOf(f) === activePage && !hidden.has(f.name)),
-		[frames, activePage, hidden],
-	);
-	const visiblePlaceholders = useMemo(
-		() => placeholders.filter((one) => (one.page ?? ROOT_PAGE) === activePage),
-		[placeholders, activePage],
-	);
-	const visiblePlaceholdersRef = useRef(visiblePlaceholders);
-	visiblePlaceholdersRef.current = visiblePlaceholders;
+	const visibleFrames = useCanvasState(store, visibleFramesOf);
+	const visiblePlaceholders = useCanvasState(store, visiblePlaceholdersOf);
 	/**
 	 * The page as the picture layer draws it (#81): every frame in drawing
 	 * order, each with its still's address. Which of them a DOM shell draws
@@ -584,39 +576,23 @@ export function ProjectCanvas({
 		[visibleFrames, project],
 	);
 	const [pictureClaims] = useState(() => new PictureClaims());
-	const navigatorFrames = useMemo(() => frames.filter((frame) => !hidden.has(frame.name)), [frames, hidden]);
-	const navigatorPages = useMemo(() => pages.filter((page) => !hiddenPages.has(page)), [pages, hiddenPages]);
-	/**
-	 * The pages standing on the field, composed from the projection (#265).
-	 *
-	 * Nothing is fetched and nothing is baked: every frame under a page is
-	 * already in hand with its geometry and its cover, so the picture is a read
-	 * of what this side holds and a frame edited two pages down redraws the
-	 * object above it as soon as the projection lands.
-	 */
-	const pageObjects = useMemo(
-		() => pageObjectsOn(activePage, navigatorPages, navigatorFrames, places, placeholders),
-		[activePage, navigatorPages, navigatorFrames, places, placeholders],
-	);
-	const pageObjectsRef = useRef(pageObjects);
-	pageObjectsRef.current = pageObjects;
+	const navigatorFrames = useCanvasState(store, navigatorFramesOf);
+	const navigatorPages = useCanvasState(store, navigatorPagesOf);
+	/** the pages standing on the field (#265) */
+	const pageObjects = useCanvasState(store, pageObjectsOf);
 	/**
 	 * Everything standing on this field, as boxes: the frames and the pages
 	 * (#265). What a fit has to take in, because a page of pages is nothing but
 	 * objects and a camera that only knew frames landed on an empty view.
 	 */
-	const fieldBoxes = useCallback(
-		(): Box[] => [
-			...framesRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
-			...pageObjectsRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
-			...visiblePlaceholdersRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
-		],
-		[],
-	);
-	const placesRef = useRef(places);
-	placesRef.current = places;
-	const selectedPageRef = useRef(selectedPage);
-	selectedPageRef.current = selectedPage;
+	const fieldBoxes = useCallback((): Box[] => {
+		const state = store.get();
+		return [
+			...visibleFramesOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
+			...pageObjectsOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
+			...visiblePlaceholdersOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
+		];
+	}, [store]);
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
@@ -731,31 +707,19 @@ export function ProjectCanvas({
 	const gesture = useRef<Gesture>({ kind: "idle" });
 	// a press on another frame while one was live, which its release enters
 	const clickSwitch = useRef<{ from: string; to: string } | null>(null);
-	const framesRef = useRef(visibleFrames);
-	framesRef.current = visibleFrames;
-	// the whole projection, for cross-page reads: walks, exits, editor paths
-	const allFramesRef = useRef(frames);
-	allFramesRef.current = frames;
-	const placeholdersRef = useRef(placeholders);
-	placeholdersRef.current = placeholders;
-	const activePageRef = useRef(activePage);
-	activePageRef.current = activePage;
-	const pagesRef = useRef(pages);
-	pagesRef.current = pages;
+	// the frames on the page shown, as the lifecycle reads them: a ref onto the store
+	const [framesRef] = useState(() => ({
+		get current() {
+			return visibleFramesOf(store.get());
+		},
+	}));
 	// every page's last known camera this session, keyed by page (#39)
 	const cameras = useRef<Record<string, Camera>>({});
-	const enteredRef = useRef(entered);
-	enteredRef.current = entered;
-	const accelDownRef = useRef(accelDown);
-	accelDownRef.current = accelDown;
 	/** The last screen point a relayed middle-button drag reported (#8). */
 	const framePan = useRef<Point | null>(null);
 	// ⌘ no longer borrows Select — Select is the base, and ⌘ is its element
 	// modifier. Space is the only transient left.
-	const transientTool: CanvasTool | null = spaceDown ? "hand" : null;
-	const effectiveTool = transientTool ?? tool;
-	const toolRef = useRef(effectiveTool);
-	toolRef.current = effectiveTool;
+	const effectiveTool = toolOf({ tool, spaceDown });
 	/**
 	 * Whether the Edit tool is on (#339): picked, or borrowed by holding ⌘ in
 	 * Select. Space borrowing the Hand does not put it down. While it is on,
@@ -777,16 +741,12 @@ export function ProjectCanvas({
 		setPreview(null);
 		hideFrameHover();
 	}, [pointerTool, hideFrameHover]);
-	const selectedRef = useRef(selected);
-	selectedRef.current = selected;
 	// the way back along ⌥-arrow steps, dropped once the selection moves any other way
 	const spatialTrail = useRef<SpatialTrail | null>(null);
 	useEffect(() => {
 		const trail = spatialTrail.current;
 		if (trail !== null && (selected.length !== 1 || selected[0] !== trail.at)) spatialTrail.current = null;
 	}, [selected]);
-	const pickedRef = useRef(picked);
-	pickedRef.current = picked;
 	// the walk session mirror: what the last go/back carried, owed to the next boot
 	const walkSession = useRef<SessionRecord | null>(null);
 	const walkTarget = useRef<string | null>(null);
@@ -831,8 +791,6 @@ export function ProjectCanvas({
 	const handPrints = useRef(new Map<string, string>());
 	/** the frame's answer to a whole generation: children or siblings (#339) */
 	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
-	// the open edit as the handlers read it, a paint earlier than the render
-	const editingRef = useRef<HandEdit | null>(null);
 	const endEditRef = useRef<(commit: boolean) => void>(() => {});
 	/** the delete as its own refusal reaches for it: a delete that offers the call */
 	const alterElementRef = useRef<
@@ -894,7 +852,6 @@ export function ProjectCanvas({
 	const nudgeOrigins = useRef(new Map<string, Geometry>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const pendingTrashRef = useRef<StagedTrash | null>(null);
 	// staging a page has to leave it, and the switch is declared further down
 	const leavePage = useRef<(target: string) => void>(() => {});
 	// the one undo/redo stack: per window, in memory, hands' writes only — the
@@ -1027,11 +984,8 @@ export function ProjectCanvas({
 			// until the new one reports arrived (#253's no blink); the timer is the
 			// bound, because a document that never arrives must not leave a dead
 			// one standing in front of it
-			const was = docNoncesRef.current[frame] ?? 0;
+			const was = store.get().docNonces[frame] ?? 0;
 			reloading.current.add(frame);
-			// the mirror moves now rather than at the next render, so a second
-			// reload in the same tick holds the document it actually replaced
-			docNoncesRef.current = { ...docNoncesRef.current, [frame]: was + 1 };
 			if (holdNext.current.delete(frame)) {
 				setHeldPaint((current) => ({ ...current, [frame]: was }));
 				clearTimeout(holdTimers.current.get(frame));
@@ -1043,10 +997,7 @@ export function ProjectCanvas({
 			setDocNonces((current) => ({ ...current, [frame]: was + 1 }));
 			// the document an edit was open in is going: the shim's half of it goes
 			// with it, so the canvas must not keep holding this frame's pointer
-			if (editingRef.current?.frame === frame) {
-				editingRef.current = null;
-				setEditing(null);
-			}
+			if (store.get().editing?.frame === frame) setEditing(null);
 			saved.current.delete(frame);
 			setWalkArrivals((current) => withoutFrame(current, frame));
 			// a reload drops every pick in the frame: the new document is asked afresh
@@ -1054,7 +1005,7 @@ export function ProjectCanvas({
 			if (pickedChain.current?.frame === frame) holdChain(null);
 			setPreview((current) => (current?.frame === frame ? null : current));
 		},
-		[holdChain, releaseHold],
+		[holdChain, releaseHold, store],
 	);
 
 	/**
@@ -1073,13 +1024,13 @@ export function ProjectCanvas({
 	 */
 	const reloadOrHold = useCallback(
 		(frame: string) => {
-			if (pickedRef.current.some((pick) => pick.frame === frame)) {
+			if (store.get().picked.some((pick) => pick.frame === frame)) {
 				writtenUnderHand.current.add(frame);
 				return;
 			}
 			reloadFrameDocument(frame);
 		},
-		[reloadFrameDocument],
+		[reloadFrameDocument, store],
 	);
 
 	/**
@@ -1116,7 +1067,7 @@ export function ProjectCanvas({
 
 	const runExport = useCallback(
 		async (names: readonly string[], format: ExportFormat) => {
-			const ordered = framesInCanvasOrder(framesRef.current, names);
+			const ordered = framesInCanvasOrder(visibleFramesOf(store.get()), names);
 			const first = ordered[0];
 			if (first === undefined) return;
 			setExporting(true);
@@ -1153,7 +1104,7 @@ export function ProjectCanvas({
 				setExporting(false);
 			}
 		},
-		[capturePng, project],
+		[capturePng, project, store],
 	);
 
 	/**
@@ -1171,9 +1122,9 @@ export function ProjectCanvas({
 				return;
 			}
 			setExportReturnMenu(returnMenu);
-			setExportDialog(framesInCanvasOrder(framesRef.current, names).map((frame) => frame.name));
+			setExportDialog(framesInCanvasOrder(visibleFramesOf(store.get()), names).map((frame) => frame.name));
 		},
-		[runExport],
+		[runExport, store],
 	);
 
 	const cancelExportDialog = useCallback(() => {
@@ -1216,16 +1167,8 @@ export function ProjectCanvas({
 	 * belong to has landed and the projection has been read back, so a frame that
 	 * changed again in that window comes back marked rather than staying quiet.
 	 */
-	const [read, setRead] = useState<ReadonlySet<string>>(new Set());
-	const unseen = useMemo(() => {
-		const marks = new Map<string, Unseen>();
-		for (const frame of frames) {
-			if (frame.unseen !== undefined && !read.has(frame.name)) marks.set(frame.name, frame.unseen);
-		}
-		return marks;
-	}, [frames, read]);
-	const unseenRef = useRef(unseen);
-	unseenRef.current = unseen;
+	const setRead = useCanvasSetter(store, "read");
+	const unseen = useCanvasState(store, unseenOf);
 	/** the last thing a person did here: the dwell clock stops when it goes stale */
 	const attention = useRef(Date.now());
 	const dwell = useRef(new Map<string, number>());
@@ -1234,7 +1177,7 @@ export function ProjectCanvas({
 
 	const markRead = useCallback(
 		(names: readonly string[]) => {
-			const fresh = names.filter((name) => unseenRef.current.has(name));
+			const fresh = names.filter((name) => unseenOf(store.get()).has(name));
 			if (fresh.length === 0) return;
 			for (const name of fresh) reading.current.add(name);
 			setRead((current) => new Set([...current, ...fresh]));
@@ -1255,7 +1198,7 @@ export function ProjectCanvas({
 				})();
 			}, 260);
 		},
-		[project, refetchFrames],
+		[project, refetchFrames, store],
 	);
 
 	/**
@@ -1279,14 +1222,14 @@ export function ProjectCanvas({
 			if (cam === null || viewport === null) return;
 			const vw = viewport.clientWidth;
 			const vh = viewport.clientHeight;
-			const looking = framesRef.current
-				.filter((frame) => unseenRef.current.has(frame.name) && looked(frame, cam, vw, vh))
+			const looking = visibleFramesOf(store.get())
+				.filter((frame) => unseenOf(store.get()).has(frame.name) && looked(frame, cam, vw, vh))
 				.map((frame) => frame.name);
 			const crossed = advanceDwell(dwell.current, looking);
 			if (crossed.length > 0) markRead(crossed);
 		}, TICK_MS);
 		return () => window.clearInterval(timer);
-	}, [unseen.size, markRead, camera]);
+	}, [unseen.size, markRead, camera, store]);
 
 	useEffect(() => {
 		const touch = () => {
@@ -1346,8 +1289,6 @@ export function ProjectCanvas({
 
 	// --- site boxes (#34, #214): where an arrow grows from, and where a write landed ---
 
-	const edgesRef = useRef(edges);
-	edgesRef.current = edges;
 	const siteBoxSeq = useRef(0);
 	const siteBoxExpected = useRef(new Map<string, number>());
 	/** every located write still waiting for a document to turn its lines into a box */
@@ -1365,40 +1306,43 @@ export function ProjectCanvas({
 	 * this bit of source sit on screen — and because a frame that has just booted
 	 * should be measured once rather than twice.
 	 */
-	const requestSiteBoxes = useCallback((frame: string) => {
-		const target = iframes.current.get(frame)?.contentWindow;
-		if (target == null) return;
-		const anchors: SiteAnchor[] = [];
-		const seen = new Set<string>();
-		for (const edge of edgesRef.current) {
-			if (edge.from !== frame) continue;
-			for (const site of edge.sites) {
-				if (site.anchor === undefined) continue;
-				const key = anchorKeyOf(site.path, site.anchor);
+	const requestSiteBoxes = useCallback(
+		(frame: string) => {
+			const target = iframes.current.get(frame)?.contentWindow;
+			if (target == null) return;
+			const anchors: SiteAnchor[] = [];
+			const seen = new Set<string>();
+			for (const edge of store.get().edges) {
+				if (edge.from !== frame) continue;
+				for (const site of edge.sites) {
+					if (site.anchor === undefined) continue;
+					const key = anchorKeyOf(site.path, site.anchor);
+					if (seen.has(key)) continue;
+					seen.add(key);
+					// only data-go sites carry the DOM-fallback target: a ui.go site
+					// whose stamp misses must fall to the frame edge, never claim an
+					// unrelated carrier that happens to share the destination
+					anchors.push({
+						path: site.path,
+						line: site.anchor.line,
+						col: site.anchor.col,
+						...(site.via === "data-go" ? { target: edge.to } : {}),
+					});
+				}
+			}
+			for (const write of armedWrites.current.values()) {
+				const key = rangeKeyOf(write.path, write.from, write.to);
 				if (seen.has(key)) continue;
 				seen.add(key);
-				// only data-go sites carry the DOM-fallback target: a ui.go site
-				// whose stamp misses must fall to the frame edge, never claim an
-				// unrelated carrier that happens to share the destination
-				anchors.push({
-					path: site.path,
-					line: site.anchor.line,
-					col: site.anchor.col,
-					...(site.via === "data-go" ? { target: edge.to } : {}),
-				});
+				anchors.push({ path: write.path, line: write.from, col: 0, through: write.to });
 			}
-		}
-		for (const write of armedWrites.current.values()) {
-			const key = rangeKeyOf(write.path, write.from, write.to);
-			if (seen.has(key)) continue;
-			seen.add(key);
-			anchors.push({ path: write.path, line: write.from, col: 0, through: write.to });
-		}
-		if (anchors.length === 0) return;
-		const id = ++siteBoxSeq.current;
-		siteBoxExpected.current.set(frame, id);
-		target.postMessage(sitesMessage(anchors, id), "*");
-	}, []);
+			if (anchors.length === 0) return;
+			const id = ++siteBoxSeq.current;
+			siteBoxExpected.current.set(frame, id);
+			target.postMessage(sitesMessage(anchors, id), "*");
+		},
+		[store],
+	);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies(edges): the graph moving is the trigger — the request reads it through the ref
 	useEffect(() => {
@@ -1456,21 +1400,19 @@ export function ProjectCanvas({
 	// a walk marker must not outlive its walk: a frame dropped back to its
 	// picture before its boot ever reported loaded is borrowed again later, and
 	// that boot is honest — only the current walk target keeps its marker (#28)
-	const walkArrivalsRef = useRef(walkArrivals);
-	walkArrivalsRef.current = walkArrivals;
 	useEffect(
 		() =>
 			frameLife.subscribe(() => {
 				const alive = (name: string) =>
 					name === walkTarget.current || (frameLife.states[name] ?? "picture") !== "picture";
 				// asked of the last render's first, so a report is no render of the canvas
-				if ([...walkArrivalsRef.current].every(alive)) return;
+				if ([...store.get().walkArrivals].every(alive)) return;
 				setWalkArrivals((current) => {
 					const kept = [...current].filter(alive);
 					return kept.length === current.size ? current : new Set(kept);
 				});
 			}),
-		[frameLife],
+		[frameLife, store],
 	);
 
 	// no stored camera: fit the field once both viewport and field exist
@@ -1518,11 +1460,11 @@ export function ProjectCanvas({
 	useLayoutEffect(() => {
 		if (!loaded || arrivedOn.current === activePage) return;
 		arrivedOn.current = activePage;
-		if (framesRef.current.length > 0 || pageObjectsRef.current.length === 0) return;
+		if (visibleFramesOf(store.get()).length > 0 || pageObjectsOf(store.get()).length === 0) return;
 		const viewport = viewportRef.current;
 		if (viewport === null) return;
 		placeCamera(fitCamera(boundsOf(fieldBoxes()), viewport.clientWidth, viewport.clientHeight));
-	}, [loaded, activePage, fieldBoxes, placeCamera]);
+	}, [loaded, activePage, fieldBoxes, placeCamera, store]);
 
 	// --- camera ---------------------------------------------------------------
 
@@ -1607,13 +1549,13 @@ export function ProjectCanvas({
 		const cam = camera.get();
 		if (cam === null) return undefined;
 		return {
-			page: activePageRef.current,
+			page: store.get().activePage,
 			camera: { x: cam.x, y: cam.y, k: cam.k },
-			entered: enteredRef.current,
-			selected: [...selectedRef.current],
-			picked: [...pickedRef.current],
+			entered: store.get().entered,
+			selected: [...store.get().selected],
+			picked: [...store.get().picked],
 		};
-	}, [camera]);
+	}, [camera, store]);
 
 	const recordDeparture = useCallback(() => {
 		const from = jumpSpot();
@@ -1623,7 +1565,7 @@ export function ProjectCanvas({
 	/** Enter one frame as a fresh preview root: no carried session, no witnessed edge. */
 	const enterFrame = useCallback(
 		(target: string) => {
-			const frame = framesRef.current.find((candidate) => candidate.name === target);
+			const frame = visibleFramesOf(store.get()).find((candidate) => candidate.name === target);
 			if (frame === undefined) return;
 			departedFrameDocuments.current.delete(target);
 			walkTarget.current = null;
@@ -1645,24 +1587,27 @@ export function ProjectCanvas({
 			// already are would fight a wheel that arrives inside it
 			if (next.x !== cam.x || next.y !== cam.y || next.k !== cam.k) camera.fly(next);
 		},
-		[camera],
+		[camera, store],
 	);
 
-	const exitEntered = useCallback((retainFrame = false) => {
-		const frame = enteredRef.current;
-		setEntered(null);
-		setAccelDown(false);
-		setExternalLink(null);
-		walkTarget.current = null;
-		walkSession.current = null;
-		if (retainFrame && frame !== null) {
-			setSelected([frame]);
-			setPicked([]);
-		}
-		// Focus can otherwise remain trapped in the now-inert iframe, where the
-		// following arrow would never reach the canvas navigation layer.
-		viewportRef.current?.focus({ preventScroll: true });
-	}, []);
+	const exitEntered = useCallback(
+		(retainFrame = false) => {
+			const frame = store.get().entered;
+			setEntered(null);
+			setAccelDown(false);
+			setExternalLink(null);
+			walkTarget.current = null;
+			walkSession.current = null;
+			if (retainFrame && frame !== null) {
+				setSelected([frame]);
+				setPicked([]);
+			}
+			// Focus can otherwise remain trapped in the now-inert iframe, where the
+			// following arrow would never reach the canvas navigation layer.
+			viewportRef.current?.focus({ preventScroll: true });
+		},
+		[store],
+	);
 
 	/**
 	 * Picking a tool (#321). The Edit tool is never inside a frame: taking it
@@ -1671,10 +1616,10 @@ export function ProjectCanvas({
 	 */
 	const chooseTool = useCallback(
 		(next: CanvasTool) => {
-			if (next === "edit" && enteredRef.current !== null) exitEntered(true);
+			if (next === "edit" && store.get().entered !== null) exitEntered(true);
 			setTool(next);
 		},
-		[exitEntered],
+		[exitEntered, store],
 	);
 
 	const toggleArrows = useCallback(() => void writeSetting("canvas.threads", !arrowsOn), [writeSetting, arrowsOn]);
@@ -1762,7 +1707,7 @@ export function ProjectCanvas({
 	const commitGeometry = useCallback(
 		(names: readonly string[], before?: Record<string, Geometry>) => {
 			const patch: Record<string, Geometry> = {};
-			for (const frame of framesRef.current) {
+			for (const frame of visibleFramesOf(store.get())) {
 				if (!names.includes(frame.name)) continue;
 				patch[frame.name] = {
 					x: Math.round(frame.x),
@@ -1788,7 +1733,7 @@ export function ProjectCanvas({
 				if (!ok) void refetchFrames();
 			});
 		},
-		[project, refetchFrames, updateHistory],
+		[project, refetchFrames, updateHistory, store],
 	);
 
 	/**
@@ -1802,14 +1747,13 @@ export function ProjectCanvas({
 	 */
 	const applyPlaces = useCallback(
 		(moved: Readonly<Record<string, Place>>) => {
-			const next = { ...placesRef.current, ...moved };
-			placesRef.current = next;
+			const next = { ...store.get().places, ...moved };
 			setPlaces(next);
 			void putPlaces(project, next).then((ok) => {
 				if (!ok) void refetchFrames();
 			});
 		},
-		[project, refetchFrames],
+		[project, refetchFrames, store],
 	);
 
 	const flushNudge = useCallback(() => {
@@ -1825,9 +1769,9 @@ export function ProjectCanvas({
 
 	const nudge = useCallback(
 		(dx: number, dy: number) => {
-			const names = selectedRef.current;
+			const names = store.get().selected;
 			if (names.length === 0) return;
-			for (const frame of framesRef.current) {
+			for (const frame of visibleFramesOf(store.get())) {
 				if (!names.includes(frame.name) || nudgeOrigins.current.has(frame.name)) continue;
 				nudgeOrigins.current.set(frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h });
 			}
@@ -1840,7 +1784,7 @@ export function ProjectCanvas({
 			clearTimeout(nudgeTimer.current);
 			nudgeTimer.current = setTimeout(flushNudge, NUDGE_FLUSH_MS);
 		},
-		[flushNudge],
+		[flushNudge, store],
 	);
 
 	// --- undo/redo: inverse patches over the same sidecar writes ----------------
@@ -1870,7 +1814,7 @@ export function ProjectCanvas({
 	 */
 	const setFrameGeometry = useCallback(
 		(name: string, patch: Partial<Geometry>) => {
-			const was = framesRef.current.find((frame) => frame.name === name);
+			const was = visibleFramesOf(store.get()).find((frame) => frame.name === name);
 			if (was === undefined) return;
 			const before = { x: Math.round(was.x), y: Math.round(was.y), w: Math.round(was.w), h: Math.round(was.h) };
 			const after = { ...before, ...patch };
@@ -1879,7 +1823,7 @@ export function ProjectCanvas({
 			updateHistory(record(history.current, entry));
 			applyRects({ [name]: after });
 		},
-		[applyRects, updateHistory],
+		[applyRects, updateHistory, store],
 	);
 
 	/**
@@ -1929,7 +1873,7 @@ export function ProjectCanvas({
 				cam === null || viewport === null
 					? null
 					: visibleWorldRect(cam, viewport.clientWidth, viewport.clientHeight, 0);
-			const rects = placeCopies(copies, allFramesRef.current, { beside, viewPage: activePageRef.current, view });
+			const rects = placeCopies(copies, store.get().frames, { beside, viewPage: store.get().activePage, view });
 			if (Object.keys(rects).length > 0) void putGeometry(project, rects);
 			const landed = copies.map((copy) => copy.to);
 			if (landed.length === 0) return;
@@ -1938,7 +1882,7 @@ export function ProjectCanvas({
 			setSelected(landed);
 			frameAnchor.current = landed[0] ?? null;
 		},
-		[holdChain, project, camera],
+		[holdChain, project, camera, store],
 	);
 
 	/** The rail's copy, paste and duplicate, which the canvas's ⌘C, ⌘V and ⌘D run. */
@@ -1947,11 +1891,11 @@ export function ProjectCanvas({
 	/** What a history entry is checked against: the disk as the canvas has it now. */
 	const liveness = useCallback(
 		(): Liveness => ({
-			frames: new Map(allFramesRef.current.map((frame) => [frame.name, pageOf(frame)])),
-			pages: new Set(pagesRef.current),
-			pending: pendingTrashRef.current,
+			frames: new Map(store.get().frames.map((frame) => [frame.name, pageOf(frame)])),
+			pages: new Set(store.get().pages),
+			pending: store.get().pendingTrash,
 		}),
-		[],
+		[store],
 	);
 
 	const recordEntry = useCallback(
@@ -1970,25 +1914,26 @@ export function ProjectCanvas({
 	 */
 	const arrangeFrames = useCallback(() => {
 		flushNudge(); // a pending nudge is its own entry, never part of this one
-		const selection = selectedRef.current;
+		const selection = store.get().selected;
 		const scope =
-			selection.length > 1 ? framesRef.current.filter((frame) => selection.includes(frame.name)) : framesRef.current;
+			selection.length > 1
+				? visibleFramesOf(store.get()).filter((frame) => selection.includes(frame.name))
+				: visibleFramesOf(store.get());
 		if (scope.length < 2) return;
 		const before = Object.fromEntries(
 			scope.map((frame) => [frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h }]),
 		);
-		const rects = arrange(scope, edgesRef.current);
+		const rects = arrange(scope, store.get().edges);
 		const entry = entryOf(before, rects);
 		if (entry === undefined) return; // already tidy: nothing to undo
 		updateHistory(record(history.current, entry));
 		applyRects(rects);
-	}, [applyRects, flushNudge, updateHistory]);
+	}, [applyRects, flushNudge, updateHistory, store]);
 
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
 
 	const commitTrash = useCallback(() => {
-		const staged = pendingTrashRef.current;
-		pendingTrashRef.current = null;
+		const staged = store.get().pendingTrash;
 		clearTimeout(trashTimer.current);
 		setPendingTrash(null);
 		if (staged === null || (staged.frames.length === 0 && staged.page === null)) return;
@@ -2000,7 +1945,7 @@ export function ProjectCanvas({
 			setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 			void refetchFrames();
 		});
-	}, [project, refetchFrames]);
+	}, [project, refetchFrames, store]);
 
 	/**
 	 * Stage one entry on the trash toast.
@@ -2019,7 +1964,7 @@ export function ProjectCanvas({
 			// would commit the very entry that caused the switch — no toast, no undo
 			// a page inside the one being staged goes with the folder, so being on one
 			// of those is being on a page that is about to be gone
-			if (page !== null && (activePageRef.current === page || pageWithin(page, activePageRef.current))) {
+			if (page !== null && (store.get().activePage === page || pageWithin(page, store.get().activePage))) {
 				leavePage.current(ROOT_PAGE);
 			}
 			setHidden((current) => new Set([...current, ...staged.frames]));
@@ -2029,25 +1974,24 @@ export function ProjectCanvas({
 				const kept = current.filter((pick) => !staged.frames.includes(pick.frame));
 				return kept.length === current.length ? current : kept;
 			});
-			if (enteredRef.current !== null && staged.frames.includes(enteredRef.current)) exitEntered();
-			pendingTrashRef.current = staged;
+			const entered = store.get().entered;
+			if (entered !== null && staged.frames.includes(entered)) exitEntered();
 			setPendingTrash(staged);
 			trashTimer.current = setTimeout(commitTrash, TRASH_UNDO_MS);
 		},
-		[commitTrash, exitEntered],
+		[commitTrash, exitEntered, store],
 	);
 
 	const stageTrash = useCallback((names: string[]) => stageEntry({ frames: names, page: null }), [stageEntry]);
 
 	const undoTrash = useCallback(() => {
-		const staged = pendingTrashRef.current;
+		const staged = store.get().pendingTrash;
 		if (staged === null) return;
-		pendingTrashRef.current = null;
 		clearTimeout(trashTimer.current);
 		setPendingTrash(null);
 		setHidden((current) => new Set([...current].filter((name) => !staged.frames.includes(name))));
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
-	}, []);
+	}, [store]);
 
 	/**
 	 * The hand's door to the agent: the composer takes focus, on the thread that
@@ -2059,7 +2003,7 @@ export function ProjectCanvas({
 			const pick =
 				from === undefined
 					? undefined
-					: pickedRef.current.find((held) => held.frame === from.frame && held.selector === from.selector);
+					: store.get().picked.find((held) => held.frame === from.frame && held.selector === from.selector);
 			setAgentRequest({
 				id: crypto.randomUUID(),
 				thread: deck.open,
@@ -2074,7 +2018,7 @@ export function ProjectCanvas({
 						}),
 			});
 		},
-		[deck.open],
+		[deck.open, store],
 	);
 
 	// --- where a text write lands (#314) -----------------------------------------
@@ -2100,10 +2044,13 @@ export function ProjectCanvas({
 	}, []);
 
 	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
-	const sharedWrite = useCallback((frame: string, path: string): boolean => {
-		const held = allFramesRef.current.some((entry) => entry.name === frame);
-		return !held || !path.startsWith(`design/${frameFolderRel(frame)}`);
-	}, []);
+	const sharedWrite = useCallback(
+		(frame: string, path: string): boolean => {
+			const held = store.get().frames.some((entry) => entry.name === frame);
+			return !held || !path.startsWith(`design/${frameFolderRel(frame)}`);
+		},
+		[store],
+	);
 
 	/**
 	 * The other frames rendering a shared file the hand is about to write
@@ -2125,10 +2072,10 @@ export function ProjectCanvas({
 	/** Whether the hand is still in a frame: selected, an element of it held, or entered. */
 	const frameHeld = useCallback(
 		(frame: string) =>
-			selectedRef.current.includes(frame) ||
-			pickedRef.current.some((pick) => pick.frame === frame) ||
-			enteredRef.current === frame,
-		[],
+			store.get().selected.includes(frame) ||
+			store.get().picked.some((pick) => pick.frame === frame) ||
+			store.get().entered === frame,
+		[store],
 	);
 
 	/**
@@ -2444,9 +2391,9 @@ export function ProjectCanvas({
 	// leaving the page (or the tab) mid-toast: the staged move still happens
 	useEffect(() => {
 		const flush = () => {
-			const staged = pendingTrashRef.current;
+			const staged = store.get().pendingTrash;
 			if (staged === null) return;
-			pendingTrashRef.current = null;
+			setPendingTrash(null);
 			beaconTrash(project, [...staged.frames], staged.page === null ? [] : [staged.page]);
 		};
 		window.addEventListener("pagehide", flush);
@@ -2454,7 +2401,7 @@ export function ProjectCanvas({
 			window.removeEventListener("pagehide", flush);
 			flush();
 		};
-	}, [project]);
+	}, [project, store]);
 
 	// --- element pick (#23): the shim answers, the pointer never enters ---------
 
@@ -2549,11 +2496,6 @@ export function ProjectCanvas({
 			holdChain({ frame, chain });
 			setSelected([]);
 			setPicked(held);
-			// The next step reads where the selection stands off this ref, and it
-			// is often decided before React has committed the last one — a key
-			// pressed on the heels of a click (#323). The chain beside it is
-			// already written here and now for the same reason.
-			pickedRef.current = held;
 		},
 		[holdChain],
 	);
@@ -2613,7 +2555,6 @@ export function ProjectCanvas({
 					holdChain({ frame, chain: [...chain, anchor] });
 					setSelected([]);
 					setPicked(held);
-					pickedRef.current = held;
 				},
 			);
 		},
@@ -2696,12 +2637,12 @@ export function ProjectCanvas({
 	/** Tab and ⇧Tab: round the siblings of the one element held. */
 	const walkSibling = useCallback(
 		(step: "next" | "previous"): boolean => {
-			const held = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
-			if (enteredRef.current !== null || held === undefined) return false;
+			const held = store.get().picked.length === 1 ? store.get().picked[0] : undefined;
+			if (store.get().entered !== null || held === undefined) return false;
 			walkKin(held.frame, held.selector, step);
 			return true;
 		},
-		[walkKin],
+		[walkKin, store],
 	);
 
 	/**
@@ -2712,7 +2653,7 @@ export function ProjectCanvas({
 	 * of meanings.
 	 */
 	const selectParent = useCallback((): boolean => {
-		const held = pickedRef.current;
+		const held = store.get().picked;
 		if (held.length > 0) {
 			const up = parentOf({ picks: held, chain: pickedChain.current });
 			if (up === undefined) {
@@ -2727,12 +2668,12 @@ export function ProjectCanvas({
 			}
 			return true;
 		}
-		if (selectedRef.current.length > 0) {
+		if (store.get().selected.length > 0) {
 			setSelected([]);
 			return true;
 		}
 		return false;
-	}, [holdChain, holdFrame]);
+	}, [holdChain, holdFrame, store]);
 
 	/**
 	 * The element tree in the pages rail (#342): a third reader of this one
@@ -2788,11 +2729,11 @@ export function ProjectCanvas({
 
 	/** ⌘A (#339): every sibling of the element held, and the element with them. */
 	const selectSiblings = useCallback((): boolean => {
-		const anchor = pickedRef.current[pickedRef.current.length - 1];
-		if (enteredRef.current !== null || anchor === undefined) return false;
+		const anchor = store.get().picked[store.get().picked.length - 1];
+		if (store.get().entered !== null || anchor === undefined) return false;
 		selectGeneration(anchor.frame, anchor.selector, "siblings");
 		return true;
-	}, [selectGeneration]);
+	}, [selectGeneration, store]);
 
 	// --- the hand's refusals -----------------------------------------------------
 
@@ -2810,16 +2751,6 @@ export function ProjectCanvas({
 	// --- the text gesture (#255, #314) --------------------------------------------
 
 	/**
-	 * The edit, in both places that read it: the state drives the render — the
-	 * frame owns its pointer while an edit is open — and the ref is what the
-	 * pointer and key handlers read, a paint earlier than the render would.
-	 */
-	const setEdit = useCallback((next: HandEdit | null) => {
-		editingRef.current = next;
-		setEditing(next);
-	}, []);
-
-	/**
 	 * End an open edit from out here, which is what a press anywhere on the
 	 * field means. The frame answers with `edited` either way, and that answer
 	 * is what writes — this only says which way it ended. One the frame never
@@ -2828,15 +2759,15 @@ export function ProjectCanvas({
 	 */
 	const endEdit = useCallback(
 		(commit: boolean) => {
-			const held = editingRef.current;
+			const held = store.get().editing;
 			if (held === null) return;
 			iframes.current.get(held.frame)?.contentWindow?.postMessage(endEditMessage(commit), "*");
 			clearTimeout(closeTimer.current);
 			closeTimer.current = setTimeout(() => {
-				if (editingRef.current?.id === held.id) setEdit(null);
+				if (store.get().editing?.id === held.id) setEditing(null);
 			}, PICK_REPLY_MS);
 		},
-		[setEdit],
+		[store],
 	);
 	endEditRef.current = endEdit;
 
@@ -2853,7 +2784,7 @@ export function ProjectCanvas({
 	 */
 	const beginTextEdit = useCallback(
 		(pick: PickedSelection, local: Point | null) => {
-			const open = editingRef.current;
+			const open = store.get().editing;
 			if (open?.frame === pick.frame && open.selector === pick.selector) return;
 			const refuse = (refusal: Refusal) =>
 				showRefusal({ frame: pick.frame, selector: pick.selector, refusal, asked: wordsAsk(pick) });
@@ -2871,7 +2802,7 @@ export function ProjectCanvas({
 			const target = iframes.current.get(pick.frame);
 			if (target?.contentWindow == null) return;
 			const id = ++pickSeq.current;
-			setEdit({
+			setEditing({
 				frame: pick.frame,
 				selector: pick.selector,
 				source: stamp,
@@ -2887,11 +2818,11 @@ export function ProjectCanvas({
 			target.focus();
 			clearTimeout(openTimer.current);
 			openTimer.current = setTimeout(() => {
-				const held = editingRef.current;
-				if (held?.id === id && held.phase === "opening") setEdit({ ...held, phase: "open" });
+				const held = store.get().editing;
+				if (held?.id === id && held.phase === "opening") setEditing({ ...held, phase: "open" });
 			}, OPENING_MS);
 		},
-		[setEdit, showRefusal],
+		[showRefusal, store],
 	);
 
 	/**
@@ -2914,19 +2845,19 @@ export function ProjectCanvas({
 	 * everything else it means when it did not.
 	 */
 	const openHeld = useCallback((): boolean => {
-		if (enteredRef.current !== null || editingRef.current !== null) return false;
-		const picks = pickedRef.current;
+		if (store.get().entered !== null || store.get().editing !== null) return false;
+		const picks = store.get().picked;
 		const only = picks.length === 1 ? picks[0] : undefined;
 		if (only !== undefined) {
 			openElement(only, null);
 			return true;
 		}
 		if (picks.length > 1) return false;
-		const frame = selectedRef.current.length === 1 ? selectedRef.current[0] : undefined;
+		const frame = store.get().selected.length === 1 ? store.get().selected[0] : undefined;
 		if (frame === undefined) return false;
 		selectGeneration(frame, "", "children");
 		return true;
-	}, [openElement, selectGeneration]);
+	}, [openElement, selectGeneration, store]);
 
 	/** A double-click in Edit (#339): the deepest element under it, opened. */
 	const openAt = useCallback(
@@ -2934,13 +2865,13 @@ export function ProjectCanvas({
 			beginPick(frame, local, (chain) => {
 				const target = deepest(chain);
 				if (target === undefined) return;
-				const open = editingRef.current;
+				const open = store.get().editing;
 				if (open?.frame === frame && open.selector === target.selector) return;
 				applyPick(frame, chain, target);
 				openElement({ frame, ...target }, local);
 			});
 		},
-		[applyPick, beginPick, openElement],
+		[applyPick, beginPick, openElement, store],
 	);
 
 	/**
@@ -2948,12 +2879,12 @@ export function ProjectCanvas({
 	 * rename key the sidebar already uses, on the element rather than on a row.
 	 */
 	const openWords = useCallback((): boolean => {
-		if (enteredRef.current !== null || editingRef.current !== null) return false;
-		const only = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+		if (store.get().entered !== null || store.get().editing !== null) return false;
+		const only = store.get().picked.length === 1 ? store.get().picked[0] : undefined;
 		if (only === undefined || only.words !== true) return false;
 		beginTextEdit(only, null);
 		return true;
-	}, [beginTextEdit]);
+	}, [beginTextEdit, store]);
 
 	/**
 	 * The edit has ended (#314). The frame already shows the words, so the
@@ -2964,14 +2895,14 @@ export function ProjectCanvas({
 	 */
 	const finishEdit = useCallback(
 		(held: HandEdit, commit: boolean, nodes: readonly EditedNode[], owner: string | null) => {
-			setEdit(null);
+			setEditing(null);
 			viewportRef.current?.focus();
 			// the box the words are drawn in moved with them, so the ring is
 			// re-read off the element itself — while it is still the one held: a
 			// click that ended this edit has already moved the selection on
-			const stillHeld = pickedRef.current.find(
-				(pick) => pick.frame === held.frame && pick.selector === held.selector,
-			);
+			const stillHeld = store
+				.get()
+				.picked.find((pick) => pick.frame === held.frame && pick.selector === held.selector);
 			if (stillHeld !== undefined) walkKin(held.frame, held.selector, "self");
 			const attempted = wordsOf(nodes);
 			if (!commit || attempted === held.start) return;
@@ -3022,7 +2953,7 @@ export function ProjectCanvas({
 				});
 			});
 		},
-		[afterRead, fingerprintFor, holdReaders, project, restoreWords, setEdit, settled, showRefusal, walkKin],
+		[afterRead, fingerprintFor, holdReaders, project, restoreWords, settled, showRefusal, walkKin, store],
 	);
 
 	// --- delete (#317) ------------------------------------------------------------
@@ -3429,8 +3360,8 @@ export function ProjectCanvas({
 	 */
 	const moveStep = useCallback(
 		(step: -1 | 1): boolean => {
-			if (enteredRef.current !== null || editingRef.current !== null) return false;
-			const picks = pickedRef.current;
+			if (store.get().entered !== null || store.get().editing !== null) return false;
+			const picks = store.get().picked;
 			const first = picks[0];
 			if (first === undefined) return false;
 			const run = moveRun.current;
@@ -3476,7 +3407,7 @@ export function ProjectCanvas({
 			);
 			return true;
 		},
-		[askFrame, claimMove, moveBeside, nextMove, showRefusal, whenLoaded],
+		[askFrame, claimMove, moveBeside, nextMove, showRefusal, whenLoaded, store],
 	);
 	const moveStepRef = useRef(moveStep);
 	moveStepRef.current = moveStep;
@@ -3562,11 +3493,8 @@ export function ProjectCanvas({
 	// the names as one string is the dep, and the names themselves are what the
 	// effect reads: a list rebuilt on every render is not a change of selection
 	const heldKey = JSON.stringify(heldFrames);
-	const heldFramesRef = useRef(heldFrames);
-	heldFramesRef.current = heldFrames;
-	// biome-ignore lint/correctness/useExhaustiveDependencies(heldKey): the frames the hand is in changing is the whole trigger
 	useEffect(() => {
-		const holding = new Set(heldFramesRef.current);
+		const holding = new Set<string>(JSON.parse(heldKey));
 		for (const frame of new Set([...saved.current.keys(), ...writtenUnderHand.current])) {
 			if (holding.has(frame)) continue;
 			saved.current.delete(frame);
@@ -3597,7 +3525,7 @@ export function ProjectCanvas({
 			beginPick(frame, local, (chain) => {
 				const target = deepest(chain);
 				if (target === undefined) return; // frame background: nothing to toggle
-				const current = pickedRef.current;
+				const current = store.get().picked;
 				const held = current.filter((pick) => !(pick.frame === frame && pick.selector === target.selector));
 				if (held.length < current.length) {
 					setPicked(held);
@@ -3608,7 +3536,7 @@ export function ProjectCanvas({
 				setSelected([]);
 			});
 		},
-		[beginPick, holdChain],
+		[beginPick, holdChain, store],
 	);
 
 	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
@@ -3616,7 +3544,7 @@ export function ProjectCanvas({
 		const frame = navigatorFrames.find((candidate) => candidate.name === name);
 		if (frame === undefined) return;
 		const targetPage = pageOf(frame);
-		const changedPage = targetPage !== activePageRef.current;
+		const changedPage = targetPage !== store.get().activePage;
 		if (changedPage) {
 			recordDeparture();
 			switchToPage(targetPage);
@@ -3628,7 +3556,7 @@ export function ProjectCanvas({
 		// name and the rows are in whatever order somebody arranged them into
 		const range = modifiers.shift && frameAnchor.current !== null ? (span?.(frameAnchor.current) ?? []) : [];
 		if (range.length > 0) {
-			setSelected(modifiers.toggle && !changedPage ? [...new Set([...selectedRef.current, ...range])] : [...range]);
+			setSelected(modifiers.toggle && !changedPage ? [...new Set([...store.get().selected, ...range])] : [...range]);
 			return;
 		}
 		frameAnchor.current = name;
@@ -3650,7 +3578,7 @@ export function ProjectCanvas({
 	const extendFrameRange = (span: FrameSpan) => {
 		const anchor = frameAnchor.current;
 		const held = anchor === null ? undefined : navigatorFrames.find((candidate) => candidate.name === anchor);
-		if (anchor === null || held === undefined || pageOf(held) !== activePageRef.current) return;
+		if (anchor === null || held === undefined || pageOf(held) !== store.get().activePage) return;
 		const range = span(anchor);
 		if (range.length === 0) return;
 		setTool("select");
@@ -3660,7 +3588,7 @@ export function ProjectCanvas({
 	};
 
 	const flyToFrame = (name: string) => {
-		const frame = framesRef.current.find((candidate) => candidate.name === name);
+		const frame = visibleFramesOf(store.get()).find((candidate) => candidate.name === name);
 		const viewport = viewportRef.current;
 		if (frame === undefined || viewport === null) return;
 		recordDeparture();
@@ -3691,7 +3619,7 @@ export function ProjectCanvas({
 	 */
 	const switchToPage = useCallback(
 		(target: string, arriveAt?: Camera, then?: Camera) => {
-			if (activePageRef.current === target) return;
+			if (store.get().activePage === target) return;
 			flushNudge();
 			commitTrash();
 			clearCanvasSelection();
@@ -3699,26 +3627,26 @@ export function ProjectCanvas({
 			setMenu(null);
 			setExternalLink(null);
 			camera.stop();
-			const next = switchPage(cameras.current, activePageRef.current, camera.get(), target, arriveAt);
+			const next = switchPage(cameras.current, store.get().activePage, camera.get(), target, arriveAt);
 			cameras.current = next.cameras;
 			setActivePage(target);
 			// placed by the commit that swaps the field, so both are drawn by one frame
 			arrival.current = { page: target, camera: next.camera, ...(then === undefined ? {} : { then }) };
 		},
-		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, camera],
+		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, camera, store],
 	);
 	leavePage.current = switchToPage;
 	/** Page-folder clicks return selection to the page, even when it is already active. */
 	const activatePageFromTree = useCallback(
 		(target: string) => {
-			if (activePageRef.current !== target) {
+			if (store.get().activePage !== target) {
 				recordDeparture();
 				switchToPage(target);
 				return;
 			}
 			clearCanvasSelection();
 		},
-		[clearCanvasSelection, recordDeparture, switchToPage],
+		[clearCanvasSelection, recordDeparture, switchToPage, store],
 	);
 	/** ⏎, ⌘↓ and the double-click: inside a page object, as into a frame (#265) */
 	const goInsidePage = useCallback(
@@ -3734,13 +3662,13 @@ export function ProjectCanvas({
 	 * False on the root page, where there is nowhere up to go.
 	 */
 	const goUpPage = useCallback((): boolean => {
-		const here = activePageRef.current;
+		const here = store.get().activePage;
 		if (here === ROOT_PAGE) return false;
 		recordDeparture();
 		switchToPage(pageParent(here));
 		setSelectedPage(here);
 		return true;
-	}, [recordDeparture, switchToPage]);
+	}, [recordDeparture, switchToPage, store]);
 
 	// a page deleted on disk cannot stay active, and neither can one staged for
 	// the Trash: either way the canvas has nowhere to be, so it snaps back to
@@ -3758,10 +3686,10 @@ export function ProjectCanvas({
 	const walkTo = useCallback(
 		(target: string, session: SessionRecord | null) => {
 			recordDeparture();
-			const across = allFramesRef.current.find((f) => f.name === target);
-			if (across !== undefined && pageOf(across) !== activePageRef.current) {
-				switchToPage(pageOf(across), arrivalAt(across));
-			}
+			const across = store.get().frames.find((f) => f.name === target);
+			// a frame on another page is the arrival's to place, not this flight's
+			const leaving = across !== undefined && pageOf(across) !== store.get().activePage;
+			if (leaving) switchToPage(pageOf(across), arrivalAt(across));
 			walkSession.current = session;
 			walkTarget.current = target;
 			// a walk carries the app's knowledge with it: the page it lands on now knows it too
@@ -3773,7 +3701,7 @@ export function ProjectCanvas({
 			setEntered(target);
 			setSelected([]);
 			setPicked([]);
-			const frame = framesRef.current.find((f) => f.name === target);
+			const frame = leaving ? undefined : visibleFramesOf(store.get()).find((f) => f.name === target);
 			const viewport = viewportRef.current;
 			const cam = camera.get();
 			if (frame !== undefined && viewport !== null && cam !== null) {
@@ -3789,7 +3717,7 @@ export function ProjectCanvas({
 			// screen scripts run fresh on every arrival — reboot even a warm target
 			setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
 		},
-		[recordDeparture, switchToPage, arrivalAt, camera],
+		[recordDeparture, switchToPage, arrivalAt, camera, store],
 	);
 
 	// moving between frames while live (DEV-295): the ⌥ overview, steps that
@@ -3797,11 +3725,7 @@ export function ProjectCanvas({
 	const live = useLiveMoves({
 		camera,
 		viewportRef,
-		framesRef,
-		allFramesRef,
-		edgesRef,
-		enteredRef,
-		selectedRef,
+		store,
 		enterFrame,
 		walkTo: (name) => walkTo(name, null),
 		select: (name, trail) => {
@@ -3814,10 +3738,10 @@ export function ProjectCanvas({
 		landOn: (name) => landOnFrameRef.current(name),
 		selectionIdle: () =>
 			gesture.current.kind === "idle" &&
-			editingRef.current === null &&
-			toolRef.current === "select" &&
-			selectedPageRef.current === null &&
-			pickedRef.current.length === 0,
+			store.get().editing === null &&
+			toolOf(store.get()) === "select" &&
+			store.get().selectedPage === null &&
+			store.get().picked.length === 0,
 	});
 	const liveRef = useRef(live);
 	liveRef.current = live;
@@ -3835,16 +3759,19 @@ export function ProjectCanvas({
 	 */
 	const arriveAtJump = useCallback(
 		(entry: JumpEntry) => {
-			if (entry.page !== activePageRef.current) {
+			if (entry.page !== store.get().activePage) {
 				switchToPage(entry.page, entry.camera);
 			} else {
-				if (enteredRef.current !== null) exitEntered();
+				if (store.get().entered !== null) exitEntered();
 				clearCanvasSelection();
 				setMenu(null);
 				camera.fly(entry.camera);
 			}
 			const onPage = new Set(
-				allFramesRef.current.filter((frame) => pageOf(frame) === entry.page).map((frame) => frame.name),
+				store
+					.get()
+					.frames.filter((frame) => pageOf(frame) === entry.page)
+					.map((frame) => frame.name),
 			);
 			setSelected(entry.selected.filter((name) => onPage.has(name)));
 			setPicked(entry.picked.filter((pick) => onPage.has(pick.frame)));
@@ -3858,26 +3785,26 @@ export function ProjectCanvas({
 			// remounts takes it at its loaded report, the way a walk's target does
 			iframes.current.get(target)?.focus();
 		},
-		[switchToPage, exitEntered, clearCanvasSelection, camera],
+		[switchToPage, exitEntered, clearCanvasSelection, camera, store],
 	);
 
 	const jumpBack = useCallback(() => {
 		const from = jumpSpot();
 		if (from === undefined) return;
-		const taken = takeBack(jumpList.current, from, new Set([ROOT_PAGE, ...pagesRef.current]));
+		const taken = takeBack(jumpList.current, from, new Set([ROOT_PAGE, ...store.get().pages]));
 		if (taken === undefined) return;
 		jumpList.current = taken.jumps;
 		arriveAtJump(taken.entry);
-	}, [jumpSpot, arriveAtJump]);
+	}, [jumpSpot, arriveAtJump, store]);
 
 	const jumpForward = useCallback(() => {
 		const from = jumpSpot();
 		if (from === undefined) return;
-		const taken = takeForward(jumpList.current, from, new Set([ROOT_PAGE, ...pagesRef.current]));
+		const taken = takeForward(jumpList.current, from, new Set([ROOT_PAGE, ...store.get().pages]));
 		if (taken === undefined) return;
 		jumpList.current = taken.jumps;
 		arriveAtJump(taken.entry);
-	}, [jumpSpot, arriveAtJump]);
+	}, [jumpSpot, arriveAtJump, store]);
 
 	/**
 	 * The stream dropped and came back. Nothing was delivered while it was gone
@@ -3896,8 +3823,8 @@ export function ProjectCanvas({
 	const resync = useCallback(() => {
 		void refetchFrames();
 		void refetchFlows();
-		for (const frame of allFramesRef.current) reloadFrameDocument(frame.name);
-	}, [refetchFrames, refetchFlows, reloadFrameDocument]);
+		for (const frame of store.get().frames) reloadFrameDocument(frame.name);
+	}, [refetchFrames, refetchFlows, reloadFrameDocument, store]);
 
 	/**
 	 * What this canvas shows, told to the daemon's photo booth: the page, the
@@ -3914,16 +3841,16 @@ export function ProjectCanvas({
 		const view = viewStream.current;
 		const viewport = viewportRef.current;
 		if (view === null || restCameraRef.current === null || viewport === null) return;
-		const frames = framesOnScreen(framesRef.current, restCameraRef.current, {
+		const frames = framesOnScreen(visibleFramesOf(store.get()), restCameraRef.current, {
 			width: viewport.clientWidth,
 			height: viewport.clientHeight,
 		});
 		const scheme = frameScheme();
-		const told = JSON.stringify([view, activePageRef.current, frames, scheme]);
+		const told = JSON.stringify([view, store.get().activePage, frames, scheme]);
 		if (told === toldView.current) return;
 		toldView.current = told;
-		putCanvasView(project, { view, page: activePageRef.current, frames, scheme });
-	}, [project]);
+		putCanvasView(project, { view, page: store.get().activePage, frames, scheme });
+	}, [project, store]);
 	// the machine going over to dark at sunset is a scheme every cover that
 	// follows one was not taken in
 	useEffect(() => {
@@ -3986,7 +3913,7 @@ export function ProjectCanvas({
 					} else if (event.kind === "shared") {
 						// a shared file the link graph has read names its own readers (#109);
 						// anything it could not name can stale every document
-						const staled = event.frames ?? framesRef.current.map((frame) => frame.name);
+						const staled = event.frames ?? visibleFramesOf(store.get()).map((frame) => frame.name);
 						for (const frame of staled) {
 							const own = saved.current.get(frame);
 							// the frame the hand wrote the shared file from already shows it
@@ -4030,6 +3957,7 @@ export function ProjectCanvas({
 		resync,
 		tellView,
 		presenceRoom,
+		store,
 	]);
 
 	/**
@@ -4064,7 +3992,7 @@ export function ProjectCanvas({
 					const active = gesture.current;
 					if (active.kind !== "resize" || active.frame !== message.frame || message.id !== contentRequest.current)
 						return;
-					const frame = framesRef.current.find((entry) => entry.name === message.frame);
+					const frame = visibleFramesOf(store.get()).find((entry) => entry.name === message.frame);
 					if (frame === undefined || message.width !== Math.round(frame.w)) return;
 					if (message.height !== null)
 						contentSize.current = { frame: message.frame, width: message.width, height: message.height };
@@ -4073,8 +4001,8 @@ export function ProjectCanvas({
 				case "copy": {
 					const source = event.source as WindowProxy;
 					const blocked = departedFrameDocuments.current.has(message.frame);
-					const known = allFramesRef.current.some((candidate) => candidate.name === message.frame);
-					if (!clipboardCopyAllowed(known, enteredRef.current === message.frame, blocked)) {
+					const known = store.get().frames.some((candidate) => candidate.name === message.frame);
+					if (!clipboardCopyAllowed(known, store.get().entered === message.frame, blocked)) {
 						rejectClipboardCopy(
 							message,
 							(result) => source.postMessage(result, "*"),
@@ -4101,7 +4029,7 @@ export function ProjectCanvas({
 					// a completed boot retires its walk cover — later reboots are honest
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					// the keyboard follows the walk: an entered frame owns it (#28)
-					if (enteredRef.current === message.frame) iframes.current.get(message.frame)?.focus();
+					if (store.get().entered === message.frame) iframes.current.get(message.frame)?.focus();
 					// a fresh document renders fresh elements: re-anchor its arrows (#34)
 					requestSiteBoxes(message.frame);
 					return;
@@ -4142,7 +4070,7 @@ export function ProjectCanvas({
 					}
 					return;
 				case "session?": {
-					const own = allFramesRef.current.find((candidate) => candidate.name === message.frame);
+					const own = store.get().frames.find((candidate) => candidate.name === message.frame);
 					const record =
 						walkTarget.current === message.frame
 							? walkSession.current
@@ -4153,20 +4081,20 @@ export function ProjectCanvas({
 					return;
 				}
 				case "state": {
-					const own = allFramesRef.current.find((candidate) => candidate.name === message.frame);
+					const own = store.get().frames.find((candidate) => candidate.name === message.frame);
 					if (own === undefined) return;
 					const page = pageOf(own);
 					pageSessions.current.set(page, { scenario: message.scenario, state: message.state, stack: [] });
 					for (const [name, iframe] of iframes.current) {
 						if (name === message.frame) continue;
-						const sibling = allFramesRef.current.find((candidate) => candidate.name === name);
+						const sibling = store.get().frames.find((candidate) => candidate.name === name);
 						if (sibling === undefined || pageOf(sibling) !== page) continue;
 						iframe.contentWindow?.postMessage(sharedStateMessage(message.state), "*");
 					}
 					return;
 				}
 				case "external":
-					if (enteredRef.current === message.frame) {
+					if (store.get().entered === message.frame) {
 						setExternalLink({ frame: message.frame, href: message.href });
 					}
 					return;
@@ -4190,13 +4118,13 @@ export function ProjectCanvas({
 				// its element has moved on, and writing what it says would land on
 				// whatever took its place.
 				case "edit-open": {
-					const held = editingRef.current;
+					const held = store.get().editing;
 					if (held === null || held.id !== message.id) return;
 					if (!message.ok) {
-						setEdit(null);
-						const tag = pickedRef.current.find(
-							(pick) => pick.frame === held.frame && pick.selector === held.selector,
-						)?.tag;
+						setEditing(null);
+						const tag = store
+							.get()
+							.picked.find((pick) => pick.frame === held.frame && pick.selector === held.selector)?.tag;
 						showRefusal({
 							frame: held.frame,
 							selector: held.selector,
@@ -4205,11 +4133,11 @@ export function ProjectCanvas({
 						});
 						return;
 					}
-					setEdit({ ...held, start: message.text });
+					setEditing({ ...held, start: message.text });
 					return;
 				}
 				case "edited": {
-					const held = editingRef.current;
+					const held = store.get().editing;
 					if (held === null || held.id !== message.id) return;
 					finishEdit(held, message.commit, message.nodes, message.owner);
 					return;
@@ -4254,7 +4182,7 @@ export function ProjectCanvas({
 					// can never drift from what the same key does out here.
 					// The tab keys too: a frame left running beside the entered one,
 					// a teammate's on a timer say, must not switch the window's tab.
-					if (ENTERED_ONLY_RELAYS.has(message.id) && enteredRef.current !== message.frame) return;
+					if (ENTERED_ONLY_RELAYS.has(message.id) && store.get().entered !== message.frame) return;
 					if (LIVE_MOVE_RELAYS.has(message.id) && !liveRef.current.fromLive(message.frame)) return;
 					// the shim matched ⌘⇧] under either modifier; which one is accel is
 					// the canvas's rule, so ctrl+⇧] on a Mac is not the next tab
@@ -4290,12 +4218,12 @@ export function ProjectCanvas({
 					if (message.modifier !== accelKeyName()) return;
 					// a ⌘ let go anywhere ends a fork's ] again, a fresh one too; but not
 					// a frame losing the focus to the next one, its ⌘ still down
-					if (message.blur !== true) liveRef.current.accel(message.held, message.held && !accelDownRef.current);
-					if (enteredRef.current === message.frame) setAccelDown(message.held);
+					if (message.blur !== true) liveRef.current.accel(message.held, message.held && !store.get().accelDown);
+					if (store.get().entered === message.frame) setAccelDown(message.held);
 					return;
 				case "pan": {
 					// the middle-button drag the shim kept for us: pan without leaving
-					if (enteredRef.current !== message.frame) return;
+					if (store.get().entered !== message.frame) return;
 					if (message.phase === "end") {
 						framePan.current = null;
 						setPanning(false);
@@ -4321,7 +4249,7 @@ export function ProjectCanvas({
 					// not cross an iframe boundary. The frame shim claims browser-zoom
 					// wheel gestures and hands them back here as canvas camera intents;
 					// its zoom chords arrive as relayed keys (case "key").
-					if (enteredRef.current !== message.frame) return;
+					if (store.get().entered !== message.frame) return;
 					camera.stop();
 					setMenu(null);
 					const iframe = iframes.current.get(message.frame);
@@ -4346,7 +4274,7 @@ export function ProjectCanvas({
 				case "scroll": {
 					// a wheel the entered frame had nowhere to scroll: it chains out
 					// to the canvas as the same pan the viewport's own wheel makes
-					if (enteredRef.current !== message.frame) return;
+					if (store.get().entered !== message.frame) return;
 					const viewport = viewportRef.current;
 					if (viewport === null) return;
 					camera.stop();
@@ -4360,8 +4288,8 @@ export function ProjectCanvas({
 				case "presence": {
 					// the pointer, a press and the scroll inside the entered frame, which never cross into here:
 					// told in the frame's own pixels, said to the team in world ones
-					if (enteredRef.current !== message.frame) return;
-					const frame = framesRef.current.find((entry) => entry.name === message.frame);
+					if (store.get().entered !== message.frame) return;
+					const frame = visibleFramesOf(store.get()).find((entry) => entry.name === message.frame);
 					const iframe = iframes.current.get(message.frame);
 					if (frame === undefined || iframe === undefined) return;
 					const scale = iframe.clientWidth > 0 ? frame.w / iframe.clientWidth : 1;
@@ -4380,9 +4308,9 @@ export function ProjectCanvas({
 				case "go":
 				case "back": {
 					const source = event.source as WindowProxy;
-					const active = enteredRef.current === message.frame;
-					const known = allFramesRef.current.some((candidate) => candidate.name === message.frame);
-					const targetExists = allFramesRef.current.some((candidate) => candidate.name === message.target);
+					const active = store.get().entered === message.frame;
+					const known = store.get().frames.some((candidate) => candidate.name === message.frame);
+					const targetExists = store.get().frames.some((candidate) => candidate.name === message.target);
 					const rejection = walkRejectionReason(
 						message,
 						known,
@@ -4420,9 +4348,9 @@ export function ProjectCanvas({
 		strike,
 		releaseHold,
 		finishEdit,
-		setEdit,
 		showRefusal,
 		camera,
+		store,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -4431,7 +4359,7 @@ export function ProjectCanvas({
 		if (el === null) return;
 		const onWheel = (event: WheelEvent) => {
 			// Leave the finder's native list scrolling alone before cancelling the wheel.
-			if (findingRef.current) return;
+			if (store.get().finding) return;
 			event.preventDefault();
 			camera.stop();
 			setMenu(null);
@@ -4452,7 +4380,7 @@ export function ProjectCanvas({
 		};
 		el.addEventListener("wheel", onWheel, { passive: false });
 		return () => el.removeEventListener("wheel", onWheel);
-	}, [zoomAtPoint, panBy, camera]);
+	}, [zoomAtPoint, panBy, camera, store]);
 
 	// Camera motion is drawn and never rendered. Every drawn frame is the camera
 	// moving, which is the whole of what live frames hold their animations
@@ -4563,7 +4491,7 @@ export function ProjectCanvas({
 	};
 
 	const frameAtWorld = (p: Point): string | null => {
-		const list = framesRef.current;
+		const list = visibleFramesOf(store.get());
 		for (let i = list.length - 1; i >= 0; i--) {
 			const f = list[i];
 			if (f !== undefined && p.x >= f.x && p.x <= f.x + f.w && p.y >= f.y && p.y <= f.y + f.h) return f.name;
@@ -4578,7 +4506,7 @@ export function ProjectCanvas({
 
 	/** A world point in a frame's own coordinates — what every pick verb takes. */
 	const frameLocalAt = (name: string, world: Point): Point | null => {
-		const frame = framesRef.current.find((f) => f.name === name);
+		const frame = visibleFramesOf(store.get()).find((f) => f.name === name);
 		return frame === undefined ? null : { x: world.x - frame.x, y: world.y - frame.y };
 	};
 
@@ -4593,8 +4521,9 @@ export function ProjectCanvas({
 	 * the one that ships, so only the frame under the pointer ever draws.
 	 */
 	const hoverPickAt = (frame: string | null, world: Point, accel: boolean) => {
-		const reaching = () => toolRef.current === "edit" || (toolRef.current === "select" && accelDownRef.current);
-		if (frame === null || !(toolRef.current === "edit" || accel)) {
+		const reaching = () =>
+			toolOf(store.get()) === "edit" || (toolOf(store.get()) === "select" && store.get().accelDown);
+		if (frame === null || !(toolOf(store.get()) === "edit" || accel)) {
 			hoverPoint.current = frame === null ? null : { frame, world };
 			setPreview(null);
 			return;
@@ -4642,12 +4571,12 @@ export function ProjectCanvas({
 	/** Redraw the outline where the pointer already rests — ⌘ changes what it means. */
 	refreshRings.current = () => {
 		const at = hoverPoint.current;
-		if (at === null || toolRef.current === "hand" || gesture.current.kind !== "idle") {
+		if (at === null || toolOf(store.get()) === "hand" || gesture.current.kind !== "idle") {
 			setPreview(null);
 			return;
 		}
 		hoverLast.current = 0;
-		hoverPickAt(at.frame, at.world, accelDownRef.current);
+		hoverPickAt(at.frame, at.world, store.get().accelDown);
 	};
 
 	/**
@@ -4731,7 +4660,7 @@ export function ProjectCanvas({
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
-		for (const frame of framesRef.current) {
+		for (const frame of visibleFramesOf(store.get())) {
 			if (names.includes(frame.name)) origins.set(frame.name, { x: frame.x, y: frame.y });
 		}
 		return origins;
@@ -4740,7 +4669,7 @@ export function ProjectCanvas({
 	// the rects a move began from — origins carry x/y, a move never changes size
 	const moveBefore = (origins: ReadonlyMap<string, Point>): Record<string, Geometry> => {
 		const before: Record<string, Geometry> = {};
-		for (const frame of framesRef.current) {
+		for (const frame of visibleFramesOf(store.get())) {
 			const origin = origins.get(frame.name);
 			if (origin !== undefined) before[frame.name] = { x: origin.x, y: origin.y, w: frame.w, h: frame.h };
 		}
@@ -4748,7 +4677,7 @@ export function ProjectCanvas({
 	};
 
 	const onPointerDown = (event: React.PointerEvent) => {
-		if (findingRef.current || exportDialogRef.current !== null) return;
+		if (store.get().finding || store.get().exportDialog !== null) return;
 		// a press ends the ⌥ overview where it stands: ⌥ drag and ⌥ click are
 		// gestures of their own (DEV-295)
 		clickSwitch.current = null;
@@ -4775,14 +4704,14 @@ export function ProjectCanvas({
 		// (#255). While the frame's pointer is still out here, a press over it
 		// is the second half of the very double-click that opened the edit and
 		// belongs to nobody on the field.
-		const openEdit = editingRef.current;
+		const openEdit = store.get().editing;
 		if (openEdit !== null) {
 			const over = frameAtWorld(toWorld(p, cam)) === openEdit.frame;
 			if (over && openEdit.phase === "opening") return;
 			endEdit(true);
 			if (over) return;
 		}
-		const panningIntent = event.button === 1 || (event.button === 0 && toolRef.current === "hand");
+		const panningIntent = event.button === 1 || (event.button === 0 && toolOf(store.get()) === "hand");
 		viewportRef.current?.setPointerCapture(event.pointerId);
 
 		if (panningIntent) {
@@ -4795,13 +4724,13 @@ export function ProjectCanvas({
 		// A live frame owns its own presses. The canvas only sees one when the
 		// accel modifier has borrowed its pointer to reach an element, so that
 		// modifier must not read as leaving.
-		if (enteredRef.current !== null && !accelPressed(event)) {
-			const from = enteredRef.current;
+		const from = store.get().entered;
+		if (from !== null && !accelPressed(event)) {
 			const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(toWorld(p, cam));
 			if (hit === from) return; // the pointer is the frame's now
 			// one click on another frame enters that one instead (DEV-295); a drag
 			// is still a move of it, so the switch waits for the release
-			if (hit !== null && event.button === 0 && !event.shiftKey && toolRef.current === "select") {
+			if (hit !== null && event.button === 0 && !event.shiftKey && toolOf(store.get()) === "select") {
 				clickSwitch.current = { from, to: hit };
 			}
 			exitEntered();
@@ -4812,9 +4741,9 @@ export function ProjectCanvas({
 		// resize handles first: they overhang the frame and own the pointer
 		const handleHit = datasetHit(event.target, "handle");
 		const handle = handleHit !== null && isHandle(handleHit) ? handleHit : null;
-		const single = selectedRef.current.length === 1 ? (selectedRef.current[0] ?? null) : null;
+		const single = store.get().selected.length === 1 ? (store.get().selected[0] ?? null) : null;
 		if (handle !== null && single !== null) {
-			const frame = framesRef.current.find((f) => f.name === single);
+			const frame = visibleFramesOf(store.get()).find((f) => f.name === single);
 			if (frame !== undefined) {
 				const anchor = {
 					x: handle.includes("w") ? frame.x + frame.w : frame.x,
@@ -4841,27 +4770,27 @@ export function ProjectCanvas({
 			// a page standing on this field (#265). Frames own their own pixels, so
 			// this is asked where none of them answered; a page is picked on its
 			// own, and taking one puts the frame selection down
-			const page = datasetHit(event.target, "page-object") ?? pageObjectAt(pageObjectsRef.current, world)?.page;
-			if (page !== undefined && page !== null && toolRef.current !== "hand") {
+			const page = datasetHit(event.target, "page-object") ?? pageObjectAt(pageObjectsOf(store.get()), world)?.page;
+			if (page !== undefined && page !== null && toolOf(store.get()) !== "hand") {
 				setSelected([]);
 				setPicked([]);
 				setSelectedPage(page);
 				// a page on a field with no frames of its own stands on a shelf the
 				// daemon lays, so there is nothing for a drag to arrange it against
-				const at = placesRef.current[page];
-				if (at !== undefined && framesRef.current.length > 0) {
+				const at = store.get().places[page];
+				if (at !== undefined && visibleFramesOf(store.get()).length > 0) {
 					gesture.current = { kind: "page-pending", page, origin: at, start: p };
 				}
 				return;
 			}
 			setSelectedPage(null);
-			if (toolRef.current === "hand") {
+			if (toolOf(store.get()) === "hand") {
 				setSelected([]);
 				setPicked([]);
 				return;
 			}
 			// empty canvas: a clean click clears, a drag draws the marquee
-			const base = event.shiftKey ? selectedRef.current : [];
+			const base = event.shiftKey ? store.get().selected : [];
 			if (!event.shiftKey) {
 				setSelected([]);
 				setPicked([]);
@@ -4878,10 +4807,10 @@ export function ProjectCanvas({
 		// ⇧-click in Edit, or among elements already held, puts the deepest
 		// element under the pointer in or out of the selection (#37, #339)
 		if (
-			toolRef.current !== "hand" &&
+			toolOf(store.get()) !== "hand" &&
 			event.shiftKey &&
 			label === null &&
-			(toolRef.current === "edit" || pickedRef.current.length > 0)
+			(toolOf(store.get()) === "edit" || store.get().picked.length > 0)
 		) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) togglePickAt(hit, local);
@@ -4899,7 +4828,7 @@ export function ProjectCanvas({
 		// takes the deepest element under the pointer, and nothing more. The
 		// modifier is exclusive, never a union: on the Mac ctrl-click is the
 		// context menu's, so accepting either would fire both.
-		if (toolRef.current === "select" && accelPressed(event) && label === null) {
+		if (toolOf(store.get()) === "select" && accelPressed(event) && label === null) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) selectDeepestAt(hit, local);
 			return;
@@ -4907,17 +4836,17 @@ export function ProjectCanvas({
 
 		// In Edit every click is the deepest element under the pointer (#339),
 		// and a drag moves that element among its siblings (#340).
-		if (toolRef.current === "edit" && label === null) {
+		if (toolOf(store.get()) === "edit" && label === null) {
 			const local = frameLocalAt(hit, world);
 			// a press on the element that was already held is the second click
 			// the text gesture is (#255) — noted here and acted on at pointer-up,
 			// because until then it may yet turn out to be a drag of the frame
 			if (local !== null) {
-				const again = secondClick(pickedRef.current, hit, local);
+				const again = secondClick(store.get().picked, hit, local);
 				pressOnHeld.current = again === undefined ? null : { pick: again, local };
 				selectDeepestAt(hit, local);
 			}
-			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
+			const names = store.get().selected.includes(hit) ? [...store.get().selected] : [hit];
 			gesture.current =
 				local === null
 					? { kind: "pending", names, origins: originsOf(names), start: p }
@@ -4925,8 +4854,8 @@ export function ProjectCanvas({
 			return;
 		}
 
-		const wasSelected = selectedRef.current.includes(hit);
-		const names = wasSelected ? [...selectedRef.current] : [hit];
+		const wasSelected = store.get().selected.includes(hit);
+		const names = wasSelected ? [...store.get().selected] : [hit];
 		if (!wasSelected) {
 			setSelected([hit]);
 			setPicked([]);
@@ -4942,7 +4871,7 @@ export function ProjectCanvas({
 
 		if (active.kind === "idle") {
 			// idle motion previews the frame and, under ⌘ or a scope, its element
-			if (menuOpenRef.current || event.pointerType === "touch") {
+			if (store.get().menu !== null || event.pointerType === "touch") {
 				hideFrameHover();
 				return;
 			}
@@ -4959,13 +4888,13 @@ export function ProjectCanvas({
 						: { frame, visible: true },
 			);
 			// a page lights the way a frame does, and only where no frame answered
-			const overPage = frame === null ? (pageObjectAt(pageObjectsRef.current, world)?.page ?? null) : null;
+			const overPage = frame === null ? (pageObjectAt(pageObjectsOf(store.get()), world)?.page ?? null) : null;
 			setHoveredPage((current) => (current === overPage ? current : overPage));
 			// The rings and the element preview belong to the pointing tools, and
 			// every reader of `hovered` out here gates on that. The frame under the
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
 			// and a pointer resting on a frame is resting on it in the Hand too.
-			if (toolRef.current === "hand") return;
+			if (toolOf(store.get()) === "hand") return;
 			hoverPickAt(label === null ? frame : null, world, accelPressed(event));
 			return;
 		}
@@ -5023,13 +4952,13 @@ export function ProjectCanvas({
 			const rawX = (p.x - active.start.x) / cam.k;
 			const rawY = (p.y - active.start.y) / cam.k;
 			const movingBoxes: Box[] = [];
-			for (const frame of framesRef.current) {
+			for (const frame of visibleFramesOf(store.get())) {
 				const origin = active.origins.get(frame.name);
 				if (origin !== undefined)
 					movingBoxes.push({ x: origin.x + rawX, y: origin.y + rawY, w: frame.w, h: frame.h });
 			}
 			if (movingBoxes.length === 0) return;
-			const statics = framesRef.current.filter((f) => !active.origins.has(f.name));
+			const statics = visibleFramesOf(store.get()).filter((f) => !active.origins.has(f.name));
 			// the modifier is read off the move itself rather than off the key event:
 			// the gesture keeps no modifier state, and mid-drag the wait is a frame
 			const snap = snapMovedBox(boundsOf(movingBoxes), statics, SNAP_THRESHOLD_PX / cam.k, {
@@ -5078,7 +5007,9 @@ export function ProjectCanvas({
 				w: rect.w / cam.k,
 				h: rect.h / cam.k,
 			};
-			const swept = framesRef.current.filter((f) => intersects(world, f)).map((f) => f.name);
+			const swept = visibleFramesOf(store.get())
+				.filter((f) => intersects(world, f))
+				.map((f) => f.name);
 			const next = [...new Set([...active.base, ...swept])];
 			setSelected((current) => (sameNames(current, next) ? current : next));
 			return;
@@ -5089,7 +5020,7 @@ export function ProjectCanvas({
 			const { handle, anchor, origin } = active;
 			// the dragged edges snap like moves do; a min-size clamp beats the snap
 			// and drops its guides — a line must never point at an edge that isn't there
-			const statics = framesRef.current.filter((f) => f.name !== active.frame);
+			const statics = visibleFramesOf(store.get()).filter((f) => f.name !== active.frame);
 			const threshold = SNAP_THRESHOLD_PX / cam.k;
 			let { x, y, w, h } = origin;
 			let vGuides: number[] = [];
@@ -5160,7 +5091,7 @@ export function ProjectCanvas({
 	 * frame move's commit has, against the durable a page's place lives in.
 	 */
 	const commitPlace = (page: string, origin: Place) => {
-		const at = placesRef.current[page];
+		const at = store.get().places[page];
 		if (at === undefined) return;
 		const entry = placeEntryOf({ [page]: origin }, { [page]: at });
 		if (entry === undefined) return;
@@ -5223,8 +5154,8 @@ export function ProjectCanvas({
 	 * must never hand the page the pointer by accident.
 	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
-		if (exportDialogRef.current !== null) return;
-		if (toolRef.current === "hand") return;
+		if (store.get().exportDialog !== null) return;
+		if (toolOf(store.get()) === "hand") return;
 		const cam = camera.get();
 		if (cam === null) return;
 		const label = datasetHit(event.target, "frame-label");
@@ -5234,16 +5165,16 @@ export function ProjectCanvas({
 			// double-click goes inside a page the same way it goes inside a frame
 			// (#265). The camera does not fly: a page is its own coordinate space,
 			// and pretending otherwise would be a lie about what just happened
-			const page = pageObjectAt(pageObjectsRef.current, world);
+			const page = pageObjectAt(pageObjectsOf(store.get()), world);
 			if (page !== null) {
 				cancelGesture();
 				goInsidePage(page.page);
 			}
 			return;
 		}
-		if (hit === enteredRef.current) return;
+		if (hit === store.get().entered) return;
 		cancelGesture();
-		if (toolRef.current === "select" && !accelPressed(event)) {
+		if (toolOf(store.get()) === "select" && !accelPressed(event)) {
 			enterFrame(hit);
 			return;
 		}
@@ -5254,7 +5185,7 @@ export function ProjectCanvas({
 
 	const onContextMenu = (event: React.MouseEvent) => {
 		event.preventDefault();
-		if (exportDialogRef.current !== null) return;
+		if (store.get().exportDialog !== null) return;
 		const cam = camera.get();
 		if (cam === null) return;
 		const p = localPoint(event);
@@ -5266,9 +5197,9 @@ export function ProjectCanvas({
 			setMenu(null);
 			return;
 		}
-		if (enteredRef.current !== null) exitEntered();
-		const elementSelection = pickedRef.current.some((pick) => pick.frame === hit);
-		if (!elementSelection && !selectedRef.current.includes(hit)) {
+		if (store.get().entered !== null) exitEntered();
+		const elementSelection = store.get().picked.some((pick) => pick.frame === hit);
+		if (!elementSelection && !store.get().selected.includes(hit)) {
 			setSelected([hit]);
 			setPicked([]);
 		}
@@ -5299,9 +5230,9 @@ export function ProjectCanvas({
 
 	/** The page a named frame sits on — the root page when it is unknown. */
 	const framePageOf = (name: string): string => {
-		const frame = allFramesRef.current.find((f) => f.name === name);
+		const frame = store.get().frames.find((f) => f.name === name);
 		if (frame !== undefined) return pageOf(frame);
-		return placeholdersRef.current.find((one) => one.name === name)?.page ?? ROOT_PAGE;
+		return store.get().placeholders.find((one) => one.name === name)?.page ?? ROOT_PAGE;
 	};
 
 	/**
@@ -5338,10 +5269,10 @@ export function ProjectCanvas({
 	/** Land on a frame by name: switch page if needed, select it, centre the camera. */
 	const landOnFrame = useCallback(
 		(name: string) => {
-			const frame = allFramesRef.current.find((candidate) => candidate.name === name);
+			const frame = store.get().frames.find((candidate) => candidate.name === name);
 			if (frame === undefined) {
 				// a placeholder is landed on as a frame is, and nothing is selected: there is nothing in it yet
-				const held = placeholdersRef.current.find((candidate) => candidate.name === name);
+				const held = store.get().placeholders.find((candidate) => candidate.name === name);
 				const viewport = viewportRef.current;
 				const cam = camera.get();
 				if (held === undefined) return;
@@ -5351,7 +5282,7 @@ export function ProjectCanvas({
 						? undefined
 						: centerOn(cam, held, viewport.clientWidth, viewport.clientHeight);
 				const page = held.page ?? ROOT_PAGE;
-				if (page !== activePageRef.current) switchToPage(page, cam ?? undefined, centred);
+				if (page !== store.get().activePage) switchToPage(page, cam ?? undefined, centred);
 				else if (centred !== undefined) camera.fly(centred);
 				return;
 			}
@@ -5365,14 +5296,14 @@ export function ProjectCanvas({
 			// Another page arrives where the camera stood and flies on to the frame
 			// from there, as the landing always has; the flight starts in the commit
 			// that brings the page, so none of it is drawn over the page being left.
-			if (pageOf(frame) !== activePageRef.current) switchToPage(pageOf(frame), cam ?? undefined, centred);
+			if (pageOf(frame) !== store.get().activePage) switchToPage(pageOf(frame), cam ?? undefined, centred);
 			else if (centred !== undefined) camera.fly(centred);
 			setPicked([]);
 			holdChain(null);
 			setSelected([frame.name]);
 			frameAnchor.current = frame.name;
 		},
-		[recordDeparture, switchToPage, holdChain, camera],
+		[recordDeparture, switchToPage, holdChain, camera, store],
 	);
 	landOnFrameRef.current = landOnFrame;
 
@@ -5415,21 +5346,16 @@ export function ProjectCanvas({
 
 	// --- keys -------------------------------------------------------------------
 
-	const menuOpenRef = useRef(false);
-	menuOpenRef.current = menu !== null;
-	const exportingRef = useRef(exporting);
-	exportingRef.current = exporting;
-
 	useEffect(() => {
-		const pickTarget = () => [...new Set(pickedRef.current.map((pick) => pick.frame))];
+		const pickTarget = () => [...new Set(store.get().picked.map((pick) => pick.frame))];
 		/**
 		 * The frames a menu verb acts on from the keyboard: the selection, or
 		 * the frames behind an element pick. Inside an entered frame there are
 		 * none — the keys belong to the prototype then, never to the canvas.
 		 */
 		const verbTarget = () => {
-			if (enteredRef.current !== null) return [];
-			return selectedRef.current.length > 0 ? [...selectedRef.current] : pickTarget();
+			if (store.get().entered !== null) return [];
+			return store.get().selected.length > 0 ? [...store.get().selected] : pickTarget();
 		};
 		const gestureStill = () => gesture.current.kind === "idle" || gesture.current.kind === "pan";
 		const zoomStep = (event: KeyboardEvent | undefined, factor: number) => {
@@ -5441,26 +5367,26 @@ export function ProjectCanvas({
 		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
 			if (event === undefined) return;
 			// a held element moves one step among its siblings instead (#340)
-			if (selectedRef.current.length === 0 && pickedRef.current.length > 0) {
+			if (store.get().selected.length === 0 && store.get().picked.length > 0) {
 				const earlier = event.key === "ArrowUp" || event.key === "ArrowLeft";
 				if (moveStep(earlier ? -1 : 1)) event.preventDefault();
 				return;
 			}
-			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
+			if (store.get().entered !== null || store.get().selected.length === 0) return;
 			event.preventDefault();
 			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
 			const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
 			nudge(dx, dy);
 		};
 		const stepSelection = (event: KeyboardEvent) => {
-			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
+			if (store.get().entered !== null || store.get().selected.length === 0) return;
 			event.preventDefault();
-			if (selectedRef.current.length !== 1) return;
-			const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
+			if (store.get().selected.length !== 1) return;
+			const current = visibleFramesOf(store.get()).find((frame) => frame.name === store.get().selected[0]);
 			if (current === undefined) return;
 			const direction = stepDirection(event);
 			if (direction === undefined) return;
-			const step = stepSpatially(current, framesRef.current, direction, spatialTrail.current);
+			const step = stepSpatially(current, visibleFramesOf(store.get()), direction, spatialTrail.current);
 			if (step === undefined) return;
 			const { target } = step;
 			spatialTrail.current = step.trail;
@@ -5477,13 +5403,11 @@ export function ProjectCanvas({
 		// compile — the handlers gate on state, the register never does
 		const handlers = {
 			// Held keys repeat, and only the first press changes what a ring means.
-			// The ref is mirrored from state at render, which is a paint away; the
-			// redraw below reads it now, so this press writes both.
+			// The redraw below reads the store, which this press has already set.
 			"canvas.accel-hold": () => {
-				liveRef.current.accel(true, !accelDownRef.current);
-				if (accelDownRef.current) return;
+				liveRef.current.accel(true, !store.get().accelDown);
+				if (store.get().accelDown) return;
 				setAccelDown(true);
-				accelDownRef.current = true;
 				refreshRings.current();
 			},
 			"canvas.space-hold": (event) => {
@@ -5505,7 +5429,7 @@ export function ProjectCanvas({
 			// ⌘Z answers the trash toast first (#7), then walks the one stack (#230)
 			"canvas.undo": (event) => {
 				event?.preventDefault();
-				if (pendingTrashRef.current !== null) undoTrash();
+				if (store.get().pendingTrash !== null) undoTrash();
 				else if (gestureStill()) walk("undo");
 			},
 			"canvas.redo": (event) => {
@@ -5518,33 +5442,33 @@ export function ProjectCanvas({
 			// "/" is the filter's door here as on Home, ⌘K beside it — the chord
 			// every other palette taught, same door
 			"canvas.find": (event) => {
-				if (enteredRef.current !== null) return;
+				if (store.get().entered !== null) return;
 				event?.preventDefault();
 				setFinding(true);
 			},
 			// leaving an entered frame: ⌘esc landing canvas-side (#42), or the
 			// esc the shim relays out of the frame that owned it
 			"canvas.leave": (event) => {
-				if (enteredRef.current === null) return;
+				if (store.get().entered === null) return;
 				event?.preventDefault();
 				exitEntered(true);
 			},
 			// ⌘↓ / ⌘↑, Finder's own keys for into and out of a folder
 			"canvas.page-in": (event) => {
-				if (enteredRef.current !== null || editingRef.current !== null) return;
-				const page = selectedPageRef.current;
+				if (store.get().entered !== null || store.get().editing !== null) return;
+				const page = store.get().selectedPage;
 				if (page === null) return;
 				event?.preventDefault();
 				goInsidePage(page);
 			},
 			"canvas.page-up": (event) => {
-				if (enteredRef.current !== null || editingRef.current !== null) return;
+				if (store.get().entered !== null || store.get().editing !== null) return;
 				if (goUpPage()) event?.preventDefault();
 			},
 			"canvas.fit-all": () => zoomFit(),
 			"canvas.fit-selection": () => {
-				const names = selectedRef.current.length > 0 ? selectedRef.current : pickTarget();
-				const boxes = framesRef.current.filter((f) => names.includes(f.name));
+				const names = store.get().selected.length > 0 ? store.get().selected : pickTarget();
+				const boxes = visibleFramesOf(store.get()).filter((f) => names.includes(f.name));
 				const viewport = viewportRef.current;
 				if (boxes.length > 0 && viewport !== null) {
 					camera.fly(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
@@ -5576,7 +5500,7 @@ export function ProjectCanvas({
 			// is entered or its words are open, and an element held changes
 			// nothing, the frame behind it is what goes
 			"canvas.copy": (event) => {
-				if (editingRef.current !== null) return;
+				if (store.get().editing !== null) return;
 				// text highlighted in the chrome (a path row, a label) is what ⌘C means
 				if (window.getSelection()?.isCollapsed === false) return;
 				const targets = verbTarget();
@@ -5585,12 +5509,12 @@ export function ProjectCanvas({
 				frameVerbs.current?.copy(targets);
 			},
 			"canvas.paste": (event) => {
-				if (enteredRef.current !== null || editingRef.current !== null || !gestureStill()) return;
+				if (store.get().entered !== null || store.get().editing !== null || !gestureStill()) return;
 				event?.preventDefault();
 				void frameVerbs.current?.paste();
 			},
 			"canvas.duplicate": (event) => {
-				if (editingRef.current !== null) return;
+				if (store.get().editing !== null) return;
 				const targets = verbTarget();
 				if (targets.length === 0) return;
 				// ⌘D is the browser's bookmark key
@@ -5602,13 +5526,13 @@ export function ProjectCanvas({
 			// element at a time, and never while its words are open — that press
 			// belongs to the text being typed.
 			"canvas.trash": (event) => {
-				if (enteredRef.current !== null) return;
-				if (pickedRef.current.length > 0) {
+				if (store.get().entered !== null) return;
+				if (store.get().picked.length > 0) {
 					event?.preventDefault();
 					// every element held goes, as one write and one press of undo
 					// (#323); never while words are open, because that press
 					// belongs to the text being typed
-					if (editingRef.current === null) deleteElement(pickedRef.current);
+					if (store.get().editing === null) deleteElement(store.get().picked);
 					return;
 				}
 				const targets = verbTarget();
@@ -5641,15 +5565,16 @@ export function ProjectCanvas({
 			// in Edit, it opens the words or selects the children; only a frame
 			// held in Select goes inside
 			"canvas.enter": (event) => {
-				if (editingRef.current !== null) return;
+				if (store.get().editing !== null) return;
 				// a page object held goes inside, as its double-click does
-				if (enteredRef.current === null && selectedPageRef.current !== null) {
+				const page = store.get().selectedPage;
+				if (store.get().entered === null && page !== null) {
 					event?.preventDefault();
-					goInsidePage(selectedPageRef.current);
+					goInsidePage(page);
 					return;
 				}
-				if (pickedRef.current.length > 0 || toolRef.current === "edit") {
-					if (enteredRef.current !== null) return;
+				if (store.get().picked.length > 0 || toolOf(store.get()) === "edit") {
+					if (store.get().entered !== null) return;
 					if (openHeld()) event?.preventDefault();
 					return;
 				}
@@ -5662,13 +5587,13 @@ export function ProjectCanvas({
 			// ⌘⏎ is ⏎ with Edit borrowed: into the words or the children, from a
 			// frame held in Select as much as from an element
 			"canvas.descend": (event) => {
-				if (enteredRef.current !== null) return;
+				if (store.get().entered !== null) return;
 				event?.preventDefault();
 				setPreview(null);
 				openHeld();
 			},
 			"canvas.ascend": (event) => {
-				if (enteredRef.current !== null) return;
+				if (store.get().entered !== null) return;
 				event?.preventDefault();
 				cancelPicks();
 				setPreview(null);
@@ -5682,33 +5607,33 @@ export function ProjectCanvas({
 			// ⌘A takes every sibling of what is held (#339), and is the browser's
 			// own select-all anywhere else
 			"canvas.select-siblings": (event) => {
-				if (editingRef.current !== null) return;
+				if (store.get().editing !== null) return;
 				if (selectSiblings()) event?.preventDefault();
 			},
 			"canvas.escape": () => {
 				cancelPicks();
 				setPreview(null);
 				// Esc finishes the words and saves them, as Enter does (#339)
-				if (editingRef.current !== null) {
+				if (store.get().editing !== null) {
 					endEditRef.current(true);
 					return;
 				}
 				if (!gestureStill()) cancelGesture();
-				else if (menuOpenRef.current) setMenu(null);
-				else if (enteredRef.current !== null) exitEntered(true);
+				else if (store.get().menu !== null) setMenu(null);
+				else if (store.get().entered !== null) exitEntered(true);
 				// Esc leaves first, then climbs to the parent the way ⇧⏎ does, then
 				// puts a page object down, and last goes up a page
 				else if (selectParent()) return;
-				else if (selectedPageRef.current !== null) setSelectedPage(null);
+				else if (store.get().selectedPage !== null) setSelectedPage(null);
 				else goUpPage();
 			},
 		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
 		const detachDialog = attachHotkeyLayer({
 			scope: "dialog",
-			active: () => exportDialogRef.current !== null,
+			active: () => store.get().exportDialog !== null,
 			handlers: {
 				"dialog.close": (event) => {
-					if (exportingRef.current) return;
+					if (store.get().exporting) return;
 					event?.preventDefault();
 					cancelExportDialog();
 				},
@@ -5717,7 +5642,7 @@ export function ProjectCanvas({
 		// the finder owns the keys while it is up, exactly as the export dialog does
 		const detachFinder = attachHotkeyLayer({
 			scope: "finder",
-			active: () => findingRef.current,
+			active: () => store.get().finding,
 			handlers: {
 				"finder.close": (event) => {
 					event?.preventDefault();
@@ -5733,7 +5658,6 @@ export function ProjectCanvas({
 			if (event.key === accelKeyName()) {
 				liveRef.current.accel(false, false);
 				setAccelDown(false);
-				accelDownRef.current = false;
 				refreshRings.current();
 			}
 			// letting go of ⌥ lands the overview, or disarms a hold that never opened
@@ -5795,6 +5719,7 @@ export function ProjectCanvas({
 		goInsidePage,
 		goUpPage,
 		camera,
+		store,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
@@ -6115,7 +6040,7 @@ export function ProjectCanvas({
 					// that saves. Here rather than on the pointer press, because a
 					// cancelled pointerdown takes the double-click with it (#314)
 					onMouseDown={(event) => {
-						const openEdit = editingRef.current;
+						const openEdit = store.get().editing;
 						const cam = camera.get();
 						if (openEdit === null || openEdit.phase !== "opening" || cam === null) return;
 						if (frameAtWorld(toWorld(localPoint(event), cam)) === openEdit.frame) event.preventDefault();
@@ -6429,8 +6354,8 @@ export function ProjectCanvas({
 									: {
 											selectionCount: selected.includes(menu.frame) ? selected.length : 1,
 											onSelect: () => {
-												const names = selectedRef.current.includes(menu.frame)
-													? [...selectedRef.current]
+												const names = store.get().selected.includes(menu.frame)
+													? [...store.get().selected]
 													: [menu.frame];
 												const returnMenu = menu;
 												setMenu(null);
@@ -6444,7 +6369,7 @@ export function ProjectCanvas({
 								playFrame(frame);
 							}}
 							onCopyPath={() => {
-								const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
+								const pick = store.get().picked.find((candidate) => candidate.frame === menu.frame);
 								copySourcePath(pick !== undefined ? sourcePathOf(pick) : frameSourcePath(menu.frame));
 								setMenu(null);
 							}}
@@ -6473,8 +6398,8 @@ export function ProjectCanvas({
 										}
 							}
 							onTrash={() => {
-								const names = selectedRef.current.includes(menu.frame)
-									? [...selectedRef.current]
+								const names = store.get().selected.includes(menu.frame)
+									? [...store.get().selected]
 									: [menu.frame];
 								setMenu(null);
 								stageTrash(names);

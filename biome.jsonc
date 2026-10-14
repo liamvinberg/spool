@@ -40,6 +40,18 @@
 			"preset": "recommended",
 			"style": {
 				"noNonNullAssertion": "off"
+			},
+			"correctness": {
+				"useExhaustiveDependencies": {
+					"level": "error",
+					"options": {
+						// the canvas store's setters are as stable as useState's (canvas-store.ts)
+						"hooks": [
+							{ "name": "useCanvasField", "stableResult": [1] },
+							{ "name": "useCanvasSetter", "stableResult": true }
+						]
+					}
+				}
 			}
 		}
 	},
