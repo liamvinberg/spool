@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
@@ -7,11 +7,14 @@ import { writePlacement } from "./geometry";
 import {
 	isPageFolder,
 	listProjectFrames,
+	listProjectFramesAwaited,
 	lookupFrame,
 	pagePaths,
 	readFrameGeometry,
 	summarizeProject,
 } from "./projection";
+import { markSeen } from "./seen";
+import { writeCover } from "./thumbs";
 
 describe("frame birth", () => {
 	it("carries the folder's birth time so the finder can sort newest first", () => {
@@ -23,6 +26,61 @@ describe("frame birth", () => {
 		const born = frames[0]?.born ?? 0;
 		expect(born).toBeGreaterThanOrEqual(before - 2000);
 		expect(born).toBeLessThanOrEqual(Date.now() + 2000);
+	});
+});
+
+describe("the projection read without blocking", () => {
+	it("answers what the blocking read answers, placing and seeding as it does", async () => {
+		const project = () => {
+			const root = makeTempDir();
+			const entry = "export default () => null;\n";
+			writeDesignFile(root, join("frames", "home", "frame.tsx"), entry);
+			writeDesignFile(root, join("frames", "home", "frame.json"), '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+			writeDesignFile(root, join("frames", "app", "settings", "frame.tsx"), entry);
+			writeDesignFile(root, join("frames", "app", "settings", "frame.json"), '{ "w": 1440, "h": 900 }\n');
+			writeDesignFile(root, join("frames", "app", "deep", "inbox", "frame.tsx"), entry);
+			writeDesignFile(root, join("frames", "app", "deep", "inbox", "parts", "row.tsx"), entry);
+			writeDesignFile(root, join("frames", "app", "broken", "frame.tsx"), entry);
+			writeDesignFile(root, join("frames", "app", "broken", "frame.json"), "{ not json");
+			writeDesignFile(root, join("frames", "app", "linked", "frame.tsx"), entry);
+			writeDesignFile(root, join("shared", "linked.json"), '{ "x": 5000, "y": 0, "w": 320, "h": 640 }\n');
+			symlinkSync(
+				join(root, "design", "shared", "linked.json"),
+				join(root, "design", "frames", "app", "linked", "frame.json"),
+			);
+			writeDesignFile(
+				root,
+				join("frames", "app", "soon", "frame.json"),
+				'{ "x": 0, "y": 2000, "w": 390, "h": 844, "placeholder": { "title": "Soon", "brief": "Later." } }\n',
+			);
+			writeCover(root, "home", Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]));
+			return root;
+		};
+		const sync = project();
+		const awaited = project();
+		const strip = (projection: ReturnType<typeof listProjectFrames>) => ({
+			...projection,
+			root: "",
+			frames: projection.frames.map(({ born, ...frame }) => ({ ...frame, born: born !== undefined })),
+		});
+
+		// the first read seeds the seen record and places the frames without a place
+		expect(strip(await listProjectFramesAwaited(awaited, { seen: true }))).toEqual(
+			strip(listProjectFrames(sync, { seen: true })),
+		);
+		for (const root of [sync, awaited]) {
+			const dir = join(realDesignDir(root), "frames", "app", "deep", "inbox");
+			markSeen(root, [{ name: "app/deep/inbox", dir }], ["app/deep/inbox"]);
+			const later = new Date(Date.now() + 60_000);
+			utimesSync(join(dir, "parts", "row.tsx"), later, later);
+			writeDesignFile(root, join("frames", "app", "fresh", "frame.tsx"), "export default () => null;\n");
+		}
+		const second = strip(await listProjectFramesAwaited(awaited, { seen: true }));
+		expect(second).toEqual(strip(listProjectFrames(sync, { seen: true })));
+		expect(second.frames.find((frame) => frame.name === "app/deep/inbox")?.unseen).toBe("changed");
+		expect(second.frames.find((frame) => frame.name === "app/fresh")?.unseen).toBe("new");
+		expect(second.frames.find((frame) => frame.name === "app/linked")).toMatchObject({ x: 5000, w: 320 });
+		expect(second.frames.find((frame) => frame.name === "home")?.cover).toBeDefined();
 	});
 });
 

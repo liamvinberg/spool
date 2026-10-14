@@ -1,4 +1,5 @@
 import { type Dirent, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -124,6 +125,33 @@ export function folderTouched(dir: string): number {
 	return newest;
 }
 
+/** The same walk, without holding the event loop: every folder read at once. */
+export async function folderTouchedAwaited(dir: string): Promise<number> {
+	const walk = async (at: string, depth: number): Promise<number> => {
+		let entries: Dirent[];
+		try {
+			entries = await readdir(at, { withFileTypes: true });
+		} catch {
+			return 0;
+		}
+		const times = await Promise.all(
+			entries.map(async (entry) => {
+				if (depth === 0 && entry.name === NOT_SOURCE) return 0;
+				const path = join(at, entry.name);
+				if (entry.isDirectory()) return depth < MAX_DEPTH ? await walk(path, depth + 1) : 0;
+				try {
+					return Math.round((await lstat(path)).mtimeMs);
+				} catch {
+					// a file that vanished mid-walk says nothing about the frame
+					return 0;
+				}
+			}),
+		);
+		return Math.max(0, ...times);
+	};
+	return await walk(dir, 0);
+}
+
 /** The verdict on one frame, given what the record holds and what disk says. */
 export function verdict(recorded: number | undefined, touched: number): Unseen | undefined {
 	if (recorded === undefined) return "new";
@@ -152,6 +180,22 @@ export function unseenNow(root: string, frames: readonly SeenFrame[]): Map<strin
 	const marks = new Map<string, Unseen>();
 	for (const frame of frames) {
 		const mark = verdict(record[frame.name], folderTouched(frame.dir));
+		if (mark !== undefined) marks.set(frame.name, mark);
+	}
+	return marks;
+}
+
+/**
+ * `unseenNow` with the folder walks off the event loop. A project with no
+ * record yet is seeded as there, in one turn.
+ */
+export async function unseenNowAwaited(root: string, frames: readonly SeenFrame[]): Promise<Map<string, Unseen>> {
+	const record = readRecord(root);
+	if (record === undefined) return unseenNow(root, frames);
+	const touched = await Promise.all(frames.map((frame) => folderTouchedAwaited(frame.dir)));
+	const marks = new Map<string, Unseen>();
+	for (const [index, frame] of frames.entries()) {
+		const mark = verdict(record[frame.name], touched[index] ?? 0);
 		if (mark !== undefined) marks.set(frame.name, mark);
 	}
 	return marks;

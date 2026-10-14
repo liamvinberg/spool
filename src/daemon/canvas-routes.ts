@@ -10,7 +10,7 @@ import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./ge
 import { locateInDesign } from "./locate";
 import { answeringDiskRefusals, type ResolveProject, withProject } from "./project-route";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
-import { frameDirectories, frameExists, listProjectFrames, lookupFrame } from "./projection";
+import { frameDirectories, frameExists, listProjectFramesAwaited, lookupFrame } from "./projection";
 import type { createResolvePass } from "./resolve-pass";
 import { markSeen } from "./seen";
 import { type createSelectionStore, parseSelectionPut } from "./selection";
@@ -34,9 +34,9 @@ export function canvasRoutes(deps: {
 		new Hono()
 			.get("/:project/frames", (c) => {
 				const name = c.req.param("project");
-				return withProject(c, deps.resolve, (root) => {
+				return withProject(c, deps.resolve, async (root) => {
 					try {
-						const projection = listProjectFrames(root, { seen: true });
+						const projection = await listProjectFramesAwaited(root, { seen: true });
 						return c.json({
 							...projection,
 							frames: projection.frames.map((frame) => {
@@ -159,7 +159,7 @@ export function canvasRoutes(deps: {
 					// origin to render from, and in-process app.request() never binds one
 					const origin = deps.origin();
 					if (origin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
-					const listing = listProjectFrames(root);
+					const listing = await listProjectFramesAwaited(root);
 					const frames = listing.frames.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
 					try {
 						const result = await deps.resolvePass.run({

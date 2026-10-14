@@ -91,6 +91,23 @@ export function scanCovers(root: string): Map<string, Cover> {
 	return covers;
 }
 
+/** The same sweep, without holding the event loop: every folder read at once. */
+export async function scanCoversAwaited(root: string): Promise<Map<string, Cover>> {
+	const store = coverStoreDir(root);
+	const found = await Promise.all(
+		(await listed(store))
+			.filter((entry) => entry.isDirectory())
+			.map(async (entry) => {
+				const frame = segmentFrame(entry.name);
+				if (frame === undefined) return undefined;
+				const names = (await listed(join(store, entry.name))).filter((one) => one.isFile()).map((one) => one.name);
+				const cover = coverAmong(names);
+				return cover === undefined ? undefined : ([frame, cover] as const);
+			}),
+	);
+	return new Map(found.filter((each) => each !== undefined));
+}
+
 /** One frame's cover, without holding the event loop: what a Home card reads for its picture. */
 export async function readCoverAwaited(root: string, frame: string): Promise<Cover | undefined> {
 	const dir = coverDir(root, frame);

@@ -101,6 +101,24 @@ export function namedClasses(source: string): string[] {
 	return strings.flatMap((text) => text.split(/\s+/)).filter((name) => name !== "");
 }
 
+/**
+ * The classes each source file named when last read, by path: a shared
+ * component is a source of every frame that draws it, and a save that
+ * recompiles those frames would read its classes again for each.
+ */
+const namedByFile = new Map<string, { text: string; names: string[] }>();
+/** Past this many files the memory starts over, so a daemon serving many projects holds no more than this. */
+const NAMED_FILES = 4000;
+
+function namedClassesOf(file: string, text: string): string[] {
+	const known = namedByFile.get(file);
+	if (known !== undefined && known.text === text) return known.names;
+	const names = namedClasses(text);
+	if (known === undefined && namedByFile.size >= NAMED_FILES) namedByFile.clear();
+	namedByFile.set(file, { text, names });
+	return names;
+}
+
 /** The utility a class is of, past its variants and modifiers, when it is one held to the theme. */
 function themedUtility(name: string): boolean {
 	if (/[[\](){}$'"`]/.test(name)) return false;
@@ -126,7 +144,7 @@ export function escapeClass(name: string): string {
 }
 
 /** Whether a stylesheet has a rule for a class: its selector, not followed by more of a name. */
-function styled(css: string, name: string): boolean {
+function styledIn(css: string, name: string): boolean {
 	const selector = `.${escapeClass(name)}`;
 	for (let at = css.indexOf(selector); at !== -1; at = css.indexOf(selector, at + 1)) {
 		const next = css[at + selector.length];
@@ -135,17 +153,61 @@ function styled(css: string, name: string): boolean {
 	return false;
 }
 
+/** A character `styledIn` takes for more of a name after a selector. */
+function continuesName(code: number): boolean {
+	return (
+		(code >= 48 && code <= 57) ||
+		(code >= 65 && code <= 90) ||
+		(code >= 97 && code <= 122) ||
+		code === 95 ||
+		code === 92 ||
+		code === 45
+	);
+}
+
+/**
+ * `styledIn` for many names over one stylesheet, from one pass over it: every
+ * `.`-run an escaped class could spell, cut wherever `styledIn` would find no
+ * more of a name, so a lookup answers what its scan would. A frame names
+ * hundreds of classes and its stylesheet runs to megabytes, and one scan per
+ * class held the daemon's loop for tens of milliseconds a compile. A name
+ * whose escape opens with a digit carries a space inside its selector, which
+ * the runs never cross, so it is still scanned.
+ */
+function styledIndex(css: string): (name: string) => boolean {
+	const selectors = new Set<string>();
+	for (let dot = css.indexOf("."); dot !== -1; dot = css.indexOf(".", dot + 1)) {
+		let at = dot + 1;
+		while (true) {
+			const code = css.charCodeAt(at);
+			if (Number.isNaN(code) || !continuesName(code)) selectors.add(css.slice(dot, at));
+			if (Number.isNaN(code)) break;
+			// an escape's backslash always takes the character after it
+			if (code === 92) at += 2;
+			else if (continuesName(code) || code >= 128) at += 1;
+			else break;
+		}
+	}
+	return (name) => {
+		const first = name.charCodeAt(0);
+		if (first >= 48 && first <= 57) return styledIn(css, name);
+		return selectors.has(`.${escapeClass(name)}`);
+	};
+}
+
 /**
  * The themed classes a frame's sources name that its stylesheet never built,
  * each once, in the order first named.
  */
 export function unstyledClasses(files: ReadonlyArray<{ file: string; text: string }>, css: string): string[] {
 	const missing = new Set<string>();
+	let styled: ((name: string) => boolean) | undefined;
 	for (const { file, text } of files) {
 		if (!SOURCE.test(file)) continue;
-		for (const name of namedClasses(text)) {
+		for (const name of namedClassesOf(file, text)) {
 			if (missing.has(name) || !themedUtility(name)) continue;
-			if (!styled(css, name)) missing.add(name);
+			styled ??= styledIndex(css);
+			if (!styled(name)) missing.add(name);
 		}
 	}
 	return [...missing];

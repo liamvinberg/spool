@@ -46,6 +46,32 @@ export function A({ on }) {
 		).toEqual(["bg-white", "text-subtle", "hover:bg-paper", "!text-ghost"]);
 	});
 
+	it("finds a selector wherever no more of a name follows it, the end of the sheet and a non-ASCII letter included", () => {
+		const css = `.bg-inkk{}.bg-ink-2\\:x{}.text-é{}.text-lineé{}.md\\:bg-wash:hover{}.text-tail\\\\.rounded-end`;
+		const names = [
+			"bg-ink",
+			"bg-inkk",
+			"bg-ink-2",
+			"bg-ink-2:x",
+			"text-é",
+			"text-line",
+			"md:bg-wash",
+			"bg-wash",
+			"text-tail\\",
+			"text-tail",
+			"rounded-end",
+			"rounded-en",
+		];
+		const source = `export const A = () => <div className="${names.join(" ")}" />;`;
+		expect(unstyledClasses([{ file: "/d/frames/a/frame.tsx", text: source }], css)).toEqual([
+			"bg-ink",
+			"bg-ink-2",
+			"bg-wash",
+			"text-tail",
+			"rounded-en",
+		]);
+	});
+
 	it("escapes a class the way its selector is written", () => {
 		expect(escapeClass("md:hover:bg-white/50")).toBe("md\\:hover\\:bg-white\\/50");
 		expect(escapeClass("2xl:p-1.5")).toBe("\\32 xl\\:p-1\\.5");
