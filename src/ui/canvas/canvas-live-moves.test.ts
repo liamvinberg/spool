@@ -505,6 +505,44 @@ describe("moving between tall frames while live", () => {
 	});
 });
 
+/**
+ * A row of tall screens readable from the overview's zoom (DEV-295): its
+ * stops are glances on the way to a frame, not rests, so the frames it brings
+ * on screen stay stills, and the documents live where it opened stay live.
+ */
+describe("the overview over readable frames", () => {
+	const row = Array.from({ length: 8 }, (_, i) => ({ name: `s${i}`, x: i * 250, y: 0, w: 200, h: 1000 }));
+	const world = { frames: row, edges: [], pages: [] };
+	const documents = (host: HTMLElement) =>
+		[...host.querySelectorAll<HTMLIFrameElement>("iframe[title]")].map((frame) => frame.title).sort();
+
+	it("mounts no document for a frame it passes over, and puts none down", async () => {
+		const { host } = await openCanvas(world, { x: 0, y: 0, k: 1 });
+		await enter(host, "s0");
+		await wait(400);
+		const live = documents(host);
+		expect(live).toEqual(["s0", "s1", "s2", "s3", "s4"]);
+
+		await relay(host, "s0", step("ArrowRight"));
+		expect(overviewTarget(host)).toBe("s1");
+		// s5 is readable inside the overview's ring, and is left its still
+		expect(cameraScale(host)).toBeLessThan(1);
+		await wait(400);
+		expect(documents(host)).toEqual(live);
+		// and so are s5 and s6 a stop further on
+		await relay(host, "s0", step("ArrowRight"));
+		expect(overviewTarget(host)).toBe("s2");
+		await wait(400);
+		expect(documents(host)).toEqual(live);
+
+		// letting go is a rest again: the ring around where it landed mounts
+		await relay(host, "s0", { spool: "hold", phase: "up" });
+		expect(liveChip(host)).toBe("s2");
+		await wait(400);
+		expect(documents(host)).toEqual([...live, "s5"]);
+	});
+});
+
 async function until(done: () => boolean, ms = 2000): Promise<void> {
 	const deadline = Date.now() + ms;
 	while (Date.now() < deadline) {

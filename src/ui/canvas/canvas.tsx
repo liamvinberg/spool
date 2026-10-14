@@ -4403,7 +4403,10 @@ export function ProjectCanvas({
 				if (at === null) return;
 				noteCameraMoving(moving);
 				if (moving) return;
-				restCameraRef.current = at;
+				// the ⌥ overview's stops are glances on the way to a frame, not
+				// rests (DEV-295): the documents stay as they stood where it
+				// opened, and none mount for the frames it passes over
+				if (!liveRef.current.isShown()) restCameraRef.current = at;
 				rested.current();
 			}),
 		[camera, noteCameraMoving],
