@@ -13,7 +13,7 @@ import type { Box } from "./camera";
 
 /**
  * The postMessage bridge between canvas and frames. The frame side lives in
- * the served document (capture/key shim in daemon/document.ts, session and
+ * the served document (the frame shim in runtime/frame-shim/, session and
  * walks in runtime/frame-runtime.ts). This is the canvas's vocabulary for it.
  * SessionRecord is the runtime's own type, with one shape in both realms.
  */

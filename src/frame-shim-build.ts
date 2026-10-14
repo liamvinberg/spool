@@ -13,14 +13,20 @@ import { relayedHotkeys, tabHotkeyCombos } from "./ui/hotkeys";
  * same bytes; a checkout runs it on first use (`daemon/frame-shims.ts`).
  */
 export interface FrameShims {
+	/** the canvas shim (#8/#22), a classic script */
+	canvasShim: string;
 	/** the capture worker page's script */
 	captureWorker: string;
+	/** an expression for the booth's isolated world: `{ contentHeight, settle }` */
+	boothProbes: string;
 }
 
 /** `dir`: the absolute path of `src/runtime/frame-shim`. */
 export function buildFrameShims(dir: string): FrameShims {
 	return {
+		canvasShim: bundle(join(dir, "canvas-shim.ts")),
 		captureWorker: bundle(join(dir, "capture-worker.ts")),
+		boothProbes: `(() => {\n${bundle(join(dir, "booth-probes.ts"), "spoolProbes")}return spoolProbes;\n})()`,
 	};
 }
 

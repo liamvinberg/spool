@@ -96,7 +96,7 @@ interface HotkeySpec {
 	readonly typing?: true;
 	/**
 	 * Reaches out of an entered frame: the frame shim relays it to the canvas,
-	 * which runs the entry (daemon/document.ts). `true` relays the entry's own
+	 * which runs the entry (runtime/frame-shim/keys.ts). `true` relays the entry's own
 	 * keys; a list names the combos that do from inside a frame, where the
 	 * frame keeps the plain keys or Esc must leave whatever is held.
 	 */
@@ -844,7 +844,7 @@ export function isRelayedHotkey(id: unknown): id is HotkeyId {
 /**
  * The window's tab keys, every combo: a frame whose words are being edited
  * holds them back from the Mac menu, since closing or leaving the tab then
- * would take the open edit with it (daemon/document.ts).
+ * would take the open edit with it (runtime/frame-shim/edit.ts).
  */
 export function tabHotkeyCombos(): readonly string[] {
 	return HOTKEYS.flatMap((entry) => (entry.group === "Tabs" && "keys" in entry ? entry.keys : []));

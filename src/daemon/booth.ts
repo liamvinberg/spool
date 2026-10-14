@@ -9,7 +9,7 @@ import {
 	MissingHeadlessShellError,
 } from "../headless-shell";
 import { pageParent } from "../page-path";
-import { contentHeightSource, settleSource } from "./document";
+import { frameShims } from "./frame-shims";
 import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
 import { VENDOR_REACT_URL } from "./vendor-pins";
 import type { LogEntry } from "./verify-record";
@@ -1358,7 +1358,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 		// the content's own bottom, as the canvas reads it; a viewport-sized app
 		// that does not scroll has none, and runs exactly as tall as the document
-		const own = Number(await evaluate(tab, world, `(${contentHeightSource()})()`));
+		const own = Number(await evaluate(tab, world, `${frameShims().boothProbes}.contentHeight()`));
 		const contentHeight =
 			own > 0 ? own : Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
 		return {
@@ -1498,7 +1498,11 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 */
 	async function settled(tab: Tab, world: number): Promise<void> {
 		await within(
-			evaluate(tab, world, `(${settleSource("requestAnimationFrame")})(${SETTLE_BUDGET_MS})`),
+			evaluate(
+				tab,
+				world,
+				`${frameShims().boothProbes}.settle(${SETTLE_BUDGET_MS}, (callback) => requestAnimationFrame(callback))`,
+			),
 			SETTLE_BUDGET_MS + SETTLE_GRACE_MS,
 			"settling",
 		).catch((error: unknown) => {

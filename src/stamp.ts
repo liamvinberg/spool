@@ -7,7 +7,8 @@
  * daemon before it parses, the canvas before it draws a path — so the shape is
  * named once here rather than re-derived per reader.
  *
- * The frame shim keeps its own copy, because injected code has no imports.
+ * The frame shim keeps its own copy (runtime/frame-shim/stamps.ts), which also
+ * takes a stamp with no file.
  */
 export interface StampRef {
 	/** the file under `design/`: `frames/cart/frame.tsx` */

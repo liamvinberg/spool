@@ -175,9 +175,9 @@ export function lowerCombo(combo: ParsedCombo): ComboMatch {
 }
 
 /**
- * Whether a press is a lowered combo. Self-contained on purpose: the frame
- * shim carries its source (daemon/document.ts), so it may read nothing but its
- * arguments. `accelKey` is the platform's accel key name, for hold combos.
+ * Whether a press is a lowered combo; the frame shim bundles it too
+ * (runtime/frame-shim/keys.ts). `accelKey` is the platform's accel key name,
+ * for hold combos.
  */
 export function comboMatches(event: ComboEvent, match: ComboMatch, accelKey: string | null): boolean {
 	if (match.hold !== null) return event.key === (match.hold === "alt" ? "Alt" : accelKey);

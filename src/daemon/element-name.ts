@@ -9,11 +9,8 @@
  * a word for its tag (`h1` is Heading, `a` is Link, `nav` is Navigation), a
  * plain run of words is Text, and a plain `div` is a Group.
  *
- * The shim carries a copy of each half, interpolated into its source, so the
- * rules are written and tested once. That is why each half is one function
- * with nothing named inside it: the copy has no module around it, and a dev
- * build that keeps names wraps every inner function in a helper the frame does
- * not have. The shim puts the two together the way `elementName` does.
+ * The frame shim bundles this module (runtime/frame-shim/pick.ts), so the rules
+ * are written and tested once.
  */
 export function elementName(el: Element): string {
 	return wholeComponent(el) ?? tagWord(el);

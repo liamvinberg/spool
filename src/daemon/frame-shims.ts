@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildFrameShims, type FrameShims } from "../frame-shim-build";
 
@@ -9,6 +10,7 @@ import { buildFrameShims, type FrameShims } from "../frame-shim-build";
 let built: FrameShims | undefined;
 
 export function frameShims(): FrameShims {
-	built ??= buildFrameShims(fileURLToPath(new URL("../runtime/frame-shim/", import.meta.url)));
+	// a path, not a URL: a test's DOM may stand its own URL in for node's
+	built ??= buildFrameShims(join(dirname(fileURLToPath(import.meta.url)), "../runtime/frame-shim"));
 	return built;
 }

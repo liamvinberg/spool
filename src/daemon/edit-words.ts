@@ -16,8 +16,8 @@
  * one space, drops the one that would begin the first run or end the last, and
  * never draws two in a row across the join between two runs.
  *
- * The shim carries a copy of this function, interpolated into its source, so
- * the rule is written and tested once.
+ * The frame shim bundles this function (runtime/frame-shim/edit.ts), so the
+ * rule is written and tested once.
  */
 export function collapsedWords(values: readonly string[]): string[] {
 	const runs = values.map((value) => value.replace(/\s+/g, " "));

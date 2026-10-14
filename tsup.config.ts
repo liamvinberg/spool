@@ -2,27 +2,12 @@ import { resolve } from "node:path";
 import type { Plugin } from "esbuild";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
-import { collapsedWords } from "./src/daemon/edit-words";
-import { tagWord, wholeComponent } from "./src/daemon/element-name";
 import { buildFrameShims } from "./src/frame-shim-build";
-import { comboMatches } from "./src/ui/hotkey-combos";
 import { buildVendorEntry } from "./src/vendor-entry-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
 // would race the other's write — the build script clears dist/ up front
 const licenses = esbuildLicenses();
-
-// The canvas shim's helpers as source, printed once here and baked into both builds that carry the shim (the
-// CLI's and spool.page/compile), so the daemon and a Worker that bundles the compile again embed the same bytes
-// (src/daemon/document.ts).
-const shimHelpers = {
-	__SPOOL_SHIM_HELPERS__: JSON.stringify({
-		wholeComponent: String(wholeComponent),
-		tagWord: String(tagWord),
-		collapsedWords: String(collapsedWords),
-		comboMatches: String(comboMatches),
-	}),
-};
 
 // The frame shims, built once from src/runtime/frame-shim and baked into both builds that carry them in place of
 // daemon/frame-shims.ts, which builds them from source in a checkout: the CLI and spool.page/compile inline the same
@@ -59,7 +44,6 @@ export default defineConfig([
 		shims: true,
 		// Bundled code asks for builtins that only exist under node:, like node:sqlite.
 		removeNodeProtocol: false,
-		define: shimHelpers,
 		esbuildPlugins: [licenses, frameShims],
 	},
 	{
@@ -92,7 +76,6 @@ export default defineConfig([
 		splitting: false,
 		external: [/^node:/],
 		removeNodeProtocol: false,
-		define: shimHelpers,
 		esbuildPlugins: [licenses, frameShims],
 	},
 	{
