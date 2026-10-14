@@ -3478,11 +3478,8 @@ export function ProjectCanvas({
 	// the names as one string is the dep, and the names themselves are what the
 	// effect reads: a list rebuilt on every render is not a change of selection
 	const heldKey = JSON.stringify(heldFrames);
-	const heldFramesRef = useRef(heldFrames);
-	heldFramesRef.current = heldFrames;
-	// biome-ignore lint/correctness/useExhaustiveDependencies(heldKey): the frames the hand is in changing is the whole trigger
 	useEffect(() => {
-		const holding = new Set(heldFramesRef.current);
+		const holding = new Set<string>(JSON.parse(heldKey));
 		for (const frame of new Set([...saved.current.keys(), ...writtenUnderHand.current])) {
 			if (holding.has(frame)) continue;
 			saved.current.delete(frame);
