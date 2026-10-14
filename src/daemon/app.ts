@@ -66,6 +66,7 @@ import { watchForMoves } from "./moved-in";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
 import { createIconWatch, iconType, isIconHash, readProjectIcon } from "./project-icon";
+import { withProject } from "./project-route";
 import { createThumbnailWatch, readProjectThumbnail } from "./project-thumbnail";
 import { FRAME_BIRTH, frameExists, frameGeometry, frameNames, listProjectFrames } from "./projection";
 import { createResolvePass } from "./resolve-pass";
@@ -1114,29 +1115,29 @@ export function createDaemonApp({
 		 * only ever the file the project's icon resolves to now. An SVG opened on its own runs nothing here: it is
 		 * served sandboxed, with no script and nothing fetched.
 		 */
-		.get("/icons/:project/:hash", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const hash = c.req.param("hash");
-			if (!isIconHash(hash)) return c.text("no such icon", 404);
-			const found = await readProjectIcon(project.root);
-			if (found === undefined || found.icon.hash !== hash) return c.text("no such icon", 404);
-			immutableCover(c, iconType(found.icon.path));
-			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-			return c.body(new Uint8Array(found.bytes));
-		})
+		.get("/icons/:project/:hash", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				const hash = c.req.param("hash");
+				if (!isIconHash(hash)) return c.text("no such icon", 404);
+				const found = await readProjectIcon(root);
+				if (found === undefined || found.icon.hash !== hash) return c.text("no such icon", 404);
+				immutableCover(c, iconType(found.icon.path));
+				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+				return c.body(new Uint8Array(found.bytes));
+			}),
+		)
 		// a project's thumbnail, by its content, exactly as its icon is served
-		.get("/thumbnails/:project/:hash", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const hash = c.req.param("hash");
-			if (!isIconHash(hash)) return c.text("no such thumbnail", 404);
-			const found = await readProjectThumbnail(project.root);
-			if (found === undefined || found.thumbnail.hash !== hash) return c.text("no such thumbnail", 404);
-			immutableCover(c, iconType(found.thumbnail.path));
-			c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-			return c.body(new Uint8Array(found.bytes));
-		})
+		.get("/thumbnails/:project/:hash", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				const hash = c.req.param("hash");
+				if (!isIconHash(hash)) return c.text("no such thumbnail", 404);
+				const found = await readProjectThumbnail(root);
+				if (found === undefined || found.thumbnail.hash !== hash) return c.text("no such thumbnail", 404);
+				immutableCover(c, iconType(found.thumbnail.path));
+				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+				return c.body(new Uint8Array(found.bytes));
+			}),
+		)
 		.route(
 			"/api/p",
 			canvasRoutes({
@@ -1150,34 +1151,34 @@ export function createDaemonApp({
 			}),
 		)
 		.get("/covers/:project/:frame/:hash", async (c) => {
-			// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
-			// carry the control header, and an immutable cache key, so a warm
-			// reload fetches none of them.
 			const name = c.req.param("project");
-			const project = resolveProject(c, name);
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			const hash = c.req.param("hash");
-			if (!isFramePath(frame) || !isCoverHash(hash)) {
-				return c.text("no such cover", 404);
-			}
-			let exists = false;
-			try {
-				exists = frameExists(project.root, frame);
-				const image = exists ? readCoverImage(project.root, frame, hash) : undefined;
-				if (image !== undefined) {
-					immutableCover(c, image.type);
-					return c.body(new Uint8Array(image.bytes));
+			return withProject(c, resolveProject, async (root) => {
+				// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
+				// carry the control header, and an immutable cache key, so a warm
+				// reload fetches none of them.
+				const frame = c.req.param("frame");
+				const hash = c.req.param("hash");
+				if (!isFramePath(frame) || !isCoverHash(hash)) {
+					return c.text("no such cover", 404);
 				}
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-			// The address named a cover this frame does not have. The booth owes it
-			// a picture: the cover lands, the thumb event carries the new image, and
-			// the canvas asks again at the address that now exists.
-			if (exists) owePicture(project.root, name, frame);
-			return c.text("no such cover", 404);
+				let exists = false;
+				try {
+					exists = frameExists(root, frame);
+					const image = exists ? readCoverImage(root, frame, hash) : undefined;
+					if (image !== undefined) {
+						immutableCover(c, image.type);
+						return c.body(new Uint8Array(image.bytes));
+					}
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
+				// The address named a cover this frame does not have. The booth owes it
+				// a picture: the cover lands, the thumb event carries the new image, and
+				// the canvas asks again at the address that now exists.
+				if (exists) owePicture(root, name, frame);
+				return c.text("no such cover", 404);
+			});
 		})
 		/*
 		 * What one open canvas shows, for the booth's order (#81): the frames on
@@ -1192,22 +1193,21 @@ export function createDaemonApp({
 				const parsed = canvasView.safeParse(value);
 				return parsed.success ? parsed.data : c.text('a view is { "view", "page", "frames", "scheme" }', 400);
 			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { view, page, frames, scheme } = c.req.valid("json");
-				const open = views.get(view);
-				if (open?.root !== project.root) return c.body(null, 204);
-				sittings.view(view, { root: project.root, page, frames });
-				// Only a canvas whose own scheme changed moves the booth, so two
-				// canvases in different schemes do not trade it back and forth on
-				// every pan: the one that changed last is the one being looked at.
-				if (open.scheme !== scheme) {
-					open.scheme = scheme;
-					if (booth.setScheme(scheme)) void restale(boothWatches.keys());
-				}
-				return c.body(null, 204);
-			},
+			(c) =>
+				withProject(c, resolveProject, (root) => {
+					const { view, page, frames, scheme } = c.req.valid("json");
+					const open = views.get(view);
+					if (open?.root !== root) return c.body(null, 204);
+					sittings.view(view, { root: root, page, frames });
+					// Only a canvas whose own scheme changed moves the booth, so two
+					// canvases in different schemes do not trade it back and forth on
+					// every pan: the one that changed last is the one being looked at.
+					if (open.scheme !== scheme) {
+						open.scheme = scheme;
+						if (booth.setScheme(scheme)) void restale(boothWatches.keys());
+					}
+					return c.body(null, 204);
+				}),
 		)
 		.route(
 			"/api/p",
@@ -1230,19 +1230,19 @@ export function createDaemonApp({
 				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
 			}),
 		)
-		.get("/api/p/:project/verify/:frame", async (c) => {
-			// the agent's compile probe (#25): shot and logs branch on this JSON —
-			// ok hands the closure etag (the log cache key), error the text verbatim
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
-			if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
-			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
-			// the scheme a boot would render in now, the log cache's third key
-			await booth.schemeKnown();
-			return c.json({ kind: "ok", etag: doc.etag, scheme: booth.scheme });
-		})
+		.get("/api/p/:project/verify/:frame", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				// the agent's compile probe (#25): shot and logs branch on this JSON —
+				// ok hands the closure etag (the log cache key), error the text verbatim
+				const frame = c.req.param("frame");
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
+				if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
+				// the scheme a boot would render in now, the log cache's third key
+				await booth.schemeKnown();
+				return c.json({ kind: "ok", etag: doc.etag, scheme: booth.scheme });
+			}),
+		)
 		.post(
 			"/api/p/:project/boot/:frame",
 			validator("json", (value, c) => {
@@ -1334,23 +1334,23 @@ export function createDaemonApp({
 		)
 		.route("/api/p", handRoutes({ resolve: resolveProject, lastReaders: lastReadersIn }))
 		.route("/api/p", explorerRoutes({ resolve: resolveProject, trash: trashImpl }))
-		.get("/p/:project/frames/:frame", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
-			if (doc.kind === "missing") return c.text(doc.message, 404);
-			if (doc.kind === "error") return c.html(doc.document, 500);
-			// A frame document changes whenever its source does, and the etag is the
-			// whole of how a browser learns that. Without this the browser is free to
-			// guess a freshness lifetime from nothing, so say it: ask every time, and
-			// the ask is a 304 for as long as the source stands still.
-			c.header("cache-control", "no-cache");
-			if (c.req.header("if-none-match") === doc.etag) return c.body(null, 304);
-			c.header("etag", doc.etag);
-			c.header("x-spool-cache", doc.cache);
-			return c.html(doc.document);
-		})
+		.get("/p/:project/frames/:frame", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				const frame = c.req.param("frame");
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				if (doc.kind === "missing") return c.text(doc.message, 404);
+				if (doc.kind === "error") return c.html(doc.document, 500);
+				// A frame document changes whenever its source does, and the etag is the
+				// whole of how a browser learns that. Without this the browser is free to
+				// guess a freshness lifetime from nothing, so say it: ask every time, and
+				// the ask is a 304 for as long as the source stands still.
+				c.header("cache-control", "no-cache");
+				if (c.req.header("if-none-match") === doc.etag) return c.body(null, 304);
+				c.header("etag", doc.etag);
+				c.header("x-spool-cache", doc.cache);
+				return c.html(doc.document);
+			}),
+		)
 		.get(
 			"/play/:project",
 			validator("query", (value, c) => {
@@ -1445,22 +1445,25 @@ export function createDaemonApp({
 				return c.html(assemblePlayerDocument(config, compiled.bundle));
 			},
 		)
-		.get("/play/:project/-/*", (c) => {
-			// The composition's modules (#24): named by content, so a name is the
-			// module and may be cached for good. They answer only for a project this
-			// daemon has already composed — the document that imports them is what
-			// composes it — and a name from a bundle since retired still answers for
-			// as long as a tab served with it might walk to it.
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
-			const chunk = playerCompiler.getChunk(project.root, name);
-			if (chunk === undefined) return c.text("not found", 404);
-			c.header("access-control-allow-origin", "*");
-			c.header("cache-control", "public, max-age=31536000, immutable");
-			c.header("content-type", name.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8");
-			return c.body(chunk);
-		})
+		.get("/play/:project/-/*", (c) =>
+			withProject(c, resolveProject, (root) => {
+				// The composition's modules (#24): named by content, so a name is the
+				// module and may be cached for good. They answer only for a project this
+				// daemon has already composed — the document that imports them is what
+				// composes it — and a name from a bundle since retired still answers for
+				// as long as a tab served with it might walk to it.
+				const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
+				const chunk = playerCompiler.getChunk(root, name);
+				if (chunk === undefined) return c.text("not found", 404);
+				c.header("access-control-allow-origin", "*");
+				c.header("cache-control", "public, max-age=31536000, immutable");
+				c.header(
+					"content-type",
+					name.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8",
+				);
+				return c.body(chunk);
+			}),
+		)
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
 		.get("/api/p/:project/scenarios/:name", (c) => {
 			const project = resolveProjectData(c);
@@ -1607,11 +1610,11 @@ export function createDaemonApp({
 	);
 	app.route("/api/p", projectShares.routes);
 	/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
-	app.get("/api/p/:project/sync", (c) => {
-		const project = resolveProject(c, c.req.param("project"));
-		if ("response" in project) return project.response;
-		return c.json(teamSync.state(project.root));
-	});
+	app.get("/api/p/:project/sync", (c) =>
+		withProject(c, resolveProject, (root) => {
+			return c.json(teamSync.state(root));
+		}),
+	);
 	app.route(
 		"/api/p",
 		setAsideRoutes({
@@ -1626,14 +1629,14 @@ export function createDaemonApp({
 	 * Presence on a team canvas: where this machine's person is, from the canvas, as it changes. It goes to the
 	 * team through the local copy's sync connection and nowhere else: never to disk, never into history.
 	 */
-	app.put("/api/p/:project/presence", async (c) => {
-		const project = resolveProject(c, c.req.param("project"));
-		if ("response" in project) return project.response;
-		const state = readPresenceState(((await c.req.json().catch(() => undefined)) as { state?: unknown })?.state);
-		if (state === undefined) return c.text("presence must be { state: { page, pointer, ... } | null }", 400);
-		teamSync.presence(project.root, state);
-		return c.body(null, 204);
-	});
+	app.put("/api/p/:project/presence", async (c) =>
+		withProject(c, resolveProject, async (root) => {
+			const state = readPresenceState(((await c.req.json().catch(() => undefined)) as { state?: unknown })?.state);
+			if (state === undefined) return c.text("presence must be { state: { page, pointer, ... } | null }", 400);
+			teamSync.presence(root, state);
+			return c.body(null, 204);
+		}),
+	);
 
 	/**
 	 * Tell one canvas who else is on its team canvas: everyone there now, then each change. Its person leaves
