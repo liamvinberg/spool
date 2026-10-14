@@ -1,8 +1,9 @@
 import { useRef } from "react";
-import type { ProjectedFrame } from "../api";
+import { pageName } from "../../page-path";
+import type { Camera, ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { Kbd } from "../primitives/display";
-import { type Box, shellRadiusOnScreen, toScreen } from "./camera";
+import { type Box, clamp, shellRadiusOnScreen, toScreen } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { nothingThat, type Overview, overviewNeighbours } from "./live-moves";
 import { Follow } from "./overlays";
@@ -12,8 +13,9 @@ import type { SpatialDirection } from "./spatial-navigation";
  * The ⌥ overview's furniture (DEV-295), in screen pixels over the frames: the
  * target in the accent ring, each frame one arrow away from it in a thin ring
  * wearing the key that reaches it on the edge that faces the target, and the
- * rest under a veil. A press toward nothing leaves a stop mark on that side,
- * and says so.
+ * rest under a veil. A frame one arrow away but off screen at the overview's
+ * zoom has no ring: its key is pinned to that edge of the view instead, with
+ * its name. A press toward nothing leaves a stop mark on that side, and says so.
  * The names are the labels' own (frame-label.tsx).
  */
 
@@ -92,10 +94,13 @@ export function OverviewLayer({
 	camera,
 	frames,
 	overview,
+	view,
 }: {
 	camera: CameraStore;
 	frames: readonly ProjectedFrame[];
 	overview: Overview;
+	/** the viewport's size in screen pixels, for what lies past its edges */
+	view: () => { w: number; h: number } | null;
 }) {
 	const target = frames.find((frame) => frame.name === overview.target);
 	if (target === undefined) return null;
@@ -120,13 +125,13 @@ export function OverviewLayer({
 					/>
 				),
 			)}
-			{[...near.values()].map(({ frame }) => (
+			{[...near.values()].map(({ frame, direction }) => (
 				<Follow
 					key={`near-${frame.name}`}
 					camera={camera}
-					screen={(at) => frameBox(at, frame, 2)}
+					screen={(at) => ({ ...frameBox(at, frame, 2), away: offScreen(at, frame, direction, view()) })}
 					data-overview-near={frame.name}
-					className="absolute border border-line-strong"
+					className="absolute border border-line-strong data-away:hidden"
 				/>
 			))}
 			<Follow
@@ -139,12 +144,33 @@ export function OverviewLayer({
 				<Follow
 					key={`key-${frame.name}`}
 					camera={camera}
-					screen={(at) => edgeFacing(toScreen(frame, at), direction)}
-					className="absolute h-0 w-0"
+					screen={(at) => ({
+						...edgeFacing(toScreen(frame, at), direction),
+						away: offScreen(at, frame, direction, view()),
+					})}
+					className="absolute h-0 w-0 data-away:hidden"
 				>
 					<Kbd className="absolute -translate-x-1/2 -translate-y-1/2 animate-menu-in bg-surface-window text-primary">
 						{`⌥${ARROW[direction]}`}
 					</Kbd>
+				</Follow>
+			))}
+			{[...near.values()].map(({ frame, direction }) => (
+				<Follow
+					key={`edge-${frame.name}`}
+					camera={camera}
+					screen={(at) => {
+						const size = view();
+						if (size === null) return { away: true };
+						return {
+							...pinnedToward(toScreen(frame, at), direction, size),
+							away: !offScreen(at, frame, direction, size),
+						};
+					}}
+					data-overview-edge={frame.name}
+					className="absolute h-0 w-0 data-away:hidden"
+				>
+					<EdgeTag direction={direction} name={frame.name} />
 				</Follow>
 			))}
 			{bump !== null && (
@@ -157,6 +183,64 @@ export function OverviewLayer({
 					<Stop direction={bump.direction} />
 				</Follow>
 			)}
+		</div>
+	);
+}
+
+/**
+ * Whether a frame one arrow away is past the view's edge, its key with it:
+ * the point it wears its key at, on its edge facing the target, is off screen.
+ */
+function offScreen(
+	at: Camera,
+	frame: Box,
+	direction: SpatialDirection,
+	size: { w: number; h: number } | null,
+): boolean {
+	if (size === null) return false;
+	const { left, top } = edgeFacing(toScreen(frame, at), direction);
+	return left < 0 || top < 0 || left > size.w || top > size.h;
+}
+
+/** How far in from the view's edge a pinned tag stands, in screen pixels. */
+const EDGE_INSET = 12;
+/** How far a pinned tag's middle keeps from a corner, along its edge: half its widest, so it never runs off. */
+const EDGE_ALONG = { across: 112, down: 24 } as const;
+
+/**
+ * Where a far frame's tag pins: on the view's edge the arrow points to, slid
+ * along it toward where the frame lies, short of the corners.
+ */
+function pinnedToward(rect: Box, direction: SpatialDirection, size: { w: number; h: number }) {
+	const cx = clamp(rect.x + rect.w / 2, EDGE_ALONG.across, size.w - EDGE_ALONG.across);
+	const cy = clamp(rect.y + rect.h / 2, EDGE_ALONG.down, size.h - EDGE_ALONG.down);
+	switch (direction) {
+		case "right":
+			return { left: size.w - EDGE_INSET, top: cy };
+		case "left":
+			return { left: EDGE_INSET, top: cy };
+		case "down":
+			return { left: cx, top: size.h - EDGE_INSET };
+		case "up":
+			return { left: cx, top: EDGE_INSET };
+	}
+}
+
+/** A far frame's key, pinned to the view's edge: the arrow that reaches it, and its name. */
+function EdgeTag({ direction, name }: { direction: SpatialDirection; name: string }) {
+	return (
+		<div
+			className={cn(
+				"absolute flex max-w-56 animate-menu-in items-center gap-1.5 whitespace-nowrap rounded-sm bg-surface-window py-0.5 text-secondary shadow-float type-detail",
+				direction === "right" ? "pr-0.5 pl-2" : "pr-2 pl-0.5",
+				direction === "right" && "right-0 -translate-y-1/2 flex-row-reverse",
+				direction === "left" && "left-0 -translate-y-1/2",
+				direction === "down" && "bottom-0 -translate-x-1/2",
+				direction === "up" && "top-0 -translate-x-1/2",
+			)}
+		>
+			<Kbd className="bg-surface-window text-primary">{`⌥${ARROW[direction]}`}</Kbd>
+			<span className="min-w-0 truncate">{pageName(name)}</span>
 		</div>
 	);
 }

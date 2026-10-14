@@ -6290,7 +6290,15 @@ export function ProjectCanvas({
 								overview={live.overview !== null}
 							/>
 							{live.overview !== null && (
-								<OverviewLayer camera={camera} frames={visibleFrames} overview={live.overview} />
+								<OverviewLayer
+									camera={camera}
+									frames={visibleFrames}
+									overview={live.overview}
+									view={() => {
+										const viewport = viewportRef.current;
+										return viewport === null ? null : { w: viewport.clientWidth, h: viewport.clientHeight };
+									}}
+								/>
 							)}
 							{/* the agent's companions (#366), in the same screen space as the furniture
 						    beside them: presence on any visible frame at any zoom, and a ring on

@@ -629,6 +629,80 @@ describe("the overview over readable frames", () => {
 	});
 });
 
+/**
+ * A page whose frames stand in one long row, and one frame on its own in a
+ * second row far to the left: down reaches it from anywhere in the row, so a
+ * fit of every neighbour would take the whole row in and make each a sliver.
+ */
+describe("the overview over a long row and one far frame", () => {
+	const row = Array.from({ length: 8 }, (_, i) => ({ name: `r${i}`, x: i * 180, y: 0, w: 100, h: 100 }));
+	const stray = { name: "stray", x: -3000, y: 400, w: 100, h: 100 };
+	const world = { frames: [...row, stray], edges: [], pages: [] };
+	// close up on r3, the far right of the view
+	const CLOSE = { x: -300, y: 0, k: 2 };
+
+	const away = (host: HTMLElement, selector: string) => host.querySelector(selector)?.hasAttribute("data-away");
+
+	/** The zoom held, the stray told at the bottom edge, and the arrow down panning to it at that zoom. */
+	async function stepsToStray(host: HTMLElement, press: (key: string) => Promise<void>) {
+		const k = cameraScale(host);
+		expect(k).toBeLessThan(CLOSE.k);
+		expect(k).toBeGreaterThanOrEqual(CLOSE.k / 2);
+		// the row's neighbours ringed where they stand, the stray pinned to the edge it lies past
+		expect(away(host, '[data-overview-near="r4"]')).toBe(false);
+		expect(away(host, '[data-overview-edge="r4"]')).toBe(true);
+		expect(away(host, '[data-overview-near="stray"]')).toBe(true);
+		const tag = host.querySelector<HTMLElement>('[data-overview-edge="stray"]');
+		expect(tag?.hasAttribute("data-away")).toBe(false);
+		expect(tag?.textContent).toContain("⌥↓");
+		expect(tag?.textContent).toContain("stray");
+		expect(Number.parseFloat(tag?.style.top ?? "")).toBeGreaterThan(VIEW.h - 40);
+
+		await press("ArrowDown");
+		expect(overviewTarget(host)).toBe("stray");
+		expect(cameraScale(host)).toBe(k);
+		const at = onScreen(host, stray.x, stray.y);
+		expect(at.clientX).toBeGreaterThanOrEqual(0);
+		expect(at.clientX + stray.w * k).toBeLessThanOrEqual(VIEW.w);
+		expect(at.clientY).toBeGreaterThanOrEqual(0);
+		expect(at.clientY + stray.h * k).toBeLessThanOrEqual(VIEW.h);
+		expect(host.querySelector('[data-overview-near="stray"]')).toBeNull();
+	}
+
+	it("steps back only as far as the row's neighbours, and pans to the far frame at that zoom", async () => {
+		const { host } = await openCanvas(world, CLOSE);
+		await enter(host, "r3");
+		await relay(host, "r3", holdAlt);
+		await wait(OVERVIEW_HOLD_MS + 40);
+		expect(overviewTarget(host)).toBe("r3");
+		await stepsToStray(host, (key) => relay(host, "r3", step(key)));
+		await relay(host, "r3", { spool: "hold", phase: "up" });
+		expect(liveChip(host)).toBe("stray");
+	});
+
+	it("does the same from a frame selected out on the canvas", async () => {
+		const { host, canvas } = await openCanvas(world, CLOSE);
+		await act(async () => {
+			for (const type of ["pointerdown", "pointerup"]) {
+				canvas.dispatchEvent(
+					new PointerEvent(type, { bubbles: true, button: 0, clientX: 880, clientY: 100, pointerId: 1 }),
+				);
+			}
+		});
+		expect(labelClass(host, "r3")).toContain("text-accent");
+		const key = (type: string, init: KeyboardEventInit) =>
+			act(async () => {
+				window.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }));
+			});
+		await key("keydown", { key: "Alt", code: "AltLeft", altKey: true });
+		await wait(OVERVIEW_HOLD_MS + 40);
+		expect(overviewTarget(host)).toBe("r3");
+		await stepsToStray(host, (arrow) => key("keydown", { key: arrow, code: arrow, altKey: true }));
+		await key("keyup", { key: "Alt", code: "AltLeft" });
+		expect(labelClass(host, "stray")).toContain("text-accent");
+	});
+});
+
 /** Where a world point is on screen now. */
 function onScreen(host: HTMLElement, x: number, y: number): { clientX: number; clientY: number } {
 	const camera = cameraOf(host);
