@@ -381,8 +381,11 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 */
 	const postFreeze = useCallback((frame: string, on: boolean) => {
 		const sourceWindow = iframes.current.get(frame)?.contentWindow;
-		// a document that left took its freeze with it
-		if (sourceWindow == null) {
+		// a document that left took its freeze with it, and one that has not
+		// reported loaded may not be listening yet: a freeze posted then is lost,
+		// and counting it held would keep the real one from ever being sent.
+		// Its loaded report applies the freeze it arrived into (`noteLoaded`).
+		if (sourceWindow == null || !readyRef.current.has(frame)) {
 			frozen.current.delete(frame);
 			return;
 		}
@@ -614,8 +617,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			readyRef.current = next;
 			setReady(next);
 			askArrival(frame);
+			applyFreeze();
 		},
-		[askArrival],
+		[askArrival, applyFreeze],
 	);
 
 	/**
