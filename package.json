@@ -42,6 +42,7 @@
 		"check": "biome check . && tsx src/design-lint.ts",
 		"design:lint": "tsx src/design-lint.ts",
 		"design:sync": "tsx src/design-sync.ts",
+		"build:shims": "tsx src/frame-shim-build.ts",
 		"test": "vitest run",
 		"test:changed": "tsx src/test-changed.ts",
 		"test:canvas": "SPOOL_TEST_CANVAS=1 vitest run src/daemon/class-scanner.test.ts",

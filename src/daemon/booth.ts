@@ -1358,7 +1358,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		}
 		// the content's own bottom, as the canvas reads it; a viewport-sized app
 		// that does not scroll has none, and runs exactly as tall as the document
-		const own = Number(await evaluate(tab, world, `${frameShims().boothProbes}.contentHeight()`));
+		const own = Number(await evaluate(tab, world, `${frameShims.boothProbes}.contentHeight()`));
 		const contentHeight =
 			own > 0 ? own : Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
 		return {
@@ -1501,7 +1501,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			evaluate(
 				tab,
 				world,
-				`${frameShims().boothProbes}.settle(${SETTLE_BUDGET_MS}, (callback) => requestAnimationFrame(callback))`,
+				`${frameShims.boothProbes}.settle(${SETTLE_BUDGET_MS}, (callback) => requestAnimationFrame(callback))`,
 			),
 			SETTLE_BUDGET_MS + SETTLE_GRACE_MS,
 			"settling",

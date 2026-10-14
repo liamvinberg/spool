@@ -1,28 +1,10 @@
-import { resolve } from "node:path";
-import type { Plugin } from "esbuild";
 import { defineConfig } from "tsup";
 import { esbuildLicenses } from "./src/bundle-licenses";
-import { buildFrameShims } from "./src/frame-shim-build";
 import { buildVendorEntry } from "./src/vendor-entry-build";
 
 // no clean flag: array configs build in parallel, and one config's clean
 // would race the other's write — the build script clears dist/ up front
 const licenses = esbuildLicenses();
-
-// The frame shims, built once from src/runtime/frame-shim and baked into both builds that carry them in place of
-// daemon/frame-shims.ts, which builds them from source in a checkout: the CLI and spool.page/compile inline the same
-// bytes, and neither carries esbuild for it.
-let shims: string | undefined;
-const frameShims: Plugin = {
-	name: "frame-shims",
-	setup(build) {
-		build.onResolve({ filter: /^\.\/frame-shims$/ }, () => ({ path: "frame-shims", namespace: "frame-shims" }));
-		build.onLoad({ filter: /.*/, namespace: "frame-shims" }, () => {
-			shims ??= JSON.stringify(buildFrameShims(resolve("src/runtime/frame-shim")));
-			return { contents: `const shims = ${shims};\nexport function frameShims() { return shims; }\n`, loader: "js" };
-		});
-	},
-};
 
 export default defineConfig([
 	{
@@ -44,7 +26,7 @@ export default defineConfig([
 		shims: true,
 		// Bundled code asks for builtins that only exist under node:, like node:sqlite.
 		removeNodeProtocol: false,
-		esbuildPlugins: [licenses, frameShims],
+		esbuildPlugins: [licenses],
 	},
 	{
 		// the runtimes the daemon serves at /vendor/spool.js and /vendor/spool-jsx.js:
@@ -76,7 +58,7 @@ export default defineConfig([
 		splitting: false,
 		external: [/^node:/],
 		removeNodeProtocol: false,
-		esbuildPlugins: [licenses, frameShims],
+		esbuildPlugins: [licenses],
 	},
 	{
 		// spool.page/sync-protocol (src/team-sync-protocol.ts): the sync protocol, which spool-cloud's sync object

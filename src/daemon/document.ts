@@ -26,7 +26,7 @@ export interface FrameDocumentParts {
 
 let escapedCaptureWorker: string | undefined;
 const escapedCaptureWorkerJs = (): string => {
-	escapedCaptureWorker ??= escapeInlineScript(frameShims().captureWorker);
+	escapedCaptureWorker ??= escapeInlineScript(frameShims.captureWorker);
 	return escapedCaptureWorker;
 };
 const captureWorkerBaseCsp = (): string =>
@@ -186,7 +186,7 @@ export function assembleFrameDocument({
 	return htmlShell(
 		frame,
 		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame, projectCapability, controlOrigin })}</script>
-<script>${escapeInlineScript(frameShims().canvasShim)}</script>
+<script>${escapeInlineScript(frameShims.canvasShim)}</script>
 <style>html, body, #root { height: 100%; }</style>
 <style>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
@@ -204,7 +204,7 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * yesterday's protocol.
  */
 export function shimHash(): string {
-	shimDigest ??= createHash("sha256").update(frameShims().canvasShim).digest("hex");
+	shimDigest ??= createHash("sha256").update(frameShims.canvasShim).digest("hex");
 	return shimDigest;
 }
 let shimDigest: string | undefined;
