@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { type Box, entryCamera, fitCamera, moveCamera, revealCamera } from "./camera";
+import {
+	type Box,
+	entryCamera,
+	fitCamera,
+	moveCamera,
+	revealCamera,
+	SMALL_PAGE_FLOOR,
+	zoomAt,
+	zoomFloor,
+} from "./camera";
 
 /** A tall page: taller than any viewport, the frame the old fit hurt most. */
 const page: Box = { x: 0, y: 0, w: 800, h: 6000 };
@@ -116,5 +125,50 @@ describe("revealCamera", () => {
 			x: 400 - 1700 * 0.5,
 			y: 300 - 250 * 0.5,
 		});
+	});
+});
+
+describe("zoomFloor", () => {
+	it("is where the whole page fits the view with a fit's margin", () => {
+		const page: Box = { x: -4000, y: 200, w: 20000, h: 6000 };
+		const floor = zoomFloor(page, 1200, 800);
+		expect(floor).toBeCloseTo((1200 - 128) / 20000);
+		expect(floor).toBe(fitCamera(page, 1200, 800).k);
+	});
+
+	it("still lets a small page zoom out to a fixed level", () => {
+		expect(zoomFloor({ x: 0, y: 0, w: 390, h: 844 }, 1200, 800)).toBe(SMALL_PAGE_FLOOR);
+	});
+
+	it("never goes below 2%, however large the page", () => {
+		expect(zoomFloor({ x: 0, y: 0, w: 1e6, h: 1e6 }, 1200, 800)).toBe(0.02);
+	});
+
+	it("is 2% on an empty page or a view too small to fit anything", () => {
+		expect(zoomFloor(null, 1200, 800)).toBe(0.02);
+		expect(zoomFloor({ x: 0, y: 0, w: 0, h: 0 }, 1200, 800)).toBe(0.02);
+		expect(zoomFloor({ x: 0, y: 0, w: 400, h: 400 }, 100, 100)).toBe(0.02);
+	});
+});
+
+describe("zoomAt with a floor", () => {
+	it("stops zooming out at the floor, the pinned point staying put", () => {
+		const camera = { x: 100, y: 50, k: 0.3 };
+		const out = zoomAt(camera, 400, 300, 0.5, 0.25);
+		expect(out.k).toBe(0.25);
+		// the world point under (400, 300) is still under it
+		expect((400 - out.x) / out.k).toBeCloseTo((400 - camera.x) / camera.k);
+		expect((300 - out.y) / out.k).toBeCloseTo((300 - camera.y) / camera.k);
+	});
+
+	it("zooms in freely and never snaps a camera already further out", () => {
+		const below = { x: 0, y: 0, k: 0.1 };
+		expect(zoomAt(below, 0, 0, 0.5, 0.25).k).toBe(0.1);
+		expect(zoomAt(below, 0, 0, 2, 0.25).k).toBe(0.2);
+	});
+
+	it("keeps the 2% floor without one, or with a lower one", () => {
+		expect(zoomAt({ x: 0, y: 0, k: 0.03 }, 0, 0, 0.5).k).toBe(0.02);
+		expect(zoomAt({ x: 0, y: 0, k: 0.03 }, 0, 0, 0.5, 0.001).k).toBe(0.02);
 	});
 });

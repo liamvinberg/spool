@@ -17,6 +17,7 @@ import {
 	wheelPixels,
 	wheelZoomFactor,
 	zoomAt,
+	zoomFloor,
 } from "../canvas/camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/camera-store";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
@@ -324,6 +325,10 @@ function ViewerCanvas({
 		return () => window.removeEventListener("popstate", onPop);
 	}, [config]);
 
+	// out no further than the whole page fitting the view (DEV-289); a ref, so the wheel reads today's page
+	const floor = useRef<number | undefined>(undefined);
+	floor.current = frames.length === 0 ? undefined : zoomFloor(boundsOf(frames), size.w, size.h);
+
 	// scroll pans; with ⌘ or ctrl held, or a pinch, it zooms around the pointer
 	useEffect(() => {
 		const el = viewport.current;
@@ -337,7 +342,7 @@ function ViewerCanvas({
 			if (event.ctrlKey || event.metaKey) {
 				const box = el.getBoundingClientRect();
 				const factor = wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight);
-				camera.set(zoomAt(at, event.clientX - box.left, event.clientY - box.top, factor));
+				camera.set(zoomAt(at, event.clientX - box.left, event.clientY - box.top, factor, floor.current));
 			} else if (event.shiftKey && dx === 0) camera.set({ ...at, x: at.x - dy });
 			else camera.set({ ...at, x: at.x - dx, y: at.y - dy });
 		};
@@ -398,7 +403,7 @@ function ViewerCanvas({
 	};
 	const zoomBy = (factor: number) => {
 		const at = camera.get();
-		if (at !== null) camera.fly(zoomAt(at, size.w / 2, size.h / 2, factor));
+		if (at !== null) camera.fly(zoomAt(at, size.w / 2, size.h / 2, factor, floor.current));
 	};
 
 	// --- presence (DEV-197): seen and seeing as on the Mac; a frame played is the frame they're inside

@@ -93,6 +93,7 @@ import {
 	wheelPixels,
 	wheelZoomFactor,
 	zoomAt,
+	zoomFloor,
 } from "./camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
 import {
@@ -1506,11 +1507,18 @@ export function ProjectCanvas({
 		(cx: number, cy: number, factor: number, animate = false) => {
 			const cam = camera.get();
 			if (cam === null) return;
-			const next = zoomAt(cam, cx, cy, factor);
+			const viewport = viewportRef.current;
+			const boxes = fieldBoxes();
+			// out no further than the whole page fitting the view (DEV-289)
+			const floor =
+				viewport === null || boxes.length === 0
+					? undefined
+					: zoomFloor(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight);
+			const next = zoomAt(cam, cx, cy, factor, floor);
 			if (animate) camera.fly(next, 140);
 			else camera.set(next);
 		},
-		[camera],
+		[camera, fieldBoxes],
 	);
 
 	/** Move the field by a screen distance at the same zoom: every pan is this. */
