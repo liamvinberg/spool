@@ -214,7 +214,9 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 		}
 		let live = true;
 		const at = presses.current;
-		const reply = agentModelOffer(project, thread, engine)
+		// an ask the rail moved on from is given up, so its spawn ends and it stops holding a connection
+		const asking = new AbortController();
+		const reply = agentModelOffer(project, thread, engine, asking.signal)
 			.then(offerOf)
 			.catch(() => null);
 		pending.current = { owner, reply };
@@ -225,6 +227,7 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 		});
 		return () => {
 			live = false;
+			asking.abort();
 		};
 	}, [project, thread, asked, engine, owner]);
 
