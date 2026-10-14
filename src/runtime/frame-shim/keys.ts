@@ -73,6 +73,10 @@ const awaitFrame = (event: KeyboardEvent, relay: RelayKey, frame: string | undef
 
 // the ⌥ held that spool was told of, once per hold; null while none is
 let altHeld: { broken: boolean; stepped: boolean; since: number } | null = null;
+// whether the overview may be up on that hold: held past its delay, or opened
+// at once by a step under it
+const overviewMayBeOpen = (): boolean =>
+	altHeld !== null && !altHeld.broken && (altHeld.stepped || performance.now() - altHeld.since >= OVERVIEW_HOLD_MS);
 const breakAlt = (frame: string | undefined): void => {
 	if (altHeld === null || altHeld.broken) return;
 	altHeld.broken = true;
@@ -110,6 +114,26 @@ export function relayKeysOut(): void {
 					// accel is ⌘ on a Mac and ctrl elsewhere: ctrl+⌥ arrows on a Mac
 					// are the frame's, and the system's, never spool's
 					if (relay.match.accel && !(appleShim ? event.metaKey : event.ctrlKey)) continue;
+					// once the overview is up the step keys move it: the frame is behind
+					// it, so a list or tree in focus there no longer takes its arrows
+					// (they ignore ⌥ more often than not) and ends the overview under you
+					if (relay.match.hold === null && overviewMayBeOpen()) {
+						event.preventDefault();
+						event.stopImmediatePropagation();
+						window.parent.postMessage(
+							{
+								spool: "key",
+								frame,
+								id: relay.id,
+								metaKey: event.metaKey,
+								ctrlKey: event.ctrlKey,
+								key: event.key,
+								code: event.code,
+							},
+							"*",
+						);
+						return;
+					}
 					// the frame's own listeners come first: decide once they all ran
 					if (!relay.typing && typingIn(event)) {
 						if (event.key !== "Alt") breakAlt(frame);
@@ -156,7 +180,7 @@ export function relayKeysOut(): void {
 		"pointerdown",
 		(event) => {
 			if (window.parent === window || altHeld === null) return;
-			const open = !altHeld.broken && (altHeld.stepped || performance.now() - altHeld.since >= OVERVIEW_HOLD_MS);
+			const open = overviewMayBeOpen();
 			breakAlt(shimConfig().frame);
 			if (!open) return;
 			swallowPress = true;
