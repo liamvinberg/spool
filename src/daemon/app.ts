@@ -1615,6 +1615,10 @@ export function createDaemonApp({
 			return c.json(teamSync.state(root));
 		}),
 	);
+	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
+	app.post("/api/p/:project/sync/untold", (c) =>
+		withProject(c, resolveProject, (root) => c.json({ lines: teamSync.untold(root) })),
+	);
 	app.route(
 		"/api/p",
 		setAsideRoutes({

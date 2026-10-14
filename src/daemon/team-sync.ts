@@ -199,6 +199,10 @@ export interface LocalCopy {
 
 /** Why a file git put in design/ that the team doesn't have stays on this machine. */
 const GIT_ONLY = "git put it here and your team doesn't have it; edit it to send it";
+/** Why a file over the size limit stays on the machine that wrote it. */
+const TOO_BIG = `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
+/** What an agent is told to do about a file too big to travel: Spool never shrinks anything itself. */
+const SHRINK = `teammates see it missing; shrink it under ${FILE_LIMIT_BYTES / 1_000_000} MB on this Mac (the skill says how)`;
 /** Why a file outside the layout stays on the machine that wrote it. */
 const OUTSIDE_LAYOUT = "only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync";
 /** How sync says each limit it paused on. */
@@ -989,7 +993,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	/** A save spool.page wouldn't take: the file stays here, and a limit pauses sync until it lifts. */
 	const refused = (path: string, reason: unknown, retryAfter: unknown) => {
-		if (reason === "too_large") hold(path, `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`);
+		if (reason === "too_large") hold(path, TOO_BIG);
 		else if (reason === "outside_layout" || reason === "invalid_save") hold(path, OUTSIDE_LAYOUT);
 		else if (typeof reason === "string" && Object.hasOwn(LIMITS, reason)) pause(reason as Limited, retryAfter);
 		// signed_out and not_editor: the connection closes next, and the close is what is answered
@@ -1234,6 +1238,8 @@ export function createTeamSync(deps: {
 	const hops = new Map<string, number>();
 	/** Roots this daemon is moving itself: never followed meanwhile, whatever their spool.json says. */
 	const held = new Set<string>();
+	/** What each root's agent was last told didn't travel, so its next command says only what is new. */
+	const toldAgent = new Map<string, Set<string>>();
 	let closed = false;
 	const say = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	/** A copy's link and how to ask spool.page about it, resolved once each time it is followed or asked after. */
@@ -1550,6 +1556,26 @@ export function createTeamSync(deps: {
 			goneLocal: goneLocalWith(root) ?? null,
 			...(copies.get(root)?.state() ?? { paused: null, sending: null, held: [] }),
 		}),
+		/**
+		 * What an agent's next command on a root says of its sync (DEV-261): each file that didn't travel and why, and
+		 * a pause, each said once until it travels or lifts. A file too big or outside the layout is found on disk now,
+		 * so one written a moment ago is named before the watcher has looked at it.
+		 */
+		untold(root: string): string[] {
+			const copy = copies.get(root);
+			if (copy === undefined) return [];
+			const { paused, held: stuck } = copy.state();
+			const lines = [...stuck, ...staysOnThisMac(root)]
+				.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+				.map(({ path, why }) => `${path} didn't travel: ${why}`);
+			if (paused !== null) lines.push(`sync paused: ${paused}`);
+			const now = new Set(lines);
+			const before = toldAgent.get(root) ?? new Set();
+			toldAgent.set(root, now);
+			const told = [...now].filter((line) => !before.has(line));
+			if (told.some((line) => line.endsWith(TOO_BIG))) told.push(SHRINK);
+			return told;
+		},
 		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
 		watchPresence(root: string, watcher: (presence: Presence) => void): () => void {
 			const set = watchers.get(root) ?? new Set();
@@ -1833,8 +1859,7 @@ function whyStays(designDir: string, path: string): string | undefined {
 		const stat = lstatSync(at, { throwIfNoEntry: false });
 		if (stat?.isSymbolicLink() === true) return "symlinks stay on this Mac";
 		if (stat === undefined || (index < segments.length - 1 && !stat.isDirectory())) return undefined;
-		if (index === segments.length - 1 && stat.isFile() && stat.size > FILE_LIMIT_BYTES)
-			return `it's over ${FILE_LIMIT_BYTES / 1_000_000} MB`;
+		if (index === segments.length - 1 && stat.isFile() && stat.size > FILE_LIMIT_BYTES) return TOO_BIG;
 	}
 	return undefined;
 }

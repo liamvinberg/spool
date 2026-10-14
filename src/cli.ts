@@ -46,7 +46,7 @@ import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
 import { localCopyOf } from "./team-project";
 import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
-import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, readUntold, resolveRegisteredProject } from "./verbs";
 import { batchShotFailure, formatBatchShot, logsFrame, shotFrames } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -255,6 +255,10 @@ program
 	.action(async (paths: string[]) => {
 		// read-only: a project due its frame-name migration is told so, not migrated
 		const root = await offlineProject(checkStart(process.cwd(), paths), { migrate: false });
+		// check needs no daemon, but a running one knows what of a team project didn't travel
+		const daemon = readDaemonState(spoolDir);
+		if (daemon !== undefined && followedLink(root) !== undefined)
+			await tellUntold(daemonUrl(daemon.host, daemon.port), basename(root), daemon.controlToken);
 		const output = await runCheck(root, process.cwd(), paths);
 		for (const line of output.stderr) process.stderr.write(`${line}\n`);
 		for (const line of output.stdout) process.stdout.write(`${line}\n`);
@@ -416,7 +420,13 @@ async function verbContext(): Promise<{ root: string; name: string; daemonUrl: s
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
 	const { url, controlToken, pid } = await ensureDaemon(spoolDir);
 	warnGoneSource(pid);
+	await tellUntold(url, name, controlToken);
 	return { root, name, daemonUrl: url, controlToken };
+}
+
+/** Say what of a team project didn't reach the team, and why, before the verb's own output (DEV-261). */
+async function tellUntold(url: string, name: string, controlToken: string): Promise<void> {
+	for (const line of await readUntold(url, name, controlToken)) narrate(line);
 }
 
 program

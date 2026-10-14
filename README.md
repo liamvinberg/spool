@@ -51,6 +51,17 @@ spool autostart   # start at login on macOS; spool autostart off removes it
 
 `spool --no-open` prints the canvas address. The released daemon uses `http://localhost:7766` by default. [local.spool.page](https://local.spool.page) finds the daemon on your machine and takes you there.
 
+## Limits
+
+A team project on [Spool Cloud](https://spool.page/#cloud) holds:
+
+- **1 GB** per project.
+- **25 MB** per file. A bigger file stays on the Mac that wrote it, and the next spool command your agent runs there names it. Spool never compresses anything: shrink video and large images before they go in `design/`.
+- **30,000 saves** per editor per project a month.
+- **120 saves a minute** per project, with up to 2,000 at once.
+
+There's no limit on people.
+
 ## Develop
 
 ```sh

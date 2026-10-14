@@ -983,6 +983,31 @@ describe("what travels", () => {
 		expect(JSON.stringify(await syncState(ana.daemon))).not.toContain("film.mov");
 	});
 
+	it("tells an agent's next command each file that didn't travel and why, once", async () => {
+		const { ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		expect(await untold(ana.daemon)).toEqual([]);
+		mkdirSync(join(ana.root, "design/shared/assets"), { recursive: true });
+		writeFileSync(join(ana.root, "design/shared/assets/demo.mp4"), Buffer.alloc(30_000_000, 1));
+		writeDesignFile(ana.root, "notes.md", "mine\n");
+
+		// named the moment it is on disk, before the watcher has looked
+		expect(await untold(ana.daemon)).toEqual([
+			"notes.md didn't travel: only canvas.json, AGENTS.md, CLAUDE.md, frames/ and shared/ sync",
+			"shared/assets/demo.mp4 didn't travel: it's over 25 MB",
+			"teammates see it missing; shrink it under 25 MB on this Mac (the skill says how)",
+		]);
+		expect(await untold(ana.daemon)).toEqual([]);
+
+		// shrunk, it travels; grown again, it is said again
+		writeFileSync(join(ana.root, "design/shared/assets/demo.mp4"), Buffer.alloc(1_000, 1));
+		await until(() => same(ana.root, ben.root, "shared/assets/demo.mp4"));
+		expect(await untold(ana.daemon)).toEqual([]);
+		writeFileSync(join(ana.root, "design/shared/assets/demo.mp4"), Buffer.alloc(26_000_000, 1));
+		expect(await untold(ana.daemon)).toContain("shared/assets/demo.mp4 didn't travel: it's over 25 MB");
+	});
+
 	it("lets a big file finish being written before it travels, so no first part of it does", async () => {
 		const { cloud, said, ana, ben } = await twoEditors();
 		writeFrame(ana.root, "home", "export default () => null;\n");
@@ -1019,6 +1044,12 @@ describe("what travels", () => {
 });
 
 /** What a canvas opened on the project now is told of its sync: an ending, a pause, and what didn't travel. */
+async function untold(daemon: ReturnType<typeof makeApp>, project = "checkout"): Promise<string[]> {
+	return (
+		(await (await daemon.request(`/api/p/${project}/sync/untold`, { method: "POST" })).json()) as { lines: string[] }
+	).lines;
+}
+
 async function syncState(daemon: ReturnType<typeof makeApp>, project = "checkout") {
 	return (await daemon.request(`/api/p/${project}/sync`)).json();
 }
