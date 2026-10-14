@@ -122,6 +122,28 @@ export function entryCamera(camera: Camera, box: Box, vw: number, vh: number): C
 	return intersects(box, visibleWorldRect(camera, vw, vh, 0)) ? camera : centerOn(camera, box, vw, vh);
 }
 
+/**
+ * The camera that moves from one live frame to another (DEV-295): it always
+ * brings the target to you. Below a fit, zoom in to fit; at or above it, keep
+ * the zoom and center the target while it fits on screen. A target bigger than
+ * the view lands at its start: centered across (its left edge at a fit's margin
+ * when it is wider than the view) and its top a fit's margin below the top.
+ * Unlike entryCamera, there is no close-up to keep: the target is elsewhere.
+ */
+export function moveCamera(camera: Camera, box: Box, vw: number, vh: number): Camera {
+	const fit = fitCamera(box, vw, vh);
+	if (camera.k < fit.k) return fit;
+	const { k } = camera;
+	const margin = FIT_INSET / 2;
+	const w = box.w * k;
+	const h = box.h * k;
+	return {
+		k,
+		x: (w <= vw ? (vw - w) / 2 : margin) - box.x * k,
+		y: (h <= vh ? (vh - h) / 2 : margin) - box.y * k,
+	};
+}
+
 /** Frames visible to a camera, padded by margin fractions of the viewport. */
 export function visibleWorldRect(camera: Camera, vw: number, vh: number, marginFraction: number): Box {
 	return {

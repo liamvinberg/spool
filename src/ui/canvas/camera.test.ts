@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Box, entryCamera, fitCamera, revealCamera } from "./camera";
+import { type Box, entryCamera, fitCamera, moveCamera, revealCamera } from "./camera";
 
 /** A tall page: taller than any viewport, the frame the old fit hurt most. */
 const page: Box = { x: 0, y: 0, w: 800, h: 6000 };
@@ -60,6 +60,46 @@ describe("entryCamera", () => {
 		const chip: Box = { x: 900, y: 900, w: 120, h: 90 };
 		const entered = entryCamera({ x: 0, y: 0, k: 0.1 }, chip, VW, VH);
 		expect(entered.k).toBe(1);
+	});
+});
+
+describe("moveCamera", () => {
+	/** A design-system page beside the one live: 1440 wide, 4000 tall, 160 apart. */
+	const next: Box = { x: 1600, y: 0, w: 1440, h: 4000 };
+	const onScreen = (camera: { x: number; y: number; k: number }, box: Box) => ({
+		left: box.x * camera.k + camera.x,
+		top: box.y * camera.k + camera.y,
+		right: (box.x + box.w) * camera.k + camera.x,
+	});
+
+	it("brings a tall neighbour in that entryCamera would leave where it is", () => {
+		// reading the first page close up, the next one's edge on screen
+		const reading = { x: -900, y: -1200, k: 0.5 };
+		expect(entryCamera(reading, next, VW, VH)).toBe(reading);
+		const moved = moveCamera(reading, next, VW, VH);
+		expect(moved.k).toBe(0.5);
+		const at = onScreen(moved, next);
+		// across: centered, it fits at this zoom; down: its top a fit's margin in
+		expect((at.left + at.right) / 2).toBeCloseTo(VW / 2);
+		expect(at.top).toBeCloseTo(64);
+	});
+
+	it("aligns the left edge of a target wider than the view", () => {
+		const moved = moveCamera({ x: 0, y: 0, k: 1 }, next, VW, VH);
+		expect(onScreen(moved, next)).toMatchObject({ left: 64, top: 64 });
+	});
+
+	it("zooms in to fit from further out, as entering does", () => {
+		const far = { x: 0, y: 0, k: 0.02 };
+		expect(moveCamera(far, next, VW, VH)).toEqual(fitCamera(next, VW, VH));
+	});
+
+	it("centers a target that fits at the current zoom", () => {
+		const phone: Box = { x: 600, y: 300, w: 390, h: 844 };
+		const moved = moveCamera({ x: 0, y: 0, k: 0.8 }, phone, VW, VH);
+		expect(moved.k).toBe(0.8);
+		expect((phone.x + phone.w / 2) * 0.8 + moved.x).toBeCloseTo(VW / 2);
+		expect((phone.y + phone.h / 2) * 0.8 + moved.y).toBeCloseTo(VH / 2);
 	});
 });
 
