@@ -9,8 +9,8 @@ import { resolveDesignPath } from "./design-path";
  *
  * When a save reaches the team after a teammate's to the same file, the team keeps it in its history and never
  * applies it, and this machine's disk takes the team's version. The save itself is kept here too, in
- * `design/.spool`, which never travels, so the canvas can mark each frame that renders the file and offer to
- * compare it, put it back, or hand it to the agent. A delete of this machine's that a teammate's edit undid is
+ * `design/.spool`, which never travels, so the canvas can say so and offer to put it back, let it go, or hand it
+ * to the agent. A delete of this machine's that a teammate's edit undid is
  * marked the same way: an edit beats a delete, and the deleter is told.
  *
  * One mark per path: a later collision on the same file replaces the earlier one. A mark goes when it is acted on,

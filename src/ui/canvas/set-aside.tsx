@@ -1,73 +1,72 @@
-import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import {
-	compareSetAside,
-	dismissSetAside,
-	fetchSetAside,
-	putSetAsideBack,
-	type SetAsideCompare,
-	type ShownSetAside,
-} from "../api";
-import { attachHotkeyLayer } from "../hotkey-dispatch";
-import { Button } from "../primitives/actions";
-import { Dialog, Popover } from "../primitives/overlays";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dismissSetAside, fetchSetAside, putSetAsideBack, type ShownSetAside } from "../api";
+import { TextAction, Toast } from "../primitives/feedback";
 
 /**
- * Set-aside marks on a team project's canvas.
+ * A team project's clashes, said on its canvas as one notice.
  *
- * When this machine's save reaches the team after a teammate's to the same file, the team keeps the teammate's
- * and this machine's disk takes it. Only this machine is told, on each frame that renders the file: what happened,
- * whose save stands, and three ways on. Compare shows both sides. Put mine back writes this machine's side again,
- * which travels as an ordinary new save on top. Hand to agent starts a turn on the agent with both sides, and
- * only when pressed: nothing reaches an agent on its own. A delete of this machine's that a teammate's edit
- * undid is marked the same way, since an edit beats a delete.
- *
- * Coming back from offline can set many saves aside at once. More than a handful together are one summary
- * instead of a mark on every frame, and so is a file no frame renders.
+ * When this machine's save reaches the team after a teammate's to the same file, the sync merges the two the way
+ * git would, and nobody hears of it. Only where both changed the same lines does a save stay set aside: the team
+ * keeps the teammate's, this machine's disk takes it, and this machine alone is told, once for all such files, with
+ * three ways on. Use theirs lets this machine's side go. Use mine writes it again, which travels as an ordinary new
+ * save on top. Ask agent to fix starts one new thread with every file in it, and only when pressed: nothing reaches
+ * an agent on its own. A delete of this machine's that a teammate's edit undid is told the same way, since an edit
+ * beats a delete.
  */
 
-/** More marks than this arriving together are one summary. */
-const SET_ASIDE_HANDFUL = 3;
-
-/** What the agent is asked when a mark is handed to it: both sides, by path, and what to do with them. */
-export function setAsideAsk(mark: ShownSetAside): string {
-	const file = `design/${mark.path}`;
-	const who = mark.by ?? "a teammate";
-	if (mark.kind === "restored")
-		return `I deleted ${file} in this team project, and ${who}'s edit brought it back: an edit beats a delete. Read their version in ${file} and tell me whether it should still go; if it should, delete it again.`;
-	if (mark.deleted || mark.file === null)
-		return `My delete of ${file} was set aside: ${who}'s edit reached the team first, so the file stayed. Read their version in ${file} and tell me whether it should still go; if it should, delete it again.`;
-	return `My change to ${file} was set aside: ${who}'s save reached the team first, and the file now has their version. My version is in ${mark.file}. Redo my change on top of the team's version in ${file}, keeping their work.`;
+/** What the agent is asked: every clashed file, where both sides are, and what to do with them. */
+export function setAsideAsk(marks: readonly ShownSetAside[]): string {
+	const lines = marks.map((mark) => {
+		const file = `design/${mark.path}`;
+		const who = mark.by ?? "a teammate";
+		if (mark.kind === "restored" || mark.deleted || mark.file === null)
+			return `- ${file}: I deleted it and ${who} edited it, so it stayed. Read their version and tell me whether it should still go; if it should, delete it again.`;
+		return `- ${file}: ${who}'s version is in the file now. Mine is in ${mark.file}.`;
+	});
+	return [
+		"My changes to these files in this team project clashed with a teammate's: we both changed the same lines, and theirs reached the team first.",
+		"",
+		...lines,
+		"",
+		"Redo each of my changes on top of the team's version in the file, keeping their work.",
+	].join("\n");
 }
 
-/** The one line a mark says. */
-function setAsideSays(mark: ShownSetAside): string {
-	const whose = mark.by === null ? "A teammate's" : `${mark.by}'s`;
-	if (mark.kind === "restored") return `Your delete was undone. ${whose} edit brought it back.`;
-	if (mark.deleted) return `Your delete was set aside. ${whose} edit arrived first.`;
-	return `Your change was set aside. ${whose} arrived first.`;
+/** Who a mark's teammate is, as the canvas names people: their address before the @. */
+function nameOf(by: string | null): string | null {
+	return by === null ? null : (by.split("@")[0] ?? by);
 }
 
-interface Acts {
-	compare(mark: ShownSetAside): void;
-	putBack(mark: ShownSetAside): void;
-	hand(mark: ShownSetAside): void;
-	dismiss(mark: ShownSetAside): void;
+/** The notice's one line: who, and what both changed. */
+export function setAsideSays(marks: readonly ShownSetAside[]): string {
+	const names = new Set(marks.map((mark) => nameOf(mark.by)));
+	const [only] = names;
+	const who = names.size === 1 && only != null ? `You and ${only}` : "You and a teammate";
+	const [first] = marks;
+	const frames = new Set(marks.flatMap((mark) => mark.frames));
+	let what: string;
+	if (marks.length === 1 && first !== undefined)
+		what = first.frames.length === 1 ? (first.frames[0] ?? first.path) : first.path;
+	else if (frames.size > 0 && marks.every((mark) => mark.frames.length > 0))
+		what = `${frames.size} ${frames.size === 1 ? "frame" : "frames"}`;
+	else what = `${marks.length} files`;
+	return `${who} both changed ${what}`;
 }
 
-export interface CanvasSetAside {
-	/** The mark on one frame's label, when this machine has one there. */
-	label(frame: string): ReactNode | undefined;
-	/** The summary and Compare, drawn over the canvas. */
-	node: ReactNode;
+export interface SetAsideFix {
+	/** What the third action says: the agent fixes it, or, with no agent on this machine, its prompt is copied. */
+	label: string;
+	run(marks: readonly ShownSetAside[]): void;
 }
 
 /**
- * The project's marks, read when the canvas opens, when sync says they changed (the `set-aside` change event,
- * passed on as `spool-set-aside-change`), and when the window comes back to the front.
+ * The project's clashes, read when the canvas opens, when sync says they changed (the `set-aside` change event,
+ * passed on as `spool-set-aside-change`), and when the window comes back to the front. The notice, or nothing.
  */
-export function useSetAside(project: string, hand: (mark: ShownSetAside) => void): CanvasSetAside {
+export function useSetAside(project: string, fix: SetAsideFix): ReactNode {
 	const [marks, setMarks] = useState<ShownSetAside[]>([]);
-	const [comparing, setComparing] = useState<{ mark: ShownSetAside; sides: SetAsideCompare } | null>(null);
+	// closed for now: it comes back when the canvas opens again, or another clash arrives
+	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
 	const revision = useRef(0);
 
 	const refresh = useCallback(() => {
@@ -88,233 +87,55 @@ export function useSetAside(project: string, hand: (mark: ShownSetAside) => void
 		};
 	}, [refresh]);
 
-	const acts = useMemo<Acts>(
-		() => ({
-			compare: (mark) =>
-				void compareSetAside(project, mark.id).then((sides) => {
-					if (sides !== undefined) setComparing({ mark, sides });
-				}),
-			putBack: (mark) => {
-				setMarks((current) => current.filter((held) => held.id !== mark.id));
-				void putSetAsideBack(project, mark.id).then(refresh);
-			},
-			hand,
-			dismiss: (mark) => {
-				setMarks((current) => current.filter((held) => held.id !== mark.id));
-				void dismissSetAside(project, mark.id).then(refresh);
-			},
-		}),
-		[project, hand, refresh],
-	);
-
-	const { onFrames, summary } = useMemo(() => {
-		const onFrames = new Map<string, ShownSetAside[]>();
-		const summary: ShownSetAside[] = [];
-		for (const mark of marks) {
-			if (mark.frames.length === 0 || mark.together > SET_ASIDE_HANDFUL) {
-				summary.push(mark);
-				continue;
-			}
-			for (const frame of mark.frames) onFrames.set(frame, [...(onFrames.get(frame) ?? []), mark]);
-		}
-		return { onFrames, summary };
-	}, [marks]);
-
-	return {
-		label: (frame) => {
-			const here = onFrames.get(frame);
-			return here === undefined ? undefined : <SetAsideMark marks={here} acts={acts} />;
-		},
-		node: (
-			<>
-				{summary.length > 0 && <SetAsideSummary marks={summary} acts={acts} />}
-				{comparing !== null && (
-					<SetAsideCompareDialog
-						mark={comparing.mark}
-						sides={comparing.sides}
-						onClose={() => setComparing(null)}
-					/>
-				)}
-			</>
-		),
+	const shown = useMemo(() => marks.filter((mark) => !hidden.has(mark.id)), [marks, hidden]);
+	if (shown.length === 0) return null;
+	/** Answer every mark the notice stands for, at once. */
+	const answer = (act: (project: string, id: string) => Promise<boolean>) => {
+		const ids = new Set(shown.map((mark) => mark.id));
+		setMarks((current) => current.filter((mark) => !ids.has(mark.id)));
+		void Promise.all(shown.map((mark) => act(project, mark.id))).then(refresh);
 	};
-}
-
-/** The mark on a frame's label: a word that opens what happened and what can be done. */
-function SetAsideMark({ marks, acts }: { marks: readonly ShownSetAside[]; acts: Acts }) {
-	const [open, setOpen] = useState(false);
-	// an action answers the mark, so the note closes behind it; Compare is a look, and keeps it
-	const answered = useMemo<Acts>(
-		() => ({
-			compare: acts.compare,
-			putBack: (mark) => {
-				setOpen(false);
-				acts.putBack(mark);
-			},
-			hand: (mark) => {
-				setOpen(false);
-				acts.hand(mark);
-			},
-			dismiss: (mark) => {
-				setOpen(false);
-				acts.dismiss(mark);
-			},
-		}),
-		[acts],
-	);
 	return (
-		<>
-			<button
-				type="button"
-				data-set-aside-mark=""
-				aria-expanded={open}
-				className="shrink-0 rounded-xs border border-line-strong bg-surface-raised px-1.5 text-primary type-detail hover:bg-surface-control"
-				onPointerDown={(event) => event.stopPropagation()}
-				onDoubleClick={(event) => event.stopPropagation()}
-				onClick={(event) => {
-					event.stopPropagation();
-					setOpen((was) => !was);
-				}}
-			>
-				set aside
-			</button>
-			{open && (
-				<Popover
-					aria-label="Set aside"
-					className="absolute top-full left-0 z-10 mt-1 w-toast gap-3 whitespace-normal"
-					onPointerDown={(event) => event.stopPropagation()}
-					onDoubleClick={(event) => event.stopPropagation()}
-					onWheel={(event) => event.stopPropagation()}
-					onKeyDown={(event) => {
-						if (event.key === "Escape") setOpen(false);
-					}}
-				>
-					{marks.map((mark) => (
-						<SetAsideNote key={mark.id} mark={mark} acts={answered} />
-					))}
-				</Popover>
-			)}
-		</>
+		<SetAsideNotice
+			marks={shown}
+			fixLabel={fix.label}
+			onTheirs={() => answer(dismissSetAside)}
+			onMine={() => answer(putSetAsideBack)}
+			onFix={() => fix.run(shown)}
+			onClose={() => setHidden((was) => new Set([...was, ...shown.map((mark) => mark.id)]))}
+		/>
 	);
 }
 
-/** One mark's line, its file, and its actions. */
-function SetAsideNote({ mark, acts, compact = false }: { mark: ShownSetAside; acts: Acts; compact?: boolean }) {
-	return (
-		<div data-set-aside={mark.path} className="flex flex-col gap-2">
-			{!compact && <p className="text-primary type-control">{setAsideSays(mark)}</p>}
-			<div className="flex items-baseline justify-between gap-2">
-				<span className="min-w-0 truncate text-secondary type-value">{mark.path}</span>
-				<button
-					type="button"
-					aria-label={`Dismiss ${mark.path}`}
-					className="shrink-0 text-secondary type-detail hover:text-primary"
-					onClick={() => acts.dismiss(mark)}
-				>
-					Dismiss
-				</button>
-			</div>
-			<div className="flex flex-wrap gap-1.5">
-				<Button size="sm" onClick={() => acts.compare(mark)}>
-					Compare
-				</Button>
-				<Button size="sm" onClick={() => acts.putBack(mark)}>
-					Put mine back
-				</Button>
-				<Button size="sm" onClick={() => acts.hand(mark)}>
-					Hand to agent
-				</Button>
-			</div>
-		</div>
-	);
-}
-
-/** Many at once: one card instead of a mark on every frame. */
-function SetAsideSummary({ marks, acts }: { marks: readonly ShownSetAside[]; acts: Acts }) {
-	const count = marks.length === 1 ? "1 of your changes was" : `${marks.length} of your changes were`;
-	return (
-		<Popover
-			role="region"
-			aria-label="Set aside"
-			data-set-aside-summary=""
-			className="-translate-x-1/2 absolute top-4 left-1/2 z-30 max-h-[60vh] w-dialog gap-3 overflow-auto"
-			onPointerDown={(event) => event.stopPropagation()}
-			onWheel={(event) => event.stopPropagation()}
-		>
-			<div className="flex items-baseline justify-between gap-3">
-				<p className="text-primary type-control">{count} set aside: teammates' saves reached the team first.</p>
-				<button
-					type="button"
-					className="shrink-0 text-secondary type-detail hover:text-primary"
-					onClick={() => {
-						for (const mark of marks) acts.dismiss(mark);
-					}}
-				>
-					Dismiss all
-				</button>
-			</div>
-			{marks.map((mark) => (
-				<SetAsideNote key={mark.id} mark={mark} acts={acts} compact />
-			))}
-		</Popover>
-	);
-}
-
-/** Both sides of a set-aside file, side by side. */
-function SetAsideCompareDialog({
-	mark,
-	sides,
+export function SetAsideNotice({
+	marks,
+	fixLabel,
+	onTheirs,
+	onMine,
+	onFix,
 	onClose,
 }: {
-	mark: ShownSetAside;
-	sides: SetAsideCompare;
+	marks: readonly ShownSetAside[];
+	fixLabel: string;
+	onTheirs: () => void;
+	onMine: () => void;
+	onFix: () => void;
 	onClose: () => void;
 }) {
-	const id = useId();
-	const dialogRef = useRef<HTMLDialogElement>(null);
-	useLayoutEffect(() => {
-		const dialog = dialogRef.current;
-		const previous = document.activeElement;
-		dialog?.showModal();
-		return () => {
-			dialog?.close();
-			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-		};
-	}, []);
-	useEffect(() => attachHotkeyLayer({ scope: "dialog", handlers: {} }), []);
 	return (
-		<Dialog
-			native
-			ref={dialogRef}
-			width="free"
-			aria-labelledby={`${id}-title`}
-			className="w-[1100px] gap-4"
-			onCancel={(event) => {
-				event.preventDefault();
-				onClose();
-			}}
-		>
-			<div className="flex items-baseline justify-between gap-4">
-				<h2 id={`${id}-title`} className="text-primary type-control">
-					Compare <span className="text-secondary type-value">{mark.path}</span>
-				</h2>
-				<Button onClick={onClose}>Close</Button>
-			</div>
-			<div className="grid min-h-0 flex-1 grid-cols-2 gap-4">
-				<CompareSide title="Yours, set aside" side={sides.mine} />
-				<CompareSide title={mark.by === null ? "The team's" : `The team's, from ${mark.by}`} side={sides.team} />
-			</div>
-		</Dialog>
-	);
-}
-
-function CompareSide({ title, side }: { title: string; side: SetAsideCompare["mine"] }) {
-	return (
-		<section aria-label={title} className="flex min-h-0 flex-col gap-2">
-			<h3 className="text-secondary type-detail">{title}</h3>
-			<pre className="min-h-[120px] flex-1 overflow-auto rounded-md border border-line-strong bg-surface-window p-3 text-primary type-value whitespace-pre">
-				{side === null ? "deleted" : (side.text ?? `${side.size} bytes, not text`)}
-			</pre>
-		</section>
+		<Toast
+			data-set-aside=""
+			className="max-w-sheet"
+			// one line: the actions are what wrap first, never the sentence
+			message={<span className="whitespace-nowrap">{setAsideSays(marks)}</span>}
+			action={
+				<>
+					<TextAction onClick={onTheirs}>Use theirs</TextAction>
+					<TextAction onClick={onMine}>Use mine</TextAction>
+					<TextAction onClick={onFix}>{fixLabel}</TextAction>
+				</>
+			}
+			onDismiss={onClose}
+		/>
 	);
 }

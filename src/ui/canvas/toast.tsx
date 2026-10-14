@@ -15,11 +15,18 @@ export interface Notice {
 export function Toast({ notice }: { notice: Notice }) {
 	return (
 		<div className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30">
-			<Said
-				message={notice.message}
-				tone={notice.kind === "error" ? "error" : "default"}
-				progress={notice.kind === "progress" ? true : undefined}
-			/>
+			<NoticeToast notice={notice} />
 		</div>
+	);
+}
+
+/** The line itself, for a place that stacks it with others (`NoticeStack`). */
+export function NoticeToast({ notice }: { notice: Notice }) {
+	return (
+		<Said
+			message={notice.message}
+			tone={notice.kind === "error" ? "error" : "default"}
+			progress={notice.kind === "progress" ? true : undefined}
+		/>
 	);
 }

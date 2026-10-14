@@ -29,17 +29,12 @@ export function TrashToast({
 	onUndo: () => void;
 }) {
 	return (
-		<div
-			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30"
-			onPointerDown={(event) => event.stopPropagation()}
-		>
-			<Toast
-				message={`Moved ${subjectOf(frames, page)} to Trash`}
-				action={<TextAction onClick={onUndo}>Undo</TextAction>}
-				keys={UNDO_CHORD}
-				drain={undoMs}
-			/>
-		</div>
+		<Toast
+			message={`Moved ${subjectOf(frames, page)} to Trash`}
+			action={<TextAction onClick={onUndo}>Undo</TextAction>}
+			keys={UNDO_CHORD}
+			drain={undoMs}
+		/>
 	);
 }
 

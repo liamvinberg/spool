@@ -37,7 +37,7 @@ import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectThumbnail } from "../daemon/project-thumbnail";
 import type { ProjectCard as DaemonProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
-import type { SetAsideCompare, ShownSetAside } from "../daemon/set-aside-routes";
+import type { ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
@@ -92,7 +92,6 @@ export type {
 	SelectionEntry,
 	SelectionPut,
 	ServedThread,
-	SetAsideCompare,
 	ShownSetAside,
 	TeamPeople,
 	TeamRole,
@@ -1952,12 +1951,6 @@ export async function fetchSetAside(project: string): Promise<ShownSetAside[]> {
 	} catch {
 		return [];
 	}
-}
-
-/** One mark's two sides, this machine's and the team's, for Compare. */
-export async function compareSetAside(project: string, id: string): Promise<SetAsideCompare | undefined> {
-	const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/set-aside/${encodeURIComponent(id)}`);
-	return response.ok ? ((await response.json()) as SetAsideCompare) : undefined;
 }
 
 /** Put this machine's side back on disk, which the sync sends as an ordinary new save. */

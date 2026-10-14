@@ -59,7 +59,6 @@ export function FrameLabel({
 	hovered,
 	unseen,
 	onPlay,
-	setAside,
 	live,
 	clickEnters = false,
 	overview = null,
@@ -91,15 +90,13 @@ export function FrameLabel({
 	unseen?: Unseen | undefined;
 	/** Play this frame. Offered on the selection, where the attention already is. */
 	onPlay?: () => void;
-	/** A team project's mark on a frame whose file this machine's save lost (`set-aside.tsx`). */
-	setAside?: ReactNode;
 }) {
 	const place = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
 	const changed = useChanged();
 	const turn = useMemo(() => bucketOf(name, WIDTH_TURNS), [name]);
-	// looked at, or carrying something to press at its far end: never a turn behind
-	const exact = selected || hovered || entered || setAside != null;
+	// looked at: never a turn behind
+	const exact = selected || hovered || entered;
 	// the frames this label was drawn in while the camera moved, which its turn counts
 	const moves = useRef(0);
 	// hidden for skipping a zoom while off screen (below)
@@ -191,7 +188,6 @@ export function FrameLabel({
 						{/* the selection's own verb, at the far end of its own row: no
 					    travelling to a corner of the chrome to act on what is right
 					    here. Ghost until wanted — the label is not a toolbar. */}
-						{setAside}
 						{selected && onPlay !== undefined && (
 							<button
 								type="button"
