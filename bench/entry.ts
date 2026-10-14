@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type Browser, chromium, type Page } from "playwright-core";
 import {
@@ -45,14 +45,18 @@ import {
  * at the overview camera, into a different frame, so every one boots a
  * document nobody has opened in that tab.
  *
- * `--trace <file>` records one entry at each rate as a Chrome trace, for
- * Perfetto or DevTools, and lists the canvas's long main-thread tasks in it:
- * the second by default (`--trace-entry`), because the first in a fresh
- * browser also pays its GPU process's first pipeline compiles, which a
- * browser in use has long since paid.
+ * The landing is what the camera coming to rest sets off, from its rest
+ * (REST_MS after the flight's last frame) to LANDING_MS after that frame: the
+ * canvas's work at the rest and the neighbouring documents it mounts. Its
+ * animation-frame intervals are timed for every entry.
  *
- * The landing is the second after the flight's last frame: the camera's rest,
- * the render it sets off and the neighbouring documents that mount at it.
+ * `--trace <file>` records every entry as a Chrome trace and reads the
+ * landing's longest main-thread task out of each, which is the one number an
+ * interval cannot give. It keeps one entry's trace at each rate, for Perfetto
+ * or DevTools, and lists that one's long tasks: the second by default
+ * (`--trace-entry`), because the first in a fresh browser also pays its GPU
+ * process's first pipeline compiles, which a browser in use has long since
+ * paid.
  *
  *   pnpm build && node bench/entry.ts --project <path> --page app --headed
  *   node bench/entry.ts --project <path> --page app --zoom 0.16 --entries 8 --throttle 1,4 --headed
@@ -179,10 +183,9 @@ const ENTRY_TIMEOUT_MS = 8000;
 /** A double-click as a hand makes one: each press held this long, this far apart. */
 const CLICK_HOLD_MS = 60;
 const CLICK_GAP_MS = 90;
-/**
- * How long after the flight's last frame the landing is watched: the camera
- * store's 100 ms rest, the render it sets off and the neighbours it mounts.
- */
+/** How long a camera left alone takes to be at rest: camera-store.ts's REST_MS. */
+const REST_MS = 100;
+/** How long after the flight's last frame the landing is watched. */
 const LANDING_MS = 1000;
 
 interface Entry {
@@ -199,10 +202,10 @@ interface Entry {
 	between: GestureStats;
 	fly: GestureStats;
 	entry: GestureStats;
-	/** The camera's rest and what it mounts: LANDING_MS from the flight's last frame. */
+	/** The camera's rest and what it mounts, from the rest to LANDING_MS after the flight. */
 	landing: GestureStats;
-	/** The longest animation frame of the landing, 0 with none over 50 ms. */
-	landingLoaf: number;
+	/** The landing's longest task on the canvas's main thread, from a trace; NaN untraced. */
+	landingTask: number;
 	/** Documents mounted once the entry was over, the entered one included. */
 	mountedAfter: number;
 }
@@ -287,7 +290,6 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 	const faded = ofFrame.find((mark) => mark.cover === "0" || mark.cover === null);
 	const liveAt = faded === undefined ? Number.NaN : faded.t + (faded.cover === null ? 0 : COVER_FADE_MS);
 	const end = Math.max(flyEnd, liveAt);
-	const landing = windowStats(state, flyEnd, flyEnd + LANDING_MS);
 	return {
 		rate,
 		frame,
@@ -300,10 +302,8 @@ async function enterOnce(page: Page, target: { x: number; y: number }, rate: num
 		between: windowStats(state, probe.press as number, click),
 		fly: windowStats(state, click, flyEnd),
 		entry: windowStats(state, click, end),
-		landing,
-		landingLoaf: state.loaf
-			.filter((entry) => entry.t >= flyEnd && entry.t <= flyEnd + LANDING_MS)
-			.reduce((worst, entry) => Math.max(worst, entry.duration), 0),
+		landing: windowStats(state, flyEnd + REST_MS, flyEnd + LANDING_MS),
+		landingTask: Number.NaN,
 		mountedAfter: marks.at(-1)?.iframes ?? 0,
 	};
 }
@@ -361,15 +361,24 @@ async function measure(
 				await tab.waitForTimeout(600);
 				const target = (await targets(tab, options.entries))[index];
 				if (target === undefined) throw new Error(`no frame ${index + 1} on screen to enter`);
-				const trace =
-					index + 1 === options.traceEntry && options.trace !== undefined
-						? options.trace.replace(/\.json$/, `-${rate}x.json`)
-						: undefined;
+				const kept = index + 1 === options.traceEntry;
+				const trace = options.trace?.replace(/\.json$/, kept ? `-${rate}x.json` : `-${rate}x-${index + 1}.json`);
 				if (trace !== undefined) await browser.startTracing(tab, { path: trace });
 				const entry = await enterOnce(tab, target, rate);
 				if (trace !== undefined) {
 					await browser.stopTracing();
-					process.stderr.write(`bench: wrote the trace to ${trace}\n${longTasks(trace)}`);
+					const tasks = canvasTasks(trace);
+					entry.landingTask = tasks
+						.filter((task) => task.at >= entry.flyEnd + REST_MS && task.at <= entry.flyEnd + LANDING_MS)
+						.reduce((longest, task) => Math.max(longest, task.ms), 0);
+					if (kept) {
+						const rows = tasks.filter((task) => task.ms >= TRACE_TASK_MS);
+						process.stderr.write(
+							`bench: wrote the trace to ${trace}\n` +
+								`bench:   canvas tasks over ${TRACE_TASK_MS} ms from the double-click, the flight ending at ${ms(entry.flyEnd)}:\n` +
+								rows.map((task) => `bench:     +${ms(task.at)} ms  ${ms(task.ms)} ms\n`).join(""),
+						);
+					} else rmSync(trace);
 				}
 				entries.push(entry);
 				process.stderr.write(
@@ -396,37 +405,38 @@ interface TraceEvent {
 	args?: { data?: { type?: string } };
 }
 
-/** A task this long on the canvas's main thread is listed from a trace. */
+/** A task this long on the canvas's main thread is listed from the kept trace. */
 const TRACE_TASK_MS = 8;
 
 /**
- * The canvas's own main-thread tasks over TRACE_TASK_MS from the double-click
- * on, from a trace: the thread is the one that dispatched the double-click,
- * and each row is the task's start after it and its length.
+ * The canvas's own main-thread tasks from the double-click on, from a trace:
+ * the thread is the one that dispatched the double-click, and each task is
+ * its start after it and its length, in ms.
  */
-function longTasks(path: string): string {
+function canvasTasks(path: string): { at: number; ms: number }[] {
 	const { traceEvents } = JSON.parse(readFileSync(path, "utf8")) as { traceEvents: TraceEvent[] };
 	const click = traceEvents.find((event) => event.name === "EventDispatch" && event.args?.data?.type === "dblclick");
-	if (click === undefined) return "bench: no double-click in the trace\n";
-	const tasks = traceEvents.filter(
-		(event) =>
-			event.ph === "X" &&
-			event.pid === click.pid &&
-			event.tid === click.tid &&
-			event.ts >= click.ts &&
-			(event.name === "ThreadControllerImpl::RunTask" || event.name === "RunTask") &&
-			(event.dur ?? 0) / 1000 >= TRACE_TASK_MS,
-	);
+	if (click === undefined) throw new Error(`no double-click in the trace ${path}`);
+	const tasks = traceEvents
+		.filter(
+			(event) =>
+				event.ph === "X" &&
+				event.pid === click.pid &&
+				event.tid === click.tid &&
+				event.ts >= click.ts &&
+				(event.name === "ThreadControllerImpl::RunTask" || event.name === "RunTask"),
+		)
+		.sort((a, b) => a.ts - b.ts || (b.dur ?? 0) - (a.dur ?? 0));
 	// a task is often traced twice, the scheduler's span around the thread's
 	// own: one inside another is the same task
-	const rows: string[] = [];
+	const found: { at: number; ms: number }[] = [];
 	let end = Number.NEGATIVE_INFINITY;
-	for (const task of tasks.sort((a, b) => a.ts - b.ts || (b.dur ?? 0) - (a.dur ?? 0))) {
+	for (const task of tasks) {
 		if (task.ts < end) continue;
 		end = task.ts + (task.dur ?? 0);
-		rows.push(`bench:     +${ms((task.ts - click.ts) / 1000)} ms  ${ms((task.dur ?? 0) / 1000)} ms\n`);
+		found.push({ at: (task.ts - click.ts) / 1000, ms: (task.dur ?? 0) / 1000 });
 	}
-	return `bench:   canvas tasks over ${TRACE_TASK_MS} ms, from the double-click:\n${rows.join("")}`;
+	return found;
 }
 
 function table(entries: Entry[], rateList: number[]): string {
@@ -461,7 +471,7 @@ function table(entries: Entry[], rateList: number[]): string {
 		`| entry worst LoAF blocking | ${cell((e) => e.entry.loafWorstBlocking)} |`,
 		`| landing worst interval | ${cell((e) => e.landing.worst)} |`,
 		`| landing intervals > ${RARE_INTERVAL_MS} ms | ${count((e) => e.landing.rareIntervals)} |`,
-		`| landing longest animation frame | ${cell((e) => e.landingLoaf)} |`,
+		`| landing longest task (traced) | ${cell((e) => e.landingTask)} |`,
 		`| documents mounted after | ${count((e) => e.mountedAfter)} |`,
 	].join("\n");
 }
