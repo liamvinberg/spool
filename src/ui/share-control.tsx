@@ -144,7 +144,7 @@ export function ShareControl({
 				ref={button}
 				data-bar-end="share"
 				icon={<ShareIcon />}
-				label={disabled ? "Share (open a project first)" : "Share"}
+				label="Share"
 				aria-haspopup="dialog"
 				aria-expanded={open}
 				pressed={open}
