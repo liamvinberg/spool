@@ -143,6 +143,27 @@ export function CogIcon() {
 	);
 }
 
+/** A box with an arrow leaving it: the share glyph a Mac already uses, at the bar's 16px and 1.4 stroke. */
+export function ShareIcon() {
+	return (
+		<svg
+			width="16"
+			height="16"
+			viewBox="0 0 16 16"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1.4"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M8 1.8v8.4" />
+			<path d="M5.2 4.4 8 1.6l2.8 2.8" />
+			<path d="M5.6 6.6H4.2a1 1 0 0 0-1 1v5.6a1 1 0 0 0 1 1h7.6a1 1 0 0 0 1-1V7.6a1 1 0 0 0-1-1h-1.4" />
+		</svg>
+	);
+}
+
 /** The per-card menu on home. */
 export function DotsIcon() {
 	return (

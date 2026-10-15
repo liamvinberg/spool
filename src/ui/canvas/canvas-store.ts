@@ -3,6 +3,7 @@ import type { ProjectedPlaceholder } from "../../daemon/projection";
 import type { Unseen } from "../../daemon/seen";
 import { ROOT_PAGE } from "../../page-path";
 import type { FlowEdge, Place, ProjectedFrame } from "../api";
+import type { ShareContext } from "../share-control";
 import type { CanvasTool } from "./canvas-tools";
 import type { HandEdit } from "./hand-edit";
 import type { Staging } from "./history";
@@ -269,3 +270,10 @@ export const unseenOf = derived(
 		return marks;
 	},
 );
+
+/** What the bar's Share reads as it opens: the page in front, every page and how many frames stand on each, and the walks. */
+export function shareContextOf(state: CanvasState): ShareContext {
+	const frames = new Map<string, number>();
+	for (const frame of navigatorFramesOf(state)) frames.set(pageOf(frame), (frames.get(pageOf(frame)) ?? 0) + 1);
+	return { page: state.activePage, pages: navigatorPagesOf(state), frames, walks: state.edges };
+}
