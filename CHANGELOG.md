@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.43.0
+
+### Minor Changes
+
+- bf2bdae: Your agent now hears when a file in a team project didn't reach the team. The next `spool` command it runs there, `shot`, `logs`, `check` and the rest, names each file that stayed on your Mac and why, such as a video over 25 MB. `spool skill` names the 25 MB limit and how to shrink video and images before they go in `design/`.
+- 8bdf5ea: `spool move --team <address>` now moves a project that's only on this Mac into a team, so an agent can do it once you say yes. It asks first, like the other moves. When you leave out `--team`, or name a team you're not in, it lists your teams.
+- 768fbd7: Sharing now lives in a Share button at the top right, next to help and settings. It shares the page you're on with a link by default, lets you pick more pages from a searchable list that stays one size however big the project is, and shows a QR code of the link so you can open the prototype on your phone straight away. The project's shares are listed in the same place, so the Shared button no longer comes and goes beside your tabs. Right-clicking a page and choosing Share… opens it on that page.
+
+### Patch Changes
+
+- 5c6d974: Teammates' names docked on a frame now line up with even gaps. A frame shows at most three names: with four or more people inside, it shows the first two and a "+N" pill. Hover it to see who else is there.
+- 8afa2cf: The agent panel stops asking for a chat's models once you move to another chat. Those asks stayed open until the agent answered, and a few of them could stall the canvas's other requests, so a button like Use mine on a clash appeared to do nothing.
+- 820bcb3: Holding ⌥ inside a live frame now keeps moving between frames when something in the frame has focus that uses the arrow keys, like a tree or a list. Once the overview is up the arrows move it, instead of going to the frame and closing the overview.
+- 8564239: When spool.page drops everyone at once, after a deploy or under load, daemons and open team canvases no longer all reconnect in the same second. Each waits a random time that doubles with every failed try, up to about 30 seconds, and only starts again from about a second once its connection held for a minute.
+- aa9660a: The canvas answers faster right after a save to a shared component. Listing the canvas's frames no longer holds up the canvas's other requests while it reads every frame's folder, and recompiling the frames that use the component spends far less time checking their classes against the stylesheet.
+- 2f20fae: Moving a team project to another team now works the same when your projects folder is reached through a symlink: the copy on this Mac moves to the new team's folder under its real path, so it stays one project here and moves along again the next time.
+- efbb972: Zooming out on the canvas now stops where the whole page fits the window with some room around it, instead of shrinking the page to a speck in an empty field. A page of one or two frames still lets you zoom out to a quarter size, and the shared page in the browser stops at the same place.
+
 ## 0.42.4
 
 ### Patch Changes
