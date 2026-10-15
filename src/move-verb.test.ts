@@ -161,6 +161,8 @@ describe("spool move", () => {
 		const solo = join(makeTempDir(), "pitch");
 		mkdirSync(solo);
 		git(solo, "init", "--quiet", "--initial-branch=main", ".");
+		git(solo, "config", "user.email", "hands@example.test");
+		git(solo, "config", "user.name", "Hands");
 		git(solo, "config", "commit.gpgsign", "false");
 		initProject(solo, state, {});
 		writeFrame(solo, "home", "export default () => <h1>Pitch</h1>;\n");
