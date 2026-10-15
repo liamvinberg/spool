@@ -1979,8 +1979,8 @@ export async function dismissSetAside(project: string, id: string): Promise<bool
 }
 
 /**
- * A project's shares, through the daemon, which holds this Mac's session with spool.page: read, changed and
- * stopped from the Shared control, and made from a page's right-click. A refusal answers spool.page's reason.
+ * A project's shares, through the daemon, which holds this Mac's session with spool.page: made, read, changed and
+ * stopped from Share at the bar's end, which a page's right-click also opens. A refusal answers spool.page's reason.
  */
 export function daemonShares(project: string): SharesSource & {
 	create(request: ShareRequest): Promise<{ share: ShareView } | { error: string }>;

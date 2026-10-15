@@ -51,7 +51,8 @@ import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
 import { AgentIcon, FolderIcon, PropertiesIcon } from "../icons";
 import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
-import { SHARES_CHANGED, useShares } from "../shares";
+import { openShare, type ShareContext } from "../share-control";
+import { useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
@@ -93,6 +94,7 @@ import {
 	navigatorFramesOf,
 	navigatorPagesOf,
 	pageObjectsOf,
+	shareContextOf,
 	toolOf,
 	unseenOf,
 	useCanvasField,
@@ -192,7 +194,6 @@ import {
 } from "./protocol";
 import { useElementTree } from "./rail-elements";
 import { setAsideAsk, useSetAside } from "./set-aside";
-import { ShareSheet } from "./share-sheet";
 import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
@@ -225,6 +226,8 @@ export interface CanvasChrome {
 	camera: CameraStore;
 	/** hands the project to an agent of one's own, for the bar's help; absent where there is no project folder */
 	useAgent?: (() => void) | undefined;
+	/** what the bar's Share reads as it opens: the page in front, the project's pages and frames, and its walks */
+	share: () => ShareContext;
 }
 
 interface Point {
@@ -373,7 +376,6 @@ export function ProjectCanvas({
 	// pages shared with outsiders through spool.page (DEV-193), started from a page's right-click
 	const pageShares = useMemo(() => daemonShares(project), [project]);
 	const { shares: projectShares } = useShares(pageShares);
-	const [sharingPage, setSharingPage] = useState<string | null>(null);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	// on the document rather than the viewport, which a booting canvas has not drawn yet
 	useEffect(() => watchMotionStrain(camera, document.documentElement), [camera]);
@@ -4744,9 +4746,10 @@ export function ProjectCanvas({
 		onChrome({
 			camera,
 			useAgent: root === undefined ? undefined : () => setAgentHandoff(true),
+			share: () => shareContextOf(store.get()),
 		});
 		return () => onChrome(null);
-	}, [onChrome, camera, root]);
+	}, [onChrome, camera, root, store]);
 
 	// --- presence (DEV-196) ---------------------------------------------------------
 
@@ -4940,7 +4943,7 @@ export function ProjectCanvas({
 					// against the same overlay and lands in the same batched write
 					onMarkSeen={markRead}
 					under={elementTree.under}
-					onSharePage={projectShares?.state === "ready" && projectShares.manage ? setSharingPage : undefined}
+					onSharePage={projectShares?.state === "ready" && projectShares.manage ? openShare : undefined}
 				/>
 			),
 		},
@@ -5495,19 +5498,6 @@ export function ProjectCanvas({
 					) : null}
 				</div>
 			</PaneWindow>
-			{sharingPage !== null && (
-				<ShareSheet
-					page={sharingPage}
-					pages={navigatorPages}
-					walks={edges}
-					onCreate={async (request) => {
-						const answer = await pageShares.create(request);
-						if ("share" in answer) window.dispatchEvent(new CustomEvent(SHARES_CHANGED));
-						return answer;
-					}}
-					onClose={() => setSharingPage(null)}
-				/>
-			)}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

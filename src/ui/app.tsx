@@ -42,7 +42,8 @@ import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
-import { SharedControl, useShares } from "./shares";
+import { ShareControl } from "./share-control";
+import { useShares } from "./shares";
 import {
 	type ClosedTab,
 	lastTab,
@@ -161,7 +162,7 @@ export function App() {
 	/** The strip as drawn, for the tab keys, which read it when pressed. */
 	const stripRef = useRef<readonly string[]>([]);
 	stripRef.current = tabs.map((tab) => tab.root);
-	/** The focused project's shares with outsiders, for the Shared control at the window's top right (DEV-193). */
+	/** The focused project's shares with outsiders, for Share at the window's top right (DEV-193). */
 	const focusedName = focusedTab?.name;
 	const tabShares = useMemo(() => (focusedName === undefined ? null : daemonShares(focusedName)), [focusedName]);
 	const { shares: focusedShares } = useShares(tabShares);
@@ -789,18 +790,18 @@ export function App() {
 						/>
 					</div>
 
-					{focusedTab !== undefined && chrome !== null && (
-						<div className="flex h-full shrink-0 items-center gap-4">
-							{/* Play lives on the selection now (#13/#24), where the frame it
-						    would open is the frame you are looking at. A header button
-						    could only ever guess, and its guess with nothing selected was
-						    the first frame by name — a start that means nothing. */}
-							{/* who the project's pages are shared with, outside the team (DEV-193) */}
-							{tabShares !== null && <SharedControl source={tabShares} shares={focusedShares} />}
-						</div>
-					)}
 					{/* the same on Home and on every canvas, so nothing in the bar moves on the way between them */}
 					<div data-bar-end-group="" className="flex h-full shrink-0 items-center gap-0.5">
+						{/* who sees the project's pages outside the team (DEV-193), and the way to share more */}
+						<ShareControl
+							source={focusedTab === undefined ? null : tabShares}
+							shares={focusedShares}
+							context={focusedTab === undefined ? undefined : chrome?.share}
+							onSignIn={() => {
+								setAccount({ state: "signing-in" });
+								void signInCloudAccount();
+							}}
+						/>
 						<BarEnd
 							settingsOpen={settingsOpen}
 							onSettings={settingsOpen ? closeSettings : openSettings}

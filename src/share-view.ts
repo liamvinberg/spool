@@ -1,8 +1,8 @@
 /**
- * Shares of a project's pages, as spool.page tells them and every surface shows them: the Shared control on the
- * Mac's canvas and on the browser canvas, and the sheet a share starts from. A share belongs to its project (its
- * team's, or a solo project's own account), shows a set of pages to outsiders, and is either named people, who
- * sign in, or anyone with its link. Pure, so the canvas, the viewer and the daemon spell it alike.
+ * Shares of a project's pages, as spool.page tells them and every surface shows them: Share at the Mac window's
+ * bar, where shares are made and kept, and the Shared control on the browser canvas. A share belongs to its project
+ * (its team's, or a solo project's own account), shows a set of pages to outsiders, and is either named people,
+ * who sign in, or anyone with its link. Pure, so the canvas, the viewer and the daemon spell it alike.
  */
 import { pageName, ROOT_PAGE } from "./page-path";
 
