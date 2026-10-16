@@ -19,7 +19,7 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 
 ### Issue tracker
 
-Issues and specs live in Linear (team Devosurf, project Spool), not GitHub Issues. See `docs/agents/issue-tracker.md`.
+Issues and specs live in Plane (plane.devosurf.dev, project `SPOOL`), through the `plane` MCP group, not GitHub Issues. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
