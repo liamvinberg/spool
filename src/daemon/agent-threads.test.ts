@@ -10,6 +10,7 @@ import {
 	readThreads,
 	serveThreads,
 	type ThreadPut,
+	threadsDir,
 	writeThread,
 } from "./agent-threads";
 
@@ -91,6 +92,18 @@ describe("the store", () => {
 		const put = parseThreadPut({ ...picture, after: { count: 1, key: "u0" } });
 		if (put === undefined) throw new Error("the put did not parse");
 		expect(putThread(makeTempDir(), ROOT, ONE, put)).toBe("moved");
+	});
+
+	it("spells the file the way JSON does, and reads it again once something else wrote it", () => {
+		const spoolDir = makeTempDir();
+		putThread(spoolDir, ROOT, ONE, picture);
+		const [file] = readdirSync(threadsDir(spoolDir, ROOT)).filter((name) => name === `${ONE}.json`);
+		const path = join(threadsDir(spoolDir, ROOT), file ?? "");
+		const [back] = readThreads(spoolDir, ROOT);
+		expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(back, null, "\t")}\n`);
+		// held, and then not, once the file is no longer the one it was read from
+		writeFileSync(path, `${JSON.stringify({ ...back, ask: "edited by hand" }, null, "\t")}\n`);
+		expect(readThreads(spoolDir, ROOT)[0]?.ask).toBe("edited by hand");
 	});
 
 	it("keys by the project root, so two projects never see each other's threads", () => {

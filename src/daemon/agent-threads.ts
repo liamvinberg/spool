@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { type AgentOwnership, isThreadEngine, LEGACY_ENGINE, type ThreadEngine } from "./agent-engine";
@@ -316,10 +316,74 @@ function threadFile(spoolDir: string, root: string, id: string): string {
 	return join(threadsDir(spoolDir, root), `${id}.json`);
 }
 
+/**
+ * The threads this daemon last read or wrote, by file, for as long as the file is still the
+ * one they came from (task 168).
+ *
+ * A rail writes its picture every two seconds while a turn runs, and a write that carries
+ * on from the stored part has to read that part first. A conversation that kept its
+ * screenshots runs to tens of megabytes, and reading one back and writing it out again
+ * held the daemon for half a second a time — the daemon that is streaming the turn. So
+ * the last few are held parsed, and each entry's text is kept beside the entry it was
+ * made from, so writing the picture again costs what changed and the disk.
+ *
+ * The file's size and change time are the check that nothing else wrote it since: a stale
+ * hold is read again rather than trusted. Only a few are held, because each can be large.
+ */
+const recent = new Map<string, { readonly mtimeMs: number; readonly size: number; readonly thread: StoredThread }>();
+const RECENT = 4;
+
+function remember(file: string, thread: StoredThread): void {
+	const { mtimeMs, size } = statSync(file);
+	recent.delete(file);
+	recent.set(file, { mtimeMs, size, thread });
+	for (const old of recent.keys()) {
+		if (recent.size <= RECENT) break;
+		recent.delete(old);
+	}
+}
+
+function held(file: string): StoredThread | undefined {
+	const hold = recent.get(file);
+	if (hold === undefined) return undefined;
+	const { mtimeMs, size } = statSync(file);
+	if (mtimeMs === hold.mtimeMs && size === hold.size) return hold.thread;
+	recent.delete(file);
+	return undefined;
+}
+
+/** each entry as the file spells it, made once per entry rather than once per write */
+const spelled = new WeakMap<object, string>();
+
+function spell(entry: unknown): string {
+	if (typeof entry !== "object" || entry === null) return JSON.stringify(entry) ?? "null";
+	const known = spelled.get(entry);
+	if (known !== undefined) return known;
+	// two tabs in, where the entries list sits in the file; a JSON string holds no raw line break
+	const text = (JSON.stringify(entry, null, "\t") ?? "null").replaceAll("\n", "\n\t\t");
+	spelled.set(entry, text);
+	return text;
+}
+
+/** the file's text, the same as `JSON.stringify(thread, null, "\t")` spells it */
+function threadText(thread: StoredThread): string {
+	const mark = `spool-entries-${randomUUID()}`;
+	const text = JSON.stringify(
+		thread,
+		(key, value: unknown) => (key === "entries" && value === thread.entries ? mark : value),
+		"\t",
+	);
+	const list = thread.entries.length === 0 ? "[]" : `[\n\t\t${thread.entries.map(spell).join(",\n\t\t")}\n\t]`;
+	return `${text.replace(`"${mark}"`, () => list)}\n`;
+}
+
 export function readThread(spoolDir: string, root: string, id: string): StoredThread | undefined {
 	if (!isThreadId(id)) return undefined;
 	try {
-		const raw: unknown = JSON.parse(readFileSync(threadFile(spoolDir, root, id), "utf8"));
+		const file = threadFile(spoolDir, root, id);
+		const hold = held(file);
+		if (hold !== undefined) return hold;
+		const raw: unknown = JSON.parse(readFileSync(file, "utf8"));
 		const thread = parseThread(raw);
 		if (thread !== undefined && typeof raw === "object" && raw !== null && !("engine" in raw)) {
 			try {
@@ -328,6 +392,7 @@ export function readThread(spoolDir: string, root: string, id: string): StoredTh
 				/* Keep a readable legacy record available when migration cannot be saved. */
 			}
 		}
+		if (thread !== undefined && recent.get(file)?.thread !== thread) remember(file, thread);
 		return thread;
 	} catch {
 		// a thread nobody can read is one thread, and the strip still holds the rest
@@ -336,7 +401,9 @@ export function readThread(spoolDir: string, root: string, id: string): StoredTh
 }
 
 export function writeThread(spoolDir: string, root: string, thread: StoredThread): void {
-	writeAtomic(threadFile(spoolDir, root, thread.id), `${JSON.stringify(thread, null, "\t")}\n`);
+	const file = threadFile(spoolDir, root, thread.id);
+	writeAtomic(file, threadText(thread));
+	remember(file, thread);
 }
 
 /**
