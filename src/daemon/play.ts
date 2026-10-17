@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { PLAYER_CHROME_RULES } from "../runtime/player-chrome-css";
@@ -8,13 +8,15 @@ import { type CompileHost, describeCompileError } from "./design-compile";
 import { realDesignDir } from "./design-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "./document";
 import {
+	beginPlayerCompile,
 	type ComposedPlayer,
-	compilePlayer,
 	compositionOptions,
 	type FrameStyle,
 	type PlayerBundle,
+	type PlayerCompilation,
 	type PlayerContext,
 	type PlayerFrameRef,
+	partialPlayer,
 	playerEntry,
 	playerStamp,
 } from "./player-compile";
@@ -49,8 +51,29 @@ export interface PlayerConfig {
 }
 
 export type PlayerCompile =
-	| { kind: "ok"; bundle: PlayerBundle; cache: "hit" | "miss" }
+	| { kind: "ok"; bundle: PlayerBundle; cache: "hit" | "miss" | "partial" }
 	| { kind: "error"; message: string };
+
+/**
+ * How many frames have to be without a stylesheet before a play stops waiting
+ * for all of them (SPOOL-165). Under it the whole compile is about as quick
+ * as a partial one, so a play waits for the whole and is served the bundle
+ * that is cached. It is what a cold compile looks like: a project nothing has
+ * composed since the daemon started, where every frame's sheet is still to
+ * build.
+ */
+const PARTIAL_FROM = 8;
+
+/** A compile in flight for a root, and whether a play may open before it ends. */
+interface Running {
+	done: Promise<PlayerCompile>;
+	/**
+	 * The compilation once one has begun, and whether enough of its stylesheets
+	 * are missing that a play should open on a partial player. Undefined for a
+	 * cache hit, or a compile that failed before it began.
+	 */
+	begun: Promise<{ compilation: PlayerCompilation; cold: boolean } | undefined>;
+}
 
 /**
  * How many retired bundles keep answering for their modules. A document served
@@ -81,24 +104,67 @@ export function createPlayerCompiler(
 	version: string,
 	webfonts: Webfonts = inertWebfonts(),
 	host: CompileHost = daemonCompileHost,
+	{ partialFrom = PARTIAL_FROM }: { partialFrom?: number } = {},
 ) {
 	const cache = new Map<string, ComposedPlayer>();
 	/** Bundles a root has served, newest first, so their modules stay answerable. */
 	const served = new Map<string, PlayerBundle[]>();
 	const contexts = new Map<string, PlayerContext>();
 	/** One compile in flight per root: the shell and its iframe ask within the same second. */
-	const inflight = new Map<string, Promise<PlayerCompile>>();
+	const inflight = new Map<string, Running>();
 	let closed = false;
 
-	function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
+	function run(root: string, frames: PlayerFrameRef[]): Running {
 		const running = inflight.get(root);
 		if (running !== undefined) return running;
-		const compile = compileOrReuse(root, frames).finally(() => inflight.delete(root));
-		inflight.set(root, compile);
-		return compile;
+		let began: (value: { compilation: PlayerCompilation; cold: boolean } | undefined) => void = () => {};
+		const begun = new Promise<{ compilation: PlayerCompilation; cold: boolean } | undefined>((resolve) => {
+			began = resolve;
+		});
+		const done = compileOrReuse(root, frames, began).finally(() => {
+			began(undefined);
+			inflight.delete(root);
+		});
+		const started = { done, begun };
+		inflight.set(root, started);
+		return started;
 	}
 
-	async function compileOrReuse(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
+	/** The whole player: every frame's stylesheet built, and cached where it can be. */
+	function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
+		return run(root, frames).done;
+	}
+
+	/**
+	 * A player to open on `start` (SPOOL-165). Warm, or nearly, that is the whole
+	 * player as getBundle has it. Cold, with most stylesheets still to build, it
+	 * is a partial player as soon as the composition and the start frame's
+	 * stylesheet are, while the rest build behind it and the whole is cached as
+	 * ever. A compile already under way, as the canvas's warming starts one, is
+	 * the one it opens from.
+	 */
+	async function getPlayable(root: string, frames: PlayerFrameRef[], start: string): Promise<PlayerCompile> {
+		const running = run(root, frames);
+		const begun = await running.begun;
+		if (begun === undefined || !begun.cold || !begun.compilation.frames.some((ref) => ref.name === start)) {
+			return running.done;
+		}
+		try {
+			const bundle = await partialPlayer(begun.compilation, start, randomUUID());
+			retain(root, bundle);
+			return { kind: "ok", bundle, cache: "partial" };
+		} catch {
+			// the composition or the start frame's stylesheet failed: the whole
+			// compile says how, as it would have without the partial
+			return running.done;
+		}
+	}
+
+	async function compileOrReuse(
+		root: string,
+		frames: PlayerFrameRef[],
+		began: (value: { compilation: PlayerCompilation; cold: boolean }) => void,
+	): Promise<PlayerCompile> {
 		const stamp = playerStamp(frames);
 		try {
 			// Match frame compilation: one canonical root covers imports, shared
@@ -118,7 +184,10 @@ export function createPlayerCompiler(
 				return { kind: "ok", bundle: cached.bundle, cache: "hit" };
 			}
 			const context = await contextFor(root, designDir, frames, stamp);
-			const entry = await compilePlayer(host, version, designDir, frames, stamp, webfonts, context);
+			const missing = frames.filter((ref) => !context.styles.has(ref.name)).length;
+			const compilation = beginPlayerCompile(host, version, designDir, frames, stamp, webfonts, context);
+			began({ compilation, cold: missing >= partialFrom });
+			const entry = await compilation.done;
 			// Match the frame compiler: a compile failure is never cached, so the
 			// player recovers the instant the frame does. A stubbed build's inputs
 			// cannot cover the broken frame's own closure, so revalidating against
@@ -174,11 +243,16 @@ export function createPlayerCompiler(
 		served.set(root, [bundle, ...kept].slice(0, RETIRED_BUNDLES + 1));
 	}
 
-	/** A compiled module by served name, from the current bundle or one lately retired. */
-	function getChunk(root: string, name: string): string | undefined {
+	/**
+	 * A compiled module by served name, from the current bundle or one lately
+	 * retired. A partial player's stylesheet answers once its frame's is built.
+	 */
+	async function getChunk(root: string, name: string): Promise<string | undefined> {
 		for (const bundle of served.get(root) ?? []) {
 			const chunk = bundle.chunks.get(name);
 			if (chunk !== undefined) return chunk;
+			const later = bundle.later?.get(name);
+			if (later !== undefined) return later();
 		}
 		return undefined;
 	}
@@ -203,7 +277,7 @@ export function createPlayerCompiler(
 		await Promise.all(open.map((held) => held.context.dispose()));
 	}
 
-	return { getBundle, getChunk, forget, close };
+	return { getBundle, getPlayable, getChunk, forget, close };
 }
 
 export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
