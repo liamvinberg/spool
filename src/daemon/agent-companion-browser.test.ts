@@ -12,14 +12,11 @@ import {
 } from "../test-helpers";
 
 /**
- * The agent's companion on the canvas while it changes a frame, end to end (#214, #366).
+ * The agent at a frame on the canvas while it changes it, end to end (#366, task 164).
  *
- * Four seams meet here and each is unit-tested on its own: the daemon's witness says the
- * frame changed and which lines, the transcript folds that into where the agent is, the
- * frame's shim turns the write's range into a box, and the layer puts the square on it.
- * What only a browser can say is that they are one chain — that a write the agent lands
- * really does bring its square to the block it changed, on the frame showing it, without
- * anybody clicking anything.
+ * The daemon's witness says the frame changed, the transcript folds that into where the agent
+ * is, and the frame's name row says it is working there. What only a browser can say is that
+ * they are one chain, without anybody clicking anything.
  *
  * The agent here is a fixture that writes the file itself and then says it did, which is
  * the whole of what the real one does that this cares about: the pixels change because
@@ -38,15 +35,12 @@ const BEFORE = `export default function Home() {
 
 const PROMPT = "close on sundays";
 
-/** the two numbers of a CSS `translate(xpx, ypx)` */
-const numbersIn = (transform: string | null): [number, number] => {
-	const [x, y] = (transform ?? "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
-	return [x ?? Number.NaN, y ?? Number.NaN];
-};
 const OLD = '<p id="hours">open until six</p>';
 const NEW = '<p id="hours">closed sundays</p>';
 
-it("brings the square to the block a write changed, on the frame showing it", { timeout: 180_000 }, async () => {
+it("says on the frame's name row that the agent is working on it while a write lands", {
+	timeout: 180_000,
+}, async () => {
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
 
@@ -146,45 +140,11 @@ it("brings the square to the block a write changed, on the frame showing it", { 
 	await field.fill(PROMPT);
 	await field.press("Enter");
 
-	// the companion: the agent is at this frame, and the canvas says so on it
-	const square = page.locator('[data-agent-companion="main"][data-frame="home"]');
-	await expect.poll(() => square.count(), { timeout: 30_000 }).toBe(1);
-
-	// and the ring: the block that changed, measured by the document showing it, with the
-	// square hopped to its corner. Nothing here computed a box from the file
-	const ring = page.locator("[data-companion-ring]");
-	await ring.waitFor({ state: "attached", timeout: 30_000 });
-	const ringed = await ring.boundingBox();
-	const changed = await hours.boundingBox();
-	expect(ringed).not.toBeNull();
-	expect(changed).not.toBeNull();
-	const middle = (box: { y: number; height: number } | null) => (box?.y ?? 0) + (box?.height ?? 0) / 2;
-	// the ring is on the paragraph the write rewrote, and not on the heading above it.
-	// Its centre rather than its edges, because it is drawn out of the square at 96%
-	expect(Math.abs(middle(ringed) - middle(changed))).toBeLessThan(3);
-	const centre = (box: { x: number; width: number } | null) => (box?.x ?? 0) + (box?.width ?? 0) / 2;
-	expect(Math.abs(centre(ringed) - centre(changed))).toBeLessThan(3);
-	// and it is the block's own size, give or take the stand-off and the 96% it grows from
-	expect(Math.abs((ringed?.width ?? 0) - (changed?.width ?? 0))).toBeLessThan(0.06 * (changed?.width ?? 0));
-	expect(ringed?.height ?? 0).toBeLessThan((changed?.height ?? 0) + 8);
-	await expect.poll(() => square.getAttribute("data-act")).toBe("edit");
-
-	// the square is fixed to its frame: the camera moving moves both by the same amount,
-	// on the same frame it moves, once whatever it was doing has settled
-	const body = square.locator(":scope > div").last();
-	const at = () => body.evaluate((element) => (element as HTMLElement).style.transform);
-	const iframe = () => page.locator('iframe[title="home"]').boundingBox();
-	await page.waitForTimeout(2000);
-	const was = await at();
-	const stood = await iframe();
-	await page.mouse.move(700, 450);
-	await page.mouse.wheel(120, 80);
-	await expect.poll(async () => (await iframe())?.x).not.toBe(stood?.x);
-	const moved = await iframe();
-	const [wasX, wasY] = numbersIn(was);
-	const [nowX, nowY] = numbersIn(await at());
-	expect(nowX - wasX).toBeCloseTo((moved?.x ?? 0) - (stood?.x ?? 0), 0);
-	expect(nowY - wasY).toBeCloseTo((moved?.y ?? 0) - (stood?.y ?? 0), 0);
+	// the agent is at this frame, and the frame's name row says so
+	const row = page.locator('[data-frame-label="home"] [data-frame-agents="home"]');
+	await expect.poll(() => row.count(), { timeout: 30_000 }).toBe(1);
+	expect(await row.getAttribute("data-frame-agents-state")).toBe("working");
+	await expect.poll(says, { timeout: 30_000 }).toBe("closed sundays");
 
 	// the frame really did take the write, so the mark is about something that happened
 	expect(await says()).toBe("closed sundays");
@@ -192,7 +152,7 @@ it("brings the square to the block a write changed, on the frame showing it", { 
 
 /**
  * The rail shut, the agent stops to ask (#366): the ask stands on the canvas under the
- * frame the agent is at, its square the waiting ring and the agent's rail icon wearing the
+ * frame the agent is at, its name row saying waiting and the agent's rail icon wearing the
  * waiting mark, and answering it there is answering it.
  */
 it("stands an ask under its frame while the rail is shut, and answers from there", { timeout: 180_000 }, async () => {
@@ -294,16 +254,16 @@ it("stands an ask under its frame while the rail is shut, and answers from there
 	await field.fill(PROMPT_ASK);
 	await field.press("Enter");
 	// close the side while the turn runs, to its rail
-	await page
-		.locator('[data-agent-companion="main"][data-frame="home"]')
-		.waitFor({ state: "attached", timeout: 30_000 });
+	await page.locator('[data-frame-agents="home"]').waitFor({ state: "attached", timeout: 30_000 });
 	await page.locator('[data-side-close="right"]').click();
 	await expect.poll(() => page.locator("[data-agent-rail]").isVisible()).toBe(false);
 
 	const card = page.locator("[data-agent-canvas-ask]");
 	await card.waitFor({ timeout: 30_000 });
 	expect(await card.textContent()).toContain("Adding a date library");
-	await expect.poll(() => page.locator('[data-agent-companion="main"]').getAttribute("data-act")).toBe("ask");
+	await expect
+		.poll(() => page.locator('[data-frame-agents="home"]').getAttribute("data-frame-agents-state"))
+		.toBe("waiting");
 	expect(await page.locator('[data-rail-icon="agent"] [data-pane-mark="waiting"]').count()).toBe(1);
 	// it stands under the frame it is about
 	const frame = await page.locator('iframe[title="home"]').boundingBox();
