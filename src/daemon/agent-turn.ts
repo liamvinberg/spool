@@ -37,6 +37,9 @@ import { createTurnShell } from "./agent-turn-shell";
  * the turn is already over.
  */
 
+/** how long a stop waits on the binary to end the turn before spool ends it (task 168) */
+export const STOP_GRACE_MS = 10_000;
+
 export interface AgentTurnOptions {
 	readonly executor: AgentExecutor;
 	/** the project root: the agent stands in the product root, not in design/ */
@@ -136,6 +139,16 @@ export function startAgentTurn({
 	let interrupts = 0;
 	let asked = 0;
 	/**
+	 * The backstop under a stop the binary never answers (task 168).
+	 *
+	 * The press is a request, and a request can go unheard: a binary wedged on a provider
+	 * that stopped answering reads none of its stdin, and the turn said Working, with Stop
+	 * under it, for as long as anybody watched. So a stop that has not ended the turn when
+	 * the grace runs out says the ending itself and takes the process, the same way a
+	 * binary that will not go after its own ending is taken.
+	 */
+	let unheard: ReturnType<typeof setTimeout> | undefined;
+	/**
 	 * The turn lasts until its background designers land, not until the agent answers
 	 * (#365): an ending the agent reports while they run is held, and the turn reads
 	 * `holding` until the agent answers the last of them landing, which Claude Code wakes
@@ -173,6 +186,13 @@ export function startAgentTurn({
 				push(held);
 				over(target);
 			}
+			unheard ??= setTimeout(() => {
+				if (shell.left || shell.finished) return;
+				push({ kind: "ended", ending: "stopped", reason: "stopped", stopReason: null, parent: null });
+				asking.clear();
+				target.kill();
+			}, STOP_GRACE_MS);
+			unheard.unref?.();
 		}
 	}
 
@@ -244,6 +264,7 @@ export function startAgentTurn({
 				}
 			});
 			started.onExit((code, message) => {
+				if (unheard !== undefined) clearTimeout(unheard);
 				asking.clear();
 				const recovery = code === 0 ? undefined : recoveryFor(message ?? "");
 				shell.close({
