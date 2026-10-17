@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { drawableEntries, settledPicture, transcriptOf } from "../ui/canvas/agent-transcript";
+import { drawableEntries, footed, settledPicture, transcriptOf } from "../ui/canvas/agent-transcript";
 import type { AgentEnded, AgentEvent } from "./agent-events";
 import { readThread, type StoredThread, writeThread } from "./agent-threads";
 
@@ -20,7 +20,9 @@ export function agentPictureEnding(
 		);
 		const entries = [
 			...before,
-			...settledPicture(shown.entries).map((entry) => ({ ...entry, key: `${turn}:${entry.key}` })),
+			// footed, as the rail keeps it: without the foot the turn came back with no receipt and
+			// none of the frames it made (task 168)
+			...settledPicture(footed(shown)).map((entry) => ({ ...entry, key: `${turn}:${entry.key}` })),
 		];
 		let recovery = latest.recovery ?? null;
 		let ending: AgentEnded["ending"] | null = null;
