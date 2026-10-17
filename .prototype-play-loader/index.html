@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Play loader prototype</title>
+<meta name="description" content="Throwaway prototype: five ways the play window can load, at warm, after-edit and cold speeds.">
+<style>
+@font-face { font-family: "Fragment Mono"; src: url(fragment-mono.woff2) format("woff2"); }
+:root { --thread: #f5391a; --page: #0e0e0e; --bar: #282828; --line: #363636; --hint: #94918d; --ink: #f0efed; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #070707; color: var(--ink); font: 400 12px/18px "Fragment Mono", ui-monospace, monospace; -webkit-font-smoothing: antialiased; }
+body { display: grid; place-items: center; overflow: hidden; }
+
+/* the stand-in for the Mac app's play window, scaled to fit */
+#fit { position: absolute; inset: 0 0 120px; }
+.win { position: relative; width: 1200px; height: 830px; background: var(--page); border-radius: 10px; overflow: hidden; outline: 1px solid #2a2a2a; position: absolute; left: 50%; top: 50%; transform-origin: center; }
+.top { position: absolute; inset: 0 0 auto; height: 30px; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 76px; background: var(--bar); border-bottom: 1px solid var(--line); z-index: 5; }
+.lights { position: absolute; left: 12px; top: 9px; display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.top .project { color: var(--hint); }
+.top .end { margin-left: auto; display: flex; gap: 12px; color: var(--hint); font-size: 11px; }
+.top .loading { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+
+.stage { position: absolute; inset: 30px 0 0; overflow: hidden; }
+.screen { position: absolute; top: 0; bottom: 0; left: 50%; translate: -50% 0; }
+.live, .cover { position: absolute; inset: 0; }
+
+/* the frame being played: a stand-in prototype */
+.proto { position: absolute; inset: 0; background: #fff; color: #111; font: 15px/1.5 -apple-system, "Inter", system-ui, sans-serif; overflow: hidden; }
+.proto nav { display: flex; align-items: center; gap: 28px; padding: 22px 48px; border-bottom: 1px solid #eee; font-size: 14px; color: #555; }
+.proto nav b { color: #111; margin-right: auto; font-size: 16px; }
+.proto .hero { padding: 88px 48px 0; max-width: 760px; }
+.proto h1 { font-size: 54px; line-height: 1.04; letter-spacing: -1.6px; margin: 0 0 20px; font-weight: 650; }
+.proto p { color: #555; font-size: 18px; margin: 0 0 32px; max-width: 520px; }
+.proto .cta { display: inline-block; background: #111; color: #fff; padding: 13px 22px; border-radius: 8px; font-size: 15px; }
+.proto .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 72px 48px; }
+.proto .tile { height: 180px; border-radius: 12px; background: #f3f2ef; }
+.proto .tile:nth-child(2) { background: #ffe9e2; }
+.phone .proto nav { padding: 18px 20px; gap: 0; } .phone .proto nav span { display: none; }
+.phone .proto .hero { padding: 48px 20px 0; } .phone .proto h1 { font-size: 36px; letter-spacing: -1px; }
+.phone .proto p { font-size: 16px; } .phone .proto .row { grid-template-columns: 1fr; padding: 40px 20px; } .phone .proto .tile { height: 120px; }
+
+/* shared pieces */
+.thread-line { position: absolute; top: 0; left: 0; right: 0; height: 1px; overflow: hidden; z-index: 4; opacity: 0; transition: opacity 200ms ease; }
+.thread-line::after { content: ""; position: absolute; top: 0; width: 120px; height: 1px; background: var(--thread); animation: run 1.6s cubic-bezier(.65,0,.35,1) infinite alternate; }
+@keyframes run { from { left: -120px; } to { left: 100%; } }
+.status { position: absolute; left: 0; right: 0; top: 50%; translate: 0 -50%; text-align: center; z-index: 3; opacity: 0; transition: opacity 240ms ease; pointer-events: none; }
+.status .name { color: var(--ink); }
+.status .sub { color: var(--hint); font-size: 11px; margin-top: 4px; }
+
+/* ---- variant: today (what ships) ---- */
+.v-today .screen { background: #fff; }
+.v-today .live { opacity: 0; }
+.v-today.ready .live { opacity: 1; }
+
+/* ---- variant: quiet ---- */
+.v-quiet .live { opacity: 0; transition: opacity 180ms ease-out; }
+.v-quiet.ready .live { opacity: 1; }
+.v-quiet.slow:not(.ready) .thread-line { opacity: 1; }
+.v-quiet.slow:not(.ready) .status.late { opacity: 1; }
+
+/* ---- variant: thread (the frame's edge is traced while it composes) ---- */
+.trace { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 2; pointer-events: none; }
+.trace rect { fill: none; vector-effect: non-scaling-stroke; }
+.trace .rail { stroke: #2c2c2c; stroke-width: 1; opacity: 0; transition: opacity 300ms ease; }
+.trace .run { stroke: var(--thread); stroke-width: 1.5; stroke-dasharray: .18 .82; stroke-linecap: round; opacity: 0; transition: opacity 300ms ease; animation: trace 2.4s linear infinite; }
+@keyframes trace { to { stroke-dashoffset: -1; } }
+.v-thread .live { opacity: 0; transition: opacity 260ms ease-out, scale 360ms cubic-bezier(.2,.8,.2,1); scale: .985; }
+.v-thread.ready .live { opacity: 1; scale: 1; }
+.v-thread.slow:not(.ready) .rail, .v-thread.slow:not(.ready) .run { opacity: 1; }
+.v-thread.slow:not(.ready) .status { opacity: 1; }
+.v-thread.ready .run { animation: close 380ms ease-out forwards; opacity: 0; transition: opacity 380ms ease 120ms; }
+@keyframes close { to { stroke-dasharray: 1 0; } }
+
+/* ---- variant: winding (the mark winds its thread) ---- */
+.mark { position: absolute; left: 50%; top: 50%; width: 52px; translate: -50% -78%; z-index: 3; opacity: 0; transition: opacity 240ms ease; overflow: visible; }
+.mark path { fill: var(--thread); transform-box: fill-box; transform-origin: left center; scale: 0 1; }
+.v-winding.slow:not(.ready) .mark { opacity: 1; }
+.v-winding.slow:not(.ready) .mark path { animation: wind 2.8s cubic-bezier(.6,0,.2,1) infinite; animation-delay: calc(var(--i) * 110ms); }
+@keyframes wind { 0% { scale: 0 1; transform-origin: left center; } 32% { scale: 1 1; transform-origin: left center; } 68% { scale: 1 1; transform-origin: right center; } 92%, 100% { scale: 0 1; transform-origin: right center; } }
+.v-winding .status { translate: 0 30px; }
+.v-winding.slow:not(.ready) .status { opacity: 1; }
+.v-winding .live { opacity: 0; transition: opacity 220ms ease-out; }
+.v-winding.ready .live { opacity: 1; }
+
+/* ---- variant: cover (the frame's canvas still paints at once) ---- */
+.v-cover .cover { opacity: .5; filter: grayscale(.35); transition: opacity 200ms ease; }
+.v-cover .live { opacity: 0; transition: opacity 160ms ease-out; }
+.v-cover.ready .live { opacity: 1; }
+.v-cover.slow:not(.ready) .thread-line { opacity: 1; }
+.v-cover:not(.ready) .stage { cursor: progress; }
+
+.cover { display: none; } .v-cover .cover { display: block; }
+.trace { display: none; } .v-thread .trace { display: block; }
+.mark { display: none; } .v-winding .mark { display: block; }
+.v-today .thread-line, .v-today .status, .v-winding .thread-line, .v-thread .thread-line { display: none; }
+.v-cover .status { display: none; }
+.v-quiet .status:not(.late) { display: none; }
+.status.late { display: none; } .v-quiet .status.late { display: block; translate: 0 -50%; }
+
+@media (max-width: 700px) { .dock { gap: 4px; padding: 8px; } .dock .k { width: 44px; } .dock .note { font-size: 10px; line-height: 14px; } }
+@media (prefers-reduced-motion: reduce) { .thread-line::after, .trace .run, .mark path, .top .loading { animation: none !important; } .mark path { scale: 1 1 !important; } }
+
+/* the switcher: flat, out of the way */
+.dock { position: fixed; left: 50%; bottom: 16px; translate: -50% 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: #161616; border: 1px solid #2a2a2a; border-radius: 10px; width: min(760px, calc(100vw - 24px)); z-index: 20; }
+.dock .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.dock .k { color: var(--hint); width: 56px; font-size: 11px; }
+.dock button { font: inherit; font-size: 11px; color: var(--hint); background: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.dock button:hover { color: var(--ink); }
+.dock button[aria-pressed="true"] { color: var(--ink); border-color: #3a3a3a; background: #1f1f1f; }
+.dock .replay { margin-left: auto; color: var(--ink); border-color: #3a3a3a; }
+.dock .clock { color: var(--hint); font-size: 11px; min-width: 150px; text-align: right; }
+.dock .note { color: var(--hint); font-size: 11px; line-height: 16px; }
+</style>
+</head>
+<body>
+<div id="fit">
+	<div class="win" id="win">
+		<div class="top">
+			<span class="lights"><i></i><i></i><i></i></span>
+			<span><span class="project">site / </span>waitlist</span>
+			<span class="end"><span class="loading" id="barLoading">loading</span><span id="size">1200 × 800</span></span>
+		</div>
+		<div class="stage" id="stage">
+			<div class="thread-line"></div>
+			<div class="status late"><div class="sub" id="lateSub">composing 454 frames</div></div>
+			<div class="status"><div class="name" id="statusName">site/waitlist</div><div class="sub" id="statusSub">composing 454 frames</div></div>
+			<svg class="mark" viewBox="250 182 524 660" id="mark" aria-hidden="true"></svg>
+			<div class="screen" id="screen">
+				<svg class="trace" preserveAspectRatio="none" viewBox="0 0 100 100" aria-hidden="true"><rect class="rail" x="0" y="0" width="100" height="100" pathLength="1"/><rect class="run" x="0" y="0" width="100" height="100" pathLength="1"/></svg>
+				<div class="cover"><div class="proto" id="coverProto"></div></div>
+				<div class="live"><div class="proto" id="liveProto"></div></div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<div class="dock">
+	<div class="group" id="variants"><span class="k">loader</span></div>
+	<div class="group" id="speeds"><span class="k">speed</span></div>
+	<div class="group" id="frames"><span class="k">frame</span><button class="replay" id="replay">replay</button><span class="clock" id="clock"></span></div>
+	<div class="note" id="note"></div>
+</div>
+
+<script>
+const MARK = "M 441.500 188.662 C 422.070 189.413, 388.412 191.274, 371.428 192.538 C 356.315 193.662, 349.569 194.664, 338.928 197.368 C 331.543 199.244, 323.025 201.728, 320 202.888 C 311.090 206.304, 304.179 210.772, 301.469 214.868 C 300.075 216.974, 298.434 221.390, 297.822 224.683 C 296.905 229.613, 297.003 231.978, 298.378 238.085 C 300.127 245.850, 306.286 259.381, 310.403 264.500 C 312.719 267.381, 312.947 267.447, 316.157 266.161 C 325.050 262.599, 343.811 256.545, 355.500 253.466 C 388.527 244.767, 417.646 240.318, 496 232.003 C 580.468 223.039, 616.554 217.746, 652.500 209.047 C 661.300 206.917, 673.675 203.480, 680 201.409 L 691.500 197.644 687 196.831 C 673.460 194.385, 624.640 190.546, 587.500 189.007 C 566.676 188.143, 461.359 187.895, 441.500 188.662 M 762.691 222.139 C 758.121 226.627, 744.378 233.494, 730 238.473 C 697.061 249.881, 637.695 261.384, 572.500 268.992 C 472.663 280.642, 436.032 286.291, 399.500 295.670 C 387.399 298.776, 367.978 304.982, 357.241 309.173 C 355.448 309.873, 354.132 310.908, 354.316 311.473 C 354.726 312.730, 374.529 330.751, 384.160 338.631 L 391.182 344.376 397.341 342.661 C 444.868 329.429, 479.624 322.722, 564 310.502 C 614.084 303.249, 631.766 300.405, 655 295.867 C 718.214 283.520, 758.367 268.086, 768.054 252.412 C 770.103 249.097, 770.229 247.980, 769.714 237.663 C 769.408 231.523, 768.559 224.677, 767.829 222.449 L 766.500 218.399 762.691 222.139 M 747.405 305.109 C 744.761 308.036, 723.455 318.192, 712 321.985 C 706.775 323.715, 695.750 326.883, 687.500 329.024 C 663.804 335.174, 643.086 339.205, 572 351.494 C 534.511 357.974, 495.609 365.424, 478.304 369.436 C 462.892 373.009, 433.374 381.292, 432.330 382.337 C 431.999 382.668, 437.920 389.477, 445.488 397.469 C 453.056 405.461, 459.307 412, 459.380 412 C 459.453 412, 461.085 411.532, 463.007 410.961 C 470.574 408.710, 502.440 400.897, 519.500 397.110 C 529.400 394.912, 556.625 389.246, 580 384.518 C 623.577 375.705, 646.947 370.375, 665.786 364.955 C 692.529 357.261, 711.092 349.293, 725.482 339.332 C 731.359 335.263, 733.347 333.075, 738.053 325.499 C 749.045 307.803, 753.246 298.643, 747.405 305.109 M 691.500 385.164 C 683.239 391.415, 664.871 399.405, 642.982 406.269 C 628.165 410.915, 607.464 416.356, 577.500 423.482 C 535.145 433.554, 511.948 439.722, 492.760 446.013 C 482.454 449.392, 473.857 452.459, 473.657 452.829 C 473.456 453.198, 478.797 457.136, 485.524 461.580 L 497.756 469.659 516.128 464.822 C 526.233 462.161, 543.050 457.713, 553.500 454.936 C 622.050 436.724, 655.594 422.010, 679.657 399.597 C 686.502 393.221, 697.017 381.834, 695.843 382.068 C 695.654 382.106, 693.700 383.499, 691.500 385.164 M 612 464.112 C 603.330 470.038, 586.059 477.959, 554.415 490.522 C 491.638 515.447, 468.318 529.030, 445.329 554.063 L 439.500 560.409 445.793 555.212 C 453.360 548.963, 467.539 540.490, 480.491 534.479 C 485.715 532.054, 500.678 525.506, 513.744 519.926 C 540.081 508.680, 567.547 495.260, 581.905 486.624 C 595.158 478.653, 619.176 461.157, 617 461.059 C 616.725 461.046, 614.475 462.420, 612 464.112 M 511.500 559.732 C 507.650 561.149, 496.689 565.170, 487.143 568.666 C 436.273 587.298, 411.340 601.499, 380.627 629.334 C 377.141 632.494, 378.489 632.016, 384.500 627.962 C 396.878 619.613, 418.617 611.318, 460.264 599.053 C 477.079 594.101, 496.837 588.068, 504.169 585.645 C 522.326 579.647, 542.069 571.706, 541.685 570.556 C 541.269 569.308, 521.097 556.978, 519.635 557.078 C 519.011 557.120, 515.350 558.315, 511.500 559.732 M 540 615.120 C 524.656 620.625, 491.990 628.702, 441.500 639.475 C 406.276 646.990, 396.912 649.402, 378.579 655.682 C 362.653 661.137, 347.105 668.998, 336.567 676.924 C 328.202 683.215, 312.964 697.757, 307.671 704.500 L 304.532 708.500 308.309 705.243 C 313.108 701.104, 321.090 697.079, 332.421 693.082 C 351.893 686.214, 372.922 681.639, 413 675.550 C 494.043 663.238, 530.838 655.853, 563.077 645.431 C 569.085 643.489, 574 641.397, 574 640.783 C 574 639.315, 547.908 612.978, 546.548 613.073 C 545.971 613.113, 543.025 614.034, 540 615.120 M 602.500 681.180 C 593.129 684.883, 571.535 690.945, 553.500 694.936 C 519.695 702.417, 489.342 706.882, 420.500 714.503 C 362.911 720.877, 343.071 723.732, 323.484 728.464 C 300.415 734.037, 285.942 740.164, 276.348 748.417 C 273.974 750.458, 268.958 757.265, 264.638 764.306 C 254.877 780.218, 254.573 781.047, 259.916 777.176 C 270.125 769.780, 298.090 763.851, 345.500 759.030 C 356.500 757.912, 387.775 755.192, 415 752.987 C 496.683 746.369, 523.230 743.556, 557.500 737.889 C 590.433 732.443, 617.695 725.499, 636.049 717.882 C 641.548 715.600, 646.245 713.413, 646.486 713.023 C 646.728 712.632, 641.006 707.180, 633.772 700.906 C 626.538 694.633, 617.895 687.138, 614.567 684.250 C 611.238 681.362, 608.286 679.046, 608.007 679.102 C 607.728 679.159, 605.250 680.094, 602.500 681.180 M 679 759.565 C 638.381 776.236, 580.784 785.567, 473 792.940 C 456.775 794.050, 429.325 795.886, 412 797.021 C 352.172 800.939, 303.999 805.928, 276.760 811.027 C 270.303 812.235, 265.260 813.611, 265.552 814.085 C 266.514 815.640, 278.802 818.907, 293.276 821.454 C 322.734 826.640, 363.431 830.953, 413.500 834.197 C 440.735 835.962, 565 835.971, 593 834.211 C 653.158 830.428, 664.242 829.014, 681.688 822.899 C 692.872 818.978, 699.844 815.022, 704.343 810.043 C 706.295 807.881, 708.417 804.175, 709.058 801.807 C 710.930 794.887, 709.719 786.040, 705.765 777.760 C 702.502 770.927, 691.364 754.849, 690.086 755.128 C 689.764 755.198, 684.775 757.194, 679 759.565";
+const variants = [
+	["today", "today", "What ships: the screen behind the hidden frame is white, the bar pulses loading, the frame pops in."],
+	["quiet", "quiet", "Dark stage. Under 300ms nothing shows at all, then the frame fades in. Slower than that, a thread runs under the bar and a line says what it is doing."],
+	["thread", "thread", "After 300ms a thread runs around the frame's own edge, at its real size, so you see the shape you are about to get. Ready: the thread closes and the frame grows in."],
+	["winding", "winding", "After 300ms the spool mark winds its thread, band by band, with the frame's name under it. The most branded, and the loudest."],
+	["cover", "cover", "The frame's canvas still (the booth already has one) paints at once, dimmed, so it never feels empty. It goes live when ready. Clicks before then do nothing, which is the cost."],
+];
+const speeds = [
+	["warm", 250, "warm 0.25s", "warm (canvas open a while)"],
+	["edit", 700, "after edit 0.7s", "right after an edit"],
+	["cold", 13200, "cold 13s", "cold (first play, 454-frame project)"],
+];
+const frames = [["desktop", "desktop 1200"], ["phone", "phone 390, wide window"]];
+const params = new URLSearchParams(location.search);
+let variant = params.get("variant") ?? "thread";
+let speed = params.get("speed") ?? "edit";
+let frame = params.get("frame") ?? "desktop";
+
+const $ = (id) => document.getElementById(id);
+const win = $("win");
+
+// the mark, split into its bands so each can wind on its own
+$("mark").innerHTML = MARK.split(/ (?=M )/).map((d, i) => `<path d="${d}" style="--i:${i}"/>`).join("");
+
+const protoHtml = `<nav><b>Loom</b><span>Product</span><span>Pricing</span><span>Sign in</span></nav>
+<div class="hero"><h1>You're on the list.</h1><p>We'll write the moment your seat opens. Until then, here is what is coming.</p><span class="cta">Share your invite link</span></div>
+<div class="row"><div class="tile"></div><div class="tile"></div><div class="tile"></div></div>`;
+$("coverProto").innerHTML = protoHtml;
+$("liveProto").innerHTML = protoHtml;
+
+function buttons(container, list, current, set) {
+	const el = $(container);
+	for (const [key, label] of list) {
+		const b = document.createElement("button");
+		b.textContent = label;
+		b.dataset.key = key;
+		b.onclick = () => { set(key); sync(); play(); };
+		el.insertBefore(b, el.querySelector(".replay"));
+	}
+}
+buttons("variants", variants, variant, (k) => (variant = k));
+buttons("speeds", speeds.map(([k, , l]) => [k, l]), speed, (k) => (speed = k));
+buttons("frames", frames, frame, (k) => (frame = k));
+$("replay").onclick = play;
+
+function sync() {
+	for (const b of document.querySelectorAll(".dock button[data-key]")) {
+		const k = b.dataset.key;
+		b.setAttribute("aria-pressed", String(k === variant || k === speed || k === frame));
+	}
+	$("note").textContent = variants.find(([k]) => k === variant)[2];
+	const p = new URLSearchParams({ variant, speed, frame });
+	history.replaceState(null, "", `?${p}`);
+	const phone = frame === "phone";
+	win.classList.toggle("phone", phone);
+	$("screen").style.width = phone && !narrow ? "390px" : "100%";
+	$("size").textContent = narrow ? "" : "1200 × 800";
+	const name = phone ? "app/onboarding" : "site/waitlist";
+	$("statusName").textContent = name;
+	win.querySelector(".top > span:nth-child(2)").innerHTML = phone ? '<span class="project">app / </span>onboarding' : '<span class="project">site / </span>waitlist';
+	fit();
+}
+
+let timers = [];
+let raf = 0;
+function play() {
+	timers.forEach(clearTimeout); timers = []; cancelAnimationFrame(raf);
+	win.className = `win v-${variant}${frame === "phone" ? " phone" : ""}`;
+	// restart animations so every replay starts from nothing
+	void win.offsetWidth;
+	const ms = speeds.find(([k]) => k === speed)[1];
+	const cold = speed === "cold";
+	$("statusSub").textContent = cold ? "composing 454 frames" : "loading";
+	$("lateSub").textContent = cold ? "composing 454 frames" : "loading";
+	$("barLoading").style.display = variant === "today" ? "" : "none";
+	const sw = $("screen").offsetWidth, sh = $("screen").offsetHeight;
+	const svg = win.querySelector(".trace");
+	svg.setAttribute("viewBox", `0 0 ${sw} ${sh}`);
+	for (const r of svg.querySelectorAll("rect")) { r.setAttribute("x", 1); r.setAttribute("y", 1); r.setAttribute("width", sw - 2); r.setAttribute("height", sh - 2); }
+	const t0 = performance.now();
+	timers.push(setTimeout(() => win.classList.add("slow"), 300));
+	timers.push(setTimeout(() => { win.classList.add("ready"); $("barLoading").style.display = "none"; }, ms));
+	const tick = () => {
+		const t = (performance.now() - t0) / 1000;
+		const done = t * 1000 >= ms;
+		$("clock").textContent = done ? `live at ${(ms / 1000).toFixed(2)}s` : `loading ${t.toFixed(1)}s`;
+		if (!done) raf = requestAnimationFrame(tick);
+	};
+	tick();
+}
+
+// on a phone the window is a phone frame's own window: 390 wide, the frame filling it
+const narrow = matchMedia("(max-width: 700px)").matches;
+const W = narrow ? 390 : 1200, H = narrow ? 874 : 830;
+if (narrow) { win.style.width = W + "px"; win.style.height = H + "px"; frame = "phone"; document.getElementById("frames").querySelectorAll("button[data-key]").forEach((b) => b.remove()); }
+function fit() {
+	$("fit").style.bottom = `${document.querySelector(".dock").offsetHeight + 24}px`;
+	const box = $("fit").getBoundingClientRect();
+	const s = Math.min((box.width - 24) / W, (box.height - 24) / H, 1);
+	win.style.transform = `translate(-50%, -50%) scale(${s})`;
+}
+addEventListener("resize", fit);
+sync();
+play();
+</script>
+</body>
+</html>
