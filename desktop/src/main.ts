@@ -701,6 +701,9 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 		minWidth: 240,
 		minHeight: 200,
 		title: request.frame ?? request.project,
+		// shown once it has painted, so it opens on its bar and the page's dark
+		// rather than as an empty window the page then fills in
+		show: false,
 		backgroundColor: "#0e0e0e",
 		// The bar is spool's, so the title bar is not the OS's. The lights are
 		// still the OS's and are placed to sit centred in a 30px strip.
@@ -739,12 +742,24 @@ async function openPlayWindow(url: string, request: PlayRequest): Promise<void> 
 	});
 	window_.on("closed", () => played.delete(id));
 
+	// A page that never paints still gets its window: late, not lost.
+	const showing = setTimeout(() => {
+		if (!window_.isDestroyed()) window_.show();
+	}, PAINT_PATIENCE_MS);
+	window_.once("ready-to-show", () => {
+		clearTimeout(showing);
+		window_.show();
+	});
+
 	log("play", request.project, request.frame ?? "(first)", `${rect.w}x${rect.h}`, restored ? "restored" : "authored");
 	void window_.loadURL(url);
 }
 
 /** Long enough to be the end of a drag rather than a frame of one. */
 const SETTLE_MS = 400;
+
+/** How long a play window waits on its first paint before it is shown anyway. */
+const PAINT_PATIENCE_MS = 1_000;
 
 function boundsOf(window_: BrowserWindow): WindowRect {
 	const { x, y, width, height } = window_.getBounds();

@@ -1,5 +1,6 @@
 import { createElement, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
+import { SPOOL_MARK_PATH } from "../brand";
 import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
@@ -60,6 +61,8 @@ export interface PlayerShellHost {
 export interface PlayerShellView {
 	/** The player is not ready to be seen — booting, cutting, or resettling. */
 	hidden: boolean;
+	/** The player has been seen once: what hides it from here on is a walk, never the boot. */
+	revealed: boolean;
 	loadError: string | undefined;
 	/** The bare render-origin player, offered when the embedded one will not boot. */
 	loadEscape: string | undefined;
@@ -913,7 +916,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 
 	return {
 		controller,
-		view: () => ({ hidden, loadError, loadEscape }),
+		view: () => ({ hidden, revealed, loadError, loadEscape }),
 		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
 		geometryPending,
 		geometryApplied,
@@ -958,6 +961,45 @@ function retainedGeometry(frames: Record<string, FrameGeometry>): { name: string
 }
 
 /**
+ * How long a play waits before the mark says it is loading. Under a second a
+ * wait reads as the app being quick, and a loader that flashes for a moment
+ * reads as slow, so a warm play (a quarter second) and one right after an edit
+ * (under one) never show it. A cold compile, seconds long, does.
+ */
+const ARRIVAL_MARK_MS = 800;
+
+/** The stagger between the mark's bands as they wind, top to bottom. */
+const ARRIVAL_BAND_MS = 110;
+
+/** The mark's bands, top first, each its own path so each winds on its own. */
+const MARK_BANDS = SPOOL_MARK_PATH.split(/ (?=M )/);
+
+/**
+ * What stands over the screen until the player is first seen: the page's own
+ * dark, so a played frame never opens on a white box, and the mark winding
+ * its thread when the wait is long enough to need saying (a cold compile).
+ * A warm play is over before the mark would show, so it is only a dissolve
+ * from the dark into the frame. It stays mounted and fades, which is the
+ * dissolve; it never takes a pointer, so nothing under it waits on it.
+ */
+function Arrival({ arrived }: { arrived: boolean }) {
+	return (
+		<div className={arrived ? "spool-arrival is-arrived" : "spool-arrival"} aria-hidden="true">
+			<svg
+				className="spool-arrival-mark"
+				viewBox="250 182 524 660"
+				aria-hidden="true"
+				style={{ animationDelay: `${ARRIVAL_MARK_MS}ms` }}
+			>
+				{MARK_BANDS.map((band, index) => (
+					<path key={band} d={band} style={{ animationDelay: `${ARRIVAL_MARK_MS + index * ARRIVAL_BAND_MS}ms` }} />
+				))}
+			</svg>
+		</div>
+	);
+}
+
+/**
  * Boot the played tab — the door `spool url` prints, the canvas opens, and a
  * phone visits. Frame code never enters this realm. Geometry arrives through
  * the served document's own bridge, which is why those custom events are wired
@@ -995,7 +1037,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 
 	function Host() {
 		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
-		const { hidden, loadError, loadEscape } = shell.view();
+		const { hidden, revealed, loadError, loadEscape } = shell.view();
 		if (loadError !== undefined) {
 			return (
 				<div className="spool-player-error" role="alert">
@@ -1010,34 +1052,32 @@ export function bootPlayerShell(config: ShellConfig): void {
 			);
 		}
 		return (
-			<iframe
-				id="spool-player"
-				title={config.project}
-				allow="clipboard-write"
-				sandbox="allow-scripts"
-				src={config.innerUrl}
-				onLoad={shell.loaded}
-				// Hidden by opacity, never visibility: headed Chromium render-throttles
-				// a visibility-hidden cross-origin iframe, which starves the runtime's
-				// animation-frame gates and deadlocks the reveal it is hiding for
-				// (#185). inert keeps what visibility used to guarantee — no clicks,
-				// no focus — while the frame stays rendered underneath.
-				inert={hidden}
-				style={{ opacity: hidden ? 0 : 1 }}
-			/>
+			<>
+				<iframe
+					id="spool-player"
+					title={config.project}
+					allow="clipboard-write"
+					sandbox="allow-scripts"
+					src={config.innerUrl}
+					onLoad={shell.loaded}
+					// Hidden by opacity, never visibility: headed Chromium render-throttles
+					// a visibility-hidden cross-origin iframe, which starves the runtime's
+					// animation-frame gates and deadlocks the reveal it is hiding for
+					// (#185). inert keeps what visibility used to guarantee — no clicks,
+					// no focus — while the frame stays rendered underneath.
+					inert={hidden}
+					style={{ opacity: hidden ? 0 : 1 }}
+				/>
+				<Arrival arrived={revealed} />
+			</>
 		);
 	}
 	function Page() {
-		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
-		const { hidden, loadError } = shell.view();
 		return createElement(Player, {
 			project: config.project,
 			frames: {},
 			controller: shell.controller,
 			host: createElement(Host),
-			// The bar says so while the iframe is held back: the compile and the
-			// first fetch happen behind it, and a blank white box says nothing.
-			loading: hidden && loadError === undefined,
 			onInset: shell.inset,
 		});
 	}
