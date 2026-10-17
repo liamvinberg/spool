@@ -13,6 +13,7 @@ import {
 	createElement,
 	type HTMLAttributes,
 	type ReactNode,
+	useCallback,
 	useEffect,
 	useRef,
 	useState,
@@ -453,21 +454,56 @@ export interface ScrollAreaProps extends HTMLAttributes<HTMLDivElement> {
 export function ScrollArea({ fade = "end", className, style, onScroll, children, ...rest }: ScrollAreaProps) {
 	const ref = useRef<HTMLDivElement>(null);
 	const [edges, setEdges] = useState({ start: false, end: false });
-	const measure = () => {
+	const measure = useCallback(() => {
 		const element = ref.current;
 		if (element === null) return;
 		const start = element.scrollTop > 1;
 		const end = element.scrollTop + element.clientHeight < element.scrollHeight - 1;
 		setEdges((was) => (was.start === start && was.end === end ? was : { start, end }));
-	};
+	}, []);
+	/*
+	 * One observer for the region's life, told only about the children it has not met and
+	 * let go of the ones that left (task 169). Measuring after every render read the layout
+	 * back once per commit, forcing it mid-frame each time a streaming turn redrew the tree,
+	 * and observing a child again restarts its observation and measures it once more. An
+	 * observer reports a target when it starts watching it, so a new child is measured in
+	 * the frame's own layout; a child leaving is the one change nothing reports, so that
+	 * alone measures here.
+	 */
+	const watching = useRef<{ observer: ResizeObserver; met: Set<Element> } | null>(null);
 	useEffect(() => {
-		measure();
 		const element = ref.current;
 		if (element === null || typeof ResizeObserver === "undefined") return;
 		const observer = new ResizeObserver(measure);
+		watching.current = { observer, met: new Set() };
 		observer.observe(element);
-		for (const child of Array.from(element.children)) observer.observe(child);
-		return () => observer.disconnect();
+		return () => {
+			observer.disconnect();
+			watching.current = null;
+		};
+	}, [measure]);
+	useEffect(() => {
+		const element = ref.current;
+		const seen = watching.current;
+		if (element === null) return;
+		if (seen === null) {
+			measure();
+			return;
+		}
+		const now = new Set(Array.from(element.children));
+		let left = false;
+		for (const child of seen.met) {
+			if (now.has(child)) continue;
+			seen.observer.unobserve(child);
+			seen.met.delete(child);
+			left = true;
+		}
+		for (const child of now) {
+			if (seen.met.has(child)) continue;
+			seen.met.add(child);
+			seen.observer.observe(child);
+		}
+		if (left) measure();
 	});
 	const top = fade === "both" && edges.start;
 	const bottom = fade !== "none" && edges.end;
