@@ -32,9 +32,6 @@
 	"src/ui/canvas/agent-wall.tsx": {
 		"ad-hoc-motion": 1
 	},
-	"src/ui/canvas/pane-window.tsx": {
-		"ad-hoc-motion": 1
-	},
 	"src/ui/canvas/placeholder-frame.tsx": {
 		"ad-hoc-motion": 1
 	},

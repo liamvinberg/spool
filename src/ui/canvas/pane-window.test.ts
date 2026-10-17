@@ -96,6 +96,12 @@ describe("the tabs", () => {
 		await click(tab(host, "agent"));
 		expect(host.querySelector<HTMLElement>('[data-pane-verbs="agent"]')?.className).not.toContain("hidden");
 	});
+
+	it("shows the lit pane's verbs without the pointer on its row", async () => {
+		const { host } = await mount();
+		const verbs = host.querySelector<HTMLElement>('[data-pane-verbs="pages"]')?.parentElement;
+		expect(verbs?.className).not.toMatch(/opacity-0/);
+	});
 });
 
 describe("closing a side", () => {
