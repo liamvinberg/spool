@@ -324,14 +324,15 @@ function threadFile(spoolDir: string, root: string, id: string): string {
  * on from the stored part has to read that part first. A conversation that kept its
  * screenshots runs to tens of megabytes, and reading one back and writing it out again
  * held the daemon for half a second a time — the daemon that is streaming the turn. So
- * the last few are held parsed, and each entry's text is kept beside the entry it was
- * made from, so writing the picture again costs what changed and the disk.
+ * the last few written are held parsed, and each entry's text is kept beside the entry it
+ * was made from, so writing the picture again costs what changed and the disk.
  *
  * The file's size and change time are the check that nothing else wrote it since: a stale
- * hold is read again rather than trusted. Only a few are held, because each can be large.
+ * hold is read again rather than trusted. Only the threads being written are held, never
+ * every one a listing reads, and only two, because each can be large.
  */
 const recent = new Map<string, { readonly mtimeMs: number; readonly size: number; readonly thread: StoredThread }>();
-const RECENT = 4;
+const RECENT = 2;
 
 function remember(file: string, thread: StoredThread): void {
 	const { mtimeMs, size } = statSync(file);
@@ -392,7 +393,6 @@ export function readThread(spoolDir: string, root: string, id: string): StoredTh
 				/* Keep a readable legacy record available when migration cannot be saved. */
 			}
 		}
-		if (thread !== undefined && recent.get(file)?.thread !== thread) remember(file, thread);
 		return thread;
 	} catch {
 		// a thread nobody can read is one thread, and the strip still holds the rest
