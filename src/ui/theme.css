@@ -230,6 +230,11 @@
 	--animate-agent-drop-out: agent-drop-out 120ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 	--animate-agent-fade-in: agent-fade-in 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-fade-out: agent-fade-out 160ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	/* a turn's steps open out of its line and fold back into it: the box grows and shrinks
+	 * as a grid track, so the rows are laid out at their width from the first frame and
+	 * only the clip moves, on the snap curve; the fold a little quicker than the open */
+	--animate-agent-unfold: agent-unfold 260ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-agent-fold: agent-fold 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 	--shadow-agent-float: 0 8px 24px -6px rgb(0 0 0 / 0.36), 0 2px 6px -2px rgb(0 0 0 / 0.24);
 	/* the agent on the canvas and its asks (#366). One ink square per working agent:
 	 * it arrives from 40% where the agent first acts, travels on a 420ms in-out between
@@ -652,6 +657,28 @@
 		}
 	}
 
+	@keyframes agent-unfold {
+		from {
+			grid-template-rows: 0fr;
+			opacity: 0;
+		}
+		to {
+			grid-template-rows: 1fr;
+			opacity: 1;
+		}
+	}
+
+	@keyframes agent-fold {
+		from {
+			grid-template-rows: 1fr;
+			opacity: 1;
+		}
+		to {
+			grid-template-rows: 0fr;
+			opacity: 0;
+		}
+	}
+
 	@keyframes menu-in {
 		from {
 			opacity: 0;
@@ -824,6 +851,7 @@
 	.animate-agent-float-in,
 	.animate-agent-drop-in,
 	.animate-agent-fade-in,
+	.animate-agent-unfold,
 	.animate-agent-spin,
 	.animate-agent-wind,
 	.animate-agent-draw-in,
@@ -886,7 +914,8 @@
 	/* a float or a fade on its way out is out, for the same reason */
 	.animate-agent-float-out,
 	.animate-agent-drop-out,
-	.animate-agent-fade-out {
+	.animate-agent-fade-out,
+	.animate-agent-fold {
 		display: none;
 	}
 

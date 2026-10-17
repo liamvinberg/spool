@@ -7,6 +7,8 @@ import { useStillness } from "./stillness";
  */
 export const FLOAT_OUT_MS = 120;
 export const FADE_OUT_MS = 160;
+/** How long a turn's steps take to fold back into its line, matching `--animate-agent-fold`. */
+export const FOLD_MS = 200;
 
 /**
  * Whether something that comes and goes is drawn, and how (#364).
