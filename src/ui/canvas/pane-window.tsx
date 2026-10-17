@@ -1060,7 +1060,8 @@ export function PaneWindow({
 								>
 									{group.tabs.map((pane) => renderTab(pane, pane === group.active))}
 								</Tabs>
-								<div className="ml-auto flex shrink-0 items-center opacity-0 transition-opacity duration-150 ease-out group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100 has-[[aria-expanded=true]]:opacity-100 motion-reduce:transition-none">
+								{/* the lit pane's verbs stand in its row at all times: a + that shows only under the pointer is a + nobody finds */}
+								<div className="ml-auto flex shrink-0 items-center">
 									{group.tabs.map((pane) => (
 										<div
 											key={pane}
