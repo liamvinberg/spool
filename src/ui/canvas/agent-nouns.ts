@@ -468,6 +468,25 @@ export function nameCall(call: {
 	};
 }
 
+/**
+ * Whether more of a call's arguments arriving could still change the name it streamed to
+ * (task 169).
+ *
+ * A name read off the fragments is read off fields whose closing quote has arrived, and a
+ * closed field never changes as the rest arrives. So once every field `nameCall` reads for
+ * this tool is in, reading the fragments again is the same answer at the cost of the whole
+ * input so far, which for a Write is the file it is writing, once per fragment and again on
+ * every redraw of the turn.
+ */
+export function nameSettled(tool: string, named: CallName): boolean {
+	if (tool === "Read" || WRITES.has(tool) || tool === DELEGATION_TOOL || tool === "ToolSearch") {
+		return named.subject !== null;
+	}
+	// a shell call's spool verb is read off its command alone; anything else waits on its description
+	if (tool === "Bash") return named.verb !== "run" || named.subject !== null;
+	return false;
+}
+
 /** a verb as what someone is doing: `read` → `reading`, `plan` → `planning`, `write` → `writing` */
 function participle(verb: string): string {
 	const word = verb.toLowerCase();

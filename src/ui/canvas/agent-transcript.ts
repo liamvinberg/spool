@@ -10,6 +10,7 @@ import {
 	type CallName,
 	drawsOwnRow,
 	nameCall,
+	nameSettled,
 	type RowForeign,
 	readProse,
 	stepWords,
@@ -1383,7 +1384,9 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					asking.asked = readProse(block.fragments, "question");
 					break;
 				}
-				nameRow(block, block.fragments, false, null);
+				// a name every field of has arrived is the name the rest of the input will give too
+				if (block.named === null || !nameSettled(block.tool, block.named))
+					nameRow(block, block.fragments, false, null);
 				break;
 			}
 			case "called": {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { frameHolding, frameOf, nameCall, nameOf } from "./agent-nouns";
+import { frameHolding, frameOf, nameCall, nameOf, nameSettled } from "./agent-nouns";
 
 /**
  * A frame is named by its path under frames/ (#336), so the noun a path gives is
@@ -71,5 +71,34 @@ describe("a call that only reads (#365)", () => {
 		expect(nameCall({ tool: "read", input: { path: "/p/notes.md" }, root: "/p", whole: true })?.detail).toBe(
 			"notes.md",
 		);
+	});
+});
+
+describe("a streamed name that the rest of the input cannot change (task 169)", () => {
+	const named = (tool: string, input: string) => nameCall({ tool, input, root: "/p", whole: false });
+	it("is settled for a write once its path has arrived, however much content is still coming", () => {
+		const half = named("Write", '{"file_path": "/p/design/frames/home/frame.tsx", "content": "export');
+		expect(half && nameSettled("Write", half)).toBe(true);
+		const pathless = named("Write", '{"file_path": "/p/design/fra');
+		expect(pathless && nameSettled("Write", pathless)).toBe(false);
+	});
+	it("is settled for a spool shell verb, and for any other command only once its description is in", () => {
+		const shot = named("Bash", '{"command": "spool shot home", "desc');
+		expect(shot && nameSettled("Bash", shot)).toBe(true);
+		const plain = named("Bash", '{"command": "ls -la", "descri');
+		expect(plain && nameSettled("Bash", plain)).toBe(false);
+	});
+	it("is never settled for a tool spool reads no field of", () => {
+		expect(
+			nameSettled("Grep", {
+				verb: "grep",
+				subject: null,
+				frame: null,
+				detail: null,
+				writes: false,
+				finds: false,
+				reads: true,
+			}),
+		).toBe(false);
 	});
 });
