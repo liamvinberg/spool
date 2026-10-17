@@ -145,3 +145,48 @@ it("wears the bar, puts it away on the eye, and peeks it back on a rest against 
 	await again.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=one`);
 	await expect.poll(() => again.locator(".spool-top.is-away").count(), { timeout: 30_000 }).toBe(1);
 });
+
+it("opens on the page's dark, winds the mark through a long wait, and dissolves into the frame", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const project = await canvasWithFrames();
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	// the player document held back, as a cold compile holds it
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await context.route(
+		(url) => url.pathname === `/play/${project.name}` && url.searchParams.get("shell") === "1",
+		async (route) => {
+			await held;
+			await route.continue();
+		},
+	);
+	const played = await context.newPage();
+	await played.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=one`);
+
+	const arrival = played.locator(".spool-arrival");
+	await expect.poll(() => arrival.count(), { timeout: 30_000 }).toBe(1);
+	// the screen is white for the frame's sake, and none of it shows while waiting
+	expect(await arrival.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(14, 14, 14)");
+	expect(await arrival.evaluate((el) => getComputedStyle(el).visibility)).toBe("visible");
+	expect(await arrival.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("none");
+	// a wait that long says so
+	await expect
+		.poll(() => played.locator(".spool-arrival-mark").evaluate((el) => Number(getComputedStyle(el).opacity)), {
+			timeout: 5_000,
+		})
+		.toBe(1);
+
+	release();
+	await played.waitForFunction(
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
+		undefined,
+		{ timeout: 30_000 },
+	);
+	await expect
+		.poll(() => arrival.evaluate((el) => getComputedStyle(el).visibility), { timeout: 5_000 })
+		.toBe("hidden");
+});

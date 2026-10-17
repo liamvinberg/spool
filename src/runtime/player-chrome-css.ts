@@ -101,6 +101,39 @@ body { margin: 0; background: #0e0e0e; }
 .spool-bar-loading { animation: spool-bar-loading 1.2s ease-in-out infinite; }
 @keyframes spool-bar-loading { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .spool-bar-loading { animation: none; } }
+/* the arrival: the shell's screen until the player is first seen. The page's
+   dark over the screen's white, the mark winding its thread once the wait is
+   long enough to say so, and a dissolve into the frame when it is ready. It
+   never takes a pointer */
+.spool-arrival {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	display: grid;
+	place-items: center;
+	background: #0e0e0e;
+	pointer-events: none;
+	transition: opacity 240ms ease-out, visibility 0s linear 240ms;
+}
+.spool-arrival.is-arrived { opacity: 0; visibility: hidden; }
+.spool-arrival-mark { width: 40px; overflow: visible; opacity: 0; animation: spool-arrival-in 300ms ease forwards; }
+.spool-arrival-mark path {
+	fill: #f5391a;
+	transform-box: fill-box;
+	transform-origin: left center;
+	scale: 0 1;
+	animation: spool-wind 2.8s cubic-bezier(0.6, 0, 0.2, 1) infinite;
+}
+.spool-arrival.is-arrived .spool-arrival-mark, .spool-arrival.is-arrived path { animation-play-state: paused; }
+@keyframes spool-arrival-in { to { opacity: 1; } }
+/* wound on from the left, held, and wound off to the right */
+@keyframes spool-wind {
+	0% { scale: 0 1; transform-origin: left center; }
+	32% { scale: 1 1; transform-origin: left center; }
+	68% { scale: 1 1; transform-origin: right center; }
+	92%, 100% { scale: 0 1; transform-origin: right center; }
+}
+@media (prefers-reduced-motion: reduce) { .spool-arrival-mark path { animation: none; scale: 1 1; } }
 /* the eye and the close: one box each, lit on hover */
 .spool-bar-icon {
 	display: flex;
