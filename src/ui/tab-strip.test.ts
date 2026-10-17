@@ -331,9 +331,37 @@ it("dots a tab not focused with who else is in its project, three at most, and n
 		);
 	expect(dots(0)).toEqual([]);
 	expect(dots(1)).toEqual(["ana", "ben", "cleo"]);
-	expect(tabOf(host, 1)?.querySelector("[data-tab-here]")?.textContent).toBe(", ana, ben, cleo, dag here");
+	expect(tabOf(host, 1)?.querySelector("[data-tab-here] .sr-only")?.textContent).toBe(", ana, ben, cleo, dag here");
+	expect(tabOf(host, 1)?.querySelector("[data-tab-here-more]")?.textContent).toBe("+1");
+	// after the name, not in it, so a long name fades under its own gradient and leaves the dots whole
+	expect(tabOf(host, 1)?.querySelector(".project-tab-name [data-tab-here]")).toBeNull();
 	expect(dots(2)).toEqual([]);
 	await rerender({ focused: "/w/beta" });
 	expect(dots(0)).toEqual(["ana", "ben", "cleo"]);
 	expect(dots(1)).toEqual([]);
+});
+
+it("swells a tab's dots into everyone's name pills while the pointer is on them", async () => {
+	const mate = (name: string) => ({ accountId: name, name, color: "#7aa7ff", idle: false });
+	const { host } = await render({
+		tabs: [
+			{ root: "/w/alpha", name: "alpha" },
+			{ root: "/w/beta", name: "beta", here: [mate("ana"), mate("ben"), mate("cleo"), mate("dag")] },
+		],
+	});
+	const zone = tabOf(host, 1)?.querySelector<HTMLElement>("[data-tab-here]");
+	const pills = () =>
+		[...document.querySelectorAll<HTMLElement>("[data-tab-here-pill]")].map((pill) => pill.dataset.tabHerePill);
+	expect(pills()).toEqual([]);
+	await act(async () => {
+		// React hears enter and leave from the pointer passing over and out
+		zone?.dispatchEvent(new PointerEvent("pointerover", { pointerType: "mouse", bubbles: true }));
+	});
+	expect(pills()).toEqual(["ana", "ben", "cleo", "dag"]);
+	await act(async () => {
+		zone?.dispatchEvent(
+			new PointerEvent("pointerout", { pointerType: "mouse", bubbles: true, relatedTarget: document.body }),
+		);
+	});
+	await vi.waitFor(() => expect(pills()).toEqual([]));
 });

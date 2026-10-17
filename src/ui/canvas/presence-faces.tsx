@@ -11,6 +11,9 @@ import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate 
  * them is, or how long they've been idle. A row follows that person; pressing it again, or esc, stops.
  */
 
+/** The near-black every name in a person's colour is written in, whatever the theme: on their colour it always reads. */
+export const PRESENCE_INK = "#0e0e0e";
+
 /** The faces drawn before the rest collapse into `+N`. */
 const FACES_SHOWN = 4;
 const SIZE = 22;
@@ -309,7 +312,7 @@ export function Face({
 				className="absolute inset-0 flex items-center justify-center rounded-full font-semibold text-[10px] uppercase leading-none"
 				style={{
 					background: away ? "var(--color-surface-window)" : color,
-					color: away ? color : "#0e0e0e",
+					color: away ? color : PRESENCE_INK,
 					boxShadow: `0 0 0 2px var(--color-surface-window)${away ? `, inset 0 0 0 1.25px ${color}` : ""}`,
 				}}
 			>
@@ -329,7 +332,7 @@ export function FollowMark({ mate }: { mate: Teammate }) {
 			<span className="absolute inset-0 border-2" style={{ borderColor: mate.person.color }} />
 			<span
 				className="absolute top-0 left-1/2 -translate-x-1/2 rounded-b-xs px-2 pt-[2px] pb-[3px] type-detail"
-				style={{ background: mate.person.color, color: "#0e0e0e" }}
+				style={{ background: mate.person.color, color: PRESENCE_INK }}
 			>
 				following {mate.person.name.toLowerCase()} · esc
 			</span>

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
 import { cn } from "../cn";
 import { SpinRing } from "../primitives/display";
@@ -16,7 +16,7 @@ import {
 	WaitingRow,
 } from "./agent-ask-view";
 import { EndMark, WaitingMark } from "./agent-marks";
-import { FADE_OUT_MS, MOTION, useLeaving } from "./agent-motion";
+import { FADE_OUT_MS, FOLD_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
 import { workOf } from "./placeholder-frame";
 import { useStillness } from "./stillness";
@@ -124,7 +124,7 @@ export function TurnFoot({
 	// ask is never anywhere but on screen
 	const hung = mine === undefined ? designer : undefined;
 	// the steps fade in and out under the line rather than appearing in one frame
-	const shownSteps = useLeaving(open && mine === undefined, FADE_OUT_MS);
+	const shownSteps = useLeaving(open && mine === undefined, FOLD_MS);
 	const queued = asks.filter((ask) => ask !== mine && ask !== hung);
 	// a card at the end of the chat is the turn waiting on the person, and its line says so
 	const carded = queued.length > 0;
@@ -167,16 +167,21 @@ export function TurnFoot({
 					permissions={permissions}
 				/>
 			)}
+			{/* the foot's gap rides inside the box, so it opens and folds with the steps rather than jumping */}
 			<div
 				data-agent-steps={shownSteps ?? "shut"}
 				hidden={shownSteps === null}
 				className={cn(
-					"flex flex-col",
-					shownSteps === "open" && "animate-agent-fade-in",
-					shownSteps === "leaving" && "pointer-events-none animate-agent-fade-out",
+					"-mt-3 grid grid-rows-[1fr]",
+					shownSteps === "open" && "animate-agent-unfold",
+					shownSteps === "leaving" && "pointer-events-none animate-agent-fold",
 				)}
 			>
-				{steps}
+				<div className="min-h-0 overflow-hidden">
+					<StepsScroll open={shownSteps === "open"} live={!over}>
+						{steps}
+					</StepsScroll>
+				</div>
 			</div>
 			{queued.map((entry) => (
 				<DesignerAsk key={entry.key} entry={entry} onAnswer={answer} permissions={permissions} />
@@ -187,6 +192,72 @@ export function TurnFoot({
 
 /** a path into a frame's own folder, in an approval's path or command */
 const FRAME_PATH = /(?:^|[\s'"/=])design\/frames\/[a-z0-9]/i;
+
+/** how far from the end a reader can be and still count as following the newest step */
+const FOLLOWING = 24;
+/** how deep the fade is at an edge with more beyond it */
+const EDGE_FADE = 24;
+
+/** fade out each edge of the steps' box that has more beyond it */
+function fadeEdges(element: HTMLElement) {
+	const above = element.scrollTop > 1;
+	const below = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
+	const mask =
+		above || below
+			? `linear-gradient(to bottom, ${above ? "transparent" : "black"}, black ${EDGE_FADE}px, black calc(100% - ${EDGE_FADE}px), ${below ? "transparent" : "black"})`
+			: "";
+	element.style.maskImage = mask;
+	element.style.setProperty("-webkit-mask-image", mask);
+}
+
+/**
+ * A turn's steps, opened: never taller than a share of the rail, so opening a long turn
+ * never sends the chat away, and scrolled inside instead. While the turn runs it follows
+ * the newest step, as long as the reader is at the end; scrolled up, it stays where they
+ * put it. An edge with more beyond it fades out.
+ */
+function StepsScroll({ open, live, children }: { open: boolean; live: boolean; children: ReactNode }) {
+	const box = useRef<HTMLDivElement>(null);
+	const following = useRef(true);
+	// opened on a turn still running, it opens at the newest step
+	useLayoutEffect(() => {
+		const element = box.current;
+		if (!open || element === null) return;
+		if (live) {
+			element.scrollTop = element.scrollHeight;
+			following.current = true;
+		}
+		fadeEdges(element);
+	}, [open, live]);
+	useEffect(() => {
+		const element = box.current;
+		const rows = element?.firstElementChild;
+		if (element === null || rows == null) return;
+		const onScroll = () => {
+			following.current = element.scrollHeight - element.clientHeight - element.scrollTop < FOLLOWING;
+			fadeEdges(element);
+		};
+		element.addEventListener("scroll", onScroll, { passive: true });
+		const observer =
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(() => {
+						if (live && following.current) element.scrollTop = element.scrollHeight;
+						fadeEdges(element);
+					});
+		observer?.observe(rows);
+		observer?.observe(element);
+		return () => {
+			element.removeEventListener("scroll", onScroll);
+			observer?.disconnect();
+		};
+	}, [live]);
+	return (
+		<div ref={box} data-agent-steps-scroll="" className="mt-3 max-h-[min(360px,45vh)] overflow-y-auto">
+			<div className="flex flex-col">{children}</div>
+		</div>
+	);
+}
 
 /** an approval about a frame: what it would let through reaches into `design/frames/` */
 function aboutFrame(entry: AskEntry): boolean {

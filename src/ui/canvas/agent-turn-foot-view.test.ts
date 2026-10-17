@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../daemon/agent-events";
-import { FADE_OUT_MS, MOTION } from "./agent-motion";
+import { FADE_OUT_MS, FOLD_MS, MOTION } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, type Stamped, sourceShape, transcriptOf } from "./agent-transcript";
 import { TurnFoot } from "./agent-turn-foot";
 
@@ -142,7 +142,7 @@ describe("the turn's grid, drawn", () => {
 });
 
 describe("the turn's steps", () => {
-	it("fade in under the line, and stay through their fade when it closes", async () => {
+	it("open out of the line, and stay through their fold when it closes", async () => {
 		const { host } = await draw(footOf([tile("home", "done")]));
 		const line = () => host.querySelector<HTMLButtonElement>("button[data-agent-turn-line]");
 		const steps = () => host.querySelector<HTMLElement>("[data-agent-steps]");
@@ -150,12 +150,13 @@ describe("the turn's steps", () => {
 
 		await act(async () => line()?.click());
 		expect(steps()?.getAttribute("data-agent-steps")).toBe("open");
-		expect(steps()?.className).toContain("animate-agent-fade-in");
+		expect(steps()?.className).toContain("animate-agent-unfold");
 
 		await act(async () => line()?.click());
 		expect(steps()?.getAttribute("data-agent-steps")).toBe("leaving");
+		expect(steps()?.className).toContain("animate-agent-fold");
 		expect(steps()?.hidden).toBe(false);
-		await wait(FADE_OUT_MS + 40);
+		await wait(FOLD_MS + 40);
 		expect(steps()?.getAttribute("data-agent-steps")).toBe("shut");
 		expect(steps()?.hidden).toBe(true);
 	});

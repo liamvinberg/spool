@@ -9,8 +9,9 @@ import {
 	useReducedMotion,
 } from "motion/react";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type { ProjectIcon } from "./api";
+import { PRESENCE_INK } from "./canvas/presence-faces";
 import { cn } from "./cn";
 import { CloseIcon, HomeIcon, PlusIcon } from "./icons";
 import { IconButton } from "./primitives/actions";
@@ -61,7 +62,7 @@ export interface TabProject {
 	here?: readonly TabMate[] | undefined;
 }
 
-/** The most dots a tab draws after its name; everyone is in the list on its canvas. */
+/** The most dots a tab draws after its name; the rest are a count, and everyone is in the pills it swells into. */
 export const DOTS_SHOWN = 3;
 
 /** how far a press travels before it is a drag rather than a click */
@@ -609,22 +610,50 @@ function Backing({ sheet }: { sheet: boolean }) {
 }
 
 /**
- * Who else is in a project whose tab isn't focused: a dot each in their colour, three at most, the ones working first
- * and the idle at the faces' resting ink, on the name's line so they fade with it when the tab is squeezed.
+ * Who else is in a project whose tab isn't focused: a dot each in their colour, the ones working first and the idle
+ * at the faces' resting ink, three at most and a count for the rest. They stand after the name rather than in it, so
+ * a long name fades out under its own gradient and the dots sit where the fade ends, never cut off with it. They go
+ * with the name when the tab is squeezed to its mark.
+ *
+ * Pointed at, each dot swells into its person's name pill, the one their pointer carries on the canvas, and the
+ * pills stack under the tab, everyone in it listed, the counted ones swelling out of the count.
  */
 function TabDots({ mates }: { mates: readonly TabMate[] }) {
 	const shown = mates.slice(0, DOTS_SHOWN);
+	const more = mates.length - shown.length;
+	const zone = useRef<HTMLSpanElement>(null);
+	const [from, setFrom] = useState<HereFrom | null>(null);
+	const open = () => {
+		const element = zone.current;
+		if (element === null) return;
+		const spots = [...element.querySelectorAll<HTMLElement>("[data-tab-here-dot], [data-tab-here-more]")].map(
+			(spot) => spot.getBoundingClientRect(),
+		);
+		const tab = element.closest("[data-tab]")?.getBoundingClientRect() ?? element.getBoundingClientRect();
+		setFrom({ spots, left: spots[0]?.left ?? tab.left, top: tab.bottom + 4, scale: motionScale(element) });
+	};
 	return (
-		<span data-tab-here="" className="ml-1.5 inline-flex h-4 -translate-y-px items-center align-middle">
+		<span
+			ref={zone}
+			data-tab-here=""
+			data-tab-here-open={from === null ? undefined : ""}
+			className="group/here relative -ml-3 flex h-6 shrink-0 items-center pr-1 pl-1"
+			style={{ opacity: NAME_SHOWN }}
+			onPointerEnter={(event) => {
+				if (event.pointerType === "mouse" && event.buttons === 0) open();
+			}}
+			onPointerLeave={() => setFrom(null)}
+			onPointerDown={() => setFrom(null)}
+		>
 			<span className="sr-only">, {mates.map((mate) => mate.name).join(", ")} here</span>
 			{shown.map((mate, i) => (
 				<span
 					key={mate.accountId}
 					aria-hidden="true"
 					data-tab-here-dot={mate.accountId}
-					className="relative size-1.5 rounded-full"
+					className="relative size-1.5 rounded-full transition-[margin,transform] duration-fast ease-out group-data-[tab-here-open]/here:scale-125"
 					style={{
-						marginLeft: i === 0 ? 0 : -2,
+						marginLeft: i === 0 ? 0 : from === null ? -2 : 2,
 						background: mate.color,
 						boxShadow: "0 0 0 1.5px var(--color-surface-window)",
 						zIndex: shown.length - i,
@@ -633,14 +662,88 @@ function TabDots({ mates }: { mates: readonly TabMate[] }) {
 					}}
 				/>
 			))}
+			{more > 0 && (
+				<span
+					aria-hidden="true"
+					data-tab-here-more=""
+					className="ml-1 text-secondary tabular-nums leading-none type-detail"
+				>
+					+{more}
+				</span>
+			)}
+			{createPortal(
+				<AnimatePresence>{from !== null && <HerePills key="pills" mates={mates} from={from} />}</AnimatePresence>,
+				document.body,
+			)}
 		</span>
+	);
+}
+
+/** where a tab's pills swell from: each dot's box and the count's, and the column they stack into under the tab */
+interface HereFrom {
+	readonly spots: readonly DOMRect[];
+	readonly left: number;
+	readonly top: number;
+	readonly scale: ReturnType<typeof motionScale>;
+}
+
+/** a pill's height, and the step from one to the next down the column */
+const PILL_H = 18;
+const PILL_STEP = PILL_H + 4;
+
+/** Everyone in a tab's project as name pills, each grown out of its dot, and shrunk back into it on the way out. */
+function HerePills({ mates, from }: { mates: readonly TabMate[]; from: HereFrom }) {
+	const { spots, left, top, scale } = from;
+	const ms = scale.base / 1000;
+	return (
+		<div
+			aria-hidden="true"
+			data-tab-here-pills=""
+			className="pointer-events-none fixed z-50 flex flex-col items-start"
+			style={{ left, top, gap: PILL_STEP - PILL_H }}
+		>
+			{mates.map((mate, i) => {
+				// the counted ones come out of the count
+				const spot = spots[Math.min(i, spots.length - 1)];
+				const dot = {
+					x: (spot?.left ?? left) + (spot === undefined ? 0 : spot.width / 2) - 3 - left,
+					y: (spot?.top ?? top) + (spot === undefined ? 0 : spot.height / 2) - 3 - (top + i * PILL_STEP),
+				};
+				const tucked = { x: dot.x, y: dot.y, width: 6, height: 6, opacity: 0 };
+				return (
+					<motion.span
+						key={mate.accountId}
+						data-tab-here-pill={mate.accountId}
+						className="flex items-center overflow-hidden whitespace-nowrap rounded-full font-medium text-[11px] leading-none"
+						style={{
+							background: mate.color,
+							color: PRESENCE_INK,
+							filter: mate.idle ? "saturate(0.2)" : undefined,
+						}}
+						initial={tucked}
+						animate={{ x: 0, y: 0, width: "auto", height: PILL_H, opacity: mate.idle ? 0.45 : 1 }}
+						exit={{ ...tucked, transition: { duration: scale.base / 1000 / 1.5, ease: scale.curve } }}
+						transition={{ duration: ms, ease: scale.curve, delay: (i * ms) / 8, opacity: { duration: ms / 3 } }}
+					>
+						<motion.span
+							className="px-[7px]"
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1, transition: { duration: ms, delay: (i * ms) / 8 + ms / 3 } }}
+							exit={{ opacity: 0, transition: { duration: ms / 4 } }}
+						>
+							{mate.name}
+						</motion.span>
+					</motion.span>
+				);
+			})}
+		</div>
 	);
 }
 
 function Name({ children }: { children: React.ReactNode }) {
 	return (
 		<span
-			className="project-tab-name min-w-0 flex-1 overflow-hidden whitespace-nowrap pr-3 text-left"
+			className="project-tab-name min-w-0 shrink overflow-hidden whitespace-nowrap pr-3 text-left"
 			style={{ maskImage: NAME_FADE, WebkitMaskImage: NAME_FADE, opacity: NAME_SHOWN }}
 		>
 			{children}
@@ -846,10 +949,8 @@ function Tab({
 							cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
 						/>
 					</span>
-					<Name>
-						{tab.name}
-						{!active && tab.here !== undefined && tab.here.length > 0 && <TabDots mates={tab.here} />}
-					</Name>
+					<Name>{tab.name}</Name>
+					{!active && tab.here !== undefined && tab.here.length > 0 && <TabDots mates={tab.here} />}
 				</button>
 				<span
 					className={cn(
