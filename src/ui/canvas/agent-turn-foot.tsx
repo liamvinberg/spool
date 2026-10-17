@@ -18,7 +18,6 @@ import {
 import { EndMark, WaitingMark } from "./agent-marks";
 import { FADE_OUT_MS, FOLD_MS, MOTION, useLeaving } from "./agent-motion";
 import { type AgentTile, type AgentTurnFoot, SOURCE_ROWS, type SourceLine } from "./agent-transcript";
-import { workOf } from "./placeholder-frame";
 import { useStillness } from "./stillness";
 
 /**
@@ -54,12 +53,21 @@ export function receiptOf(foot: AgentTurnFoot): string {
 	return `Done in ${took}`;
 }
 
+/** what a reading designer's step says it is at, by the step's first verb: `Write the frame, then spool check` is drawing */
+export function readingPhase(step: string | undefined): "Reading" | "Drawing" | "Checking" {
+	const said = step?.toLowerCase() ?? "";
+	const phases = [
+		{ phase: "Drawing" as const, at: said.search(/\b(write|draw|build|create|make)/) },
+		{ phase: "Checking" as const, at: said.search(/\b(check|shot|verify|review)/) },
+	].filter((one) => one.at >= 0);
+	return phases.sort((a, b) => a.at - b.at)[0]?.phase ?? "Reading";
+}
+
 /** a tile's caption: its live step while something is happening to it, whose it is once not */
 export function captionOf(tile: AgentTile): string {
 	switch (tile.state) {
 		case "reading":
-			// what its designer's step says it is at, as its placeholder says it (#369)
-			return workOf(tile)?.phase ?? "Reading";
+			return readingPhase(tile.step);
 		case "drawing":
 			return `Drawing · ${tile.lines} ${tile.lines === 1 ? "line" : "lines"}`;
 		case "fresh":

@@ -4,18 +4,17 @@ import { nameCall } from "./agent-nouns";
 /**
  * The agent's presence on the canvas, folded from the turn (#366).
  *
- * One small ink square per working agent: the agent the person talks to, and every designer
- * it fanned out to. This is the fact underneath it, read off the same events the rail draws
- * from: where each agent is and what it is doing there. How the square moves between those
- * facts is `agent-companion-layer`'s.
+ * One per working agent: the agent the person talks to, and every designer it fanned out to,
+ * read off the same events the rail draws from: where each agent is and what it is doing
+ * there. The canvas says it on the name row of the frame it is at (`frame-agents`).
  *
- * - `new`: the frame's source is streaming in; `lines` counts it. The square is its caret.
- * - `landed`: the frame just landed; the square rides down its edge as the picture draws in.
- * - `read`: a call is reading the frame; the square slides down its edge.
+ * - `new`: the frame's source is streaming in; `lines` counts it.
+ * - `landed`: the frame just landed.
+ * - `read`: a call is reading the frame.
  * - `edit`: a change landed in the frame; `range` is the lines that moved.
  * - `shot`: spool is taking the frame's picture.
- * - `delete`: the frame went; it shrinks into the square.
- * - `ask`: the agent stopped to ask the person something; the square is the waiting ring.
+ * - `delete`: the frame went.
+ * - `ask`: the agent stopped to ask the person something: the frame's row says waiting.
  * - `idle`: at the frame between calls.
  */
 export type CompanionAct = "new" | "landed" | "read" | "edit" | "shot" | "delete" | "ask" | "idle";

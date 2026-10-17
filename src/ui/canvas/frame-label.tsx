@@ -5,6 +5,7 @@ import { cn } from "../cn";
 import { bucketOf } from "./bucket";
 import { type Box, type NearScreen, tooSmall } from "./camera";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
+import { type FrameAgent, FrameAgentsMark } from "./frame-agents";
 import type { SpatialDirection } from "./spatial-navigation";
 import { UnseenMark } from "./unseen-mark";
 
@@ -63,8 +64,11 @@ export function FrameLabel({
 	clickEnters = false,
 	overview = null,
 	overviewHint,
+	agents,
 }: {
 	name: string;
+	/** the agents at this frame, said after its name (task 164) */
+	agents?: readonly FrameAgent[] | undefined;
 	/** the entered frame's chip, as a move between frames landed it */
 	live?: LiveChip | null | undefined;
 	/** another frame is live and a click here enters this one instead */
@@ -147,7 +151,7 @@ export function FrameLabel({
 			<div
 				ref={label}
 				data-frame-label={name}
-				className="group/label pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
+				className="group/label @container/row pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
 			>
 				{entered && overview !== "target" ? (
 					<div className="flex items-center pb-2.5">
@@ -185,6 +189,7 @@ export function FrameLabel({
 						>
 							{leaf}
 						</span>
+						<FrameAgentsMark name={name} agents={agents} />
 						{clickEnters && overview === null && (
 							<span
 								data-click-enters={name}

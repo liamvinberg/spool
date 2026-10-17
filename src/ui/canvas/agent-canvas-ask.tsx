@@ -17,8 +17,7 @@ const WIDTH = 360;
 
 /**
  * Where the card hangs off its frame's left foot, in screen pixels: its top edge `below`
- * the foot, and its notch centred `notch` in, whose tip is `tip` below the foot. The
- * companion that hangs the ask stands on that tip (`agent-companion-layer`).
+ * the foot, and its notch centred `notch` in, whose tip is `tip` below the foot.
  */
 export const HANG = { below: 22, notch: 15, tip: 14 } as const;
 

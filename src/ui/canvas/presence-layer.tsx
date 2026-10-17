@@ -4,7 +4,6 @@ import { Count } from "../primitives/display";
 import type { Box } from "./camera";
 import type { CameraStore } from "./camera-store";
 import {
-	agentSays,
 	CLICK_MS,
 	followGesture,
 	gestureMoving,
@@ -93,8 +92,7 @@ export interface Docked {
 /**
  * Where each pill docked on a frame's name stands, in screen pixels: right-aligned on the frame's
  * top-right corner, right to left in the order their people went inside, an even gap between each by
- * their drawn width (`width`, by person or `moreKey`, the estimate until measured), and stepped aside left
- * of the room an agent's companion takes on that row (#373). Never more than `MAX_PILLS` stand there: with
+ * their drawn width (`width`, by person or `moreKey`, the estimate until measured). Never more than `MAX_PILLS` stand there: with
  * more people inside, the first names and a "+N" pill counting the rest. Once the pills would crowd the
  * frame's own name, as when zoomed out, everyone inside shrinks to a dot, overlapping in the same order.
  */
@@ -102,7 +100,6 @@ export function pillSlots(
 	frames: readonly (Box & { name: string })[],
 	inside: (frame: string) => readonly { id: string; name: string }[],
 	toScreen: (x: number, y: number) => { x: number; y: number },
-	taken?: ReadonlyMap<string, number>,
 	width: (key: string, label: string) => number = (_, label) => pillWidth(label),
 ): Docked {
 	const pills = new Map<string, PillSlot>();
@@ -111,8 +108,7 @@ export function pillSlots(
 		const mates = inside(frame.name);
 		if (mates.length === 0) continue;
 		const corner = toScreen(frame.x + frame.w, frame.y);
-		const room = taken?.get(frame.name) ?? 0;
-		const start = room > 0 ? corner.x - room - PILL_GAP : corner.x;
+		const start = corner.x;
 		const folding = mates.length > MAX_PILLS;
 		const named = folding ? mates.slice(0, MAX_PILLS - 1) : mates;
 		const rest = folding ? mates.slice(MAX_PILLS - 1) : [];
@@ -155,15 +151,12 @@ export function PresenceLayer({
 	camera,
 	frames,
 	page,
-	taken,
 }: {
 	room: PresenceRoom;
 	camera: CameraStore;
 	/** The frames on this page, in world units. */
 	frames: readonly (Box & { name: string })[];
 	page: string;
-	/** By frame name, the screen pixels an agent's companion takes at the right of its name row. */
-	taken?: ReadonlyMap<string, number>;
 }) {
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
 	const motions = useRef(new Map<string, Motion>());
@@ -265,7 +258,6 @@ export function PresenceLayer({
 				.sort((a, b) => a.entered - b.entered)
 				.map((mate) => ({ id: mate.person.accountId, name: mate.person.name })),
 		toScreen,
-		taken,
 		(key, label) => widths.current.get(key) ?? pillWidth(label),
 	);
 
@@ -424,7 +416,6 @@ function Cursor({
 				? hand
 				: { x: hand.x + (home.x - hand.x) * dock, y: hand.y + (home.y - hand.y) * dock - lift };
 	const grabbing = state.pressed && state.dragging.length > 0;
-	const says = agentSays(mate);
 	const shape = grabbing ? "hand" : gesture === undefined ? "arrow" : pointerShape(gesture, now);
 	const click = gesture?.click != null && now - gesture.click.at < CLICK_MS ? gesture.click : null;
 	// out on the canvas the pill speaks and goes quiet; docked it stays, and dims when idle
@@ -485,12 +476,6 @@ function Cursor({
 					<span ref={nameRef} style={{ opacity: Math.max(0, 1 - dotted * 2.5) }}>
 						{person.name}
 					</span>
-					{/* out on the canvas, what their agent is doing rides beside their name (#378) */}
-					{slot === undefined && says !== null ? (
-						<span data-presence-agent="" className="opacity-70">
-							&nbsp;· {says}
-						</span>
-					) : null}
 				</span>
 			)}
 		</div>

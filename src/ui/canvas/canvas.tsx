@@ -56,9 +56,7 @@ import { useShares } from "../shares";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
-import { AgentCompanionLayer, dockRoom } from "./agent-companion-layer";
 import { useAgentDefaults } from "./agent-defaults";
-import { type ArmedWrite, rangeKeyOf, useLocatedMarks } from "./agent-hand";
 import { useAgentModel } from "./agent-model";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
@@ -111,6 +109,7 @@ import { deepest, parentOf } from "./element-selection";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, createSiteBoxStore, FlowArrows } from "./flow-arrows";
+import { useFrameAgents } from "./frame-agents";
 import {
 	buildFramePdf,
 	type CapturedFrame,
@@ -170,7 +169,7 @@ import {
 import { type PaneDef, PaneWindow, usePaneCommands } from "./pane-window";
 import { PictureCanvas, PictureClaims } from "./picture-canvas";
 import type { PictureFrame } from "./picture-layer";
-import { PlaceholderFrame, tileFor, workOf } from "./placeholder-frame";
+import { PlaceholderFrame } from "./placeholder-frame";
 import { createPresenceRoom } from "./presence";
 import { FollowMark, PresenceFaces } from "./presence-faces";
 import { PresenceLayer } from "./presence-layer";
@@ -198,7 +197,7 @@ import { CanvasSidebar, type FrameSpan, type FrameVerbs, type RunEntry, type Sel
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { type SpatialTrail, stepSpatially } from "./spatial-navigation";
 import { SYNC_CHANGED, useSyncState } from "./sync-state";
-import { TeammateCompanions, TeammatePlaceholder, teammateOf } from "./teammate-agents";
+import { TeammatePlaceholder, teammateOf } from "./teammate-agents";
 import { type Notice, NoticeToast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
@@ -1197,8 +1196,6 @@ export function ProjectCanvas({
 
 	const siteBoxSeq = useRef(0);
 	const siteBoxExpected = useRef(new Map<string, number>());
-	/** every located write still waiting for a document to turn its lines into a box */
-	const armedWrites = useRef(new Map<string, ArmedWrite>());
 
 	/**
 	 * Ask one frame's shim where the elements the canvas is asking about sit. Only
@@ -1236,12 +1233,6 @@ export function ProjectCanvas({
 					});
 				}
 			}
-			for (const write of armedWrites.current.values()) {
-				const key = rangeKeyOf(write.path, write.from, write.to);
-				if (seen.has(key)) continue;
-				seen.add(key);
-				anchors.push({ path: write.path, line: write.from, col: 0, through: write.to });
-			}
 			if (anchors.length === 0) return;
 			const id = ++siteBoxSeq.current;
 			siteBoxExpected.current.set(frame, id);
@@ -1255,10 +1246,6 @@ export function ProjectCanvas({
 		for (const name of iframes.current.keys()) requestSiteBoxes(name);
 	}, [edges, requestSiteBoxes]);
 
-	// the blocks the agent's writes changed, as documents measure them (#214, #366): the
-	// located marks its companions ring. The arms are a ref here because `requestSiteBoxes`
-	// reads them from inside a message handler
-	const { marks: locatedMarks, strike } = useLocatedMarks(project, turn, armedWrites);
 	// where each working agent is on the canvas (#366). A call on a file in a frame's own
 	// subfolder names that subfolder (#336): the agent is at the frame holding it
 	const companions = useMemo(
@@ -1268,8 +1255,8 @@ export function ProjectCanvas({
 			),
 		[turn.companions, reach],
 	);
-	/** the name rows companions dock on, which teammates' pills step aside from (#373) */
-	const companionRoom = useMemo(() => dockRoom(companions, visibleFrames), [companions, visibleFrames]);
+	/** the agents at each frame and placeholder, this canvas's and teammates', said on its name row */
+	const agentsAt = useFrameAgents(presenceRoom, companions, team);
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
 	const askFooted = !railShown && turn.phase === "asking";
@@ -3173,12 +3160,6 @@ export function ProjectCanvas({
 					if (siteBoxExpected.current.get(message.frame) !== message.id) return;
 					siteBoxExpected.current.delete(message.frame);
 					siteBoxes.set(message.frame, message.boxes);
-					// a write this document can show is a write this frame gets a mark for,
-					// and one it renders nothing of answers null and gets none (#214)
-					for (const write of armedWrites.current.values()) {
-						const box = message.boxes[rangeKeyOf(write.path, write.from, write.to)];
-						if (box != null) strike(message.frame, write.key, box);
-					}
 					return;
 				}
 				case "key":
@@ -3353,7 +3334,6 @@ export function ProjectCanvas({
 		panBy,
 		requestSiteBoxes,
 		siteBoxes,
-		strike,
 		releaseHold,
 		finishEdit,
 		showRefusal,
@@ -5096,7 +5076,7 @@ export function ProjectCanvas({
 										key={one.name}
 										placeholder={one}
 										camera={camera}
-										work={workOf(tileFor(turn.entries, one.name))}
+										agents={agentsAt.get(one.name)}
 										pointed={pointed === one.name}
 									/>
 								) : (
@@ -5107,6 +5087,7 @@ export function ProjectCanvas({
 										by={by}
 										camera={camera}
 										pointed={pointed === one.name}
+										agents={agentsAt.get(one.name)}
 									/>
 								);
 							})}
@@ -5221,6 +5202,7 @@ export function ProjectCanvas({
 										}
 										overview={overviewRoles?.(frame.name) ?? null}
 										overviewHint={overviewHint}
+										agents={agentsAt.get(frame.name)}
 									/>
 								);
 							})}
@@ -5296,18 +5278,6 @@ export function ProjectCanvas({
 									}}
 								/>
 							)}
-							{/* the agent's companions (#366), in the same screen space as the furniture
-						    beside them: presence on any visible frame at any zoom, and a ring on
-						    a located mark wherever a document was live enough to be measured */}
-							<AgentCompanionLayer
-								camera={camera}
-								frames={visibleFrames}
-								companions={companions}
-								marks={locatedMarks}
-								footed={askFooted}
-							/>
-							{/* teammates' agents at these frames, each in their colour (#378) */}
-							{team && <TeammateCompanions room={presenceRoom} camera={camera} frames={visibleFrames} />}
 							{(() => {
 								// under its frame, or under its placeholder while the frame is not there yet,
 								// and only on the page showing it (#376)
@@ -5331,13 +5301,7 @@ export function ProjectCanvas({
 							})()}
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
-								<PresenceLayer
-									room={presenceRoom}
-									camera={camera}
-									frames={visibleFrames}
-									page={activePage}
-									taken={companionRoom}
-								/>
+								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
 							)}
 							{/* the pointer is the overview's while it is up (DEV-295): over every
 						    frame, so no press or hover reaches a prototype */}
