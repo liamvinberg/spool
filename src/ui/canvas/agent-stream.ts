@@ -15,6 +15,7 @@ import {
 	interruptAgentTurn,
 	putAgentThread,
 	putFrameBack,
+	type ThreadSaved,
 } from "../api";
 import type { AgentCompanion } from "./agent-companion";
 import { draftsFor } from "./agent-drafts";
@@ -387,6 +388,19 @@ interface Live {
 	holds: number;
 	/** when its picture was last written down, so a stream throttles its own writes */
 	saved: number;
+	/**
+	 * The entries the daemon's picture was last written from, as this rail drew them, or null
+	 * while the rail has not written one it can vouch for (task 168).
+	 *
+	 * What makes a save cost what changed rather than the whole conversation. The turns that
+	 * are over are the same objects from one save to the next, so the run of entries a save
+	 * shares with this one, object for object, is the run the daemon already has, and only
+	 * what comes after it goes down the wire. A thread that came off disk starts at null,
+	 * because what it drew is not what is stored: a restart's cut is drawn and not written.
+	 */
+	stored: readonly AgentEntry[] | null;
+	/** the picture's write on its way, and the one waiting behind it, if any */
+	writing: { last: Promise<void>; next: Promise<void> | null };
 }
 
 function born(id: string, over: Partial<Live> = {}): Live {
@@ -429,6 +443,8 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		named: "",
 		holds: 0,
 		saved: 0,
+		stored: null,
+		writing: { last: Promise.resolve(), next: null },
 		...over,
 	};
 }
@@ -472,6 +488,14 @@ function restored(stored: ServedThread): Live {
 		pending: drawableQueue(stored.pending ?? []),
 		recovery: stored.recovery ?? null,
 		ending: stored.ending ?? null,
+		/*
+		 * What this drew is what the daemon holds, entry for entry, so the first save after a
+		 * load sends what moved rather than the whole conversation back to where it came from
+		 * (task 168). Not after a cut: the cut is drawn here and the disk does not have it
+		 * yet, so the first save writes it. Nor where an entry was dropped as unreadable,
+		 * because then the counts are of two different lists.
+		 */
+		stored: stored.stopped && !live ? null : entries.length === stored.entries.length ? before : null,
 	});
 }
 
@@ -494,6 +518,19 @@ function restored(stored: ServedThread): Live {
 function message(thread: Live, words: AgentWords): AgentQueued {
 	thread.holds += 1;
 	return { ...words, id: `held-${thread.holds}` };
+}
+
+/**
+ * How many entries, from the top, are the very objects the daemon's picture was written
+ * from: the part of a save that is already stored. Zero for a thread with no picture this
+ * rail can vouch for, which writes the whole one.
+ */
+function sharedRun(stored: readonly AgentEntry[] | null, entries: readonly AgentEntry[]): number {
+	if (stored === null) return 0;
+	const most = Math.min(stored.length, entries.length);
+	let at = 0;
+	while (at < most && stored[at] === entries[at]) at += 1;
+	return at;
 }
 
 /** what the fold reads has moved, so whatever was folded out of it is no longer it */
@@ -689,24 +726,23 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 	 * three derivations of the same fold, and passing them in meant four places agreeing
 	 * about how a thread's life, entries and plan are read.
 	 */
-	const save = useCallback(
-		(thread: Live) => {
+	/**
+	 * One write of a thread's picture, as it is when the write goes out: the entries after
+	 * the part the daemon already has, or the whole picture when that part is unknown or the
+	 * daemon's picture has moved under it (task 168).
+	 */
+	const write = useCallback(
+		async (thread: Live): Promise<void> => {
 			const shown = shownOf(thread);
 			const entries = entriesOf(thread, shown);
-			// whatever this thread owed is paid by writing it: the debt is one picture and
-			// this is that picture (#234)
-			owed.current.delete(thread);
-			// a thread nobody has said anything to is not a conversation yet, and an empty
-			// picture on disk would be a tab restored with nothing in it
-			if (entries.length === 0) return Promise.resolve();
-			thread.saved = Date.now();
-			return putAgentThread(project, thread.id, {
+			if (entries.length === 0) return;
+			const picture = (from: number) => ({
 				engine: thread.engine,
 				ask: askOf(entries),
 				life: storedLife(lifeFor(thread, openRef.current, shown)),
 				at: thread.at,
 				// nothing on disk is still arriving: what a reader will see is drawn whole
-				entries: settledPicture(entries),
+				entries: settledPicture(from === 0 ? entries : entries.slice(from)),
 				// where the turn in flight begins, so a reader that can pick that turn up keeps
 				// the conversation and refolds the rest off the log rather than drawing it twice
 				// (#211). Everything, once nothing is running: `keptOf` is the whole rule
@@ -717,9 +753,43 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				pending: thread.pending,
 				recovery: thread.recovery,
 				ending: thread.ending ?? null,
+				...(from === 0 ? {} : { after: { count: from, key: entries[from - 1]?.key ?? "" } }),
 			});
+			const from = sharedRun(thread.stored, entries);
+			// the daemon's picture is unknown from the moment this write is out until it lands
+			thread.stored = null;
+			let result: ThreadSaved = await putAgentThread(project, thread.id, picture(from));
+			// what the daemon has is not what this rail last wrote: write the whole picture
+			if (result === "moved") result = await putAgentThread(project, thread.id, picture(0));
+			if (result === "saved") thread.stored = entries;
 		},
 		[project],
+	);
+
+	const save = useCallback(
+		(thread: Live): Promise<void> => {
+			// whatever this thread owed is paid by writing it: the debt is one picture and
+			// this is that picture (#234)
+			owed.current.delete(thread);
+			// a thread nobody has said anything to is not a conversation yet, and an empty
+			// picture on disk would be a tab restored with nothing in it
+			if (entriesOf(thread, shownOf(thread)).length === 0) return Promise.resolve();
+			thread.saved = Date.now();
+			/*
+			 * One write at a time per thread, and one waiting at most (task 168). A write
+			 * carries on from what the one before it left on disk, so it goes out once that one
+			 * has landed, and it is drawn then rather than now: a save asked for while one waits
+			 * is already paid by it, because it will write the thread as it stands by then.
+			 */
+			if (thread.writing.next !== null) return thread.writing.next;
+			const next = thread.writing.last.then(() => {
+				thread.writing.next = null;
+				return write(thread);
+			});
+			thread.writing = { last: next, next };
+			return next;
+		},
+		[write],
 	);
 
 	/** everything owed, written now: the end of the throttle, and what a tab going runs */

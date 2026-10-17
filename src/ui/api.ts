@@ -1454,16 +1454,28 @@ export async function fetchAgentThreads(project: string): Promise<ServedThread[]
 	}
 }
 
-/** one thread's picture, written whole: stored is exactly drawn, with no lossy tier */
-export async function putAgentThread(project: string, thread: string, picture: ThreadPut): Promise<void> {
+/**
+ * How a picture's write went: it landed, the daemon's picture was not the one a partial
+ * write carried on from (task 168), or it never landed.
+ */
+export type ThreadSaved = "saved" | "moved" | "lost";
+
+/**
+ * One thread's picture: stored is exactly drawn, with no lossy tier. Written whole, or as
+ * the entries after the part the daemon already has, which `after` names.
+ */
+export async function putAgentThread(project: string, thread: string, picture: ThreadPut): Promise<ThreadSaved> {
 	try {
-		await client.api.p[":project"].agent.threads[":thread"].$put({
+		const res = await client.api.p[":project"].agent.threads[":thread"].$put({
 			param: { project, thread },
 			json: { ...picture, entries: [...picture.entries], queued: [...picture.queued] },
 		});
+		if (res.status === 412) return "moved";
+		return res.ok ? "saved" : "lost";
 	} catch {
 		// a write that never landed costs what the next one will land anyway: the picture is
 		// rewritten on every boundary, so nothing here is the only chance to record it
+		return "lost";
 	}
 }
 

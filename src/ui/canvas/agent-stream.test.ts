@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentEvent, ServedThread, ThreadPut } from "../api";
+import { takePicture } from "./agent-rail-harness";
 import { type AgentDeck, type AgentTurn, useAgentThreads } from "./agent-stream";
 
 /**
@@ -22,6 +23,10 @@ function mount(stored: readonly ServedThread[] = []) {
 	const asked: string[] = [];
 	/** every picture the rail wrote down, in the order it wrote them */
 	const puts: ThreadPut[] = [];
+	/** what the daemon holds, which starts as what it served */
+	const pictures = new Map<string, readonly unknown[]>(stored.map((one) => [one.id, one.entries]));
+	/** each write as it went down the wire, which may be the end of a picture rather than all of it */
+	const sent: ThreadPut[] = [];
 	/** what each turn was called on the way out, which is the address its stop names (#165) */
 	const named: string[] = [];
 	/**
@@ -73,7 +78,11 @@ function mount(stored: readonly ServedThread[] = []) {
 				return Response.json({ threads: stored });
 			}
 			if (url.pathname.includes("/agent/threads/")) {
-				puts.push(JSON.parse(String(init?.body ?? "{}")) as ThreadPut);
+				const body = JSON.parse(String(init?.body ?? "{}")) as ThreadPut;
+				sent.push(body);
+				const put = takePicture(pictures, url.pathname.split("/agent/threads/")[1] ?? "", body);
+				if (put === undefined) return new Response("moved", { status: 412 });
+				puts.push(put);
 				if (door.picture !== null) await door.picture;
 				return new Response(null, { status: 204 });
 			}
@@ -121,6 +130,8 @@ function mount(stored: readonly ServedThread[] = []) {
 		renders: () => seen.length,
 		asked,
 		puts,
+		sent,
+		pictures,
 		named,
 		door,
 		reads,
@@ -658,6 +669,29 @@ describe("a turn picked back up", () => {
 		expect(canvas.latest().queued.map((one) => one.text)).toEqual(["and the footer"]);
 	});
 
+	it("writes only what moved on the first save after a load, and the whole picture after a cut (task 168)", async () => {
+		const done = mount([midTurn({ live: false, life: "read" })]);
+		await done.render();
+		await settle(120);
+		await act(async () => {
+			done.latest().queue("and the footer");
+		});
+		await settle(50);
+		expect(done.sent.at(-1)?.after).toEqual({ count: 2, key: "say:1:0" });
+		expect(done.sent.at(-1)?.entries).toEqual([]);
+
+		const cut = mount([midTurn({ live: false, stopped: true, life: "read" })]);
+		await cut.render();
+		await settle(120);
+		await act(async () => {
+			cut.latest().queue("and the footer");
+		});
+		await settle(50);
+		// the cut is drawn and not yet stored, so it goes down whole
+		expect(cut.sent.at(-1)?.after).toBeUndefined();
+		expect(cut.sent.at(-1)?.entries.at(-1)).toMatchObject({ kind: "note", text: "stopped" });
+	});
+
 	it("draws a thread the daemon is no longer holding as the cut it was", async () => {
 		const canvas = mount([midTurn({ live: false, stopped: true })]);
 		await canvas.render();
@@ -731,6 +765,35 @@ describe("what the queue survives", () => {
 		// a refresh in the window between the write and the send used to come back holding
 		// words the daemon was already running, and send them a second time
 		expect(canvas.puts.slice(0, before).some((put) => put.queued.length === 0)).toBe(true);
+	});
+
+	/**
+	 * A save costs what changed, not the conversation (task 168): a 60 MB chat froze the
+	 * window for two seconds on every write, which is every two seconds while a turn runs.
+	 */
+	it("writes only what moved since the daemon's last picture, and the whole one when that moved", async () => {
+		const canvas = mount();
+		await queueOne(canvas);
+		await act(async () => {
+			canvas.latest().unqueue(canvas.latest().queued[0]?.id ?? "");
+		});
+		await settle(50);
+		const last = canvas.sent.at(-1);
+		const whole = canvas.puts.at(-1);
+		// the take-back moved nothing in the log, so none of it went down again
+		expect(last?.after?.count).toBe(whole?.entries.length);
+		expect(last?.entries).toEqual([]);
+		expect(whole?.entries.length).toBeGreaterThan(0);
+
+		// somebody else wrote this thread's picture: the next write is refused and sent whole
+		for (const key of canvas.pictures.keys()) canvas.pictures.set(key, []);
+		const wrote = canvas.sent.length;
+		await act(async () => {
+			canvas.latest().queue("again");
+		});
+		await settle(50);
+		expect(canvas.sent.slice(wrote).map((put) => put.after === undefined)).toEqual([false, true]);
+		expect(canvas.puts.at(-1)?.entries.length).toBe(whole?.entries.length);
 	});
 
 	it("writes a take-back down as it happens rather than on the next throttle", async () => {
