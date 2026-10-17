@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.43.1
+
+### Patch Changes
+
+- 2287fbb: An agent at work on a frame now says so on the frame's name row, a turning ring and "working", or "waiting" when it stopped to ask, in its owner's colour on a team canvas. The squares that travelled each frame are gone, a placeholder frame is its dashed edge and name with nothing inside, and a teammate's pointer carries only their name.
+- 3f9ad41: A side panel's own buttons, such as the Agent pane's + for a new chat, now always show in its tab row instead of only while the pointer is over it.
+- 0317ea1: Playing a frame no longer opens on a white box. The player stays dark until the frame is ready, then fades into it. A long wait, like the first play of a big project, shows the spool mark winding. In the Mac app the play window appears once it has drawn its bar, instead of empty.
+- 3466b3f: The first play of a big project opens on its frame in about two seconds instead of waiting for every frame's styles to build. The other frames' styles keep building behind it, and walking to one that is not ready yet builds it first.
+- b25498b: The dots on a team project's tab now sit after its name, where a long name fades out, so they stay whole however tight the tabs get. Past three people the rest show as a count, and pointing at the dots swells them into everyone's name pills under the tab.
+- b62f92a: Opening a turn's steps in the agent chat now grows them out of the status line and folds them back smoothly, and a long turn's steps scroll inside a box of their own instead of pushing the chat away, following the newest step while the turn runs.
+
 ## 0.43.0
 
 ### Minor Changes
