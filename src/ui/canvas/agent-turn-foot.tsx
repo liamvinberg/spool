@@ -45,9 +45,18 @@ export function clockOf(ms: number): string {
 	return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-/** what the settled line says, by how the turn ended */
+/**
+ * A foot is over once it has an ending. Its length can be unknown: a turn the lights went out
+ * on reached disk mid-turn, and how long it ran is a thing nobody found out (task 168).
+ */
+export function footOver(foot: AgentTurnFoot): boolean {
+	return foot.ending !== null;
+}
+
+/** what the settled line says, by how the turn ended, and for how long where that is known */
 export function receiptOf(foot: AgentTurnFoot): string {
-	const took = spokenDuration(foot.ms ?? 0);
+	if (foot.ms === null) return foot.ending === "failed" ? "Failed" : foot.ending === "done" ? "Done" : "Stopped";
+	const took = spokenDuration(foot.ms);
 	if (foot.ending === "stopped") return `Stopped after ${took}`;
 	if (foot.ending === "failed") return `Failed after ${took}`;
 	return `Done in ${took}`;
@@ -104,10 +113,13 @@ export function TurnFoot({
 	asks = [],
 	onAnswer,
 	permissions,
+	stopping = false,
 }: {
 	foot: AgentTurnFoot;
 	/** the turn's clock, for a foot still running */
 	elapsed: number;
+	/** stop was pressed and the agent has not answered it yet */
+	stopping?: boolean;
 	reach: TileReach;
 	/** the turn's rows and waits, drawn behind the status line */
 	steps: ReactNode;
@@ -117,7 +129,7 @@ export function TurnFoot({
 	permissions?: (() => void) | undefined;
 }) {
 	const [open, setOpen] = useState(false);
-	const over = foot.ms !== null;
+	const over = footOver(foot);
 	const makers = new Set(foot.tiles.flatMap((tile) => (tile.delegation === undefined ? [] : [tile.delegation])));
 	// a designer's ask hangs off its own tile; anything else is the turn's own
 	const designer = asks.find(
@@ -134,8 +146,9 @@ export function TurnFoot({
 	// the steps fade in and out under the line rather than appearing in one frame
 	const shownSteps = useLeaving(open && mine === undefined, FOLD_MS);
 	const queued = asks.filter((ask) => ask !== mine && ask !== hung);
-	// a card at the end of the chat is the turn waiting on the person, and its line says so
-	const carded = queued.length > 0;
+	// a card at the end of the chat or an ask hung under a designer's tile is the turn waiting on
+	// the person, and its line says so: the clock is parked on it (task 168)
+	const carded = queued.length > 0 || hung !== undefined;
 	const answer = onAnswer ?? (() => {});
 	return (
 		<div data-agent-turn={over ? "over" : "running"} className="flex flex-col gap-3 pt-1">
@@ -161,6 +174,7 @@ export function TurnFoot({
 						elapsed={elapsed}
 						open={open}
 						waiting={carded}
+						stopping={stopping}
 						onToggle={() => setOpen((was) => !was)}
 					/>
 				</>
@@ -307,9 +321,9 @@ function LineAsk({
 	const named = question === null || question.multi ? null : optionFrames(question, foot.tiles);
 	const grid =
 		foot.tiles.length === 0 ? null : named === null || question === null ? (
-			<TileGrid tiles={foot.tiles} settled={foot.ms !== null} reach={reach} />
+			<TileGrid tiles={foot.tiles} settled={footOver(foot)} reach={reach} />
 		) : (
-			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} settled={foot.ms !== null} />
+			<PictureChoice tiles={foot.tiles} frames={named} ask={ask} reach={reach} settled={footOver(foot)} />
 		);
 	return (
 		<div
@@ -450,23 +464,26 @@ function TurnLine({
 	elapsed,
 	open,
 	waiting,
+	stopping,
 	onToggle,
 }: {
 	foot: AgentTurnFoot;
 	elapsed: number;
 	open: boolean;
-	/** an ask about no frame waits at the end of the chat */
+	/** an ask waits on the person: a card at the end of the chat, or one under a designer's tile */
 	waiting: boolean;
+	stopping: boolean;
 	onToggle: () => void;
 }) {
-	const over = foot.ms !== null;
-	const asking = waiting && !over;
-	const words = over ? receiptOf(foot) : asking ? "Waiting on you" : (foot.status ?? "Working");
+	const over = footOver(foot);
+	const halting = stopping && !over;
+	const asking = waiting && !over && !halting;
+	const words = over ? receiptOf(foot) : halting ? "Stopping" : asking ? "Waiting on you" : (foot.status ?? "Working");
 	return (
 		<button
 			type="button"
 			aria-expanded={open}
-			data-agent-turn-line={over ? (foot.ending ?? "done") : asking ? "waiting" : "running"}
+			data-agent-turn-line={over ? (foot.ending ?? "done") : halting ? "stopping" : asking ? "waiting" : "running"}
 			onClick={onToggle}
 			className={cn(
 				"-mx-1.5 flex h-[26px] items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150",
@@ -476,9 +493,9 @@ function TurnLine({
 		>
 			{asking ? <WaitingMark /> : <TurnMark over={over} ending={foot.ending} />}
 			<span className={cn("min-w-0 flex-1 truncate type-control", asking ? "text-primary" : "text-secondary")}>
-				{over || asking ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
+				{over || asking || halting ? words : <span className="agent-shimmer animate-agent-shimmer">{words}</span>}
 			</span>
-			{over || !Number.isFinite(elapsed) ? null : (
+			{over || halting || !Number.isFinite(elapsed) ? null : (
 				<span data-agent-clock="" className="shrink-0 tabular-nums text-secondary type-detail">
 					{clockOf(elapsed)}
 				</span>

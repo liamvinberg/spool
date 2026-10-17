@@ -5,7 +5,14 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { FADE_OUT_MS, FOLD_MS, MOTION } from "./agent-motion";
-import { type AgentTile, type AgentTurnFoot, type Stamped, sourceShape, transcriptOf } from "./agent-transcript";
+import {
+	type AgentTile,
+	type AgentTurnFoot,
+	type Stamped,
+	settledPicture,
+	sourceShape,
+	transcriptOf,
+} from "./agent-transcript";
 import { TurnFoot } from "./agent-turn-foot";
 
 /*
@@ -301,5 +308,76 @@ describe("the turn's grid as a choice", () => {
 		};
 		expect(columns(footOf(tiles))).toBe(2);
 		expect(columns(footOf(tiles, 3000))).toBe(3);
+	});
+});
+
+describe("the turn's line says what the turn is doing (task 168)", () => {
+	const line = (host: HTMLElement) => host.querySelector("[data-agent-turn-line]");
+
+	it("reads a foot that reached disk mid-turn as stopped, with no clock and no spinner", async () => {
+		const [stored] = settledPicture([footOf([tile("home", "done")])]);
+		const { host } = await draw(stored as AgentTurnFoot);
+		expect(line(host)?.getAttribute("data-agent-turn-line")).toBe("stopped");
+		expect(line(host)?.textContent).toContain("Stopped");
+		expect(host.querySelector("[data-agent-clock]")).toBeNull();
+		expect(host.querySelector('[data-agent-turn="over"]')).not.toBeNull();
+	});
+
+	it("says it waits on you while a designer's ask hangs under its tile", async () => {
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		const tiles = [tile("home--calm", "reading", { delegation: "a1" })];
+		const reach = { have: new Set(["home--calm"]), onJump: () => {}, onPoint: () => {} };
+		const ask = {
+			key: "ask:b1",
+			kind: "ask",
+			request: "req-b",
+			question: false,
+			delegation: "a1",
+			tool: "Bash",
+			detail: "npm install",
+			asked: "Install the packages",
+			questions: [],
+			always: false,
+			state: "open",
+			words: null,
+		} as const;
+		act(() =>
+			root.render(
+				createElement(TurnFoot, {
+					foot: footOf(tiles),
+					elapsed: 6000,
+					reach,
+					steps: null,
+					asks: [ask],
+					onAnswer: () => {},
+				}),
+			),
+		);
+		unmount = () => {
+			act(() => root.unmount());
+			host.remove();
+		};
+		expect(host.querySelector("[data-agent-ask-under]")).not.toBeNull();
+		expect(line(host)?.getAttribute("data-agent-turn-line")).toBe("waiting");
+		expect(line(host)?.textContent).toContain("Waiting on you");
+	});
+
+	it("says stopping once stop is pressed, before the agent has answered it", async () => {
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		const reach = { have: new Set<string>(), onJump: () => {}, onPoint: () => {} };
+		act(() =>
+			root.render(createElement(TurnFoot, { foot: footOf([]), elapsed: 6000, reach, steps: null, stopping: true })),
+		);
+		unmount = () => {
+			act(() => root.unmount());
+			host.remove();
+		};
+		expect(line(host)?.getAttribute("data-agent-turn-line")).toBe("stopping");
+		expect(line(host)?.textContent).toContain("Stopping");
+		expect(host.querySelector("[data-agent-clock]")).toBeNull();
 	});
 });

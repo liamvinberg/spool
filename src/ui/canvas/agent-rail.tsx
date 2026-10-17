@@ -202,6 +202,7 @@ export function AgentRail({
 		plan,
 		phase,
 		elapsed,
+		stopping,
 		queued,
 		handback,
 		draft,
@@ -419,6 +420,7 @@ export function AgentRail({
 								live={phase === "playing"}
 								spoke={spoke}
 								elapsed={elapsed}
+								stopping={stopping}
 								jump={jump}
 								onAnswer={onAnswer}
 							/>
@@ -618,6 +620,7 @@ function Transcript({
 	live,
 	spoke,
 	elapsed,
+	stopping,
 	jump,
 	onAnswer,
 }: {
@@ -636,6 +639,8 @@ function Transcript({
 	 */
 	spoke: number;
 	elapsed: number;
+	/** stop was pressed on the running turn, which only its own foot can be */
+	stopping: boolean;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
@@ -818,6 +823,7 @@ function Transcript({
 								<TurnFoot
 									foot={entry}
 									elapsed={elapsed}
+									stopping={stopping}
 									reach={jump}
 									asks={asks}
 									onAnswer={onAnswer}

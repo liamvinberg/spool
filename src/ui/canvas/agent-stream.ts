@@ -119,6 +119,12 @@ export interface AgentTurn {
 	 */
 	readonly elapsed: number;
 	/**
+	 * Stop was pressed and the turn has not ended yet (task 168). The press is a request the
+	 * binary answers in its own time, and until it does the turn's line says Stopping rather
+	 * than going on saying Working under a press that looked like it did nothing.
+	 */
+	readonly stopping: boolean;
+	/**
 	 * Send what was typed, and with it whatever the composer was holding (#116, #119).
 	 *
 	 * `sent` is captured by the caller rather than read later because the selection is a
@@ -1465,6 +1471,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 			plan: planOf(here, seen),
 			phase,
 			elapsed: still || here.drained ? Number.POSITIVE_INFINITY : here.ms,
+			stopping: here.streaming && here.stopping,
 			send: say,
 			answer: useCallback(
 				(request: string, reply: AgentReply) => {
@@ -1511,7 +1518,9 @@ export function useAgentThreads(project: string, preferred: AgentEngineId | unde
 				hold(thread, []);
 				handBack(thread, back);
 				void interruptAgentTurn(project, thread.named);
-			}, [project, hold, handBack]),
+				// and the line says so now, whether or not the box had anything to hand back
+				redraw();
+			}, [project, hold, handBack, redraw]),
 			putBack: useCallback(
 				async (tile: AgentTile) => {
 					const thread = threads.current.get(openRef.current);

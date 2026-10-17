@@ -81,6 +81,8 @@ function mount(stored: readonly ServedThread[] = []) {
 				named.push((JSON.parse(String(init?.body ?? "{}")) as { turn?: string }).turn ?? "");
 				if (door.turn !== 0) return new Response(`the door said ${door.turn}`, { status: door.turn });
 			}
+			// a stop is heard and says nothing back: what it causes arrives on the turn's own read
+			if (url.pathname.endsWith("/agent/interrupt")) return new Response(null, { status: 204 });
 			// the attach door's own answer for a thread it is holding nothing for
 			if (url.pathname.includes("/agent/turn/") && door.gone) {
 				return new Response("no turn to read", { status: 404 });
@@ -200,6 +202,28 @@ describe("the turn a thread is running", () => {
 		});
 		expect(canvas.named).toHaveLength(0);
 		if (action === "stop") expect(canvas.latest().phase).toBe("settled");
+	});
+
+	it("says the turn is stopping from the press until the turn ends (task 168)", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		await settle(150);
+		expect(canvas.latest().stopping).toBe(false);
+		await act(async () => {
+			canvas.latest().stop();
+		});
+		// the binary has not answered the request yet, and the line already says what was asked
+		expect(canvas.latest().stopping).toBe(true);
+		canvas.push({ kind: "ended", ending: "stopped", reason: "aborted_streaming", stopReason: null, parent: null });
+		canvas.push(closed);
+		canvas.close();
+		await settle(300);
+		expect(canvas.latest().stopping).toBe(false);
+		expect(canvas.latest().phase).toBe("settled");
 	});
 
 	it("keeps reading the stream when stillness is asked for", async () => {
