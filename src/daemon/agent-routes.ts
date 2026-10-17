@@ -671,9 +671,10 @@ export function agentRoutes(deps: {
 						if (!isThreadId(thread)) {
 							return c.text("a thread is named by the uuid its session runs under", 400);
 						}
-						if (!putThread(spoolDir, root, thread, c.req.valid("json"))) {
-							return c.text("a thread's engine cannot change", 409);
-						}
+						const put = putThread(spoolDir, root, thread, c.req.valid("json"));
+						// the picture the rail carried on from is not the one stored: it writes the whole one
+						if (put === "moved") return c.text("the stored picture is not the one this put carries on", 412);
+						if (!put) return c.text("a thread's engine cannot change", 409);
 						return c.body(null, 204);
 					}),
 			)

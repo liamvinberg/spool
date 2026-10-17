@@ -153,7 +153,31 @@ export function isThreadId(value: unknown): value is string {
 /** what a client may say about a thread, which is the envelope minus spool's own flags */
 export type ThreadPut = Omit<StoredThread, "id" | "stopped" | "closed" | "engine" | "session"> & {
 	readonly engine?: ThreadEngine;
+	/**
+	 * Where the entries carry on from, for a put that sends only the end of its picture
+	 * (task 168). Absent, the entries are the whole picture.
+	 */
+	readonly after?: ThreadAfter;
 };
+
+/**
+ * The part of the stored picture a put keeps: its first `count` entries, the last of which
+ * is keyed `key`.
+ *
+ * A long conversation is mostly turns that are over, and a picture keeps every screenshot
+ * a turn took. Written whole, a 60 MB chat cost the rail two seconds of a frozen window on
+ * every save, which is every two seconds while a turn runs. So the rail sends what moved
+ * since the daemon last took its picture, and says where that starts.
+ *
+ * The key is the check that the daemon's picture is still the one the rail last wrote: a
+ * turn that ended with nobody watching, or another tab, writes its own, and the rail's
+ * count would then be of somebody else's entries. A count that falls past the stored
+ * picture or a key that differs is refused, and the rail writes the whole picture instead.
+ */
+export interface ThreadAfter {
+	readonly count: number;
+	readonly key: string;
+}
 
 /**
  * The envelope, wherever it came from.
@@ -231,7 +255,22 @@ export function parseThreadPut(value: unknown): ThreadPut | undefined {
 	if (envelope === undefined) return undefined;
 	const record = value as Record<string, unknown>;
 	if ("session" in record || (record.engine !== undefined && !isThreadEngine(record.engine))) return undefined;
-	return { ...envelope, ...(record.engine === undefined ? {} : { engine: record.engine as ThreadEngine }) };
+	const engine = record.engine === undefined ? {} : { engine: record.engine as ThreadEngine };
+	if (record.after === undefined) return { ...envelope, ...engine };
+	const after = parseAfter(record.after);
+	if (after === undefined) return undefined;
+	// the boundary counts the whole picture, so it is checked against the whole picture once
+	// the stored part is put back in front of these entries, not against these entries alone
+	const kept =
+		typeof record.kept === "number" && Number.isInteger(record.kept) && record.kept >= 0 ? record.kept : null;
+	return { ...envelope, ...engine, kept: kept ?? after.count + envelope.entries.length, after };
+}
+
+function parseAfter(value: unknown): ThreadAfter | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { count, key } = value as { count?: unknown; key?: unknown };
+	if (typeof count !== "number" || !Number.isInteger(count) || count < 1 || typeof key !== "string") return undefined;
+	return { count, key };
 }
 
 /**
@@ -245,15 +284,24 @@ export function parseThreadPut(value: unknown): ThreadPut | undefined {
  * said about it has been answered by the next turn. A tab that was put away stays put away:
  * nothing a client draws is a request to bring it back.
  */
-export function putThread(spoolDir: string, root: string, id: string, put: ThreadPut): boolean {
+export function putThread(spoolDir: string, root: string, id: string, { after, ...put }: ThreadPut): boolean | "moved" {
 	if (!isThreadId(id)) return false;
 	const had = readThread(spoolDir, root, id);
 	if (had !== undefined && put.engine !== undefined && put.engine !== had.engine) return false;
 	// the bundled engine's threads are only ever ones it left behind, never new ones
 	if (had === undefined && put.engine === LEGACY_ENGINE) return false;
+	let entries = put.entries;
+	if (after !== undefined) {
+		const last = had?.entries[after.count - 1];
+		const key = typeof last === "object" && last !== null ? (last as { key?: unknown }).key : undefined;
+		if (had === undefined || key !== after.key) return "moved";
+		entries = [...had.entries.slice(0, after.count), ...put.entries];
+	}
 	writeThread(spoolDir, root, {
 		id,
 		...put,
+		entries,
+		kept: Math.min(put.kept, entries.length),
 		engine: had?.engine ?? put.engine ?? "claude",
 		session: had?.session ?? { id },
 		// a thread the hands are sending into is a thread that is running again, so a new

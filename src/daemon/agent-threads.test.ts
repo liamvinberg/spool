@@ -59,6 +59,40 @@ describe("the store", () => {
 		expect(back?.entries).toEqual(picture.entries);
 	});
 
+	it("carries a put that sends only the end of its picture on from the stored part (task 168)", () => {
+		const spoolDir = makeTempDir();
+		putThread(spoolDir, ROOT, ONE, picture);
+		const next = { key: "row:t2", kind: "row", state: "running", verb: "edit", subject: "home" };
+		const put = parseThreadPut({ ...picture, entries: [next], kept: 2, after: { count: 2, key: "row:t1" } });
+		if (put === undefined) throw new Error("the put did not parse");
+
+		expect(putThread(spoolDir, ROOT, ONE, put)).toBe(true);
+
+		const [back] = readThreads(spoolDir, ROOT);
+		expect(back?.entries).toEqual([...picture.entries, next]);
+		// the boundary is the whole picture's, not the sent part's
+		expect(back?.kept).toBe(2);
+	});
+
+	it.each([
+		["past the stored picture", { count: 3, key: "row:t1" }],
+		["after an entry the store keys otherwise", { count: 2, key: "row:other" }],
+	])("refuses a put that carries on %s, and keeps the picture", (_how, after) => {
+		const spoolDir = makeTempDir();
+		putThread(spoolDir, ROOT, ONE, picture);
+		const put = parseThreadPut({ ...picture, entries: [], after });
+		if (put === undefined) throw new Error("the put did not parse");
+
+		expect(putThread(spoolDir, ROOT, ONE, put)).toBe("moved");
+		expect(readThreads(spoolDir, ROOT)[0]?.entries).toEqual(picture.entries);
+	});
+
+	it("refuses to carry a put on from a thread it has never stored", () => {
+		const put = parseThreadPut({ ...picture, after: { count: 1, key: "u0" } });
+		if (put === undefined) throw new Error("the put did not parse");
+		expect(putThread(makeTempDir(), ROOT, ONE, put)).toBe("moved");
+	});
+
 	it("keys by the project root, so two projects never see each other's threads", () => {
 		const spoolDir = makeTempDir();
 		putThread(spoolDir, ROOT, ONE, picture);
