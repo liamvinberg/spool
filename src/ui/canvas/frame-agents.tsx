@@ -1,4 +1,4 @@
-import { type CSSProperties, useMemo, useSyncExternalStore } from "react";
+import { type CSSProperties, useMemo, useRef, useSyncExternalStore } from "react";
 import { SpinRing, StatusMark } from "../primitives/display";
 import type { AgentCompanion } from "./agent-companion";
 import type { PresenceRoom, Teammate } from "./presence";
@@ -97,12 +97,50 @@ export function FrameAgentsMark({ name, agents }: { name: string; agents: readon
 	);
 }
 
-/** every frame's agents, kept with this canvas's turn and its teammates' presence */
+/**
+ * every frame's agents, kept with this canvas's turn and its teammates' presence. A frame
+ * whose agents say what they said before keeps the same list, and the map stays the same
+ * while none moved, so a turn's ticks redraw no label (task 169)
+ */
 export function useFrameAgents(room: PresenceRoom, own: readonly AgentCompanion[], team: boolean): FrameAgents {
 	const heard = useSyncExternalStore(room.subscribe, () => (team ? heardWork(room.teammates()) : ""));
-	return useMemo(
-		() => (own.length === 0 && heard === "" ? NO_AGENTS : frameAgents(own, team ? room.teammates() : [])),
-		[own, heard, room, team],
+	const last = useRef<FrameAgents>(NO_AGENTS);
+	return useMemo(() => {
+		const next = own.length === 0 && heard === "" ? NO_AGENTS : frameAgents(own, team ? room.teammates() : []);
+		last.current = steady(last.current, next);
+		return last.current;
+	}, [own, heard, room, team]);
+}
+
+/** `next`, holding on to each of `was`'s lists that say the same, and to `was` itself if all do */
+export function steady(was: FrameAgents, next: FrameAgents): FrameAgents {
+	if (next.size === 0) return NO_AGENTS;
+	let same = was.size === next.size;
+	const kept = new Map<string, readonly FrameAgent[]>();
+	for (const [name, agents] of next) {
+		const before = was.get(name);
+		if (before !== undefined && sameAgents(before, agents)) kept.set(name, before);
+		else {
+			kept.set(name, agents);
+			same = false;
+		}
+	}
+	return same ? was : kept;
+}
+
+function sameAgents(a: readonly FrameAgent[], b: readonly FrameAgent[]): boolean {
+	return (
+		a.length === b.length &&
+		a.every((one, at) => {
+			const other = b[at];
+			return (
+				other !== undefined &&
+				one.color === other.color &&
+				one.own === other.own &&
+				one.waiting === other.waiting &&
+				one.says === other.says
+			);
+		})
 	);
 }
 

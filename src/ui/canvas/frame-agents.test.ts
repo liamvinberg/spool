@@ -7,7 +7,7 @@ import type { AgentEvent } from "../../daemon/agent-events";
 import type { PresenceAgentWork, PresenceState } from "../../team-sync-protocol";
 import type { AgentCompanion } from "./agent-companion";
 import { transcriptOf } from "./agent-transcript";
-import { type FrameAgent, FrameAgentsMark, frameAgents } from "./frame-agents";
+import { type FrameAgent, FrameAgentsMark, frameAgents, NO_AGENTS, steady } from "./frame-agents";
 import { createPresenceRoom } from "./presence";
 
 /** Agents at a frame, said on its name row (task 164): which frames, and what the row says. */
@@ -34,6 +34,23 @@ function roomWith(work: PresenceAgentWork[], running = true) {
 }
 
 describe("which frames agents are at", () => {
+	it("keeps the lists and the map a turn's tick did not change, so no label redraws for it (task 169)", () => {
+		const first = steady(NO_AGENTS, frameAgents([companion(), companion({ frame: "app/cart", key: "d1" })], []));
+		const tick = steady(
+			first,
+			frameAgents([companion({ beat: 2 }), companion({ frame: "app/cart", key: "d1" })], []),
+		);
+		expect(tick).toBe(first);
+		const asked = steady(
+			tick,
+			frameAgents([companion({ act: "ask" }), companion({ frame: "app/cart", key: "d1" })], []),
+		);
+		expect(asked).not.toBe(tick);
+		expect(asked.get("app/cart")).toBe(first.get("app/cart"));
+		expect(asked.get("app/home")?.[0]?.waiting).toBe(true);
+		expect(steady(asked, frameAgents([], []))).toBe(NO_AGENTS);
+	});
+
 	it("puts this canvas's agents at their frames, and a designer holding only its placeholder at the placeholder", () => {
 		const at = frameAgents(
 			[
