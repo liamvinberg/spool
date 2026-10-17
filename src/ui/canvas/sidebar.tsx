@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Unseen } from "../../daemon/seen";
 import {
@@ -254,7 +254,12 @@ const NOTHING_UNSEEN: ReadonlyMap<string, Unseen> = new Map();
 /** no frames on their way, one list for every render so the rows keep */
 const NONE_WAITING: readonly { readonly page?: string }[] = [];
 
-export function CanvasSidebar({
+/**
+ * The pages tree, drawn again only when what it shows changes (task 169): the canvas around
+ * it renders on every turn tick and hover, and a tree of every page and frame redrawn with
+ * each of those was most of what those renders cost.
+ */
+export const CanvasSidebar = memo(function CanvasSidebar({
 	project,
 	pages,
 	activePage,
@@ -1799,7 +1804,7 @@ export function CanvasSidebar({
 					)}
 		</aside>
 	);
-}
+});
 
 /* ── one row ─────────────────────────────────────────────────────────── */
 

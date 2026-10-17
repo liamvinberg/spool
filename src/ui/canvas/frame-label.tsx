@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useRef } from "react";
+import { memo, type ReactNode, useMemo, useRef } from "react";
 import type { Unseen } from "../../daemon/seen";
 import { pageName } from "../../page-path";
 import { cn } from "../cn";
@@ -50,7 +50,11 @@ export type OverviewRole = "target" | "near" | "dim";
  */
 const WIDTH_TURNS = 4;
 
-export function FrameLabel({
+/**
+ * Drawn again only when what it says changes (task 169): it places itself off the camera, so
+ * the canvas rendering for a hover or a turn's tick has nothing to tell it.
+ */
+export const FrameLabel = memo(function FrameLabel({
 	name,
 	frame,
 	camera,
@@ -92,8 +96,8 @@ export function FrameLabel({
 	 * is when you most need to know which of these is new.
 	 */
 	unseen?: Unseen | undefined;
-	/** Play this frame. Offered on the selection, where the attention already is. */
-	onPlay?: () => void;
+	/** Play this frame, by its name. Offered on the selection, where the attention already is. */
+	onPlay?: ((name: string) => void) | undefined;
 }) {
 	const place = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
@@ -208,7 +212,7 @@ export function FrameLabel({
 								className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-[color,opacity] duration-fast ease-out hover:text-accent-strong group-data-away/label:pointer-events-none group-data-away/label:opacity-0 type-detail"
 								onPointerDown={(event) => {
 									event.stopPropagation();
-									onPlay();
+									onPlay(name);
 								}}
 								onDoubleClick={(event) => event.stopPropagation()}
 							>
@@ -231,7 +235,7 @@ export function FrameLabel({
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * The field every frame label stands in (#81): screen pixels, carried by the

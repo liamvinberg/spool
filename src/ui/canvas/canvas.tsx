@@ -53,6 +53,7 @@ import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { openShare, type ShareContext } from "../share-control";
 import { useShares } from "../shares";
+import { useStableCallback } from "../stable-callback";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
@@ -4886,6 +4887,13 @@ export function ProjectCanvas({
 	 * each one stands is the pane window's, and a pane is mounted for as long as
 	 * the canvas is, so drafts and scroll outlive it being out of sight.
 	 */
+	// the pages tree is memoised: every handler it holds keeps one identity (task 169)
+	const onSelectFrameRow = useStableCallback(selectFrameRow);
+	const onExtendFrameRange = useStableCallback(extendFrameRange);
+	const onFlyToFrame = useStableCallback(flyToFrame);
+	const onTrashPage = useStableCallback((page: string, names: string[]) => stageEntry({ frames: names, page }));
+	const onCopyFramePath = useStableCallback((name: string) => copySourcePath(frameSourcePath(name)));
+	const onRefreshFrames = useStableCallback(() => void refetchFrames());
 	const panes: readonly PaneDef[] = [
 		{
 			id: "pages",
@@ -4902,17 +4910,17 @@ export function ProjectCanvas({
 					waiting={placeholders}
 					selected={selected}
 					onSwitchPage={activatePageFromTree}
-					onSelectFrame={selectFrameRow}
-					onExtendSelection={extendFrameRange}
-					onDoubleClickFrame={flyToFrame}
+					onSelectFrame={onSelectFrameRow}
+					onExtendSelection={onExtendFrameRange}
+					onDoubleClickFrame={onFlyToFrame}
 					onTrashFrames={stageTrash}
-					onTrashPage={(page, names) => stageEntry({ frames: names, page })}
+					onTrashPage={onTrashPage}
 					onRevealFrame={landOnFrame}
-					onCopyPath={(name) => copySourcePath(frameSourcePath(name))}
+					onCopyPath={onCopyFramePath}
 					onCopiesLanded={cascadeCopies}
 					verbs={frameVerbs}
 					onFramesRenamed={followRenamedFrames}
-					onRefresh={() => void refetchFrames()}
+					onRefresh={onRefreshFrames}
 					onRecord={recordEntry}
 					run={runEntry}
 					// the finder's pick, or the page holding the frame a row in the agent rail is
@@ -5189,7 +5197,7 @@ export function ProjectCanvas({
 										selected={isSelected}
 										hovered={isHovered}
 										unseen={unseen.get(frame.name)}
-										onPlay={() => playFrame(frame.name)}
+										onPlay={playFrame}
 										live={
 											isEntered && live.chip?.frame === frame.name
 												? { ...live.chip, faded: live.overview !== null }
