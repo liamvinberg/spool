@@ -2295,8 +2295,9 @@ describe("an ask, anchored", () => {
 		expect(canvas.host.querySelector("[data-agent-tile-waiting]")?.getAttribute("data-agent-tile")).toBe(
 			"home--bold",
 		);
-		// the turn's own line is still the turn's: one designer waits, the others work
-		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).toBeNull();
+		// and the turn's line says it waits on you, because its clock does (task 168): a line
+		// that said Working over a clock parked on the ask read as a turn frozen at 0:06
+		expect(canvas.host.querySelector('[data-agent-turn-line="waiting"]')).not.toBeNull();
 		// the card hangs under the grid, from the tile that waits
 		const under = canvas.host.querySelector("[data-agent-ask-under]");
 		expect(under?.getAttribute("data-agent-ask-under")).toBe("home--bold");

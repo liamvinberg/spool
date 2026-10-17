@@ -322,6 +322,29 @@ describe("the turn's line", () => {
 		expect(counting[0]).toMatchObject({ key: "a:wait:0", state: "running", ms: null, at: 4_100 });
 	});
 
+	it("gives a retry its own steps rather than the failed turn's (task 168)", () => {
+		// a retry says nothing of its own, so both turns sit under the one set of words
+		const failed = settledPicture(
+			footed(
+				transcriptOf(
+					[{ text: "go" }],
+					stamp([
+						{ kind: "waiting", parent: null } as AgentEvent,
+						{ kind: "closed", code: 1, message: "rate limit", parent: null } as AgentEvent,
+					]),
+				),
+			),
+		).map((entry) => ({ ...entry, key: `a:${entry.key}` }));
+		const retry = footed(
+			transcriptOf([], stamp([{ kind: "say", block: 0, text: "Again.", parent: null } as AgentEvent])),
+		);
+		const laid = turnLayout([...failed, ...retry]);
+		const feet = laid.filter(({ entry }) => entry.kind === "turn");
+		expect(feet).toHaveLength(2);
+		expect(feet[0]?.steps.map((step) => step.kind)).toEqual(["wait"]);
+		expect(feet[1]?.steps).toEqual([]);
+	});
+
 	it("leaves a turn kept from before the foot as it was drawn", () => {
 		const old: AgentEntry[] = [
 			{ key: "a:user", kind: "user", text: "hi", context: null, attached: [] },

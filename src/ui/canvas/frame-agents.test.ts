@@ -3,8 +3,10 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished } from "vitest";
+import type { AgentEvent } from "../../daemon/agent-events";
 import type { PresenceAgentWork, PresenceState } from "../../team-sync-protocol";
 import type { AgentCompanion } from "./agent-companion";
+import { transcriptOf } from "./agent-transcript";
 import { type FrameAgent, FrameAgentsMark, frameAgents } from "./frame-agents";
 import { createPresenceRoom } from "./presence";
 
@@ -69,6 +71,33 @@ describe("which frames agents are at", () => {
 		]);
 		expect(at.get("app/home")?.map((one) => one.own)).toEqual([true, false]);
 		expect(at.get("app/home")?.[1]).toMatchObject({ waiting: true, says: "ada's agent · waiting" });
+	});
+
+	it.each<[string, AgentEvent[]]>([
+		["done", [{ kind: "ended", ending: "done", reason: null, stopReason: "end_turn", parent: null }]],
+		["stopped", [{ kind: "ended", ending: "stopped", reason: "aborted_streaming", stopReason: null, parent: null }]],
+		["failed", [{ kind: "ended", ending: "failed", reason: "rate limit", stopReason: null, parent: null }]],
+		["gone with nothing said", [{ kind: "closed", code: null, message: "stopped", parent: null }]],
+	])("lets go of the frame once the turn is %s (task 168)", (_how, ending) => {
+		const editing: AgentEvent = {
+			kind: "frame",
+			change: "changed",
+			frame: "app/home",
+			lines: 40,
+			call: "c1",
+			task: null,
+			parent: null,
+		};
+		const marks = (events: AgentEvent[]) =>
+			frameAgents(
+				transcriptOf(
+					[],
+					events.map((event, at) => ({ at, event })),
+				).companions,
+				[],
+			);
+		expect(marks([editing]).get("app/home")).toHaveLength(1);
+		expect(marks([editing, ...ending]).size).toBe(0);
 	});
 
 	it("forgets a teammate's agents once they leave", () => {

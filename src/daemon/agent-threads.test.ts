@@ -10,6 +10,7 @@ import {
 	readThreads,
 	serveThreads,
 	type ThreadPut,
+	threadsDir,
 	writeThread,
 } from "./agent-threads";
 
@@ -57,6 +58,52 @@ describe("the store", () => {
 		});
 		// nothing is capped and nothing is elided, so live and restored are the same view
 		expect(back?.entries).toEqual(picture.entries);
+	});
+
+	it("carries a put that sends only the end of its picture on from the stored part (task 168)", () => {
+		const spoolDir = makeTempDir();
+		putThread(spoolDir, ROOT, ONE, picture);
+		const next = { key: "row:t2", kind: "row", state: "running", verb: "edit", subject: "home" };
+		const put = parseThreadPut({ ...picture, entries: [next], kept: 2, after: { count: 2, key: "row:t1" } });
+		if (put === undefined) throw new Error("the put did not parse");
+
+		expect(putThread(spoolDir, ROOT, ONE, put)).toBe(true);
+
+		const [back] = readThreads(spoolDir, ROOT);
+		expect(back?.entries).toEqual([...picture.entries, next]);
+		// the boundary is the whole picture's, not the sent part's
+		expect(back?.kept).toBe(2);
+	});
+
+	it.each([
+		["past the stored picture", { count: 3, key: "row:t1" }],
+		["after an entry the store keys otherwise", { count: 2, key: "row:other" }],
+	])("refuses a put that carries on %s, and keeps the picture", (_how, after) => {
+		const spoolDir = makeTempDir();
+		putThread(spoolDir, ROOT, ONE, picture);
+		const put = parseThreadPut({ ...picture, entries: [], after });
+		if (put === undefined) throw new Error("the put did not parse");
+
+		expect(putThread(spoolDir, ROOT, ONE, put)).toBe("moved");
+		expect(readThreads(spoolDir, ROOT)[0]?.entries).toEqual(picture.entries);
+	});
+
+	it("refuses to carry a put on from a thread it has never stored", () => {
+		const put = parseThreadPut({ ...picture, after: { count: 1, key: "u0" } });
+		if (put === undefined) throw new Error("the put did not parse");
+		expect(putThread(makeTempDir(), ROOT, ONE, put)).toBe("moved");
+	});
+
+	it("spells the file the way JSON does, and reads it again once something else wrote it", () => {
+		const spoolDir = makeTempDir();
+		putThread(spoolDir, ROOT, ONE, picture);
+		const [file] = readdirSync(threadsDir(spoolDir, ROOT)).filter((name) => name === `${ONE}.json`);
+		const path = join(threadsDir(spoolDir, ROOT), file ?? "");
+		const [back] = readThreads(spoolDir, ROOT);
+		expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(back, null, "\t")}\n`);
+		// held, and then not, once the file is no longer the one it was read from
+		writeFileSync(path, `${JSON.stringify({ ...back, ask: "edited by hand" }, null, "\t")}\n`);
+		expect(readThreads(spoolDir, ROOT)[0]?.ask).toBe("edited by hand");
 	});
 
 	it("keys by the project root, so two projects never see each other's threads", () => {

@@ -18,7 +18,7 @@ import { sessionFile } from "./agent-claude-session";
 import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
 import { readThread } from "./agent-threads";
-import { startAgentTurn } from "./agent-turn";
+import { STOP_GRACE_MS, startAgentTurn } from "./agent-turn";
 
 /** Every event of one turn, read off the stream the way a client would. */
 async function drainTurn(res: Response, limit = 4000): Promise<AgentEvent[]> {
@@ -738,6 +738,36 @@ describe("the stop", () => {
 		expect(agent.spawned[0]?.inputs[1]).toContain('"interrupt"');
 		const ended = events.find((event) => event.kind === "ended");
 		expect(ended?.kind === "ended" && ended.ending).toBe("stopped");
+	});
+
+	it("ends a turn whose binary never answers the stop, once the grace is out (task 168)", async () => {
+		vi.useFakeTimers();
+		// a binary that reads nothing: the prompt and the stop both go unanswered
+		const agent = fixtureAgentExecutor();
+		const turn = startAgentTurn({
+			executor: agent.executor,
+			root: "/tmp/product",
+			content: [],
+			session: { id: "6b5c1d2e-1111-4222-8333-444455556667", resume: false },
+		});
+		const seen: AgentEvent[] = [];
+		const reading = (async () => {
+			for await (const event of turn.events) seen.push(event);
+		})();
+		await vi.advanceTimersByTimeAsync(0);
+		const proc = agent.spawned[0] as (typeof agent.spawned)[number];
+		expect(turn.interrupt()).toBe(true);
+		await vi.advanceTimersByTimeAsync(STOP_GRACE_MS - 500);
+		expect(proc.killed).toBe(false);
+
+		await vi.advanceTimersByTimeAsync(1_000);
+
+		expect(proc.killed).toBe(true);
+		await reading;
+		const ended = seen.find((event) => event.kind === "ended");
+		expect(ended?.kind === "ended" && ended.ending).toBe("stopped");
+		expect(seen.at(-1)?.kind).toBe("closed");
+		vi.useRealTimers();
 	});
 
 	it("never echoes the binary's interruption notice into the log", async () => {

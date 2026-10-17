@@ -198,6 +198,7 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 		close: () => {},
 	};
 	const stored: Stored = { served: null, hold: null, puts: [], closed: [] };
+	const pictures = new Map<string, readonly unknown[]>();
 	/** what the rail last called its turn, which is the address a stop names (#165) */
 	let named = "";
 	/** the daemon's own watcher channel: what a frame the turn writes arrives on */
@@ -397,7 +398,11 @@ export function mount({ still = false }: { still?: boolean } = {}) {
 			if (url.pathname.includes("/agent/threads/")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/close$/, "") ?? "";
 				if (url.pathname.endsWith("/close")) stored.closed.push(thread);
-				else stored.puts.push({ thread, body: JSON.parse(String(init?.body ?? "{}")) as ThreadPut });
+				else {
+					const body = takePicture(pictures, thread, JSON.parse(String(init?.body ?? "{}")) as ThreadPut);
+					if (body === undefined) return new Response("moved", { status: 412 });
+					stored.puts.push({ thread, body });
+				}
 				return new Response(null, { status: 204 });
 			}
 			// the stop's own door: a request rather than a kill, so nothing comes back
@@ -1055,3 +1060,25 @@ export const refused: AgentEvent = {
 	message: "Not logged in · Please run /login",
 	parent: null,
 };
+
+/**
+ * A picture's write, taken the way the daemon takes it (task 168): a write that carries on
+ * from part of the stored picture is put back together with it, and one carrying on from a
+ * picture that is not stored is refused. What comes back is the whole picture as stored, so
+ * a test reads what the daemon would hold rather than what one write happened to send.
+ */
+export function takePicture(
+	pictures: Map<string, readonly unknown[]>,
+	thread: string,
+	{ after, ...body }: ThreadPut,
+): ThreadPut | undefined {
+	let entries = body.entries;
+	if (after !== undefined) {
+		const had = pictures.get(thread) ?? [];
+		const last = had[after.count - 1] as { key?: unknown } | undefined;
+		if (last?.key !== after.key) return undefined;
+		entries = [...had.slice(0, after.count), ...body.entries];
+	}
+	pictures.set(thread, entries);
+	return { ...body, entries };
+}

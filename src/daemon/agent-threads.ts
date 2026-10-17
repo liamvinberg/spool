@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { type AgentOwnership, isThreadEngine, LEGACY_ENGINE, type ThreadEngine } from "./agent-engine";
@@ -153,7 +153,31 @@ export function isThreadId(value: unknown): value is string {
 /** what a client may say about a thread, which is the envelope minus spool's own flags */
 export type ThreadPut = Omit<StoredThread, "id" | "stopped" | "closed" | "engine" | "session"> & {
 	readonly engine?: ThreadEngine;
+	/**
+	 * Where the entries carry on from, for a put that sends only the end of its picture
+	 * (task 168). Absent, the entries are the whole picture.
+	 */
+	readonly after?: ThreadAfter;
 };
+
+/**
+ * The part of the stored picture a put keeps: its first `count` entries, the last of which
+ * is keyed `key`.
+ *
+ * A long conversation is mostly turns that are over, and a picture keeps every screenshot
+ * a turn took. Written whole, a 60 MB chat cost the rail two seconds of a frozen window on
+ * every save, which is every two seconds while a turn runs. So the rail sends what moved
+ * since the daemon last took its picture, and says where that starts.
+ *
+ * The key is the check that the daemon's picture is still the one the rail last wrote: a
+ * turn that ended with nobody watching, or another tab, writes its own, and the rail's
+ * count would then be of somebody else's entries. A count that falls past the stored
+ * picture or a key that differs is refused, and the rail writes the whole picture instead.
+ */
+export interface ThreadAfter {
+	readonly count: number;
+	readonly key: string;
+}
 
 /**
  * The envelope, wherever it came from.
@@ -231,7 +255,22 @@ export function parseThreadPut(value: unknown): ThreadPut | undefined {
 	if (envelope === undefined) return undefined;
 	const record = value as Record<string, unknown>;
 	if ("session" in record || (record.engine !== undefined && !isThreadEngine(record.engine))) return undefined;
-	return { ...envelope, ...(record.engine === undefined ? {} : { engine: record.engine as ThreadEngine }) };
+	const engine = record.engine === undefined ? {} : { engine: record.engine as ThreadEngine };
+	if (record.after === undefined) return { ...envelope, ...engine };
+	const after = parseAfter(record.after);
+	if (after === undefined) return undefined;
+	// the boundary counts the whole picture, so it is checked against the whole picture once
+	// the stored part is put back in front of these entries, not against these entries alone
+	const kept =
+		typeof record.kept === "number" && Number.isInteger(record.kept) && record.kept >= 0 ? record.kept : null;
+	return { ...envelope, ...engine, kept: kept ?? after.count + envelope.entries.length, after };
+}
+
+function parseAfter(value: unknown): ThreadAfter | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { count, key } = value as { count?: unknown; key?: unknown };
+	if (typeof count !== "number" || !Number.isInteger(count) || count < 1 || typeof key !== "string") return undefined;
+	return { count, key };
 }
 
 /**
@@ -245,15 +284,24 @@ export function parseThreadPut(value: unknown): ThreadPut | undefined {
  * said about it has been answered by the next turn. A tab that was put away stays put away:
  * nothing a client draws is a request to bring it back.
  */
-export function putThread(spoolDir: string, root: string, id: string, put: ThreadPut): boolean {
+export function putThread(spoolDir: string, root: string, id: string, { after, ...put }: ThreadPut): boolean | "moved" {
 	if (!isThreadId(id)) return false;
 	const had = readThread(spoolDir, root, id);
 	if (had !== undefined && put.engine !== undefined && put.engine !== had.engine) return false;
 	// the bundled engine's threads are only ever ones it left behind, never new ones
 	if (had === undefined && put.engine === LEGACY_ENGINE) return false;
+	let entries = put.entries;
+	if (after !== undefined) {
+		const last = had?.entries[after.count - 1];
+		const key = typeof last === "object" && last !== null ? (last as { key?: unknown }).key : undefined;
+		if (had === undefined || key !== after.key) return "moved";
+		entries = [...had.entries.slice(0, after.count), ...put.entries];
+	}
 	writeThread(spoolDir, root, {
 		id,
 		...put,
+		entries,
+		kept: Math.min(put.kept, entries.length),
 		engine: had?.engine ?? put.engine ?? "claude",
 		session: had?.session ?? { id },
 		// a thread the hands are sending into is a thread that is running again, so a new
@@ -268,10 +316,75 @@ function threadFile(spoolDir: string, root: string, id: string): string {
 	return join(threadsDir(spoolDir, root), `${id}.json`);
 }
 
+/**
+ * The threads this daemon last read or wrote, by file, for as long as the file is still the
+ * one they came from (task 168).
+ *
+ * A rail writes its picture every two seconds while a turn runs, and a write that carries
+ * on from the stored part has to read that part first. A conversation that kept its
+ * screenshots runs to tens of megabytes, and reading one back and writing it out again
+ * held the daemon for half a second a time — the daemon that is streaming the turn. So
+ * the last few written are held parsed, and each entry's text is kept beside the entry it
+ * was made from, so writing the picture again costs what changed and the disk.
+ *
+ * The file's size and change time are the check that nothing else wrote it since: a stale
+ * hold is read again rather than trusted. Only the threads being written are held, never
+ * every one a listing reads, and only two, because each can be large.
+ */
+const recent = new Map<string, { readonly mtimeMs: number; readonly size: number; readonly thread: StoredThread }>();
+const RECENT = 2;
+
+function remember(file: string, thread: StoredThread): void {
+	const { mtimeMs, size } = statSync(file);
+	recent.delete(file);
+	recent.set(file, { mtimeMs, size, thread });
+	for (const old of recent.keys()) {
+		if (recent.size <= RECENT) break;
+		recent.delete(old);
+	}
+}
+
+function held(file: string): StoredThread | undefined {
+	const hold = recent.get(file);
+	if (hold === undefined) return undefined;
+	const { mtimeMs, size } = statSync(file);
+	if (mtimeMs === hold.mtimeMs && size === hold.size) return hold.thread;
+	recent.delete(file);
+	return undefined;
+}
+
+/** each entry as the file spells it, made once per entry rather than once per write */
+const spelled = new WeakMap<object, string>();
+
+function spell(entry: unknown): string {
+	if (typeof entry !== "object" || entry === null) return JSON.stringify(entry) ?? "null";
+	const known = spelled.get(entry);
+	if (known !== undefined) return known;
+	// two tabs in, where the entries list sits in the file; a JSON string holds no raw line break
+	const text = (JSON.stringify(entry, null, "\t") ?? "null").replaceAll("\n", "\n\t\t");
+	spelled.set(entry, text);
+	return text;
+}
+
+/** the file's text, the same as `JSON.stringify(thread, null, "\t")` spells it */
+function threadText(thread: StoredThread): string {
+	const mark = `spool-entries-${randomUUID()}`;
+	const text = JSON.stringify(
+		thread,
+		(key, value: unknown) => (key === "entries" && value === thread.entries ? mark : value),
+		"\t",
+	);
+	const list = thread.entries.length === 0 ? "[]" : `[\n\t\t${thread.entries.map(spell).join(",\n\t\t")}\n\t]`;
+	return `${text.replace(`"${mark}"`, () => list)}\n`;
+}
+
 export function readThread(spoolDir: string, root: string, id: string): StoredThread | undefined {
 	if (!isThreadId(id)) return undefined;
 	try {
-		const raw: unknown = JSON.parse(readFileSync(threadFile(spoolDir, root, id), "utf8"));
+		const file = threadFile(spoolDir, root, id);
+		const hold = held(file);
+		if (hold !== undefined) return hold;
+		const raw: unknown = JSON.parse(readFileSync(file, "utf8"));
 		const thread = parseThread(raw);
 		if (thread !== undefined && typeof raw === "object" && raw !== null && !("engine" in raw)) {
 			try {
@@ -288,7 +401,9 @@ export function readThread(spoolDir: string, root: string, id: string): StoredTh
 }
 
 export function writeThread(spoolDir: string, root: string, thread: StoredThread): void {
-	writeAtomic(threadFile(spoolDir, root, thread.id), `${JSON.stringify(thread, null, "\t")}\n`);
+	const file = threadFile(spoolDir, root, thread.id);
+	writeAtomic(file, threadText(thread));
+	remember(file, thread);
 }
 
 /**
