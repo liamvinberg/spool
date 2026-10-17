@@ -892,11 +892,15 @@ export function turnLayout(
 	let start = 0;
 	for (let at = 0; at <= entries.length; at += 1) {
 		const entry = entries[at];
-		if (entry !== undefined && entry.kind !== "user") continue;
-		// one turn: from its first words to the next turn's, or the end of the log
+		// A turn ends at the next person's words, and at its own foot (task 168). A retry, a
+		// continue and a turn picked back up say nothing of their own, so a turn that failed and
+		// the retry after it sit between the same two sets of words. Cutting only at words handed
+		// both feet the same steps and asks: "Failed after 3s" over a clock that never moved.
+		const ended = entries[at - 1]?.kind === "turn";
+		if (entry !== undefined && entry.kind !== "user" && !ended) continue;
 		const turn = entries.slice(start, at);
-		const foot = turn.findIndex((one) => one.kind === "turn");
-		if (foot === -1) for (const one of turn) out.push({ entry: one, steps: [], asks: [] });
+		const foot = turn.at(-1)?.kind === "turn";
+		if (!foot) for (const one of turn) out.push({ entry: one, steps: [], asks: [] });
 		else {
 			const steps = thinkingRuns(turn.filter((one) => one.kind === "row" || one.kind === "wait"));
 			// an ask still waiting opens out of the turn's line or its grid, not out of the log (#366)
