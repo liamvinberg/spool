@@ -1430,7 +1430,7 @@ export function createDaemonApp({
 				}
 				// marked before composing, so a canvas closing meanwhile never lets it cool
 				playedRoots.add(project.root);
-				const compiled = await playerCompiler.getBundle(project.root, projection.frames);
+				const compiled = await playerCompiler.getPlayable(project.root, projection.frames, start);
 				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
 				keepPlayerWarm(project.root);
 				const config = {
@@ -1443,7 +1443,9 @@ export function createDaemonApp({
 				};
 				const etag = playerEtag(compiled.bundle, config);
 				if (!shellRender && c.req.header("if-none-match") === etag) return c.body(null, 304);
-				if (shellRender) {
+				// a partial player is one moment of a compile still running: the next
+				// request gets the whole one, so nothing may keep this
+				if (shellRender || compiled.cache === "partial") {
 					c.header("cache-control", "no-store");
 				} else {
 					c.header("etag", etag);
@@ -1453,14 +1455,15 @@ export function createDaemonApp({
 			},
 		)
 		.get("/play/:project/-/*", (c) =>
-			withProject(c, resolveProject, (root) => {
+			withProject(c, resolveProject, async (root) => {
 				// The composition's modules (#24): named by content, so a name is the
 				// module and may be cached for good. They answer only for a project this
 				// daemon has already composed — the document that imports them is what
 				// composes it — and a name from a bundle since retired still answers for
-				// as long as a tab served with it might walk to it.
+				// as long as a tab served with it might walk to it. A partial player's
+				// stylesheets (SPOOL-165) answer once their frame's is built.
 				const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
-				const chunk = playerCompiler.getChunk(root, name);
+				const chunk = await playerCompiler.getChunk(root, name);
 				if (chunk === undefined) return c.text("not found", 404);
 				c.header("access-control-allow-origin", "*");
 				c.header("cache-control", "public, max-age=31536000, immutable");

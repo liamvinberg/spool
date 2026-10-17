@@ -54,6 +54,12 @@ export interface PlayerBundle {
 	importMap: object;
 	names: string[];
 	hash: string;
+	/**
+	 * Stylesheets a partial player names before they are built, by served name
+	 * (SPOOL-165): each answers once its frame's is, or never where the build
+	 * failed.
+	 */
+	later?: ReadonlyMap<string, () => Promise<string | undefined>>;
 }
 
 /** A frame in the composition: leaf-name identity, page-aware folder (#39). */
@@ -144,7 +150,42 @@ function listing(files: DesignFiles, folder: string): string {
 				.join("/");
 }
 
-export async function compilePlayer(
+/** One frame's stylesheet as the composition built it, before any fonts ride it. */
+export interface BuiltStyle {
+	name: string;
+	css: string;
+	themed: boolean;
+}
+
+/**
+ * A player compile under way, whose parts can be asked for before the whole
+ * is done (SPOOL-165). Every frame's stylesheet is most of a cold compile, and
+ * a document needs only the one it opens on: `style` begins a frame's now when
+ * the pool has not reached it yet, so a cold play waits for the composition
+ * and one stylesheet rather than all of them.
+ */
+export interface PlayerCompilation {
+	/** The frames being composed, in the projection's order. */
+	frames: readonly PlayerFrameRef[];
+	/** The composition, and the frames standing down in their own place. */
+	composed: Promise<{ composition: Composition; broken: Map<string, string> }>;
+	/** One frame's stylesheet that someone is waiting on: begun at once, ahead of the pool. */
+	style(name: string): Promise<BuiltStyle>;
+	/** What every document of this compile carries besides its modules. */
+	extras(): Promise<PlayerExtras>;
+	done: Promise<ComposedPlayer>;
+}
+
+export interface PlayerExtras {
+	/** The project's own faces (shared/fonts.css), resolved and inlined. */
+	projectFonts: string | undefined;
+	/** The webfont revision they were resolved at (#80). */
+	fontsRevision: number;
+	transitions: string | undefined;
+	importMap: object;
+}
+
+export function beginPlayerCompile(
 	host: CompileHost,
 	version: string,
 	designDir: string,
@@ -152,20 +193,17 @@ export async function compilePlayer(
 	stamp: string,
 	webfonts: Webfonts,
 	context: PlayerContext,
-): Promise<ComposedPlayer> {
+): PlayerCompilation {
 	// One read of every input for the whole player, as for a frame document:
 	// the composition, every frame's stylesheet and the cache key are all made of
 	// the same bytes.
 	const reads = createDesignReads(designDir, host.files);
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
-	let composed: { composition: Composition; broken: Map<string, string> };
 	context.reading.reads = reads;
-	try {
-		composed = await composePlayer(host, designDir, frames, context, reads);
-	} finally {
+	const composed = composePlayer(host, designDir, frames, context, reads).finally(() => {
 		context.reading.reads = undefined;
-	}
+	});
 
 	const shared = join(designDir, "shared");
 	const kept = context.styles;
@@ -189,8 +227,12 @@ export async function compilePlayer(
 	};
 	const playing = new Set(frames.map((ref) => ref.name));
 	for (const name of kept.keys()) if (!playing.has(name)) kept.delete(name);
-	const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
-		if (composed.broken.has(ref.name)) return { name: ref.name, css: "", themed: false };
+
+	const refs = new Map(frames.map((ref) => [ref.name, ref]));
+	const building = new Map<string, Promise<BuiltStyle>>();
+	const buildStyle = async (ref: PlayerFrameRef): Promise<BuiltStyle> => {
+		const { broken } = await composed;
+		if (broken.has(ref.name)) return { name: ref.name, css: "", themed: false };
 		const last = kept.get(ref.name);
 		if (last !== undefined && styleKey(designDir, last.inputs, current, list) === last.key) {
 			return { name: ref.name, css: last.css, themed: last.themed };
@@ -209,75 +251,182 @@ export async function compilePlayer(
 			...(chunk === undefined ? {} : { chunk }),
 		});
 		return { name: ref.name, css, themed };
-	});
-	const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
-	// read the moment the fonts resolve, as the frame compiler does (#80)
-	const fontsRevision = webfonts.revision();
-	const { css: projectFonts } = inlineLocalFonts(
-		designDir,
-		resolvedFonts,
-		reads.bytes,
-		designPathResolver(designDir, host.files),
-	);
-	// A walk is one document, and a frame with a theme carries its own fonts: once
-	// one does, the project's ride each frame without a theme rather than the
-	// whole walk, so they switch with the frame as its tokens do.
-	const perFrame = frameStyles.some((frame) => frame.themed);
-	const fonts = perFrame ? undefined : projectFonts;
-	const transitions = reads.text(join(shared, "transitions.css"));
-	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
+	};
+	/**
+	 * Stylesheets someone is waiting on, asked for before the pool reached them:
+	 * a play's opening frame, a walk's destination. The pool lets them go
+	 * first, rather than queueing them on the stylesheet workers behind its own.
+	 */
+	const urgent = new Set<Promise<BuiltStyle>>();
+	const style = (name: string): Promise<BuiltStyle> => {
+		const known = building.get(name);
+		if (known !== undefined) return known;
+		const ref = refs.get(name);
+		if (ref === undefined) return Promise.reject(new Error(`frame "${name}" is not in this composition`));
+		const begun = buildStyle(ref);
+		building.set(name, begun);
+		return begun;
+	};
+	const styleNow = (name: string): Promise<BuiltStyle> => {
+		const known = building.get(name);
+		if (known !== undefined) return known;
+		const begun = style(name);
+		urgent.add(begun);
+		const settle = () => urgent.delete(begun);
+		begun.then(settle, settle);
+		return begun;
+	};
 
-	const settled = reads.settled();
-	const digests = reads.digests();
-	const inputsKey = inputsHash(version, stamp, designDir, digests);
-	const names = frames.map((ref) => ref.name);
-	const { entry, chunks, screens } = composed.composition;
-	const styles = new Map<string, string>();
-	for (const frame of frameStyles) {
-		const riding = perFrame && !frame.themed ? projectFonts : undefined;
-		const style = kept.get(frame.name);
-		const own = style !== undefined && style.css === frame.css ? style : undefined;
-		let chunk = own?.chunk;
-		if (chunk === undefined || chunk.fonts !== riding) {
-			const css = withFonts(riding, frame.css);
-			chunk = {
-				fonts: riding,
-				css,
-				name: `styles/frame-${createHash("sha256").update(css).digest("hex").slice(0, 16)}.css`,
+	let extrasOnce: Promise<PlayerExtras> | undefined;
+	const extras = () => {
+		extrasOnce ??= (async () => {
+			const resolvedFonts = await webfonts.resolve(reads.text(join(shared, "fonts.css")));
+			// read the moment the fonts resolve, as the frame compiler does (#80)
+			const fontsRevision = webfonts.revision();
+			const { css: projectFonts } = inlineLocalFonts(
+				designDir,
+				resolvedFonts,
+				reads.bytes,
+				designPathResolver(designDir, host.files),
+			);
+			return {
+				projectFonts,
+				fontsRevision,
+				transitions: reads.text(join(shared, "transitions.css")),
+				importMap: mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins()),
 			};
-			if (own !== undefined) own.chunk = chunk;
+		})();
+		return extrasOnce;
+	};
+
+	const done = (async (): Promise<ComposedPlayer> => {
+		const { composition, broken } = await composed;
+		const frameStyles = await mapConcurrent(frames, 8, async (ref) => {
+			while (urgent.size > 0) await Promise.allSettled(urgent);
+			return style(ref.name);
+		});
+		const { projectFonts, fontsRevision, transitions, importMap } = await extras();
+		// A walk is one document, and a frame with a theme carries its own fonts: once
+		// one does, the project's ride each frame without a theme rather than the
+		// whole walk, so they switch with the frame as its tokens do.
+		const perFrame = frameStyles.some((frame) => frame.themed);
+		const fonts = perFrame ? undefined : projectFonts;
+
+		const settled = reads.settled();
+		const digests = reads.digests();
+		const inputsKey = inputsHash(version, stamp, designDir, digests);
+		const names = frames.map((ref) => ref.name);
+		const { entry, chunks, screens } = composition;
+		const styles = new Map<string, string>();
+		for (const frame of frameStyles) {
+			const riding = perFrame && !frame.themed ? projectFonts : undefined;
+			const style = kept.get(frame.name);
+			const own = style !== undefined && style.css === frame.css ? style : undefined;
+			let chunk = own?.chunk;
+			if (chunk === undefined || chunk.fonts !== riding) {
+				chunk = styleChunk(riding, frame.css);
+				if (own !== undefined) own.chunk = chunk;
+			}
+			styles.set(frame.name, chunk.name);
+			chunks.set(chunk.name, chunk.css);
 		}
-		styles.set(frame.name, chunk.name);
-		chunks.set(chunk.name, chunk.css);
-	}
-	// A bundle a file moved under while it compiled (a stylesheet two frames read
-	// differently) is named by its own contents, as a frame document is by its
-	// bytes, so no revalidation takes it for the sources now. It is never cached.
-	// A settled bundle carries the webfont revision in its name, as a frame
-	// document's etag does (#80), since a resolve changes its fonts alone.
-	const hash = settled
-		? createHash("sha256").update(`${inputsKey}\0${fontsRevision}`).digest("hex")
-		: createHash("sha256")
-				.update(JSON.stringify([entry, [...chunks], fonts, transitions, importMap]))
-				.digest("hex");
+		// A bundle a file moved under while it compiled (a stylesheet two frames read
+		// differently) is named by its own contents, as a frame document is by its
+		// bytes, so no revalidation takes it for the sources now. It is never cached.
+		// A settled bundle carries the webfont revision in its name, as a frame
+		// document's etag does (#80), since a resolve changes its fonts alone.
+		const hash = settled
+			? createHash("sha256").update(`${inputsKey}\0${fontsRevision}`).digest("hex")
+			: createHash("sha256")
+					.update(JSON.stringify([entry, [...chunks], fonts, transitions, importMap]))
+					.digest("hex");
+		return {
+			stamp,
+			inputs: [...digests.keys()],
+			hash: inputsKey,
+			fonts: fontsRevision,
+			broken: [...broken.keys()],
+			settled,
+			bundle: {
+				entry,
+				chunks,
+				screens,
+				styles,
+				fonts,
+				transitions,
+				importMap,
+				names,
+				hash,
+			},
+		};
+	})();
+	// a compile nobody awaits yet must not report an unhandled rejection
+	done.catch(() => {});
+	return { frames, composed, style: styleNow, extras, done };
+}
+
+/** A frame's stylesheet as a served module: its css with any fonts riding it, named by content. */
+function styleChunk(riding: string | undefined, css: string): { fonts: string | undefined; css: string; name: string } {
+	const sheet = withFonts(riding, css);
 	return {
-		stamp,
-		inputs: [...digests.keys()],
-		hash: inputsKey,
-		fonts: fontsRevision,
-		broken: [...composed.broken.keys()],
-		settled,
-		bundle: {
-			entry,
-			chunks,
-			screens,
-			styles,
-			fonts,
-			transitions,
-			importMap,
-			names,
-			hash,
-		},
+		fonts: riding,
+		css: sheet,
+		name: `styles/frame-${createHash("sha256").update(sheet).digest("hex").slice(0, 16)}.css`,
+	};
+}
+
+/**
+ * A player that can open on `start` before the rest of its stylesheets are
+ * built (SPOOL-165): the composition, the start frame's stylesheet, and for
+ * every other frame a name that answers once that frame's is built. Those
+ * names belong to this bundle alone (`id`), so each is still one sheet for
+ * good and may be cached as such.
+ *
+ * Whether any frame carries a theme is not known until every stylesheet is,
+ * so the project's fonts ride each frame without a theme, as they do once any
+ * frame has one. In a walk where none does that is the same faces on every
+ * screen, only carried by the screen rather than the document.
+ */
+export async function partialPlayer(compilation: PlayerCompilation, start: string, id: string): Promise<PlayerBundle> {
+	const { composition } = await compilation.composed;
+	const [opening, { projectFonts, transitions, importMap }] = await Promise.all([
+		compilation.style(start),
+		compilation.extras(),
+	]);
+	const sheet = (style: BuiltStyle) => styleChunk(style.themed ? undefined : projectFonts, style.css);
+	const chunks = new Map(composition.chunks);
+	const styles = new Map<string, string>();
+	const later = new Map<string, () => Promise<string | undefined>>();
+	compilation.frames.forEach((ref, index) => {
+		if (ref.name === start) {
+			const chunk = sheet(opening);
+			chunks.set(chunk.name, chunk.css);
+			styles.set(ref.name, chunk.name);
+			return;
+		}
+		const name = `styles/later-${id}-${index}.css`;
+		styles.set(ref.name, name);
+		// asked for only when a walk needs it: the pool reaches the rest in its own time
+		let asked: Promise<string | undefined> | undefined;
+		later.set(name, () => {
+			asked ??= compilation.style(ref.name).then(
+				(style) => sheet(style).css,
+				() => undefined,
+			);
+			return asked;
+		});
+	});
+	return {
+		entry: composition.entry,
+		chunks,
+		screens: composition.screens,
+		styles,
+		later,
+		fonts: undefined,
+		transitions,
+		importMap,
+		names: compilation.frames.map((ref) => ref.name),
+		hash: createHash("sha256").update(`partial\0${id}`).digest("hex"),
 	};
 }
 
@@ -308,7 +457,7 @@ async function mapConcurrent<Input, Output>(
 }
 
 /** The split build of the composition: modules by served name, and what each screen needs. */
-interface Composition {
+export interface Composition {
 	sourceFiles: string[];
 	entry: string;
 	chunks: Map<string, string>;

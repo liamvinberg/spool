@@ -479,6 +479,74 @@ describe("serving the player", () => {
 		expect(configOf(await grown.text()).frames.receipt).toBeDefined();
 	});
 
+	it("opens a cold play on its start frame's stylesheet while the rest build behind it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		// enough frames that none of their stylesheets is built yet: a cold compile
+		const frames = Array.from({ length: 9 }, (_, index) => `screen-${index}`);
+		for (const [index, frame] of frames.entries()) {
+			writeFrame(root, frame, `export default () => <main className="m-[${index + 11}px]">${frame}</main>;\n`);
+		}
+		const app = makeApp(spoolDir);
+
+		const first = await app.request(`/play/${name}?frame=screen-4`);
+		expect(first.status).toBe(200);
+		expect(first.headers.get("x-spool-cache")).toBe("partial");
+		// one moment of a compile still running: never kept, never revalidated
+		expect(first.headers.get("cache-control")).toBe("no-store");
+		expect(first.headers.get("etag")).toBeNull();
+		const doc = await first.text();
+		expect(doc).toContain('data-spool-frame-style="screen-4"');
+		const config = configOf(doc) as ReturnType<typeof configOf> & { styles: Record<string, string> };
+		expect(config.styles["screen-4"]).toMatch(/^styles\/frame-/);
+		expect(await (await app.request(`/play/${name}/-/${config.styles["screen-4"]}`)).text()).toContain(
+			".m-\\[15px\\]",
+		);
+
+		// every other frame is named now and answers once its stylesheet is built
+		for (const [index, frame] of frames.entries()) {
+			if (frame === "screen-4") continue;
+			expect(config.styles[frame]).toMatch(/^styles\/later-/);
+			const later = await app.request(`/play/${name}/-/${config.styles[frame]}`);
+			expect(later.status).toBe(200);
+			expect(later.headers.get("content-type")).toContain("text/css");
+			expect(later.headers.get("cache-control")).toContain("immutable");
+			const css = await later.text();
+			expect(css).toContain(`.m-\\[${index + 11}px\\]`);
+		}
+		// the opening screen's modules are the whole composition's
+		const composed = await compositionOf(app, doc);
+		expect(composed.all).toContain("screen-8");
+
+		// and once the compile behind it ends, a play is the whole player, cached
+		await expect
+			.poll(async () => (await app.request(`/play/${name}?frame=screen-4`)).headers.get("x-spool-cache"), {
+				timeout: 10_000,
+			})
+			.toBe("hit");
+		const whole = configOf(await (await app.request(`/play/${name}?frame=screen-4`)).text()) as ReturnType<
+			typeof configOf
+		> & { styles: Record<string, string> };
+		expect(Object.values(whole.styles).every((style) => style.startsWith("styles/frame-"))).toBe(true);
+	});
+
+	it("serves a play after an edit the whole player, never a partial one", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const frames = Array.from({ length: 9 }, (_, index) => `screen-${index}`);
+		for (const frame of frames) writeFrame(root, frame, `export default () => <main>${frame}</main>;\n`);
+		const app = makeApp(spoolDir);
+		// the cold compile, run to its end
+		await app.request(`/play/${name}`);
+		await expect
+			.poll(async () => (await app.request(`/play/${name}`)).headers.get("x-spool-cache"), { timeout: 10_000 })
+			.toBe("hit");
+
+		writeFrame(root, "screen-2", 'export default () => <main className="p-9">edited</main>;\n');
+		const edited = await app.request(`/play/${name}`);
+		expect(edited.headers.get("x-spool-cache")).toBe("miss");
+	});
+
 	it("keeps the player playable when one frame will not compile", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = scaffold(spoolDir);
