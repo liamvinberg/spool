@@ -13,10 +13,10 @@ import {
 } from "../test-helpers";
 
 /**
- * A turn's grid and its companion in a real browser (#365, #366): what only a page can
- * say once the transcript, the rail and the canvas are wired together. The grid stands two
- * across while the turn runs and three once it is over; a companion left alone dims after
- * about two seconds; and a frame the turn deleted comes back from the rail's Put back.
+ * A turn's grid and the frame it is at in a real browser (#365, task 164): what only a page
+ * can say once the transcript, the rail and the canvas are wired together. The grid stands two
+ * across while the turn runs and three once it is over; the frame the agent is at says working
+ * on its name row; and a frame the turn deleted comes back from the rail's Put back.
  *
  * The agent is a fixture that does on disk what it says it did, in the order a real one
  * does it: the file first, then the result.
@@ -32,7 +32,7 @@ const CART = `export default function Cart() {
 `;
 const PROMPT = "make a cart and drop home";
 
-it("runs a turn's grid two across, then three, dims an idle companion and puts a frame back", {
+it("runs a turn's grid two across, then three, says working on the frame and puts a frame back", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -112,15 +112,10 @@ it("runs a turn's grid two across, then three, dims an idle companion and puts a
 	await field.fill(PROMPT);
 	await field.press("Enter");
 
-	// the companion at the frame it wrote, full strength, then dimmed once left alone
-	const square = page.locator('[data-agent-companion="main"][data-frame="cart"] [data-companion-square]');
-	await square.waitFor({ state: "attached", timeout: 30_000 });
-	const opacity = () => square.evaluate((element) => (element as HTMLElement).style.opacity).catch(() => null);
-	await expect.poll(opacity, { timeout: 10_000 }).toBe("1");
-	const idleFrom = Date.now();
-	await expect.poll(opacity, { timeout: 10_000, interval: 100 }).toBe("0.45");
-	// about two seconds, not at once
-	expect(Date.now() - idleFrom).toBeGreaterThan(1200);
+	// the frame it wrote says on its name row that the agent is working there
+	await page
+		.locator('[data-frame-label="cart"] [data-frame-agents="cart"]')
+		.waitFor({ state: "attached", timeout: 30_000 });
 
 	// while the turn runs the grid is two across
 	const grid = page.locator("[data-agent-rail] [data-agent-turn] [data-agent-tiles]").last();

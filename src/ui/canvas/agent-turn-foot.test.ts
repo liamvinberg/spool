@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { turnLayout } from "./agent-rail";
 import { type AgentEntry, footed, type Stamped, settledPicture, transcriptOf } from "./agent-transcript";
-import { captionOf, clockOf, receiptOf, spokenDuration } from "./agent-turn-foot";
+import { captionOf, clockOf, readingPhase, receiptOf, spokenDuration } from "./agent-turn-foot";
 
 /*
  * A turn's foot (#365): the frames it touched and its one status line, folded off the
@@ -212,6 +212,15 @@ describe("the turn's grid", () => {
 		const [kept] = settledPicture([foot as AgentEntry]);
 		expect(kept?.kind === "turn" && kept.tiles.map((tile) => [tile.frame, tile.state])).toEqual([["home", "done"]]);
 		expect(kept?.kind === "turn" && kept.ending).toBe("stopped");
+	});
+});
+
+describe("what a reading designer is at", () => {
+	it("reads, draws or checks by its step's first verb", () => {
+		expect(readingPhase(undefined)).toBe("Reading");
+		expect(readingPhase("Running Read the home frame")).toBe("Reading");
+		expect(readingPhase("Running Write the frame, then spool check")).toBe("Drawing");
+		expect(readingPhase("Running spool check and shot")).toBe("Checking");
 	});
 });
 

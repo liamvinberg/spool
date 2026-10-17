@@ -2,9 +2,6 @@
 	"src/ui/canvas/agent-ask-view.tsx": {
 		"ad-hoc-motion": 7
 	},
-	"src/ui/canvas/agent-companion-layer.tsx": {
-		"ad-hoc-motion": 4
-	},
 	"src/ui/canvas/agent-composer.tsx": {
 		"ad-hoc-motion": 5
 	},
