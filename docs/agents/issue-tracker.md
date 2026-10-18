@@ -1,42 +1,39 @@
-# Issue tracker: Plane
+# Issue tracker: agent-hub's tracker
 
-spool's issues, specs and Wayfinder maps live in Plane, self-hosted at [plane.devosurf.dev](https://plane.devosurf.dev): workspace `devosurf`, project `SPOOL`. An issue is named `SPOOL-N` and links as `https://plane.devosurf.dev/devosurf/browse/SPOOL-N/`.
+The skills say issue; here an issue is a **ticket**, and the issue tracker is agent-hub's tracker. Tickets and specs for spool live in agent-hub's tracker: the service keeps them, and Desk, Liam's page of every project's tickets, shows them: lists, a board, a map's graph, and each ticket's page, where he starts its runs. Work them with the four tools in the `tickets` group (`create_ticket`, `get_ticket`, `list_tickets`, `update_ticket`), which only codemode scripts reach; `describeNamespace("tickets")` gives their parameters. They return typed data, so one script can read, filter and change several tickets.
 
-Agents reach Plane through the `plane` MCP group (codemode scripts: `describeNamespace("mcp__plane")`). It is a small server for this setup (on devobee, `~/.config/agent-hub/bin/plane_tracker.py`; its API key is in `~/.config/agent-hub/plane.env`) with five tools: `list_projects`, `get_issue`, `list_issues`, `create_issue`, `update_issue`. Bodies and comments go in and come out as Markdown.
+A ticket is `#12` within spool and `spool#12` from another project; the tools take either. A bare `#12` is always a ticket: pull requests are not part of the tracker.
 
 ## Conventions
 
-- **Create an issue**: `create_issue` with `project: "SPOOL"`, a `title`, a Markdown `body` and its `labels`; `parent` and `blockedBy` (`SPOOL-N`) when they're known.
-- **Read an issue**: `get_issue`, which returns its body, comments, labels, state, claim, parent, children, blockers (each with whether it's still open), what it blocks, related issues and its link.
-- **List issues**: `list_issues` by `project` or `parent`, filtered by `label` and `state` (`open`, the default, `closed` or `all`); `frontier: true` for the ones ready to work on. No bodies: read those with `get_issue`.
-- **Comment**: `update_issue` with `comment`.
-- **Labels**: `update_issue` with `addLabels` / `removeLabels`, by name; a new label is made on first use. The triage labels are in `docs/agents/triage-labels.md`.
-- **Close**: `update_issue` with `close: true` (Done), and a `comment` when there's an answer to record. A rejected issue: `close: true, reason: "wontfix"` (Cancelled, label added). Reopen with `reopen: true`.
-- **Parent/child**: `parent` on `create_issue` or `update_issue`; `clearParent: true` removes it.
-- **Blocking**: `blockedBy` on `create_issue`, `addBlockedBy` on `update_issue`. Removing a blocker isn't in Plane's API for this edition: do it in Plane's UI, or ask Liam.
+- **Create a ticket**: `create_ticket` with a `title`, a markdown `body` and its `labels`; `parent`, `blockedBy` and `model` too when they're known.
+- **Read a ticket**: `get_ticket`, which returns its `body`, `labels`, `state`, `parent`, `children`, `blockedBy`, `comments` (author, text, time), `files`, `model`, linked `tasks` and `page` (its Desk link, for answers) in one call.
+- **List tickets**: `list_tickets`, filtered by `label`, `state` (`open`, the default, `closed` or `all`) and `parent`; `frontier: true` for the ones ready to work on. It leaves out bodies and comments: read those with `get_ticket`.
+- **Comment**: `update_ticket` with `comment`. Comments are where findings and context go: Desk shows them on the ticket's page.
+- **Labels**: `update_ticket` with `addLabels` and `removeLabels`. A ticket has at most 5. The labels are in `docs/agents/triage-labels.md`; a project can add up to 8 of its own, made on first use.
+- **Close**: `update_ticket` with `close: true`, and a `comment` when there's an answer to record. Close a rejected ticket with the `wontfix` label added and `reason: "wontfix"`. Reopen with `reopen: true`.
+- **Parent/child**: the ticket's `parent`, set on `create_ticket` or `update_ticket` (`parent: null` clears it); `get_ticket` lists the `children`.
+- **Blocking**: the ticket's `blockedBy`, a list of tickets: `blockedBy` on `create_ticket`, `addBlockedBy` and `removeBlockedBy` on `update_ticket`. A ticket is unblocked when every blocker is closed.
+- **Model**: `model` (`provider/model:thinking`) on `create_ticket` or `update_ticket` sets the model the ticket's runs use; `model: null` clears it. Leave it unset unless Liam asks: the defaults by run type decide.
 
 PRs as a request surface: no.
 
 ## When a skill says "publish to the issue tracker"
 
-Create an issue in project `SPOOL` with `create_issue`. For a set of tickets, create them blockers first, each with its `parent` and its `blockedBy` naming the issues just made.
+Create a ticket in spool with `create_ticket`. For a set of tickets, create them blockers first, each with its `parent` and its `blockedBy` naming the tickets just made.
 
 ## When a skill says "fetch the relevant ticket"
 
-`get_issue` by `SPOOL-N`, comments included.
+Read the ticket with `get_ticket`, by `#N` or `spool#N`, comments included.
 
 ## Wayfinding operations
 
-Used by `/wayfinder`. The map is a Plane issue; its tickets are its children.
+Used by `/wayfinder`.
 
-- **Map**: one issue labelled `wayfinder:map`, holding Destination, Notes, Decisions so far, Not yet specified and Out of scope. Find the open maps with `list_issues({ project: "SPOOL", label: "wayfinder:map" })`. The latest map is [Wayfinder map: Spool Cloud public launch](https://plane.devosurf.dev/devosurf/browse/SPOOL-89/) (`SPOOL-89`).
-- **Ticket**: a child of the map labelled `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling` or `wayfinder:task`.
-- **Blocking**: Plane's native "blocked by" relation. A ticket is unblocked when every blocker is Done or Cancelled.
-- **Frontier**: `list_issues({ parent: MAP, frontier: true })`: the map's open, unclaimed children with no open blocker. First in number order wins.
-- **Claim**: `update_issue({ issue, claim: true })`, the session's first write: it assigns the ticket to Liam, and is refused when the ticket is already claimed, so take another from the frontier then.
-- **Resolve**: `update_issue` with the answer as `comment` and `close: true`, then `update_issue` on the map with its whole `body` again, a one-line gist and link under "Decisions so far". Graduate fog from "Not yet specified" into new child tickets as it becomes answerable.
-- **Specs and build tickets** are the handoff after the map: no parent, no `wayfinder:` label; link the decision they come from.
-
-## GitHub issues
-
-GitHub Issues on `liamvinberg/spool` take reports from outside only. Triage one by moving what is still wanted into Plane and closing it on GitHub, with a comment that names no private detail.
+- **Map**: one ticket labelled `wayfinder:map`, its body holding Notes / Decisions so far / Fog. Find the open maps with `list_tickets({ label: "wayfinder:map", state: "open" })`.
+- **Child ticket**: a ticket whose `parent` is the map, labelled `wayfinder:grilling` (a decision with Liam), `wayfinder:prototype` (built, then judged with Liam), `wayfinder:research` (an agent runs it end to end) or `wayfinder:task` (work that unblocks a decision).
+- **Blocking**: the ticket's `blockedBy` (`addBlockedBy` on `update_ticket`); it is unblocked when every blocker is closed.
+- **Frontier**: `list_tickets({ parent: map, frontier: true })`: the map's open children whose blockers are all closed and that no open task holds. First in map order wins.
+- **Claim**: a ticket is claimed while a task linked to it is open; there is no assignee. A task started from the ticket in Desk, or by autopilot, is linked to it already. To claim a ticket you picked yourself, call `update_ticket({ ticket, claim: true })` before working it: it links your task (a worker's claim is its task's), and is refused while another open task holds the ticket, so take another from the frontier then.
+- **Resolve**: `update_ticket` with the answer as `comment` and `close: true`, then `update_ticket` on the map with its whole `body` again, a one-line gist with `#N` added under "Decisions so far". Graduate fog from "Not yet specified" into new child tickets as it becomes answerable.
+- **Autopilot**: a map Liam started autopilot on (Start on the map's page in Desk) starts its frontier tickets by itself, each as a task in the map's own channel, linked to the ticket. Closing any ticket starts the tickets it unblocks, so close a ticket as soon as it is resolved; tickets your run makes or unblocks start once the run ends, so set a new ticket's blockers in the same run that makes it. Pause stops new starts; closing the map ends autopilot.
