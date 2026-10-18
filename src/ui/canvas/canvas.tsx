@@ -1,6 +1,16 @@
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+	type ComponentProps,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
+import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
@@ -57,14 +67,17 @@ import { useStableCallback } from "../stable-callback";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
-import { useAgentDefaults } from "./agent-defaults";
-import { useAgentModel } from "./agent-model";
+import type { AgentCompanion } from "./agent-companion";
+import { AgentDeckHost, createDeckStore, type DeckStore, useDeck, useWholeDeck } from "./agent-deck";
+import { type AgentDefaultsDeck, useAgentDefaults } from "./agent-defaults";
+import { type AgentModelDeck, useAgentModel } from "./agent-model";
 import { FADE_OUT_MS, useHeld, useLeaving } from "./agent-motion";
 import { frameHolding } from "./agent-nouns";
 import { useAgentPermissions } from "./agent-permissions";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type AgentRequest, type FrameJump } from "./agent-rail";
-import { useAgentThreads } from "./agent-stream";
+import type { AgentDeck } from "./agent-stream";
+import type { AgentTile } from "./agent-transcript";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
 import { frameScheme, framesOnScreen } from "./booth-view";
@@ -349,15 +362,7 @@ export function ownsFrameMessage(
 	return source !== null && iframes.get(frame)?.contentWindow === source;
 }
 
-export function ProjectCanvas({
-	project,
-	root,
-	onChrome,
-	onRename,
-	onFolder,
-	focusName,
-	onNameFocused,
-}: {
+interface ProjectCanvasProps {
 	project: string;
 	root?: string;
 	focusName?: boolean | undefined;
@@ -365,7 +370,40 @@ export function ProjectCanvas({
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
-}) {
+}
+
+/**
+ * The canvas, with the project's agent threads running beside it rather than inside it
+ * (task 169): a turn's ticks redraw the threads' host and the parts of the canvas that
+ * read what moved, and the canvas element itself is made here, once, so they stop there.
+ */
+export function ProjectCanvas(props: ProjectCanvasProps) {
+	// the machine's agent choice (#361): nothing agent-shaped is drawn until it has loaded
+	const agentDefaults = useAgentDefaults(props.project);
+	const [deck] = useState(createDeckStore);
+	return (
+		<AgentDeckHost
+			store={deck}
+			project={props.project}
+			preferred={agentDefaults.engine ?? undefined}
+			root={props.root}
+		>
+			<CanvasField {...props} deck={deck} agentDefaults={agentDefaults} />
+		</AgentDeckHost>
+	);
+}
+
+function CanvasField({
+	project,
+	root,
+	onChrome,
+	onRename,
+	onFolder,
+	focusName,
+	onNameFocused,
+	deck,
+	agentDefaults,
+}: ProjectCanvasProps & { deck: DeckStore; agentDefaults: AgentDefaultsDeck }) {
 	/**
 	 * The camera (#81): one value outside React, drawn once per animation frame
 	 * by whatever follows it. A wheel tick moves it and renders nothing.
@@ -556,28 +594,29 @@ export function ProjectCanvas({
 			...visiblePlaceholdersOf(state).map(({ x, y, w, h }) => ({ x, y, w, h })),
 		];
 	}, [store]);
-	// the agent rail's one turn (#192). It owns the stream and nothing else here has
-	// to know about it: a frame the turn writes lands as an ordinary `change` event,
-	// so the canvas repaints while the transcript is still arriving.
-	// the machine's agent choice (#361): nothing agent-shaped is drawn until it has loaded
-	const agentDefaults = useAgentDefaults(project);
-	const preferredEngine = agentDefaults.engine ?? undefined;
-	const deck = useAgentThreads(project, preferredEngine, root);
-	const turn = deck.turn;
-	const permissions = useAgentPermissions(project, deck.open, turn.phase, agentDefaults.mode);
+	// the agent rail's turns (#192). They run beside the canvas (task 169), and a frame a
+	// turn writes lands as an ordinary `change` event, so the canvas repaints while the
+	// transcript is still arriving. What is read here is the little the canvas draws itself
+	const deckOpen = useDeck(deck, (one) => one.open);
+	const deckEngine = useDeck(deck, (one) => one.engine);
+	const turnPhase = useDeck(deck, (one) => one.turn.phase);
+	const threadWaiting = useDeck(deck, (one) => one.threads.some((thread) => thread.life === "waiting"));
+	const threadElsewhere = useDeck(deck, (one) =>
+		one.threads.some((thread) => thread.id !== one.open && thread.life !== "read"),
+	);
+	const permissions = useAgentPermissions(project, deckOpen, turnPhase, agentDefaults.mode);
 	const syncState = useSyncState(project);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
-	const install = useAgentInstall(project, deck.engine, deck.open);
+	const install = useAgentInstall(project, deckEngine, deckOpen);
 	/**
 	 * Clashes' Ask agent to fix: one press opens a new thread and sends it every clashed file, with
 	 * where both sides are. The rail opens on it. Where the rail has nowhere to put words yet, the
 	 * composer holds them for the person to send. With no agent on this machine, the prompt is copied.
 	 */
-	const { running: turnRunning, queue: queueTurn, send: sendTurn } = turn;
 	const fixing = useRef<{ text: string; from: string } | null>(null);
-	const onNewThread = deck.onNew;
+	const onNewThread = useCallback(() => deck.get().onNew(), [deck]);
 	const noAgent = install.none;
 	const fixClashes = useMemo(
 		() => ({
@@ -590,39 +629,30 @@ export function ProjectCanvas({
 						.then(() => setNotice({ kind: "success", message: "Prompt copied: paste it into your agent" }));
 					return;
 				}
-				fixing.current = { text, from: deck.open };
+				fixing.current = { text, from: deck.get().open };
 				onNewThread();
 			},
 		}),
-		[noAgent, onNewThread, deck.open],
+		[noAgent, onNewThread, deck],
 	);
 	useEffect(() => {
 		const asked = fixing.current;
 		// the new thread is open: the words go to it
-		if (asked === null || asked.from === deck.open) return;
+		if (asked === null || asked.from === deckOpen) return;
 		fixing.current = null;
-		const took = turnRunning() ? queueTurn(asked.text) : sendTurn(asked.text);
+		const turn = deck.get().turn;
+		const took = turn.running() ? turn.queue(asked.text) : turn.send(asked.text);
 		setAgentRequest({
 			id: crypto.randomUUID(),
-			thread: deck.open,
+			thread: deckOpen,
 			...(took ? {} : { prepared: { intent: "set-aside", text: asked.text, selection: [] } }),
 		});
-	}, [deck.open, turnRunning, queueTurn, sendTurn]);
+	}, [deckOpen, deck]);
 	const setAside = useSetAside(project, fixClashes);
 	// which machine is answering, asked of that machine rather than shipped (#118, #199).
 	// Keyed on the open thread, because that is what the answer is about: the rows are the
 	// binary's and the same for every thread, and which of them is answering is not.
-	const offeredModel = useAgentModel(project, deck.open, deck.engine);
-	const model = {
-		...offeredModel,
-		started: turn.entries.length > 0,
-		// saved before the menu moves: the blank chat then follows the confirmed choice
-		onEngine: (engine: AgentEngineId) =>
-			agentDefaults.choose(engine).then((confirmed) => {
-				if (confirmed) deck.follow();
-				return confirmed;
-			}),
-	};
+	const offeredModel = useAgentModel(project, deckOpen, deckEngine);
 	/**
 	 * What a row in the rail can do about the frame it names (#143, #194).
 	 *
@@ -1249,35 +1279,38 @@ export function ProjectCanvas({
 
 	// where each working agent is on the canvas (#366). A call on a file in a frame's own
 	// subfolder names that subfolder (#336): the agent is at the frame holding it
+	const ownCompanions = useDeck(deck, (one) => one.turn.companions, sameCompanions);
 	const companions = useMemo(
 		() =>
-			turn.companions.map((one) =>
+			ownCompanions.map((one) =>
 				one.frame === null ? one : { ...one, frame: frameHolding(one.frame, reach.have) },
 			),
-		[turn.companions, reach],
+		[ownCompanions, reach],
 	);
 	/** the agents at each frame and placeholder, this canvas's and teammates', said on its name row */
 	const agentsAt = useFrameAgents(presenceRoom, companions, team);
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
-	const askFooted = !railShown && turn.phase === "asking";
+	const askFooted = !railShown && turnPhase === "asking";
+	const answerAsk = useCallback(
+		(request: string, reply: AgentReply) => deck.get().turn.answer(request, reply),
+		[deck],
+	);
+	const askStanding = useDeck(deck, (one) => (askFooted ? standingAskOf(one.turn.entries) : null));
 	/**
 	 * The ask that stands on the canvas, and what it hangs from: the frame its agent is at,
 	 * or the spot reserved for a designer's frame before it has one. None where it is about
 	 * neither.
 	 */
 	const footedAsk = useMemo(() => {
-		if (!askFooted) return null;
-		const entry = turn.entries.find(
-			(one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null,
-		);
-		if (entry === undefined) return null;
+		const entry = askStanding;
+		if (entry === null) return null;
 		const by = companions.find(
 			(one) => one.key === (entry.delegation ?? "") && (one.frame !== null || one.spot !== null),
 		);
 		if (by === undefined) return null;
 		return { entry, frame: by.frame, spot: by.spot };
-	}, [askFooted, turn.entries, companions]);
+	}, [askStanding, companions]);
 	// answered, or the rail opened, the card fades where it stood rather than vanishing
 	const footedShown = useLeaving(footedAsk !== null, FADE_OUT_MS);
 	const footedLast = useHeld(footedAsk);
@@ -1914,7 +1947,7 @@ export function ProjectCanvas({
 					: store.get().picked.find((held) => held.frame === from.frame && held.selector === from.selector);
 			setAgentRequest({
 				id: crypto.randomUUID(),
-				thread: deck.open,
+				thread: deck.get().open,
 				...(from === undefined
 					? {}
 					: {
@@ -1926,7 +1959,7 @@ export function ProjectCanvas({
 						}),
 			});
 		},
-		[deck.open, store],
+		[deck, store],
 	);
 
 	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
@@ -4324,7 +4357,7 @@ export function ProjectCanvas({
 			),
 		[frames, project],
 	);
-	const putBack = turn.putBack;
+	const putBack = useCallback((tile: AgentTile) => deck.get().turn.putBack(tile), [deck]);
 	const jump = useMemo<FrameJump>(
 		() => ({
 			have: reach.have,
@@ -4957,38 +4990,26 @@ export function ProjectCanvas({
 			title: "Agent",
 			icon: <AgentIcon />,
 			hotkey: "panes.agent",
-			working: turn.phase === "playing",
+			working: turnPhase === "playing",
 			// a turn of any chat stopped on a question only a person can answer (#366)
-			waiting: turn.phase === "asking" || deck.threads.some((thread) => thread.life === "waiting"),
+			waiting: turnPhase === "asking" || threadWaiting,
 			// another chat is running, waiting on a person, or landed unread (#364)
-			elsewhere: deck.threads.some((thread) => thread.id !== deck.open && thread.life !== "read"),
+			elsewhere: threadElsewhere,
 			focus: (body) => body.querySelector("textarea")?.focus({ preventScroll: true }),
 			render: ({ width, visible }) => (
-				<AgentRail
+				<DeckRail
+					deck={deck}
 					active={visible}
-					agentReady={deck.engine !== undefined || deck.legacy}
-					legacy={deck.legacy}
 					request={agentRequest}
 					// an agent that never asks has no mode to pick, so the rail draws no mode menu (#363);
 					// nor does one whose word on it has not come, so pi's never flashes in (#364)
-					permissions={model.modes === true ? permissions : undefined}
+					permissions={offeredModel.modes === true ? permissions : undefined}
 					width={width}
-					turn={turn}
 					jump={jump}
 					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
-					threads={{
-						list: deck.threads,
-						open: deck.open,
-						finished: deck.finished,
-						onOpen: deck.onOpen,
-						onClose: deck.onClose,
-						// a chat opened on one engine (a recovery) leaves the machine's choice alone
-						onNew: deck.onNew,
-					}}
 					install={install}
-					login={deck.login}
-					model={model}
-					preferred={agentDefaults.engine}
+					offeredModel={offeredModel}
+					agentDefaults={agentDefaults}
 				/>
 			),
 		},
@@ -5302,7 +5323,7 @@ export function ProjectCanvas({
 										camera={camera}
 										frame={at}
 										entry={standingAsk.entry}
-										onAnswer={turn.answer}
+										onAnswer={answerAsk}
 										leaving={footedShown === "leaving"}
 									/>
 								);
@@ -5582,4 +5603,76 @@ function camelize(attribute: string): string {
 /** The ⌘K palette, carrying the pane window's commands from inside it. */
 function PanePalette(props: Omit<Parameters<typeof FindPalette>[0], "commands">) {
 	return <FindPalette {...props} commands={usePaneCommands()} />;
+}
+
+/**
+ * The agent's rail, drawn off the whole deck (task 169): the one part of the canvas that
+ * redraws with every tick of a turn, because the turn is what it draws.
+ */
+function DeckRail({
+	deck,
+	offeredModel,
+	agentDefaults,
+	...rail
+}: Omit<
+	ComponentProps<typeof AgentRail>,
+	"agentReady" | "legacy" | "turn" | "threads" | "login" | "model" | "preferred"
+> & {
+	deck: DeckStore;
+	offeredModel: AgentModelDeck;
+	agentDefaults: AgentDefaultsDeck;
+}) {
+	const whole = useWholeDeck();
+	return (
+		<AgentRail
+			{...rail}
+			agentReady={whole.engine !== undefined || whole.legacy}
+			legacy={whole.legacy}
+			turn={whole.turn}
+			threads={{
+				list: whole.threads,
+				open: whole.open,
+				finished: whole.finished,
+				onOpen: whole.onOpen,
+				onClose: whole.onClose,
+				// a chat opened on one engine (a recovery) leaves the machine's choice alone
+				onNew: whole.onNew,
+			}}
+			login={whole.login}
+			model={{
+				...offeredModel,
+				started: whole.turn.entries.length > 0,
+				// saved before the menu moves: the blank chat then follows the confirmed choice
+				onEngine: (engine: AgentEngineId) =>
+					agentDefaults.choose(engine).then((confirmed) => {
+						if (confirmed) deck.get().follow();
+						return confirmed;
+					}),
+			}}
+			preferred={agentDefaults.engine}
+		/>
+	);
+}
+
+/** the ask a turn is parked on, if it has a request to answer: the one that can stand on the canvas */
+function standingAskOf(entries: AgentDeck["turn"]["entries"]): AskEntry | null {
+	return entries.find((one): one is AskEntry => one.kind === "ask" && waitingAsk(one) && one.request !== null) ?? null;
+}
+
+/** whether two lists of this canvas's agents put them in the same places, saying the same */
+function sameCompanions(a: readonly AgentCompanion[], b: readonly AgentCompanion[]): boolean {
+	return (
+		a.length === b.length &&
+		a.every((one, at) => {
+			const other = b[at];
+			return (
+				other !== undefined &&
+				one.key === other.key &&
+				one.name === other.name &&
+				one.frame === other.frame &&
+				one.act === other.act &&
+				(one.spot === other.spot || (one.spot !== null && other.spot !== null && one.spot.name === other.spot.name))
+			);
+		})
+	);
 }
