@@ -13,7 +13,6 @@ import {
 	OVERVIEW_OPEN_MS,
 	type Overview,
 	openOverview,
-	overviewCamera,
 	overviewPan,
 	pointOverview,
 	sideOf,
@@ -136,21 +135,18 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 	);
 
 	/**
-	 * The overview's camera: on opening, out to its zoom; on a move of its
-	 * target, panned at the zoom it is headed for (its own, or one the wheel
-	 * chose), only as far as brings the target into view.
+	 * The overview's camera when its target moves: the zoom it stands at (the
+	 * one it opened at, or one the wheel chose), panned only as far as brings the
+	 * target into view. Opening it moves nothing.
 	 */
 	const flyOverview = useCallback(
-		(next: Overview, opening: boolean) => {
+		(next: Overview) => {
 			const target = frameNamed(next.target);
 			const size = viewSize();
-			const { camera, store } = depsRef.current;
+			const { camera } = depsRef.current;
 			const from = camera.aim();
 			if (target === undefined || size === null || from === null) return;
-			const to = opening
-				? overviewCamera(target, visibleFramesOf(store.get()), next.saved, size.w, size.h)
-				: overviewPan(from, target, size.w, size.h);
-			camera.fly(to, OVERVIEW_OPEN_MS);
+			camera.fly(overviewPan(from, target, size.w, size.h), OVERVIEW_OPEN_MS);
 		},
 		[frameNamed, viewSize],
 	);
@@ -173,9 +169,8 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 		if (from === null || saved === null) return null;
 		const next = openOverview(from.mode, from.origin, saved);
 		setOverview(next);
-		flyOverview(next, true);
 		return next;
-	}, [overviewOrigin, setOverview, flyOverview]);
+	}, [overviewOrigin, setOverview]);
 
 	const openRef = useRef(open);
 	openRef.current = open;
@@ -270,7 +265,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 				event.preventDefault();
 				const next = moveOverview(current, frames, direction);
 				setOverview(next);
-				if (next.target !== current.target) flyOverview(next, false);
+				if (next.target !== current.target) flyOverview(next);
 				return true;
 			}
 			// the arrow is another key: a ⌥ held this long no longer opens anything
@@ -292,7 +287,7 @@ export function useLiveMoves(deps: LiveMoveDeps) {
 			if (opened !== null) {
 				const next = moveOverview(opened, frames, direction);
 				setOverview(next);
-				flyOverview(next, false);
+				flyOverview(next);
 			}
 			return true;
 		},

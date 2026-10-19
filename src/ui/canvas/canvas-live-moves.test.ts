@@ -132,8 +132,8 @@ describe("moving between frames while live", () => {
 
 		await relay(host, "welcome", step("ArrowRight"));
 		expect(overviewTarget(host)).toBe("sign-up");
-		// the camera stepped back to hold sign-up and its neighbours
-		expect(cameraScale(host)).toBeLessThan(2);
+		// the zoom it was live at, never stepped back
+		expect(cameraScale(host)).toBe(2);
 		// one arrow away, each wearing the key that reaches it
 		expect(host.querySelector('[data-overview-near="welcome"]')).not.toBeNull();
 		expect(host.querySelector('[data-overview-near="verify"]')).not.toBeNull();
@@ -167,7 +167,7 @@ describe("moving between frames while live", () => {
 		expect(cameraTransform(host)).not.toBe(entered);
 	});
 
-	it("opens on ⌥ held alone a moment, and letting go without moving zooms back in, still live", async () => {
+	it("opens on ⌥ held alone a moment without moving the camera, and letting go stays live", async () => {
 		const { host } = await openCanvas();
 		await enter(host, "welcome");
 		const entered = cameraTransform(host);
@@ -176,7 +176,7 @@ describe("moving between frames while live", () => {
 		expect(overviewTarget(host)).toBeNull();
 		await wait(OVERVIEW_HOLD_MS + 40);
 		expect(overviewTarget(host)).toBe("welcome");
-		expect(cameraScale(host)).toBeLessThan(2);
+		expect(cameraTransform(host)).toBe(entered);
 		expect(labelText(host, "welcome")).toContain("let go of ⌥ to stay");
 
 		await relay(host, "welcome", { spool: "hold", phase: "up" });
@@ -611,11 +611,11 @@ describe("the overview over readable frames", () => {
 
 		await relay(host, "s0", step("ArrowRight"));
 		expect(overviewTarget(host)).toBe("s1");
-		// s5 is readable inside the overview's ring, and is left its still
-		expect(cameraScale(host)).toBeLessThan(1);
+		// the overview keeps the zoom it opened at
+		expect(cameraScale(host)).toBe(1);
 		await wait(400);
 		expect(documents(host)).toEqual(live);
-		// and so are s5 and s6 a stop further on
+		// and a stop further on
 		await relay(host, "s0", step("ArrowRight"));
 		expect(overviewTarget(host)).toBe("s2");
 		await wait(400);
@@ -631,8 +631,8 @@ describe("the overview over readable frames", () => {
 
 /**
  * A page whose frames stand in one long row, and one frame on its own in a
- * second row far to the left: down reaches it from anywhere in the row, so a
- * fit of every neighbour would take the whole row in and make each a sliver.
+ * second row far to the left: down reaches it from anywhere in the row, and
+ * the overview tells it at the view's edge rather than stepping back to it.
  */
 describe("the overview over a long row and one far frame", () => {
 	const row = Array.from({ length: 8 }, (_, i) => ({ name: `r${i}`, x: i * 180, y: 0, w: 100, h: 100 }));
@@ -643,14 +643,13 @@ describe("the overview over a long row and one far frame", () => {
 
 	const away = (host: HTMLElement, selector: string) => host.querySelector(selector)?.hasAttribute("data-away");
 
-	/** The zoom held, the stray told at the bottom edge, and the arrow down panning to it at that zoom. */
-	async function stepsToStray(host: HTMLElement, press: (key: string) => Promise<void>) {
+	/** The zoom never stepped back, the stray told at the bottom edge, and the arrow down panning to it at that zoom. */
+	async function stepsToStray(host: HTMLElement, press: (key: string) => Promise<void>, near: string) {
 		const k = cameraScale(host);
-		expect(k).toBeLessThan(CLOSE.k);
-		expect(k).toBeGreaterThanOrEqual(CLOSE.k / 2);
-		// the row's neighbours ringed where they stand, the stray pinned to the edge it lies past
-		expect(away(host, '[data-overview-near="r4"]')).toBe(false);
-		expect(away(host, '[data-overview-edge="r4"]')).toBe(true);
+		expect(k).toBe(CLOSE.k);
+		// a neighbour on screen ringed where it stands, the stray pinned to the edge it lies past
+		expect(away(host, `[data-overview-near="${near}"]`)).toBe(false);
+		expect(away(host, `[data-overview-edge="${near}"]`)).toBe(true);
 		expect(away(host, '[data-overview-near="stray"]')).toBe(true);
 		const tag = host.querySelector<HTMLElement>('[data-overview-edge="stray"]');
 		expect(tag?.hasAttribute("data-away")).toBe(false);
@@ -669,13 +668,14 @@ describe("the overview over a long row and one far frame", () => {
 		expect(host.querySelector('[data-overview-near="stray"]')).toBeNull();
 	}
 
-	it("steps back only as far as the row's neighbours, and pans to the far frame at that zoom", async () => {
+	it("keeps the zoom it opened at, and pans to the far frame at that zoom", async () => {
 		const { host } = await openCanvas(world, CLOSE);
 		await enter(host, "r3");
 		await relay(host, "r3", holdAlt);
 		await wait(OVERVIEW_HOLD_MS + 40);
 		expect(overviewTarget(host)).toBe("r3");
-		await stepsToStray(host, (key) => relay(host, "r3", step(key)));
+		// entering brought r3 to the middle, r4 beside it
+		await stepsToStray(host, (key) => relay(host, "r3", step(key)), "r4");
 		await relay(host, "r3", { spool: "hold", phase: "up" });
 		expect(liveChip(host)).toBe("stray");
 	});
@@ -697,7 +697,8 @@ describe("the overview over a long row and one far frame", () => {
 		await key("keydown", { key: "Alt", code: "AltLeft", altKey: true });
 		await wait(OVERVIEW_HOLD_MS + 40);
 		expect(overviewTarget(host)).toBe("r3");
-		await stepsToStray(host, (arrow) => key("keydown", { key: arrow, code: arrow, altKey: true }));
+		// the camera never moved: r3 at the right of the view, r2 beside it
+		await stepsToStray(host, (arrow) => key("keydown", { key: arrow, code: arrow, altKey: true }), "r2");
 		await key("keyup", { key: "Alt", code: "AltLeft" });
 		expect(labelClass(host, "stray")).toContain("text-accent");
 	});
