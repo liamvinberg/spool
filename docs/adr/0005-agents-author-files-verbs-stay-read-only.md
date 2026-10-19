@@ -31,6 +31,15 @@
 > parent writes beside it, and a row of a list within its array literal, so
 > the ops are four. Moving an element into another container and adding one
 > stay the agent's.
+>
+> Amended by #164. Comments on a team project are not project files: they
+> live in Spool Cloud ([ADR-0011](./0011-comments-live-in-spool-cloud-not-in-design.md)).
+> One verb, `spool comments`, reads them through the daemon (from what it last
+> got from Cloud, saying when, so it works offline), and is the one verb that
+> writes: a reply, a resolve, or a new Team comment, sent through the daemon as
+> the signed-in person and shown as their agent ("Ana's agent"). On a share's
+> comment, which an outsider reads, an agent's reply is only a draft that the
+> person sends. Frames are still authored only as files.
 
 There is no `spool new` or frame-authoring write verb: a frame is born by writing `frames/<name>/frame.tsx`, and the project read verbs only observe (`selection`, `flows`, `shot`, `logs`, `url`, `skill`) (#6). Lifecycle commands are separate: `init` and `open` register and open a project, while `remove` forgets one registered root without touching its files. Spool serializes those machine-global registry and session writes.
 
