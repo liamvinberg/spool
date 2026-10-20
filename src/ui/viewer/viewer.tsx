@@ -413,6 +413,11 @@ function ViewerCanvas({
 		const id = linkedComment(new URL(window.location.href));
 		return id === null ? null : { id, link: true };
 	});
+	// a link to a comment (an email's, say) while signed out asks them in first, and goes to it once they are
+	const linkedSignedOut = aim?.link === true && signIn !== undefined;
+	useEffect(() => {
+		if (linkedSignedOut) setAsked((was) => was ?? "none");
+	}, [linkedSignedOut]);
 	useEffect(() => {
 		if (aim === null || comments === null) return;
 		const comment = comments.comments.find((each) => each.id === aim.id);

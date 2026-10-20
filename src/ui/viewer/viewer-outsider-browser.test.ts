@@ -318,6 +318,22 @@ it("forgets what it read when spool.page signs them out and asks them in again, 
 	}
 });
 
+it("asks a signed-out outsider to sign in when an email's link names a comment, then opens it", {
+	timeout: 60_000,
+}, async () => {
+	const opened = await open({}, [comment("c1")], { tipSeen: true });
+	const { page } = opened;
+	await opened.go("/?comment=c1");
+	const dialog = page.locator("[data-viewer-sign-in]");
+	await dialog.waitFor();
+	await page.getByRole("textbox", { name: "Email" }).fill("jonas@northwind.example");
+	await page.getByRole("button", { name: "Email me a code" }).click();
+	await page.getByRole("textbox", { name: "Code" }).fill("482913");
+	await page.getByRole("button", { name: "Continue" }).click();
+	await dialog.waitFor({ state: "detached" });
+	await page.locator('[data-comment-card="c1"]').waitFor();
+});
+
 it("signs in by Google's popup only with the code it hands back, by message or by the host's channel, or cancels", {
 	timeout: 60_000,
 }, async () => {
