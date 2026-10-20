@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { spoolAsync } from "./cli-test-helpers";
@@ -77,6 +77,7 @@ async function mac(machine: Machine) {
 				body: string;
 				agent: boolean;
 				resolved: { by: { name: string }; agent?: true } | null;
+				standing: string;
 				replies: { agent: boolean; body: string }[];
 				editedSince?: true;
 			}[];
@@ -268,5 +269,31 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		expect(nowhere.status).toBe(1);
 		expect(nowhere.stderr).toContain("there's no frame receipts");
 		expect((await anas.read()).comments).toEqual([]);
+	});
+
+	it("files a deleted page's comments with the closed ones, as the canvas does", async () => {
+		const { ana } = await team();
+		const anas = await mac(ana);
+		await anas.online();
+		const cart = join(ana.root, "design", "frames", "shop", "cart");
+		mkdirSync(cart, { recursive: true });
+		writeFileSync(join(cart, "frame.tsx"), "export default function Cart() {\n\treturn <main>Cart</main>;\n}\n");
+		const added = await (async () => {
+			for (const start = Date.now(); Date.now() - start < 8000; ) {
+				const tried = await anas.spool("add", "shop/cart", "The cart is empty.");
+				if (tried.status === 0) return tried;
+				await new Promise((wake) => setTimeout(wake, 100));
+			}
+			throw new Error("the cart never stood");
+		})();
+		const id = /^added (\S+)/.exec(added.stdout)?.[1] ?? "";
+		expect((await anas.spool()).stdout).toContain("1 open comment, live from spool.page\n");
+
+		rmSync(join(ana.root, "design", "frames", "shop"), { recursive: true });
+		await anas.until((comments) => comments.some((comment) => comment.standing === "deleted-page"));
+		expect((await anas.spool()).stdout).toBe("0 open comments, live from spool.page\n");
+		expect((await anas.spool("--resolved")).stdout).toContain(
+			`<comment id="${id}">\nana's agent, to the team, page deleted\non page shop, which was deleted\n`,
+		);
 	});
 });

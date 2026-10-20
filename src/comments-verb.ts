@@ -2,7 +2,7 @@ import { commentBlock, commentBlocks } from "./daemon/comment-block";
 import { CONTROL_HEADER } from "./daemon/security";
 import { SpoolError } from "./errors";
 import { pageParent } from "./page-path";
-import { type Comment, readComment } from "./team-sync-protocol";
+import { type Comment, isOpenComment, readComment } from "./team-sync-protocol";
 import { refusalOf } from "./verbs";
 
 /**
@@ -19,7 +19,10 @@ interface CommentsRead {
 	comments: Comment[];
 }
 
-/** Which comments `list` prints: the open ones, narrowed to a page, a frame or a share, or the resolved ones too. */
+/**
+ * Which comments `list` prints: the open ones (neither resolved nor on a deleted page), narrowed to a page, a frame
+ * or a share, or the closed ones too.
+ */
 export interface CommentFilters {
 	page?: string | undefined;
 	frame?: string | undefined;
@@ -47,7 +50,8 @@ function call(daemon: CommentsDaemon, path: string, init?: { method: string; bod
 export async function listComments(daemon: CommentsDaemon, filters: CommentFilters, now = Date.now()): Promise<string> {
 	const read = await readComments(daemon);
 	const kept = read.comments.filter((comment) => {
-		if (filters.resolved !== true && comment.resolved !== null) return false;
+		// a deleted page's comments are closed, as the canvas's Resolved view and spool.page's open count hold them
+		if (filters.resolved !== true && !isOpenComment(comment)) return false;
 		if (filters.page !== undefined && comment.page !== filters.page) return false;
 		if (filters.frame !== undefined && comment.frame !== filters.frame) return false;
 		if (filters.share !== undefined) {
