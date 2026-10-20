@@ -1169,6 +1169,28 @@ describe("the minute's bucket", () => {
 		});
 		expect(said.ana.filter((line) => line.startsWith("Sync paused"))).toEqual([]);
 	});
+
+	// a cleanup of thousands of files: the canvas's notice stays put while it counts down, never gone and back
+	it("says a long wait once as it begins and counts it down, never ending it while changes still wait", async () => {
+		const { cloud, ana } = await twoEditors();
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await ana.daemon.request("/api/p/checkout/events", { signal: controller.signal }));
+		await events.next();
+		// ten saves a second, from an empty bucket: 150 changes wait fifteen seconds
+		cloud.bucket(0, 600, Date.now);
+		for (let n = 0; n < 150; n++) writeFrame(ana.root, `f${n}`, `export default () => <p>${n}</p>;\n`);
+		const told: string[] = [];
+		for (const end = Date.now() + 2_500; Date.now() < end; ) {
+			const event = await events.next(5_000);
+			const { kind, message } = event.data as { kind?: string; message?: string };
+			if (kind === "sync" && (message === "" || message?.startsWith("Sending") === true)) told.push(message);
+		}
+		expect(told[0]).toMatch(/^Sending \d+ changes to devosurf/u);
+		expect(told).not.toContain("");
+		// begun, and counted down every few seconds rather than on every save
+		expect(told.length).toBeLessThanOrEqual(2);
+	});
 });
 
 describe("the month's heads-up", () => {
