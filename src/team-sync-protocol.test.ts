@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
 	COMMENT_BODY_LIMIT,
-	commentBodyRefusal,
 	type Comment,
 	type CommentPost,
+	commentBodyRefusal,
 	PRESENCE_AGENT_WORDS,
 	PRESENCE_AGENT_WORK,
 	type PresenceAgent,
