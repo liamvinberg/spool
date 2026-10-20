@@ -965,7 +965,7 @@ export function CommentCard({
 				>
 					<ResolveIcon done className="size-3.5 text-accent" />
 					<span className="min-w-0 flex-1 truncate text-secondary type-label">
-						Resolved by {resolved.by.name}, {resolvedAgo(resolved.at)}
+						Resolved by {nameOf(resolved.by, resolved.agent === true)}, {resolvedAgo(resolved.at)}
 					</span>
 					<TextAction className="-mr-1.5" disabled={offline} onClick={toggleResolved}>
 						Reopen
@@ -1232,7 +1232,7 @@ export function nameOf(by: CommentPerson, agent: boolean): string {
 }
 
 /** An agent's face: its owner's colour as a rounded square, holding the agent's mark, as presence draws one. */
-function AgentGlyph() {
+export function AgentGlyph() {
 	return (
 		<svg viewBox="0 0 16 16" width={11} height={11} fill="none" aria-hidden="true">
 			<circle cx="3.2" cy="5.4" r="1.4" fill="currentColor" />

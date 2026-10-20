@@ -132,4 +132,17 @@ it("puts a comment in the agent composer as a chip, and runs nothing until Enter
 	);
 	// the chip went with the words
 	await page.locator("[data-agent-rail] [data-agent-comments]").waitFor({ state: "detached" });
+
+	// Ben's agent resolves it: the card says whose agent did
+	socket.send(encodeFrame({ type: "comment-resolve", ref: "b2", comment: id, agent: true }));
+	await expect
+		.poll(
+			() =>
+				card
+					.locator("[data-comment-resolved]")
+					.textContent()
+					.catch(() => null),
+			{ timeout: 10_000 },
+		)
+		.toContain("Resolved by ben's agent");
 });

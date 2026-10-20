@@ -8,7 +8,7 @@ import { SelectTrigger } from "../primitives/inputs";
 import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
 import { Segment, SegmentedControl, Switch } from "../primitives/selection";
 import { ScrollArea, StatusLine } from "../primitives/structure";
-import { ago, Said, TeamLabel } from "./comments-layer";
+import { AgentGlyph, ago, nameOf, Said, TeamLabel } from "./comments-layer";
 import {
 	counts,
 	type Filters,
@@ -303,12 +303,12 @@ function Row({
 				)}
 				style={{ background: comment.author.color, color: PRESENCE_INK }}
 			>
-				{comment.author.name.charAt(0)}
+				{comment.agent ? <AgentGlyph /> : comment.author.name.charAt(0)}
 			</span>
 			<span className="flex min-w-0 flex-1 flex-col gap-1">
 				<span className="flex h-5 items-center gap-2">
 					<span className={cn("truncate type-control", unread ? "text-primary" : "text-primary/90")}>
-						{comment.author.name}
+						{nameOf(comment.author, comment.agent)}
 					</span>
 					{showPlace ? (
 						<span className="truncate text-tertiary type-detail">{comment.frame ?? "on the field"}</span>
