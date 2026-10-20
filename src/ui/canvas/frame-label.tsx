@@ -96,7 +96,7 @@ export const FrameLabel = memo(function FrameLabel({
 	 * is when you most need to know which of these is new.
 	 */
 	unseen?: Unseen | undefined;
-	/** Play this frame, by its name. Offered on the selection, where the attention already is. */
+	/** Play this frame, by its name. Offered on the frame pointed at, the selection and the live one. */
 	onPlay?: ((name: string) => void) | undefined;
 }) {
 	const place = useRef<HTMLDivElement | null>(null);
@@ -158,7 +158,7 @@ export const FrameLabel = memo(function FrameLabel({
 				className="group/label @container/row pointer-events-auto absolute bottom-full left-0 whitespace-nowrap"
 			>
 				{entered && overview !== "target" ? (
-					<div className="flex items-center pb-2.5">
+					<div className="flex items-center gap-1.5 pb-2.5">
 						<span
 							key={live?.at ?? 0}
 							data-live-chip={name}
@@ -170,6 +170,8 @@ export const FrameLabel = memo(function FrameLabel({
 						>
 							{live?.note ?? "live · esc exits"}
 						</span>
+						{/* inside it is where you try the frame, so playing it from there stays one click */}
+						{onPlay !== undefined && <PlayButton name={name} leaf={leaf} onPlay={onPlay} />}
 					</div>
 				) : (
 					<div
@@ -194,6 +196,13 @@ export const FrameLabel = memo(function FrameLabel({
 							{leaf}
 						</span>
 						<FrameAgentsMark name={name} agents={agents} />
+						{/* the frame's own verb, right after its name: shown on the frame you
+					    point at or picked, so playing it is one click, never a corner of the
+					    chrome. Beside the name rather than at the row's far end, because
+					    the far end is where teammates inside the frame dock their names. */}
+						{(selected || hovered) && onPlay !== undefined && (
+							<PlayButton name={name} leaf={leaf} onPlay={onPlay} />
+						)}
 						{clickEnters && overview === null && (
 							<span
 								data-click-enters={name}
@@ -201,26 +210,6 @@ export const FrameLabel = memo(function FrameLabel({
 							>
 								click enters
 							</span>
-						)}
-						{/* the selection's own verb, at the far end of its own row: no
-					    travelling to a corner of the chrome to act on what is right
-					    here. Ghost until wanted — the label is not a toolbar. */}
-						{selected && onPlay !== undefined && (
-							<button
-								type="button"
-								aria-label={`Play ${leaf}`}
-								className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-[color,opacity] duration-fast ease-out hover:text-accent-strong group-data-away/label:pointer-events-none group-data-away/label:opacity-0 type-detail"
-								onPointerDown={(event) => {
-									event.stopPropagation();
-									onPlay(name);
-								}}
-								onDoubleClick={(event) => event.stopPropagation()}
-							>
-								<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
-									<path d="M2 1.2 8.4 5 2 8.8Z" />
-								</svg>
-								play
-							</button>
 						)}
 					</div>
 				)}
@@ -236,6 +225,27 @@ export const FrameLabel = memo(function FrameLabel({
 		</div>
 	);
 });
+
+/** Play a frame, from its label: a ghost until pointed at. */
+function PlayButton({ name, leaf, onPlay }: { name: string; leaf: string; onPlay: (name: string) => void }) {
+	return (
+		<button
+			type="button"
+			aria-label={`Play ${leaf}`}
+			className="flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary transition-[color,opacity] duration-fast ease-out hover:text-accent-strong group-data-away/label:pointer-events-none group-data-away/label:opacity-0 type-detail"
+			onPointerDown={(event) => {
+				event.stopPropagation();
+				onPlay(name);
+			}}
+			onDoubleClick={(event) => event.stopPropagation()}
+		>
+			<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
+				<path d="M2 1.2 8.4 5 2 8.8Z" />
+			</svg>
+			play
+		</button>
+	);
+}
 
 /**
  * The field every frame label stands in (#81): screen pixels, carried by the
