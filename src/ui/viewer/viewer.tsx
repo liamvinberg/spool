@@ -1235,12 +1235,13 @@ function PagesRail({
 										onPlay(row.name);
 									}}
 									aria-label={`Play ${pageName(row.name)}`}
-									className="flex h-5 items-center gap-1 rounded-xs px-1 text-secondary hover:text-accent-strong type-detail"
+									title="Play"
+									// a glyph alone: it stands where the name fades out, and a word would sit on the name
+									className="grid size-5 place-items-center rounded-xs text-secondary hover:text-accent-strong"
 								>
 									<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
 										<path d="M2 1.2 8.4 5 2 8.8Z" />
 									</svg>
-									play
 								</button>
 							}
 						/>
