@@ -1663,10 +1663,23 @@ export function createDaemonApp({
 				.catch(() => {});
 		for (const presence of teamSync.copy(root)?.people() ?? []) tell(presence);
 		const unwatch = teamSync.watchPresence(root, tell);
+		const unwatchHidden = watchPointerHidden(stream, root, nextId);
 		return () => {
 			unwatch();
+			unwatchHidden();
 			if (![...views.values()].some((view) => view.root === root)) teamSync.presence(root, null);
 		};
+	}
+
+	/** Tell one canvas whether its person's pointer is hidden from the others on its page (#107), and each change. */
+	function watchPointerHidden(stream: SSEStreamingApi, root: string, nextId: () => number): () => void {
+		return teamSync.watchPointerHidden(
+			root,
+			(hidden) =>
+				void stream
+					.writeSSE({ event: "presence-hidden", data: JSON.stringify({ hidden }), id: String(nextId()) })
+					.catch(() => {}),
+		);
 	}
 
 	app.onError((error, c) => {

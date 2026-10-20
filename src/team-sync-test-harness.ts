@@ -101,6 +101,8 @@ interface Connected {
 	moving?: boolean;
 	/** Its hello said it reads `files`. */
 	bundles?: boolean;
+	/** Its hello said it reads `presences`, and the object sends them. */
+	ticks?: boolean;
 	/** Where this connection's person last said they were: kept only while it's connected. */
 	presence?: { state: PresenceState; at: number };
 	deliver(frame: string | Uint8Array): void;
@@ -141,6 +143,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let limited: { reason: Limited; retryAfter: number } | undefined;
 	/** The object takes bundles, as spool.page does since it learned them; off, it is an older one. */
 	let takesBundles = true;
+	/** The object sends presence a tick at a time to a connection that reads them, as spool.page does since #107. */
+	let ticks = true;
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
 	/** The minute's bucket, on a clock the test turns: its level when last taken from, and how fast it refills. */
@@ -383,6 +387,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			}
 			from.moving = message.moving === true;
 			from.bundles = message.bundles === true;
+			from.ticks = ticks && message.ticks === true;
 			if (!from.moving && at.mover === from.person.accountId) at.mover = null;
 			from.deliver(
 				encodeFrame({
@@ -610,18 +615,28 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 
 	function relayPresence(at: Project, person: Person): void {
 		const frame = presenceFrame(person, standing(at, person));
-		for (const other of at.sockets) if (other.live && other.person !== person) other.deliver(frame);
+		for (const other of at.sockets)
+			if (other.live && other.person !== person) other.deliver(other.ticks === true ? tickOf([frame]) : frame);
+	}
+
+	/** Presence frames as one tick: each entry as it would go alone. */
+	function tickOf(frames: (string | Uint8Array)[]): string | Uint8Array {
+		const people = frames.map((frame) => decodeFrame(frame)?.message);
+		return encodeFrame({ type: "presences", people });
 	}
 
 	function greet(at: Project, to: Connected): void {
 		const told = new Set<Person>([to.person]);
+		const frames: (string | Uint8Array)[] = [];
 		for (const socket of at.sockets) {
 			if (told.has(socket.person)) continue;
 			const stood = standing(at, socket.person);
 			if (stood === undefined) continue;
 			told.add(socket.person);
-			to.deliver(presenceFrame(socket.person, stood));
+			frames.push(presenceFrame(socket.person, stood));
 		}
+		if (to.ticks === true && frames.length > 0) to.deliver(tickOf(frames));
+		else for (const frame of frames) to.deliver(frame);
 	}
 
 	const openSocket =
@@ -749,6 +764,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		},
 		resent: (name: string) => project(name)?.resent ?? [],
 		turns: (name: string) => project(name)?.turns ?? [],
+		/** The object is an older spool.page, which tells each person's presence in a message of its own. */
+		withoutTicks() {
+			ticks = false;
+		},
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
