@@ -1117,6 +1117,8 @@ export interface AgentSaying {
 	 * which is why this is bytes at all.
 	 */
 	readonly attached?: readonly Attachment[] | undefined;
+	/** Comments sent to the agent (spool#172), by id, which the daemon renders from its own snapshot. */
+	readonly comments?: readonly string[] | undefined;
 }
 
 /**
@@ -1242,6 +1244,7 @@ function sayTurn(
 					prompt: one.prompt,
 					...(one.selection === undefined ? {} : { selection: [...one.selection] }),
 					...(one.attached === undefined ? {} : { attachments: one.attached }),
+					...(one.comments === undefined ? {} : { comments: [...one.comments] }),
 				})),
 			},
 		},

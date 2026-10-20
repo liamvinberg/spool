@@ -121,6 +121,7 @@ import {
 	type CommentDraft,
 	type CommentsContext,
 	CommentsLayer,
+	commentChip,
 	commentWorld,
 	useCommentPeople,
 	useComments,
@@ -2006,6 +2007,20 @@ function CanvasField({
 			});
 		},
 		[deck, store],
+	);
+
+	/**
+	 * "Send to agent" on a comment's card (spool#172): through the same door as Ask the agent, the composer takes
+	 * focus on the open thread holding the comment as a chip. Nothing runs until the person sends.
+	 */
+	const sendCommentToAgent = useCallback(
+		(comment: Comment) =>
+			setAgentRequest({
+				id: crypto.randomUUID(),
+				thread: deck.get().open,
+				comment: { id: comment.id, label: commentChip(comment) },
+			}),
+		[deck],
 	);
 
 	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
@@ -5527,6 +5542,8 @@ function CanvasField({
 									frames={visibleFrames}
 									page={activePage}
 									comments={comments.comments}
+									// only with an agent on this Mac to send it to
+									onSendToAgent={noAgent ? undefined : sendCommentToAgent}
 								/>
 							)}
 							{/* the pointer is the overview's while it is up (DEV-295): over every

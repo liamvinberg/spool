@@ -208,6 +208,8 @@ export function Composer({
 	answering,
 	strip,
 	pointing,
+	comments = [],
+	onDropComment,
 	draft,
 	onDraft,
 	attached,
@@ -253,6 +255,12 @@ export function Composer({
 	answering: string | null;
 	strip: Strip;
 	pointing: Pointing;
+	/**
+	 * Comments sent to the agent from their cards (spool#172), each a chip until the words go: the daemon reads them
+	 * from its own snapshot then. With them and no words, Enter alone means "deal with this".
+	 */
+	comments?: readonly ChipWords[];
+	onDropComment?: (id: string) => void;
 	/** controlled, because a take-back and a stop both write into the field (#170) */
 	draft: string;
 	onDraft: (text: string) => void;
@@ -343,7 +351,13 @@ export function Composer({
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
 		// canvas the hands have moved on from
-		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
+		const context = [...comments.map((chip) => chip.label), contextOf(strip)].filter((line) => line !== null);
+		const sent: AgentSent = {
+			context: context.length === 0 ? null : context.join(", "),
+			attached,
+			selection: pointing.entries,
+			...(comments.length === 0 ? {} : { comments: comments.map((chip) => chip.id) }),
+		};
 		/*
 		 * Asked of the turn itself rather than of the last render (#234).
 		 *
@@ -366,7 +380,9 @@ export function Composer({
 	};
 
 	const submit = (box: HTMLTextAreaElement | null) => {
-		const text = draft.trim();
+		const typed = draft.trim();
+		// comments in the box and no words: Enter alone hands them over to be dealt with
+		const text = typed === "" && answering === null && comments.length > 0 ? dealWith(comments.length) : typed;
 		if (text === "") return;
 		// answering answers, busy queues, otherwise sends — the three meanings of
 		// one press, resolved by what the turn is doing (#170)
@@ -380,7 +396,10 @@ export function Composer({
 			if (took && box !== null) box.style.height = `${MIN_H}px`;
 		});
 	};
-	const says = fieldSays(answering, finished, cutting);
+	const says =
+		comments.length > 0 && answering === null
+			? `Enter to deal with ${comments.length === 1 ? "it" : "them"}, or say what to do`
+			: fieldSays(answering, finished, cutting);
 	const file = useRef<HTMLInputElement>(null);
 	const showRing = context !== null && context >= CONTEXT_SHOWN_AT;
 	// what each control in the footer last drew, so one on its way out still draws it
@@ -436,6 +455,19 @@ export function Composer({
 								/>
 							))}
 						</div>
+					)}
+					{comments.length > 0 && (
+						<span data-agent-comments="" className="flex min-w-0 flex-wrap items-center gap-1.5">
+							{comments.map((chip) => (
+								<Chip
+									key={chip.id}
+									words={chip}
+									lit={false}
+									onLight={() => {}}
+									onDrop={onDropComment === undefined ? undefined : () => onDropComment(chip.id)}
+								/>
+							))}
+						</span>
 					)}
 					<SelectionStrip strip={strip} pointing={pointing} />
 					{/*
@@ -795,6 +827,11 @@ function readAttachment(file: File): Promise<Attachment> {
  * prompt's. Opening the count is the human asking for the list, and then it is a
  * list: hoverable, individually droppable, eight rows before it scrolls inside
  * itself and no bar when it does. */
+
+/** What Enter alone says when the box holds comments and no words (spool#172). */
+export function dealWith(count: number): string {
+	return count === 1 ? "Deal with this comment." : "Deal with these comments.";
+}
 
 /** rows the open list shows before it starts scrolling under a fade */
 const ROWS_SHOWN = 8;

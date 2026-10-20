@@ -23,7 +23,7 @@ import {
 	postReply,
 } from "../api";
 import { cn } from "../cn";
-import { CloseIcon, DotsIcon, ResolveIcon } from "../icons";
+import { AgentIcon, CloseIcon, DotsIcon, ResolveIcon } from "../icons";
 import { Button, IconButton } from "../primitives/actions";
 import { Dot, Kbd } from "../primitives/display";
 import { TextAction } from "../primitives/feedback";
@@ -157,6 +157,7 @@ export function CommentsLayer({
 	frames,
 	page,
 	comments,
+	onSendToAgent,
 }: {
 	context: CommentsContext;
 	store: CanvasStore;
@@ -165,6 +166,8 @@ export function CommentsLayer({
 	frames: readonly (Box & { name: string })[];
 	page: string;
 	comments: readonly Comment[];
+	/** Put a comment in the agent composer as a chip (spool#172); absent where there is no agent to send it to. */
+	onSendToAgent?: ((comment: Comment) => void) | undefined;
 }) {
 	const [draft, setDraft] = useCanvasField(store, "commentDraft");
 	const [open, setOpen] = useCanvasField(store, "commentOpen");
@@ -275,6 +278,7 @@ export function CommentsLayer({
 						context={context}
 						comment={openComment}
 						onClose={() => setOpen(null)}
+						onSendToAgent={onSendToAgent}
 					/>
 				</CardAt>
 			)}
@@ -880,10 +884,12 @@ export function CommentCard({
 	context,
 	comment,
 	onClose,
+	onSendToAgent,
 }: {
 	context: CommentsContext;
 	comment: Comment;
 	onClose: () => void;
+	onSendToAgent?: ((comment: Comment) => void) | undefined;
 }) {
 	const { project, online, people, reader, refresh } = context;
 	const [text, setText] = useState("");
@@ -933,6 +939,14 @@ export function CommentCard({
 			<div className="flex h-10 shrink-0 items-center gap-2 border-line-default border-b pr-1.5 pl-3">
 				<TeamLabel />
 				<span className="min-w-0 flex-1 truncate text-tertiary type-detail">{placeSays(comment)}</span>
+				{onSendToAgent === undefined ? null : (
+					<IconButton
+						size="sm"
+						icon={<AgentIcon />}
+						label="Send to agent"
+						onClick={() => onSendToAgent(comment)}
+					/>
+				)}
 				<IconButton
 					size="sm"
 					icon={
@@ -1205,6 +1219,11 @@ function EditField({ acts, text, onDone }: { acts: MessageActs; text: string; on
 function resolvedAgo(at: number): string {
 	const said = ago(at);
 	return said === "now" ? "just now" : `${said} ago`;
+}
+
+/** A comment as the agent composer's chip names it: whose, and where. */
+export function commentChip(comment: Comment): string {
+	return `comment · ${nameOf(comment.author, comment.agent)} · ${comment.frame ?? "the field"}`;
 }
 
 /** Who wrote a message: the person, or their agent writing as them through `spool comments` (spool#172). */
