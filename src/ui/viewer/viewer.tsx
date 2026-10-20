@@ -237,6 +237,15 @@ function Quiet({ children }: { children: ReactNode }) {
 const NEAR_MARGIN = 0.25;
 /** How many documents one page keeps live at once; the rest wait as their names. */
 const LIVE_LIMIT = 24;
+/** What the chrome takes off the top (the buttons by the faces) and the foot (the tools) of a fitted page. */
+const FIT_TOP = 40;
+const FIT_FOOT = 48;
+
+/** A page fitted between the chrome at the top and the tools at the foot, so neither stands over a frame. */
+function fitBetweenChrome(bounds: Box, w: number, h: number): Camera {
+	const fitted = fitCamera(bounds, w, Math.max(h - FIT_TOP - FIT_FOOT, 1));
+	return { ...fitted, y: fitted.y + FIT_TOP };
+}
 /** Where a page with nothing on it stands. */
 const EMPTY_CAMERA: Camera = { x: 0, y: 0, k: 1 };
 
@@ -300,7 +309,7 @@ function ViewerCanvas({
 	useLayoutEffect(() => {
 		if (size.w === 0) return;
 		const left = cameras.current.get(page);
-		camera.set(left ?? (frames.length === 0 ? EMPTY_CAMERA : fitCamera(boundsOf(frames), size.w, size.h)));
+		camera.set(left ?? (frames.length === 0 ? EMPTY_CAMERA : fitBetweenChrome(boundsOf(frames), size.w, size.h)));
 	}, [camera, page, frames, size.w, size.h]);
 	useEffect(
 		() =>
@@ -614,7 +623,7 @@ function ViewerCanvas({
 		if (at !== null) camera.fly(entryCamera(at, frame, size.w, size.h));
 	};
 	const fit = () => {
-		if (frames.length > 0) camera.fly(fitCamera(boundsOf(frames), size.w, size.h));
+		if (frames.length > 0) camera.fly(fitBetweenChrome(boundsOf(frames), size.w, size.h));
 	};
 	const zoomBy = (factor: number) => {
 		const at = camera.get();
