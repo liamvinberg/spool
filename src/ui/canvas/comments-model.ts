@@ -1,4 +1,4 @@
-import type { Comment } from "../../team-sync-protocol";
+import { type Comment, isOpenComment } from "../../team-sync-protocol";
 
 /*
  * What the canvas makes of a team project's comments for one person (spool#170), as data: which are unread for
@@ -46,7 +46,7 @@ export function isForYou(comment: Comment, me: string | null): boolean {
 
 /** Resolved, or as good as: a comment on a deleted page stands only under Resolved. */
 export function isClosed(comment: Comment): boolean {
-	return comment.resolved !== null || comment.standing === "deleted-page";
+	return !isOpenComment(comment);
 }
 
 /** When the last word in it was said: its newest message. */
