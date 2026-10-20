@@ -127,7 +127,11 @@ export function PagePicker({
 					}}
 				/>
 			</div>
-			<div ref={list} className="min-h-0 flex-1 overflow-y-auto p-unit" style={{ height: rows * ROW + PAD }}>
+			<div
+				ref={list}
+				className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-unit"
+				style={{ height: rows * ROW + PAD }}
+			>
 				{hits.length === 0 ? (
 					<div className="flex items-center px-1.5 text-secondary type-value" style={{ height: ROW }}>
 						no page answers to that

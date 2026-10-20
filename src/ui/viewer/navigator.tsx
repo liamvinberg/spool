@@ -145,7 +145,7 @@ export function Navigator({
 			</label>
 			<nav
 				aria-label="Pages"
-				className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-6"
+				className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pb-6"
 				style={{ paddingBottom: "calc(24px + env(safe-area-inset-bottom))" }}
 			>
 				{found !== "" ? (

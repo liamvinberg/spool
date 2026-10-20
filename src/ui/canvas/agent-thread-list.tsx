@@ -175,7 +175,11 @@ export function ThreadDrop({
 					onClick={onDone}
 				/>
 			) : null}
-			<Float open={shown} from="down" className="absolute inset-x-2 -top-1 z-20 max-h-[60%] overflow-y-auto p-1">
+			<Float
+				open={shown}
+				from="down"
+				className="absolute inset-x-2 -top-1 z-20 max-h-[60%] overflow-x-hidden overflow-y-auto p-1"
+			>
 				<div role="dialog" aria-label="Chats" data-agent-threads="" className="flex flex-col">
 					{list.map((thread) => (
 						<ThreadRow

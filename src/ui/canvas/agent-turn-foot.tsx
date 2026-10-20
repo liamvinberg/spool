@@ -199,7 +199,9 @@ export function TurnFoot({
 					shownSteps === "leaving" && "pointer-events-none animate-agent-fold",
 				)}
 			>
-				<div className="min-h-0 overflow-hidden">
+				{/* a step's row reaches 6px past the text either side for its hover wash (`-mx-1.5`),
+				    so the box reaches out with it: a row wider than its box scrolls it sideways */}
+				<div className="-mx-1.5 min-h-0 overflow-hidden">
 					<StepsScroll open={shownSteps === "open"} live={!over}>
 						{steps}
 					</StepsScroll>
@@ -275,7 +277,11 @@ function StepsScroll({ open, live, children }: { open: boolean; live: boolean; c
 		};
 	}, [live]);
 	return (
-		<div ref={box} data-agent-steps-scroll="" className="mt-3 max-h-[min(360px,45vh)] overflow-y-auto">
+		<div
+			ref={box}
+			data-agent-steps-scroll=""
+			className="pages-scrollbar mt-3 max-h-[min(360px,45vh)] overflow-x-hidden overflow-y-auto px-1.5"
+		>
 			<div className="flex flex-col">{children}</div>
 		</div>
 	);

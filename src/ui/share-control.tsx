@@ -161,7 +161,7 @@ export function ShareControl({
 						aria-label="Share"
 						data-share-popover=""
 						pad="sm"
-						className="fixed z-50 w-[340px] overflow-y-auto"
+						className="fixed z-50 w-[340px] overflow-x-hidden overflow-y-auto"
 						style={{ right: at.right, top: at.top, maxHeight: `calc(100vh - ${at.top + 12}px)` }}
 					>
 						<ShareBody
