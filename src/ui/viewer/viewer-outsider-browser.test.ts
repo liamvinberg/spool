@@ -474,4 +474,12 @@ it("lets a member pick a share of the page, and reads every audience: its tag, i
 	await composer.locator("textarea").press("Enter");
 	await expect.poll(() => written.length).toBe(2);
 	expect(written[1]).toMatchObject({ path: "/api/comments", body: { audience: { share: "s-north" } } });
+
+	// the Comments list says who reads each, as its card does
+	await page.keyboard.press("Escape");
+	await page.locator("[data-comments-button]").click();
+	const row = page.locator('[data-comment-row="c1"]');
+	await row.waitFor();
+	expect(await row.locator("[data-comment-audience]").getAttribute("data-comment-audience")).toBe("link");
+	expect(await row.locator("[data-comment-audience]").textContent()).toBe("Link share");
 });

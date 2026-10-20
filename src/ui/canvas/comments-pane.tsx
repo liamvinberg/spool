@@ -8,7 +8,7 @@ import { SelectTrigger } from "../primitives/inputs";
 import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
 import { Segment, SegmentedControl, Switch } from "../primitives/selection";
 import { ScrollArea, StatusLine } from "../primitives/structure";
-import { AgentGlyph, ago, nameOf, Said, TeamLabel } from "./comments-layer";
+import { AgentGlyph, AudienceTag, ago, nameOf, Said } from "./comments-layer";
 import {
 	counts,
 	type Filters,
@@ -324,7 +324,7 @@ function Row({
 					className={cn("line-clamp-2", closed && "text-secondary")}
 				/>
 				<span className="flex min-w-0 items-center gap-2 pt-0.5">
-					<TeamLabel />
+					<AudienceTag share={comment.share} />
 					{replies > 0 ? (
 						<span className="shrink-0 text-secondary type-detail">
 							{replies} {replies === 1 ? "reply" : "replies"}
