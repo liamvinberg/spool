@@ -106,6 +106,7 @@ async function canvas(app: ReturnType<typeof daemon>) {
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});
 	return {
+		app,
 		read,
 		/** Once its copy is connected to the team, so what it writes reaches it. */
 		online: () => eventually(async () => (await read()).online),
@@ -488,5 +489,39 @@ describe("a comment over its frame's life (spool#160)", () => {
 		expect(await refused.json()).toMatchObject({ error: "unpaid" });
 		expect((await bens.read()).comments.map((comment) => comment.body)).toEqual(["Before it lapsed."]);
 		expect(cloud.comments("checkout")).toHaveLength(1);
+	});
+});
+
+describe("a comment for a share (spool#174)", () => {
+	it("goes to the share the canvas picked, and an agent's reply on it waits for its person to send", async () => {
+		const made = await team();
+		const anas = await canvas(daemon(made.ana));
+		const bens = await canvas(daemon(made.ben));
+		await anas.online();
+		await bens.online();
+		expect((await anas.write({ body: "For the client", audience: { share: 3 } })).status).toBe(400);
+		const { id } = (await (await anas.write({ body: "For the client", audience: { share: "s1" } })).json()) as {
+			id: string;
+		};
+		await bens.told();
+		expect((await bens.read()).comments[0]).toMatchObject({ id, audience: { share: "s1" }, share: { kind: "link" } });
+		// Ana's agent replies: a draft only Ana's canvas has
+		const drafted = await anas.app.request(`/api/p/checkout/comments/${id}/replies`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ body: "Fixed in the receipt", agent: true }),
+		});
+		const { id: reply } = (await drafted.json()) as { id: string };
+		await anas.told();
+		expect((await anas.read()).comments[0]?.replies).toMatchObject([{ id: reply, draftFor: "ana" }]);
+		expect((await bens.read()).comments[0]?.replies).toEqual([]);
+		// only its person sends it, with their edit
+		expect((await bens.call(`${id}/replies/${reply}/send`, "POST", {})).status).toBe(403);
+		const sent = await anas.call(`${id}/replies/${reply}/send`, "POST", { body: "Fixed it" });
+		expect(await sent.json()).toMatchObject({
+			comment: { replies: [{ id: reply, body: "Fixed it", draftFor: null }] },
+		});
+		await bens.told();
+		expect((await bens.read()).comments[0]?.replies).toMatchObject([{ id: reply, body: "Fixed it", agent: true }]);
 	});
 });

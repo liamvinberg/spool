@@ -4,7 +4,14 @@ import { cloudTeams } from "../cloud-teams";
 import { isFramePath, isPagePath } from "../page-path";
 import { personName } from "../person-name";
 import { localCopyOf, readProjectLink } from "../team-project";
-import { COMMENT_MENTIONS, type CommentElement, type CommentPoint, isCommentBody } from "../team-sync-protocol";
+import {
+	COMMENT_MENTIONS,
+	type CommentAudience,
+	type CommentElement,
+	type CommentPoint,
+	isCommentBody,
+	readAudience,
+} from "../team-sync-protocol";
 import type { ResolveProject } from "./project-route";
 import { type ElementPut, elementEntry } from "./selection";
 import {
@@ -30,6 +37,8 @@ interface CommentInput {
 	mentions: string[] | undefined;
 	agent?: true;
 	find?: string;
+	/** one share of its page reads it besides the team (spool#174); the team alone when absent */
+	audience?: CommentAudience;
 }
 
 /** An element found in a frame: its place in the frame's own pixels, and its handles as the shim names them. */
@@ -144,6 +153,22 @@ export function commentRoutes(deps: {
 				...(reply === undefined ? {} : { reply }),
 			}),
 		);
+	/** A draft the person's agent left them on a share's comment, sent as it is or with their edit (spool#174). */
+	const send = (c: Context) =>
+		withRoot(c, async (root) => {
+			const input: unknown = await c.req.json().catch(() => ({}));
+			const body = isRecord(input) ? input.body : undefined;
+			const mentions = isRecord(input) ? readMentions(input.mentions) : undefined;
+			if (!(body === undefined || isCommentBody(body)) || mentions === null)
+				return c.text("a draft is sent as { body?, mentions? } with 1 to 4,000 characters", 400);
+			return change(c, root, {
+				type: "comment-send",
+				comment: c.req.param("comment") ?? "",
+				reply: c.req.param("reply") ?? "",
+				...(body === undefined ? {} : { body }),
+				...(mentions === undefined ? {} : { mentions }),
+			});
+		});
 	const simple = (type: "comment-read" | "comment-unread") => (c: Context) =>
 		withRoot(c, (root) => change(c, root, { type, comment: c.req.param("comment") ?? "" }));
 	/** A resolve or reopen, the canvas's with no body and an agent's (`spool comments`) as `{ agent: true }`. */
@@ -181,15 +206,16 @@ export function commentRoutes(deps: {
 			.delete("/:project/comments/:comment", (c) => remove(c))
 			.patch("/:project/comments/:comment/replies/:reply", (c) => edit(c, c.req.param("reply")))
 			.delete("/:project/comments/:comment/replies/:reply", (c) => remove(c, c.req.param("reply")))
+			.post("/:project/comments/:comment/replies/:reply/send", send)
 			.post("/:project/comments", (c) =>
 				withRoot(c, async (root) => {
 					const input = readCommentInput(await c.req.json().catch(() => undefined));
 					if (input === undefined)
 						return c.text(
-							'a comment is { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated } | null, body, mentions?, agent?: true, find?: "selector or path:line" }',
+							'a comment is { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated } | null, body, mentions?, agent?: true, find?: "selector or path:line", audience?: "team" | { share } }',
 							400,
 						);
-					const { page, frame, body, mentions } = input;
+					const { page, frame, body, mentions, audience } = input;
 					let { at } = input;
 					let put = input.element;
 					if (input.find !== undefined) {
@@ -221,6 +247,7 @@ export function commentRoutes(deps: {
 								revision: now.revision,
 								body,
 								...(mentions === undefined ? {} : { mentions }),
+								...(audience === undefined || audience === "team" ? {} : { audience }),
 								...agent,
 							},
 							now.still,
@@ -311,9 +338,15 @@ function readCommentInput(value: unknown): CommentInput | undefined {
 	const { page, frame, at, element, body, agent, find } = value;
 	const mentions = readMentions(value.mentions);
 	if (mentions === null) return undefined;
+	const audience = value.audience === undefined ? undefined : readAudience(value.audience);
+	if (value.audience !== undefined && audience === undefined) return undefined;
 	if (!(agent === undefined || agent === true)) return undefined;
 	if (!(find === undefined || (typeof find === "string" && find.trim() !== ""))) return undefined;
-	const extra = { ...(agent === true ? AGENT : {}), ...(find === undefined ? {} : { find: find.trim() }) };
+	const extra = {
+		...(agent === true ? AGENT : {}),
+		...(find === undefined ? {} : { find: find.trim() }),
+		...(audience === undefined ? {} : { audience }),
+	};
 	if (typeof page !== "string" || !(page === "" || isPagePath(page)) || !isCommentBody(body)) return undefined;
 	if (!(frame === null || (typeof frame === "string" && isFramePath(frame)))) return undefined;
 	if (!isRecord(at)) return undefined;

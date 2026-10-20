@@ -58,6 +58,7 @@ const COMMENT_CHANGES = new Set([
 	"comment-delete",
 	"comment-read",
 	"comment-unread",
+	"comment-send",
 ]);
 
 type Role = "admin" | "editor" | "viewer" | null;
@@ -802,6 +803,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				standing: "placed",
 				replies: [],
 				...(named.length > 0 ? { mentions: named } : {}),
+				// a share's comment as a member reads it (spool#174): the fake team's every share is its writer's link
+				...(post.audience === undefined || post.audience === "team"
+					? {}
+					: { share: { kind: "link" as const, who: [], by: from.person.accountId } }),
 			};
 			at.comments.push(comment);
 			at.places.set(id, {
@@ -833,6 +838,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		}
 		const id = `c${++commentIds}`.padEnd(8, "x");
 		const named = mentioned(at, post.mentions);
+		// an agent's reply on a share's comment waits for its person to send it (spool#174)
+		const draftFor = post.agent === true && comment.audience !== "team" ? from.person.accountId : null;
 		const reply: CommentReply = {
 			id,
 			author,
@@ -840,12 +847,14 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			body: post.body,
 			created: now,
 			edited: null,
-			draftFor: null,
+			draftFor,
 			...(named.length > 0 ? { mentions: named } : {}),
 		};
 		comment.replies.push(reply);
 		told = { type: "comment-replied", comment: comment.id, reply };
-		for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
+		for (const socket of at.sockets)
+			if (socket.live && (draftFor === null || socket.person.accountId === draftFor))
+				socket.deliver(encodeFrame(told));
 		from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
 	}
 
@@ -958,6 +967,16 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				const named = mentioned(at, change.mentions);
 				if (named.length > 0) target.mentions = named;
 				else delete target.mentions;
+				break;
+			}
+			case "comment-send": {
+				if (reply === undefined || reply.draftFor !== account) {
+					refuse("not_author");
+					return;
+				}
+				reply.draftFor = null;
+				reply.created = now;
+				if (change.body !== undefined) reply.body = change.body;
 				break;
 			}
 			case "comment-delete": {

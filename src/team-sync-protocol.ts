@@ -1313,7 +1313,8 @@ function readCommentPerson(value: unknown): CommentPerson | undefined {
 	return { accountId, name, color };
 }
 
-function readAudience(value: unknown): CommentAudience | undefined {
+/** A comment's audience, as a post names it: undefined for anything else. */
+export function readAudience(value: unknown): CommentAudience | undefined {
 	if (value === "team") return "team";
 	return isRecord(value) && isId(value.share) ? { share: value.share } : undefined;
 }
