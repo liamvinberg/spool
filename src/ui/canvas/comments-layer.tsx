@@ -257,7 +257,7 @@ export function CommentsLayer({
 	);
 
 	return (
-		<div ref={field} className="pointer-events-none absolute inset-0 overflow-hidden" data-comments-layer="">
+		<div ref={field} className="pointer-events-none absolute inset-0 overflow-clip" data-comments-layer="">
 			{hidden
 				? null
 				: groups.map((group) => {
@@ -926,6 +926,9 @@ function MentionField({
 	const [dismissed, setDismissed] = useState(false);
 	const [lit, setLit] = useState(0);
 	const field = useRef<HTMLDivElement>(null);
+	const box = useRef<HTMLTextAreaElement>(null);
+	// taken at once, where it stands: a card opening off the canvas mid-flight never drags the canvas to it
+	useEffect(() => box.current?.focus({ preventScroll: true }), []);
 	const asked = mentionAsked(value);
 	const typed = asked?.typed.toLowerCase() ?? "";
 	const matches =
@@ -986,8 +989,8 @@ function MentionField({
 					setLit(0);
 					setDismissed(false);
 				}}
+				ref={box}
 				rows={rows}
-				autoFocus
 				aria-label={label}
 				placeholder={placeholder}
 				onKeyDown={onKeyDown}

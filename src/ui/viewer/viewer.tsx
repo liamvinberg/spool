@@ -651,7 +651,7 @@ function ViewerCanvas({
 	const followed = following === null ? undefined : room?.get(following);
 
 	return (
-		<div className="flex h-dvh select-none overflow-hidden bg-surface-window text-primary">
+		<div className="flex h-dvh select-none overflow-clip bg-surface-window text-primary">
 			<PagesRail
 				project={project}
 				page={page}
@@ -685,7 +685,7 @@ function ViewerCanvas({
 					) : undefined
 				}
 			/>
-			<div className="relative min-w-0 flex-1 overflow-hidden bg-surface-canvas">
+			<div className="relative min-w-0 flex-1 overflow-clip bg-surface-canvas">
 				<div
 					ref={viewport}
 					data-viewer-field=""
