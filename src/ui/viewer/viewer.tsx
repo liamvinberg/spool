@@ -20,10 +20,12 @@ import {
 	zoomFloor,
 } from "../canvas/camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/camera-store";
+import { COMMENT_CURSOR } from "../canvas/comment-cursor";
 import { CommentsLayer, commentWorld } from "../canvas/comments-layer";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
+import { type ElementPreview, PreviewIn } from "../canvas/overlays";
 import { createPresenceRoom } from "../canvas/presence";
 import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
 import { PresenceLayer } from "../canvas/presence-layer";
@@ -53,6 +55,7 @@ import {
 	viewerShares,
 } from "./source";
 import {
+	askPick,
 	CommentsButton,
 	CommentsPanel,
 	placeComment,
@@ -380,26 +383,80 @@ function ViewerCanvas({
 		setAim(null);
 	}, [aim, comments, config, page, played, known, frames, go, camera, size.w, size.h, onNotice]);
 	const placing = comments?.tool === "comment";
-	/** A press under the Comment tool: a pin on the frame under it, at the frame's own point, or on the field. */
-	const placeAt = (event: React.PointerEvent) => {
+	/**
+	 * What is under a point on screen: the world point, and the frame drawn on top there, where frames overlap, with
+	 * the point in its own pixels and its live document, when it has one.
+	 */
+	const under = (clientX: number, clientY: number) => {
 		const box = viewport.current?.getBoundingClientRect();
 		const at = camera.get();
-		if (comments === null || box === undefined || at === null) return;
-		const world = { x: (event.clientX - box.left - at.x) / at.k, y: (event.clientY - box.top - at.y) / at.k };
-		// the frame drawn on top, where frames overlap
+		if (box === undefined || at === null) return null;
+		const world = { x: (clientX - box.left - at.x) / at.k, y: (clientY - box.top - at.y) / at.k };
 		const frame = [...frames]
 			.reverse()
 			.find(
 				(each) =>
 					world.x >= each.x && world.x <= each.x + each.w && world.y >= each.y && world.y <= each.y + each.h,
 			);
-		if (frame === undefined) return placeComment(comments, { page, frame: null, at: world }, null);
+		if (frame === undefined) return { world, frame: null };
 		const document =
 			viewport.current?.querySelector<HTMLIFrameElement>(
 				`[data-viewer-frame="${CSS.escape(frame.name)}"] iframe[title="${CSS.escape(frame.name)}"]`,
 			) ?? null;
-		placeComment(comments, { page, frame: frame.name, at: { x: world.x - frame.x, y: world.y - frame.y } }, document);
+		return { world, frame: { name: frame.name, at: { x: world.x - frame.x, y: world.y - frame.y }, document } };
 	};
+	/** A press under the Comment tool: a pin on the frame under it, at the frame's own point, or on the field. */
+	const placeAt = (event: React.PointerEvent) => {
+		const found = under(event.clientX, event.clientY);
+		if (comments === null || found === null) return;
+		if (found.frame === null) return placeComment(comments, { page, frame: null, at: found.world }, null);
+		placeComment(comments, { page, frame: found.frame.name, at: found.frame.at }, found.frame.document);
+	};
+
+	/**
+	 * Under the Comment tool, the element a press would point at, outlined as the Mac outlines it (spool#173): asked
+	 * of the frame's own document, which answers a pick from any canvas that holds it. One ask is out at a time, and
+	 * the pointer's newest point is asked next, so the outline keeps up with the hand without queueing behind it.
+	 */
+	const [hover, setHover] = useState<ElementPreview | null>(null);
+	const hoverAsk = useRef<{ busy: boolean; next: { x: number; y: number } | null }>({ busy: false, next: null });
+	const placingNow = useRef(placing);
+	placingNow.current = placing;
+	const hoverAt = (clientX: number, clientY: number) => {
+		const ask = hoverAsk.current;
+		ask.next = { x: clientX, y: clientY };
+		if (ask.busy) return;
+		const point = ask.next;
+		ask.next = null;
+		const found = under(point.x, point.y)?.frame;
+		if (found === undefined || found === null || found.document === null) return setHover(null);
+		ask.busy = true;
+		void askPick(found.document, found.at).then((hit) => {
+			ask.busy = false;
+			if (!placingNow.current) return setHover(null);
+			setHover(
+				hit === undefined
+					? null
+					: {
+							frame: found.name,
+							selector: hit.selector,
+							rect: hit.rect,
+							...(hit.rects === undefined ? {} : { rects: hit.rects }),
+							radius: hit.radius,
+						},
+			);
+			const later = ask.next;
+			if (later !== null) hoverAt(later.x, later.y);
+		});
+	};
+	const hoverOff = useCallback(() => {
+		hoverAsk.current.next = null;
+		setHover(null);
+	}, []);
+	useEffect(() => {
+		if (!placing) hoverOff();
+	}, [placing, hoverOff]);
+	const hoverFrame = hover === null ? undefined : frames.find((frame) => frame.name === hover.frame);
 
 	// out no further than the whole page fitting the view (DEV-289); a ref, so the wheel reads today's page
 	const floor = useRef<number | undefined>(undefined);
@@ -439,11 +496,15 @@ function ViewerCanvas({
 	const onPointerMove = (event: React.PointerEvent) => {
 		const held = drag.current;
 		const at = camera.get();
+		if (placing && (held === null || !held.moved)) hoverAt(event.clientX, event.clientY);
 		if (held === null || held.id !== event.pointerId || at === null) return;
 		const dx = event.clientX - held.x;
 		const dy = event.clientY - held.y;
 		if (!held.moved && Math.hypot(dx, dy) < 3) return;
-		if (!held.moved) event.currentTarget.setPointerCapture(event.pointerId);
+		if (!held.moved) {
+			event.currentTarget.setPointerCapture(event.pointerId);
+			hoverOff();
+		}
 		held.moved = true;
 		held.x = event.clientX;
 		held.y = event.clientY;
@@ -536,9 +597,11 @@ function ViewerCanvas({
 				<div
 					ref={viewport}
 					data-viewer-field=""
-					className={`absolute inset-0 touch-none ${placing ? "cursor-crosshair" : "cursor-default"}`}
+					className="absolute inset-0 touch-none"
+					style={{ cursor: placing ? COMMENT_CURSOR : "default" }}
 					onPointerDown={onPointerDown}
 					onPointerMove={onPointerMove}
+					onPointerLeave={hoverOff}
 					onPointerUp={onPointerUp}
 					onPointerCancel={() => {
 						drag.current = null;
@@ -580,6 +643,11 @@ function ViewerCanvas({
 					{frames.length === 0 && (
 						<div className="absolute inset-0 flex items-center justify-center text-secondary type-detail">
 							nothing on this page yet
+						</div>
+					)}
+					{hoverFrame !== undefined && hover !== null && (
+						<div className="pointer-events-none absolute inset-0" data-comment-hover={hover.selector}>
+							<PreviewIn camera={camera} frame={hoverFrame} preview={hover} />
 						</div>
 					)}
 					{room !== undefined && <PresenceLayer room={room} camera={camera} frames={frames} page={page} />}
@@ -771,7 +839,8 @@ function FieldFrame({
 				<button
 					type="button"
 					aria-label={`Play ${pageName(frame.name)}`}
-					className={`absolute inset-0 bg-transparent ${placing ? "cursor-crosshair" : "cursor-pointer"}`}
+					className="absolute inset-0 bg-transparent"
+					style={{ cursor: placing ? COMMENT_CURSOR : "pointer" }}
 					onPointerDown={(event) => event.preventDefault()}
 					onClick={(event) => event.detail === 0 && onPlay()}
 				/>

@@ -414,6 +414,42 @@ it("opens on the comment a link names, on its page, and takes the link off the a
 	expect(new URL(gone.page.url()).search).toBe("");
 });
 
+it("outlines the element under the Comment tool's pin, from the frame, and nothing once the tool is put down", {
+	timeout: 60_000,
+}, async () => {
+	const { page } = await open();
+	await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+	const field = page.locator("[data-viewer-field]");
+	expect(await field.evaluate((one) => getComputedStyle(one).cursor)).toBe("default");
+	await page.keyboard.press("c");
+	// the pointer is the pin itself
+	expect(await field.evaluate((one) => getComputedStyle(one).cursor)).toMatch(/^url\(/u);
+	const on = await onFrame(page, "home", { x: 120, y: 20 });
+	await page.mouse.move(on.x, on.y);
+	const hover = page.locator("[data-comment-hover]");
+	await hover.waitFor();
+	expect(await hover.getAttribute("data-comment-hover")).toBe("main > h1");
+	// drawn round the heading's box as the frame reports it, 2px out, with no tag naming it
+	const home = await page.locator('[data-viewer-frame="home"]').boundingBox();
+	const ring = await hover.locator(".border-accent").boundingBox();
+	if (home === null || ring === null) throw new Error("not on screen");
+	const k = home.width / 800;
+	expect(ring.x).toBeCloseTo(home.x - 2, 0);
+	expect(ring.width).toBeCloseTo(800 * k + 4, 0);
+	expect(ring.height).toBeCloseTo(40 * k + 4, 0);
+	expect(await hover.textContent()).toBe("");
+	// off every frame, nothing is outlined
+	await page.mouse.move(on.x, home.y + home.height + 40);
+	await hover.waitFor({ state: "detached" });
+	await page.mouse.move(on.x, on.y);
+	await hover.waitFor();
+	await page.keyboard.press("v");
+	await hover.waitFor({ state: "detached" });
+	await page.mouse.move(on.x + 10, on.y);
+	await page.waitForTimeout(200);
+	expect(await hover.count()).toBe(0);
+});
+
 it("reads a lapsed team's comments but writes none: no Comment tool, composer or reply field", {
 	timeout: 60_000,
 }, async () => {

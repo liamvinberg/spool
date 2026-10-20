@@ -247,7 +247,7 @@ let picks = 0;
  * The deepest element at a frame-local point, asked of the frame's document as the Mac's canvas asks it: undefined
  * when the frame says nothing in time, or nothing is there.
  */
-function askPick(document: HTMLIFrameElement, at: Point): Promise<PickedHit | undefined> {
+export function askPick(document: HTMLIFrameElement, at: Point): Promise<PickedHit | undefined> {
 	const target = document.contentWindow;
 	if (target === null) return Promise.resolve(undefined);
 	const id = ++picks;
