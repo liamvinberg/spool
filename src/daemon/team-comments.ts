@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { SpoolError } from "../errors";
+import { commentRefusalSays, type HeardComments, hearComments } from "../team-comments-heard";
 import type { ProjectLink } from "../team-project";
 import {
 	type Comment,
@@ -67,27 +68,9 @@ export class CommentRefused extends SpoolError {
 		readonly reason: CommentRefusal,
 		readonly retryAfter?: number,
 	) {
-		super(
-			reason === "rate_limited" && retryAfter !== undefined
-				? `${REFUSALS[reason]} (in ${retryAfter} second${retryAfter === 1 ? "" : "s"})`
-				: REFUSALS[reason],
-		);
+		super(commentRefusalSays(reason, "mac", retryAfter));
 	}
 }
-
-const REFUSALS: Record<CommentRefusal, string> = {
-	invalid_comment: "a comment needs words, and at most 4,000 characters of them",
-	still_too_large: "the frame's picture was too large to keep with the comment",
-	comment_not_found: "that comment isn't there anymore",
-	signed_out: "this Mac is signed out of spool.page",
-	not_editor: "you aren't an editor of this project anymore",
-	unpaid: "the team has no paid time left",
-	unavailable: "spool.page couldn't take the comment just now",
-	too_long: "a comment or reply is at most 4,000 characters",
-	rate_limited: "that's more comments than spool.page takes from one person in a minute; wait a moment and send again",
-	too_many_open: "this project has as many open comments as it can hold; resolve some to make room",
-	not_author: "only its author can edit it, and only its author or an editor can delete it",
-};
 
 /** How long a comment waits on the team's answer before it is said to have failed. */
 const ANSWER_MS = 15_000;
@@ -112,8 +95,8 @@ export interface CopyComments {
 /** A copy's comments, kept in `file`; with none, they're only held while the copy runs. */
 export function copyComments(file: string | undefined, onChange?: () => void): CopyComments {
 	let { heard, comments, reads } = file === undefined ? { heard: null, comments: [], reads: {} } : readKept(file);
-	/** A snapshot arriving in parts, put together until its last part, with this person's reads if it says them. */
-	let incoming: { comments: Comment[]; reads: Record<string, number> | undefined } | undefined;
+	/** What the team said, a snapshot's parts and all, put together as every reader puts it. */
+	let held: HeardComments = { comments, reads };
 	let refs = 0;
 	const waiting = new Map<
 		string,
@@ -156,71 +139,20 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 	return {
 		hear(message, bytes) {
 			if (!String(message.type).startsWith("comment")) return false;
-			const heard = readCommentsMessage(message);
-			if (heard === undefined) return true;
-			switch (heard.type) {
-				case "comments":
-					if (heard.first) incoming = { comments: [], reads: heard.reads === undefined ? undefined : {} };
-					if (incoming !== undefined) {
-						incoming.comments.push(...heard.comments);
-						if (incoming.reads !== undefined) Object.assign(incoming.reads, heard.reads ?? {});
-					}
-					if (heard.last && incoming !== undefined) {
-						comments = incoming.comments;
-						// a snapshot sent again to every reader (a rename) says nobody's reads: this person's stand
-						if (incoming.reads !== undefined) reads = incoming.reads;
-						else
-							reads = Object.fromEntries(
-								Object.entries(reads).filter(([id]) => comments.some((one) => one.id === id)),
-							);
-						incoming = undefined;
-						keep();
-					}
-					break;
-				case "comment-removed": {
-					comments = comments.filter((comment) => comment.id !== heard.id);
-					const { [heard.id]: _gone, ...rest } = reads;
-					reads = rest;
-					keep();
-					break;
-				}
-				case "comment-seen": {
-					const { [heard.comment]: _was, ...rest } = reads;
-					reads = heard.read === null ? rest : { ...rest, [heard.comment]: heard.read };
-					keep();
-					break;
-				}
-				case "comment-added":
-					comments = [...comments.filter((comment) => comment.id !== heard.comment.id), heard.comment];
-					keep();
-					break;
-				case "comment-changed":
-					// a comment as it now is, in its place in the order; one never heard of is one more
-					comments = comments.some((comment) => comment.id === heard.comment.id)
-						? comments.map((comment) => (comment.id === heard.comment.id ? heard.comment : comment))
-						: [...comments, heard.comment];
-					keep();
-					break;
-				case "comment-replied":
-					comments = comments.map((comment) =>
-						comment.id === heard.comment
-							? {
-									...comment,
-									replies: [...comment.replies.filter((reply) => reply.id !== heard.reply.id), heard.reply],
-								}
-							: comment,
-					);
-					keep();
-					break;
-				case "comment-posted":
-					settle(heard.ref, { id: heard.id });
-					break;
-				case "comment-still":
-					settle(heard.ref, { still: bytes });
-					break;
-				case "comment-refused":
-					settle(heard.ref, { error: new CommentRefused(heard.reason, heard.retryAfter) });
-					break;
+			const said = readCommentsMessage(message);
+			if (said === undefined) return true;
+			if (said.type === "comment-posted") settle(said.ref, { id: said.id });
+			else if (said.type === "comment-still") settle(said.ref, { still: bytes });
+			else if (said.type === "comment-refused")
+				settle(said.ref, { error: new CommentRefused(said.reason, said.retryAfter) });
+			const next = hearComments(held, said);
+			if (next === held) return true;
+			held = next;
+			// what is kept is whole: a snapshot is kept once its last part is in
+			if (next.incoming === undefined) {
+				comments = next.comments;
+				reads = next.reads;
+				keep();
 			}
 			return true;
 		},
@@ -233,7 +165,7 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 				"still" in answer ? answer.still : undefined,
 			),
 		lost() {
-			incoming = undefined;
+			held = { comments, reads };
 			for (const ref of [...waiting.keys()]) settle(ref, { error: new CommentsOffline() });
 		},
 	};
