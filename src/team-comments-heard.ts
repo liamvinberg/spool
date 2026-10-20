@@ -105,4 +105,7 @@ const REFUSALS: Record<Exclude<CommentRefusal, "signed_out">, string> = {
 	rate_limited: "that's more comments than spool.page takes from one person in a minute; wait a moment and send again",
 	too_many_open: "this project has as many open comments as it can hold; resolve some to make room",
 	not_author: "only its author can edit it, and only its author or an editor can delete it",
+	blocked: "the team has blocked you from commenting on this share",
+	share_ended: "this share has ended, so its comments take nothing new",
+	share_limited: "this link has had as many comments as it takes in a day; try again later",
 };

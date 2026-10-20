@@ -677,6 +677,23 @@ export interface CommentReply {
 	draftFor: string | null;
 	/** The members its words @mention, named as they are now; absent when it mentions nobody. */
 	mentions?: CommentPerson[];
+	/** Written by someone outside the team, through the comment's share (spool#174). */
+	outsider?: true;
+}
+
+/**
+ * The share a comment's audience is, as a member reads it (spool#174): what kind, who reads it outside the team
+ * (their names for a people share, none for a link share), who made it, and whether it has ended. Never told to
+ * an outsider.
+ */
+export interface CommentShare {
+	kind: "people" | "link";
+	/** The people a people share names, by name as each is known to spool.page; empty for a link share. */
+	who: string[];
+	/** The account that made the share; null once that account is gone. */
+	by: string | null;
+	/** Stopped or gone: its comments stay readable by members, and nobody posts to it any more. */
+	ended?: true;
 }
 
 /** One comment as a reader gets it: its first message, where it stands, and every reply. */
@@ -712,6 +729,10 @@ export interface Comment {
 	replies: CommentReply[];
 	/** The members its first message @mentions, named as they are now; absent when it mentions nobody. */
 	mentions?: CommentPerson[];
+	/** Its audience's share, for a member (spool#174); absent for a Team comment, and for an outsider. */
+	share?: CommentShare;
+	/** Written by someone outside the team, through its share: its pin is hollow (spool#174). */
+	outsider?: true;
 }
 
 /**
@@ -732,6 +753,8 @@ export interface CommentPost {
 	agent?: true;
 	/** The members its words @mention, by account; the object keeps only the team's members. */
 	mentions?: string[];
+	/** Who reads it: the team when absent, or one live share of its page (spool#174). */
+	audience?: CommentAudience;
 }
 
 /** Daemon → object: a reply to a comment, by the person whose connection it is. */
@@ -788,7 +811,20 @@ export interface CommentReadMark {
 	comment: string;
 }
 
-export type CommentChange = CommentResolve | CommentEdit | CommentDelete | CommentReadMark;
+/**
+ * Send a draft (spool#174): the agent's reply waiting for this person goes out as theirs, with new words when they
+ * edited it. Only the person it waits for sends it.
+ */
+export interface CommentSend {
+	type: "comment-send";
+	ref: string;
+	comment: string;
+	reply: string;
+	body?: string;
+	mentions?: string[];
+}
+
+export type CommentChange = CommentResolve | CommentEdit | CommentDelete | CommentReadMark | CommentSend;
 
 /**
  * Daemon → object: the still a comment kept of its frame, which its person's agent is shown when the frame was edited
@@ -884,7 +920,15 @@ export type CommentRefusal =
 	| "unpaid"
 	| "unavailable"
 	| CommentLimited
-	| "not_author";
+	| "not_author"
+	| CommentShareRefusal;
+
+/**
+ * Why a share's comments refused a post (spool#174). `blocked`: the share's editors blocked this person from its
+ * comments. `share_ended`: the share was stopped, so nothing new is posted to it. `share_limited`: a link share's
+ * outsiders together posted `LINK_SHARE_COMMENTS_PER_DAY` within the day (`retryAfter` says when one fits).
+ */
+export type CommentShareRefusal = "blocked" | "share_ended" | "share_limited";
 
 /**
  * A limit a comment or reply would pass. `too_long`: its words are past `COMMENT_BODY_LIMIT`. `rate_limited`: its
@@ -925,6 +969,11 @@ export const COMMENT_STILL_BYTES = 4 * 1024 * 1024;
 export const COMMENTS_PER_MINUTE = 30;
 /** How many open comments a project may hold before a new one is refused. Cloud's default, which a maintainer can raise. */
 export const COMMENTS_OPEN = 5_000;
+/**
+ * How many comments and replies a link share's outsiders post together in a day: a bucket that holds this many and
+ * refills over the day (spool#174). Cloud's default, which a maintainer can raise.
+ */
+export const LINK_SHARE_COMMENTS_PER_DAY = 300;
 /** The most members one message may @mention. */
 export const COMMENT_MENTIONS = 50;
 /** How many comments one part of a snapshot carries. */
@@ -945,9 +994,11 @@ export function isCommentBody(value: unknown): value is string {
 
 /** A well-formed `comment-post`, copied field by field; undefined for anything else. */
 export function readCommentPost(message: Record<string, unknown>): CommentPost | undefined {
-	const { type, ref, page, frame, at, element, revision, body, agent, mentions } = message;
+	const { type, ref, page, frame, at, element, revision, body, agent, mentions, audience } = message;
 	if (type !== "comment-post" || !isId(ref) || !isCommentName(page) || !(frame === null || isFrameName(frame)))
 		return undefined;
+	const heard = audience === undefined ? "team" : readAudience(audience);
+	if (heard === undefined) return undefined;
 	const point = readPoint(at);
 	const handles = element === null ? null : readCommentElement(element);
 	if (point === undefined || handles === undefined || !isCommentBody(body)) return undefined;
@@ -968,6 +1019,7 @@ export function readCommentPost(message: Record<string, unknown>): CommentPost |
 		body,
 		...(agent === true ? { agent } : {}),
 		...(named.length > 0 ? { mentions: named } : {}),
+		...(heard === "team" ? {} : { audience: heard }),
 	};
 }
 
@@ -1000,6 +1052,19 @@ export function readCommentChange(message: Record<string, unknown>): CommentChan
 		case "comment-read":
 		case "comment-unread":
 			return { type, ref, comment };
+		case "comment-send": {
+			if (!isId(reply) || !(body === undefined || isCommentBody(body))) return undefined;
+			const named = readMentionIds(mentions);
+			if (named === undefined) return undefined;
+			return {
+				type,
+				ref,
+				comment,
+				reply,
+				...(body === undefined ? {} : { body }),
+				...(named.length > 0 ? { mentions: named } : {}),
+			};
+		}
 		case "comment-delete":
 			if (!(reply === undefined || isId(reply))) return undefined;
 			return { type, ref, comment, ...(reply === undefined ? {} : { reply }) };
@@ -1115,6 +1180,9 @@ const COMMENT_REFUSALS: readonly CommentRefusal[] = [
 	"rate_limited",
 	"too_many_open",
 	"not_author",
+	"blocked",
+	"share_ended",
+	"share_limited",
 ];
 
 /** The refusal a reason names, if it names one: as a socket says it, or spool.page's comments API answers it. */
@@ -1126,7 +1194,7 @@ export function commentRefusal(reason: unknown): CommentRefusal | undefined {
 export function readComment(value: unknown): Comment | undefined {
 	if (!isRecord(value)) return undefined;
 	const { id, audience, page, frame, at, element, revision, still, author, agent, body, created, edited } = value;
-	const { resolved, standing, dropped, editedSince, replies, mentions } = value;
+	const { resolved, standing, dropped, editedSince, replies, mentions, share, outsider } = value;
 	if (!isId(id) || !isCommentName(page) || !(frame === null || isFrameName(frame))) return undefined;
 	const who = readCommentPerson(author);
 	const point = readPoint(at);
@@ -1157,6 +1225,9 @@ export function readComment(value: unknown): Comment | undefined {
 	if (!read.every((reply): reply is CommentReply => reply !== undefined)) return undefined;
 	const named = readMentioned(mentions);
 	if (named === undefined) return undefined;
+	const through = share === undefined ? undefined : readCommentShare(share);
+	if ((share !== undefined && through === undefined) || !(outsider === undefined || outsider === true))
+		return undefined;
 	return {
 		id,
 		audience: heard,
@@ -1177,20 +1248,42 @@ export function readComment(value: unknown): Comment | undefined {
 		...(editedSince === true ? { editedSince } : {}),
 		replies: read,
 		...(named.length > 0 ? { mentions: named } : {}),
+		...(through === undefined ? {} : { share: through }),
+		...(outsider === true ? { outsider } : {}),
 	};
+}
+
+/** A comment's share as a member reads it, copied field by field; undefined for anything else. */
+function readCommentShare(value: unknown): CommentShare | undefined {
+	if (!isRecord(value)) return undefined;
+	const { kind, who, by, ended } = value;
+	if (kind !== "people" && kind !== "link") return undefined;
+	if (!Array.isArray(who) || who.length > COMMENT_MENTIONS || !who.every(isCommentName)) return undefined;
+	if (!(by === null || isId(by)) || !(ended === undefined || ended === true)) return undefined;
+	return { kind, who: [...who], by, ...(ended === true ? { ended } : {}) };
 }
 
 /** A well-formed reply, copied field by field; undefined for anything else. */
 export function readCommentReply(value: unknown): CommentReply | undefined {
 	if (!isRecord(value)) return undefined;
-	const { id, author, agent, body, created, edited, draftFor, mentions } = value;
+	const { id, author, agent, body, created, edited, draftFor, mentions, outsider } = value;
 	const who = readCommentPerson(author);
 	if (!isId(id) || who === undefined || typeof agent !== "boolean" || typeof body !== "string") return undefined;
 	if (!isTime(created) || !(edited === null || isTime(edited))) return undefined;
 	if (!(draftFor === null || isId(draftFor))) return undefined;
 	const named = readMentioned(mentions);
-	if (named === undefined) return undefined;
-	return { id, author: who, agent, body, created, edited, draftFor, ...(named.length > 0 ? { mentions: named } : {}) };
+	if (named === undefined || !(outsider === undefined || outsider === true)) return undefined;
+	return {
+		id,
+		author: who,
+		agent,
+		body,
+		created,
+		edited,
+		draftFor,
+		...(named.length > 0 ? { mentions: named } : {}),
+		...(outsider === true ? { outsider } : {}),
+	};
 }
 
 /** The people a message mentions, as a reader gets them: none, or each well formed. */
