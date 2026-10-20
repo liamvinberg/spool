@@ -367,6 +367,9 @@ it("lists comments in the panel, and a row flies to its pin on its own page", { 
 	const { page } = await open(PATH, [comment("c1"), comment("c3", { page: "shop", frame: "shop/cart" })]);
 	const panel = page.locator("[data-comments-panel]");
 	expect(await panel.getAttribute("data-comments-panel")).toBe("closed");
+	// the button counts the whole project's, as the list does: the other page's comment too, and its unread
+	const button = page.locator("[data-comments-button]");
+	await expect.poll(() => button.locator("[data-comments-count]").textContent()).toBe("2");
 	await page.locator("[data-comments-button]").click();
 	await expect.poll(() => panel.getAttribute("data-comments-panel")).toBe("open");
 	// the whole project, so the other page's comment is listed too

@@ -6,7 +6,7 @@ import type { Point } from "../canvas/camera";
 import { type CanvasStore, createCanvasStore, useCanvasField } from "../canvas/canvas-store";
 import type { CommentStills } from "../canvas/comment-history";
 import type { CommentDraft, CommentsContext } from "../canvas/comments-layer";
-import { counts, inScope, isUnread, type Reader } from "../canvas/comments-model";
+import { counts, type Reader } from "../canvas/comments-model";
 import { CommentsPane } from "../canvas/comments-pane";
 import { PaneActionsSlot } from "../canvas/pane-window";
 import { type PickedHit, parseFrameMessage, pickMessage } from "../canvas/protocol";
@@ -382,38 +382,33 @@ export function ViewerTools({ tool, onTool }: { tool: ViewerTool; onTool: (tool:
 	);
 }
 
-/** The list's door, beside Shared: this page's open comments, and the accent's dot when something is unread. */
+/** The list's door, beside Shared: the project's open comments, and the accent's dot when something is unread. */
 export function CommentsButton({
 	comments,
-	page,
 	open,
 	onClick,
 }: {
 	comments: ViewerComments;
-	page: string;
 	open: boolean;
 	onClick: () => void;
 }) {
-	const here = counts(inScope(comments.comments, "page", page), comments.reader).open;
-	const unread = comments.comments.some(
-		(comment) =>
-			comment.resolved === null && comment.standing !== "deleted-page" && isUnread(comment, comments.reader),
-	);
+	// the whole project's, as the inbox counts them: open ones, and whether any of them is unread
+	const { open: total, unread } = counts(comments.comments, comments.reader);
 	return (
 		<button
 			type="button"
 			aria-expanded={open}
 			data-comments-button=""
-			data-unread={unread ? "" : undefined}
+			data-unread={unread > 0 ? "" : undefined}
 			onClick={onClick}
 			className="relative flex h-7 items-center gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 text-primary transition-colors hover:bg-surface-panel aria-expanded:bg-state-selected-strong type-control"
 		>
 			<CommentIcon className="size-3.5" />
 			Comments
 			<span className="text-secondary type-detail" data-comments-count="">
-				{here}
+				{total}
 			</span>
-			{unread ? (
+			{unread > 0 ? (
 				<span
 					className="absolute -top-1 -right-1 size-2 animate-comment-pin-in rounded-full bg-accent"
 					style={{ boxShadow: "0 0 0 1.5px var(--color-surface-window)" }}

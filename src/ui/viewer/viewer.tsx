@@ -600,7 +600,6 @@ function ViewerCanvas({
 					{comments !== null && (
 						<CommentsButton
 							comments={comments}
-							page={page}
 							open={comments.panel}
 							onClick={() => comments.setPanel(!comments.panel)}
 						/>
