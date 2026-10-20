@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { commentRefusalSays, type HeardComments, hearComments, NO_COMMENTS_HEARD } from "../../team-comments-heard";
 import { type Comment, type CommentRefusal, commentRefusal } from "../../team-sync-protocol";
-import type { CommentAct, CommentChanged, CommentMentionable, CommentSent, CommentsClient, CommentWrite } from "../api";
+import { type CommentMentionable, type CommentsClient, commentsClient } from "../api";
 import type { Point } from "../canvas/camera";
 import { type CanvasStore, createCanvasStore, useCanvasField } from "../canvas/canvas-store";
 import { audienceOf } from "../canvas/comment-audience";
@@ -68,51 +68,16 @@ async function answered(sent: Promise<Response>): Promise<{ body: unknown } | { 
 }
 
 /**
- * A member's browser writing comments at spool.page, as its person: a new comment is posted to `address`, a reply
- * under `<address>/<id>/replies`, and a change goes to the comment's own address. What changed is heard on the
- * socket, as every other reader hears it.
+ * A browser writing comments at spool.page, as its person, by the Mac's own client: a member's to the project's
+ * comments, an outsider's to their share's. What changed is heard on the socket, as every other reader hears it.
  */
 export function cloudComments(address: string): CommentsClient {
-	const json = { "content-type": "application/json" };
-	const at = (comment: string, rest = "") => `${address}/${encodeURIComponent(comment)}${rest}`;
-	const send = (url: string, init: RequestInit) => fetch(url, { credentials: "same-origin", ...init });
-	const sent = async (request: Promise<Response>): Promise<CommentSent> => {
-		const answer = await answered(request);
-		if ("error" in answer) return answer;
-		const { body } = answer;
-		return typeof body === "object" && body !== null && "id" in body && typeof body.id === "string"
-			? { id: body.id }
-			: { error: "failed", message: commentRefusalSays("unavailable", "browser") };
-	};
-	return {
-		post: (comment: CommentWrite) =>
-			sent(send(address, { method: "POST", headers: json, body: JSON.stringify(comment) })),
-		reply: (comment, body, mentions) =>
-			sent(
-				send(at(comment, "/replies"), { method: "POST", headers: json, body: JSON.stringify({ body, mentions }) }),
-			),
-		async change(comment: string, change: CommentAct): Promise<CommentChanged> {
-			const reply = (id: string | undefined) => (id === undefined ? "" : `/replies/${encodeURIComponent(id)}`);
-			const request =
-				change.type === "edit"
-					? send(at(comment, reply(change.reply)), {
-							method: "PATCH",
-							headers: json,
-							body: JSON.stringify({ body: change.body, mentions: change.mentions }),
-						})
-					: change.type === "delete"
-						? send(at(comment, reply(change.reply)), { method: "DELETE" })
-						: change.type === "send"
-							? send(at(comment, `${reply(change.reply)}/send`), {
-									method: "POST",
-									headers: json,
-									body: JSON.stringify({ body: change.body, mentions: change.mentions }),
-								})
-							: send(at(comment, `/${change.type}`), { method: "POST" });
-			const answer = await answered(request);
-			return "error" in answer ? answer : { ok: true };
-		},
-	};
+	return commentsClient({
+		address,
+		request: (url, init) => fetch(url, { credentials: "same-origin", ...init }),
+		answer: answered,
+		unsent: commentRefusalSays("unavailable", "browser"),
+	});
 }
 
 /**

@@ -2143,15 +2143,6 @@ export interface CommentWrite {
 /** The team took it, under this id; or it didn't, offline or for a reason said in words. */
 export type CommentSent = { id: string } | { error: string; message: string };
 
-async function sentComment(response: Promise<Response>): Promise<CommentSent> {
-	const answered = await commentAnswer(response);
-	if ("error" in answered) return answered;
-	const { body } = answered;
-	return typeof body === "object" && body !== null && "id" in body && typeof body.id === "string"
-		? { id: body.id }
-		: { error: "failed", message: "the comment didn't send" };
-}
-
 /** What the daemon answered a comment's write: its body, or the refusal with its words. */
 async function commentAnswer(
 	response: Promise<Response>,
@@ -2183,60 +2174,6 @@ export type CommentAct =
 export type CommentChanged = { ok: true } | { error: string; message: string };
 
 /**
- * Change a comment as this Mac's person: resolve or reopen it, mark it read or unread, edit its words or a reply's,
- * delete it or a reply. The canvas hears the result as every other canvas does, through its comments changing.
- */
-export async function changeComment(project: string, comment: string, change: CommentAct): Promise<CommentChanged> {
-	const base = `/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment)}`;
-	const at = (reply: string | undefined) =>
-		reply === undefined ? base : `${base}/replies/${encodeURIComponent(reply)}`;
-	const json = { "content-type": "application/json" };
-	const sent =
-		change.type === "edit"
-			? controlFetch(at(change.reply), {
-					method: "PATCH",
-					headers: json,
-					body: JSON.stringify({ body: change.body, mentions: change.mentions }),
-				})
-			: change.type === "delete"
-				? controlFetch(at(change.reply), { method: "DELETE" })
-				: change.type === "send"
-					? controlFetch(`${at(change.reply)}/send`, {
-							method: "POST",
-							headers: json,
-							body: JSON.stringify({ body: change.body, mentions: change.mentions }),
-						})
-					: controlFetch(`${base}/${change.type}`, { method: "POST" });
-	const answered = await commentAnswer(sent);
-	return "error" in answered ? answered : { ok: true };
-}
-
-export function postComment(project: string, comment: CommentWrite): Promise<CommentSent> {
-	return sentComment(
-		controlFetch(`/api/p/${encodeURIComponent(project)}/comments`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(comment),
-		}),
-	);
-}
-
-export function postReply(
-	project: string,
-	comment: string,
-	body: string,
-	mentions: string[] = [],
-): Promise<CommentSent> {
-	return sentComment(
-		controlFetch(`/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment)}/replies`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ body, mentions }),
-		}),
-	);
-}
-
-/**
  * Where a canvas writes comments (spool#173): a Mac's through its daemon, which sends them to the team on the
  * project's sync connection; a browser's straight to spool.page. The comments layer and the card write through it
  * and never ask which.
@@ -2247,11 +2184,65 @@ export interface CommentsClient {
 	change(comment: string, change: CommentAct): Promise<CommentChanged>;
 }
 
+/**
+ * Where one canvas's comments client writes, and how: the comments' address (a new one is posted there, a reply under
+ * `<address>/<id>/replies`, a change at the comment's own address), how a request goes, and how its answer reads.
+ */
+export interface CommentsLine {
+	address: string;
+	request: (url: string, init: RequestInit) => Promise<Response>;
+	answer: (response: Promise<Response>) => Promise<{ body: unknown } | { error: string; message: string }>;
+	/** what an answer that names no comment says */
+	unsent: string;
+}
+
+/** A comments client on one line: every write but a delete is JSON, as each comments API asks. */
+export function commentsClient(line: CommentsLine): CommentsClient {
+	const json = (body: unknown): RequestInit => ({
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	const at = (comment: string, reply?: string) =>
+		`${line.address}/${encodeURIComponent(comment)}${reply === undefined ? "" : `/replies/${encodeURIComponent(reply)}`}`;
+	const sent = async (request: Promise<Response>): Promise<CommentSent> => {
+		const answer = await line.answer(request);
+		if ("error" in answer) return answer;
+		const { body } = answer;
+		return typeof body === "object" && body !== null && "id" in body && typeof body.id === "string"
+			? { id: body.id }
+			: { error: "failed", message: line.unsent };
+	};
+	return {
+		post: (comment) => sent(line.request(line.address, json(comment))),
+		reply: (comment, body, mentions) => sent(line.request(`${at(comment)}/replies`, json({ body, mentions }))),
+		async change(comment, change) {
+			const request =
+				change.type === "edit"
+					? line.request(at(comment, change.reply), {
+							...json({ body: change.body, mentions: change.mentions }),
+							method: "PATCH",
+						})
+					: change.type === "delete"
+						? line.request(at(comment, change.reply), { method: "DELETE" })
+						: change.type === "send"
+							? line.request(
+									`${at(comment, change.reply)}/send`,
+									json({ body: change.body, mentions: change.mentions }),
+								)
+							: line.request(`${at(comment)}/${change.type}`, json({}));
+			const answer = await line.answer(request);
+			return "error" in answer ? answer : { ok: true };
+		},
+	};
+}
+
 /** This Mac's daemon, writing for one of its team projects. */
 export function daemonComments(project: string): CommentsClient {
-	return {
-		post: (comment) => postComment(project, comment),
-		reply: (comment, body, mentions) => postReply(project, comment, body, mentions),
-		change: (comment, change) => changeComment(project, comment, change),
-	};
+	return commentsClient({
+		address: `/api/p/${encodeURIComponent(project)}/comments`,
+		request: controlFetch,
+		answer: commentAnswer,
+		unsent: "the comment didn't send",
+	});
 }

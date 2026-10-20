@@ -147,6 +147,10 @@ async function open(
 		if (url.origin === APP && url.pathname === "/api/people")
 			return route.fulfill({ json: { members: [{ ...BO, you: true }] } });
 		if (url.origin === APP && (url.pathname.startsWith("/_spool/") || url.pathname.startsWith("/api/comments"))) {
+			// as spool.page's comments APIs are: every write but a delete is JSON
+			const json = request.headers()["content-type"]?.startsWith("application/json") === true;
+			if (request.method() !== "GET" && request.method() !== "DELETE" && !json)
+				return route.fulfill({ status: 415, json: { error: "json_required" } });
 			const body: unknown = request.postData() === null ? null : JSON.parse(request.postData() ?? "null");
 			written.push({ method: request.method(), path: url.pathname, body });
 			if (url.pathname === "/_spool/sign-in/code") return route.fulfill({ status: 202, json: { mailbox: "x" } });
@@ -275,6 +279,17 @@ it("signs in on the link's host by an email code and the name step, then the pin
 	expect(await toolIn(page)).toBe("comment");
 	expect(await page.locator("[data-viewer-signed-in]").textContent()).toBe("Jonas Ek");
 	expect(opened.said).toEqual([]);
+
+	// a card they open is read, and they resolve it, each a write the link's host takes
+	await page.keyboard.press("Escape");
+	await page.locator('[data-comment-pin="c1"]').click();
+	const card = page.locator('[data-comment-card="c1"]');
+	await card.waitFor();
+	await card.getByRole("button", { name: "Resolve" }).click();
+	await expect
+		.poll(() => written.slice(3).map((one) => `${one.method} ${one.path}`))
+		.toEqual(["POST /_spool/comments/c1/read", "POST /_spool/comments/c1/resolve"]);
+	expect(await card.locator("[data-comment-refusal]").count()).toBe(0);
 });
 
 it("signs in by Google's popup only with the code it hands back, by message or by the host's channel, or cancels", {
