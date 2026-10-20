@@ -25,6 +25,7 @@ import {
 	isRecord,
 	joinParts,
 	type Limited,
+	type Moved,
 	PRESENCE_IDLE_MS,
 	PROJECT_LIMIT_BYTES,
 	PROTOCOL_VERSION,
@@ -43,6 +44,7 @@ import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
 import {
+	CommentRefused,
 	CommentsOffline,
 	copyComments,
 	type KeptComments,
@@ -53,6 +55,7 @@ import {
 	readKept,
 } from "./team-comments";
 import { baseOf, keepBase, mergeText, pruneBases } from "./team-merge";
+import { movesToSay } from "./team-moved";
 import { rescanAfterWatchStarts, type TreeWatch, watchTree } from "./watch-tree";
 
 /**
@@ -226,6 +229,8 @@ export interface LocalCopy {
 	change(change: NewChange): Promise<string>;
 	/** The still a comment kept of its frame, asked of the team: undefined when it kept none. */
 	still(comment: string): Promise<Uint8Array | undefined>;
+	/** Spool renamed or moved frames or pages here: said with the saves that delete their old files. */
+	moved(moved: Moved): void;
 	close(): void;
 }
 
@@ -422,6 +427,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
 	const presence = copyPresence(options.onPresence, options.onRoster);
 	const comments = copyComments(options.commentsFile, options.onComments);
+	/** What Spool renamed or moved here, said on the saves that delete the old files (spool#160). */
+	const moves = movesToSay();
+	/** Whether the team still holds a file under a folder, as this copy last heard. */
+	const teamHolds = (folder: string) =>
+		Object.entries(state.files).some(([path, file]) => file.hash !== null && path.startsWith(folder));
 	/** Paths that didn't travel and why, each said once until it travels or goes. */
 	const held = new Map<string, string>();
 	/** A limit paused sync: why, and until when nothing is sent. What changes meanwhile waits on disk. */
@@ -706,10 +716,15 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				return { ref, path, base: state.files[path]?.version ?? null, deleted: bytes === undefined, bytes };
 			});
 			sendsOut.set(sent, framed.length);
+			const moved = moves.carried(
+				framed.filter((save) => save.deleted).map((save) => save.path),
+				teamHolds,
+			);
+			const saying = moved === undefined ? {} : { moved };
 			const [only] = framed;
 			if (framed.length === 1 && only !== undefined) {
 				const { bytes, ...save } = only;
-				socket.send(encodeFrame({ type: "save", ...save }, bytes));
+				socket.send(encodeFrame({ type: "save", ...save, ...saying }, bytes));
 				continue;
 			}
 			socket.send(
@@ -717,6 +732,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 					{
 						type: "saves",
 						saves: framed.map(({ bytes, ...save }) => ({ ...save, size: bytes?.byteLength ?? 0 })),
+						...saying,
 					},
 					joinParts(framed.map(({ bytes }) => bytes)),
 				),
@@ -1201,6 +1217,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		reply: (reply) => comments.reply(caughtUp ? socket : undefined, reply),
 		change: (change) => comments.change(caughtUp ? socket : undefined, change),
 		still: (comment) => comments.still(caughtUp ? socket : undefined, comment),
+		moved: (moved) => moves.said(moved),
 		turnEnded: () => {
 			const said = setTimeout(() => {
 				const waited = isIdle()
@@ -1740,24 +1757,30 @@ export function createTeamSync(deps: {
 		},
 		/**
 		 * A team project's comments as this Mac knows them: what its copy was last told, kept on disk, so they show
-		 * offline too; `online` says whether a comment written now reaches the team.
+		 * offline too; `online` says whether a comment written now reaches the team, and `unpaid` that none can while
+		 * the team has gone local: they are read-only until it pays.
 		 */
-		comments(root: string): { online: boolean } & KeptComments {
+		comments(root: string): { online: boolean; unpaid: boolean } & KeptComments {
 			const copy = copies.get(root);
-			if (copy !== undefined) return { online: copy.online(), ...copy.comments() };
+			if (copy !== undefined) return { online: copy.online(), unpaid: false, ...copy.comments() };
 			const link = followedLink(root);
-			if (link === undefined) return { online: false, heard: null, comments: [], reads: {} };
-			return { online: false, ...readKept(keptCommentsFile(deps.spoolDir, link)) };
+			if (link === undefined) return { online: false, unpaid: false, heard: null, comments: [], reads: {} };
+			const unpaid = goneLocalWith(root) !== undefined;
+			return { online: false, unpaid, ...readKept(keptCommentsFile(deps.spoolDir, link)) };
 		},
 		/** Write a comment on a root's team project as this Mac's person; refused as offline when it can't reach it. */
 		comment(root: string, comment: NewComment, still?: Uint8Array): Promise<string> {
 			const copy = copies.get(root);
-			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.comment(comment, still);
+			return copy === undefined ? Promise.reject(notWritable(root)) : copy.comment(comment, still);
 		},
 		/** Reply under a comment on a root's team project as this Mac's person. */
 		reply(root: string, reply: NewReply): Promise<string> {
 			const copy = copies.get(root);
-			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.reply(reply);
+			return copy === undefined ? Promise.reject(notWritable(root)) : copy.reply(reply);
+		},
+		/** Spool renamed or moved frames or pages in a root: a team project's comments follow them (spool#160). */
+		moved(root: string, moved: Moved): void {
+			copies.get(root)?.moved(moved);
 		},
 		/** Resolve, reopen, edit, delete, read or mark unread a comment on a root's team project as this Mac's person. */
 		changeComment(root: string, change: NewChange): Promise<string> {
@@ -1790,6 +1813,11 @@ export function createTeamSync(deps: {
 }
 
 export type TeamSync = ReturnType<typeof createTeamSync>;
+
+/** Why a comment can't be written on a root whose copy isn't running: its team gone local, or it's offline. */
+function notWritable(root: string): Error {
+	return goneLocalWith(root) === undefined ? new CommentsOffline() : new CommentRefused("unpaid");
+}
 
 /**
  * A team project ended for this machine: its local copy becomes an ordinary project here. The solo

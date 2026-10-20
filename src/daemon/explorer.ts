@@ -94,9 +94,10 @@ function carryPage(root: string, from: string, to: string): void {
 /**
  * What every rename and move ends with, once the folders stand where they were
  * asked to: the covers and the seen mark of every frame that changed name
- * follow it, and every walk into one is written at its new name.
+ * follow it, and every walk into one is written at its new name. What moved,
+ * for a team project's comments to follow it (spool#160).
  */
-function renamed(root: string, designDir: string, moved: Moved): void {
+function renamed(root: string, designDir: string, moved: Moved): Moved {
 	const frames = [
 		...(moved.frames ?? []),
 		...(moved.pages ?? []).flatMap((page) =>
@@ -109,17 +110,18 @@ function renamed(root: string, designDir: string, moved: Moved): void {
 	for (const frame of frames) carryCover(root, frame.from, frame.to);
 	carrySeen(root, frames);
 	retargetLinks(root, retargetFor(moved));
+	return moved;
 }
 
 /**
  * A frame renamed in place. Both ends are names and both sit on the same page:
  * what a frame is called is one gesture and which page holds it is another.
  */
-export function renameFrame(root: string, from: string, to: string): Refusal | { kind: "renamed" } {
+export function renameFrame(root: string, from: string, to: string): Refusal | { kind: "renamed"; moved: Moved } {
 	if (!isFramePath(from)) return refuse(400, `not a frame name: "${from}"`);
 	if (!isFramePath(to)) return refuse(400, `not a frame name: "${to}"`);
 	// a frame renamed to what it is already called is a request already answered
-	if (from === to) return { kind: "renamed" };
+	if (from === to) return { kind: "renamed", moved: {} };
 	if (pageParent(from) !== pageParent(to)) {
 		return refuse(400, "a rename keeps a frame on its page; moving it onto another page is a move");
 	}
@@ -129,8 +131,7 @@ export function renameFrame(root: string, from: string, to: string): Refusal | {
 	const target = folderOf(designDir, to);
 	if (existsSync(target)) return refuse(409, describeTaken(pageParent(to), pageName(to)));
 	renameSync(resolveDesignPath(designDir, found.dir), target);
-	renamed(root, designDir, { frames: [{ from, to }] });
-	return { kind: "renamed" };
+	return { kind: "renamed", moved: renamed(root, designDir, { frames: [{ from, to }] }) };
 }
 
 /**
@@ -138,10 +139,10 @@ export function renameFrame(root: string, from: string, to: string): Refusal | {
  * what a page is called is one gesture and where it sits is another, so a
  * rename that changed the holding page would be a move wearing a rename's wire.
  */
-export function renamePage(root: string, from: string, to: string): Refusal | { kind: "renamed" } {
+export function renamePage(root: string, from: string, to: string): Refusal | { kind: "renamed"; moved: Moved } {
 	if (!isPagePath(from)) return refuse(400, `not a page name: "${from}"`);
 	if (!isPagePath(to)) return refuse(400, `not a page name: "${to}"`);
-	if (from === to) return { kind: "renamed" };
+	if (from === to) return { kind: "renamed", moved: {} };
 	if (pageParent(from) !== pageParent(to)) {
 		return refuse(400, "a rename keeps a page where it is — moving it into another page is a move");
 	}
@@ -153,8 +154,7 @@ export function renamePage(root: string, from: string, to: string): Refusal | { 
 	// the page's own bookkeeping follows the folder: the page the canvas is on,
 	// every camera inside it, and its place and contents in the rail's order
 	carryPage(root, from, to);
-	renamed(root, designDir, { pages: [{ from, to }] });
-	return { kind: "renamed" };
+	return { kind: "renamed", moved: renamed(root, designDir, { pages: [{ from, to }] }) };
 }
 
 /**
@@ -165,7 +165,11 @@ export function renamePage(root: string, from: string, to: string): Refusal | { 
  * same reason a round trip earlier. A page named alongside one of its own
  * ancestors rides along inside it rather than moving twice.
  */
-export function movePages(root: string, pages: readonly string[], parent: string): Refusal | { kind: "moved" } {
+export function movePages(
+	root: string,
+	pages: readonly string[],
+	parent: string,
+): Refusal | { kind: "moved"; moved: Moved } {
 	if (pages.length === 0) return refuse(400, "a move must name at least one page");
 	if (!isPageSlot(parent)) return refuse(400, `not a page name: "${parent}"`);
 	const designDir = realDesignDir(root);
@@ -196,11 +200,14 @@ export function movePages(root: string, pages: readonly string[], parent: string
 		reaimEscapingImports(designDir, move.dir, move.target);
 		carryPage(root, move.from, move.to);
 	}
-	renamed(root, designDir, { pages: moves.map(({ from, to }) => ({ from, to })) });
-	return { kind: "moved" };
+	return { kind: "moved", moved: renamed(root, designDir, { pages: moves.map(({ from, to }) => ({ from, to })) }) };
 }
 
-export function moveFrames(root: string, frames: readonly string[], page: string): Refusal | { kind: "moved" } {
+export function moveFrames(
+	root: string,
+	frames: readonly string[],
+	page: string,
+): Refusal | { kind: "moved"; moved: Moved } {
 	if (frames.length === 0) return refuse(400, "a move must name at least one frame");
 	if (!isPageSlot(page)) return refuse(400, `not a page name: "${page}"`);
 	const designDir = realDesignDir(root);
@@ -225,8 +232,7 @@ export function moveFrames(root: string, frames: readonly string[], page: string
 		renameSync(move.dir, move.target);
 		reaimEscapingImports(designDir, move.dir, move.target);
 	}
-	renamed(root, designDir, { frames: moves.map(({ from, to }) => ({ from, to })) });
-	return { kind: "moved" };
+	return { kind: "moved", moved: renamed(root, designDir, { frames: moves.map(({ from, to }) => ({ from, to })) }) };
 }
 
 export function duplicateFrames(

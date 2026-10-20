@@ -41,6 +41,7 @@ import { cloudTeamRoutes } from "./cloud-teams";
 import { editedSince } from "./comment-edited";
 import { commentsForPrompt } from "./comment-prompt";
 import { commentRoutes, teamPeople } from "./comment-routes";
+import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError } from "./design-path";
 import {
@@ -1357,7 +1358,18 @@ export function createDaemonApp({
 			},
 		)
 		.route("/api/p", handRoutes({ resolve: resolveProject, lastReaders: lastReadersIn }))
-		.route("/api/p", explorerRoutes({ resolve: resolveProject, trash: trashImpl }))
+		.route(
+			"/api/p",
+			explorerRoutes({
+				resolve: resolveProject,
+				trash: trashImpl,
+				moved: (root, moved) =>
+					teamSync.moved(root, {
+						...(moved.frames === undefined ? {} : { frames: [...moved.frames] }),
+						...(moved.pages === undefined ? {} : { pages: [...moved.pages] }),
+					}),
+			}),
+		)
 		.get("/p/:project/frames/:frame", async (c) =>
 			withProject(c, resolveProject, async (root) => {
 				const frame = c.req.param("frame");
@@ -1680,6 +1692,16 @@ export function createDaemonApp({
 				});
 				if (shot.kind === "unserved") return { broken: `${frame} failed to serve` };
 				return shot.found ?? null;
+			},
+			revision: async (root, frame) => {
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				return doc.kind === "ok" ? doc.source : null;
+			},
+			still: async (root, comment) => {
+				const link = followedLink(root);
+				return link === undefined
+					? undefined
+					: commentStill(spoolDir, link, comment, { ...cloud, origin: originOf(cloud) });
 			},
 		}),
 	);
