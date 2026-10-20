@@ -318,6 +318,25 @@ it("forgets what it read when spool.page signs them out and asks them in again, 
 	}
 });
 
+it("signs an outsider out of the link's host from the rail, their comments gone at once", {
+	timeout: 60_000,
+}, async () => {
+	const { outsider } = project;
+	if (outsider === undefined) throw new Error("no outsider");
+	const signedIn = { ...project, outsider: { ...outsider, me: { id: "jonas", name: "Jonas Ek" } } };
+	const opened = await open(signedIn, [comment("c1")], { tipSeen: true });
+	const { page, written } = opened;
+	await opened.go();
+	await page.locator('[data-comment-pin="c1"]').waitFor();
+	await page.getByRole("button", { name: "Sign out" }).click();
+	await expect.poll(() => written.map((one) => `${one.method} ${one.path}`)).toContain("POST /_spool/sign-out");
+	await expect.poll(() => page.locator("[data-comment-pin]").count()).toBe(0);
+	expect(await page.getByText("not signed in").count()).toBe(1);
+	// they asked to go, so nothing asks them back in
+	expect(await page.locator("[data-viewer-sign-in]").count()).toBe(0);
+	expect(opened.connections()).toBe(1);
+});
+
 it("asks a signed-out outsider to sign in when an email's link names a comment, then opens it", {
 	timeout: 60_000,
 }, async () => {

@@ -38,7 +38,7 @@ import { TextAction, Toast } from "../primitives/feedback";
 import { Bar, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
-import type { LinkSignedIn } from "./link-sign-in";
+import { type LinkSignedIn, signOutHere, type ViewerLinkSignIn } from "./link-sign-in";
 import { Navigator, type NavigatorToast } from "./navigator";
 import { onPhone } from "./phone";
 import { SharedLink } from "./shared-link";
@@ -362,6 +362,13 @@ function ViewerCanvas({
 			else if (outsiderShare?.signIn !== undefined) setAsked("none");
 		},
 	);
+	// signing out of a link's host: its comments go at once, and spool.page ends the session behind them
+	const signOut = (link: ViewerLinkSignIn | undefined) => {
+		if (link === undefined) return;
+		setCutOff(true);
+		setSignedInHere(null);
+		void signOutHere(link);
+	};
 	const comments = useViewerComments(project, presence ?? outsiderHeard, commentsUrl, onNotice, outsiderMe);
 	useCommentKeys(played === null ? comments : null);
 	// signed out on a link share: the frames open, and everything that needs the comments asks them to sign in first
@@ -655,9 +662,17 @@ function ViewerCanvas({
 				onPlay={play}
 				foot={
 					outsiderMe !== null ? (
-						<span className="truncate" data-viewer-signed-in="">
-							{outsiderMe.name}
-						</span>
+						<>
+							<span className="truncate" data-viewer-signed-in="">
+								{outsiderMe.name}
+							</span>
+							{/* a link's host is signed in on alone, so it signs out here too */}
+							{outsiderShare?.signIn === undefined ? null : (
+								<TextAction className="-mr-1.5" onClick={() => signOut(outsiderShare.signIn)}>
+									Sign out
+								</TextAction>
+							)}
+						</>
 					) : signIn !== undefined ? (
 						<>
 							<span className="truncate">not signed in</span>
