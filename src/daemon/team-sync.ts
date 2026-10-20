@@ -11,6 +11,9 @@ import { checkoutOf } from "../git-remote";
 import { reconnectBackoff } from "../reconnect-backoff";
 import { localCopyOf, type ProjectLink, parseProjectLink, TEAM_GITIGNORE } from "../team-project";
 import {
+	BUNDLE_BYTES,
+	BUNDLE_SAVES,
+	bundleParts,
 	CANVAS_PATH,
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
@@ -19,6 +22,8 @@ import {
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
+	isRecord,
+	joinParts,
 	type Limited,
 	PRESENCE_IDLE_MS,
 	PROJECT_LIMIT_BYTES,
@@ -358,8 +363,27 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const backoff = reconnectBackoff();
 	let retry: NodeJS.Timeout | undefined;
 	let refs = 0;
-	/** Saves sent and not yet answered, by their ref, with the bytes a set-aside mark keeps. */
-	const inflight = new Map<string, { path: string; hash: string | null; bytes: Buffer | undefined; batch: string }>();
+	/**
+	 * Saves sent and not yet answered, by their ref, with the bytes a set-aside mark keeps and the send they went in:
+	 * one message, a lone save or a bundle, which took one save from the minute's bucket.
+	 */
+	const inflight = new Map<
+		string,
+		{ path: string; hash: string | null; bytes: Buffer | undefined; batch: string; sent: number }
+	>();
+	/** How many of each send's saves are still unanswered, by send: what the bucket hasn't answered yet. */
+	const sendsOut = new Map<number, number>();
+	let sends = 0;
+	/** Every path read to go up and not yet answered: in a bundle being made, or in flight. */
+	const going = new Set<string>();
+	/**
+	 * Saves read in this pass over the changes, each send's worth, sent together once the pass is done: a cleanup's
+	 * thousands of files go up in a few bundles. A send each, one save in each, to an object that takes no bundles.
+	 */
+	let outgoing: { saves: { path: string; bytes: Buffer | undefined }[]; size: number }[] = [];
+	let shipping: NodeJS.Immediate | undefined;
+	/** The object takes bundles: its welcome said so. */
+	let bundles = false;
 	/** While a connection catches up, everything it sets aside arrives together, as one batch. */
 	let burst: string | undefined;
 	/** Paths that changed again while their last save was in flight. */
@@ -412,6 +436,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const isIdle = () =>
 		caughtUp &&
 		inflight.size === 0 &&
+		outgoing.length === 0 &&
 		yielding.size === 0 &&
 		changed.size === 0 &&
 		restoring.size === 0 &&
@@ -515,7 +540,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const now = Date.now();
 		let wait = Math.max(0, holdUntil - now);
 		if (pace !== undefined) {
-			const room = pace.room + ((now - pace.at) * pace.refill) / 60_000 - inflight.size;
+			const room = pace.room + ((now - pace.at) * pace.refill) / 60_000 - sendsOut.size - outgoing.length;
 			if (room < 1) wait = Math.max(wait, ((1 - room) * 60_000) / pace.refill);
 		}
 		return wait;
@@ -556,7 +581,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** A wait long enough to say: how many changes, to which team, and about how long until the last has gone. */
 	const sayWait = () => {
 		const refill = pace?.refill ?? SAVES_PER_MINUTE;
-		const ms = untilRoom() + ((waiting.size - 1) * 60_000) / refill;
+		const ms = untilRoom() + ((sendsFor(waiting.size) - 1) * 60_000) / refill;
 		const said =
 			waiting.size > 0 && ms > SENDING_SAID_MS
 				? `Sending ${waiting.size.toLocaleString("en")} ${waiting.size === 1 ? "change" : "changes"} to ${link.team}, ${aboutHowLong(ms)}`
@@ -606,17 +631,71 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		);
 	};
 
+	/** How many sends this many saves take, the most each send carries. */
+	const sendsFor = (saves: number) => Math.ceil(saves / (bundles ? BUNDLE_SAVES : 1));
+
+	/** Whether a save of this size fits the send being made, which has taken its save from the bucket already. */
+	const fits = (size: number) => {
+		const last = outgoing.at(-1);
+		return (
+			bundles &&
+			last !== undefined &&
+			size <= BUNDLE_BYTES &&
+			last.saves.length < BUNDLE_SAVES &&
+			last.size + size <= BUNDLE_BYTES
+		);
+	};
+
+	/** A save read to go up: in the send being made, or a new one, all sent once this pass is done. */
 	const send = (path: string, bytes: Buffer | undefined) => {
 		if (socket === undefined) return;
-		const ref = String(++refs);
-		const hash = bytes === undefined ? null : digest(bytes);
-		inflight.set(ref, { path, hash, bytes, batch: burst ?? randomUUID() });
-		socket.send(
-			encodeFrame(
-				{ type: "save", ref, path, base: state.files[path]?.version ?? null, deleted: bytes === undefined },
-				bytes,
-			),
-		);
+		const size = bytes?.byteLength ?? 0;
+		const last = outgoing.at(-1);
+		if (last !== undefined && fits(size)) {
+			last.saves.push({ path, bytes });
+			last.size += size;
+		} else outgoing.push({ saves: [{ path, bytes }], size });
+		going.add(path);
+		shipping ??= setImmediate(ship);
+	};
+
+	/** Every send made in this pass, each one message: a lone save, or a bundle of them. */
+	const ship = () => {
+		shipping = undefined;
+		const made = outgoing;
+		outgoing = [];
+		for (const { saves } of made) {
+			if (socket === undefined || closed) {
+				for (const { path } of saves) going.delete(path);
+				continue;
+			}
+			const sent = ++sends;
+			// what a bundle sets aside is marked together, as one batch
+			const batch = burst ?? randomUUID();
+			const framed = saves.map(({ path, bytes }) => {
+				const ref = String(++refs);
+				const hash = bytes === undefined ? null : digest(bytes);
+				inflight.set(ref, { path, hash, bytes, batch, sent });
+				return { ref, path, base: state.files[path]?.version ?? null, deleted: bytes === undefined, bytes };
+			});
+			sendsOut.set(sent, framed.length);
+			const [only] = framed;
+			if (framed.length === 1 && only !== undefined) {
+				const { bytes, ...save } = only;
+				socket.send(encodeFrame({ type: "save", ...save }, bytes));
+				continue;
+			}
+			socket.send(
+				encodeFrame(
+					{
+						type: "saves",
+						saves: framed.map(({ bytes, ...save }) => ({ ...save, size: bytes?.byteLength ?? 0 })),
+					},
+					joinParts(framed.map(({ bytes }) => bytes)),
+				),
+			);
+		}
+		wake();
 	};
 
 	/** Send one path if it differs from the team's version this copy last had, unless git made it differ. */
@@ -627,7 +706,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			waitForGit();
 			return;
 		}
-		if ([...inflight.values()].some((sent) => sent.path === path)) {
+		if (going.has(path)) {
 			dirty.add(path);
 			return;
 		}
@@ -644,7 +723,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (bytes !== undefined && hash !== null) keep(hash, bytes);
 			return;
 		}
-		if (untilRoom() > 0) return wait(path);
+		if (!fits(bytes?.byteLength ?? 0) && untilRoom() > 0) return wait(path);
 		send(path, bytes);
 	};
 
@@ -858,6 +937,53 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		options.onMarks?.();
 	};
 
+	/** The team's answer to one save this copy sent, alone or in a bundle. */
+	const answered = (message: Record<string, unknown>) => {
+		const sent = typeof message.ref === "string" ? inflight.get(message.ref) : undefined;
+		if (sent === undefined || typeof message.ref !== "string") return;
+		inflight.delete(message.ref);
+		going.delete(sent.path);
+		const left = (sendsOut.get(sent.sent) ?? 1) - 1;
+		if (left > 0) sendsOut.set(sent.sent, left);
+		else sendsOut.delete(sent.sent);
+		if (message.type === "saved" && typeof message.version === "number") {
+			state.files[sent.path] = { version: message.version, hash: sent.hash };
+			persistSoon();
+			if (sent.bytes !== undefined && sent.hash !== null) keep(sent.hash, sent.bytes);
+			options.onSaved?.(sent.path);
+			// this copy's own save of a marked file reached the team, and is the answer to the mark
+			if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();
+			if (paused !== undefined && !isPaused()) {
+				paused = undefined;
+				notice("Sync resumed.");
+				options.onPaused?.();
+			}
+		}
+		if (message.type === "set-aside") {
+			yielding.add(sent.path);
+			const version = typeof message.version === "number" ? message.version : 0;
+			mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
+		}
+		if (message.type === "refused" && message.reason === "rate_limited" && live)
+			waitForRoom(sent.path, message.retryAfter);
+		else if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
+		if (dirty.delete(sent.path)) check(sent.path);
+	};
+
+	/** A teammate's bundle: each file in it, in order, as if it had come alone. */
+	const receiveAll = (message: Record<string, unknown>, bytes: Uint8Array | undefined) => {
+		const { files } = message;
+		if (!Array.isArray(files) || !files.every(isRecord)) return;
+		const entries = files.map((file) => ({
+			file,
+			deleted: file.deleted === true,
+			size: typeof file.size === "number" ? file.size : -1,
+		}));
+		const parts = bundleParts(entries, bytes);
+		if (parts === null) return;
+		for (const [index, { file }] of entries.entries()) receive(file, parts[index]);
+	};
+
 	const handle = (data: string | ArrayBuffer) => {
 		// a frame the socket had in hand when this copy stopped is for nobody: its folder may be gone already
 		if (closed) return;
@@ -869,11 +995,13 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			// a move's connection is paced by nothing
 			pace = undefined;
 			hearPace(message.pace);
+			bundles = message.bundles === true;
 		} else if (message.type === "month") {
 			const { made, limit } = message;
 			if (typeof made === "number" && typeof limit === "number")
 				notice(`${made.toLocaleString("en")} of ${limit.toLocaleString("en")} saves to ${link.project} this month`);
 		} else if (message.type === "file") receive(message, bytes);
+		else if (message.type === "files") receiveAll(message, bytes);
 		else if (message.type === "caught-up") {
 			if (typeof message.head === "number" && message.head > state.head) state.head = message.head;
 			persist();
@@ -900,32 +1028,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (typeof path === "string" && travels(path) && typeof version === "number")
 				mark({ path, kind: "restored", version, by: byOf(message.by), batch: burst ?? randomUUID() }, undefined);
 		} else if (message.type === "saved" || message.type === "set-aside" || message.type === "refused") {
-			const sent = typeof message.ref === "string" ? inflight.get(message.ref) : undefined;
-			if (sent === undefined || typeof message.ref !== "string") return;
-			inflight.delete(message.ref);
 			hearPace(message.pace);
-			if (message.type === "saved" && typeof message.version === "number") {
-				state.files[sent.path] = { version: message.version, hash: sent.hash };
-				persistSoon();
-				if (sent.bytes !== undefined && sent.hash !== null) keep(sent.hash, sent.bytes);
-				options.onSaved?.(sent.path);
-				// this copy's own save of a marked file reached the team, and is the answer to the mark
-				if (forgetMarks(designDir, { path: sent.path })) options.onMarks?.();
-				if (paused !== undefined && !isPaused()) {
-					paused = undefined;
-					notice("Sync resumed.");
-					options.onPaused?.();
-				}
-			}
-			if (message.type === "set-aside") {
-				yielding.add(sent.path);
-				const version = typeof message.version === "number" ? message.version : 0;
-				mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
-			}
-			if (message.type === "refused" && message.reason === "rate_limited" && live)
-				waitForRoom(sent.path, message.retryAfter);
-			else if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
-			if (dirty.delete(sent.path)) check(sent.path);
+			answered(message);
+		} else if (message.type === "answers" && Array.isArray(message.answers)) {
+			hearPace(message.pace);
+			for (const answer of message.answers as unknown[]) if (isRecord(answer)) answered(answer);
 		}
 		wake();
 	};
@@ -959,6 +1066,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 						protocol: PROTOCOL_VERSION,
 						format: FORMAT_VERSION,
 						since: state.head,
+						bundles: true,
 						...(options.moving === undefined ? {} : { moving: true }),
 					}),
 				);
@@ -971,6 +1079,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				burst = undefined;
 				// what was in flight is settled by the next catch-up: applied saves come back as the team's version
 				inflight.clear();
+				sendsOut.clear();
+				going.clear();
+				outgoing = [];
+				bundles = false;
 				dirty.clear();
 				yielding.clear();
 				presence.lost();
@@ -1070,6 +1182,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (settle !== undefined) clearTimeout(settle);
 			if (gitWait !== undefined) clearTimeout(gitWait);
 			if (asking !== undefined) clearImmediate(asking);
+			if (shipping !== undefined) clearImmediate(shipping);
 			gaps?.close();
 			// when this copy stopped watching: whatever git does from now is checked when it is followed again
 			if (watching || recording !== undefined) persist();

@@ -728,6 +728,8 @@ describe("Move to team under the save limit", () => {
 		const ana = cloud.machine("ana");
 		const project = bigProject(500);
 		let now = 0;
+		// the spool.page before bundles, which took each save alone
+		cloud.withoutBundles();
 		cloud.rateLimit(120, 60_000, () => now);
 		const slept: number[] = [];
 		const progress: MoveProgress[] = [];
