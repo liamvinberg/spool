@@ -263,5 +263,10 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		const added = await anas.spool("add", "receipt", "Here.", "--element", "footer");
 		expect(added.status).toBe(1);
 		expect(added.stderr).toContain('nothing on receipt matches "footer"');
+		// a frame that isn't there takes no pin, which nobody would ever see
+		const nowhere = await anas.spool("add", "receipts", "Here.");
+		expect(nowhere.status).toBe(1);
+		expect(nowhere.stderr).toContain("there's no frame receipts");
+		expect((await anas.read()).comments).toEqual([]);
 	});
 });

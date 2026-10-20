@@ -236,6 +236,9 @@ export function commentRoutes(deps: {
 					const element: CommentElement | null =
 						frame === null || put === null ? null : handlesOf(root, { ...put, frame });
 					const now = frame === null ? { revision: null, still: undefined } : await deps.frameNow(root, frame);
+					// a pin stands on a frame that is there: on none, nobody would ever see it
+					if (frame !== null && now.revision === null)
+						return c.json({ error: "frame_not_found", message: `there's no frame ${frame}` }, 404);
 					const agent = input.agent === true ? AGENT : {};
 					return answered(c, () =>
 						deps.comment(
