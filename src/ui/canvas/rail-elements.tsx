@@ -232,7 +232,7 @@ function TreeRows({
 		<div
 			ref={tree}
 			data-element-tree=""
-			className="pages-scrollbar overflow-y-auto py-1"
+			className="pages-scrollbar overflow-x-hidden overflow-y-auto py-1"
 			style={{ maxHeight: TREE_MOST }}
 		>
 			{rows.map((row) => {

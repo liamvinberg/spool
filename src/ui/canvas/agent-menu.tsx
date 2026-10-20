@@ -526,7 +526,10 @@ export function AgentMenu({
 					</div>
 				</Fade>
 				<div
-					className={cn("pages-scrollbar overflow-y-auto p-1", findable ? "max-h-[360px] pt-0" : "max-h-[420px]")}
+					className={cn(
+						"pages-scrollbar overflow-x-hidden overflow-y-auto p-1",
+						findable ? "max-h-[360px] pt-0" : "max-h-[420px]",
+					)}
 				>
 					{shown}
 					{nothingFound ? <p className="px-7 py-3 text-secondary type-label">No models match “{query}”.</p> : null}

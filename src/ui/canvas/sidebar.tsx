@@ -1627,7 +1627,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 				role="tree"
 				tabIndex={0}
 				aria-label="Pages tree"
-				className="pages-scrollbar min-h-0 flex-1 overflow-y-auto py-2 outline-none"
+				className="pages-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto py-2 outline-none"
 				onPointerDown={() => {
 					setMenu(null);
 					setCursor(null);
