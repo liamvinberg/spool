@@ -5,6 +5,7 @@ import { SpoolError } from "../errors";
 import type { ProjectLink } from "../team-project";
 import {
 	type Comment,
+	type CommentChange,
 	type CommentPost,
 	type CommentRefusal,
 	type CommentReplyPost,
@@ -30,16 +31,26 @@ export function keptCommentsFile(spoolDir: string, link: ProjectLink): string {
 	return join(spoolDir, "comments", new URL(link.origin).host, link.team, `${link.project}.json`);
 }
 
-/** The comments a copy last heard, and when it heard them: null when it never has. */
+/**
+ * The comments a copy last heard, and when it heard them: null when it never has. With them, when this machine's
+ * person last read each one they have read, by its id, which reaches every Mac and browser of theirs.
+ */
 export interface KeptComments {
 	heard: number | null;
 	comments: Comment[];
+	reads: Record<string, number>;
 }
 
 /** What a person writes for a new comment: where it stands and its words. The team says who wrote it. */
 export type NewComment = Omit<CommentPost, "type" | "ref">;
 /** What a person writes under a comment. */
 export type NewReply = Omit<CommentReplyPost, "type" | "ref">;
+/** A change a person makes to a comment that is there: resolve, reopen, edit, delete, read or mark unread. */
+export type NewChange = CommentChange extends infer Change
+	? Change extends CommentChange
+		? Omit<Change, "ref">
+		: never
+	: never;
 
 /** Comments can't be written now: the copy isn't connected to its team, so nothing is queued. */
 export class CommentsOffline extends SpoolError {
@@ -52,8 +63,15 @@ export class CommentsOffline extends SpoolError {
 /** The team wouldn't take a comment or reply, and why. */
 export class CommentRefused extends SpoolError {
 	override readonly name = "CommentRefused";
-	constructor(readonly reason: CommentRefusal) {
-		super(REFUSALS[reason]);
+	constructor(
+		readonly reason: CommentRefusal,
+		readonly retryAfter?: number,
+	) {
+		super(
+			reason === "rate_limited" && retryAfter !== undefined
+				? `${REFUSALS[reason]} (in ${retryAfter} second${retryAfter === 1 ? "" : "s"})`
+				: REFUSALS[reason],
+		);
 	}
 }
 
@@ -68,7 +86,7 @@ const REFUSALS: Record<CommentRefusal, string> = {
 	too_long: "a comment or reply is at most 4,000 characters",
 	rate_limited: "that's more comments than spool.page takes from one person in a minute; wait a moment and send again",
 	too_many_open: "this project has as many open comments as it can hold; resolve some to make room",
-	not_author: "only its author can change that",
+	not_author: "only its author can edit it, and only its author or an editor can delete it",
 };
 
 /** How long a comment waits on the team's answer before it is said to have failed. */
@@ -83,35 +101,37 @@ export interface CopyComments {
 	post(socket: SyncSocket | undefined, comment: NewComment, still?: Uint8Array): Promise<string>;
 	/** Send a reply on a caught-up connection. Its id. */
 	reply(socket: SyncSocket | undefined, reply: NewReply): Promise<string>;
+	/** Send a change to a comment on a caught-up connection; settled once the team took it and said what changed. */
+	change(socket: SyncSocket | undefined, change: NewChange): Promise<string>;
 	/** The connection went: whatever waits on an answer fails as offline. */
 	lost(): void;
 }
 
 /** A copy's comments, kept in `file`; with none, they're only held while the copy runs. */
 export function copyComments(file: string | undefined, onChange?: () => void): CopyComments {
-	let { heard, comments } = file === undefined ? { heard: null, comments: [] } : readKept(file);
-	/** A snapshot arriving in parts, put together until its last part. */
-	let incoming: Comment[] | undefined;
+	let { heard, comments, reads } = file === undefined ? { heard: null, comments: [], reads: {} } : readKept(file);
+	/** A snapshot arriving in parts, put together until its last part, with this person's reads if it says them. */
+	let incoming: { comments: Comment[]; reads: Record<string, number> | undefined } | undefined;
 	let refs = 0;
 	const waiting = new Map<
 		string,
 		{ resolve(id: string): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 	>();
 
-	let kept = JSON.stringify(comments);
+	let kept = JSON.stringify({ comments, reads });
 	/** Keep what was heard and when; a canvas is told only when it brought something new. */
 	const keep = () => {
 		heard = Date.now();
 		if (file !== undefined) {
 			mkdirSync(dirname(file), { recursive: true });
-			writeAtomic(file, `${JSON.stringify({ heard, comments })}\n`);
+			writeAtomic(file, `${JSON.stringify({ heard, comments, reads })}\n`);
 		}
-		const now = JSON.stringify(comments);
+		const now = JSON.stringify({ comments, reads });
 		if (now === kept) return;
 		kept = now;
 		onChange?.();
 	};
-	const settle = (ref: string, outcome: { id: string } | { error: Error }) => {
+	const settle = (ref: string, outcome: { id: string } | { error: Error }): void => {
 		const waiter = waiting.get(ref);
 		if (waiter === undefined) return;
 		waiting.delete(ref);
@@ -138,14 +158,40 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 			if (heard === undefined) return true;
 			switch (heard.type) {
 				case "comments":
-					if (heard.first) incoming = [];
-					incoming?.push(...heard.comments);
+					if (heard.first) incoming = { comments: [], reads: heard.reads === undefined ? undefined : {} };
+					if (incoming !== undefined) {
+						incoming.comments.push(...heard.comments);
+						if (incoming.reads !== undefined) Object.assign(incoming.reads, heard.reads ?? {});
+					}
 					if (heard.last && incoming !== undefined) {
-						comments = incoming;
+						comments = incoming.comments;
+						// a snapshot sent again to every reader (a rename) says nobody's reads: this person's stand
+						if (incoming.reads !== undefined) reads = incoming.reads;
+						else
+							reads = Object.fromEntries(
+								Object.entries(reads).filter(([id]) => comments.some((one) => one.id === id)),
+							);
 						incoming = undefined;
 						keep();
 					}
 					break;
+				case "comment-changed":
+					comments = comments.map((comment) => (comment.id === heard.comment.id ? heard.comment : comment));
+					keep();
+					break;
+				case "comment-removed": {
+					comments = comments.filter((comment) => comment.id !== heard.id);
+					const { [heard.id]: _gone, ...rest } = reads;
+					reads = rest;
+					keep();
+					break;
+				}
+				case "comment-seen": {
+					const { [heard.comment]: _was, ...rest } = reads;
+					reads = heard.read === null ? rest : { ...rest, [heard.comment]: heard.read };
+					keep();
+					break;
+				}
 				case "comment-added":
 					comments = [...comments.filter((comment) => comment.id !== heard.comment.id), heard.comment];
 					keep();
@@ -165,14 +211,15 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 					settle(heard.ref, { id: heard.id });
 					break;
 				case "comment-refused":
-					settle(heard.ref, { error: new CommentRefused(heard.reason) });
+					settle(heard.ref, { error: new CommentRefused(heard.reason, heard.retryAfter) });
 					break;
 			}
 			return true;
 		},
-		list: () => ({ heard, comments }),
+		list: () => ({ heard, comments, reads }),
 		post: (socket, comment, still) => send(socket, { type: "comment-post", ...comment }, still),
 		reply: (socket, reply) => send(socket, { type: "comment-reply", ...reply }),
+		change: (socket, change) => send(socket, { ...change }),
 		lost() {
 			incoming = undefined;
 			for (const ref of [...waiting.keys()]) settle(ref, { error: new CommentsOffline() });
@@ -186,10 +233,14 @@ export function readKept(file: string): KeptComments {
 	try {
 		kept = JSON.parse(readFileSync(file, "utf8"));
 	} catch {
-		return { heard: null, comments: [] };
+		return { heard: null, comments: [], reads: {} };
 	}
 	if (typeof kept !== "object" || kept === null || !("comments" in kept) || !Array.isArray(kept.comments))
-		return { heard: null, comments: [] };
+		return { heard: null, comments: [], reads: {} };
 	const heard = "heard" in kept && typeof kept.heard === "number" && Number.isFinite(kept.heard) ? kept.heard : null;
-	return { heard, comments: kept.comments.flatMap((comment: unknown) => readComment(comment) ?? []) };
+	const reads: Record<string, number> = {};
+	if ("reads" in kept && typeof kept.reads === "object" && kept.reads !== null)
+		for (const [id, at] of Object.entries(kept.reads))
+			if (typeof at === "number" && Number.isFinite(at)) reads[id] = at;
+	return { heard, comments: kept.comments.flatMap((comment: unknown) => readComment(comment) ?? []), reads };
 }

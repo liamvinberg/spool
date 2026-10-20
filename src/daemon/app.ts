@@ -38,7 +38,7 @@ import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
-import { commentRoutes } from "./comment-routes";
+import { commentRoutes, teamPeople } from "./comment-routes";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError } from "./design-path";
 import {
@@ -1639,6 +1639,8 @@ export function createDaemonApp({
 			comments: (root) => teamSync.comments(root),
 			comment: (root, comment, still) => teamSync.comment(root, comment, still),
 			reply: (root, reply) => teamSync.reply(root, reply),
+			change: (root, change) => teamSync.changeComment(root, change),
+			people: teamPeople(spoolDir, cloud),
 			// the frame as it is now: its source revision, and the cover this Mac has of it, the comment's still
 			frameNow: async (root, frame) => {
 				const doc = await compiler.getDocument(root, frame, frameAuthority(root));

@@ -47,6 +47,7 @@ import {
 	copyComments,
 	type KeptComments,
 	keptCommentsFile,
+	type NewChange,
 	type NewComment,
 	type NewReply,
 	readKept,
@@ -221,6 +222,8 @@ export interface LocalCopy {
 	comment(comment: NewComment, still?: Uint8Array): Promise<string>;
 	/** Reply under a comment as this machine's person: its id, once the team took it. */
 	reply(reply: NewReply): Promise<string>;
+	/** Change a comment as this machine's person; refused as offline until the copy has caught up. */
+	change(change: NewChange): Promise<string>;
 	close(): void;
 }
 
@@ -1194,6 +1197,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		online: () => caughtUp && socket !== undefined,
 		comment: (comment, still) => comments.post(caughtUp ? socket : undefined, comment, still),
 		reply: (reply) => comments.reply(caughtUp ? socket : undefined, reply),
+		change: (change) => comments.change(caughtUp ? socket : undefined, change),
 		turnEnded: () => {
 			const said = setTimeout(() => {
 				const waited = isIdle()
@@ -1739,7 +1743,7 @@ export function createTeamSync(deps: {
 			const copy = copies.get(root);
 			if (copy !== undefined) return { online: copy.online(), ...copy.comments() };
 			const link = followedLink(root);
-			if (link === undefined) return { online: false, heard: null, comments: [] };
+			if (link === undefined) return { online: false, heard: null, comments: [], reads: {} };
 			return { online: false, ...readKept(keptCommentsFile(deps.spoolDir, link)) };
 		},
 		/** Write a comment on a root's team project as this Mac's person; refused as offline when it can't reach it. */
@@ -1751,6 +1755,11 @@ export function createTeamSync(deps: {
 		reply(root: string, reply: NewReply): Promise<string> {
 			const copy = copies.get(root);
 			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.reply(reply);
+		},
+		/** Resolve, reopen, edit, delete, read or mark unread a comment on a root's team project as this Mac's person. */
+		changeComment(root: string, change: NewChange): Promise<string> {
+			const copy = copies.get(root);
+			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.change(change);
 		},
 		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
 		watchPresence(root: string, watcher: (presence: Presence) => void): () => void {

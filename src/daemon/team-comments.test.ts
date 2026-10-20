@@ -96,7 +96,14 @@ async function canvas(app: ReturnType<typeof daemon>) {
 			online: boolean;
 			heard: number | null;
 			comments: Comment[];
+			reads: Record<string, number>;
 		};
+	const call = (path: string, method: string, body?: unknown) =>
+		app.request(`/api/p/checkout/comments/${path}`, {
+			method,
+			headers: { "content-type": "application/json" },
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		});
 	return {
 		read,
 		/** Once its copy is connected to the team, so what it writes reaches it. */
@@ -114,12 +121,14 @@ async function canvas(app: ReturnType<typeof daemon>) {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ page: "", frame: "receipt", at: { x: 120, y: 64 }, element: null, ...comment }),
 			}),
-		reply: (id: string, body: string) =>
+		reply: (id: string, body: string, mentions?: string[]) =>
 			app.request(`/api/p/checkout/comments/${id}/replies`, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ body }),
+				body: JSON.stringify({ body, mentions }),
 			}),
+		/** Resolve, reopen, read or mark unread a comment, edit or delete it or one of its replies. */
+		call,
 		close: () => sse.cancel(),
 	};
 }
@@ -251,5 +260,112 @@ describe("a comment on a team canvas", () => {
 		back();
 		await restarted.online();
 		await eventually(async () => (await restarted.read()).comments.length === 2);
+	});
+});
+
+describe("changing a comment on a team canvas", () => {
+	/** Ana's comment with Ben's reply, both canvases online and told of both. */
+	async function thread() {
+		const made = await team();
+		const anas = await canvas(daemon(made.ana));
+		const bens = await canvas(daemon(made.ben));
+		await anas.online();
+		await bens.online();
+		const { id } = (await (await anas.write({ body: "Thanks! is loud." })).json()) as { id: string };
+		await bens.told();
+		const { id: reply } = (await (await bens.reply(id, "Or the order number.")).json()) as { id: string };
+		await anas.told();
+		return { ...made, anas, bens, id, reply };
+	}
+
+	it("resolves and reopens on every canvas, answered with the comment as it now is", async () => {
+		const { anas, bens, id } = await thread();
+		const resolved = await bens.call(`${id}/resolve`, "POST");
+		expect(resolved.status).toBe(200);
+		expect(await resolved.json()).toMatchObject({ comment: { id, resolved: { by: { accountId: "ben" } } } });
+		await anas.told();
+		expect((await anas.read()).comments[0]?.resolved).toMatchObject({ by: { name: "ben" } });
+		const reopened = await anas.call(`${id}/reopen`, "POST");
+		expect(await reopened.json()).toMatchObject({ comment: { id, resolved: null } });
+		await bens.told();
+		expect((await bens.read()).comments[0]?.resolved).toBeNull();
+		expect((await anas.call("nothere1/resolve", "POST")).status).toBe(404);
+	});
+
+	it("edits the author's own words only, and deletes a reply or the whole comment", async () => {
+		const { cloud, anas, bens, id, reply } = await thread();
+		const edited = await anas.call(id, "PATCH", { body: "Thanks! is too loud." });
+		expect(await edited.json()).toMatchObject({
+			comment: { body: "Thanks! is too loud.", edited: expect.any(Number) },
+		});
+		await bens.told();
+		expect((await bens.read()).comments[0]?.body).toBe("Thanks! is too loud.");
+		const theirs = await anas.call(`${id}/replies/${reply}`, "PATCH", { body: "mine now" });
+		expect(theirs.status).toBe(403);
+		expect(await theirs.json()).toMatchObject({ error: "not_author" });
+		expect((await anas.call(id, "PATCH", { body: "" })).status).toBe(400);
+
+		const gone = await bens.call(`${id}/replies/${reply}`, "DELETE");
+		expect(await gone.json()).toMatchObject({ comment: { id, replies: [] } });
+		// an editor deletes anyone's: Ben deletes Ana's comment, and it leaves every canvas
+		const removed = await bens.call(id, "DELETE");
+		expect(await removed.json()).toEqual({ removed: id });
+		await anas.told();
+		expect((await anas.read()).comments).toEqual([]);
+		expect(cloud.comments("checkout")).toEqual([]);
+	});
+
+	it("reads and marks unread for its person only, kept across a restart", async () => {
+		const { cloud, ana, anas, bens, id } = await thread();
+		const read = await anas.call(`${id}/read`, "POST");
+		const { read: at } = (await read.json()) as { read: number };
+		expect(at).toBeGreaterThan(0);
+		expect((await anas.read()).reads).toEqual({ [id]: at });
+		expect((await bens.read()).reads).toEqual({});
+		expect(cloud.reads("checkout", "ana").get(id)).toBe(at);
+
+		// a second Mac of Ana's hears it at once, and whoever starts later is told by the team
+		await anas.close();
+		const again = await canvas(daemon(ana));
+		await again.online();
+		expect((await again.read()).reads).toEqual({ [id]: at });
+		const unread = await again.call(`${id}/unread`, "POST");
+		expect(await unread.json()).toMatchObject({ comment: { id }, read: null });
+		expect((await again.read()).reads).toEqual({});
+	});
+
+	it("mentions members only, and lists them for the composer", async () => {
+		const { anas, bens, id } = await thread();
+		const { people } = (await (await anas.call("people", "GET")).json()) as {
+			people: { accountId: string; name: string; you: boolean }[];
+		};
+		expect(people).toEqual(
+			expect.arrayContaining([
+				{ accountId: "ana", name: "ana", you: true },
+				{ accountId: "ben", name: "ben", you: false },
+			]),
+		);
+		await anas.write({ body: "@ben look", mentions: ["ben", "nobody"] });
+		await eventually(async () => (await bens.read()).comments.length === 2);
+		expect((await bens.read()).comments.at(-1)?.mentions).toEqual([
+			{ accountId: "ben", name: "ben", color: TEAM_COLORS[1] },
+		]);
+		expect((await bens.reply(id, "@ana yes", ["ana"])).status).toBe(201);
+		await eventually(async () => (await anas.read()).comments[0]?.replies.length === 2);
+		expect((await anas.read()).comments[0]?.replies.at(-1)?.mentions).toMatchObject([{ accountId: "ana" }]);
+		expect((await anas.write({ body: "x", mentions: "ben" })).status).toBe(400);
+	});
+
+	it("is refused offline, and over the limit says when to try again", async () => {
+		const { cloud, ben, bens, id } = await thread();
+		cloud.commentLimits({ perMinute: 1 });
+		expect((await bens.reply(id, "one")).status).toBe(201);
+		const limited = await bens.reply(id, "two");
+		expect(limited.status).toBe(429);
+		expect(await limited.json()).toMatchObject({ error: "rate_limited", retryAfter: expect.any(Number) });
+		cloud.offline("ben");
+		await eventually(async () => !(await bens.read()).online);
+		expect((await bens.call(`${id}/resolve`, "POST")).status).toBe(409);
+		expect(ben.root).toBeTruthy();
 	});
 });
