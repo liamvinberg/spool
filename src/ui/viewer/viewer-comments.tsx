@@ -147,23 +147,36 @@ export interface ViewerComments {
 
 /**
  * An outsider's comments socket (spool#174): their share's comments, every one when it opens and each change after,
- * on a connection that says nothing and joins no presence. Undefined while there is none to open.
+ * on a connection that says nothing and joins no presence. Undefined while there is none to open. spool.page
+ * closing it as signed out ends it, and `onSignedOut` says so, and whether the team blocked them.
  */
 export function useOutsiderComments(
 	address: string | undefined,
+	onSignedOut: (blocked: boolean) => void,
 ): Pick<ViewerPresence, "comments" | "heard" | "online"> | null {
 	const [comments, setComments] = useState<HeardComments>(NO_COMMENTS_HEARD);
 	const [online, setOnline] = useState(false);
 	const [heard, setHeard] = useState(false);
+	const signedOut = useRef(onSignedOut);
+	signedOut.current = onSignedOut;
 	useEffect(() => {
 		if (address === undefined) return;
 		const joined = joinPresence(address, {
 			heard: () => {},
-			dropped: () => setOnline(false),
+			// a socket that comes back says every comment again, so none counts as heard until it has
+			dropped: () => {
+				setOnline(false);
+				setHeard(false);
+			},
 			opened: () => setOnline(true),
 			comments: (message) => {
 				setComments((held) => hearComments(held, message));
 				if (message.type === "comments" && message.last) setHeard(true);
+			},
+			// cut off: blocked, or no longer signed in. What they read goes, and they are asked to sign in again
+			ended: (reason) => {
+				setComments(NO_COMMENTS_HEARD);
+				signedOut.current(reason === "blocked");
 			},
 		});
 		return () => {

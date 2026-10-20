@@ -126,9 +126,11 @@ async function open(
 	const page = await context.newPage();
 	const written: Written[] = [];
 	let socket: WebSocketRoute | undefined;
+	let connections = 0;
 	const said: string[] = [];
 	await page.routeWebSocket(`${WSS}${options.socket ?? "/_spool/comments/socket"}`, (route) => {
 		socket = route;
+		connections += 1;
 		route.onMessage((message) => said.push(String(message)));
 		route.send(JSON.stringify({ type: "comments", comments, first: true, last: true, reads: {} }));
 	});
@@ -182,6 +184,7 @@ async function open(
 		written,
 		said,
 		socket: () => socket,
+		connections: () => connections,
 		go: async (path = "/") => {
 			await page.goto(`${APP}${path}`);
 			await page.getByRole("navigation", { name: "Pages" }).waitFor();
@@ -289,6 +292,30 @@ it("signs in on the link's host by an email code and the name step, then the pin
 		.poll(() => written.slice(3).map((one) => `${one.method} ${one.path}`))
 		.toEqual(["POST /_spool/comments/c1/read", "POST /_spool/comments/c1/resolve"]);
 	expect(await card.locator("[data-comment-refusal]").count()).toBe(0);
+});
+
+it("forgets what it read when spool.page signs them out and asks them in again, or says they were blocked", {
+	timeout: 60_000,
+}, async () => {
+	const { outsider } = project;
+	if (outsider === undefined) throw new Error("no outsider");
+	const signedIn = { ...project, outsider: { ...outsider, me: { id: "jonas", name: "Jonas Ek" } } };
+	for (const reason of ["signed out", "blocked"]) {
+		const opened = await open(signedIn, [comment("c1")], { tipSeen: true });
+		const { page } = opened;
+		await opened.go();
+		await page.locator('[data-comment-pin="c1"]').waitFor();
+		await opened.socket()?.close({ code: 4401, reason });
+		await expect.poll(() => page.locator("[data-comment-pin]").count()).toBe(0);
+		if (reason === "blocked") {
+			await page.getByText("The team has blocked you from commenting on this share.").waitFor();
+			expect(await page.locator("[data-viewer-sign-in]").count()).toBe(0);
+		} else await page.locator("[data-viewer-sign-in]").waitFor();
+		expect(await page.getByText("not signed in").count()).toBe(1);
+		// never opened again, which spool.page would only refuse
+		await page.waitForTimeout(1500);
+		expect(opened.connections()).toBe(1);
+	}
 });
 
 it("signs in by Google's popup only with the code it hands back, by message or by the host's channel, or cancels", {

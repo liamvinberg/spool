@@ -2,6 +2,7 @@ import type { DesignProjection } from "../../daemon/design-projection";
 import { reconnectBackoff } from "../../reconnect-backoff";
 import { type ProjectShares, readCommenters, type SharesSource, type ShareView } from "../../share-view";
 import {
+	CLOSE_SIGNED_OUT,
 	type CommentsMessage,
 	type Presence,
 	type PresenceState,
@@ -131,11 +132,18 @@ const SILENT_MS = 10_000;
  * Hold a WebSocket to an address on the page's own origin open for as long as the canvas is, connecting again after
  * a spread-out, growing wait when it drops (`reconnectBackoff`). It asks whether it is still there every `PING_MS`, and straight away when the
  * page comes back into view or the network returns; one that stays silent past `SILENT_MS` died without a close,
- * as one does when the laptop sleeps, and is dropped and opened again rather than waited on.
+ * as one does when the laptop sleeps, and is dropped and opened again rather than waited on. One spool.page closes
+ * as signed out (blocked, cut off, or its session gone) is never opened again, which would only be refused: `ended`
+ * says so.
  */
 function keepOpen(
 	address: string,
-	on: { opened?: (socket: WebSocket) => void; heard: (data: unknown) => void; dropped?: () => void },
+	on: {
+		opened?: (socket: WebSocket) => void;
+		heard: (data: unknown) => void;
+		dropped?: () => void;
+		ended?: (reason: string) => void;
+	},
 ): () => void {
 	const url = new URL(address, window.location.href);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -152,12 +160,16 @@ function keepOpen(
 		deadline = undefined;
 	};
 	/** The socket is gone, said once whether it closed or died silent; a later word from it is never heard. */
-	const lost = (gone: WebSocket) => {
+	const lost = (gone: WebSocket, closed?: { code: number; reason: string }) => {
 		if (socket !== gone) return;
 		socket = undefined;
 		quiet();
 		if (stopped) return;
 		on.dropped?.();
+		if (closed?.code === CLOSE_SIGNED_OUT) {
+			stopped = true;
+			return on.ended?.(closed.reason);
+		}
 		retry = setTimeout(connect, backoff.next());
 	};
 	const awaitWord = (from: WebSocket) => {
@@ -191,7 +203,7 @@ function keepOpen(
 			deadline = undefined;
 			on.heard(event.data);
 		});
-		opening.addEventListener("close", () => lost(opening));
+		opening.addEventListener("close", (event) => lost(opening, event));
 	};
 	/** Back in view or back online: a socket that died meanwhile is found now, and a wait to reconnect is cut short. */
 	const recheck = () => {
@@ -249,6 +261,8 @@ export function joinPresence(
 		dropped: () => void;
 		opened?: () => void;
 		comments?: (message: CommentsMessage) => void;
+		/** spool.page closed it as signed out, saying why ("blocked", say): it isn't opened again */
+		ended?: (reason: string) => void;
 	},
 ): PresenceLink {
 	let open: WebSocket | null = null;
@@ -273,6 +287,7 @@ export function joinPresence(
 			open = null;
 			on.dropped();
 		},
+		...(on.ended === undefined ? {} : { ended: on.ended }),
 	});
 	return {
 		say: (state) => {

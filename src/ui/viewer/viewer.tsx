@@ -350,9 +350,17 @@ function ViewerCanvas({
 	// an outsider's (spool#174): once signed in, their share's alone, on a socket of their own
 	const outsiderShare = project.outsider;
 	const [signedInHere, setSignedInHere] = useState<LinkSignedIn | null>(null);
-	const outsiderMe = signedInHere ?? outsiderShare?.me ?? null;
+	// spool.page cut their comments off: blocked, or signed out (their session ended, or they signed out elsewhere)
+	const [cutOff, setCutOff] = useState(false);
+	const outsiderMe = cutOff ? null : (signedInHere ?? outsiderShare?.me ?? null);
 	const outsiderHeard = useOutsiderComments(
 		outsiderShare !== undefined && outsiderMe !== null ? outsiderShare.socket : undefined,
+		(blocked) => {
+			setCutOff(true);
+			setSignedInHere(null);
+			if (blocked) onNotice("The team has blocked you from commenting on this share.");
+			else if (outsiderShare?.signIn !== undefined) setAsked("none");
+		},
 	);
 	const comments = useViewerComments(project, presence ?? outsiderHeard, commentsUrl, onNotice, outsiderMe);
 	useCommentKeys(played === null ? comments : null);
@@ -759,6 +767,7 @@ function ViewerCanvas({
 						signIn={signIn}
 						by={sharedBy}
 						onSignedIn={(me) => {
+							setCutOff(false);
 							setSignedInHere(me);
 							setReached(asked);
 							setAsked(null);
