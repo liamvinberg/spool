@@ -93,7 +93,7 @@ export interface FrameNow {
  */
 export function commentRoutes(deps: {
 	resolve: ResolveProject;
-	comments: (root: string) => { online: boolean } & KeptComments;
+	comments: (root: string) => { online: boolean; unpaid: boolean } & KeptComments;
 	comment: (root: string, comment: NewComment, still?: Uint8Array) => Promise<string>;
 	reply: (root: string, reply: NewReply) => Promise<string>;
 	change: (root: string, change: NewChange) => Promise<string>;
@@ -110,6 +110,8 @@ export function commentRoutes(deps: {
 		frame: string,
 		target: string,
 	) => Promise<FoundElement | null | { broken: string }>;
+	/** The still a comment kept of its frame when it was made, from the team or kept here. */
+	still: (root: string, comment: string) => Promise<{ type: string; bytes: Uint8Array } | undefined>;
 }) {
 	const withRoot = async (c: Context, act: (root: string) => Promise<Response>) => {
 		const project = deps.resolve(c, c.req.param("project") ?? "");
@@ -169,6 +171,16 @@ export function commentRoutes(deps: {
 					// an agent's read (`spool comments`) asks which frames moved on since; the canvas doesn't
 					if (c.req.query("edited") === undefined) return c.json(read);
 					return c.json({ ...read, edited: await deps.editedSince(root, read.comments) });
+				}),
+			)
+			.get("/:project/comments/:comment/still", (c) =>
+				withRoot(c, async (root) => {
+					const still = await deps.still(root, c.req.param("comment") ?? "");
+					if (still === undefined) return c.text("no still for that comment here or at spool.page now", 404);
+					return c.body(Buffer.from(still.bytes), 200, {
+						"content-type": still.type,
+						"cache-control": "private, max-age=31536000, immutable",
+					});
 				}),
 			)
 			.get("/:project/comments/people", (c) =>

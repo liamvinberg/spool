@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initTeamProject } from "../init";
@@ -94,6 +94,7 @@ async function canvas(app: ReturnType<typeof daemon>) {
 	const read = async () =>
 		(await (await app.request("/api/p/checkout/comments")).json()) as {
 			online: boolean;
+			unpaid: boolean;
 			heard: number | null;
 			comments: Comment[];
 			reads: Record<string, number>;
@@ -371,5 +372,97 @@ describe("changing a comment on a team canvas", () => {
 		await eventually(async () => !(await bens.read()).online);
 		expect((await bens.call(`${id}/resolve`, "POST")).status).toBe(409);
 		expect(ben.root).toBeTruthy();
+	});
+});
+
+describe("a comment over its frame's life (spool#160)", () => {
+	it("follows its frame through a rename, says when the frame was edited since, and drops when it is deleted", async () => {
+		const { cloud, ana, ben } = await team();
+		const anaDaemon = daemon(ana);
+		const anas = await canvas(anaDaemon);
+		const bens = await canvas(daemon(ben));
+		await anas.online();
+		await bens.online();
+		await eventually(async () => cloud.paths("checkout").includes("frames/receipt/frame.tsx"));
+		const written = await anas.write({ body: "Thanks! is loud." });
+		const { id } = (await written.json()) as { id: string };
+		await bens.told();
+		const before = (await (await anaDaemon.request("/api/p/checkout/comments")).json()) as { edited: string[] };
+		expect(before.edited).toEqual([]);
+
+		// Ana renames the frame in the explorer: the comment stands on it under its new name, on Ben's Mac too
+		const renamed = await anaDaemon.request("/api/p/checkout/frames/rename", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ from: "receipt", to: "thanks" }),
+		});
+		expect(renamed.status).toBe(204);
+		await eventually(async () => (await bens.read()).comments[0]?.frame === "thanks");
+		expect((await bens.read()).comments[0]).toMatchObject({ id, frame: "thanks", standing: "placed" });
+		// Ana's Mac said the rename with the save that deleted the old frame: the team needn't guess it from bytes
+		expect(cloud.moved("checkout")).toContainEqual({ frames: [{ from: "receipt", to: "thanks" }] });
+
+		// the frame is edited: the comment still stands on it, and says it was edited since
+		writeFileSync(
+			join(ana.root, "design", "frames", "thanks", "frame.tsx"),
+			"export default function Receipt() {\n\treturn <main><h2>Paid</h2></main>;\n}\n",
+		);
+		await eventually(async () => {
+			const read = (await (await anaDaemon.request("/api/p/checkout/comments")).json()) as { edited: string[] };
+			return read.edited.includes(id);
+		});
+
+		// the frame is deleted: the comment drops onto the field where it stood, marked so
+		rmSync(join(ana.root, "design", "frames", "thanks"), { recursive: true });
+		await eventually(async () => (await bens.read()).comments[0]?.standing === "deleted-frame");
+		expect((await bens.read()).comments[0]).toMatchObject({
+			frame: null,
+			dropped: { frame: "thanks", at: expect.any(Number) },
+		});
+		expect(cloud.comments("checkout")[0]).toMatchObject({ standing: "deleted-frame" });
+	});
+
+	it("keeps the still it was made with for another Mac to compare, and is counted for the sheet that takes it out", async () => {
+		const { cloud, ana, ben } = await team();
+		const anas = await canvas(daemon(ana));
+		const benDaemon = daemon(ben);
+		const bens = await canvas(benDaemon);
+		await anas.online();
+		await bens.online();
+		writeCover(ana.root, "receipt", PNG);
+		const { id } = (await (await anas.write({ body: "Loud." })).json()) as { id: string };
+		await bens.told();
+
+		const still = await benDaemon.request(`/api/p/checkout/comments/${id}/still`);
+		expect(still.status).toBe(200);
+		expect(still.headers.get("content-type")).toBe("image/png");
+		expect(Buffer.from(await still.arrayBuffer())).toEqual(PNG);
+		// kept on Ben's Mac once fetched: asked again, it is there with the team unreachable
+		const reachable = cloud.unreachable();
+		const kept = await benDaemon.request(`/api/p/checkout/comments/${id}/still`);
+		expect(Buffer.from(await kept.arrayBuffer())).toEqual(PNG);
+		expect((await benDaemon.request("/api/p/checkout/comments/nothere1/still")).status).toBe(404);
+		reachable();
+
+		const count = await benDaemon.request("/api/cloud/teams/devosurf/projects/checkout/comments/count");
+		expect(await count.json()).toEqual({ comments: 1 });
+	});
+
+	it("is read-only while the team has gone local, the comments already there still showing", async () => {
+		const { cloud, ana, ben } = await team();
+		const anas = await canvas(daemon(ana));
+		const bens = await canvas(daemon(ben));
+		await anas.online();
+		await bens.online();
+		await anas.write({ body: "Before it lapsed." });
+		await bens.told();
+
+		cloud.lapse();
+		await eventually(async () => (await bens.read()).unpaid);
+		const refused = await bens.write({ body: "After." });
+		expect(refused.status).toBe(402);
+		expect(await refused.json()).toMatchObject({ error: "unpaid" });
+		expect((await bens.read()).comments.map((comment) => comment.body)).toEqual(["Before it lapsed."]);
+		expect(cloud.comments("checkout")).toHaveLength(1);
 	});
 });

@@ -177,10 +177,6 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 						keep();
 					}
 					break;
-				case "comment-changed":
-					comments = comments.map((comment) => (comment.id === heard.comment.id ? heard.comment : comment));
-					keep();
-					break;
 				case "comment-removed": {
 					comments = comments.filter((comment) => comment.id !== heard.id);
 					const { [heard.id]: _gone, ...rest } = reads;
@@ -196,6 +192,13 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 				}
 				case "comment-added":
 					comments = [...comments.filter((comment) => comment.id !== heard.comment.id), heard.comment];
+					keep();
+					break;
+				case "comment-changed":
+					// a comment as it now is, in its place in the order; one never heard of is one more
+					comments = comments.some((comment) => comment.id === heard.comment.id)
+						? comments.map((comment) => (comment.id === heard.comment.id ? heard.comment : comment))
+						: [...comments, heard.comment];
 					keep();
 					break;
 				case "comment-replied":
