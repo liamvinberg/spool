@@ -7,8 +7,13 @@ import {
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNPAID,
+	COMMENTS_OPEN,
+	COMMENTS_PER_MINUTE,
 	COMMENTS_PER_PART,
 	type Comment,
+	type CommentPerson,
+	type CommentReply,
+	commentBodyRefusal,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
@@ -17,6 +22,7 @@ import {
 	mergeCanvas,
 	PROTOCOL_VERSION,
 	type PresenceState,
+	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
 	readPresenceState,
@@ -31,6 +37,16 @@ import {
  * machine or holds saves to a limit as an admin or spool.page would.
  */
 export const TEAM_ORIGIN = "https://cloud.test";
+
+/** The changes a copy makes to a comment that is there. */
+const COMMENT_CHANGES = new Set([
+	"comment-resolve",
+	"comment-reopen",
+	"comment-edit",
+	"comment-delete",
+	"comment-read",
+	"comment-unread",
+]);
 
 type Role = "admin" | "editor" | "viewer" | null;
 
@@ -78,6 +94,10 @@ interface Project {
 	comments: Comment[];
 	/** The still each comment kept of its frame, by the comment's id. */
 	stills: Map<string, Uint8Array>;
+	/** When each person last read each comment they have read: by account, then by comment. */
+	reads: Map<string, Map<string, number>>;
+	/** Each person's comment bucket: its level when last taken from, and when. */
+	buckets: Map<string, { level: number; at: number }>;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -132,6 +152,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const moves: { from: string; to: string; by: string }[] = [];
 	let ids = 0;
 	let commentIds = 0;
+	/** The comment limits every project here keeps: core's, unless a test raised or lowered them as a maintainer. */
+	let commentLimits = { perMinute: COMMENTS_PER_MINUTE, open: COMMENTS_OPEN };
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
 	/** While set, spool.page doesn't answer at all: every request fails as a network that is down does. */
@@ -251,6 +273,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 						name: one.accountId,
 						email: `${one.accountId}@devosurf.com`,
 						role: roleIn(one, address),
+						you: one === person,
 					})),
 				invites: [],
 			});
@@ -296,6 +319,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					repo: body.repo ?? null,
 					comments: [],
 					stills: new Map(),
+					reads: new Map(),
+					buckets: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -414,19 +439,32 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
 			from.live = true;
 			greet(at, from);
-			for (let start = 0; start === 0 || start < at.comments.length; start += COMMENTS_PER_PART)
+			const reads = at.reads.get(from.person.accountId) ?? new Map<string, number>();
+			for (let start = 0; start === 0 || start < at.comments.length; start += COMMENTS_PER_PART) {
+				const comments = at.comments.slice(start, start + COMMENTS_PER_PART);
+				const seen: Record<string, number> = {};
+				for (const comment of comments) {
+					const read = reads.get(comment.id);
+					if (read !== undefined) seen[comment.id] = read;
+				}
 				from.deliver(
 					encodeFrame({
 						type: "comments",
-						comments: at.comments.slice(start, start + COMMENTS_PER_PART),
+						comments,
 						first: start === 0,
 						last: start + COMMENTS_PER_PART >= at.comments.length,
+						reads: seen,
 					}),
 				);
+			}
 			return;
 		}
 		if (message.type === "comment-post" || message.type === "comment-reply") {
 			commented(at, from, message, bytes);
+			return;
+		}
+		if (typeof message.type === "string" && COMMENT_CHANGES.has(message.type)) {
+			changed(at, from, message);
 			return;
 		}
 		if (message.type === "presence") {
@@ -559,7 +597,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	/** A comment or a reply from a caught-up copy: kept, sent to every live copy, and its writer answered. */
 	function commented(at: Project, from: Connected, message: Record<string, unknown>, bytes?: Uint8Array): void {
 		const ref = typeof message.ref === "string" ? message.ref : "-";
-		const refuse = (reason: string) => from.deliver(encodeFrame({ type: "comment-refused", ref, reason }));
+		const refuse = (reason: string, retryAfter?: number) =>
+			from.deliver(
+				encodeFrame({ type: "comment-refused", ref, reason, ...(retryAfter === undefined ? {} : { retryAfter }) }),
+			);
 		if (!from.live) {
 			from.close();
 			return;
@@ -568,17 +609,23 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			refuse("not_editor");
 			return;
 		}
-		const author = { accountId: from.person.accountId, name: from.person.accountId, color: from.person.color };
-		const id = `c${++commentIds}`.padEnd(8, "x");
+		const author = personOf(from.person);
 		const now = Date.now();
 		let told: Record<string, unknown>;
 		if (message.type === "comment-post") {
 			const post = readCommentPost(message);
 			if (post === undefined) {
-				refuse("invalid_comment");
+				refuse(commentBodyRefusal(message.body) ?? "invalid_comment");
 				return;
 			}
-			const { type: _type, ref: _ref, agent, ...where } = post;
+			const limited = postLimited(at, from.person, true);
+			if (limited !== undefined) {
+				refuse(limited.reason, limited.retryAfter);
+				return;
+			}
+			const { type: _type, ref: _ref, agent, mentions, ...where } = post;
+			const id = `c${++commentIds}`.padEnd(8, "x");
+			const named = mentioned(at, mentions);
 			const comment: Comment = {
 				id,
 				audience: "team",
@@ -591,31 +638,170 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				resolved: null,
 				standing: "placed",
 				replies: [],
+				...(named.length > 0 ? { mentions: named } : {}),
 			};
 			at.comments.push(comment);
 			if (bytes !== undefined) at.stills.set(id, bytes);
 			told = { type: "comment-added", comment };
-		} else {
-			const post = readCommentReplyPost(message);
-			const comment = post === undefined ? undefined : at.comments.find((comment) => comment.id === post.comment);
-			if (post === undefined || comment === undefined) {
-				refuse(post === undefined ? "invalid_comment" : "comment_not_found");
-				return;
-			}
-			const reply = {
-				id,
-				author,
-				agent: post.agent === true,
-				body: post.body,
-				created: now,
-				edited: null,
-				draftFor: null,
-			};
-			comment.replies.push(reply);
-			told = { type: "comment-replied", comment: comment.id, reply };
+			for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
+			from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
+			return;
 		}
+		const post = readCommentReplyPost(message);
+		const comment = post === undefined ? undefined : at.comments.find((comment) => comment.id === post.comment);
+		if (post === undefined || comment === undefined) {
+			refuse(post === undefined ? (commentBodyRefusal(message.body) ?? "invalid_comment") : "comment_not_found");
+			return;
+		}
+		const limited = postLimited(at, from.person, false);
+		if (limited !== undefined) {
+			refuse(limited.reason, limited.retryAfter);
+			return;
+		}
+		const id = `c${++commentIds}`.padEnd(8, "x");
+		const named = mentioned(at, post.mentions);
+		const reply: CommentReply = {
+			id,
+			author,
+			agent: post.agent === true,
+			body: post.body,
+			created: now,
+			edited: null,
+			draftFor: null,
+			...(named.length > 0 ? { mentions: named } : {}),
+		};
+		comment.replies.push(reply);
+		told = { type: "comment-replied", comment: comment.id, reply };
 		for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
 		from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
+	}
+
+	/** A person as comments name them here: by account, in their colour. */
+	const personOf = (person: Person): CommentPerson => ({
+		accountId: person.accountId,
+		name: person.accountId,
+		color: person.color,
+	});
+
+	/** The members among the accounts a message mentions, as readers get them: nobody else is mentioned. */
+	function mentioned(at: Project, accounts: readonly string[] | undefined): CommentPerson[] {
+		return (accounts ?? []).flatMap((account) => {
+			const person = [...people.values()].find((one) => one.accountId === account);
+			return person === undefined || roleIn(person, at.team) === null ? [] : [personOf(person)];
+		});
+	}
+
+	/** The project's open comments, then the person's minute, as the object holds a post to them. */
+	function postLimited(
+		at: Project,
+		person: Person,
+		opens: boolean,
+	): { reason: string; retryAfter?: number } | undefined {
+		const open = at.comments.filter((comment) => comment.resolved === null && comment.standing !== "deleted-page");
+		if (opens && open.length >= commentLimits.open) return { reason: "too_many_open" };
+		const { perMinute } = commentLimits;
+		const now = Date.now();
+		const was = at.buckets.get(person.accountId);
+		const level =
+			was === undefined ? perMinute : Math.min(perMinute, was.level + ((now - was.at) * perMinute) / 60_000);
+		if (level < 1)
+			return { reason: "rate_limited", retryAfter: Math.max(1, Math.ceil(((1 - level) * 60) / perMinute)) };
+		at.buckets.set(person.accountId, { level: level - 1, at: now });
+		return undefined;
+	}
+
+	/**
+	 * A change to a comment from a caught-up copy, by the rules the object keeps: anyone resolves, reopens and reads;
+	 * only the author edits; the author or an editor deletes, the first message taking its replies.
+	 */
+	function changed(at: Project, from: Connected, message: Record<string, unknown>): void {
+		const ref = typeof message.ref === "string" ? message.ref : "-";
+		const refuse = (reason: string) => from.deliver(encodeFrame({ type: "comment-refused", ref, reason }));
+		if (!from.live) {
+			from.close();
+			return;
+		}
+		if (from.person.revoked || !edits(from.person, at.team)) {
+			refuse("not_editor");
+			return;
+		}
+		const change = readCommentChange(message);
+		if (change === undefined) {
+			refuse(commentBodyRefusal(message.body) ?? "invalid_comment");
+			return;
+		}
+		const index = at.comments.findIndex((comment) => comment.id === change.comment);
+		const comment = at.comments[index];
+		if (comment === undefined) {
+			refuse("comment_not_found");
+			return;
+		}
+		const account = from.person.accountId;
+		const now = Date.now();
+		const answered = () => from.deliver(encodeFrame({ type: "comment-posted", ref, id: comment.id }));
+		const tell = (told: Record<string, unknown>) => {
+			for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
+		};
+		const reply =
+			"reply" in change && change.reply !== undefined
+				? comment.replies.find((one) => one.id === change.reply)
+				: undefined;
+		if ("reply" in change && change.reply !== undefined && reply === undefined) {
+			refuse("comment_not_found");
+			return;
+		}
+		switch (change.type) {
+			case "comment-read":
+			case "comment-unread": {
+				const reads = at.reads.get(account) ?? new Map<string, number>();
+				at.reads.set(account, reads);
+				if (change.type === "comment-read") reads.set(comment.id, now);
+				else reads.delete(comment.id);
+				const seen = { type: "comment-seen", comment: comment.id, read: reads.get(comment.id) ?? null };
+				for (const socket of at.sockets)
+					if (socket.live && socket.person.accountId === account) socket.deliver(encodeFrame(seen));
+				answered();
+				return;
+			}
+			case "comment-resolve":
+				if (comment.resolved === null) comment.resolved = { by: personOf(from.person), at: now };
+				break;
+			case "comment-reopen":
+				comment.resolved = null;
+				break;
+			case "comment-edit": {
+				const target = reply ?? comment;
+				if (target.author.accountId !== account) {
+					refuse("not_author");
+					return;
+				}
+				target.body = change.body;
+				target.edited = now;
+				const named = mentioned(at, change.mentions);
+				if (named.length > 0) target.mentions = named;
+				else delete target.mentions;
+				break;
+			}
+			case "comment-delete": {
+				const target = reply ?? comment;
+				if (target.author.accountId !== account && !edits(from.person, at.team)) {
+					refuse("not_author");
+					return;
+				}
+				if (reply !== undefined) {
+					comment.replies = comment.replies.filter((one) => one !== reply);
+					break;
+				}
+				at.comments.splice(index, 1);
+				at.stills.delete(comment.id);
+				for (const reads of at.reads.values()) reads.delete(comment.id);
+				tell({ type: "comment-removed", id: comment.id });
+				answered();
+				return;
+			}
+		}
+		tell({ type: "comment-changed", comment });
+		answered();
 	}
 
 	/**
@@ -838,6 +1024,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		},
 		resent: (name: string) => project(name)?.resent ?? [],
 		turns: (name: string) => project(name)?.turns ?? [],
+		/** Set the comment limits every project here keeps, as a maintainer raises one project's. */
+		commentLimits(limits: Partial<{ perMinute: number; open: number }>) {
+			commentLimits = { ...commentLimits, ...limits };
+		},
+		/** When an account last read each comment, as the team keeps it. */
+		reads: (name: string, account: string) => new Map(project(name)?.reads.get(account) ?? []),
 		/** Every comment the project holds, as the team keeps them. */
 		comments: (name: string) => project(name)?.comments ?? [],
 		/** The still a comment kept of its frame, if it kept one. */
