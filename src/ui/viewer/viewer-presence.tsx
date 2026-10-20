@@ -20,7 +20,11 @@ export function useViewerPresence(address: string | undefined): ViewerPresence |
 	const link = useRef<PresenceLink | null>(null);
 	useEffect(() => {
 		if (address === undefined) return;
-		const joined = joinPresence(address, { heard: (presence) => room.hear(presence), dropped: () => room.reset() });
+		const joined = joinPresence(address, {
+			heard: (presence) => room.hear(presence),
+			hidden: (hidden) => room.hide(hidden),
+			dropped: () => room.reset(),
+		});
 		link.current = joined;
 		return () => {
 			link.current = null;

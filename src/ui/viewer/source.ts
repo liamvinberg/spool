@@ -1,7 +1,13 @@
 import type { DesignProjection } from "../../daemon/design-projection";
 import { reconnectBackoff } from "../../reconnect-backoff";
 import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
-import { type Presence, type PresenceState, readPresence } from "../../team-sync-protocol";
+import {
+	type Presence,
+	type PresenceState,
+	readPresence,
+	readPresenceHidden,
+	readPresences,
+} from "../../team-sync-protocol";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -207,19 +213,26 @@ export interface PresenceLink {
  */
 export function joinPresence(
 	address: string,
-	on: { heard: (presence: Presence) => void; dropped: () => void },
+	on: { heard: (presence: Presence) => void; hidden?: (hidden: boolean) => void; dropped: () => void },
 ): PresenceLink {
 	let open: WebSocket | null = null;
 	let latest: string | null = null;
-	const stop = keepOpen(address, {
+	// everyone who changed comes a tick at a time (#107); an older spool.page ignores the ask and tells each alone
+	const ticking = new URL(address, window.location.href);
+	ticking.searchParams.set("ticks", "1");
+	const stop = keepOpen(ticking.href, {
 		opened: (socket) => {
 			open = socket;
 			if (latest !== null) socket.send(latest);
 		},
 		heard: (data) => {
 			const message = readJson(data);
-			const presence = message === undefined ? undefined : readPresence(message);
-			if (presence !== undefined) on.heard(presence);
+			if (message === undefined) return;
+			const presence = readPresence(message);
+			if (presence !== undefined) return on.heard(presence);
+			for (const one of readPresences(message) ?? []) on.heard(one);
+			const hidden = readPresenceHidden(message);
+			if (hidden !== undefined) on.hidden?.(hidden);
 		},
 		dropped: () => {
 			open = null;

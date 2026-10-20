@@ -154,7 +154,8 @@ async function open(
 	});
 	let presence: WebSocketRoute | undefined;
 	const said: PresenceState[] = [];
-	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence`, (route) => {
+	// asked a tick at a time (#107)
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence?ticks=1`, (route) => {
 		presence = route;
 		route.onMessage((message) => {
 			if (message === "ping") return;
