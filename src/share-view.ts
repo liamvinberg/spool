@@ -48,8 +48,8 @@ export interface SharesSource extends Partial<ShareCommenters> {
 
 /**
  * Someone who commented through a share (spool#174), as its settings list them for Block: by account, the name the
- * team sees on their comments, how many of their comments and replies stand there, when they last wrote (seconds),
- * and whether they are blocked from its comments.
+ * team sees on their comments, how many of their comments and replies stand there, when they last wrote (in
+ * milliseconds, as spool.page keeps comments), and whether they are blocked from its comments.
  */
 export interface ShareCommenter {
 	account: string;

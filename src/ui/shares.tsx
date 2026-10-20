@@ -324,7 +324,7 @@ export function ShareCommentersList({
 							) : (
 								<>
 									<span className="shrink-0 text-secondary">
-										{one.posts} {one.posts === 1 ? "comment" : "comments"} · {saidAgo(one.last)}
+										{one.posts} {one.posts === 1 ? "comment" : "comments"} · {saidAgo(one.last / 1000)}
 									</span>
 									{manage && (
 										<TextAction
