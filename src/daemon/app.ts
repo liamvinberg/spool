@@ -39,6 +39,7 @@ import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
 import { editedSince } from "./comment-edited";
+import { commentsForPrompt } from "./comment-prompt";
 import { commentRoutes, teamPeople } from "./comment-routes";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError } from "./design-path";
@@ -462,6 +463,11 @@ export function createDaemonApp({
 		projectCapability: projectCapability(root),
 		controlOrigin,
 	});
+	/** A frame's source revision now, which a comment's says "edited since" against; null when it won't compile. */
+	const revisionNow = async (root: string, frame: string): Promise<string | null> => {
+		const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+		return doc.kind === "ok" ? doc.source : null;
+	};
 
 	// #157: the daemon keeps design history, one idle-window batch per project.
 	// It reads the change hub rather than opening a watcher of its own, and its
@@ -1240,6 +1246,12 @@ export function createDaemonApp({
 				agentAppLauncher,
 				emitAppEvent,
 				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
+				commentsForPrompt: (root, ids) =>
+					commentsForPrompt(ids, {
+						comments: teamSync.comments(root).comments,
+						editedSince: (comments) => editedSince(comments, (frame) => revisionNow(root, frame)),
+						still: (comment) => teamSync.still(root, comment),
+					}),
 			}),
 		)
 		.get("/api/p/:project/verify/:frame", async (c) =>
@@ -1650,11 +1662,7 @@ export function createDaemonApp({
 				const image = cover === undefined ? undefined : readCoverImage(root, frame, cover.hash);
 				return { revision: doc.kind === "ok" ? doc.source : null, still: image?.bytes };
 			},
-			editedSince: (root, comments) =>
-				editedSince(comments, async (frame) => {
-					const doc = await compiler.getDocument(root, frame, frameAuthority(root));
-					return doc.kind === "ok" ? doc.source : null;
-				}),
+			editedSince: (root, comments) => editedSince(comments, (frame) => revisionNow(root, frame)),
 			// the element an agent names, found in the frame booted at its own size, as a pick would see it
 			findElement: async (root, project, frame, target) => {
 				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
