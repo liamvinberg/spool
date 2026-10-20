@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { SpoolError } from "../errors";
 import { commentRefusalSays, type HeardComments, hearComments } from "../team-comments-heard";
@@ -108,7 +108,6 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 	const keep = () => {
 		heard = Date.now();
 		if (file !== undefined) {
-			mkdirSync(dirname(file), { recursive: true });
 			writeAtomic(file, `${JSON.stringify({ heard, comments, reads })}\n`);
 		}
 		const now = JSON.stringify({ comments, reads });

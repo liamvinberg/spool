@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { authorizedCloudRequest, type CloudRequestOptions } from "../cloud-auth";
 import type { ProjectLink } from "../team-project";
@@ -41,7 +41,6 @@ export async function commentStill(
 	const bytes = new Uint8Array(await response.arrayBuffer());
 	const type = stillType(bytes);
 	if (type === undefined) return undefined;
-	mkdirSync(dirname(file), { recursive: true });
 	writeAtomic(file, Buffer.from(bytes));
 	return { type, bytes };
 }
