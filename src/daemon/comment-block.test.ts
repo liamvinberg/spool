@@ -123,21 +123,50 @@ describe("the comment block", () => {
 		);
 	});
 
-	it("names a share's audience, marks edited words, and keeps a draft apart from what was sent", () => {
+	it("names a share's audience by who reads it and its id, marks edited words, and keeps a draft apart", () => {
 		const block = commentBlock(
 			comment({
 				audience: { share: "s1" },
+				share: { kind: "people", who: ["Ines", "Ola"], by: "acc-ana" },
 				edited: 1_500,
 				replies: [reply({ author: ana, agent: true, draftFor: "acc-ana", body: "We'll fix it today." })],
 			}),
-			{ editedSince: false, shareName: (id) => (id === "s1" ? "Northwind review" : undefined) },
+			{ editedSince: false },
 		);
 
-		expect(block.split("\n")[1]).toBe("Ana, to share Northwind review, open");
+		expect(block.split("\n")[1]).toBe("Ana, to the share with Ines and Ola [s1], open");
 		expect(block).toContain("\nAna (edited): Thanks! is loud for a receipt.\n");
 		expect(block).toContain("\nAna's agent, a draft not sent: We'll fix it today.\n");
-		expect(commentBlock(comment({ audience: { share: "s2" } }), { editedSince: false }).split("\n")[1]).toBe(
-			"Ana, to share s2, open",
+		const ended = comment({ audience: { share: "s2" }, share: { kind: "link", who: [], by: null, ended: true } });
+		expect(commentBlock(ended, { editedSince: false }).split("\n")[1]).toBe(
+			"Ana, to the link share [s2], which ended, open",
+		);
+	});
+
+	it("says someone outside the team wrote through their share, on the comment and on a reply", () => {
+		const jonas = { ...ana, accountId: "acc-jonas", name: "Jonas" };
+		const block = commentBlock(
+			comment({
+				author: jonas,
+				outsider: true,
+				audience: { share: "s1" },
+				share: { kind: "link", who: [], by: "acc-ana" },
+				replies: [
+					reply({ author: ana, body: "On it." }),
+					reply({ author: jonas, outsider: true, body: "Thanks!" }),
+				],
+			}),
+			{ editedSince: false },
+		);
+
+		expect(block.split("\n")[1]).toBe("Jonas via the link share, to the link share [s1], open");
+		expect(block).toContain("\nJonas via the link share: Thanks! is loud for a receipt.\nAna: On it.\n");
+		expect(block).toContain("\nJonas via the link share: Thanks!\n");
+	});
+
+	it("says a deleted page's comment is closed, as the canvas files it", () => {
+		expect(commentBlock(comment({ standing: "deleted-page" }), { editedSince: false }).split("\n")[1]).toBe(
+			"Ana, to the team, page deleted",
 		);
 	});
 
