@@ -1,6 +1,6 @@
 import type { DesignProjection } from "../../daemon/design-projection";
 import { reconnectBackoff } from "../../reconnect-backoff";
-import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
+import { type ProjectShares, readCommenters, type SharesSource, type ShareView } from "../../share-view";
 import {
 	type CommentsMessage,
 	type Presence,
@@ -8,6 +8,7 @@ import {
 	readCommentsMessage,
 	readPresence,
 } from "../../team-sync-protocol";
+import type { ViewerLinkSignIn } from "./link-sign-in";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -73,6 +74,21 @@ export interface ViewerProject {
 	download?: string;
 	/** For a member: the frames saved to last, newest first, from the team's history. */
 	recent?: ViewerRecent[];
+	/** For an outsider on a team project's share: their share's comments (spool#174). */
+	outsider?: ViewerOutsider;
+}
+
+/**
+ * What an outsider's canvas is told of their share's comments (spool#174): the share, whom it names by name (none for
+ * a link share), who they are once signed in (null until then), where its comments are written and heard, and on a
+ * link share's own host where its sign-in runs.
+ */
+export interface ViewerOutsider {
+	share: { id: string; kind: "people" | "link"; who: string[] };
+	me: { id: string; name: string } | null;
+	comments: string;
+	socket: string;
+	signIn?: ViewerLinkSignIn;
 }
 
 /** A frame as saved to last: who saved it, by name, and when (seconds). */
@@ -371,5 +387,22 @@ export function viewerShares(address: string, manage: boolean): SharesSource {
 				body: JSON.stringify(change),
 			}),
 		stop: (share) => send(`${address}/${encodeURIComponent(share)}`, { method: "DELETE" }),
+		async commenters(share) {
+			try {
+				const response = await fetch(`${address}/${encodeURIComponent(share)}/commenters`, {
+					credentials: "same-origin",
+					headers: { accept: "application/json" },
+				});
+				return response.ok ? readCommenters(await response.json()) : null;
+			} catch {
+				return null;
+			}
+		},
+		block: (share, account) =>
+			send(`${address}/${encodeURIComponent(share)}/commenters/${encodeURIComponent(account)}/block`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: "{}",
+			}),
 	};
 }

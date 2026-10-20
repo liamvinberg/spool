@@ -1,9 +1,10 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { commentRefusalSays } from "../../team-comments-heard";
+import { commentRefusalSays, type HeardComments, hearComments, NO_COMMENTS_HEARD } from "../../team-comments-heard";
 import { type Comment, type CommentRefusal, commentRefusal } from "../../team-sync-protocol";
 import type { CommentAct, CommentChanged, CommentMentionable, CommentSent, CommentsClient, CommentWrite } from "../api";
 import type { Point } from "../canvas/camera";
 import { type CanvasStore, createCanvasStore, useCanvasField } from "../canvas/canvas-store";
+import { audienceOf } from "../canvas/comment-audience";
 import type { CommentStills } from "../canvas/comment-history";
 import type { CommentDraft, CommentsContext } from "../canvas/comments-layer";
 import { counts, type Reader } from "../canvas/comments-model";
@@ -14,7 +15,8 @@ import { CloseIcon, CommentIcon, CommentToolIcon, SelectIcon } from "../icons";
 import { IconButton, ToolGroup } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 import { Bar, Panel } from "../primitives/structure";
-import type { ViewerProject } from "./source";
+import { useShares } from "../shares";
+import { joinPresence, type ViewerProject, viewerShares } from "./source";
 import type { ViewerPresence } from "./viewer-presence";
 
 /**
@@ -23,8 +25,10 @@ import type { ViewerPresence } from "./viewer-presence";
  * two, Pointer (a click plays a frame, a drag pans) and Comment (C tapped, or held to borrow it), and placing a pin
  * hands back the Pointer. The list is a panel on the right, from a button by Shared.
  *
- * Where a person can't comment (an outsider today, or anyone signed out once spool#174 lets them look), the project
- * names no comments address, and none of this is drawn: `ViewerComments` is null.
+ * Someone outside the team comments through their share (spool#174), once signed in: their share's comments alone
+ * arrive on a socket of their own, which joins no presence, and they write to their share's comments address. Where
+ * nobody may comment (a solo project's share, or a link share's holder before they sign in) none of this is drawn:
+ * `ViewerComments` is null.
  */
 
 export type ViewerTool = "pointer" | "comment";
@@ -98,7 +102,13 @@ export function cloudComments(address: string): CommentsClient {
 						})
 					: change.type === "delete"
 						? send(at(comment, reply(change.reply)), { method: "DELETE" })
-						: send(at(comment, `/${change.type}`), { method: "POST" });
+						: change.type === "send"
+							? send(at(comment, `${reply(change.reply)}/send`), {
+									method: "POST",
+									headers: json,
+									body: JSON.stringify({ body: change.body, mentions: change.mentions }),
+								})
+							: send(at(comment, `/${change.type}`), { method: "POST" });
 			const answer = await answered(request);
 			return "error" in answer ? answer : { ok: true };
 		},
@@ -170,22 +180,81 @@ export interface ViewerComments {
 	setPanel: (open: boolean) => void;
 }
 
+/**
+ * An outsider's comments socket (spool#174): their share's comments, every one when it opens and each change after,
+ * on a connection that says nothing and joins no presence. Undefined while there is none to open.
+ */
+export function useOutsiderComments(
+	address: string | undefined,
+): Pick<ViewerPresence, "comments" | "heard" | "online"> | null {
+	const [comments, setComments] = useState<HeardComments>(NO_COMMENTS_HEARD);
+	const [online, setOnline] = useState(false);
+	const [heard, setHeard] = useState(false);
+	useEffect(() => {
+		if (address === undefined) return;
+		const joined = joinPresence(address, {
+			heard: () => {},
+			dropped: () => setOnline(false),
+			opened: () => setOnline(true),
+			comments: (message) => {
+				setComments((held) => hearComments(held, message));
+				if (message.type === "comments" && message.last) setHeard(true);
+			},
+		});
+		return () => {
+			joined.stop();
+			setOnline(false);
+			setComments(NO_COMMENTS_HEARD);
+			setHeard(false);
+		};
+	}, [address]);
+	return useMemo(
+		() => (address === undefined ? null : { comments, heard, online }),
+		[address, comments, heard, online],
+	);
+}
+
+/** Who an outsider is, once signed in: their account and the name the team sees. */
+export interface OutsiderMe {
+	id: string;
+	name: string;
+}
+
 export function useViewerComments(
 	project: ViewerProject,
-	presence: ViewerPresence | null,
+	presence: Pick<ViewerPresence, "comments" | "heard" | "online"> | null,
 	url: string,
 	notice: (message: string) => void,
+	/** for an outsider, who they signed in as; null while they haven't */
+	outsiderMe: OutsiderMe | null = null,
 ): ViewerComments | null {
-	const address = project.comments;
+	const outsider = project.outsider;
+	const address = project.comments ?? (outsider === undefined || outsiderMe === null ? undefined : outsider.comments);
 	const [store] = useState(createCanvasStore);
 	const [tool, setTool] = useState<ViewerTool>("pointer");
 	const [panel, setPanel] = useState(false);
 	const people = useViewerPeople(address === undefined ? undefined : project.people);
+	// a member's new comment may be for one of the project's shares besides the team (spool#174)
+	const sharesSource = useMemo(
+		() => (project.shares === undefined ? null : viewerShares(project.shares, false)),
+		[project.shares],
+	);
+	const { shares } = useShares(sharesSource);
+	const audiences = useMemo(() => (shares?.state === "ready" ? shares.shares.map(audienceOf) : []), [shares]);
 	const client = useMemo(() => (address === undefined ? null : cloudComments(address)), [address]);
 	const covers = project.covers;
-	const stills = useMemo(() => (address === undefined ? null : cloudStills(address, covers)), [address, covers]);
+	// an outsider reads no still a comment kept: spool.page keeps those for members (spool#174)
+	const stills = useMemo(
+		() =>
+			address === undefined
+				? null
+				: project.comments === undefined
+					? { ...cloudStills(address, covers), kept: () => undefined }
+					: cloudStills(address, covers),
+		[address, covers, project.comments],
+	);
 	const held = presence?.comments;
-	const me = project.me ?? people.find((person) => person.you)?.accountId ?? null;
+	const me = outsiderMe?.id ?? project.me ?? people.find((person) => person.you)?.accountId ?? null;
 	const reader = useMemo(() => ({ me, reads: held?.reads ?? {} }), [me, held?.reads]);
 	const noticeRef = useRef(notice);
 	noticeRef.current = notice;
@@ -209,6 +278,9 @@ export function useViewerComments(
 			// the socket says what changed, as it says it to everyone
 			refresh: NOTHING,
 			notice: ({ message }) => noticeRef.current(message),
+			shares: audiences,
+			team: project.team?.name,
+			outsider: outsider?.share,
 		},
 		writes: !unpaid,
 		tool: unpaid ? "pointer" : tool,
@@ -357,32 +429,47 @@ function ToolButton({
 }
 
 /** The browser's two tools: Pointer, which plays and pans, and Comment, which places a pin. */
-export function ViewerTools({ tool, onTool }: { tool: ViewerTool; onTool: (tool: ViewerTool) => void }) {
+export function ViewerTools({
+	tool,
+	onTool,
+	signedOut = false,
+	tip,
+}: {
+	tool: ViewerTool;
+	onTool: (tool: ViewerTool) => void;
+	/** a link share's holder before signing in: the Comment tool asks them to (spool#174) */
+	signedOut?: boolean;
+	/** the one-time tip over the tools */
+	tip?: ReactNode;
+}) {
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center">
-			<ToolGroup
-				aria-label="canvas tools"
-				className="pointer-events-auto"
-				onPointerDown={(event) => event.stopPropagation()}
-				onPointerUp={(event) => event.stopPropagation()}
-			>
-				<ToolButton
-					label="pointer"
-					keyName="V"
-					says="click plays a frame"
-					on={tool === "pointer"}
-					onClick={() => onTool("pointer")}
-					icon={<SelectIcon className="size-4" />}
-				/>
-				<ToolButton
-					label="comment"
-					keyName="C"
-					says="hold to borrow"
-					on={tool === "comment"}
-					onClick={() => onTool(tool === "comment" ? "pointer" : "comment")}
-					icon={<CommentToolIcon className="size-4" />}
-				/>
-			</ToolGroup>
+			<div className="relative">
+				{tip}
+				<ToolGroup
+					aria-label="canvas tools"
+					className="pointer-events-auto"
+					onPointerDown={(event) => event.stopPropagation()}
+					onPointerUp={(event) => event.stopPropagation()}
+				>
+					<ToolButton
+						label="pointer"
+						keyName="V"
+						says="click plays a frame"
+						on={tool === "pointer"}
+						onClick={() => onTool("pointer")}
+						icon={<SelectIcon className="size-4" />}
+					/>
+					<ToolButton
+						label="comment"
+						keyName="C"
+						says={signedOut ? "sign in to comment" : "hold to borrow"}
+						on={tool === "comment"}
+						onClick={() => onTool(tool === "comment" ? "pointer" : "comment")}
+						icon={<CommentToolIcon className="size-4" />}
+					/>
+				</ToolGroup>
+			</div>
 		</div>
 	);
 }
@@ -393,12 +480,14 @@ export function CommentsButton({
 	open,
 	onClick,
 }: {
-	comments: ViewerComments;
+	/** null signed out on a link share: no count until they sign in (spool#174) */
+	comments: ViewerComments | null;
 	open: boolean;
 	onClick: () => void;
 }) {
 	// the whole project's, as the inbox counts them: open ones, and whether any of them is unread
-	const { open: total, unread } = counts(comments.comments, comments.reader);
+	const { open: total, unread } =
+		comments === null ? { open: null, unread: 0 } : counts(comments.comments, comments.reader);
 	return (
 		<button
 			type="button"
@@ -410,9 +499,11 @@ export function CommentsButton({
 		>
 			<CommentIcon className="size-3.5" />
 			Comments
-			<span className="text-secondary type-detail" data-comments-count="">
-				{total}
-			</span>
+			{total === null ? null : (
+				<span className="text-secondary type-detail" data-comments-count="">
+					{total}
+				</span>
+			)}
 			{unread > 0 ? (
 				<span
 					className="absolute -top-1 -right-1 size-2 animate-comment-pin-in rounded-full bg-accent"

@@ -34,10 +34,11 @@ import { useFollow, usePresenceSender } from "../canvas/use-presence";
 import { handoverAddress, knock } from "../handover";
 import { FolderIcon, FrameIcon } from "../icons";
 import { Divider } from "../primitives/display";
-import { Toast } from "../primitives/feedback";
+import { TextAction, Toast } from "../primitives/feedback";
 import { Bar, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
+import type { LinkSignedIn } from "./link-sign-in";
 import { Navigator, type NavigatorToast } from "./navigator";
 import { onPhone } from "./phone";
 import { SharedLink } from "./shared-link";
@@ -60,12 +61,14 @@ import {
 	CommentsPanel,
 	placeComment,
 	useCommentKeys,
+	useOutsiderComments,
 	useViewerComments,
 	ViewerCommentsList,
 	ViewerTools,
 } from "./viewer-comments";
 import { ViewerPlayer } from "./viewer-player";
 import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
+import { CommentsTip, markTipSeen, SignInDialog, tipSeen } from "./viewer-sign-in";
 
 /**
  * The read-only canvas (DEV-114): the shipped canvas with every authoring
@@ -344,8 +347,53 @@ function ViewerCanvas({
 
 	// --- comments (spool#173): a member's, written to spool.page and heard on the presence socket
 	const commentsUrl = useMemo(() => new URL(address(config, ROOT_PAGE, null), window.location.href).href, [config]);
-	const comments = useViewerComments(project, presence, commentsUrl, onNotice);
+	// an outsider's (spool#174): once signed in, their share's alone, on a socket of their own
+	const outsiderShare = project.outsider;
+	const [signedInHere, setSignedInHere] = useState<LinkSignedIn | null>(null);
+	const outsiderMe = signedInHere ?? outsiderShare?.me ?? null;
+	const outsiderHeard = useOutsiderComments(
+		outsiderShare !== undefined && outsiderMe !== null ? outsiderShare.socket : undefined,
+	);
+	const comments = useViewerComments(project, presence ?? outsiderHeard, commentsUrl, onNotice, outsiderMe);
 	useCommentKeys(played === null ? comments : null);
+	// signed out on a link share: the frames open, and everything that needs the comments asks them to sign in first
+	const signIn = outsiderMe === null ? outsiderShare?.signIn : undefined;
+	const [asked, setAsked] = useState<Reached | null>(null);
+	const [reached, setReached] = useState<Reached | null>(null);
+	const [tip, setTip] = useState(
+		() => signIn !== undefined && outsiderShare !== undefined && !tipSeen(outsiderShare.share.id),
+	);
+	const closeTip = useCallback(() => {
+		if (outsiderShare !== undefined) markTipSeen(outsiderShare.share.id);
+		setTip(false);
+	}, [outsiderShare]);
+	const askSignIn = useCallback(
+		(intent: Reached) => {
+			closeTip();
+			setAsked(intent);
+		},
+		[closeTip],
+	);
+	// what they reached for carries on once they have signed in and the comments are there
+	useEffect(() => {
+		if (reached === null || comments === null) return;
+		if (reached === "tool") comments.setTool("comment");
+		if (reached === "list") comments.setPanel(true);
+		setReached(null);
+	}, [reached, comments]);
+	useEffect(() => {
+		if (signIn === undefined || played !== null) return;
+		const down = (event: KeyboardEvent) => {
+			const target = event.target;
+			if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === "INPUT")) return;
+			if (event.code !== "KeyC" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+			if (event.repeat) return;
+			askSignIn("tool");
+		};
+		window.addEventListener("keydown", down);
+		return () => window.removeEventListener("keydown", down);
+	}, [signIn, played, askSignIn]);
+	const sharedBy = project.shared?.by ?? "The";
 	/**
 	 * The comment to go to: its page first, then its pin, flown to with the zoom kept, and its card opened. A Copy
 	 * link (`?comment=<id>`) names one when the canvas opens, and is taken off the address once it is open; a row
@@ -592,6 +640,20 @@ function ViewerCanvas({
 					if (frame !== undefined) flyTo(frame);
 				}}
 				onPlay={play}
+				foot={
+					outsiderMe !== null ? (
+						<span className="truncate" data-viewer-signed-in="">
+							{outsiderMe.name}
+						</span>
+					) : signIn !== undefined ? (
+						<>
+							<span className="truncate">not signed in</span>
+							<TextAction className="-mr-1.5" onClick={() => askSignIn("none")}>
+								Sign in
+							</TextAction>
+						</>
+					) : undefined
+				}
 			/>
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-surface-canvas">
 				<div
@@ -665,23 +727,46 @@ function ViewerCanvas({
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
 					{project.shared !== undefined && <SharedLine shared={project.shared} />}
-					{comments !== null && (
+					{comments !== null ? (
 						<CommentsButton
 							comments={comments}
 							open={comments.panel}
 							onClick={() => comments.setPanel(!comments.panel)}
 						/>
-					)}
+					) : signIn !== undefined ? (
+						<CommentsButton comments={null} open={false} onClick={() => askSignIn("list")} />
+					) : null}
 					{project.shares !== undefined && <ProjectShared address={project.shares} manage={edits(project.role)} />}
 					{edits(project.role) && <OpenInSpool project={project} onNotice={onNotice} />}
 					{room !== undefined && (
 						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
 					)}
 				</div>
-				{comments?.writes === true && <ViewerTools tool={comments.tool} onTool={comments.setTool} />}
+				{comments?.writes === true ? (
+					<ViewerTools tool={comments.tool} onTool={comments.setTool} />
+				) : signIn !== undefined ? (
+					<ViewerTools
+						tool="pointer"
+						onTool={(tool) => tool === "comment" && askSignIn("tool")}
+						signedOut
+						tip={tip ? <CommentsTip by={sharedBy} onDone={closeTip} /> : undefined}
+					/>
+				) : null}
+				{asked !== null && signIn !== undefined && (
+					<SignInDialog
+						signIn={signIn}
+						by={sharedBy}
+						onSignedIn={(me) => {
+							setSignedInHere(me);
+							setReached(asked);
+							setAsked(null);
+						}}
+						onClose={() => setAsked(null)}
+					/>
+				)}
 				{toast !== null && (
 					<div
-						className={`-translate-x-1/2 pointer-events-none absolute left-1/2 ${comments === null ? "bottom-4" : "bottom-20"}`}
+						className={`-translate-x-1/2 pointer-events-none absolute left-1/2 ${comments === null && signIn === undefined ? "bottom-4" : "bottom-20"}`}
 					>
 						<Toast message={toast} />
 					</div>
@@ -974,6 +1059,7 @@ function PagesRail({
 	onPage,
 	onFrame,
 	onPlay,
+	foot,
 }: {
 	project: ViewerProject;
 	page: string;
@@ -981,6 +1067,8 @@ function PagesRail({
 	onPage: (page: string) => void;
 	onFrame: (frame: string) => void;
 	onPlay: (frame: string) => void;
+	/** an outsider's foot (spool#174): their name once signed in, or Sign in on a link share */
+	foot?: ReactNode;
 }) {
 	const { canvas } = project;
 	const tree = useMemo(() => mergePageTree(canvas.order.pages, canvas.pages), [canvas]);
@@ -1091,14 +1179,19 @@ function PagesRail({
 					) : null,
 				)}
 			</ScrollArea>
-			{project.account !== null && (
+			{foot !== undefined ? (
+				<StatusLine>{foot}</StatusLine>
+			) : project.account !== null ? (
 				<StatusLine>
 					<span className="truncate">{project.account}</span>
 				</StatusLine>
-			)}
+			) : null}
 		</Panel>
 	);
 }
+
+/** What a link share's holder reached for before signing in, which carries on once they have (spool#174). */
+type Reached = "tool" | "list" | "none";
 
 /** The zoom, as a percentage, written as the camera moves and never rendered. */
 function ZoomReadout({ camera }: { camera: CameraStore }) {
