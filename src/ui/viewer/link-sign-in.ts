@@ -2,7 +2,7 @@
  * Signing in on a link share's own host (spool#174): whoever holds the link signs in here to read and write its
  * comments, into a session for this host alone. The email code and the name step run against this host; Google runs
  * in a popup on spool.page, which hands back a one-time code that this page trades, with the verifier only it holds,
- * for the session. No passkey is offered. A people share's outsiders are signed in at spool.page already.
+ * for the session: neither signs anyone in without the other. No passkey is offered. A people share's outsiders are signed in at spool.page already.
  */
 
 /** Where a link share's host signs in, as its canvas names it. */
@@ -114,18 +114,23 @@ function base64Url(bytes: Uint8Array): string {
 	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
-/** How often the dialog asks after its popup's code, should the popup have lost its way back here. */
-const POLL_MS = 1500;
-/** How long it asks after the popup closed: the code is handed over as it closes. */
-const AFTER_CLOSE_MS = 4000;
+/** The channel the popup's last page on this host hands the code back on, when Google cut it off from this page. */
+export const SIGN_IN_CHANNEL = "spool-sign-in";
+
+/** The code a message hands back, if it is the popup's. */
+function handedCode(data: unknown): string | undefined {
+	const code = field(data, "code");
+	return field(data, "type") === "spool-signed-in" && typeof code === "string" ? code : undefined;
+}
 
 /**
- * Google, in a popup on spool.page: the popup's last page hands its code to this page alone, which trades it with
- * the verifier for this host's session. Should Google's pages have cut the popup off from this one, the verifier
- * alone finds the code while the popup is open. Resolves signed in, or with why not (`closed` when the popup went
- * without signing in, `blocked` when it never opened).
+ * Google, in a popup on spool.page: its last page hands a one-time code to this page, which trades it with the
+ * verifier only it holds for this host's session. The code comes by a message from spool.page to this page alone
+ * or, should Google's pages have cut the popup off from this one, by the popup going on to this host, whose page
+ * hands it here over this origin's own channel. Resolves signed in, or with why not (`blocked` when the popup never
+ * opened, `closed` when `cancel` put it down before a code came).
  */
-export async function googleHere(signIn: ViewerLinkSignIn): Promise<SignInAnswer> {
+export async function googleHere(signIn: ViewerLinkSignIn, cancel: AbortSignal): Promise<SignInAnswer> {
 	const { verifier, challenge } = await verifierPair();
 	const popup = window.open(
 		`${signIn.google}&challenge=${encodeURIComponent(challenge)}`,
@@ -134,37 +139,41 @@ export async function googleHere(signIn: ViewerLinkSignIn): Promise<SignInAnswer
 	);
 	if (popup === null) return { error: "blocked" };
 	return new Promise((resolve) => {
-		let done = false;
-		let closedAt: number | null = null;
-		const finish = (answer: SignInAnswer) => {
-			if (done) return;
-			done = true;
+		let traded = false;
+		const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(SIGN_IN_CHANNEL);
+		const stop = () => {
 			window.removeEventListener("message", heard);
-			clearInterval(poll);
-			resolve(answer);
+			channel?.close();
+			cancel.removeEventListener("abort", cancelled);
 		};
-		const trade = async (code?: string) => {
-			const answer = answerOf(
-				(await post(signIn.exchange, { verifier, ...(code === undefined ? {} : { code }) })).body,
-			);
-			if ("error" in answer && answer.error === "not_yet") return false;
-			finish(answer);
-			return true;
+		const trade = async (code: string) => {
+			if (traded) return;
+			traded = true;
+			stop();
+			resolve(answerOf((await post(signIn.exchange, { code, verifier })).body));
 		};
 		const heard = (event: MessageEvent) => {
 			if (event.origin !== signIn.origin) return;
-			const data: unknown = event.data;
-			const type = field(data, "type");
-			const code = field(data, "code");
-			if (type !== "spool-signed-in" || typeof code !== "string") return;
-			void trade(code);
+			const code = handedCode(event.data);
+			if (code !== undefined) void trade(code);
+		};
+		const cancelled = () => {
+			if (traded) return;
+			traded = true;
+			stop();
+			try {
+				popup.close();
+			} catch {
+				// cut off from it already
+			}
+			resolve({ error: "closed" });
 		};
 		window.addEventListener("message", heard);
-		const poll = setInterval(() => {
-			if (done) return;
-			if (popup.closed) closedAt ??= Date.now();
-			if (closedAt !== null && Date.now() - closedAt > AFTER_CLOSE_MS) return finish({ error: "closed" });
-			void trade();
-		}, POLL_MS);
+		channel?.addEventListener("message", (event: MessageEvent) => {
+			const code = handedCode(event.data);
+			if (code !== undefined) void trade(code);
+		});
+		cancel.addEventListener("abort", cancelled);
+		if (cancel.aborted) cancelled();
 	});
 }

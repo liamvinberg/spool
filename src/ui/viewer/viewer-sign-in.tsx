@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../primitives/actions";
 import { TextAction } from "../primitives/feedback";
 import { TextField } from "../primitives/inputs";
@@ -36,11 +36,11 @@ function said(error: string): string {
 		case "email_rate_limited":
 			return "Too many codes just now. Wait a moment, then ask again.";
 		case "invalid_name":
-			return "A name is 1 to 60 characters.";
+			return "A name is 1 to 64 characters, with no hidden ones.";
 		case "blocked":
 			return "Your browser blocked the Google window. Allow pop-ups here and try again.";
 		case "closed":
-			return "The Google window closed before you signed in.";
+			return "Google's sign-in was cancelled. Try again.";
 		case "offline":
 			return "spool.page isn't answering. Check your connection.";
 		default:
@@ -66,6 +66,11 @@ export function SignInDialog({
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Google's popup while it is open: put down with the dialog, or by its Cancel
+	const [googling, setGoogling] = useState<AbortController | null>(null);
+	const popup = useRef<AbortController | null>(null);
+	popup.current = googling;
+	useEffect(() => () => popup.current?.abort(), []);
 	// Esc puts the dialog down, as a click beside it does
 	useEffect(() => {
 		const down = (event: KeyboardEvent) => event.key === "Escape" && onClose();
@@ -83,9 +88,14 @@ export function SignInDialog({
 		setError(said(answer.error));
 	};
 	const google = () => {
+		const cancel = new AbortController();
+		setGoogling(cancel);
 		setBusy(true);
 		setError(null);
-		void googleHere(signIn).then(answered);
+		void googleHere(signIn, cancel.signal).then((answer) => {
+			setGoogling(null);
+			answered(answer);
+		});
 	};
 	const sendCode = (again = false) => {
 		if (email.trim() === "") return;
@@ -132,6 +142,14 @@ export function SignInDialog({
 							<Button size="md" className="w-full" disabled={busy} onClick={google}>
 								Continue with Google
 							</Button>
+							{googling === null ? null : (
+								<span className="flex items-center gap-2" data-viewer-sign-in-google="">
+									<span className="text-secondary type-detail">Finish signing in in the Google window.</span>
+									<TextAction className="-mr-1.5 ml-auto" onClick={() => googling.abort()}>
+										Cancel
+									</TextAction>
+								</span>
+							)}
 							<div className="flex items-center gap-3 text-secondary type-detail">
 								<span className="h-px flex-1 bg-line-default" />
 								or
@@ -193,7 +211,7 @@ export function SignInDialog({
 								label="Name"
 								value={name}
 								onValueChange={setName}
-								inputProps={{ autoFocus: true, maxLength: 60 }}
+								inputProps={{ autoFocus: true, maxLength: 64 }}
 							/>
 							<div className="flex items-center gap-2 rounded-sm border border-line-default px-2.5 py-2">
 								<span

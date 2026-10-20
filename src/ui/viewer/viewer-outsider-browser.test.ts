@@ -154,7 +154,7 @@ async function open(
 				return route.fulfill({
 					json: { step: "name", name: "Jonas", fallback: "jonas", color: "#7aa2f7" },
 				});
-			if (url.pathname === "/_spool/sign-in/name")
+			if (url.pathname === "/_spool/sign-in/name" || url.pathname === "/_spool/sign-in/exchange")
 				return route.fulfill({ json: { me: { id: "jonas", name: "Jonas Ek" } } });
 			return route.fulfill({ status: request.method() === "POST" ? 201 : 200, json: { id: "new1" } });
 		}
@@ -275,6 +275,53 @@ it("signs in on the link's host by an email code and the name step, then the pin
 	expect(await toolIn(page)).toBe("comment");
 	expect(await page.locator("[data-viewer-signed-in]").textContent()).toBe("Jonas Ek");
 	expect(opened.said).toEqual([]);
+});
+
+it("signs in by Google's popup only with the code it hands back, by message or by the host's channel, or cancels", {
+	timeout: 60_000,
+}, async () => {
+	const opened = await open({}, [comment("c1")], { tipSeen: true });
+	const { page, written } = opened;
+	// the popup, as the page sees it: Google's pages are out of reach, so it only ever closes
+	await page.addInitScript(() => {
+		const opened: string[] = [];
+		Object.assign(window, { openedPopups: opened });
+		window.open = (url?: string | URL) => {
+			opened.push(String(url));
+			return { closed: true, close() {} } as unknown as Window;
+		};
+	});
+	await opened.go();
+	await page.keyboard.press("c");
+	const dialog = page.locator("[data-viewer-sign-in]");
+	await dialog.waitFor();
+	// cancelled, it asks for nothing and can start again
+	await page.getByRole("button", { name: "Continue with Google" }).click();
+	await page.locator("[data-viewer-sign-in-google]").waitFor();
+	// and nothing asks for the code with the verifier alone
+	await page.waitForTimeout(1_800);
+	expect(written).toEqual([]);
+	await page.locator("[data-viewer-sign-in-google]").getByRole("button", { name: "Cancel" }).click();
+	expect(await page.locator("[data-viewer-sign-in-error]").textContent()).toBe(
+		"Google's sign-in was cancelled. Try again.",
+	);
+	// the popup cut off from this page goes on to this host, whose page hands the code back on its channel
+	await page.getByRole("button", { name: "Continue with Google" }).click();
+	const popups = await page.evaluate(() => (window as unknown as { openedPopups: string[] }).openedPopups);
+	expect(popups.at(-1)).toMatch(/^https:\/\/spool\.test\/sign-in\/google\?link=northwind&challenge=[\w-]{43}$/u);
+	const code = "c".repeat(43);
+	await page.evaluate((handed) => {
+		const channel = new BroadcastChannel("spool-sign-in");
+		channel.postMessage({ type: "spool-signed-in", code: handed });
+		channel.close();
+	}, code);
+	await dialog.waitFor({ state: "detached" });
+	expect(written).toHaveLength(1);
+	expect(written[0]).toMatchObject({
+		path: "/_spool/sign-in/exchange",
+		body: { code, verifier: expect.stringMatching(/^[\w-]{64}$/u) },
+	});
+	expect(await page.locator("[data-viewer-signed-in]").textContent()).toBe("Jonas Ek");
 });
 
 it("gives a signed-in outsider a composer with no picker, no element's tag and no mentions", {
