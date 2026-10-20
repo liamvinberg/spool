@@ -1,11 +1,14 @@
-import { type RefObject, useEffect, useRef } from "react";
-import { PRESENCE_DRAGGING, type PresenceState } from "../../team-sync-protocol";
+import { type RefObject, useEffect, useRef, useSyncExternalStore } from "react";
+import { PRESENCE_DRAGGING, PRESENCE_TICK_MS, type PresenceState } from "../../team-sync-protocol";
 import { toWorld } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { DRAG_SLOP, followCamera, type PresenceRoom } from "./presence";
 
-/** At most one presence in this many milliseconds is sent; the receiving canvas smooths between them. */
-const PRESENCE_SEND_MS = 50;
+/**
+ * At most one presence in this many milliseconds is sent: the team tells the others once a tick whatever came
+ * meanwhile (#107), and the receiving canvas smooths between them.
+ */
+const PRESENCE_SEND_MS = PRESENCE_TICK_MS;
 /** How quickly a follower's camera eases onto the view it follows, per second. */
 const FOLLOW_RATE = 8;
 
@@ -43,6 +46,10 @@ export function usePresenceSender(options: {
 	inside: string | null;
 	/** The frames a gesture is moving now, read when a state goes. */
 	dragging: () => readonly string[];
+	/** The team hides this person's pointer, past the first on their page (#107): only their page goes. */
+	hidden?: boolean;
+	/** The account this canvas follows, which the team then always shows it. */
+	following?: string | null;
 }): PresenceSender {
 	const latest = useRef(options);
 	latest.current = options;
@@ -67,9 +74,14 @@ export function usePresenceSender(options: {
 		const state = (): PresenceState => {
 			const cam = camera.get();
 			const viewport = viewportRef.current;
-			const { page, inside, dragging } = latest.current;
+			const { page, inside, dragging, hidden, following } = latest.current;
+			const followed = following === null || following === undefined ? {} : { following };
+			// a hidden pointer goes nowhere, so moving it says nothing at all
+			if (hidden === true)
+				return { page, pointer: null, pressed: false, dragging: [], inside, view: null, ...followed };
 			const world = framePointer ?? (pointer === null || cam === null ? null : toWorld(pointer, cam));
 			return {
+				...followed,
 				clicks,
 				scrolled: inside === null ? null : scrolled,
 				page,
@@ -179,9 +191,9 @@ export function usePresenceSender(options: {
 		};
 	}, [say, team, camera, viewportRef]);
 
-	// a page switch or a frame gone inside is news even with the pointer still
+	// a page switch, a frame gone inside, a pointer hidden or shown and a follow are news even with the pointer still
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the page and the frame inside are the triggers; the send reads them through the ref
-	useEffect(() => soon.current(), [options.page, options.inside]);
+	useEffect(() => soon.current(), [options.page, options.inside, options.hidden, options.following]);
 	// a frame left takes its scrolling with it; the next one entered tells its own
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the frame inside is the trigger
 	useEffect(() => leftFrame.current(), [options.inside]);
@@ -191,6 +203,14 @@ export function usePresenceSender(options: {
 		scrolled: (scrolled) => insideFrame.current.scrolled(scrolled),
 		again: () => again.current(),
 	}).current;
+}
+
+/** Whether the team hides this person's pointer now (#107), drawn again when it changes. */
+export function usePointerHidden(room: PresenceRoom | undefined): boolean {
+	return useSyncExternalStore(
+		(listener) => room?.subscribe(listener) ?? (() => {}),
+		() => room?.pointerHidden() ?? false,
+	);
 }
 
 /**

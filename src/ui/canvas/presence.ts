@@ -41,6 +41,10 @@ export interface PresenceRoom {
 	person(accountId: string): PresencePerson | undefined;
 	/** One change from the daemon. */
 	hear(presence: Presence, now?: number): void;
+	/** This person's pointer is hidden from the others on their page, as the team said last (#107). */
+	pointerHidden(): boolean;
+	/** The team hid this person's pointer, or showed it again. */
+	hide(hidden: boolean): void;
 	/** Forget everyone at once: the stream that told us about them is gone, and a new one says who's here. */
 	reset(): void;
 	subscribe(listener: () => void): () => void;
@@ -51,6 +55,7 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 	const heard = new Map<string, PresencePerson>();
 	const listeners = new Set<() => void>();
 	let sweep: ReturnType<typeof setTimeout> | undefined;
+	let hidden = false;
 	const tell = () => {
 		for (const listener of listeners) listener();
 	};
@@ -101,9 +106,19 @@ export function createPresenceRoom(clock: () => number = Date.now): PresenceRoom
 			});
 			tell();
 		},
+		pointerHidden: () => hidden,
+		hide(next) {
+			if (next === hidden) return;
+			hidden = next;
+			tell();
+		},
 		reset() {
 			if (sweep !== undefined) clearTimeout(sweep);
 			sweep = undefined;
+			if (hidden) {
+				hidden = false;
+				tell();
+			}
 			if (people.size === 0) return;
 			people.clear();
 			tell();

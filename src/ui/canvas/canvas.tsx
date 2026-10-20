@@ -217,7 +217,7 @@ import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
 import { HOLD_PAINT_MS, PICK_REPLY_MS, useHandEdit } from "./use-hand-edit";
 import { useLiveMoves } from "./use-live-moves";
-import { useFollow, usePresenceSender } from "./use-presence";
+import { useFollow, usePointerHidden, usePresenceSender } from "./use-presence";
 import { WalkLayer, walksOf } from "./walk-layer";
 
 /**
@@ -2922,6 +2922,7 @@ function CanvasField({
 					opened = true;
 				},
 				presence: (data) => presenceRoom.hear(data as Presence),
+				"presence-hidden": (data) => presenceRoom.hide((data as { hidden?: unknown }).hidden === true),
 				change: (data) => {
 					const event = data as {
 						kind: string;
@@ -4778,6 +4779,8 @@ function CanvasField({
 		page: activePage,
 		inside: entered,
 		dragging: () => (gesture.current.kind === "move" ? gesture.current.names : []),
+		hidden: usePointerHidden(presenceRoom),
+		following,
 	});
 	const followPage = useCallback(
 		(page: string) => {
