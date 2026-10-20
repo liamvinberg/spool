@@ -33,7 +33,7 @@ import {
 	type Tick,
 	tickOf,
 } from "./share-pages";
-import { KindGlyph, refusalSaid, SHARES_CHANGED } from "./shares";
+import { KindGlyph, refusalSaid, SHARES_CHANGED, ShareCommentersList } from "./shares";
 
 /** Said on the window to open the Share popover on a page, as a page's right-click does: `{ page }`. */
 export const SHARE_OPEN = "spool-share-open";
@@ -645,6 +645,7 @@ function ShareDetail({
 					)}
 				</>
 			)}
+			<ShareCommentersList share={share} source={source} manage={manage} onChanged={changed} className="px-2" />
 			<MenuSeparator />
 			<div className="flex h-row shrink-0 items-center gap-2 pr-1 pl-2">
 				<span className="min-w-0 flex-1 truncate text-secondary type-detail">

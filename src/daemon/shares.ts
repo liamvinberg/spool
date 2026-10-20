@@ -262,6 +262,26 @@ export function createProjectShares(options: ProjectSharesOptions) {
 				return null;
 			});
 		})
+		/** Who commented through a team project's share, and blocking one of them (spool#174). */
+		.get("/:project/shares/:share/commenters", async (c) => {
+			const project = options.resolve(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return answer(c, async () => {
+				const place = placeOf(project.root);
+				if (typeof place === "string" || place.kind !== "team") throw new CloudTeamRefused("share_not_found", 404);
+				return client().commenters(place, c.req.param("share"));
+			});
+		})
+		.post("/:project/shares/:share/commenters/:account/block", async (c) => {
+			const project = options.resolve(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return answer(c, async () => {
+				const place = placeOf(project.root);
+				if (typeof place === "string" || place.kind !== "team") throw new CloudTeamRefused("share_not_found", 404);
+				await client().block(place, c.req.param("share"), c.req.param("account"));
+				return null;
+			});
+		})
 		.delete("/:project/shares/:share", async (c) => {
 			const project = options.resolve(c, c.req.param("project"));
 			if ("response" in project) return project.response;

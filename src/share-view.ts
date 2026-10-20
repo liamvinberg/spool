@@ -40,10 +40,54 @@ export type ProjectShares =
  * Where a project's shares are read and changed from: the daemon on a Mac, spool.page in a browser. A change or a
  * stop answers spool.page's reason when it refused, or null.
  */
-export interface SharesSource {
+export interface SharesSource extends Partial<ShareCommenters> {
 	read(): Promise<ProjectShares>;
 	change(share: string, change: { add?: string[]; remove?: string[] }): Promise<string | null>;
 	stop(share: string): Promise<string | null>;
+}
+
+/**
+ * Someone who commented through a share (spool#174), as its settings list them for Block: by account, the name the
+ * team sees on their comments, how many of their comments and replies stand there, when they last wrote (seconds),
+ * and whether they are blocked from its comments.
+ */
+export interface ShareCommenter {
+	account: string;
+	name: string;
+	posts: number;
+	last: number;
+	blocked: boolean;
+}
+
+/**
+ * A team project's share's commenters, read and blocked from where its shares are kept (spool#174): null when they
+ * can't be read now. Block removes what they wrote through the share and refuses what they write next; it answers
+ * spool.page's reason, or null.
+ */
+export interface ShareCommenters {
+	commenters(share: string): Promise<ShareCommenter[] | null>;
+	block(share: string, account: string): Promise<string | null>;
+}
+
+/** A share's commenters as spool.page lists them (spool#174), field by field; null for anything else. */
+export function readCommenters(value: unknown): ShareCommenter[] | null {
+	if (typeof value !== "object" || value === null || !("commenters" in value) || !Array.isArray(value.commenters))
+		return null;
+	return value.commenters.flatMap((one: unknown) => {
+		if (typeof one !== "object" || one === null) return [];
+		const account = "account" in one ? one.account : undefined;
+		const name = "name" in one ? one.name : undefined;
+		const posts = "posts" in one ? one.posts : undefined;
+		const last = "last" in one ? one.last : undefined;
+		const blocked = "blocked" in one ? one.blocked : undefined;
+		return typeof account === "string" &&
+			typeof name === "string" &&
+			typeof posts === "number" &&
+			typeof last === "number" &&
+			typeof blocked === "boolean"
+			? [{ account, name, posts, last, blocked }]
+			: [];
+	});
 }
 
 /** What a new share asks for. */

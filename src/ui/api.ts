@@ -42,7 +42,13 @@ import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
-import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
+import {
+	type ProjectShares,
+	readCommenters,
+	type ShareRequest,
+	type SharesSource,
+	type ShareView,
+} from "../share-view";
 import { type Comment, type PresenceState, readComment } from "../team-sync-protocol";
 import { base64Logo, TeamActionRefused, type TeamsSource, teamSays, teamsAt } from "./team-source";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
@@ -2026,6 +2032,21 @@ export function daemonShares(project: string): SharesSource & {
 		async stop(share) {
 			return refusal(await controlFetch(`${base}/${encodeURIComponent(share)}`, { method: "DELETE" }));
 		},
+		async commenters(share) {
+			try {
+				const response = await controlFetch(`${base}/${encodeURIComponent(share)}/commenters`);
+				return response.ok ? readCommenters(await response.json()) : null;
+			} catch {
+				return null;
+			}
+		},
+		async block(share, account) {
+			return refusal(
+				await controlFetch(`${base}/${encodeURIComponent(share)}/commenters/${encodeURIComponent(account)}/block`, {
+					method: "POST",
+				}),
+			);
+		},
 		async create(request) {
 			const response = await controlFetch(base, {
 				method: "POST",
@@ -2115,6 +2136,8 @@ export interface CommentWrite {
 	body: string;
 	/** the members it mentions, by account */
 	mentions?: string[];
+	/** one share of its page that reads it besides the team (spool#174); the team alone when absent */
+	audience?: { share: string };
 }
 
 /** The team took it, under this id; or it didn't, offline or for a reason said in words. */
@@ -2152,7 +2175,9 @@ async function commentAnswer(
 export type CommentAct =
 	| { type: "resolve" | "reopen" | "read" | "unread" }
 	| { type: "edit"; body: string; mentions: string[]; reply?: string }
-	| { type: "delete"; reply?: string };
+	| { type: "delete"; reply?: string }
+	/** a draft the person's agent left them on a share's comment, sent as theirs, with their edit if any (spool#174) */
+	| { type: "send"; reply: string; body?: string; mentions?: string[] };
 
 /** A comment's change as the team took it: done, or refused, offline or for a reason said in words. */
 export type CommentChanged = { ok: true } | { error: string; message: string };
@@ -2175,7 +2200,13 @@ export async function changeComment(project: string, comment: string, change: Co
 				})
 			: change.type === "delete"
 				? controlFetch(at(change.reply), { method: "DELETE" })
-				: controlFetch(`${base}/${change.type}`, { method: "POST" });
+				: change.type === "send"
+					? controlFetch(`${at(change.reply)}/send`, {
+							method: "POST",
+							headers: json,
+							body: JSON.stringify({ body: change.body, mentions: change.mentions }),
+						})
+					: controlFetch(`${base}/${change.type}`, { method: "POST" });
 	const answered = await commentAnswer(sent);
 	return "error" in answered ? answered : { ok: true };
 }
