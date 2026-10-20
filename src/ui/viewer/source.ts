@@ -67,6 +67,8 @@ export interface ViewerProject {
 	me?: string;
 	/** Each frame's cover, by its name: an image a member's daemon took, on the page's own origin. */
 	covers?: Record<string, string>;
+	/** For an admin of a lapsed team: its comments are read, never written, until it pays again. */
+	unpaid?: boolean;
 	/** Where spool for Mac is got, for whoever has no spool. */
 	download?: string;
 	/** For a member: the frames saved to last, newest first, from the team's history. */

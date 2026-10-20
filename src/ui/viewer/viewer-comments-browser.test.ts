@@ -117,7 +117,12 @@ interface Opened {
 	tell: (message: Record<string, unknown>) => Promise<void>;
 }
 
-async function open(path = PATH, comments: Comment[] = [], answer?: (written: Written) => Response | null) {
+async function open(
+	path = PATH,
+	comments: Comment[] = [],
+	answer?: (written: Written) => Response | null,
+	shape: Partial<ViewerProject> = {},
+) {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const written: Written[] = [];
@@ -140,7 +145,7 @@ async function open(path = PATH, comments: Comment[] = [], answer?: (written: Wr
 			const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "font/woff2";
 			return route.fulfill({ body: readFileSync(file), contentType: type });
 		}
-		if (url.origin === APP && url.pathname === "/api/canvas") return route.fulfill({ json: project });
+		if (url.origin === APP && url.pathname === "/api/canvas") return route.fulfill({ json: { ...project, ...shape } });
 		if (url.origin === APP && url.pathname === "/api/people")
 			return route.fulfill({
 				json: {
@@ -407,4 +412,39 @@ it("opens on the comment a link names, on its page, and takes the link off the a
 	const gone = await open(`${PATH}?comment=nope`, [comment("c1")]);
 	await gone.page.getByText("That comment isn’t here anymore").waitFor();
 	expect(new URL(gone.page.url()).search).toBe("");
+});
+
+it("reads a lapsed team's comments but writes none: no Comment tool, composer or reply field", {
+	timeout: 60_000,
+}, async () => {
+	const { page } = await open(PATH, [comment("c1")], undefined, { unpaid: true });
+	const pin = page.locator('[data-comment-pin="c1"]');
+	await pin.waitFor();
+	expect(await page.locator('[aria-label="canvas tools"]').count()).toBe(0);
+	// C takes no tool, and a press on a frame places nothing
+	await page.keyboard.press("c");
+	const on = await onFrame(page, "menu", { x: 50, y: 300 });
+	await page.mouse.click(on.x, on.y);
+	await page.locator("[data-viewer-player]").waitFor();
+	await page.keyboard.press("Escape");
+	await page.locator("[data-viewer-player]").waitFor({ state: "detached" });
+	expect(await page.locator("[data-comment-composer]").count()).toBe(0);
+
+	// the card reads, says why nothing is written, and offers no reply, resolve or delete
+	await pin.click();
+	const card = page.locator('[data-comment-card="c1"]');
+	await card.waitFor();
+	expect(await card.locator("[data-comment-body]").allTextContents()).toEqual(["words of c1"]);
+	expect(await card.textContent()).toContain("read-only until it pays again");
+	expect(await card.locator('textarea[aria-label="Reply"]').count()).toBe(0);
+	expect(await card.getByRole("button", { name: "Resolve" }).count()).toBe(0);
+	await card.getByRole("button", { name: "Comment options" }).click();
+	const menu = page.locator("[data-comment-menu]");
+	expect(await menu.getByRole("menuitem").allTextContents()).toEqual(["Copy link"]);
+
+	// the list reads too, with no + to start one
+	await page.keyboard.press("Escape");
+	await page.locator("[data-comments-button]").click();
+	await page.locator('[data-comments-panel="open"]').waitFor();
+	expect(await page.getByRole("button", { name: "New comment (C)" }).count()).toBe(0);
 });

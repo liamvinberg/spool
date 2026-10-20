@@ -162,6 +162,8 @@ export interface ViewerComments {
 	context: CommentsContext;
 	/** whether every comment has been heard since the socket opened */
 	heard: boolean;
+	/** whether this person may write here: not while the team has gone local, when comments are only read */
+	writes: boolean;
 	tool: ViewerTool;
 	setTool: (tool: ViewerTool) => void;
 	panel: boolean;
@@ -188,6 +190,7 @@ export function useViewerComments(
 	const noticeRef = useRef(notice);
 	noticeRef.current = notice;
 	if (client === null || stills === null || presence === null || held === undefined) return null;
+	const unpaid = project.unpaid === true;
 	return {
 		store,
 		comments: held.comments,
@@ -199,6 +202,7 @@ export function useViewerComments(
 			reader,
 			people,
 			online: presence.online,
+			unpaid,
 			offline: BROWSER_OFFLINE,
 			stills,
 			url,
@@ -206,7 +210,8 @@ export function useViewerComments(
 			refresh: NOTHING,
 			notice: ({ message }) => noticeRef.current(message),
 		},
-		tool,
+		writes: !unpaid,
+		tool: unpaid ? "pointer" : tool,
 		setTool,
 		panel,
 		setPanel,
@@ -293,7 +298,7 @@ export function useCommentKeys(comments: ViewerComments | null): void {
 				return;
 			}
 			if (event.code === "KeyC" && !event.shiftKey) {
-				if (event.repeat || hold.current !== null) return;
+				if (event.repeat || hold.current !== null || !now.writes) return;
 				hold.current = { at: Date.now() };
 				now.setTool("comment");
 				return;
@@ -488,7 +493,7 @@ export function ViewerCommentsList({
 			pinsHidden={pinsHidden}
 			onFilters={setFilters}
 			onPick={onPick}
-			onNew={() => comments.setTool("comment")}
+			onNew={comments.writes ? () => comments.setTool("comment") : undefined}
 			onTogglePins={() => setPinsHidden(!pinsHidden)}
 		/>
 	);

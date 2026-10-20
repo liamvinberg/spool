@@ -610,7 +610,7 @@ function ViewerCanvas({
 						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
 					)}
 				</div>
-				{comments !== null && <ViewerTools tool={comments.tool} onTool={comments.setTool} />}
+				{comments?.writes === true && <ViewerTools tool={comments.tool} onTool={comments.setTool} />}
 				{toast !== null && (
 					<div
 						className={`-translate-x-1/2 pointer-events-none absolute left-1/2 ${comments === null ? "bottom-4" : "bottom-20"}`}
