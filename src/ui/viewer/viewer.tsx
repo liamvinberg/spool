@@ -363,10 +363,12 @@ function ViewerCanvas({
 	const [tip, setTip] = useState(
 		() => signIn !== undefined && outsiderShare !== undefined && !tipSeen(outsiderShare.share.id),
 	);
-	const closeTip = useCallback(() => {
-		if (outsiderShare !== undefined) markTipSeen(outsiderShare.share.id);
-		setTip(false);
-	}, [outsiderShare]);
+	// said once: shown is seen, whether or not it is answered
+	const tipShare = tip ? outsiderShare?.share.id : undefined;
+	useEffect(() => {
+		if (tipShare !== undefined) markTipSeen(tipShare);
+	}, [tipShare]);
+	const closeTip = useCallback(() => setTip(false), []);
 	const askSignIn = useCallback(
 		(intent: Reached) => {
 			closeTip();

@@ -216,6 +216,11 @@ it("signed out on a link share: frames, no pins and no count, and everything ask
 	expect(await page.locator("[data-viewer-sign-in]").count()).toBe(0);
 	// the rail's foot
 	expect(await page.getByText("not signed in").count()).toBe(1);
+	// the tip is said once: the next visit has none, whether or not it was answered
+	await page.reload();
+	await page.getByRole("navigation", { name: "Pages" }).waitFor();
+	await page.locator('[aria-label="canvas tools"]').waitFor();
+	expect(await page.locator("[data-comments-tip]").count()).toBe(0);
 
 	// the Comments button, the rail's Sign in, C and the Comment tool all open the one dialog
 	for (const ask of [
@@ -231,12 +236,6 @@ it("signed out on a link share: frames, no pins and no count, and everything ask
 		await page.keyboard.press("Escape");
 		await dialog.waitFor({ state: "detached" });
 	}
-	// the tip went with the first ask, for good
-	expect(await tip.count()).toBe(0);
-	await page.reload();
-	await page.getByRole("navigation", { name: "Pages" }).waitFor();
-	await page.locator('[aria-label="canvas tools"]').waitFor();
-	expect(await page.locator("[data-comments-tip]").count()).toBe(0);
 });
 
 it("signs in on the link's host by an email code and the name step, then the pins ripple in and the tool carries on", {
