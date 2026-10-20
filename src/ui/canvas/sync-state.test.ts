@@ -101,3 +101,36 @@ it("says changes waiting out a long spell on the minute's limit as progress, not
 		"Sending 340 changes to devosurf, about 3 minutes.",
 	);
 });
+
+it("counts a long wait down in the same notice, and a closed one stays closed until the wait ends", () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+	});
+	const show = (sending: string | null) =>
+		act(() =>
+			root.render(
+				createElement(SyncNotices, { state: { ended: null, goneLocal: null, paused: null, sending, held: [] } }),
+			),
+		);
+	show("Sending 3,898 changes to devosurf, about 32 minutes");
+	const notice = host.querySelector("[data-sync-state]");
+	show("Sending 3,880 changes to devosurf, about 32 minutes");
+	// the same notice with new words: it doesn't slide in again
+	expect(host.querySelector("[data-sync-state]")).toBe(notice);
+	expect(notice?.textContent).toContain("Sending 3,880 changes to devosurf, about 32 minutes.");
+
+	act(() => notice?.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')?.click());
+	show("Sending 3,700 changes to devosurf, about 31 minutes");
+	expect(host.querySelector("[data-sync-state]")).toBeNull();
+
+	// the next wait is said again
+	show(null);
+	show("Sending 900 changes to devosurf, about 8 minutes");
+	expect(host.querySelector("[data-sync-state]")?.textContent).toContain("Sending 900 changes");
+});
