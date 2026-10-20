@@ -4,13 +4,7 @@ import { cloudTeams } from "../cloud-teams";
 import { isFramePath, isPagePath } from "../page-path";
 import { personName } from "../person-name";
 import { localCopyOf, readProjectLink } from "../team-project";
-import {
-	COMMENT_MENTIONS,
-	type Comment,
-	type CommentElement,
-	type CommentPoint,
-	isCommentBody,
-} from "../team-sync-protocol";
+import { COMMENT_MENTIONS, type CommentElement, type CommentPoint, isCommentBody } from "../team-sync-protocol";
 import type { ResolveProject } from "./project-route";
 import { type ElementPut, elementEntry } from "./selection";
 import {

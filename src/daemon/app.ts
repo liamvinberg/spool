@@ -58,6 +58,7 @@ import { createChangeHub } from "./events";
 import { explorerRoutes } from "./explorer-routes";
 import { createFlowGraph } from "./flows";
 import { servedFrameCsp } from "./frame-csp";
+import { frameRevisionOnDisk } from "./frame-revision";
 import { refreshIndex } from "./fs-list";
 import { createGoReader } from "./go-reader";
 import { handRoutes } from "./hand-routes";
@@ -1667,12 +1668,11 @@ export function createDaemonApp({
 			reply: (root, reply) => teamSync.reply(root, reply),
 			change: (root, change) => teamSync.changeComment(root, change),
 			people: teamPeople(spoolDir, cloud),
-			// the frame as it is now: its source revision, and the cover this Mac has of it, the comment's still
+			// the frame as it is now: its own source's revision, and the cover this Mac has of it, the comment's still
 			frameNow: async (root, frame) => {
-				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
 				const cover = readCover(root, frame);
 				const image = cover === undefined ? undefined : readCoverImage(root, frame, cover.hash);
-				return { revision: doc.kind === "ok" ? doc.source : null, still: image?.bytes };
+				return { revision: await frameRevisionOnDisk(root, frame), still: image?.bytes };
 			},
 			editedSince: (root, comments) => editedSince(comments, (frame) => revisionNow(root, frame)),
 			// the element an agent names, found in the frame booted at its own size, as a pick would see it
@@ -1692,10 +1692,6 @@ export function createDaemonApp({
 				});
 				if (shot.kind === "unserved") return { broken: `${frame} failed to serve` };
 				return shot.found ?? null;
-			},
-			revision: async (root, frame) => {
-				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
-				return doc.kind === "ok" ? doc.source : null;
 			},
 			still: async (root, comment) => {
 				const link = followedLink(root);

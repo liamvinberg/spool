@@ -376,7 +376,7 @@ describe("changing a comment on a team canvas", () => {
 });
 
 describe("a comment over its frame's life (spool#160)", () => {
-	it("follows its frame through a rename, says when the frame was edited since, and drops when it is deleted", async () => {
+	it("follows its frame through a rename and a move, edited since only once its source is, and drops when it is deleted", async () => {
 		const { cloud, ana, ben } = await team();
 		const anaDaemon = daemon(ana);
 		const anas = await canvas(anaDaemon);
@@ -387,8 +387,16 @@ describe("a comment over its frame's life (spool#160)", () => {
 		const written = await anas.write({ body: "Thanks! is loud." });
 		const { id } = (await written.json()) as { id: string };
 		await bens.told();
-		const before = (await (await anaDaemon.request("/api/p/checkout/comments")).json()) as { edited: string[] };
-		expect(before.edited).toEqual([]);
+		// made at the frame's source as the team has it: not edited since
+		await new Promise((wake) => setTimeout(wake, 200));
+		expect((await bens.read()).comments[0]?.editedSince).toBeUndefined();
+		// a page to move it onto
+		mkdirSync(join(ana.root, "design", "frames", "done", "other"), { recursive: true });
+		writeFileSync(
+			join(ana.root, "design", "frames", "done", "other", "frame.tsx"),
+			"export default () => <p>other</p>;\n",
+		);
+		await eventually(async () => cloud.paths("checkout").includes("frames/done/other/frame.tsx"));
 
 		// Ana renames the frame in the explorer: the comment stands on it under its new name, on Ben's Mac too
 		const renamed = await anaDaemon.request("/api/p/checkout/frames/rename", {
@@ -402,23 +410,39 @@ describe("a comment over its frame's life (spool#160)", () => {
 		// Ana's Mac said the rename with the save that deleted the old frame: the team needn't guess it from bytes
 		expect(cloud.moved("checkout")).toContainEqual({ frames: [{ from: "receipt", to: "thanks" }] });
 
-		// the frame is edited: the comment still stands on it, and says it was edited since
+		// moved onto another page, and dragged on it: still where it was put, and not edited since
+		const moved = await anaDaemon.request("/api/p/checkout/frames/move", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ frames: ["thanks"], page: "done" }),
+		});
+		expect(moved.status).toBe(204);
+		await eventually(async () => (await bens.read()).comments[0]?.frame === "done/thanks");
 		writeFileSync(
-			join(ana.root, "design", "frames", "thanks", "frame.tsx"),
+			join(ana.root, "design", "frames", "done", "thanks", "frame.json"),
+			`${JSON.stringify({ x: 900, y: 40, w: 390, h: 844 })}\n`,
+		);
+		await eventually(async () => cloud.paths("checkout").includes("frames/done/thanks/frame.json"));
+		await new Promise((wake) => setTimeout(wake, 200));
+		expect((await bens.read()).comments[0]).toMatchObject({ page: "done", standing: "placed" });
+		expect((await bens.read()).comments[0]?.editedSince).toBeUndefined();
+
+		// the frame's source is edited: the comment still stands on it, and says it was edited since, on every Mac
+		writeFileSync(
+			join(ana.root, "design", "frames", "done", "thanks", "frame.tsx"),
 			"export default function Receipt() {\n\treturn <main><h2>Paid</h2></main>;\n}\n",
 		);
-		await eventually(async () => {
-			const read = (await (await anaDaemon.request("/api/p/checkout/comments")).json()) as { edited: string[] };
-			return read.edited.includes(id);
-		});
+		await eventually(async () => (await bens.read()).comments[0]?.editedSince === true);
+		expect(cloud.comments("checkout")[0]?.editedSince).toBe(true);
 
 		// the frame is deleted: the comment drops onto the field where it stood, marked so
-		rmSync(join(ana.root, "design", "frames", "thanks"), { recursive: true });
+		rmSync(join(ana.root, "design", "frames", "done", "thanks"), { recursive: true });
 		await eventually(async () => (await bens.read()).comments[0]?.standing === "deleted-frame");
 		expect((await bens.read()).comments[0]).toMatchObject({
 			frame: null,
-			dropped: { frame: "thanks", at: expect.any(Number) },
+			dropped: { frame: "done/thanks", at: expect.any(Number) },
 		});
+		expect((await bens.read()).comments[0]?.editedSince).toBeUndefined();
 		expect(cloud.comments("checkout")[0]).toMatchObject({ standing: "deleted-frame" });
 	});
 
