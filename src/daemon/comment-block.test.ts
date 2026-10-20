@@ -88,6 +88,10 @@ describe("the comment block", () => {
 
 		expect(block.split("\n")[1]).toBe("Ana's agent, to the team, resolved by Bo");
 		expect(block).toContain("\nAna's agent: Thanks! is loud for a receipt.\n");
+		const byAgent = comment({ resolved: { by: bo, at: 3_000, agent: true } });
+		expect(commentBlock(byAgent, { editedSince: false }).split("\n")[1]).toBe(
+			"Ana, to the team, resolved by Bo's agent",
+		);
 	});
 
 	it("points at the frame alone when nothing was under the pin", () => {

@@ -184,6 +184,9 @@ describe("comments on the sync socket", () => {
 		const sent = JSON.parse(JSON.stringify(comment)) as unknown;
 		expect(readComment(sent)).toEqual(comment);
 		expect(readComment({ ...comment, audience: { share: "s1" } })).toEqual({ ...comment, audience: { share: "s1" } });
+		const resolved = { ...comment, resolved: { by: ana, at: 3_000, agent: true } };
+		expect(readComment(resolved)).toEqual(resolved);
+		expect(readComment({ ...comment, resolved: { by: ana, at: 3_000, agent: false } })).toBeUndefined();
 		expect(readComment({ ...comment, standing: "gone" })).toBeUndefined();
 		expect(readComment({ ...comment, author: { accountId: "acc-ana" } })).toBeUndefined();
 		expect(readComment({ ...comment, replies: [{ id: "r" }] })).toBeUndefined();

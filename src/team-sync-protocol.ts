@@ -695,7 +695,8 @@ export interface Comment {
 	body: string;
 	created: number;
 	edited: number | null;
-	resolved: { by: CommentPerson; at: number } | null;
+	/** Who resolved it and when; `agent` when their agent did, through `spool comments resolve`. */
+	resolved: { by: CommentPerson; at: number; agent?: true } | null;
 	standing: CommentStanding;
 	replies: CommentReply[];
 	/** The members its first message @mentions, named as they are now; absent when it mentions nobody. */
@@ -1124,7 +1125,9 @@ export function readComment(value: unknown): Comment | undefined {
 		if (!isRecord(resolved) || !isTime(resolved.at)) return undefined;
 		const by = readCommentPerson(resolved.by);
 		if (by === undefined) return undefined;
-		closed = { by, at: resolved.at };
+		const { agent: byAgent } = resolved;
+		if (!(byAgent === undefined || byAgent === true)) return undefined;
+		closed = { by, at: resolved.at, ...(byAgent === true ? { agent: byAgent } : {}) };
 	}
 	if (!Array.isArray(replies)) return undefined;
 	const read = replies.map(readCommentReply);

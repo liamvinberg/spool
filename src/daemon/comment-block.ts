@@ -57,7 +57,8 @@ function head(comment: Comment, context: CommentBlockContext): string {
 		comment.audience === "team"
 			? "to the team"
 			: `to share ${context.shareName?.(comment.audience.share) ?? comment.audience.share}`;
-	const state = comment.resolved === null ? "open" : `resolved by ${comment.resolved.by.name}`;
+	const { resolved } = comment;
+	const state = resolved === null ? "open" : `resolved by ${who(resolved.by, resolved.agent === true)}`;
 	return `${who(comment.author, comment.agent)}, ${audience}, ${state}`;
 }
 
