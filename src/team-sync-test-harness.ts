@@ -12,14 +12,16 @@ import {
 	COMMENTS_PER_PART,
 	type Comment,
 	type CommentPerson,
-	type CommentReply,
-	commentBodyRefusal,
 	type CommentPlace,
+	type CommentReply,
 	type CopyChange,
+	commentBodyRefusal,
 	type DesignNow,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
+	frameRevision,
+	isFrameSource,
 	isRecord,
 	joinParts,
 	type Limited,
@@ -28,8 +30,8 @@ import {
 	movesComments,
 	PROTOCOL_VERSION,
 	type PresenceState,
-	readCommentChange,
 	placeAfter,
+	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
 	readCommentStillAsk,
@@ -654,6 +656,56 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	 * keeps them, and every live copy is told of each that changed (spool#160).
 	 */
 	function follow(at: Project, changes: CopyChange[], said: Moved | undefined): void {
+		place(at, changes, said);
+		if (changes.length > 0) void editedNow(at);
+	}
+
+	/** Each project's latest look at which comments' frames were edited since: an older one that ends later is dropped. */
+	const editing = new WeakMap<Project, number>();
+
+	/**
+	 * Which comments stand on a frame whose source isn't what it was when they were made, by the revision spool.page
+	 * reads its copy with: every live copy is told of each that changed (spool#160).
+	 */
+	async function editedNow(at: Project): Promise<void> {
+		const turn = (editing.get(at) ?? 0) + 1;
+		editing.set(at, turn);
+		const revisions = new Map<string, Promise<string | null>>();
+		const revisionOf = (frame: string) => {
+			let found = revisions.get(frame);
+			if (found === undefined) {
+				const files = [...at.files].flatMap(([path, file]) =>
+					file.bytes !== null && isFrameSource(frame, path) ? [{ path, hash: hash(file.bytes) ?? "" }] : [],
+				);
+				found = files.some(({ path }) => path === `frames/${frame}/frame.tsx`)
+					? frameRevision(files.map((file) => file.hash))
+					: Promise.resolve(null);
+				revisions.set(frame, found);
+			}
+			return found;
+		};
+		const looked = await Promise.all(
+			at.comments.map(async ({ id, frame, standing, revision }) => {
+				if (frame === null || standing !== "placed" || revision === null) return { id, edited: false };
+				const now = await revisionOf(frame);
+				return { id, edited: now !== null && now !== revision };
+			}),
+		);
+		if (editing.get(at) !== turn) return;
+		for (const { id, edited } of looked) {
+			const index = at.comments.findIndex((comment) => comment.id === id);
+			const comment = at.comments[index];
+			if (comment === undefined || (comment.editedSince === true) === edited) continue;
+			const { editedSince: _, ...rest } = comment;
+			const now: Comment = edited ? { ...rest, editedSince: true } : rest;
+			at.comments[index] = now;
+			for (const socket of at.sockets)
+				if (socket.live) socket.deliver(encodeFrame({ type: "comment-changed", comment: now }));
+		}
+	}
+
+	/** Where every comment stands once saves are applied, by core's rules as the sync object keeps them. */
+	function place(at: Project, changes: CopyChange[], said: Moved | undefined): void {
 		if (!movesComments(changes, said)) return;
 		const holds = (path: string) => (at.files.get(path)?.bytes ?? null) !== null;
 		const design: DesignNow = {
@@ -686,7 +738,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			const place = placeAfter(was, moved, design, Date.now());
 			if (JSON.stringify(place) === JSON.stringify(was)) continue;
 			at.places.set(comment.id, place);
-			const { dropped: _, ...rest } = comment;
+			// off its frame, it says nothing of the frame's edits: as spool.page sends it, in the same word
+			const { dropped: _, editedSince, ...rest } = comment;
 			const now: Comment = {
 				...rest,
 				page: place.page,
@@ -696,6 +749,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				...(place.frame === null && place.home !== null && place.dropped !== null
 					? { dropped: { frame: place.home.frame, at: place.dropped } }
 					: {}),
+				...(editedSince === true && place.standing === "placed" && place.frame !== null ? { editedSince } : {}),
 			};
 			at.comments[index] = now;
 			for (const socket of at.sockets)
@@ -762,6 +816,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			told = { type: "comment-added", comment };
 			for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
 			from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
+			// made at a revision the team's copy hasn't reached, or has passed, it says so at once
+			void editedNow(at);
 			return;
 		}
 		const post = readCommentReplyPost(message);
