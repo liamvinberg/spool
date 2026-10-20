@@ -4,6 +4,7 @@ import { type ProjectShares, readCommenters, type SharesSource, type ShareView }
 import {
 	CLOSE_SIGNED_OUT,
 	type CommentsMessage,
+	isRecord,
 	type Presence,
 	type PresenceState,
 	readCommentsMessage,
@@ -335,13 +336,61 @@ export function readConfig(): ViewerConfig {
 }
 
 /**
- * The project, read. The canvas only ever reads: there is no request here, or
- * anywhere in the viewer, that asks anything to change.
+ * The project, read. Its outsider part is checked field by field before the canvas trusts it, since it names the one
+ * origin a sign-in's message is taken from and every address an outsider writes to; one that isn't whole is dropped,
+ * and the canvas opens as it would for nobody signed in.
  */
 export async function readProject(config: ViewerConfig): Promise<ViewerProject | undefined> {
 	const response = await fetch(config.api, { credentials: "same-origin", headers: { accept: "application/json" } });
 	if (!response.ok) return undefined;
-	return (await response.json()) as ViewerProject;
+	const value: unknown = await response.json().catch(() => undefined);
+	if (!isRecord(value)) return undefined;
+	const { outsider, ...rest } = value;
+	const read = outsider === undefined ? undefined : readViewerOutsider(outsider);
+	// the rest is spool.page's own shape, drawn as it comes
+	const project = rest as unknown as ViewerProject;
+	return read === undefined ? project : { ...project, outsider: read };
+}
+
+/** An outsider's part of the canvas, as spool.page sends it; undefined when any field isn't what it must be. */
+export function readViewerOutsider(value: unknown): ViewerOutsider | undefined {
+	if (!isRecord(value) || !isRecord(value.share)) return undefined;
+	const { id, kind, who } = value.share;
+	if (typeof id !== "string" || (kind !== "people" && kind !== "link")) return undefined;
+	if (!Array.isArray(who) || !who.every((one) => typeof one === "string")) return undefined;
+	const { me, comments, socket, signIn } = value;
+	const signedIn =
+		me === null
+			? null
+			: isRecord(me) && typeof me.id === "string" && typeof me.name === "string"
+				? { id: me.id, name: me.name }
+				: undefined;
+	if (signedIn === undefined || !isPath(comments) || !isPath(socket)) return undefined;
+	const base = { share: { id, kind, who }, me: signedIn, comments, socket };
+	if (signIn === undefined) return base;
+	const link = readLinkSignIn(signIn);
+	return link === undefined ? undefined : { ...base, signIn: link };
+}
+
+/** A link host's sign-in addresses: its own paths, Google's on spool.page, and spool.page's exact origin. */
+function readLinkSignIn(value: unknown): ViewerLinkSignIn | undefined {
+	if (!isRecord(value)) return undefined;
+	const { code, resend, verify, name, exchange, signOut, google, origin } = value;
+	if (!isPath(code) || !isPath(resend) || !isPath(verify) || !isPath(name) || !isPath(exchange) || !isPath(signOut))
+		return undefined;
+	if (typeof google !== "string" || typeof origin !== "string" || !isOrigin(origin)) return undefined;
+	if (!URL.canParse(google) || new URL(google).origin !== origin) return undefined;
+	return { code, resend, verify, name, exchange, signOut, google, origin };
+}
+
+/** A path on the page's own origin. */
+function isPath(value: unknown): value is string {
+	return typeof value === "string" && value.startsWith("/") && !value.startsWith("//");
+}
+
+/** An https origin and nothing more, as `URL.origin` writes one. */
+function isOrigin(value: string): boolean {
+	return URL.canParse(value) && new URL(value).origin === value && value.startsWith("https://");
 }
 
 /** The comment a canvas URL opens on, from its Copy link (`?comment=<id>`); null for none. */
