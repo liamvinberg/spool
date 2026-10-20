@@ -385,7 +385,7 @@ it("says a refusal in the composer's words, and offline while the socket is down
 	await composer.locator("textarea").press("Enter");
 	await expect
 		.poll(() => composer.locator("[data-comment-refusal]").textContent())
-		.toMatch(/more comments than spool\.page takes.*\(in 12 seconds\)$/u);
+		.toMatch(/^That's more comments than spool\.page takes.*\(in 12 seconds\)\.$/u);
 	await (await presence()).close();
 	await composer.locator("[data-comment-offline]").waitFor();
 	expect(await composer.locator("[data-comment-offline]").textContent()).toContain("until you're connected again");
@@ -452,7 +452,7 @@ it("opens on the comment a link names, on its page, and takes the link off the a
 
 	// a link to a comment that is gone says so
 	const gone = await open(`${PATH}?comment=nope`, [comment("c1")]);
-	await gone.page.getByText("That comment isn’t here anymore").waitFor();
+	await gone.page.getByText("That comment isn’t here anymore.").waitFor();
 	expect(new URL(gone.page.url()).search).toBe("");
 });
 

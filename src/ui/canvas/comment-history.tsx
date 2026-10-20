@@ -173,7 +173,7 @@ function Still({
 					/>
 				) : (
 					<span className="absolute inset-0 flex items-center justify-center text-tertiary type-detail">
-						{then ? "No still" : "Not drawn yet"}
+						{then ? "no still" : "not drawn yet"}
 					</span>
 				)}
 				{shown && ring ? (

@@ -1014,9 +1014,19 @@ function RefusalLine({ refusal, context }: { refusal: string | null; context: Co
 		);
 	return refusal === null ? null : (
 		<span className="text-danger type-label" data-comment-refusal="">
-			{refusal}
+			{asSentence(refusal)}
 		</span>
 	);
+}
+
+/**
+ * A refusal as the card says it: a person's sentence, capitalised and stopped, from the words the team and the CLI
+ * print lowercase. spool stays lowercase at a sentence's start.
+ */
+export function asSentence(words: string): string {
+	const said = words.trim();
+	const start = said.startsWith("spool") ? said : `${said.charAt(0).toUpperCase()}${said.slice(1)}`;
+	return /[.?!]$/u.test(start) ? start : `${start}.`;
 }
 
 /** Writing a comment at a pin just placed: what was under it, who reads it, the words. Enter sends. */

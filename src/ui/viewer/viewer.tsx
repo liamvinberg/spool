@@ -426,7 +426,7 @@ function ViewerCanvas({
 			if (!comments.heard) return;
 			if (aim.link) {
 				window.history.replaceState(window.history.state, "", address(config, page, played));
-				onNotice("That comment isn’t here anymore");
+				onNotice("That comment isn’t here anymore.");
 			}
 			setAim(null);
 			return;

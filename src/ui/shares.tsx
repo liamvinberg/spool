@@ -313,7 +313,7 @@ export function ShareCommentersList({
 	};
 	return (
 		<div className={cn("flex flex-col", className)} data-share-commenters={share.id}>
-			<p className="flex h-7 items-center text-secondary type-detail">Commented through this share</p>
+			<p className="flex h-7 items-center text-secondary type-detail">commented through this share</p>
 			<ul className="flex flex-col">
 				{commenters.map((one) => (
 					<li key={one.account} className="flex flex-col" data-share-commenter={one.account}>
