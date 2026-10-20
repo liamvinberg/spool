@@ -27,6 +27,8 @@ export interface Hello {
 	 * month while the team project holds nothing but the move's files. An object that doesn't know it counts them.
 	 */
 	moving?: true;
+	/** The daemon reads `files`: what a teammate sent as one bundle comes down as one. */
+	bundles?: true;
 }
 
 /**
@@ -62,6 +64,85 @@ export interface Welcome {
 	/** The newest team version. */
 	head: Version;
 	pace?: Pace;
+	/** The object takes `saves`. An older one doesn't say, and its daemons send each save alone. */
+	bundles?: true;
+}
+
+/**
+ * Daemon → object: saves made together, as a cleanup or an agent's turn makes them, sent as one message and
+ * answered with one `answers`. Each is ordered, checked against its own base and applied or set aside on its own, as
+ * a lone `save` is; together they take one save from the minute's bucket and count as one of the month's. Their
+ * bytes ride the binary frame one after another, each `size` long; a bundle of deletes alone is a text frame.
+ */
+export interface Saves {
+	type: "saves";
+	saves: BundledSave[];
+}
+
+export interface BundledSave {
+	ref: string;
+	path: string;
+	base: Version | null;
+	deleted: boolean;
+	/** Its bytes in the frame; 0 for a delete. */
+	size: number;
+}
+
+/** The most saves one bundle carries. */
+export const BUNDLE_SAVES = 1_000;
+/** The most bytes one bundle carries, well under the 32 MiB a message to spool.page may be; a bigger file goes alone. */
+export const BUNDLE_BYTES = 16_000_000;
+
+/** Object → the saving daemon: the answer to each save in a bundle, in its order, and how full the bucket is now. */
+export interface Answers {
+	type: "answers";
+	answers: (Omit<Saved, "pace"> | Omit<SetAside, "pace"> | Omit<Refused, "pace">)[];
+	pace?: Pace;
+}
+
+/**
+ * Object → a daemon whose hello said `bundles`: a teammate's bundle, every applied save in it, in order. Their
+ * bytes ride the binary frame as a bundle's do.
+ */
+export interface TeamFiles {
+	type: "files";
+	files: (Omit<TeamFile, "type"> & { size: number })[];
+}
+
+/**
+ * The bytes of each entry of a bundle, cut from its frame's bytes in order: undefined for a delete. Null when the
+ * sizes don't account for the bytes exactly, which no well-formed bundle does.
+ */
+export function bundleParts(
+	entries: readonly { deleted: boolean; size: number }[],
+	bytes: Uint8Array | undefined,
+): (Uint8Array | undefined)[] | null {
+	const parts: (Uint8Array | undefined)[] = [];
+	let at = 0;
+	for (const { deleted, size } of entries) {
+		if (!Number.isSafeInteger(size) || size < 0 || (deleted && size !== 0)) return null;
+		if (deleted) {
+			parts.push(undefined);
+			continue;
+		}
+		if (bytes === undefined || at + size > bytes.byteLength) return null;
+		parts.push(bytes.subarray(at, at + size));
+		at += size;
+	}
+	return at === (bytes?.byteLength ?? 0) ? parts : null;
+}
+
+/** A bundle's bytes, each file's after the last: undefined when every entry is a delete. */
+export function joinParts(parts: readonly (Uint8Array | undefined)[]): Uint8Array | undefined {
+	const files = parts.filter((part): part is Uint8Array => part !== undefined);
+	if (files.length === 0) return undefined;
+	const joined = new Uint8Array(files.reduce((sum, part) => sum + part.byteLength, 0));
+	let at = 0;
+	for (const part of files) {
+		joined.set(part, at);
+		at += part.byteLength;
+	}
+	return joined;
 }
 
 /** Object → daemon: one path as the team has it now, bytes in the binary frame unless it was deleted. */
@@ -144,8 +225,17 @@ export interface TurnEnded {
 	type: "turn-ended";
 }
 
-export type DaemonMessage = Hello | Save | Resend | TurnEnded;
-export type ObjectMessage = Welcome | TeamFile | CaughtUp | Saved | SetAside | Refused | MonthCount;
+export type DaemonMessage = Hello | Save | Saves | Resend | TurnEnded;
+export type ObjectMessage =
+	| Welcome
+	| TeamFile
+	| TeamFiles
+	| CaughtUp
+	| Saved
+	| SetAside
+	| Refused
+	| Answers
+	| MonthCount;
 
 /** A message and the bytes riding with it, if any. */
 export interface Framed<T> {
@@ -242,7 +332,7 @@ export const CLOSE_PROTOCOL = 4406;
 /** The object couldn't check who may sync just now: the daemon reconnects, as after any dropped line. */
 export const CLOSE_UNAVAILABLE = 1011;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
 import {
+	bundleParts,
 	CANVAS_PATH,
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
@@ -9,6 +10,7 @@ import {
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
+	joinParts,
 	type Limited,
 	mergeCanvas,
 	PROTOCOL_VERSION,
@@ -54,6 +56,8 @@ interface Project {
 	saves: { path: string; base: number | null; deleted: boolean; by: string; outcome: string; moved: boolean }[];
 	/** Every save it refused, and why. */
 	refused: { path: string; reason: string }[];
+	/** How many saves each message that carried saves held: 1 for a lone save, more for a bundle. */
+	sends: number[];
 	/** Whose move the project holds nothing but, while it does: undefined before its first save, null once it holds more. */
 	mover?: string | null;
 	/** Every applied version's bytes and who made it, which a canvas.json merge reads its base from. */
@@ -68,6 +72,22 @@ interface Project {
 	repo: string | null;
 }
 
+/** One save as the object reads it, alone or out of a bundle. */
+interface Entry {
+	ref: string;
+	path: string;
+	base: number | null;
+	deleted: boolean;
+	bytes: Uint8Array | undefined;
+}
+
+/** What taking saves says: the answers, what follows them to the writer, and what is relayed to everyone else. */
+interface Told {
+	answers: Record<string, unknown>[];
+	after: (string | Uint8Array)[];
+	relayed: { path: string; version: number; deleted: boolean; content: Uint8Array | undefined; restores?: Person }[];
+}
+
 interface TeamVersion {
 	version: number;
 	bytes: Uint8Array | null;
@@ -79,6 +99,8 @@ interface Connected {
 	live: boolean;
 	/** Its hello said it moves a project in. */
 	moving?: boolean;
+	/** Its hello said it reads `files`. */
+	bundles?: boolean;
 	/** Where this connection's person last said they were: kept only while it's connected. */
 	presence?: { state: PresenceState; at: number };
 	deliver(frame: string | Uint8Array): void;
@@ -117,6 +139,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const roleIn = (person: Person, address: string): Role =>
 		address === team ? person.role : (person.roles.get(address) ?? null);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
+	/** The object takes bundles, as spool.page does since it learned them; off, it is an older one. */
+	let takesBundles = true;
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
 	/** The minute's bucket, on a clock the test turns: its level when last taken from, and how fast it refills. */
@@ -251,6 +275,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					files: new Map(),
 					saves: [],
 					refused: [],
+					sends: [],
 					versions: new Map(),
 					sockets: new Set(),
 					version: 0,
@@ -357,6 +382,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				return;
 			}
 			from.moving = message.moving === true;
+			from.bundles = message.bundles === true;
 			if (!from.moving && at.mover === from.person.accountId) at.mover = null;
 			from.deliver(
 				encodeFrame({
@@ -365,6 +391,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					format: 2,
 					head: at.version,
 					...pace(at, from),
+					...(takesBundles ? { bundles: true } : {}),
 				}),
 			);
 			const since = Number(message.since);
@@ -395,46 +422,110 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			if (from.live) at.turns.push({ by: from.person.accountId, saves: at.saves.length });
 			return;
 		}
-		if (message.type !== "save") return;
-		const { ref, path, base, deleted } = message as {
-			ref: string;
-			path: string;
-			base: number | null;
-			deleted: boolean;
-		};
-		const current = at.files.get(path);
-		const refuse = (reason: string, retryAfter?: number) => {
+		const lone = message.type === "save";
+		if (!lone && message.type !== "saves") return;
+		let entries: Entry[];
+		if (lone) {
+			const { ref, path, base, deleted } = message as Omit<Entry, "bytes">;
+			entries = [{ ref, path, base, deleted, bytes }];
+		} else {
+			const saves = Array.isArray(message.saves)
+				? (message.saves as (Omit<Entry, "bytes"> & { size: number })[])
+				: [];
+			const parts = takesBundles ? bundleParts(saves, bytes) : null;
+			if (parts === null || saves.length === 0) {
+				from.close();
+				return;
+			}
+			entries = saves.map(({ ref, path, base, deleted }, index) => ({
+				ref,
+				path,
+				base,
+				deleted,
+				bytes: parts[index],
+			}));
+		}
+		at.sends.push(entries.length);
+		take(at, from, entries, lone);
+	}
+
+	/**
+	 * Saves sent alone or together, as spool.page takes them: each checked and ordered on its own, the bundle taking
+	 * one save from the bucket, answered in one message, and relayed as one to every copy that reads bundles.
+	 */
+	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): void {
+		const told: Told = { answers: [], after: [], relayed: [] };
+		const refuse = ({ ref, path }: Entry, reason: string, retryAfter?: number) => {
 			at.refused.push({ path, reason });
-			from.deliver(
-				encodeFrame({
-					type: "refused",
-					ref,
-					path,
-					reason,
-					...(retryAfter === undefined ? {} : { retryAfter }),
-					...pace(at, from),
-				}),
-			);
+			told.answers.push({ type: "refused", ref, path, reason, ...(retryAfter === undefined ? {} : { retryAfter }) });
 		};
 		const moved = movesIn(at, from);
-		if (from.person.revoked || !edits(from.person, at.team)) {
-			refuse(from.person.revoked ? "signed_out" : "not_editor");
-			from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
-		} else if (!travels(path)) refuse("outside_layout");
-		else if ((bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) refuse("too_large");
-		else if (limited !== undefined) refuse(limited.reason, limited.retryAfter);
-		else {
-			const wait = overRate();
-			const room = level();
-			if (wait !== undefined) refuse("rate_limited", wait);
-			else if (bucket !== undefined && !moved && room < 1)
-				refuse("rate_limited", Math.max(1, Math.ceil(((1 - room) * 60) / bucket.refill)));
+		const revoked = from.person.revoked || !edits(from.person, at.team);
+		if (revoked) for (const entry of entries) refuse(entry, from.person.revoked ? "signed_out" : "not_editor");
+		const taking = revoked
+			? []
+			: entries.filter((entry) => {
+					if (!travels(entry.path)) refuse(entry, "outside_layout");
+					else if ((entry.bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) refuse(entry, "too_large");
+					else return true;
+					return false;
+				});
+		if (taking.length > 0) {
+			let held: { reason: string; retryAfter: number } | undefined;
+			if (limited !== undefined) held = limited;
 			else {
-				if (bucket !== undefined && !moved) Object.assign(bucket, { level: room - 1, at: bucket.now() });
-				if (current !== undefined && hash(current.bytes) === hash(bytes ?? null))
-					from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version, ...pace(at, from) }));
-				else apply(at, from, { ref, path, base, deleted }, current, bytes, moved);
+				const wait = overRate();
+				const room = level();
+				if (wait !== undefined) held = { reason: "rate_limited", retryAfter: wait };
+				else if (bucket !== undefined && !moved && room < 1)
+					held = {
+						reason: "rate_limited",
+						retryAfter: Math.max(1, Math.ceil(((1 - room) * 60) / bucket.refill)),
+					};
+				else if (bucket !== undefined && !moved) Object.assign(bucket, { level: room - 1, at: bucket.now() });
 			}
+			for (const entry of taking) {
+				if (held !== undefined) {
+					refuse(entry, held.reason, held.retryAfter);
+					continue;
+				}
+				const current = at.files.get(entry.path);
+				if (current !== undefined && hash(current.bytes) === hash(entry.bytes ?? null))
+					told.answers.push({ type: "saved", ref: entry.ref, path: entry.path, version: current.version });
+				else apply(at, from, entry, current, moved, told);
+			}
+		}
+		const [only] = told.answers;
+		if (lone && only !== undefined) from.deliver(encodeFrame({ ...only, ...pace(at, from) }));
+		else from.deliver(encodeFrame({ type: "answers", answers: told.answers, ...pace(at, from) }));
+		for (const frame of told.after) from.deliver(frame);
+		if (revoked) from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
+		if (told.relayed.length === 0) return;
+		const by = { accountId: from.person.accountId, device: from.person.device };
+		for (const other of at.sockets) {
+			if (other === from || !other.live) continue;
+			if (!lone && other.bundles === true)
+				other.deliver(
+					encodeFrame(
+						{
+							type: "files",
+							files: told.relayed.map(({ path, version, deleted, content }) => ({
+								path,
+								version,
+								deleted,
+								by,
+								size: content?.byteLength ?? 0,
+							})),
+						},
+						joinParts(told.relayed.map(({ content }) => content)),
+					),
+				);
+			else
+				for (const { path, version, deleted, content } of told.relayed)
+					other.deliver(encodeFrame({ type: "file", path, version, deleted, by }, content));
+			for (const { path, version, restores } of told.relayed)
+				if (restores !== undefined && other.person === restores && restores !== from.person)
+					other.deliver(encodeFrame({ type: "restored", path, version, by }));
 		}
 	}
 
@@ -445,10 +536,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	function apply(
 		at: Project,
 		from: Connected,
-		{ ref, path, base, deleted }: { ref: string; path: string; base: number | null; deleted: boolean },
+		{ ref, path, base, deleted, bytes }: Entry,
 		current: TeamVersion | undefined,
-		bytes: Uint8Array | undefined,
-		moved = false,
+		moved: boolean,
+		told: Told,
 	): void {
 		const stale = current !== undefined && current.version !== base;
 		const merged =
@@ -456,8 +547,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				? mergeCanvas(base === null ? null : (at.versions.get(base)?.bytes ?? null), current.bytes, bytes)
 				: null;
 		if (merged !== null && current !== undefined && hash(merged) === hash(current.bytes)) {
-			from.deliver(encodeFrame({ type: "saved", ref, path, version: current.version, ...pace(at, from) }));
-			from.deliver(fileFrame(path, current));
+			told.answers.push({ type: "saved", ref, path, version: current.version });
+			told.after.push(fileFrame(path, current));
 			return;
 		}
 		const beatsDelete = stale && current.bytes === null && bytes !== undefined;
@@ -474,34 +565,29 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		at.mover = moved ? from.person.accountId : null;
 		if (!applies) {
 			const by = current.by ?? from.person;
-			from.deliver(
-				encodeFrame({
-					type: "set-aside",
-					ref,
-					path,
-					version: current.version,
-					by: { accountId: by.accountId, device: by.device },
-					...pace(at, from),
-				}),
-			);
-			from.deliver(fileFrame(path, current));
+			told.answers.push({
+				type: "set-aside",
+				ref,
+				path,
+				version: current.version,
+				by: { accountId: by.accountId, device: by.device },
+			});
+			told.after.push(fileFrame(path, current));
 			return;
 		}
 		const content = merged ?? bytes ?? null;
 		const file = { version: at.version, bytes: content, by: from.person };
 		at.files.set(path, file);
 		at.versions.set(file.version, file);
-		from.deliver(encodeFrame({ type: "saved", ref, path, version: file.version, ...pace(at, from) }));
-		if (merged !== null) from.deliver(fileFrame(path, file));
-		const by = { accountId: from.person.accountId, device: from.person.device };
-		for (const other of at.sockets)
-			if (other !== from && other.live) {
-				other.deliver(
-					encodeFrame({ type: "file", path, version: file.version, deleted, by }, content ?? undefined),
-				);
-				if (beatsDelete && other.person === current.by && current.by !== from.person)
-					other.deliver(encodeFrame({ type: "restored", path, version: file.version, by }));
-			}
+		told.answers.push({ type: "saved", ref, path, version: file.version });
+		if (merged !== null) told.after.push(fileFrame(path, file));
+		told.relayed.push({
+			path,
+			version: file.version,
+			deleted,
+			content: content ?? undefined,
+			...(beatsDelete && current.by !== undefined ? { restores: current.by } : {}),
+		});
 	}
 
 	/** Where a person stands: the latest of their connections' states, as the sync object keeps it. */
@@ -655,6 +741,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		saves: (name: string) => project(name)?.saves ?? [],
 		/** Every save the project refused, and why. */
 		refused: (name: string) => project(name)?.refused ?? [],
+		/** How many saves each message that carried saves held, in order. */
+		sends: (name: string) => project(name)?.sends ?? [],
+		/** The object is an older spool.page, which takes each save alone and never says it takes bundles. */
+		withoutBundles() {
+			takesBundles = false;
+		},
 		resent: (name: string) => project(name)?.resent ?? [],
 		turns: (name: string) => project(name)?.turns ?? [],
 		/** A message the team never sends: what a compromised cloud might. */

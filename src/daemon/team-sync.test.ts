@@ -1136,6 +1136,8 @@ describe("the minute's bucket", () => {
 
 	it("holds each save until the bucket has room for it, so none is refused", async () => {
 		const { cloud, ana, ben } = await twoEditors();
+		// an older spool.page, which takes each save alone
+		cloud.withoutBundles();
 		// one save of room, refilling two a second
 		cloud.bucket(1, 120, Date.now);
 		writeFrame(ana.root, "home", "export default () => <h1>Home</h1>;\n");
@@ -1173,6 +1175,7 @@ describe("the minute's bucket", () => {
 	// a cleanup of thousands of files: the canvas's notice stays put while it counts down, never gone and back
 	it("says a long wait once as it begins and counts it down, never ending it while changes still wait", async () => {
 		const { cloud, ana } = await twoEditors();
+		cloud.withoutBundles();
 		const controller = new AbortController();
 		onTestFinished(() => controller.abort());
 		const events = sseReader(await ana.daemon.request("/api/p/checkout/events", { signal: controller.signal }));
@@ -1190,6 +1193,72 @@ describe("the minute's bucket", () => {
 		expect(told).not.toContain("");
 		// begun, and counted down every few seconds rather than on every save
 		expect(told.length).toBeLessThanOrEqual(2);
+	});
+});
+
+describe("bundles", () => {
+	it("sends a cleanup of hundreds of files as one bundle, taking one save from the bucket", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		for (let n = 0; n < 300; n++) writeFrame(ana.root, `f${n}`, `export default () => <p>${n}</p>;\n`);
+		await until(() => same(ana.root, ben.root, "frames/f299/frame.tsx"), 10_000);
+		const before = cloud.sends("checkout").length;
+		// two saves of room, and one a minute after: one each was 300 minutes
+		cloud.bucket(2, 1, Date.now);
+		rmSync(join(ana.root, "design/frames"), { recursive: true });
+		await until(
+			() => !existsSync(join(ben.root, "design/frames/f0")) && !existsSync(join(ben.root, "design/frames/f299")),
+			10_000,
+		);
+		const after = cloud.sends("checkout").slice(before);
+		expect(after.length).toBeLessThanOrEqual(2);
+		expect(after.reduce((sum, saves) => sum + saves, 0)).toBeGreaterThanOrEqual(300);
+		expect(cloud.refused("checkout")).toEqual([]);
+		expect(await syncState(ana.daemon)).toMatchObject({ paused: null, sending: null });
+	});
+
+	it("sends each save alone to an older spool.page, and reads what it relays one file at a time", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		// each copy connects again, and is welcomed by the older object
+		cloud.withoutBundles();
+		cloud.disconnect("checkout");
+		const before = cloud.sends("checkout").length;
+		for (const name of ["a", "b", "c"]) writeFrame(ana.root, name, `export default () => <p>${name}</p>;\n`);
+		await until(() => ["a", "b", "c"].every((name) => same(ana.root, ben.root, `frames/${name}/frame.tsx`)), 5_000);
+		expect(cloud.sends("checkout").slice(before)).toEqual([1, 1, 1]);
+	});
+
+	it("sets aside the one save in a bundle a teammate beat, and applies the rest", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "first\n");
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "first\n");
+
+		// Ben's machine is away while Ana changes home: his change to it and two new frames go up together
+		const back = cloud.offline("ben");
+		writeFrame(ben.root, "home", "ben's\n");
+		writeFrame(ben.root, "one", "one\n");
+		writeFrame(ben.root, "two", "two\n");
+		writeFrame(ana.root, "home", "ana's\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "ana's\n");
+		const before = cloud.sends("checkout").length;
+		back();
+		await until(() => text(ana.root, "frames/two/frame.tsx") === "two\n", 10_000);
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "ana's\n", 10_000);
+		expect(text(ana.root, "frames/one/frame.tsx")).toBe("one\n");
+		expect(cloud.sends("checkout").slice(before)).toContain(3);
+		expect(
+			cloud
+				.saves("checkout")
+				.filter((save) => save.by === "ben")
+				.map((save) => [save.path, save.outcome]),
+		).toEqual(
+			expect.arrayContaining([
+				["frames/home/frame.tsx", "set_aside"],
+				["frames/one/frame.tsx", "applied"],
+				["frames/two/frame.tsx", "applied"],
+			]),
+		);
+		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")));
+		expect(await marks(ben.daemon)).toMatchObject([{ path: "frames/home/frame.tsx", kind: "set-aside" }]);
 	});
 });
 
