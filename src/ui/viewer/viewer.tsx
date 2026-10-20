@@ -27,7 +27,7 @@ import { createPresenceRoom } from "../canvas/presence";
 import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
 import { PresenceLayer } from "../canvas/presence-layer";
 import { railRows } from "../canvas/rail-rows";
-import { useFollow, usePresenceSender } from "../canvas/use-presence";
+import { useFollow, usePointerHidden, usePresenceSender } from "../canvas/use-presence";
 import { handoverAddress, knock } from "../handover";
 import { FolderIcon, FrameIcon } from "../icons";
 import { Divider } from "../primitives/display";
@@ -417,6 +417,8 @@ function ViewerCanvas({
 		page,
 		inside: played,
 		dragging: NOTHING_DRAGGED,
+		hidden: usePointerHidden(room),
+		following,
 	});
 	useFollow({
 		room: room ?? EMPTY_ROOM,

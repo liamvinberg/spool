@@ -416,3 +416,97 @@ describe("a teammate's agent on a team canvas (#378)", () => {
 		await bens.close();
 	});
 });
+
+describe("presence in a crowded project (#107)", () => {
+	const cy = { accountId: "cy", name: "cy", color: TEAM_COLORS[2] };
+	const dee = { accountId: "dee", name: "dee", color: TEAM_COLORS[3] };
+
+	it("hears everyone a tick holds, and a team that tells each person alone, as an older one does", async () => {
+		const { cloud, ana, ben } = await team();
+		const bens = await canvas(daemon(ben), "checkout");
+		const anas = await canvas(daemon(ana), "checkout");
+		await anas.say(at(4, 4));
+		expect(await bens.heard()).toMatchObject({ person: { accountId: "ana" }, state: at(4, 4) });
+
+		cloud.forge("checkout", {
+			type: "presences",
+			people: [
+				{ type: "presence", person: cy, state: at(1, 1), still: 0 },
+				{ type: "presence", person: dee, state: at(2, 2, { page: "flows" }), still: 0 },
+			],
+		});
+		expect(await bens.heard()).toMatchObject({ person: cy, state: at(1, 1) });
+		expect(await bens.heard()).toMatchObject({ person: dee, state: at(2, 2, { page: "flows" }) });
+
+		const older = await team();
+		older.cloud.withoutTicks();
+		const theirs = await canvas(daemon(older.ben), "checkout");
+		const hers = await canvas(daemon(older.ana), "checkout");
+		await hers.say(at(7, 7));
+		expect(await theirs.heard()).toMatchObject({ person: { accountId: "ana" }, state: at(7, 7) });
+	});
+
+	it("says who this person follows, so the team always shows them that person", async () => {
+		const { ana, ben } = await team();
+		const bens = await canvas(daemon(ben), "checkout");
+		const anas = await canvas(daemon(ana), "checkout");
+		await anas.say(at(4, 4, { following: "ben" }));
+		expect((await bens.heard()).state).toEqual(at(4, 4, { following: "ben" }));
+	});
+
+	it("tells the canvas its pointer is hidden, a canvas that opens later too, and that it is shown again", async () => {
+		const { cloud, ana } = await team();
+		const anaDaemon = daemon(ana);
+		const sse = sseReader(await anaDaemon.request("/api/p/checkout/events"));
+		await sse.next();
+		const hidden = async () => {
+			for (;;) {
+				const event = await sse.next(8000);
+				if (event.event === "presence-hidden") return event.data;
+			}
+		};
+		await (await canvas(anaDaemon, "checkout")).say(at(0, 0));
+
+		cloud.forge("checkout", { type: "presence-hidden", hidden: true });
+		expect(await hidden()).toEqual({ hidden: true });
+		const later = sseReader(await anaDaemon.request("/api/p/checkout/events"));
+		await later.next();
+		expect(await later.next()).toMatchObject({ event: "presence-hidden", data: { hidden: true } });
+
+		cloud.forge("checkout", { type: "presence-hidden", hidden: false });
+		expect(await hidden()).toEqual({ hidden: false });
+		await sse.cancel();
+		await later.cancel();
+	});
+
+	it("goes on past a message it doesn't know, as from a newer spool.page", async () => {
+		const { cloud, ana, ben } = await team();
+		const bens = await canvas(daemon(ben), "checkout");
+		const anas = await canvas(daemon(ana), "checkout");
+		cloud.forge("checkout", { type: "something-new", people: 3 });
+		await anas.say(at(9, 9));
+		expect(await bens.heard()).toMatchObject({ person: { accountId: "ana" }, state: at(9, 9) });
+	});
+
+	it("keeps someone on another page from going idle on the tab while the team says they're still about", async () => {
+		const { cloud, ben } = await team();
+		const benDaemon = daemon(ben);
+		await canvas(benDaemon, "checkout");
+		const window = sseReader(await benDaemon.request("/api/events"));
+		await window.next();
+		const told = async () => {
+			for (;;) {
+				const event = await window.next(8000);
+				const data = event.data as { kind?: string; people?: { person: { name: string }; quiet: number }[] };
+				if (event.event === "app" && data.kind === "presence") return data.people ?? [];
+			}
+		};
+		const outline = at(0, 0, { page: "flows", pointer: null, view: null });
+		cloud.forge("checkout", { type: "presence", person: cy, state: outline, still: 120_000 });
+		expect((await told())[0]?.quiet).toBeGreaterThanOrEqual(120_000);
+		// the same outline again, said as the beat of someone busy elsewhere a second ago
+		cloud.forge("checkout", { type: "presence", person: cy, state: outline, still: 1_000 });
+		expect((await told())[0]?.quiet).toBeLessThan(5_000);
+		await window.cancel();
+	});
+});

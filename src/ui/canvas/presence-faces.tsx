@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { ROOT_PAGE } from "../../page-path";
+import { PRESENCE_SHOWN } from "../../team-sync-protocol";
 import { cn } from "../cn";
 import { MenuItem, MenuSeparator } from "../primitives/overlays";
 import { agentSays, idle, idleFor, nextChange, type PresenceRoom, type Teammate } from "./presence";
@@ -260,6 +261,15 @@ export function PresenceFaces({
 					</div>
 				</div>
 			</div>
+			{room.pointerHidden() && (
+				<div
+					data-presence-hidden=""
+					role="status"
+					className="absolute top-[46px] right-0 whitespace-nowrap rounded-md border border-line-strong bg-surface-window px-2 py-1 text-secondary type-detail"
+				>
+					Your pointer is hidden: {PRESENCE_SHOWN} others are shown on this page
+				</div>
+			)}
 		</div>
 	);
 }

@@ -33,6 +33,8 @@ import {
 	type PresenceState,
 	RESEND_PATHS,
 	readPresence,
+	readPresenceHidden,
+	readPresences,
 	SAVES_PER_MINUTE,
 	SAVES_PER_MONTH,
 	type TabPresence,
@@ -139,6 +141,8 @@ export interface LocalCopyOptions {
 	onSaved?: (path: string) => void;
 	/** Another person on this team canvas moved, arrived or left (`state` null). */
 	onPresence?: (presence: Presence) => void;
+	/** This person's pointer was hidden from the others on their page, or shown again (#107): `pointerHidden()` says. */
+	onPointerHidden?: () => void;
 	/** Who is here changed as the project's tab shows it: someone arrived, left, or came back from idle. */
 	onRoster?: () => void;
 	/** Asked when spool.page refused or cut the connection: does this machine still edit the project? */
@@ -193,6 +197,8 @@ export interface LocalCopy {
 	agent(agent: PresenceAgent | null): void;
 	/** Everyone else on the canvas now, `still` counted to this moment. */
 	people(): Presence[];
+	/** This person's pointer is hidden from the others on their page, as the team last said (#107). */
+	pointerHidden(): boolean;
 	/** Everyone else on the canvas now as the project's tab shows them: who, and how long since they did anything. */
 	roster(): TabPresence[];
 	/**
@@ -394,7 +400,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let settle: NodeJS.Timeout | undefined;
 	let watch: TreeWatch | undefined;
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
-	const presence = copyPresence(options.onPresence, options.onRoster);
+	const presence = copyPresence(options.onPresence, options.onRoster, options.onPointerHidden);
 	/** Paths that didn't travel and why, each said once until it travels or goes. */
 	const held = new Map<string, string>();
 	/** A limit paused sync: why, and until when nothing is sent. What changes meanwhile waits on disk. */
@@ -991,6 +997,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (framed === null) return;
 		const { message, bytes } = framed;
 		if (message.type === "presence") return presence.hear(message);
+		if (message.type === "presences") return presence.tick(message);
+		if (message.type === "presence-hidden") return presence.hidden(message);
 		if (message.type === "welcome") {
 			// a move's connection is paced by nothing
 			pace = undefined;
@@ -1067,6 +1075,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 						format: FORMAT_VERSION,
 						since: state.head,
 						bundles: true,
+						ticks: true,
 						...(options.moving === undefined ? {} : { moving: true }),
 					}),
 				);
@@ -1156,6 +1165,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		presence: (state) => presence.say(caughtUp ? socket : undefined, state),
 		agent: (agent) => presence.agent(caughtUp ? socket : undefined, agent),
 		people: () => presence.people(),
+		pointerHidden: () => presence.pointerHidden(),
 		roster: () => presence.roster(),
 		state: () => ({
 			paused: isPaused() && paused !== undefined ? paused.why : null,
@@ -1220,8 +1230,14 @@ function ownPart(state: PresenceState | null): string {
  * One local copy's share of presence. What this machine says goes up only while the copy is caught up, and is
  * said again on every reconnect; who else is here is known only for as long as the connection is up.
  */
-function copyPresence(onPresence: ((presence: Presence) => void) | undefined, onRoster?: () => void) {
+function copyPresence(
+	onPresence: ((presence: Presence) => void) | undefined,
+	onRoster?: () => void,
+	onPointerHidden?: () => void,
+) {
 	let mine: PresenceState | null = null;
+	/** the team hides this person's pointer from the others on their page, past the first ones it shows */
+	let pointerHidden = false;
 	/** this machine's agent, which the daemon says and rides on where the canvas says its person is */
 	let working: PresenceAgent | null = null;
 	/** what the team was last told, so the same state is never said twice */
@@ -1231,6 +1247,26 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined, on
 	const tell = (state: PresenceState | null) => encodeFrame({ type: "presence", state });
 	const standing = (): PresenceState | null =>
 		mine === null ? null : working === null ? mine : { ...mine, agent: working };
+	const heard = (presence: Presence) => {
+		const id = presence.person.accountId;
+		const was = others.get(id);
+		const now = Date.now();
+		if (presence.state === null) {
+			others.delete(id);
+			onPresence?.(presence);
+			if (was !== undefined) onRoster?.();
+			return;
+		}
+		// their agent at work is not them at work (#378): only their own changes keep them from going idle; an outline
+		// said again with nothing changed is someone busy on another page, `still` saying how long since they were
+		const own = was === undefined || ownPart(was.presence.state) !== ownPart(presence.state);
+		const elsewhere = presence.still > 0 ? Math.max(was?.active ?? 0, now - presence.still) : undefined;
+		const active = own ? now - presence.still : (elsewhere ?? was?.active ?? now);
+		others.set(id, { presence, heard: now, active });
+		onPresence?.(presence);
+		const back = was !== undefined && now - was.active >= PRESENCE_IDLE_MS && now - active < PRESENCE_IDLE_MS;
+		if (was === undefined || back) onRoster?.();
+	};
 	const sayIfChanged = (socket: SyncSocket | undefined) => {
 		const state = standing();
 		const text = JSON.stringify(state);
@@ -1259,26 +1295,25 @@ function copyPresence(onPresence: ((presence: Presence) => void) | undefined, on
 		},
 		hear(message: Record<string, unknown>): void {
 			const presence = readPresence(message);
-			if (presence === undefined) return;
-			const id = presence.person.accountId;
-			const was = others.get(id);
-			const now = Date.now();
-			if (presence.state === null) {
-				others.delete(id);
-				onPresence?.(presence);
-				if (was !== undefined) onRoster?.();
-				return;
-			}
-			// their agent at work is not them at work (#378): only their own changes keep them from going idle
-			const own = was === undefined || ownPart(was.presence.state) !== ownPart(presence.state);
-			const active = own ? now - presence.still : (was?.active ?? now);
-			others.set(id, { presence, heard: now, active });
-			onPresence?.(presence);
-			const back = was !== undefined && now - was.active >= PRESENCE_IDLE_MS && now - active < PRESENCE_IDLE_MS;
-			if (was === undefined || back) onRoster?.();
+			if (presence !== undefined) heard(presence);
 		},
+		/** A tick: everyone who changed since the last, heard in turn. */
+		tick(message: Record<string, unknown>): void {
+			for (const presence of readPresences(message) ?? []) heard(presence);
+		},
+		hidden(message: Record<string, unknown>): void {
+			const hidden = readPresenceHidden(message);
+			if (hidden === undefined || hidden === pointerHidden) return;
+			pointerHidden = hidden;
+			onPointerHidden?.();
+		},
+		pointerHidden: () => pointerHidden,
 		/** The connection dropped: everyone it showed is gone until it is back. */
 		lost(): void {
+			if (pointerHidden) {
+				pointerHidden = false;
+				onPointerHidden?.();
+			}
 			for (const { presence } of others.values()) onPresence?.({ ...presence, state: null, still: 0 });
 			const had = others.size > 0;
 			others.clear();
@@ -1347,6 +1382,8 @@ export function createTeamSync(deps: {
 	const retries = new Map<string, { timer: ReturnType<typeof setTimeout>; wait: number }>();
 	/** Who listens for presence on each root's canvas. */
 	const watchers = new Map<string, Set<(presence: Presence) => void>>();
+	/** Who listens on each root's canvas for whether its person's pointer is hidden (#107). */
+	const hiddenWatchers = new Map<string, Set<(hidden: boolean) => void>>();
 	/**
 	 * Where this machine's person is on each root's canvas, as its canvas last said: a copy followed after the canvas
 	 * opened (a fetch just filled it, or its team pays again) says it as soon as it is caught up.
@@ -1535,6 +1572,10 @@ export function createTeamSync(deps: {
 					onPresence: (presence) => {
 						for (const watcher of watchers.get(root) ?? []) watcher(presence);
 					},
+					onPointerHidden: () => {
+						const hidden = copies.get(root)?.pointerHidden() ?? false;
+						for (const watcher of hiddenWatchers.get(root) ?? []) watcher(hidden);
+					},
 					onRoster: () => deps.onRoster?.(root, copies.get(root)?.roster() ?? []),
 				}),
 			);
@@ -1701,6 +1742,19 @@ export function createTeamSync(deps: {
 			return () => {
 				set.delete(watcher);
 				if (set.size === 0) watchers.delete(root);
+			};
+		},
+		/**
+		 * Hear whether this person's pointer is hidden on a root's team canvas (#107): at once if it is now, then each
+		 * change. Returns the unsubscribe.
+		 */
+		watchPointerHidden(root: string, watcher: (hidden: boolean) => void): () => void {
+			const set = hiddenWatchers.get(root) ?? new Set();
+			hiddenWatchers.set(root, set.add(watcher));
+			if (copies.get(root)?.pointerHidden() === true) watcher(true);
+			return () => {
+				set.delete(watcher);
+				if (set.size === 0) hiddenWatchers.delete(root);
 			};
 		},
 		close(): void {
