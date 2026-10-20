@@ -266,6 +266,7 @@ function NewShare({
 	const [folders, setFolders] = useState<ReadonlySet<string>>(() => new Set(pageChain(context.page).slice(0, -1)));
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [notify, setNotify] = useState(true);
 	// a frame held when Share opened is where the link opens, played, while its page is one of those shared
 	const [starting, setStarting] = useState(true);
 	const start = context.frame !== null && chosen.has(pageParent(context.frame)) ? context.frame : null;
@@ -284,7 +285,7 @@ function NewShare({
 		const answer = await source.create({
 			kind,
 			pages: [...chosen].sort(),
-			...(kind === "people" ? { people: addresses } : {}),
+			...(kind === "people" ? { people: addresses, notify } : {}),
 			...(start !== null && starting ? { start } : {}),
 		});
 		setBusy(false);
@@ -381,10 +382,13 @@ function NewShare({
 					))}
 				</div>
 			)}
-			{start !== null && (
+			{(start !== null || kind === "people") && (
 				<div className="flex flex-col gap-1 px-3 pt-1 pb-1.5">
 					{start !== null && (
 						<Checkbox checked={starting} onCheckedChange={setStarting} label={`Start on ${pageName(start)}`} />
+					)}
+					{kind === "people" && (
+						<Checkbox checked={notify} onCheckedChange={setNotify} label="Email them a link to it" />
 					)}
 				</div>
 			)}
@@ -579,7 +583,7 @@ function ShareDetail({
 			.map((one) => one.trim())
 			.filter((one) => one !== "");
 		if (people.length === 0) return;
-		const refused = await source.change(share.id, { add: people });
+		const refused = await source.change(share.id, { add: people, notify: true });
 		if (refused === null) setAdding("");
 		changed(refused);
 	};

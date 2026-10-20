@@ -116,6 +116,51 @@ it("shares the page you're on with a link, and hands it to a phone as a QR code"
 	await popover.getByRole("menuitem", { name: /anyone with the link/u }).waitFor();
 });
 
+it("opens the link on the frame held, and emails the people it names unless told not to", {
+	timeout: 60_000,
+}, async () => {
+	const page = await open("ready", "area2/part1/hero");
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	const start = popover.getByRole("checkbox", { name: "Start on hero" });
+	expect(await start.isChecked()).toBe(true);
+	await popover.getByText("Named people").click();
+	await popover.getByLabel("Email addresses").fill("kim@client.com");
+	const notify = popover.getByRole("checkbox", { name: "Email them a link to it" });
+	expect(await notify.isChecked()).toBe(true);
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	expect(await page.evaluate(() => (window as unknown as { created: unknown }).created)).toEqual({
+		kind: "people",
+		pages: ["area2/part1"],
+		people: ["kim@client.com"],
+		notify: true,
+		start: "area2/part1/hero",
+	});
+	// someone added later is emailed too
+	await popover.getByLabel("Add someone by email").fill("ola@client.com");
+	await popover.getByLabel("Add someone by email").press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { changed: unknown }).changed))
+		.toEqual({ add: ["ola@client.com"], notify: true });
+
+	// unticked, the link opens on the canvas and nobody is emailed
+	await popover.getByRole("button", { name: "Back" }).click();
+	await popover.getByText("Named people").click();
+	await popover.getByLabel("Email addresses").fill("ola@client.com");
+	await popover.getByText("Start on hero").click();
+	await popover.getByText("Email them a link to it").click();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "people", pages: ["area2/part1"], people: ["ola@client.com"], notify: false });
+
+	// a frame on a page left out of the share is no start
+	const other = await open("ready", "area4/hero");
+	await other.getByRole("button", { name: "Share" }).click();
+	await other.getByRole("dialog", { name: "Share" }).getByText("Shares part1, the page you’re on").waitFor();
+	expect(await other.getByText("Start on hero").count()).toBe(0);
+});
+
 it("picks pages from a tree that keeps one size however many there are", { timeout: 60_000 }, async () => {
 	const page = await open();
 	await page.getByRole("button", { name: "Share" }).click();

@@ -178,7 +178,7 @@ function OpenedShare({
 			.map((one) => one.trim())
 			.filter((one) => one !== "");
 		if (people.length === 0) return;
-		const refused = await source.change(share.id, { add: people });
+		const refused = await source.change(share.id, { add: people, notify: true });
 		if (refused === null) setAdding("");
 		onChanged(refused);
 	};

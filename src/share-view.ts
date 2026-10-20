@@ -46,7 +46,7 @@ export type ProjectShares =
  */
 export interface SharesSource extends Partial<ShareCommenters> {
 	read(): Promise<ProjectShares>;
-	change(share: string, change: { add?: string[]; remove?: string[] }): Promise<string | null>;
+	change(share: string, change: ShareChange): Promise<string | null>;
 	stop(share: string): Promise<string | null>;
 }
 
@@ -101,6 +101,15 @@ export interface ShareRequest {
 	people?: string[];
 	/** The frame its link opens playing, on one of its pages. */
 	start?: string;
+	/** Email the people it names a link that opens it. */
+	notify?: boolean;
+}
+
+/** People named on a people share or taken off it; whoever is named is emailed a link to it when `notify` is set. */
+export interface ShareChange {
+	add?: string[];
+	remove?: string[];
+	notify?: boolean;
 }
 
 /** How a share names the root page, which has no folder to name it. */

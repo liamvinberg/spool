@@ -8,7 +8,7 @@ import { account, type CloudRequestOptions, CloudSignedOut, originOf } from "../
 import { CloudShareRefused, cloudShares, type SharePlace } from "../cloud-shares";
 import { CloudTeamRefused } from "../cloud-teams";
 import { ROOT_PAGE } from "../page-path";
-import type { ProjectShares, ShareRequest } from "../share-view";
+import type { ProjectShares, ShareChange, ShareRequest } from "../share-view";
 import { localCopyOf } from "../team-project";
 import { FILE_LIMIT_BYTES, travels } from "../team-sync-protocol";
 import { daemonCompileHost } from "./compile-host";
@@ -254,7 +254,7 @@ export function createProjectShares(options: ProjectSharesOptions) {
 		.patch("/:project/shares/:share", async (c) => {
 			const project = options.resolve(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const change = (await c.req.json().catch(() => ({}))) as { add?: string[]; remove?: string[] };
+			const change = (await c.req.json().catch(() => ({}))) as ShareChange;
 			return answer(c, async () => {
 				const place = placeOf(project.root);
 				if (typeof place === "string") throw new CloudTeamRefused("share_not_found", 404);

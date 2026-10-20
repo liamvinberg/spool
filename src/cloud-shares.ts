@@ -1,6 +1,6 @@
 import { authorizedCloudRequest, type CloudRequestOptions } from "./cloud-auth";
 import { CloudTeamRefused } from "./cloud-teams";
-import type { ShareCommenter, ShareRequest, ShareView } from "./share-view";
+import type { ShareChange, ShareCommenter, ShareRequest, ShareView } from "./share-view";
 
 /** Whose shares: a team project's, by its team and name, or a solo project's, by the id spool.page gave it. */
 export type SharePlace = { kind: "team"; team: string; project: string } | { kind: "solo"; id: string };
@@ -49,7 +49,7 @@ export function cloudShares(spoolDir: string, options: CloudRequestOptions = {})
 		list: (at: SharePlace) => call<{ shares: ShareView[] }>("GET", `${place(at)}/shares`),
 		create: (at: SharePlace, request: ShareRequest) => call<ShareView>("POST", `${place(at)}/shares`, request),
 		/** Name more people on a people share, or fewer. */
-		change: (at: SharePlace, share: string, change: { add?: string[]; remove?: string[] }) =>
+		change: (at: SharePlace, share: string, change: ShareChange) =>
 			call<null>("PATCH", `${place(at)}/shares/${encodeURIComponent(share)}`, change),
 		/** Who commented through a team project's share (spool#174). */
 		commenters: (at: SharePlace, share: string) =>
