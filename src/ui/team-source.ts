@@ -102,6 +102,8 @@ export interface TeamsSource {
 	here(address: string): Promise<ReadonlyMap<string, HerePerson[]> | undefined>;
 	/** Every project in the team; undefined while spool.page can't say. */
 	projects(address: string): Promise<ListedTeamProject[] | undefined>;
+	/** How many comments a project holds, which go if it leaves the team; undefined while spool.page can't say. */
+	commentCount(address: string, project: string): Promise<number | undefined>;
 	/** What moving `project` to the team at `to`, as `name` when given, would do; undefined while it can't be said. */
 	movePreview(address: string, project: string, to: string, name?: string): Promise<MovePreview | undefined>;
 	/** The same project moves to the team at `to`, renamed when `name` is given; its old address leads on. */
@@ -210,6 +212,12 @@ export function teamsAt(
 		async projects(address) {
 			const body = await read<{ projects?: unknown }>(`${team(address)}/projects`);
 			return Array.isArray(body?.projects) ? (body.projects as ListedTeamProject[]) : undefined;
+		},
+		async commentCount(address, project) {
+			const body = await read<{ comments?: unknown }>(
+				`${team(address)}/projects/${encodeURIComponent(project)}/comments/count`,
+			);
+			return typeof body?.comments === "number" ? body.comments : undefined;
 		},
 		async movePreview(address, project, to, name) {
 			const query = new URLSearchParams({ to, ...(name === undefined ? {} : { name }) });

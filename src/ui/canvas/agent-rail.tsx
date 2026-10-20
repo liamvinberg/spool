@@ -7,7 +7,7 @@ import { cn } from "../cn";
 import { Button } from "../primitives/actions";
 import { SpinRing } from "../primitives/display";
 import { AskCard, type AskEntry, FoldedAsk, useAsk, waitingAsk } from "./agent-ask-view";
-import { composerWidth, stripOf } from "./agent-chips";
+import { type Chip, composerWidth, stripOf } from "./agent-chips";
 import type { Pointing } from "./agent-composer";
 import { Composer } from "./agent-composer";
 import type { AgentModelDeck } from "./agent-model";
@@ -99,6 +99,8 @@ export interface AgentRequest {
 	id: string;
 	thread: string;
 	prepared?: { intent: string; text: string; selection: readonly SelectionEntry[] };
+	/** A comment sent from its card (spool#172): a chip in the composer, which runs nothing until the person sends. */
+	comment?: Chip;
 }
 
 /**
@@ -111,6 +113,8 @@ export interface AgentRequest {
 interface Holding {
 	readonly draft: string;
 	readonly attached: readonly Attachment[];
+	/** comments sent to the agent from their cards, as chips until the words go (spool#172) */
+	readonly comments?: readonly Chip[];
 	readonly prepared?: Readonly<
 		Record<
 			string,
@@ -294,7 +298,12 @@ export function AgentRail({
 		requested.current = request.id;
 		const was = held[open] ?? seed;
 		let next = was;
-		if (!request.prepared) {
+		if (request.comment) {
+			// a comment handed over joins what the box already holds, once, and touches none of the words
+			const { comment } = request;
+			const comments = was.comments ?? [];
+			if (!comments.some((one) => one.id === comment.id)) next = { ...was, comments: [...comments, comment] };
+		} else if (!request.prepared) {
 			// a plain handoff clears what an earlier refusal put in the draft, so the
 			// words left are the person's own
 			const removing = Object.entries(was.prepared ?? {}).sort(
@@ -462,6 +471,10 @@ export function AgentRail({
 										}
 									: pointing
 							}
+							comments={holding.comments ?? []}
+							onDropComment={(id) =>
+								write((was) => ({ ...was, comments: (was.comments ?? []).filter((one) => one.id !== id) }))
+							}
 							draft={holding.draft}
 							onDraft={writeDraft}
 							attached={holding.attached}
@@ -498,6 +511,8 @@ export function AgentRail({
 								// the log follows the live edge again because something was said, so a press
 								// that said nothing must not move it
 								if (took) setSpoke((count) => count + 1);
+								// the comments went with the words: their chips go with them
+								if (took) write((was) => ({ ...was, comments: [] }));
 								return took;
 							}}
 							running={running}
@@ -505,6 +520,7 @@ export function AgentRail({
 								const took = onQueue(text, sent);
 								// the words wait at the end of the log, so the log follows to show them
 								if (took) setSpoke((count) => count + 1);
+								if (took) write((was) => ({ ...was, comments: [] }));
 								return took;
 							}}
 							onStop={onStop}

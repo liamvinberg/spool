@@ -6,7 +6,15 @@ import { initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
 import type { PresenceAgent, PresenceState } from "../team-sync-protocol";
 import { fakeTeam, TEAM_COLORS, TEAM_ORIGIN } from "../team-sync-test-harness";
-import { type FakeAgentProc, fixtureAgentExecutor, makeApp, makeTempDir, sseReader, until } from "../test-helpers";
+import {
+	type FakeAgentProc,
+	fixtureAgentExecutor,
+	makeApp,
+	makeTempDir,
+	SseTimeout,
+	sseReader,
+	until,
+} from "../test-helpers";
 import { listProjectFrames } from "./projection";
 
 /**
@@ -87,7 +95,18 @@ async function canvas(app: Daemon, project: string) {
 				if (event.event === "presence") return event.data as never;
 			}
 		},
-		quiet: () => sse.expectQuiet(300),
+		/** Told nothing about anybody: a change to the comments, which connecting is, isn't presence. */
+		async quiet(): Promise<void> {
+			for (;;) {
+				const event = await sse.next(300).catch((error: unknown) => {
+					if (error instanceof SseTimeout) return null;
+					throw error;
+				});
+				if (event === null) return;
+				if (!(event.event === "change" && JSON.stringify(event.data) === '{"kind":"comments"}'))
+					throw new Error(`expected quiet, got ${JSON.stringify(event)}`);
+			}
+		},
 		say: (state: PresenceState | null) =>
 			app.request(`/api/p/${project}/presence`, {
 				method: "PUT",

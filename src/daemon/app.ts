@@ -38,6 +38,9 @@ import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
+import { commentsForPrompt } from "./comment-prompt";
+import { commentRoutes, teamPeople } from "./comment-routes";
+import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError } from "./design-path";
 import {
@@ -54,6 +57,7 @@ import { createChangeHub } from "./events";
 import { explorerRoutes } from "./explorer-routes";
 import { createFlowGraph } from "./flows";
 import { servedFrameCsp } from "./frame-csp";
+import { frameRevisionOnDisk } from "./frame-revision";
 import { refreshIndex } from "./fs-list";
 import { createGoReader } from "./go-reader";
 import { handRoutes } from "./hand-routes";
@@ -75,6 +79,7 @@ import {
 	frameNames,
 	listProjectFrames,
 	listProjectFramesAwaited,
+	readFrameGeometry,
 } from "./projection";
 import { createResolvePass } from "./resolve-pass";
 import {
@@ -547,6 +552,8 @@ export function createDaemonApp({
 		onEnded: () => emitAppEvent({ kind: "registry" }),
 		// who else is in a team project, for its tab while another is focused (task 139)
 		onRoster: (root, people) => emitAppEvent({ kind: "presence", root, people }),
+		// the comments a copy knows changed: its open canvases read them again (ADR 0011)
+		onComments: (root) => hub.publish(root, { kind: "comments" }),
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
 	});
@@ -1235,6 +1242,11 @@ export function createDaemonApp({
 				agentAppLauncher,
 				emitAppEvent,
 				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
+				commentsForPrompt: (root, ids) =>
+					commentsForPrompt(ids, {
+						comments: teamSync.comments(root).comments,
+						still: (comment) => teamSync.still(root, comment),
+					}),
 			}),
 		)
 		.get("/api/p/:project/verify/:frame", async (c) =>
@@ -1340,7 +1352,18 @@ export function createDaemonApp({
 			},
 		)
 		.route("/api/p", handRoutes({ resolve: resolveProject, lastReaders: lastReadersIn }))
-		.route("/api/p", explorerRoutes({ resolve: resolveProject, trash: trashImpl }))
+		.route(
+			"/api/p",
+			explorerRoutes({
+				resolve: resolveProject,
+				trash: trashImpl,
+				moved: (root, moved) =>
+					teamSync.moved(root, {
+						...(moved.frames === undefined ? {} : { frames: [...moved.frames] }),
+						...(moved.pages === undefined ? {} : { pages: [...moved.pages] }),
+					}),
+			}),
+		)
 		.get("/p/:project/frames/:frame", async (c) =>
 			withProject(c, resolveProject, async (root) => {
 				const frame = c.req.param("frame");
@@ -1628,6 +1651,47 @@ export function createDaemonApp({
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
 	app.post("/api/p/:project/sync/untold", (c) =>
 		withProject(c, resolveProject, (root) => c.json({ lines: teamSync.untold(root) })),
+	);
+	app.route(
+		"/api/p",
+		commentRoutes({
+			resolve: resolveProject,
+			comments: (root) => teamSync.comments(root),
+			comment: (root, comment, still) => teamSync.comment(root, comment, still),
+			reply: (root, reply) => teamSync.reply(root, reply),
+			change: (root, change) => teamSync.changeComment(root, change),
+			people: teamPeople(spoolDir, cloud),
+			// the frame as it is now: its own source's revision, and the cover this Mac has of it, the comment's still
+			frameNow: async (root, frame) => {
+				const cover = readCover(root, frame);
+				const image = cover === undefined ? undefined : readCoverImage(root, frame, cover.hash);
+				return { revision: await frameRevisionOnDisk(root, frame), still: image?.bytes };
+			},
+			// the element an agent names, found in the frame booted at its own size, as a pick would see it
+			findElement: async (root, project, frame, target) => {
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				if (doc.kind === "missing") return { broken: doc.message };
+				if (doc.kind === "error") return { broken: `${frame} doesn't compile: ${doc.message}` };
+				const { w, h } = readFrameGeometry(root, frame);
+				const shot = await booth.shoot({
+					project,
+					frame,
+					width: Math.round(w),
+					height: Math.round(h),
+					scale: 1,
+					tiles: [],
+					find: target,
+				});
+				if (shot.kind === "unserved") return { broken: `${frame} failed to serve` };
+				return shot.found ?? null;
+			},
+			still: async (root, comment) => {
+				const link = followedLink(root);
+				return link === undefined
+					? undefined
+					: commentStill(spoolDir, link, comment, { ...cloud, origin: originOf(cloud) });
+			},
+		}),
 	);
 	app.route(
 		"/api/p",

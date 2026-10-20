@@ -16,6 +16,7 @@ import {
 	renameFrame,
 	renamePage,
 } from "./explorer";
+import type { Moved } from "./frame-links";
 import { answeringDiskRefusals, type ResolveProject, withProject } from "./project-route";
 import { lookupFrame } from "./projection";
 
@@ -79,26 +80,24 @@ export function explorerRoutes(deps: {
 	resolve: ResolveProject;
 	/** Moves folders to the OS Trash, which owns restore from there (#7). */
 	trash: (paths: string[]) => Promise<void>;
+	/** Frames and pages renamed or moved: a team project's comments follow them (spool#160). */
+	moved?: (root: string, moved: Moved) => void;
 }) {
+	const said = (root: string) => (done: { moved: Moved }) => {
+		deps.moved?.(root, done.moved);
+		return new Response(null, { status: 204 });
+	};
 	return new Hono()
 		.post("/:project/frames/rename", renameBody, (c) =>
 			withProject(c, deps.resolve, (root) => {
 				const { from, to } = c.req.valid("json");
-				return explorerVerb(
-					c,
-					() => renameFrame(root, from, to),
-					() => c.body(null, 204),
-				);
+				return explorerVerb(c, () => renameFrame(root, from, to), said(root));
 			}),
 		)
 		.post("/:project/pages/rename", renameBody, (c) =>
 			withProject(c, deps.resolve, (root) => {
 				const { from, to } = c.req.valid("json");
-				return explorerVerb(
-					c,
-					() => renamePage(root, from, to),
-					() => c.body(null, 204),
-				);
+				return explorerVerb(c, () => renamePage(root, from, to), said(root));
 			}),
 		)
 		.post(
@@ -115,11 +114,7 @@ export function explorerRoutes(deps: {
 			(c) =>
 				withProject(c, deps.resolve, (root) => {
 					const { frames, page } = c.req.valid("json");
-					return explorerVerb(
-						c,
-						() => moveFrames(root, frames, page),
-						() => c.body(null, 204),
-					);
+					return explorerVerb(c, () => moveFrames(root, frames, page), said(root));
 				}),
 		)
 		.post(
@@ -136,11 +131,7 @@ export function explorerRoutes(deps: {
 			(c) =>
 				withProject(c, deps.resolve, (root) => {
 					const { pages, page } = c.req.valid("json");
-					return explorerVerb(
-						c,
-						() => movePages(root, pages, page),
-						() => c.body(null, 204),
-					);
+					return explorerVerb(c, () => movePages(root, pages, page), said(root));
 				}),
 		)
 		.post(

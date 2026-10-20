@@ -5,6 +5,8 @@ import { ROOT_PAGE } from "../../page-path";
 import type { FlowEdge, Place, ProjectedFrame } from "../api";
 import type { ShareContext } from "../share-control";
 import type { CanvasTool } from "./canvas-tools";
+import type { CommentDraft } from "./comments-layer";
+import { FILTERS, type Filters } from "./comments-model";
 import type { HandEdit } from "./hand-edit";
 import type { Staging } from "./history";
 import type { PickedSelection } from "./overlays";
@@ -69,6 +71,16 @@ export interface CanvasState {
 	exporting: boolean;
 	/** whether the frame finder (/) is open */
 	finding: boolean;
+	/** the comment the Comment tool placed, its composer open at its pin (spool#169) */
+	commentDraft: CommentDraft | null;
+	/** the composer holds words, which a click away keeps (the prototype's composer) */
+	commentWritten: boolean;
+	/** the comment whose card is open, by id */
+	commentOpen: string | null;
+	/** Shift+C put every comment pin away (spool#170) */
+	pinsHidden: boolean;
+	/** the Comments tab's filters, its Resolved switch showing resolved pins too */
+	commentFilters: Filters;
 }
 
 export interface CanvasContextMenu {
@@ -116,6 +128,11 @@ export function createCanvasStore(): CanvasStore {
 		exportDialog: null,
 		exporting: false,
 		finding: false,
+		commentDraft: null,
+		commentWritten: false,
+		commentOpen: null,
+		pinsHidden: false,
+		commentFilters: FILTERS,
 	};
 	const listeners = new Set<() => void>();
 	return {

@@ -167,9 +167,14 @@ describe("a new team's setup list", () => {
 		expect(button(mac, "Open in spool")).toBeTruthy();
 		expect(said(mac)).toContain("Sign in there as ada@tidemark.app and spool carries on with step 4.");
 
-		fake.set({ setup: steps({ invited: { editors: 2, viewers: 1 }, mac: { email: "ada@tidemark.app" } }) });
+		fake.set({
+			setup: steps({
+				invited: { editors: 2, viewers: 1 },
+				mac: { name: "Ada Lovelace", email: "ada@tidemark.app" },
+			}),
+		});
 		await back();
-		expect(said(step(host, "mac"))).toBe("Get spool on your MacSigned in as ada@tidemark.app");
+		expect(said(step(host, "mac"))).toBe("Get spool on your MacSigned in as Ada Lovelace");
 		// in a browser step 4 carries on in the app, where this Mac's own projects are
 		const moved = step(host, "moved");
 		expect(moved.getAttribute("data-state")).toBe("current");

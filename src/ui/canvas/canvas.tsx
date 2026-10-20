@@ -18,7 +18,7 @@ import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { SETTINGS } from "../../settings/registry";
-import type { Presence, PresenceState } from "../../team-sync-protocol";
+import type { Comment, Presence, PresenceState } from "../../team-sync-protocol";
 import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
@@ -33,6 +33,7 @@ import type {
 import {
 	beaconTrash,
 	coverUrl,
+	daemonComments,
 	daemonShares,
 	fetchCanvasState,
 	fetchCloudAccount,
@@ -58,7 +59,7 @@ import { experimentOn } from "../experiments";
 import { isLetGo } from "../gone-projects";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
-import { AgentIcon, FolderIcon, PropertiesIcon } from "../icons";
+import { AgentIcon, CommentIcon, FolderIcon, PropertiesIcon } from "../icons";
 import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { openShare, type ShareContext } from "../share-control";
@@ -116,6 +117,20 @@ import {
 	visiblePlaceholdersOf,
 } from "./canvas-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
+import { audienceOf } from "./comment-audience";
+import { COMMENT_CURSOR } from "./comment-cursor";
+import { COMMENTS_CHANGE, daemonStills, useCommentPeople, useComments } from "./comments-daemon";
+import {
+	type CommentDraft,
+	type CommentsContext,
+	CommentsLayer,
+	clickAway,
+	commentChip,
+	commentWorld,
+	MAC_OFFLINE,
+} from "./comments-layer";
+import { counts as commentCounts, pageCount } from "./comments-model";
+import { CommentsPane } from "./comments-pane";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { placeCopies } from "./copy-placement";
 import { type Drop, dropAt } from "./element-move";
@@ -328,6 +343,8 @@ const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+/** How long C is held before letting go of it hands back the tool it took over from, rather than keeping Comment. */
+const COMMENT_HOLD_MS = 300;
 /** How long a gesture made ahead of the selection's read waits for it before it refuses (DEV-299). */
 const READ_WAIT_MS = 5000;
 /**
@@ -521,6 +538,13 @@ function CanvasField({
 	 */
 	const [presenceRoom] = useState(() => createPresenceRoom());
 	const [team, setTeam] = useState(false);
+	/** Read by the keys, which are attached once: whether this canvas has the Comment tool. */
+	const teamRef = useRef(team);
+	teamRef.current = team;
+	/** C pressed: the tool it took over from and when, so letting go of a held C hands that tool back (spool#169). */
+	const commentHold = useRef<{ before: CanvasTool; at: number; placed?: true } | null>(null);
+	const comments = useComments(project, team);
+	const commentPeople = useCommentPeople(project, team);
 	const [following, setFollowing] = useState<string | null>(null);
 	/** the account this Mac is signed in as, which tells this canvas's own placeholders from teammates' (#378) */
 	const [you, setYou] = useState<string | null>(null);
@@ -534,6 +558,35 @@ function CanvasField({
 			live = false;
 		};
 	}, [team]);
+	/** who reads the comments here: this Mac's person, and when they last read each (spool#170) */
+	const commentReader = useMemo(
+		// the team says which of its people this Mac writes as; the signed-in account stands in until it has
+		() => ({ me: commentPeople.find((person) => person.you)?.accountId ?? you, reads: comments.reads }),
+		[commentPeople, you, comments.reads],
+	);
+	const [commentFilters] = useCanvasField(store, "commentFilters");
+	const [commentOpen] = useCanvasField(store, "commentOpen");
+	const [pinsHidden] = useCanvasField(store, "pinsHidden");
+	const commentsClient = useMemo(() => daemonComments(project), [project]);
+	const commentStills = useMemo(() => daemonStills(project), [project]);
+	// the shares a new comment may be for besides the team (spool#174)
+	const commentShares = useMemo(
+		() => (projectShares?.state === "ready" ? projectShares.shares.map(audienceOf) : []),
+		[projectShares],
+	);
+	const commentsContext: CommentsContext = {
+		client: commentsClient,
+		reader: commentReader,
+		people: commentPeople,
+		online: comments.online,
+		unpaid: comments.unpaid,
+		offline: MAC_OFFLINE,
+		stills: commentStills,
+		url: comments.url,
+		refresh: comments.refresh,
+		notice: setNotice,
+		shares: commentShares,
+	};
 	/**
 	 * Where each page stands on the field holding it (#265).
 	 *
@@ -719,6 +772,8 @@ function CanvasField({
 	 * every live frame holds its animation and nothing reaches any of them.
 	 */
 	const editOn = tool === "edit" || (tool === "select" && accelDown);
+	/** The Comment tool holds the field still as Edit does (spool#169): frames are inert under the pin. */
+	const frozen = editOn || tool === "comment";
 	// Select and Edit both point, and everything a pointer draws — rings and
 	// previews — belongs to the pair of them. Only the Hand
 	// draws nothing, because the only thing it takes is the canvas itself.
@@ -874,8 +929,8 @@ function CanvasField({
 		selectionTargets,
 		selected,
 		hovered: hoveredFrame,
-		// the Edit tool holds the whole field still while it is on (#319, #339)
-		editing: editOn,
+		// the Edit tool holds the whole field still while it is on (#319, #339), and so does Comment
+		editing: frozen,
 		cameraRef: restCameraRef,
 		viewportRef,
 	});
@@ -1291,6 +1346,8 @@ function CanvasField({
 	const agentsAt = useFrameAgents(presenceRoom, companions, team);
 	/** the agent's rail is on screen; shut, an ask stands on the canvas under its frame */
 	const [railShown, setRailShown] = useState(true);
+	/** whether the Comments tab is on screen, so its dot says news only while it isn't */
+	const [commentsShown, setCommentsShown] = useState(false);
 	const askFooted = !railShown && turnPhase === "asking";
 	const answerAsk = useCallback(
 		(request: string, reply: AgentReply) => deck.get().turn.answer(request, reply),
@@ -1557,7 +1614,7 @@ function CanvasField({
 	 */
 	const chooseTool = useCallback(
 		(next: CanvasTool) => {
-			if (next === "edit" && store.get().entered !== null) exitEntered(true);
+			if ((next === "edit" || next === "comment") && store.get().entered !== null) exitEntered(true);
 			setTool(next);
 		},
 		[exitEntered, store],
@@ -1960,6 +2017,20 @@ function CanvasField({
 			});
 		},
 		[deck, store],
+	);
+
+	/**
+	 * "Send to agent" on a comment's card (spool#172): through the same door as Ask the agent, the composer takes
+	 * focus on the open thread holding the comment as a chip. Nothing runs until the person sends.
+	 */
+	const sendCommentToAgent = useCallback(
+		(comment: Comment) =>
+			setAgentRequest({
+				id: crypto.randomUUID(),
+				thread: deck.get().open,
+				comment: { id: comment.id, label: commentChip(comment) },
+			}),
+		[deck],
 	);
 
 	/** Whether a write landed outside the frame's own folder: in a shared definition's file (#318). */
@@ -2629,6 +2700,28 @@ function CanvasField({
 		camera.fly(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 	};
 
+	/**
+	 * A row in the Comments tab (spool#170): its card opens, and the camera flies to its pin, zoom kept, landing on
+	 * its page first when it is another's. A comment whose page is gone has no pin: its card opens where it can.
+	 */
+	const flyToComment = (comment: Comment) => {
+		store.set({ commentOpen: comment.id, commentDraft: null });
+		const viewport = viewportRef.current;
+		const cam = camera.get();
+		if (comment.standing === "deleted-page" || viewport === null || cam === null) return;
+		const frames = store.get().frames.filter((frame) => pageOf(frame) === comment.page);
+		const world = commentWorld(comment, frames);
+		if (world === undefined) return;
+		const aim = {
+			k: cam.k,
+			x: viewport.clientWidth / 2 - world.x * cam.k,
+			y: viewport.clientHeight / 2 - world.y * cam.k,
+		};
+		recordDeparture();
+		if (comment.page !== store.get().activePage) switchToPage(comment.page, aim);
+		else camera.fly(aim);
+	};
+
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
 
 	/** The camera that lands an arrival centered on its target, zoom kept. */
@@ -2932,6 +3025,7 @@ function CanvasField({
 						message?: string;
 					};
 					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
+					if (event.kind === "comments") window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE));
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
 						const own = saved.current.get(frame);
@@ -3555,8 +3649,10 @@ function CanvasField({
 	 */
 	const hoverPickAt = (frame: string | null, world: Point, accel: boolean) => {
 		const reaching = () =>
-			toolOf(store.get()) === "edit" || (toolOf(store.get()) === "select" && store.get().accelDown);
-		if (frame === null || !(toolOf(store.get()) === "edit" || accel)) {
+			toolOf(store.get()) === "edit" ||
+			toolOf(store.get()) === "comment" ||
+			(toolOf(store.get()) === "select" && store.get().accelDown);
+		if (frame === null || !(toolOf(store.get()) === "edit" || toolOf(store.get()) === "comment" || accel)) {
 			hoverPoint.current = frame === null ? null : { frame, world };
 			setPreview(null);
 			return;
@@ -3728,6 +3824,8 @@ function CanvasField({
 		if (cam === null || event.button === 2) return;
 		camera.stop();
 		setMenu(null);
+		// a press anywhere on the field puts an open comment card or composer down (spool#169)
+		if (event.button === 0) clickAway(store);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
 		const p = localPoint(event);
@@ -3771,6 +3869,12 @@ function CanvasField({
 		}
 
 		if (event.button !== 0) return;
+
+		// the Comment tool places a pin where it is pressed, and nothing else (spool#169)
+		if (toolOf(store.get()) === "comment") {
+			placeComment(toWorld(p, cam), datasetHit(event.target, "page-object"));
+			return;
+		}
 
 		// resize handles first: they overhang the frame and own the pointer
 		const handleHit = datasetHit(event.target, "handle");
@@ -3895,6 +3999,50 @@ function CanvasField({
 			setPicked([]);
 		}
 		gesture.current = { kind: "pending", names, origins: originsOf(names), start: p };
+	};
+
+	/**
+	 * A press under the Comment tool (spool#169): a pin at that point, in the frame's own pixels where a frame is,
+	 * or at the world point on the page's empty field, and the composer open at it. A page standing on the field is
+	 * still gone inside. Placing hands back the pointer; what was under the pin is asked of the frame meanwhile.
+	 */
+	/** A pin placed while C is held: letting go hands back the tool C took over from, however short the hold. */
+	const placedUnderHold = () => {
+		const held = commentHold.current;
+		if (held !== null) commentHold.current = { ...held, placed: true };
+	};
+	const placeComment = (world: Point, pressedPage: string | null) => {
+		const page = store.get().activePage;
+		const frame = frameAtWorld(world);
+		if (frame === null) {
+			const object = pressedPage ?? pageObjectAt(pageObjectsOf(store.get()), world)?.page ?? null;
+			if (object !== null) {
+				goInsidePage(object);
+				return;
+			}
+			store.set({ commentDraft: { page, frame: null, at: world, element: null }, commentOpen: null });
+			setTool("select");
+			placedUnderHold();
+			return;
+		}
+		const local = frameLocalAt(frame, world);
+		if (local === null) return;
+		const draft: CommentDraft = { page, frame, at: local, element: null };
+		store.set({ commentDraft: draft, commentOpen: null, selected: [], picked: [] });
+		setTool("select");
+		placedUnderHold();
+		beginPick(
+			frame,
+			local,
+			(chain) => {
+				const target = deepest(chain);
+				if (target === undefined || store.get().commentDraft !== draft) return;
+				const { selector, tag, outerHtml, source, generated } = target;
+				store.set({ commentDraft: { ...draft, element: { selector, tag, outerHtml, source, generated } } });
+			},
+			undefined,
+			false,
+		);
 	};
 
 	const onPointerMove = (event: React.PointerEvent) => {
@@ -4518,6 +4666,17 @@ function CanvasField({
 			"canvas.tool-select": () => chooseTool("select"),
 			"canvas.tool-edit": () => chooseTool("edit"),
 			"canvas.tool-hand": () => chooseTool("hand"),
+			// C takes the Comment tool on a team canvas; held, it is borrowed until let go (spool#169)
+			"canvas.tool-comment": (event) => {
+				if (!teamRef.current || event?.repeat === true) return;
+				commentHold.current = { before: store.get().tool, at: Date.now() };
+				chooseTool("comment");
+			},
+			// ⇧C puts every pin away, and brings them back (spool#170)
+			"canvas.toggle-pins": () => {
+				if (!teamRef.current) return;
+				store.set({ pinsHidden: !store.get().pinsHidden });
+			},
 			// the menu's verbs (#7) on bare keys, each acting on the selection;
 			// Play wants one frame to open on, whether P or ⇧⏎ asked
 			"canvas.play": (event) => {
@@ -4647,6 +4806,15 @@ function CanvasField({
 			"canvas.escape": () => {
 				cancelPicks();
 				setPreview(null);
+				// Esc puts an open comment down first, then leaves the Comment tool (spool#169)
+				if (store.get().commentOpen !== null || store.get().commentDraft !== null) {
+					store.set({ commentOpen: null, commentDraft: null });
+					return;
+				}
+				if (store.get().tool === "comment") {
+					setTool("select");
+					return;
+				}
 				// Esc finishes the words and saves them, as Enter does (#339)
 				if (store.get().editing !== null) {
 					endEdit(true);
@@ -4687,6 +4855,10 @@ function CanvasField({
 		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
+			// a C held past a tap, or one a pin was placed under, borrowed the Comment tool: letting go hands back the
+			// one it took over from
+			// by the key, as the hotkey took it: on Dvorak the C is where KeyI is
+			if (event.key.toLowerCase() === "c") letGoOfC();
 			// releasing accel puts the borrowed Edit down, and the outline it drew
 			// goes from under a pointer that has not moved since (#254, #339)
 			if (event.key === accelKeyName()) {
@@ -4699,12 +4871,20 @@ function CanvasField({
 		};
 		// any other key under a held ⌥ ends the overview unopened (⌥2 is @ on a
 		// Swedish board); the step keys are what move it
+		const letGoOfC = () => {
+			const held = commentHold.current;
+			if (held === null) return;
+			commentHold.current = null;
+			if (held.placed === true || Date.now() - held.at >= COMMENT_HOLD_MS) setTool(held.before);
+		};
 		const onKeyDownFirst = (event: KeyboardEvent) => {
 			if (event.key === "Alt" || !liveRef.current.isOpen()) return;
 			if (event.altKey && stepDirection(event) !== undefined) return;
 			liveRef.current.cancel();
 		};
 		const clearModifiers = () => {
+			// a window left with C held never hears it let go
+			letGoOfC();
 			liveRef.current.accel(false, false);
 			liveRef.current.cancel();
 			setAccelDown(false);
@@ -4918,7 +5098,15 @@ function CanvasField({
 		const timer = setTimeout(readSettled, READ_WAIT_MS);
 		return () => clearTimeout(timer);
 	}, [railReading, readSettled]);
-	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
+	const cursor =
+		resizeCursor ??
+		(panning
+			? "grabbing"
+			: effectiveTool === "hand"
+				? "grab"
+				: effectiveTool === "comment"
+					? COMMENT_CURSOR
+					: "default");
 
 	/**
 	 * The window's panes (#359), in the order a fresh layout puts them: where
@@ -4932,6 +5120,31 @@ function CanvasField({
 	const onTrashPage = useStableCallback((page: string, names: string[]) => stageEntry({ frames: names, page }));
 	const onCopyFramePath = useStableCallback((name: string) => copySourcePath(frameSourcePath(name)));
 	const onRefreshFrames = useStableCallback(() => void refetchFrames());
+	const commentsPane: PaneDef = {
+		id: "comments",
+		title: "Comments",
+		icon: <CommentIcon />,
+		hotkey: "panes.comments",
+		// news while the tab is out of sight: something unread among the open comments (spool#170)
+		elsewhere: !commentsShown && commentCounts(comments.comments, commentReader).unread > 0,
+		elsewhereSays: "unread comments",
+		render: () => (
+			<CommentsPane
+				comments={comments.comments}
+				reader={commentReader}
+				people={commentPeople}
+				page={activePage}
+				project={project}
+				filters={commentFilters}
+				open={commentOpen}
+				pinsHidden={pinsHidden}
+				onFilters={(next) => store.set({ commentFilters: next })}
+				onPick={flyToComment}
+				onNew={() => chooseTool("comment")}
+				onTogglePins={() => store.set({ pinsHidden: !store.get().pinsHidden })}
+			/>
+		),
+	};
 	const panes: readonly PaneDef[] = [
 		{
 			id: "pages",
@@ -5018,6 +5231,8 @@ function CanvasField({
 				/>
 			),
 		},
+		// a team project's inbox, beside Properties and Agent (spool#170)
+		...(team ? [commentsPane] : []),
 	];
 
 	// what each frame is to the ⌥ overview while it is up (DEV-295)
@@ -5043,7 +5258,10 @@ function CanvasField({
 			<PaneWindow
 				panes={panes}
 				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
-				onShown={(panes) => setRailShown(panes.includes("agent"))}
+				onShown={(panes) => {
+					setRailShown(panes.includes("agent"));
+					setCommentsShown(panes.includes("comments"));
+				}}
 			>
 				<div
 					ref={viewportRef}
@@ -5251,6 +5469,9 @@ function CanvasField({
 									camera={camera}
 									selected={selectedPage === object.page}
 									hovered={pointerTool && hoveredPage === object.page}
+									comments={
+										team && !pinsHidden ? pageCount(comments.comments, object.page, commentReader) : undefined
+									}
 								/>
 							))}
 							{/* the tags ride over the frames, because pressing one travels —
@@ -5336,6 +5557,19 @@ function CanvasField({
 							{/* teammates on a team canvas (DEV-196), over everything on the field */}
 							{team && (
 								<PresenceLayer room={presenceRoom} camera={camera} frames={visibleFrames} page={activePage} />
+							)}
+							{/* comments on a team canvas (spool#169): pins over the field, and the card a pin opens */}
+							{team && (
+								<CommentsLayer
+									context={commentsContext}
+									store={store}
+									camera={camera}
+									frames={visibleFrames}
+									page={activePage}
+									comments={comments.comments}
+									// only with an agent on this Mac to send it to
+									onSendToAgent={noAgent ? undefined : sendCommentToAgent}
+								/>
 							)}
 							{/* the pointer is the overview's while it is up (DEV-295): over every
 						    frame, so no press or hover reaches a prototype */}
@@ -5481,7 +5715,7 @@ function CanvasField({
 						</div>
 					)}
 					{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
-					{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={chooseTool} />}
+					{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={chooseTool} team={team} />}
 					{finding ? (
 						<PanePalette
 							frames={navigatorFrames}

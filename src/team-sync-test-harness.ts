@@ -7,15 +7,49 @@ import {
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNPAID,
+	COMMENTS_OPEN,
+	COMMENTS_PER_MINUTE,
+	COMMENTS_PER_PART,
+	type Comment,
+	type CommentPerson,
+	type CommentPlace,
+	type CommentReader,
+	type CommentRefusal,
+	type CommentReply,
+	type CommentsMessage,
+	type CopyChange,
+	changeRefusal,
+	commentBodyRefusal,
+	type DesignNow,
 	decodeFrame,
+	draftFor,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
+	forReader,
+	frameGeometry,
+	frameRevisionOf,
+	isCommentChange,
+	isCommentStill,
+	isOpenComment,
 	joinParts,
 	type Limited,
+	type Moved,
+	memberPostRefusal,
 	mergeCanvas,
+	movesComments,
 	PROTOCOL_VERSION,
 	type PresenceState,
+	placeAfter,
+	readCommentChange,
+	readCommentPost,
+	readCommentReplyPost,
+	readCommentStillAsk,
+	readMoved,
 	readPresenceState,
+	replyForReader,
+	samePlace,
+	sameSourceMoves,
+	takeFromBucket,
 	travels,
 } from "./team-sync-protocol";
 
@@ -70,6 +104,22 @@ interface Project {
 	turns: { by: string; saves: number }[];
 	/** Where its code lives, as `host/path`. */
 	repo: string | null;
+	/** Every comment made on it, in order, with its replies: kept outside the save path, as the sync object keeps them. */
+	comments: Comment[];
+	/** The still each comment kept of its frame, by the comment's id. */
+	stills: Map<string, Uint8Array>;
+	/** When each person last read each comment they have read: by account, then by comment. */
+	reads: Map<string, Map<string, number>>;
+	/** Each person's comment bucket: its level when last taken from, and when. */
+	buckets: Map<string, { level: number; at: number }>;
+	/** Where each comment stands, with the frame it belongs to, by the comment's id: what saves move (spool#160). */
+	places: Map<string, CommentPlace>;
+	/** The project's shares a comment may speak to, by id: the pages each shows, and whether it ended. */
+	shares: Map<string, { pages: string[]; by: string; ended: boolean }>;
+	/** What each message that carried saves said Spool moved, in order: undefined where it said nothing. */
+	moved: (Moved | undefined)[];
+	/** Every path's last bytes, kept after it is deleted: where a deleted frame last stood. */
+	last: Map<string, Uint8Array>;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -86,6 +136,7 @@ interface Told {
 	answers: Record<string, unknown>[];
 	after: (string | Uint8Array)[];
 	relayed: { path: string; version: number; deleted: boolean; content: Uint8Array | undefined; restores?: Person }[];
+	changes: CopyChange[];
 }
 
 interface TeamVersion {
@@ -125,6 +176,9 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
 	let ids = 0;
+	let commentIds = 0;
+	/** The comment limits every project here keeps: core's, unless a test raised or lowered them as a maintainer. */
+	let commentLimits = { perMinute: COMMENTS_PER_MINUTE, open: COMMENTS_OPEN };
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
 	/** While set, spool.page doesn't answer at all: every request fails as a network that is down does. */
@@ -187,6 +241,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json({
 				accountId: person.accountId,
 				email: `${person.accountId}@devosurf.com`,
+				// named as presence names them
+				name: person.accountId,
 				sessionId: `${person.accountId}-session`,
 				expiresAt: Date.now() + 86_400_000,
 			});
@@ -241,8 +297,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					.filter((one) => roleIn(one, address) !== null)
 					.map((one) => ({
 						accountId: one.accountId,
+						name: one.accountId,
 						email: `${one.accountId}@devosurf.com`,
 						role: roleIn(one, address),
+						you: one === person,
 					})),
 				invites: [],
 			});
@@ -257,7 +315,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 						.map((one) => ({ name: one.accountId, color: one.color })),
 				})),
 			});
-		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move)?$/u.exec(path);
+		const match =
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+				path,
+			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
 		const named = match[2];
 		const at = named === undefined ? undefined : projects.get(`${address}/${named}`);
@@ -286,6 +347,14 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					resent: [],
 					turns: [],
 					repo: body.repo ?? null,
+					comments: [],
+					stills: new Map(),
+					reads: new Map(),
+					buckets: new Map(),
+					places: new Map(),
+					shares: new Map(),
+					moved: [],
+					last: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -297,6 +366,16 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				at.repo = body.repo;
 				return Response.json(described(at));
 			});
+		// how many comments the project holds, and the still one kept: any member's to read
+		if (match[3] === "/comments/count" && request.method === "GET")
+			return Response.json({ comments: at.comments.length });
+		if (match[3]?.endsWith("/still") === true && request.method === "GET") {
+			// a lapsed team's stills are its admins' in a browser, and every caller here is a Mac
+			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			const still = at.stills.get(match[3].split("/")[2] ?? "");
+			if (still === undefined) return Response.json({ error: "still_not_found" }, { status: 404 });
+			return new Response(arrayBuffer(still), { headers: { "content-type": "image/png" } });
+		}
 		if (match[3] === "/move" && request.method === "GET") {
 			const to = url.searchParams.get("to") ?? "";
 			const name = url.searchParams.get("name") ?? at.name;
@@ -323,6 +402,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		if (request.method === "DELETE" && match[3] === undefined) {
 			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
 			remove(at, url.searchParams.get("out") === "1");
+			// its comments go with the team, as spool.page deletes them
+			at.comments = [];
+			at.stills.clear();
+			at.places.clear();
 			return Response.json({});
 		}
 		asked++;
@@ -405,6 +488,48 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
 			from.live = true;
 			greet(at, from);
+			const reads = at.reads.get(from.person.accountId) ?? new Map<string, number>();
+			const theirs = at.comments.flatMap((comment) => forReader(comment, readerOf(from)) ?? []);
+			for (let start = 0; start === 0 || start < theirs.length; start += COMMENTS_PER_PART) {
+				const comments = theirs.slice(start, start + COMMENTS_PER_PART);
+				const seen: Record<string, number> = {};
+				for (const comment of comments) {
+					const read = reads.get(comment.id);
+					if (read !== undefined) seen[comment.id] = read;
+				}
+				from.deliver(
+					encodeFrame({
+						type: "comments",
+						comments,
+						first: start === 0,
+						last: start + COMMENTS_PER_PART >= theirs.length,
+						reads: seen,
+					}),
+				);
+			}
+			return;
+		}
+		if (message.type === "comment-post" || message.type === "comment-reply") {
+			commented(at, from, message, bytes);
+			return;
+		}
+		if (message.type === "comment-still-ask") {
+			const ask = readCommentStillAsk(message);
+			if (ask === undefined || !from.live) {
+				from.close();
+				return;
+			}
+			if (!at.comments.some((comment) => comment.id === ask.comment)) {
+				from.deliver(encodeFrame({ type: "comment-refused", ref: ask.ref, reason: "comment_not_found" }));
+				return;
+			}
+			from.deliver(
+				encodeFrame({ type: "comment-still", ref: ask.ref, comment: ask.comment }, at.stills.get(ask.comment)),
+			);
+			return;
+		}
+		if (isCommentChange(message.type)) {
+			changed(at, from, message);
 			return;
 		}
 		if (message.type === "presence") {
@@ -451,15 +576,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			}));
 		}
 		at.sends.push(entries.length);
-		take(at, from, entries, lone);
+		const said = readMoved(message.moved);
+		at.moved.push(said);
+		follow(at, take(at, from, entries, lone), said);
 	}
 
 	/**
 	 * Saves sent alone or together, as spool.page takes them: each checked and ordered on its own, the bundle taking
 	 * one save from the bucket, answered in one message, and relayed as one to every copy that reads bundles.
 	 */
-	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): void {
-		const told: Told = { answers: [], after: [], relayed: [] };
+	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): CopyChange[] {
+		const told: Told = { answers: [], after: [], relayed: [], changes: [] };
 		const refuse = ({ ref, path }: Entry, reason: string, retryAfter?: number) => {
 			at.refused.push({ path, reason });
 			told.answers.push({ type: "refused", ref, path, reason, ...(retryAfter === undefined ? {} : { retryAfter }) });
@@ -505,7 +632,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		else from.deliver(encodeFrame({ type: "answers", answers: told.answers, ...pace(at, from) }));
 		for (const frame of told.after) from.deliver(frame);
 		if (revoked) from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
-		if (told.relayed.length === 0) return;
+		if (told.relayed.length === 0) return told.changes;
 		const by = { accountId: from.person.accountId, device: from.person.device };
 		for (const other of at.sockets) {
 			if (other === from || !other.live) continue;
@@ -532,6 +659,365 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				if (restores !== undefined && other.person === restores && restores !== from.person)
 					other.deliver(encodeFrame({ type: "restored", path, version, by }));
 		}
+		return told.changes;
+	}
+
+	/**
+	 * Saves changed the team's copy: every comment stands where it now belongs, by core's rules as the sync object
+	 * keeps them, and every live copy is told of each that changed (spool#160).
+	 */
+	function follow(at: Project, changes: CopyChange[], said: Moved | undefined): void {
+		place(at, changes, said);
+		if (changes.length > 0) void editedNow(at);
+	}
+
+	/** Each project's latest look at which comments' frames were edited since: an older one that ends later is dropped. */
+	const editing = new WeakMap<Project, number>();
+
+	/**
+	 * Which comments stand on a frame whose source isn't what it was when they were made, by the revision spool.page
+	 * reads its copy with: every live copy is told of each that changed (spool#160).
+	 */
+	async function editedNow(at: Project): Promise<void> {
+		const turn = (editing.get(at) ?? 0) + 1;
+		editing.set(at, turn);
+		const revisions = new Map<string, Promise<string | null>>();
+		const revisionOf = (frame: string) => {
+			let found = revisions.get(frame);
+			if (found === undefined) {
+				const files = [...at.files].flatMap(([path, file]) =>
+					file.bytes === null ? [] : [{ path, hash: hash(file.bytes) ?? "" }],
+				);
+				found = frameRevisionOf(frame, files);
+				revisions.set(frame, found);
+			}
+			return found;
+		};
+		const looked = await Promise.all(
+			at.comments.map(async ({ id, frame, standing, revision }) => {
+				if (frame === null || standing !== "placed" || revision === null) return { id, edited: false };
+				const now = await revisionOf(frame);
+				return { id, edited: now !== null && now !== revision };
+			}),
+		);
+		if (editing.get(at) !== turn) return;
+		for (const { id, edited } of looked) {
+			const index = at.comments.findIndex((comment) => comment.id === id);
+			const comment = at.comments[index];
+			if (comment === undefined || (comment.editedSince === true) === edited) continue;
+			const { editedSince: _, ...rest } = comment;
+			const now: Comment = edited ? { ...rest, editedSince: true } : rest;
+			at.comments[index] = now;
+			tellComment(at, "comment-changed", now);
+		}
+	}
+
+	/** Where every comment stands once saves are applied, by core's rules as the sync object keeps them. */
+	function place(at: Project, changes: CopyChange[], said: Moved | undefined): void {
+		if (!movesComments(changes, said)) return;
+		const holds = (path: string) => (at.files.get(path)?.bytes ?? null) !== null;
+		const design: DesignNow = {
+			frame: (name) => holds(`frames/${name}/frame.tsx`),
+			page: (page) =>
+				page === "" ||
+				[...at.files].some(([path, file]) => file.bytes !== null && path.startsWith(`frames/${page}/`)),
+			geometry: (name) => {
+				const bytes = at.last.get(`frames/${name}/frame.json`);
+				return bytes === undefined ? undefined : frameGeometry(bytes);
+			},
+		};
+		const moved = {
+			frames: [...(said?.frames ?? []), ...sameSourceMoves(changes)].filter(({ from }) => !design.frame(from)),
+			pages: (said?.pages ?? []).filter(({ from }) => !design.page(from)),
+		};
+		for (const [index, comment] of at.comments.entries()) {
+			const was = at.places.get(comment.id);
+			if (was === undefined) continue;
+			const place = placeAfter(was, moved, design, Date.now());
+			if (samePlace(place, was)) continue;
+			at.places.set(comment.id, place);
+			// off its frame, it says nothing of the frame's edits: as spool.page sends it, in the same word
+			const { dropped: _, editedSince, ...rest } = comment;
+			const now: Comment = {
+				...rest,
+				page: place.page,
+				frame: place.frame,
+				at: place.at,
+				standing: place.standing,
+				...(place.frame === null && place.home !== null && place.dropped !== null
+					? { dropped: { frame: place.home.frame, at: place.dropped } }
+					: {}),
+				...(editedSince === true && place.standing === "placed" && place.frame !== null ? { editedSince } : {}),
+			};
+			at.comments[index] = now;
+			tellComment(at, "comment-changed", now);
+		}
+	}
+
+	/** Who a copy reads comments as: its person, a member, who reads every audience. */
+	const readerOf = (connected: Connected): CommentReader => ({ accountId: connected.person.accountId, share: null });
+
+	/** A comment message to every live copy, each as its reader may hear it, as the object tells them. */
+	function tell(at: Project, heard: (reader: CommentReader) => CommentsMessage | undefined): void {
+		for (const socket of at.sockets) {
+			if (!socket.live) continue;
+			const message = heard(readerOf(socket));
+			if (message !== undefined) socket.deliver(encodeFrame(message));
+		}
+	}
+
+	/** A comment made or changed, to each reader as they read it: a draft only to its person. */
+	function tellComment(at: Project, type: "comment-added" | "comment-changed", comment: Comment): void {
+		tell(at, (reader) => {
+			const seen = forReader(comment, reader);
+			return seen === undefined ? undefined : { type, comment: seen };
+		});
+	}
+
+	/** A comment or a reply from a caught-up copy: kept, sent to every reader, and its writer answered. */
+	function commented(at: Project, from: Connected, message: Record<string, unknown>, bytes?: Uint8Array): void {
+		const ref = typeof message.ref === "string" ? message.ref : "-";
+		const refuse = (reason: CommentRefusal, retryAfter?: number) =>
+			from.deliver(
+				encodeFrame({ type: "comment-refused", ref, reason, ...(retryAfter === undefined ? {} : { retryAfter }) }),
+			);
+		if (!from.live) {
+			from.close();
+			return;
+		}
+		if (from.person.revoked || !edits(from.person, at.team)) {
+			refuse("not_editor");
+			return;
+		}
+		const author = personOf(from.person);
+		const now = Date.now();
+		if (message.type === "comment-post") {
+			const post = readCommentPost(message);
+			if (post === undefined) {
+				refuse(commentBodyRefusal(message.body) ?? "invalid_comment");
+				return;
+			}
+			if (bytes !== undefined && !isCommentStill(bytes)) {
+				refuse("still_too_large");
+				return;
+			}
+			const audience = post.audience ?? "team";
+			const share = audience === "team" ? undefined : at.shares.get(audience.share);
+			const refused = memberPostRefusal(post, share === undefined ? undefined : share.ended ? "ended" : share);
+			if (refused !== undefined) {
+				refuse(refused);
+				return;
+			}
+			const limited = postLimited(at, from.person, true);
+			if (limited !== undefined) {
+				refuse(limited.reason, limited.retryAfter);
+				return;
+			}
+			const { type: _type, ref: _ref, agent, mentions, audience: _audience, ...where } = post;
+			const id = `c${++commentIds}`.padEnd(8, "x");
+			const named = mentioned(at, mentions);
+			const comment: Comment = {
+				id,
+				audience,
+				...where,
+				still: bytes !== undefined,
+				author,
+				agent: agent === true,
+				created: now,
+				edited: null,
+				resolved: null,
+				standing: "placed",
+				replies: [],
+				...(named.length > 0 ? { mentions: named } : {}),
+				// a share's comment as a member reads it (spool#174): every share here is a link share
+				...(share === undefined ? {} : { share: { kind: "link" as const, who: [], by: share.by } }),
+			};
+			at.comments.push(comment);
+			at.places.set(id, {
+				page: comment.page,
+				frame: comment.frame,
+				at: comment.at,
+				standing: "placed",
+				home: comment.frame === null ? null : { frame: comment.frame, at: comment.at },
+				dropped: null,
+			});
+			if (bytes !== undefined) at.stills.set(id, bytes);
+			tellComment(at, "comment-added", comment);
+			from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
+			// made at a revision the team's copy hasn't reached, or has passed, it says so at once
+			void editedNow(at);
+			return;
+		}
+		const post = readCommentReplyPost(message);
+		const comment = post === undefined ? undefined : at.comments.find((comment) => comment.id === post.comment);
+		if (post === undefined || comment === undefined) {
+			refuse(post === undefined ? (commentBodyRefusal(message.body) ?? "invalid_comment") : "comment_not_found");
+			return;
+		}
+		// a share that ended takes no more words
+		if (comment.audience !== "team" && at.shares.get(comment.audience.share)?.ended !== false) {
+			refuse("share_ended");
+			return;
+		}
+		const limited = postLimited(at, from.person, false);
+		if (limited !== undefined) {
+			refuse(limited.reason, limited.retryAfter);
+			return;
+		}
+		const id = `c${++commentIds}`.padEnd(8, "x");
+		const named = mentioned(at, post.mentions);
+		const reply: CommentReply = {
+			id,
+			author,
+			agent: post.agent === true,
+			body: post.body,
+			created: now,
+			edited: null,
+			draftFor: draftFor(comment.audience, post.agent === true, from.person.accountId),
+			...(named.length > 0 ? { mentions: named } : {}),
+		};
+		comment.replies.push(reply);
+		tell(at, (reader) => {
+			const heard = replyForReader(reader, comment, reply);
+			return heard === undefined ? undefined : { type: "comment-replied", comment: comment.id, reply: heard };
+		});
+		from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
+	}
+
+	/** A person as comments name them here: by account, in their colour. */
+	const personOf = (person: Person): CommentPerson => ({
+		accountId: person.accountId,
+		name: person.accountId,
+		color: person.color,
+	});
+
+	/** The members among the accounts a message mentions, as readers get them: nobody else is mentioned. */
+	function mentioned(at: Project, accounts: readonly string[] | undefined): CommentPerson[] {
+		return (accounts ?? []).flatMap((account) => {
+			const person = [...people.values()].find((one) => one.accountId === account);
+			return person === undefined || roleIn(person, at.team) === null ? [] : [personOf(person)];
+		});
+	}
+
+	/** The project's open comments, then the person's minute, as the object holds a post to them. */
+	function postLimited(
+		at: Project,
+		person: Person,
+		opens: boolean,
+	): { reason: CommentRefusal; retryAfter?: number } | undefined {
+		if (opens && at.comments.filter(isOpenComment).length >= commentLimits.open) return { reason: "too_many_open" };
+		const taken = takeFromBucket(at.buckets.get(person.accountId), commentLimits.perMinute, 60_000, Date.now());
+		if ("retryAfter" in taken) return { reason: "rate_limited", retryAfter: taken.retryAfter };
+		at.buckets.set(person.accountId, taken.bucket);
+		return undefined;
+	}
+
+	/** A change to a comment from a caught-up copy, by the rules the object keeps (`changeRefusal`). */
+	function changed(at: Project, from: Connected, message: Record<string, unknown>): void {
+		const ref = typeof message.ref === "string" ? message.ref : "-";
+		const refuse = (reason: CommentRefusal) => from.deliver(encodeFrame({ type: "comment-refused", ref, reason }));
+		if (!from.live) {
+			from.close();
+			return;
+		}
+		if (from.person.revoked || !edits(from.person, at.team)) {
+			refuse("not_editor");
+			return;
+		}
+		const change = readCommentChange(message);
+		if (change === undefined) {
+			refuse(commentBodyRefusal(message.body) ?? "invalid_comment");
+			return;
+		}
+		const index = at.comments.findIndex((comment) => comment.id === change.comment);
+		const comment = at.comments[index];
+		const named = "reply" in change && change.reply !== undefined ? change.reply : undefined;
+		const reply = named === undefined ? undefined : comment?.replies.find((one) => one.id === named);
+		const target = named === undefined ? comment : reply;
+		const account = from.person.accountId;
+		// a connection that may still sync edits the project: only editors and admins hold a local copy
+		const refused = changeRefusal(
+			change,
+			{ accountId: account, share: null, edits: true },
+			comment === undefined || target === undefined
+				? undefined
+				: {
+						audience: comment.audience,
+						author: target.author.accountId,
+						draftFor: reply?.draftFor ?? null,
+					},
+		);
+		if (comment === undefined || refused !== undefined) {
+			refuse(refused ?? "comment_not_found");
+			return;
+		}
+		if (
+			change.type === "comment-send" &&
+			comment.audience !== "team" &&
+			at.shares.get(comment.audience.share)?.ended !== false
+		) {
+			refuse("share_ended");
+			return;
+		}
+		const now = Date.now();
+		const answered = () => from.deliver(encodeFrame({ type: "comment-posted", ref, id: comment.id }));
+		switch (change.type) {
+			case "comment-read":
+			case "comment-unread": {
+				const reads = at.reads.get(account) ?? new Map<string, number>();
+				at.reads.set(account, reads);
+				if (change.type === "comment-read") reads.set(comment.id, now);
+				else reads.delete(comment.id);
+				const seen = { type: "comment-seen", comment: comment.id, read: reads.get(comment.id) ?? null };
+				for (const socket of at.sockets)
+					if (socket.live && socket.person.accountId === account) socket.deliver(encodeFrame(seen));
+				answered();
+				return;
+			}
+			case "comment-resolve":
+				if (comment.resolved === null)
+					comment.resolved = {
+						by: personOf(from.person),
+						at: now,
+						...(change.agent === true ? { agent: change.agent } : {}),
+					};
+				break;
+			case "comment-reopen":
+				comment.resolved = null;
+				break;
+			case "comment-edit": {
+				const words = reply ?? comment;
+				words.body = change.body;
+				words.edited = now;
+				const mentions = mentioned(at, change.mentions);
+				if (mentions.length > 0) words.mentions = mentions;
+				else delete words.mentions;
+				break;
+			}
+			case "comment-send": {
+				if (reply === undefined) return;
+				// it goes out as its person last left its words, as new as it is sent
+				reply.draftFor = null;
+				reply.created = now;
+				reply.edited = null;
+				if (change.body !== undefined) reply.body = change.body;
+				break;
+			}
+			case "comment-delete": {
+				if (reply !== undefined) {
+					comment.replies = comment.replies.filter((one) => one !== reply);
+					break;
+				}
+				at.comments.splice(index, 1);
+				at.stills.delete(comment.id);
+				for (const reads of at.reads.values()) reads.delete(comment.id);
+				tell(at, () => ({ type: "comment-removed", id: comment.id }));
+				answered();
+				return;
+			}
+		}
+		tellComment(at, "comment-changed", comment);
+		answered();
 	}
 
 	/**
@@ -581,6 +1067,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return;
 		}
 		const content = merged ?? bytes ?? null;
+		told.changes.push({ path, was: hash(current?.bytes ?? null), now: hash(content) });
+		if (content !== null) at.last.set(path, content);
 		const file = { version: at.version, bytes: content, by: from.person };
 		at.files.set(path, file);
 		at.versions.set(file.version, file);
@@ -764,6 +1252,25 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		},
 		resent: (name: string) => project(name)?.resent ?? [],
 		turns: (name: string) => project(name)?.turns ?? [],
+		/** Set the comment limits every project here keeps, as a maintainer raises one project's. */
+		commentLimits(limits: Partial<{ perMinute: number; open: number }>) {
+			commentLimits = { ...commentLimits, ...limits };
+		},
+		/**
+		 * A link share of a project's pages, made by an account, that its comments may speak to; `ended` ends it, as
+		 * its maker revoking it does.
+		 */
+		share(name: string, id: string, share: { pages: string[]; by: string; ended?: boolean }) {
+			project(name)?.shares.set(id, { pages: share.pages, by: share.by, ended: share.ended === true });
+		},
+		/** When an account last read each comment, as the team keeps it. */
+		reads: (name: string, account: string) => new Map(project(name)?.reads.get(account) ?? []),
+		/** Every comment the project holds, as the team keeps them. */
+		comments: (name: string) => project(name)?.comments ?? [],
+		/** The still a comment kept of its frame, if it kept one. */
+		still: (name: string, comment: string) => project(name)?.stills.get(comment),
+		/** What each message that carried saves said Spool moved, where it said anything. */
+		moved: (name: string) => (project(name)?.moved ?? []).filter((said) => said !== undefined),
 		/** The object is an older spool.page, which tells each person's presence in a message of its own. */
 		withoutTicks() {
 			ticks = false;

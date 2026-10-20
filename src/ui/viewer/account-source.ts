@@ -12,9 +12,19 @@ export interface AccountPasskey {
 	usedAt: number | null;
 }
 
+/**
+ * Whether spool.page emails the account about comments meant for it, a few minutes after they're said and unless
+ * it read them first: "for-you", or "off".
+ */
+export type CommentEmails = "for-you" | "off";
+
 /** What the account page shows: who is signed in, the Macs signed in as them and their passkeys. */
 export interface AccountSummary {
 	email: string;
+	/** The name everyone else sees; null until the account gives one, when they see `personName`'s fallback. */
+	name: string | null;
+	/** Undefined from a spool.page that sends no comment emails. */
+	commentEmails: CommentEmails | undefined;
 	macs: AccountMac[];
 	passkeys: AccountPasskey[];
 }
@@ -23,6 +33,10 @@ export interface AccountSummary {
 export interface AccountSource {
 	/** null once this browser is signed out */
 	summary(): Promise<AccountSummary | null>;
+	/** Gives the account a new name, seen everywhere at once; false when spool.page refuses it. */
+	rename(name: string): Promise<boolean>;
+	/** Turns comment emails on or off; whatever is waiting to be sent obeys it. */
+	setCommentEmails(emails: CommentEmails): Promise<void>;
 	revokeMac(id: string): Promise<void>;
 	removePasskey(id: string): Promise<void>;
 	/** Makes a passkey for spool.page in this browser and keeps it; throws when the person or the browser says no. */
@@ -33,6 +47,10 @@ export interface AccountSource {
 
 interface Summary {
 	email: string;
+	/** An older spool.page sends none; read as anything until checked. */
+	name?: unknown;
+	/** An older spool.page sends none; read as anything until checked. */
+	commentEmails?: unknown;
 	devices: AccountMac[];
 	passkeys: AccountPasskey[];
 }
@@ -54,7 +72,23 @@ export const cloudAccount: AccountSource = {
 		const response = await call("GET", "/account/summary");
 		if (response.status === 401) return null;
 		const summary = (await response.json()) as Summary;
-		return { email: summary.email, macs: summary.devices, passkeys: summary.passkeys };
+		return {
+			email: summary.email,
+			name: typeof summary.name === "string" ? summary.name : null,
+			commentEmails:
+				summary.commentEmails === "for-you" || summary.commentEmails === "off" ? summary.commentEmails : undefined,
+			macs: summary.devices,
+			passkeys: summary.passkeys,
+		};
+	},
+	async rename(name) {
+		const response = await send("POST", "/account/name", { name });
+		if (response.status === 400) return false;
+		if (!response.ok) throw new Error(`account ${response.status}`);
+		return true;
+	},
+	async setCommentEmails(emails) {
+		await call("POST", "/account/comment-emails", { emails });
 	},
 	async revokeMac(id) {
 		await call("POST", `/account/devices/${encodeURIComponent(id)}/revoke`);
@@ -86,14 +120,18 @@ export const cloudAccount: AccountSource = {
 };
 
 async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<Response> {
-	const response = await fetch(path, {
+	const response = await send(method, path, body);
+	if (!response.ok && response.status !== 401) throw new Error(`account ${response.status}`);
+	return response;
+}
+
+function send(method: "GET" | "POST", path: string, body?: unknown): Promise<Response> {
+	return fetch(path, {
 		method,
 		credentials: "same-origin",
 		headers: { accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
 		...(body === undefined ? {} : { body: JSON.stringify(body) }),
 	});
-	if (!response.ok && response.status !== 401) throw new Error(`account ${response.status}`);
-	return response;
 }
 
 function base64Url(buffer: ArrayBuffer): string {

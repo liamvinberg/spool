@@ -830,6 +830,8 @@ export interface AgentSent {
 	readonly attached?: readonly Attachment[];
 	/** the entries those chips were drawn from, which are the bytes that go out */
 	readonly selection?: readonly SelectionEntry[] | undefined;
+	/** comments sent to the agent (spool#172), by id: the daemon renders each as it holds it at the send */
+	readonly comments?: readonly string[] | undefined;
 }
 
 /**

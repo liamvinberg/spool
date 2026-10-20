@@ -1,9 +1,9 @@
 import { hotkeyChips, hotkeyEntry, hotkeyKey } from "../hotkeys";
-import { EditIcon, HandIcon, SelectIcon } from "../icons";
+import { CommentToolIcon, EditIcon, HandIcon, SelectIcon } from "../icons";
 import { IconButton, ToolGroup } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 
-export type CanvasTool = "select" | "edit" | "hand";
+export type CanvasTool = "select" | "edit" | "hand" | "comment";
 
 interface ToolMeta {
 	id: CanvasTool;
@@ -31,9 +31,26 @@ const TOOLS: readonly ToolMeta[] = [
 		hold: hotkeyChips(hotkeyEntry("canvas.tool-hand")).gesture ?? null,
 		Icon: HandIcon,
 	},
+	// a team project's fourth (spool#169): places a comment, then hands back the pointer
+	{
+		id: "comment",
+		label: "comment",
+		key: hotkeyKey("canvas.tool-comment"),
+		hold: hotkeyChips(hotkeyEntry("canvas.tool-comment")).gesture ?? null,
+		Icon: CommentToolIcon,
+	},
 ];
 
-export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool: CanvasTool) => void }) {
+export function CanvasTools({
+	tool,
+	onTool,
+	team = false,
+}: {
+	tool: CanvasTool;
+	onTool: (tool: CanvasTool) => void;
+	/** A team project's canvas, which has the Comment tool too. */
+	team?: boolean;
+}) {
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center">
 			<ToolGroup
@@ -47,7 +64,7 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 					event.stopPropagation();
 				}}
 			>
-				{TOOLS.map((meta) => (
+				{TOOLS.filter((meta) => team || meta.id !== "comment").map((meta) => (
 					<IconButton
 						key={meta.id}
 						size="lg"

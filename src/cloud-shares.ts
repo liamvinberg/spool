@@ -1,6 +1,6 @@
 import { authorizedCloudRequest, type CloudRequestOptions } from "./cloud-auth";
 import { CloudTeamRefused } from "./cloud-teams";
-import type { ShareRequest, ShareView } from "./share-view";
+import type { ShareCommenter, ShareRequest, ShareView } from "./share-view";
 
 /** Whose shares: a team project's, by its team and name, or a solo project's, by the id spool.page gave it. */
 export type SharePlace = { kind: "team"; team: string; project: string } | { kind: "solo"; id: string };
@@ -51,6 +51,16 @@ export function cloudShares(spoolDir: string, options: CloudRequestOptions = {})
 		/** Name more people on a people share, or fewer. */
 		change: (at: SharePlace, share: string, change: { add?: string[]; remove?: string[] }) =>
 			call<null>("PATCH", `${place(at)}/shares/${encodeURIComponent(share)}`, change),
+		/** Who commented through a team project's share (spool#174). */
+		commenters: (at: SharePlace, share: string) =>
+			call<{ commenters: ShareCommenter[] }>("GET", `${place(at)}/shares/${encodeURIComponent(share)}/commenters`),
+		/** Block someone from a share's comments: what they wrote there goes, and they write nothing more. */
+		block: (at: SharePlace, share: string, account: string) =>
+			call<null>(
+				"POST",
+				`${place(at)}/shares/${encodeURIComponent(share)}/commenters/${encodeURIComponent(account)}/block`,
+				{},
+			),
 		/** Stop a share: everyone it shows stops seeing it at once. */
 		stop: (at: SharePlace, share: string) => call<null>("DELETE", `${place(at)}/shares/${encodeURIComponent(share)}`),
 		/** A solo project of this account's at spool.page, to share from. */

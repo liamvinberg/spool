@@ -22,7 +22,7 @@ function mount(element: React.ReactNode) {
 const PEOPLE: TeamPeople = {
 	members: [
 		{ accountId: "ada", email: "ada@tidemark.app", role: "admin", you: true },
-		{ accountId: "sam", email: "sam@tidemark.app", role: "editor", you: false },
+		{ accountId: "sam", name: "Sam Berg", email: "sam@tidemark.app", role: "editor", you: false },
 		{ accountId: "lena", email: "lena@client.example", role: "viewer", you: false },
 	],
 	invites: [
@@ -78,6 +78,9 @@ it("gives an admin a role menu on every row, and asks before making an editor a 
 	const host = mount(createElement(TeamPeoplePage, { team: team("admin"), onChanged: vi.fn() }));
 	await settle();
 	expect(host.textContent).toContain("3 people");
+	// People names each member, with their address beside it; one without a name is their address before the @
+	expect(host.textContent).toContain("Sam Berg · sam@tidemark.app");
+	expect(host.textContent).toContain("ada (you) · ada@tidemark.app");
 	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Role of sam@tidemark.app"]')?.click());
 	const menu = host.querySelector('[role="menu"]');
 	expect(Array.from(menu?.querySelectorAll("button") ?? []).map((item) => item.textContent)).toEqual([
@@ -87,7 +90,7 @@ it("gives an admin a role menu on every row, and asks before making an editor a 
 		"Remove from Tidemark",
 	]);
 	act(() => button(menu ?? host, "Viewer").click());
-	expect(document.body.textContent).toContain("Make sam@tidemark.app a viewer?");
+	expect(document.body.textContent).toContain("Make Sam Berg a viewer?");
 	expect(document.body.textContent).toContain("Their Mac stops syncing Tidemark. The folders stay on it.");
 	expect(asked.filter((line) => line.startsWith("PATCH"))).toEqual([]);
 	await act(async () => button(document.body, "Make viewer").click());

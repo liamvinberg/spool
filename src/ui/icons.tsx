@@ -234,6 +234,16 @@ export function EditIcon({ className }: CanvasToolIconProps) {
 	);
 }
 
+/** Comment: the pin with a plus inside, for placing one (spool#169). */
+export function CommentToolIcon({ className }: CanvasToolIconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path d="M3.5 20.5V12a8.5 8.5 0 1 1 8.5 8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+			<path d="M12 8.5v7M8.5 12h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 /** Hand: the canvas panning tool. */
 export function HandIcon({ className }: CanvasToolIconProps) {
 	return (
@@ -358,6 +368,40 @@ export function MachineIcon({ className }: { className?: string }) {
 		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
 			<rect x="3.25" y="3.25" width="9.5" height="7" rx="1" stroke="currentColor" strokeWidth="1.5" />
 			<path d="M1.75 12.75h12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+/** Comments: the pin drawn as itself, a round with one corner at the spot (spool#170). */
+export function CommentIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className ?? "size-4"} fill="none" aria-hidden="true">
+			<path d="M2.6 13.4V8a5.4 5.4 0 1 1 5.4 5.4Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+/** Resolve: a ring with the check, filled once resolved; pressing it again reopens. */
+export function ResolveIcon({ done, className }: { done: boolean; className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className ?? "size-4"} fill="none" aria-hidden="true">
+			<circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill={done ? "currentColor" : "none"} />
+			<path
+				d="m5.4 8.2 1.8 1.8 3.5-3.7"
+				stroke={done ? "var(--color-surface-raised)" : "currentColor"}
+				strokeWidth="1.4"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** Sort and group: three lines, each shorter. */
+export function FilterIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className ?? "size-4"} fill="none" aria-hidden="true">
+			<path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
 }

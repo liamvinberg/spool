@@ -28,6 +28,7 @@ import {
 	type SideId,
 	sideMin,
 	stackHeights,
+	storedLayout,
 	type Verdict,
 	whereIs,
 } from "./pane-layout";
@@ -70,6 +71,8 @@ export interface PaneDef {
 	 * person or landed unread (#364). One small dot on its tab or rail icon, in sight or not.
 	 */
 	readonly elsewhere?: boolean | undefined;
+	/** What that dot says to a screen reader: the agent's "another chat has news" unless a pane says its own. */
+	readonly elsewhereSays?: string | undefined;
 	/**
 	 * Something in the pane stopped and only a person can move it: for the agent, a turn
 	 * waiting on an answer (#366). Its tab or rail icon wears the waiting mark, in sight or not.
@@ -112,6 +115,14 @@ export function PaneActions({ children }: { children: ReactNode }) {
 	const slot = useContext(PaneSlot);
 	if (slot === undefined) return <div className="flex items-center">{children}</div>;
 	return slot === null ? null : createPortal(children, slot);
+}
+
+/**
+ * A pane's actions drawn into a head of the caller's own, for a pane standing outside the pane window: the browser
+ * canvas's Comments panel (spool#173). Null while that head isn't drawn yet.
+ */
+export function PaneActionsSlot({ slot, children }: { slot: HTMLElement | null; children: ReactNode }) {
+	return <PaneSlot.Provider value={slot}>{children}</PaneSlot.Provider>;
 }
 
 const PaneCommands = createContext<readonly PaletteCommand[]>([]);
@@ -205,8 +216,10 @@ export function PaneWindow({
 	const byId = new Map(panes.map((pane) => [pane.id, pane]));
 	const registry = useRef(panes);
 	registry.current = panes;
-	const guard = useMemo(() => isLayout(ids), [ids]);
-	const [layout, setLayout] = useRemembered<Layout>(STORAGE_KEY, defaultLayout(), guard);
+	const guard = useMemo(() => isLayout(), []);
+	const [stored, setLayout] = useRemembered<Layout>(STORAGE_KEY, defaultLayout(), guard);
+	// the stored layout for this canvas's panes: a team project's Comments placed, or left out on a solo one
+	const layout = useMemo(() => storedLayout(stored, ids), [stored, ids]);
 	const reduced = useReducedMotion();
 
 	const root = useRef<HTMLDivElement>(null);
@@ -471,7 +484,7 @@ export function PaneWindow({
 				: kind === "unread"
 					? `${def.title}, new reply`
 					: kind === "elsewhere"
-						? `${def.title}, another chat has news`
+						? `${def.title}, ${def.elsewhereSays ?? "another chat has news"}`
 						: def.title;
 
 	/* ── the drag ────────────────────────────────────────────────────── */

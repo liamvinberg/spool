@@ -23,6 +23,7 @@ import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { createAgentPresence } from "./agent-presence";
 import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveThreads } from "./agent-threads";
+import type { CommentPrompt } from "./comment-prompt";
 import type { createChangeHub } from "./events";
 import { type ResolveProject, withProject } from "./project-route";
 import { type createSelectionStore, parseSelectionEntries, type SelectionEntry } from "./selection";
@@ -121,7 +122,9 @@ export function agentRoutes(deps: {
 	agentAppLauncher: AgentAppLauncher;
 	emitAppEvent: (event: AppEvent) => void;
 	/** This Mac's spool.page account, for the placeholders a team project's designers make. */
-	account: () => Promise<{ accountId: string; email: string }>;
+	account: () => Promise<{ accountId: string; name: string }>;
+	/** Comments the person sent to the agent, as the prompt carries them: their blocks, and stills that ride along. */
+	commentsForPrompt: (root: string, ids: readonly string[]) => Promise<CommentPrompt>;
 }) {
 	const {
 		spoolDir,
@@ -147,7 +150,7 @@ export function agentRoutes(deps: {
 	const askWhoIsSignedIn = (): void =>
 		void deps.account().then(
 			(one) => {
-				signedInAs = { accountId: one.accountId, name: one.email.split("@")[0] || one.email };
+				signedInAs = { accountId: one.accountId, name: one.name };
 			},
 			() => {},
 		);
@@ -299,12 +302,18 @@ export function agentRoutes(deps: {
 					if (body.session !== undefined || (body.engine !== undefined && !isAgentEngineId(body.engine))) {
 						return c.text("choose an engine; session references belong to the daemon", 400);
 					}
-					const said: { prompt: string; selection?: SelectionEntry[]; attachments?: readonly Attachment[] }[] = [];
+					const said: {
+						prompt: string;
+						selection?: SelectionEntry[];
+						attachments?: readonly Attachment[];
+						comments?: string[];
+					}[] = [];
 					for (const raw of body.said) {
 						const one = (typeof raw === "object" && raw !== null ? raw : {}) as {
 							prompt?: unknown;
 							selection?: unknown;
 							attachments?: unknown;
+							comments?: unknown;
 						};
 						if (typeof one.prompt !== "string" || one.prompt.trim() === "") {
 							return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
@@ -324,10 +333,22 @@ export function agentRoutes(deps: {
 						if (one.selection !== undefined && captured === undefined) {
 							return c.text('"selection" is the entry list this daemon served the rail', 400);
 						}
+						// comments sent to the agent ride by id: the daemon renders each from its own snapshot (spool#172)
+						const { comments } = one;
+						if (
+							comments !== undefined &&
+							!(
+								Array.isArray(comments) &&
+								comments.every((id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id))
+							)
+						) {
+							return c.text('"comments" is a list of the ids of comments sent to the agent', 400);
+						}
 						said.push({
 							prompt: one.prompt,
 							...(captured === undefined ? {} : { selection: captured }),
 							...(attached === undefined ? {} : { attachments: attached }),
+							...(comments === undefined || comments.length === 0 ? {} : { comments }),
 						});
 					}
 					if (body.recovery !== undefined && typeof body.recovery !== "string")
@@ -341,11 +362,18 @@ export function agentRoutes(deps: {
 					};
 				}),
 				(c) =>
-					withProject(c, deps.resolve, (root) => {
+					withProject(c, deps.resolve, async (root) => {
 						// one turn, streamed as it arrives (#191): the prompt goes down the
 						// binary's stdin and its events come back over this response in the
 						// order the wire sent them
 						const { said, thread, engine: requested, turn: named, recovery } = c.req.valid("json");
+						// the comments sent with each message, read now and ahead of everything below, which must
+						// run without a pause between its check that no turn is running and holding this one
+						const commented = await Promise.all(
+							said.map((one) =>
+								one.comments === undefined ? undefined : deps.commentsForPrompt(root, one.comments),
+							),
+						);
 						/*
 						 * One turn per conversation, refused rather than replaced (#211).
 						 *
@@ -391,11 +419,17 @@ export function agentRoutes(deps: {
 							root: root,
 							session: readThread(spoolDir, root, thread)?.session ?? selected.session,
 							permissions: mode,
-							said: said.map((one) => ({
-								prompt: one.prompt,
-								selection: selectionBlock(one.selection ?? selections.get(root)),
-								...(one.attachments === undefined ? {} : { attachments: one.attachments }),
-							})),
+							said: said.map((one, at) => {
+								const comments = commented[at];
+								const selection = selectionBlock(one.selection ?? selections.get(root));
+								const attachments = [...(one.attachments ?? []), ...(comments?.attachments ?? [])];
+								return {
+									prompt: one.prompt,
+									// the comment blocks lead, then what the hands point at, then the words
+									selection: [comments?.text ?? "", selection].filter((block) => block !== "").join("\n\n"),
+									...(attachments.length === 0 ? {} : { attachments }),
+								};
+							}),
 							ask,
 						});
 						// the frames the turn makes, however it writes them, are read off design/ (#365)

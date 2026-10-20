@@ -75,6 +75,19 @@ describe("what spool answers for the person", () => {
 		expect(isSpoolRead("spoolx skill")).toBe(false);
 	});
 
+	it("takes only the reads of spool comments, the one verb that writes", () => {
+		expect(isSpoolRead("spool comments")).toBe(true);
+		expect(isSpoolRead("spool comments --frame shop/cart --resolved")).toBe(true);
+		expect(isSpoolRead("spool comments list --page shop")).toBe(true);
+		expect(isSpoolRead("spool comments show k3m9p2qa")).toBe(true);
+		expect(isSpoolRead("spool comments reply k3m9p2qa Done")).toBe(false);
+		expect(isSpoolRead("spool comments resolve k3m9p2qa")).toBe(false);
+		expect(isSpoolRead("spool comments reopen k3m9p2qa")).toBe(false);
+		expect(isSpoolRead("spool comments add receipt Look")).toBe(false);
+		expect(isSpoolRead("spool comments --resolved reply k3m9p2qa Done")).toBe(false);
+		expect(isSpoolRead("spool comments --page reply")).toBe(true);
+	});
+
 	it("remembers an allowed change by each file it touches and a command as Codex split it", () => {
 		const change = { id: "c", type: "fileChange", changes: [{ path: "src/a.ts" }, { path: "/p/b.ts" }] };
 		expect(approvalScopes(root, "item/fileChange/requestApproval", {}, change)).toEqual([

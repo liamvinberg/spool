@@ -14,7 +14,7 @@ const at = (year: number, month: number, day: number) => Date.UTC(year, month - 
 const PEOPLE: TeamPeople = {
 	members: [
 		{ accountId: "ada", email: "ada@tidemark.app", role: "admin", you: true },
-		{ accountId: "mira", email: "mira@tidemark.app", role: "editor", you: false },
+		{ accountId: "mira", name: "Mira Holm", email: "mira@tidemark.app", role: "editor", you: false },
 		{ accountId: "sam", email: "sam@tidemark.app", role: "editor", you: false },
 		{ accountId: "lena", email: "lena@harbourbank.se", role: "viewer", you: false },
 	],
@@ -130,10 +130,10 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 	expect(host.textContent).toContain("On trial until October 25.");
 	expect(host.textContent).toContain("Who you pay for");
 	expect(rows(host)).toEqual([
-		"ada@tidemark.app (you)admin",
-		"mira@tidemark.appeditor",
-		"sam@tidemark.appeditor",
-		"lena@harbourbank.seviewer · free",
+		"ada (you) · ada@tidemark.appadmin",
+		"Mira Holm · mira@tidemark.appeditor",
+		"sam · sam@tidemark.appeditor",
+		"lena · lena@harbourbank.seviewer · free",
 	]);
 	expect(box(host, "ada@").disabled).toBe(true);
 	expect(box(host, "ada@").checked).toBe(true);
@@ -147,7 +147,7 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 
 	// leaving sam out: sam becomes a viewer once Stripe takes the payment, and the total follows
 	act(() => box(host, "sam@").click());
-	expect(rows(host)[2]).toBe("sam@tidemark.appbecomes a viewer");
+	expect(rows(host)[2]).toBe("sam · sam@tidemark.appbecomes a viewer");
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$384 a year");
 	act(() => host.querySelector<HTMLInputElement>('input[type="radio"][value="monthly"]')?.click());
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$40 a month");

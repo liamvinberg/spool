@@ -4,6 +4,7 @@ import {
 	type Drop,
 	defaultLayout,
 	type Env,
+	fitPanes,
 	fitWindow,
 	isLayout,
 	type Layout,
@@ -13,6 +14,7 @@ import {
 	resizeSplit,
 	type SideId,
 	stackHeights,
+	storedLayout,
 	whereIs,
 } from "./pane-layout";
 
@@ -274,8 +276,7 @@ describe("group heights", () => {
 });
 
 describe("the stored layout", () => {
-	const PANES = ["pages", "properties", "agent"];
-	const accepts = isLayout(PANES);
+	const accepts = isLayout();
 
 	it("takes back exactly what the model wrote, through JSON", () => {
 		expect(accepts(JSON.parse(JSON.stringify(defaultLayout())))).toBe(true);
@@ -283,23 +284,23 @@ describe("the stored layout", () => {
 		expect(accepts(JSON.parse(JSON.stringify(changed)))).toBe(true);
 	});
 
-	it("discards anything that is not today's shape rather than migrating it", () => {
+	it("discards anything that is not a layout's shape rather than migrating it", () => {
 		const layout = defaultLayout();
 		const right = layout.right;
 		const broken: unknown[] = [
 			null,
 			"properties",
 			{ ...layout, v: 2 },
+			{ ...layout, v: 5 },
 			// the toggles' shape, from before tabs
 			{ ...layout, v: 2, left: { panes: ["pages"], lit: ["pages"], width: 248, open: true, touched: 1 } },
 			{ ...layout, left: { ...layout.left, groups: "pages" } },
-			// a pane twice, a pane missing, a pane nobody registered
+			// a pane twice, a pane with no name
 			{
 				...layout,
 				right: { ...right, groups: [{ tabs: ["properties", "agent", "pages"], active: "agent", weight: 1 }] },
 			},
-			{ ...layout, right: { ...right, groups: [{ tabs: ["properties"], active: "properties", weight: 1 }] } },
-			{ ...layout, left: { ...layout.left, groups: [{ tabs: ["pages", "notes"], active: "pages", weight: 1 }] } },
+			{ ...layout, left: { ...layout.left, groups: [{ tabs: ["pages", ""], active: "pages", weight: 1 }] } },
 			// an active tab off its group, an empty group, a bad weight, four groups
 			{ ...layout, right: { ...right, groups: [{ tabs: ["properties", "agent"], active: "pages", weight: 1 }] } },
 			{
@@ -318,5 +319,53 @@ describe("the stored layout", () => {
 			{ ...layout, left: { ...layout.left, width: "wide" } },
 		];
 		for (const value of broken) expect(accepts(value)).toBe(false);
+	});
+});
+
+describe("the panes a canvas has (spool#170)", () => {
+	const SOLO = ["pages", "properties", "agent"];
+	const TEAM = ["pages", "properties", "agent", "comments"];
+
+	it("puts a team project's Comments beside Properties and Agent, and leaves it out of a solo one", () => {
+		const team = fitPanes(defaultLayout(), TEAM);
+		expect(tabsOf(team, "right")).toEqual([["properties", "agent", "comments"]]);
+		expect(activeOf(team, "right")).toEqual(["properties"]);
+		const solo = defaultLayout();
+		expect(fitPanes(solo, SOLO)).toBe(solo);
+	});
+
+	it("keeps the rest of a layout as it was when a canvas with fewer or more panes reads it", () => {
+		const moved = move(fitPanes(defaultLayout(), TEAM), "comments", {
+			kind: "row",
+			side: "left",
+			group: 0,
+			index: 1,
+		});
+		const showing = reduce(moved, { type: "show", pane: "comments" }, WIDE);
+		const solo = fitPanes(showing, SOLO);
+		expect(tabsOf(solo, "left")).toEqual([["pages"]]);
+		expect(activeOf(solo, "left")).toEqual(["pages"]);
+		expect(tabsOf(solo, "right")).toEqual([["properties", "agent"]]);
+		// and back on a team canvas, Comments comes back after Agent, nothing else moved
+		expect(tabsOf(fitPanes(solo, TEAM), "right")).toEqual([["properties", "agent", "comments"]]);
+		// a pane alone in its group takes its group with it, and a side left empty closes
+		const alone = move(fitPanes(defaultLayout(), TEAM), "comments", {
+			kind: "split",
+			side: "right",
+			group: 0,
+			where: "below",
+		});
+		expect(tabsOf(fitPanes(alone, SOLO), "right")).toEqual([["properties", "agent"]]);
+		const lonely = move(fitPanes(defaultLayout(), TEAM), "pages", { kind: "row", side: "right", group: 0, index: 0 });
+		const leftComments = move(lonely, "comments", { kind: "row", side: "left", group: 0, index: 0 });
+		expect(fitPanes(leftComments, SOLO).left).toMatchObject({ groups: [], open: false });
+	});
+
+	it("reads a layout stored before Comments as today's", () => {
+		const before: unknown = JSON.parse(JSON.stringify({ ...defaultLayout(), v: 3 }));
+		if (!isLayout()(before)) throw new Error("a stored 3 is read");
+		const read = storedLayout(before, TEAM);
+		expect(read.v).toBe(4);
+		expect(tabsOf(read, "right")).toEqual([["properties", "agent", "comments"]]);
 	});
 });

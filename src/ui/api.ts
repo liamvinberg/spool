@@ -42,8 +42,14 @@ import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-
 import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
-import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
-import type { PresenceState } from "../team-sync-protocol";
+import {
+	type ProjectShares,
+	readCommenters,
+	type ShareRequest,
+	type SharesSource,
+	type ShareView,
+} from "../share-view";
+import { type Comment, type PresenceState, readComment } from "../team-sync-protocol";
 import { base64Logo, TeamActionRefused, type TeamsSource, teamSays, teamsAt } from "./team-source";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
@@ -1117,6 +1123,8 @@ export interface AgentSaying {
 	 * which is why this is bytes at all.
 	 */
 	readonly attached?: readonly Attachment[] | undefined;
+	/** Comments sent to the agent (spool#172), by id, which the daemon renders from its own snapshot. */
+	readonly comments?: readonly string[] | undefined;
 }
 
 /**
@@ -1242,6 +1250,7 @@ function sayTurn(
 					prompt: one.prompt,
 					...(one.selection === undefined ? {} : { selection: [...one.selection] }),
 					...(one.attached === undefined ? {} : { attachments: one.attached }),
+					...(one.comments === undefined ? {} : { comments: [...one.comments] }),
 				})),
 			},
 		},
@@ -2023,6 +2032,21 @@ export function daemonShares(project: string): SharesSource & {
 		async stop(share) {
 			return refusal(await controlFetch(`${base}/${encodeURIComponent(share)}`, { method: "DELETE" }));
 		},
+		async commenters(share) {
+			try {
+				const response = await controlFetch(`${base}/${encodeURIComponent(share)}/commenters`);
+				return response.ok ? readCommenters(await response.json()) : null;
+			} catch {
+				return null;
+			}
+		},
+		async block(share, account) {
+			return refusal(
+				await controlFetch(`${base}/${encodeURIComponent(share)}/commenters/${encodeURIComponent(account)}/block`, {
+					method: "POST",
+				}),
+			);
+		},
 		async create(request) {
 			const response = await controlFetch(base, {
 				method: "POST",
@@ -2033,4 +2057,192 @@ export function daemonShares(project: string): SharesSource & {
 			return error === null ? { share: (await response.json()) as ShareView } : { error };
 		},
 	};
+}
+
+/**
+ * A team project's comments as this Mac knows them (ADR 0011), whether one written now reaches the team, when this
+ * Mac's person last read each one they have read, and the project's address at the team, which a comment's link
+ * is made from.
+ */
+export interface CommentsRead {
+	online: boolean;
+	/** The team has gone local: its comments read, and none can be written until it pays (spool#160). */
+	unpaid: boolean;
+	comments: Comment[];
+	reads: Readonly<Record<string, number>>;
+	url: string | null;
+}
+
+const NO_COMMENTS: CommentsRead = { online: false, unpaid: false, comments: [], reads: {}, url: null };
+
+export async function fetchComments(project: string): Promise<CommentsRead> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/comments`);
+		const body: unknown = response.ok ? await response.json() : null;
+		if (typeof body !== "object" || body === null || !("comments" in body) || !Array.isArray(body.comments))
+			return NO_COMMENTS;
+		const online = "online" in body && body.online === true;
+		const reads: Record<string, number> = {};
+		if ("reads" in body && typeof body.reads === "object" && body.reads !== null)
+			for (const [id, at] of Object.entries(body.reads)) if (typeof at === "number") reads[id] = at;
+		const url = "url" in body && typeof body.url === "string" ? body.url : null;
+		const unpaid = "unpaid" in body && body.unpaid === true;
+		return {
+			online,
+			unpaid,
+			comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []),
+			reads,
+			url,
+		};
+	} catch {
+		return NO_COMMENTS;
+	}
+}
+
+/** Someone a comment can mention: a member of the project's team. */
+export interface CommentMentionable {
+	accountId: string;
+	name: string;
+	you: boolean;
+}
+
+/** The members a comment on this project can mention; none while spool.page can't say. */
+export async function fetchCommentPeople(project: string): Promise<CommentMentionable[]> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/comments/people`);
+		const body: unknown = response.ok ? await response.json() : null;
+		if (typeof body !== "object" || body === null || !("people" in body) || !Array.isArray(body.people)) return [];
+		return body.people.flatMap((one: unknown) =>
+			typeof one === "object" &&
+			one !== null &&
+			"accountId" in one &&
+			typeof one.accountId === "string" &&
+			"name" in one &&
+			typeof one.name === "string"
+				? [{ accountId: one.accountId, name: one.name, you: "you" in one && one.you === true }]
+				: [],
+		);
+	} catch {
+		return [];
+	}
+}
+
+/** What the canvas says of a new comment: where it stands, the element as the frame's shim saw it, the words. */
+export interface CommentWrite {
+	page: string;
+	frame: string | null;
+	at: { x: number; y: number };
+	element: { selector: string; outerHtml: string; source: string | null; generated: boolean } | null;
+	body: string;
+	/** the members it mentions, by account */
+	mentions?: string[];
+	/** one share of its page that reads it besides the team (spool#174); the team alone when absent */
+	audience?: { share: string };
+}
+
+/** The team took it, under this id; or it didn't, offline or for a reason said in words. */
+export type CommentSent = { id: string } | { error: string; message: string };
+
+/** What the daemon answered a comment's write: its body, or the refusal with its words. */
+async function commentAnswer(
+	response: Promise<Response>,
+): Promise<{ body: unknown } | { error: string; message: string }> {
+	try {
+		const answer = await response;
+		const body: unknown = await answer.json().catch(() => null);
+		if (answer.ok) return { body };
+		const error = typeof body === "object" && body !== null && "error" in body ? String(body.error) : "failed";
+		const message =
+			typeof body === "object" && body !== null && "message" in body
+				? String(body.message)
+				: "the comment didn't send";
+		return { error, message };
+	} catch {
+		return { error: "offline", message: "spool isn't answering" };
+	}
+}
+
+/** A change a person makes to a comment: resolve or reopen it, read or mark it unread, edit or delete it or a reply. */
+export type CommentAct =
+	| { type: "resolve" | "reopen" | "read" | "unread" }
+	| { type: "edit"; body: string; mentions: string[]; reply?: string }
+	| { type: "delete"; reply?: string }
+	/** a draft the person's agent left them on a share's comment, sent as theirs, with their edit if any (spool#174) */
+	| { type: "send"; reply: string; body?: string; mentions?: string[] };
+
+/** A comment's change as the team took it: done, or refused, offline or for a reason said in words. */
+export type CommentChanged = { ok: true } | { error: string; message: string };
+
+/**
+ * Where a canvas writes comments (spool#173): a Mac's through its daemon, which sends them to the team on the
+ * project's sync connection; a browser's straight to spool.page. The comments layer and the card write through it
+ * and never ask which.
+ */
+export interface CommentsClient {
+	post(comment: CommentWrite): Promise<CommentSent>;
+	reply(comment: string, body: string, mentions: string[]): Promise<CommentSent>;
+	change(comment: string, change: CommentAct): Promise<CommentChanged>;
+}
+
+/**
+ * Where one canvas's comments client writes, and how: the comments' address (a new one is posted there, a reply under
+ * `<address>/<id>/replies`, a change at the comment's own address), how a request goes, and how its answer reads.
+ */
+export interface CommentsLine {
+	address: string;
+	request: (url: string, init: RequestInit) => Promise<Response>;
+	answer: (response: Promise<Response>) => Promise<{ body: unknown } | { error: string; message: string }>;
+	/** what an answer that names no comment says */
+	unsent: string;
+}
+
+/** A comments client on one line: every write but a delete is JSON, as each comments API asks. */
+export function commentsClient(line: CommentsLine): CommentsClient {
+	const json = (body: unknown): RequestInit => ({
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	const at = (comment: string, reply?: string) =>
+		`${line.address}/${encodeURIComponent(comment)}${reply === undefined ? "" : `/replies/${encodeURIComponent(reply)}`}`;
+	const sent = async (request: Promise<Response>): Promise<CommentSent> => {
+		const answer = await line.answer(request);
+		if ("error" in answer) return answer;
+		const { body } = answer;
+		return typeof body === "object" && body !== null && "id" in body && typeof body.id === "string"
+			? { id: body.id }
+			: { error: "failed", message: line.unsent };
+	};
+	return {
+		post: (comment) => sent(line.request(line.address, json(comment))),
+		reply: (comment, body, mentions) => sent(line.request(`${at(comment)}/replies`, json({ body, mentions }))),
+		async change(comment, change) {
+			const request =
+				change.type === "edit"
+					? line.request(at(comment, change.reply), {
+							...json({ body: change.body, mentions: change.mentions }),
+							method: "PATCH",
+						})
+					: change.type === "delete"
+						? line.request(at(comment, change.reply), { method: "DELETE" })
+						: change.type === "send"
+							? line.request(
+									`${at(comment, change.reply)}/send`,
+									json({ body: change.body, mentions: change.mentions }),
+								)
+							: line.request(`${at(comment)}/${change.type}`, json({}));
+			const answer = await line.answer(request);
+			return "error" in answer ? answer : { ok: true };
+		},
+	};
+}
+
+/** This Mac's daemon, writing for one of its team projects. */
+export function daemonComments(project: string): CommentsClient {
+	return commentsClient({
+		address: `/api/p/${encodeURIComponent(project)}/comments`,
+		request: controlFetch,
+		answer: commentAnswer,
+		unsent: "the comment didn't send",
+	});
 }

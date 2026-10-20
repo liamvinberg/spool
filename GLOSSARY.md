@@ -30,6 +30,8 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Comment**: What a person leaves on a team project's canvas for the others: a first message and the **replies** under it, one level deep, standing on the canvas as a **pin**, a point on a frame in that frame's own pixels or on a page's empty field. It is made with the Comment tool, the fourth beside Select, Edit and Hand, and it is never a **thread**, which is a conversation with an agent. _Avoid_: thread, note, discussion, feedback
 
+**Reply**: A message under a comment, from a person or their agent, one level deep: it keeps its comment's audience and never stands on the canvas of its own. On a share's comment an agent's reply is a draft its person reads and sends; nobody else sees it until they do. _Avoid_: answer, response, sub-comment
+
 **Pin**: A comment's mark on the canvas: its author's face at one size at every zoom, pointing at the spot the comment stands on. _Avoid_: marker, bubble
 
 **Audience**: Who reads a comment: the team, or one of the shares of the page it stands on. A comment's replies keep its audience. _Avoid_: visibility, readers, seen by

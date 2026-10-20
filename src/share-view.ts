@@ -5,6 +5,7 @@
  * who sign in, or anyone with its link. Pure, so the canvas, the viewer and the daemon spell it alike.
  */
 import { pageName, ROOT_PAGE } from "./page-path";
+import { personName } from "./person-name";
 
 export type ShareKind = "people" | "link";
 
@@ -15,6 +16,8 @@ export interface ShareView {
 	pages: string[];
 	/** Whom a people share names, by address; none for a link share. */
 	people: string[];
+	/** The same people by name, in the same order, as spool.page says them everywhere; absent from an older spool.page. */
+	names?: string[];
 	/** Who made it, by address. */
 	by: string;
 	/** When it was made, in seconds. */
@@ -39,10 +42,54 @@ export type ProjectShares =
  * Where a project's shares are read and changed from: the daemon on a Mac, spool.page in a browser. A change or a
  * stop answers spool.page's reason when it refused, or null.
  */
-export interface SharesSource {
+export interface SharesSource extends Partial<ShareCommenters> {
 	read(): Promise<ProjectShares>;
 	change(share: string, change: { add?: string[]; remove?: string[] }): Promise<string | null>;
 	stop(share: string): Promise<string | null>;
+}
+
+/**
+ * Someone who commented through a share (spool#174), as its settings list them for Block: by account, the name the
+ * team sees on their comments, how many of their comments and replies stand there, when they last wrote (in
+ * milliseconds, as spool.page keeps comments), and whether they are blocked from its comments.
+ */
+export interface ShareCommenter {
+	account: string;
+	name: string;
+	posts: number;
+	last: number;
+	blocked: boolean;
+}
+
+/**
+ * A team project's share's commenters, read and blocked from where its shares are kept (spool#174): null when they
+ * can't be read now. Block removes what they wrote through the share and refuses what they write next; it answers
+ * spool.page's reason, or null.
+ */
+export interface ShareCommenters {
+	commenters(share: string): Promise<ShareCommenter[] | null>;
+	block(share: string, account: string): Promise<string | null>;
+}
+
+/** A share's commenters as spool.page lists them (spool#174), field by field; null for anything else. */
+export function readCommenters(value: unknown): ShareCommenter[] | null {
+	if (typeof value !== "object" || value === null || !("commenters" in value) || !Array.isArray(value.commenters))
+		return null;
+	return value.commenters.flatMap((one: unknown) => {
+		if (typeof one !== "object" || one === null) return [];
+		const account = "account" in one ? one.account : undefined;
+		const name = "name" in one ? one.name : undefined;
+		const posts = "posts" in one ? one.posts : undefined;
+		const last = "last" in one ? one.last : undefined;
+		const blocked = "blocked" in one ? one.blocked : undefined;
+		return typeof account === "string" &&
+			typeof name === "string" &&
+			typeof posts === "number" &&
+			typeof last === "number" &&
+			typeof blocked === "boolean"
+			? [{ account, name, posts, last, blocked }]
+			: [];
+	});
 }
 
 /** What a new share asks for. */
@@ -60,15 +107,10 @@ export function sharedPageName(page: string): string {
 	return page === ROOT_PAGE ? TOP_PAGE : pageName(page);
 }
 
-/** A person as their address is said aloud: its first part, `kim` for kim.berg@client.com. */
-export function personName(email: string): string {
-	return email.split(/[.@]/u)[0] || email;
-}
-
 /** "kim and ola", "kim, ola and sam", or "anyone with the link": whom a share is for, as its row says it. */
 export function shareWho(share: Pick<ShareView, "kind" | "people">): string {
 	if (share.kind === "link") return "anyone with the link";
-	return saidList(share.people.map(personName));
+	return saidList(share.people.map((email) => personName({ email })));
 }
 
 /** A list said as a sentence says it: "a", "a and b", "a, b and c". */

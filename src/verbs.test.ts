@@ -199,13 +199,13 @@ describe("url", () => {
 describe("skill", () => {
 	it("prints the overview with every verb and the topic index", () => {
 		const text = skillText();
-		for (const verb of ["init", "open", "remove", "selection", "flows", "shot", "logs", "url", "skill"]) {
+		for (const verb of ["init", "open", "remove", "selection", "flows", "shot", "logs", "url", "skill", "comments"]) {
 			expect(text).toContain(`spool ${verb}`);
 		}
 	});
 
 	it("prints every listed topic", () => {
-		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "verbs"]) {
+		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "verbs", "comments"]) {
 			expect(skillText(topic).length).toBeGreaterThan(100);
 		}
 	});
@@ -230,7 +230,7 @@ describe("skill", () => {
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
 		expect(() => skillText("vibes")).toThrowError(
-			/frames, flows, sharing, team, history, scenarios, styling, shaders, verbs/,
+			/frames, flows, sharing, team, comments, history, scenarios, styling, shaders, verbs/,
 		);
 		expect(() => skillText("frames", "vibes")).toThrowError(/no skill topic "vibes"/);
 	});

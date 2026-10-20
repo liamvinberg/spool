@@ -109,7 +109,7 @@ it("says a clash once, as a notice, and each of its three actions works", { time
 	await notice.getByRole("button", { name: "Ask agent to fix" }).click();
 	await expect.poll(told, { timeout: 30_000 }).toContain("My changes to these files in this team project clashed");
 	expect(told()).toMatch(
-		/design\/shared\/ui\/go\.tsx: ana@devosurf\.com's version is in the file now\. Mine is in design\/\.spool\/set-aside\/[0-9a-f-]+\/go\.tsx/u,
+		/design\/shared\/ui\/go\.tsx: ana's version is in the file now\. Mine is in design\/\.spool\/set-aside\/[0-9a-f-]+\/go\.tsx/u,
 	);
 
 	// Use mine: an ordinary new save on top, which reaches Ana, and the notice goes

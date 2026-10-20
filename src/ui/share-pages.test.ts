@@ -65,7 +65,8 @@ describe("sharing a page", () => {
 
 	it("says whom a share is for and when, as people say it", () => {
 		expect(shareWho({ kind: "link", people: [] })).toBe("anyone with the link");
-		expect(shareWho({ kind: "people", people: ["kim@client.com", "ola.n@client.com"] })).toBe("kim and ola");
+		// an invitee is their address before the @, as anyone without a name is
+		expect(shareWho({ kind: "people", people: ["kim@client.com", "ola.n@client.com"] })).toBe("kim and ola.n");
 		expect(shareWho({ kind: "people", people: ["a@x.se", "b@x.se", "c@x.se"] })).toBe("a, b and c");
 		const now = 2_000_000_000;
 		expect(saidAgo(now - 20, now)).toBe("just now");

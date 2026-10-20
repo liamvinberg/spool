@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { ROOT_PAGE } from "../page-path";
 import {
 	type ProjectShares,
-	personName,
+	type ShareCommenter,
 	type SharesSource,
 	type ShareView,
 	saidAgo,
@@ -12,6 +12,8 @@ import {
 } from "../share-view";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
+import { Button } from "./primitives/actions";
+import { TextAction } from "./primitives/feedback";
 import { TextField } from "./primitives/inputs";
 import { Popover } from "./primitives/overlays";
 import { TeamActionRefused, teamSays } from "./team-source";
@@ -230,8 +232,15 @@ function OpenedShare({
 					</form>
 				</>
 			)}
+			<ShareCommentersList
+				share={share}
+				source={source}
+				manage
+				onChanged={onChanged}
+				className="border-line-strong border-t px-3.5 pb-1"
+			/>
 			<p className="truncate border-line-strong border-t px-3.5 pt-2 text-secondary type-detail">
-				{personName(share.by)} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
+				{share.by} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
 			</p>
 			<div className="flex h-8 items-center justify-between px-3.5">
 				{share.link === undefined ? (
@@ -259,6 +268,89 @@ function OpenedShare({
 				</button>
 			</div>
 			<p className="px-3.5 pb-2.5 text-secondary type-caption">Their access stops at once.</p>
+		</div>
+	);
+}
+
+/**
+ * Who has commented through a share (spool#174), each with how much of theirs stands there, and Block for whoever
+ * changes shares: what they wrote through the share goes, and they write there no more. Nothing when nobody has, or
+ * where shares have no comments (a solo project's).
+ */
+export function ShareCommentersList({
+	share,
+	source,
+	manage,
+	onChanged,
+	className,
+}: {
+	share: ShareView;
+	source: SharesSource;
+	manage: boolean;
+	onChanged: (refused: string | null) => void;
+	className?: string | undefined;
+}) {
+	const [commenters, setCommenters] = useState<ShareCommenter[] | null>(null);
+	const [asking, setAsking] = useState<string | null>(null);
+	const [revision, setRevision] = useState(0);
+	// read again after each Block, which `revision` counts
+	useEffect(() => {
+		let live = true;
+		if (revision >= 0)
+			void source.commenters?.(share.id).then((read) => {
+				if (live) setCommenters(read);
+			});
+		return () => {
+			live = false;
+		};
+	}, [source, share.id, revision]);
+	if (source.commenters === undefined || commenters === null || commenters.length === 0) return null;
+	const block = async (account: string) => {
+		setAsking(null);
+		const refused = (await source.block?.(share.id, account)) ?? "unavailable";
+		onChanged(refused);
+		setRevision((was) => was + 1);
+	};
+	return (
+		<div className={cn("flex flex-col", className)} data-share-commenters={share.id}>
+			<p className="flex h-7 items-center text-secondary type-detail">commented through this share</p>
+			<ul className="flex flex-col">
+				{commenters.map((one) => (
+					<li key={one.account} className="flex flex-col" data-share-commenter={one.account}>
+						<div className="flex h-7 items-center gap-2 type-detail">
+							<span className="min-w-0 flex-1 truncate text-primary">{one.name}</span>
+							{one.blocked ? (
+								<span className="shrink-0 text-tertiary">blocked</span>
+							) : (
+								<>
+									<span className="shrink-0 text-secondary">
+										{one.posts} {one.posts === 1 ? "comment" : "comments"} · {saidAgo(one.last / 1000)}
+									</span>
+									{manage && (
+										<TextAction
+											className="-mr-1.5"
+											aria-expanded={asking === one.account}
+											onClick={() => setAsking(asking === one.account ? null : one.account)}
+										>
+											Block
+										</TextAction>
+									)}
+								</>
+							)}
+						</div>
+						{asking === one.account && (
+							<div className="flex items-center gap-2 pb-1.5">
+								<span className="min-w-0 flex-1 text-secondary type-label">
+									What they wrote here goes, and they can't comment through this share again.
+								</span>
+								<Button size="sm" variant="danger" onClick={() => void block(one.account)}>
+									Block
+								</Button>
+							</div>
+						)}
+					</li>
+				))}
+			</ul>
 		</div>
 	);
 }

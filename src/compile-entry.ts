@@ -27,6 +27,9 @@
  * stands, is `projectDesign`: the read-only canvas in a browser draws a team
  * project from it, and `coverFrame` is the frame its cover on Home pictures.
  *
+ * `elementHandles` names an element a browser picked in a frame by the four
+ * handles a comment carries, from the stamp and the text of the file it names.
+ *
  * Importing this module runs nothing: no file is read and no dependency is
  * called until a compile is.
  */
@@ -58,5 +61,7 @@ export {
 	TAILWIND_STYLESHEETS,
 	type TailwindStylesheets,
 } from "./daemon/tailwind";
+/** An element's handles from its stamp and the text of the file it names, for a comment a browser places. */
+export { designStamp, type ElementHandles, elementHandles, type PickedElement } from "./element-handles";
 /** The `design/` format this compile reads: a canvas.json stamped with a newer one is not this release's to compile. */
 export { FORMAT_VERSION } from "./templates";

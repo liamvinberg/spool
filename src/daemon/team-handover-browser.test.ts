@@ -40,6 +40,7 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 			account: async () => ({
 				accountId: "ana",
 				email: "ana@example.test",
+				name: "ana",
 				sessionId: "s",
 				expiresAt: Date.now() + 3_600_000,
 			}),

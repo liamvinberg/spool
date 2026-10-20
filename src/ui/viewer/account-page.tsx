@@ -1,11 +1,14 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { personName } from "../../person-name";
 import { cn } from "../cn";
 import { Button } from "../primitives/actions";
-import type { AccountSource, AccountSummary } from "./account-source";
+import { TextField } from "../primitives/inputs";
+import { Segment, SegmentedControl } from "../primitives/selection";
+import type { AccountSource, AccountSummary, CommentEmails } from "./account-source";
 
 /**
- * spool.page/account, in Home's sidebar like a team's pages: who is signed in, the Macs signed in as them, their
- * passkeys and the way out of this browser. Passkeys are made here, since a passkey belongs to spool.page.
+ * spool.page/account, in Home's sidebar like a team's pages: who is signed in and their name, whether they get
+ * comment emails, the Macs signed in as them, their passkeys and the way out of this browser. Passkeys are made here, since a passkey belongs to spool.page.
  */
 export function AccountPage({
 	source,
@@ -23,6 +26,7 @@ export function AccountPage({
 	const [summary, setSummary] = useState<AccountSummary | undefined>();
 	const [notice, setNotice] = useState<string | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
+	const [refused, setRefused] = useState(false);
 	const read = useCallback(async () => {
 		const next = await source.summary();
 		if (next === null) onSignedOut();
@@ -34,10 +38,12 @@ export function AccountPage({
 	const act = async (key: string, action: () => Promise<void>, quiet = false) => {
 		setBusy(key);
 		setNotice(null);
+		setRefused(false);
 		try {
 			await action();
-		} catch {
-			if (!quiet) setNotice(UNREACHABLE);
+		} catch (error) {
+			if (error instanceof NameRefused) setRefused(true);
+			else if (!quiet) setNotice(UNREACHABLE);
 		}
 		await read().catch(() => setNotice(UNREACHABLE));
 		setBusy(null);
@@ -60,13 +66,67 @@ export function AccountPage({
 							className="grid h-[40px] w-[40px] shrink-0 place-items-center rounded-full bg-surface-control text-primary uppercase type-control"
 							aria-hidden="true"
 						>
-							{summary.email.slice(0, 1)}
+							{[...personName(summary)][0]}
 						</span>
 						<span className="flex min-w-0 flex-col gap-[2px]">
-							<span className="truncate type-control">{summary.email}</span>
-							{teams && <span className="text-secondary type-label">{teamsLine(teams)}</span>}
+							<span className="truncate type-control">{personName(summary)}</span>
+							<span className="truncate text-secondary type-label">
+								{summary.email}
+								{teams && (
+									<>
+										{" · "}
+										<span>{teamsLine(teams)}</span>
+									</>
+								)}
+							</span>
 						</span>
 					</div>
+
+					<Group
+						title="Name"
+						says="What everyone else sees of you: on your pointer, your comments and what you share."
+					>
+						<NameRow
+							key={summary.name ?? ""}
+							summary={summary}
+							busy={busy !== null}
+							onRename={(name) =>
+								act("name", async () => {
+									if (!(await source.rename(name))) throw new NameRefused();
+								})
+							}
+							refused={refused}
+						/>
+					</Group>
+
+					{summary.commentEmails !== undefined && (
+						<Group
+							title="Comment emails"
+							says="One email a few minutes after a comment is meant for you, unless you read it first."
+						>
+							<Row
+								title="Comments for you"
+								says="Mentions of you, replies in comments you’re in, and outsiders’ comments on shares you made. Every email can turn them off too."
+								control={
+									<SegmentedControl
+										label="Comment emails"
+										value={summary.commentEmails}
+										onValueChange={(value) => {
+											const emails: CommentEmails = value === "off" ? "off" : "for-you";
+											void act("emails", () => source.setCommentEmails(emails));
+										}}
+									>
+										<Segment value="for-you" disabled={busy !== null}>
+											For you
+										</Segment>
+										<Segment value="off" disabled={busy !== null}>
+											Off
+										</Segment>
+									</SegmentedControl>
+								}
+							/>
+						</Group>
+					)}
 
 					<Group
 						title="Macs"
@@ -156,6 +216,54 @@ export function AccountPage({
 }
 
 const UNREACHABLE = "spool.page can’t be reached just now. Try again.";
+
+/** spool.page took no name: it said why only as a refusal, and the row says the rule. */
+class NameRefused extends Error {}
+
+/** The account's name, typed over and saved; empty, it says what everyone sees until there is one. */
+function NameRow({
+	summary,
+	busy,
+	refused,
+	onRename,
+}: {
+	summary: AccountSummary;
+	busy: boolean;
+	refused: boolean;
+	onRename: (name: string) => void;
+}) {
+	const [draft, setDraft] = useState(summary.name ?? "");
+	const typed = draft.trim();
+	return (
+		<form
+			className="flex min-h-[58px] flex-col justify-center gap-[6px] border-line-default border-t py-[12px]"
+			onSubmit={(event) => {
+				event.preventDefault();
+				onRename(typed);
+			}}
+		>
+			<span className="flex gap-[8px]">
+				<TextField
+					size="lg"
+					className="w-[280px]"
+					value={draft}
+					onValueChange={setDraft}
+					placeholder={personName({ email: summary.email })}
+					label="Name"
+					error={refused}
+				/>
+				<Button type="submit" disabled={busy || typed === "" || typed === summary.name}>
+					Save
+				</Button>
+			</span>
+			{refused && (
+				<span role="alert" className="text-danger-strong type-label">
+					A name is 1 to 64 characters, with no hidden ones.
+				</span>
+			)}
+		</form>
+	);
+}
 
 function Group({
 	title,

@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { personName } from "../person-name";
 import type { BillingCycle, CloudTeam, PeopleBilling, TeamSetup } from "./api";
 import { cn } from "./cn";
 import { DOWNLOAD_URL } from "./desktop-bridge";
@@ -72,7 +73,7 @@ export function setupSteps(team: CloudTeam, setup: TeamSetup, host: Pick<SetupHo
 					? null
 					: host.on === "mac" && mac.email === host.you
 						? "Signed in on this Mac"
-						: `Signed in as ${mac.email}`,
+						: `Signed in as ${personName(mac)}`,
 		},
 		{ id: "moved", title: "Move a project in", result: moved === "skipped" ? "Skipped" : (moved?.project ?? null) },
 	);

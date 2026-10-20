@@ -20,9 +20,12 @@ import {
 	zoomFloor,
 } from "../canvas/camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/camera-store";
+import { COMMENT_CURSOR } from "../canvas/comment-cursor";
+import { CommentsLayer, clickAway, commentWorld } from "../canvas/comments-layer";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
+import { type ElementPreview, PreviewIn } from "../canvas/overlays";
 import { createPresenceRoom } from "../canvas/presence";
 import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
 import { PresenceLayer } from "../canvas/presence-layer";
@@ -31,16 +34,18 @@ import { useFollow, usePointerHidden, usePresenceSender } from "../canvas/use-pr
 import { handoverAddress, knock } from "../handover";
 import { FolderIcon, FrameIcon } from "../icons";
 import { Divider } from "../primitives/display";
-import { Toast } from "../primitives/feedback";
+import { TextAction, Toast } from "../primitives/feedback";
 import { Bar, Panel, ScrollArea, StatusLine, TreeRow } from "../primitives/structure";
 import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
+import { type LinkSignedIn, signOutHere, type ViewerLinkSignIn } from "./link-sign-in";
 import { Navigator, type NavigatorToast } from "./navigator";
 import { onPhone } from "./phone";
 import { SharedLink } from "./shared-link";
 import {
 	address,
 	edits,
+	linkedComment,
 	listen,
 	locate,
 	readProject,
@@ -50,17 +55,32 @@ import {
 	type ViewerShared,
 	viewerShares,
 } from "./source";
+import {
+	askPick,
+	CommentsButton,
+	CommentsPanel,
+	placeComment,
+	useCommentKeys,
+	useOutsiderComments,
+	useViewerComments,
+	ViewerCommentsList,
+	ViewerTools,
+} from "./viewer-comments";
 import { ViewerPlayer } from "./viewer-player";
 import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
+import { CommentsTip, markTipSeen, SignInDialog, tipSeen } from "./viewer-sign-in";
 
 /**
  * The read-only canvas (DEV-114): the shipped canvas with every authoring
  * control taken off, for anyone looking at a team project in a browser. The
  * pages rail stays, the camera is this browser's own, frames are live, and a
- * click grows a frame into the player. There is no tool, pane, agent or
- * selection, and nothing here sends anything anywhere but reads: it is fed one
- * project by `readProject`, and every frame's document comes from the frames'
- * own origin.
+ * click grows a frame into the player. There is no pane, agent or selection,
+ * and nothing about the project changes from here: it is fed one project by
+ * `readProject`, and every frame's document comes from the frames' own origin.
+ *
+ * A member comments here as on the Mac (spool#173): a Pointer and a Comment
+ * tool, the Mac's pins and cards, and the Comments list in a panel. Comments
+ * are the one thing the canvas writes, besides an editor's shares.
  */
 export function Viewer({ config }: { config: ViewerConfig }) {
 	// undefined while it is being read, null when there is no project to read
@@ -325,6 +345,189 @@ function ViewerCanvas({
 		return () => window.removeEventListener("popstate", onPop);
 	}, [config]);
 
+	// --- comments (spool#173): a member's, written to spool.page and heard on the presence socket
+	const commentsUrl = useMemo(() => new URL(address(config, ROOT_PAGE, null), window.location.href).href, [config]);
+	// an outsider's (spool#174): once signed in, their share's alone, on a socket of their own
+	const outsiderShare = project.outsider;
+	const [signedInHere, setSignedInHere] = useState<LinkSignedIn | null>(null);
+	// spool.page cut their comments off: blocked, or signed out (their session ended, or they signed out elsewhere)
+	const [cutOff, setCutOff] = useState(false);
+	const outsiderMe = cutOff ? null : (signedInHere ?? outsiderShare?.me ?? null);
+	const outsiderHeard = useOutsiderComments(
+		outsiderShare !== undefined && outsiderMe !== null ? outsiderShare.socket : undefined,
+		(blocked) => {
+			setCutOff(true);
+			setSignedInHere(null);
+			if (blocked) onNotice("The team has blocked you from commenting on this share.");
+			else if (outsiderShare?.signIn !== undefined) setAsked("none");
+		},
+	);
+	// signing out of a link's host: its comments go at once, and spool.page ends the session behind them
+	const signOut = (link: ViewerLinkSignIn | undefined) => {
+		if (link === undefined) return;
+		setCutOff(true);
+		setSignedInHere(null);
+		void signOutHere(link);
+	};
+	const comments = useViewerComments(project, presence ?? outsiderHeard, commentsUrl, onNotice, outsiderMe);
+	useCommentKeys(played === null ? comments : null);
+	// signed out on a link share: the frames open, and everything that needs the comments asks them to sign in first
+	const signIn = outsiderMe === null ? outsiderShare?.signIn : undefined;
+	const [asked, setAsked] = useState<Reached | null>(null);
+	const [reached, setReached] = useState<Reached | null>(null);
+	const [tip, setTip] = useState(
+		() => signIn !== undefined && outsiderShare !== undefined && !tipSeen(outsiderShare.share.id),
+	);
+	// said once: shown is seen, whether or not it is answered
+	const tipShare = tip ? outsiderShare?.share.id : undefined;
+	useEffect(() => {
+		if (tipShare !== undefined) markTipSeen(tipShare);
+	}, [tipShare]);
+	const closeTip = useCallback(() => setTip(false), []);
+	const askSignIn = useCallback(
+		(intent: Reached) => {
+			closeTip();
+			setAsked(intent);
+		},
+		[closeTip],
+	);
+	// what they reached for carries on once they have signed in and the comments are there
+	useEffect(() => {
+		if (reached === null || comments === null) return;
+		if (reached === "tool") comments.setTool("comment");
+		if (reached === "list") comments.setPanel(true);
+		setReached(null);
+	}, [reached, comments]);
+	useEffect(() => {
+		if (signIn === undefined || played !== null) return;
+		const down = (event: KeyboardEvent) => {
+			const target = event.target;
+			if (target instanceof HTMLElement && (target.isContentEditable || target.tagName === "INPUT")) return;
+			if (event.code !== "KeyC" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+			if (event.repeat) return;
+			askSignIn("tool");
+		};
+		window.addEventListener("keydown", down);
+		return () => window.removeEventListener("keydown", down);
+	}, [signIn, played, askSignIn]);
+	const sharedBy = project.shared?.by ?? "The";
+	/**
+	 * The comment to go to: its page first, then its pin, flown to with the zoom kept, and its card opened. A Copy
+	 * link (`?comment=<id>`) names one when the canvas opens, and is taken off the address once it is open; a row
+	 * in the Comments list names one when pressed.
+	 */
+	const [aim, setAim] = useState<{ id: string; link: boolean } | null>(() => {
+		const id = linkedComment(new URL(window.location.href));
+		return id === null ? null : { id, link: true };
+	});
+	// a link to a comment (an email's, say) while signed out asks them in first, and goes to it once they are
+	const linkedSignedOut = aim?.link === true && signIn !== undefined;
+	useEffect(() => {
+		if (linkedSignedOut) setAsked((was) => was ?? "none");
+	}, [linkedSignedOut]);
+	useEffect(() => {
+		if (aim === null || comments === null) return;
+		const comment = comments.comments.find((each) => each.id === aim.id);
+		if (comment === undefined) {
+			// not among them yet: wait until every comment has been heard, then it isn't there
+			if (!comments.heard) return;
+			if (aim.link) {
+				window.history.replaceState(window.history.state, "", address(config, page, played));
+				onNotice("That comment isn’t here anymore.");
+			}
+			setAim(null);
+			return;
+		}
+		const goes = comment.standing !== "deleted-page" && (comment.page === ROOT_PAGE || known.has(comment.page));
+		if (goes && comment.page !== page) {
+			go({ page: comment.page, frame: null }, aim.link ? "replace" : "push");
+			return;
+		}
+		if (size.w === 0) return;
+		comments.store.set({ commentOpen: comment.id, commentDraft: null });
+		const world = goes ? commentWorld(comment, frames) : undefined;
+		const at = camera.get();
+		if (world !== undefined && at !== null)
+			camera.fly({ k: at.k, x: size.w / 2 - world.x * at.k, y: size.h / 2 - world.y * at.k });
+		if (aim.link) window.history.replaceState(window.history.state, "", address(config, page, played));
+		setAim(null);
+	}, [aim, comments, config, page, played, known, frames, go, camera, size.w, size.h, onNotice]);
+	const placing = comments?.tool === "comment";
+	/**
+	 * What is under a point on screen: the world point, and the frame drawn on top there, where frames overlap, with
+	 * the point in its own pixels and its live document, when it has one.
+	 */
+	const under = (clientX: number, clientY: number) => {
+		const box = viewport.current?.getBoundingClientRect();
+		const at = camera.get();
+		if (box === undefined || at === null) return null;
+		const world = { x: (clientX - box.left - at.x) / at.k, y: (clientY - box.top - at.y) / at.k };
+		const frame = [...frames]
+			.reverse()
+			.find(
+				(each) =>
+					world.x >= each.x && world.x <= each.x + each.w && world.y >= each.y && world.y <= each.y + each.h,
+			);
+		if (frame === undefined) return { world, frame: null };
+		const document =
+			viewport.current?.querySelector<HTMLIFrameElement>(
+				`[data-viewer-frame="${CSS.escape(frame.name)}"] iframe[title="${CSS.escape(frame.name)}"]`,
+			) ?? null;
+		return { world, frame: { name: frame.name, at: { x: world.x - frame.x, y: world.y - frame.y }, document } };
+	};
+	/** A press under the Comment tool: a pin on the frame under it, at the frame's own point, or on the field. */
+	const placeAt = (event: React.PointerEvent) => {
+		const found = under(event.clientX, event.clientY);
+		if (comments === null || found === null) return;
+		if (found.frame === null) return placeComment(comments, { page, frame: null, at: found.world }, null);
+		placeComment(comments, { page, frame: found.frame.name, at: found.frame.at }, found.frame.document);
+	};
+
+	/**
+	 * Under the Comment tool, the element a press would point at, outlined as the Mac outlines it (spool#173): asked
+	 * of the frame's own document, which answers a pick from any canvas that holds it. One ask is out at a time, and
+	 * the pointer's newest point is asked next, so the outline keeps up with the hand without queueing behind it.
+	 */
+	const [hover, setHover] = useState<ElementPreview | null>(null);
+	const hoverAsk = useRef<{ busy: boolean; next: { x: number; y: number } | null }>({ busy: false, next: null });
+	const placingNow = useRef(placing);
+	placingNow.current = placing;
+	const hoverAt = (clientX: number, clientY: number) => {
+		const ask = hoverAsk.current;
+		ask.next = { x: clientX, y: clientY };
+		if (ask.busy) return;
+		const point = ask.next;
+		ask.next = null;
+		const found = under(point.x, point.y)?.frame;
+		if (found === undefined || found === null || found.document === null) return setHover(null);
+		ask.busy = true;
+		void askPick(found.document, found.at).then((hit) => {
+			ask.busy = false;
+			if (!placingNow.current) return setHover(null);
+			setHover(
+				hit === undefined
+					? null
+					: {
+							frame: found.name,
+							selector: hit.selector,
+							rect: hit.rect,
+							...(hit.rects === undefined ? {} : { rects: hit.rects }),
+							radius: hit.radius,
+						},
+			);
+			const later = ask.next;
+			if (later !== null) hoverAt(later.x, later.y);
+		});
+	};
+	const hoverOff = useCallback(() => {
+		hoverAsk.current.next = null;
+		setHover(null);
+	}, []);
+	useEffect(() => {
+		if (!placing) hoverOff();
+	}, [placing, hoverOff]);
+	const hoverFrame = hover === null ? undefined : frames.find((frame) => frame.name === hover.frame);
+
 	// out no further than the whole page fitting the view (DEV-289); a ref, so the wheel reads today's page
 	const floor = useRef<number | undefined>(undefined);
 	floor.current = frames.length === 0 ? undefined : zoomFloor(boundsOf(frames), size.w, size.h);
@@ -334,6 +537,9 @@ function ViewerCanvas({
 		const el = viewport.current;
 		if (el === null) return;
 		const onWheel = (event: WheelEvent) => {
+			// a comment's card scrolls its own words
+			if (event.target instanceof Element && event.target.closest("[data-comment-card], [data-comment-composer]"))
+				return;
 			event.preventDefault();
 			const at = camera.get();
 			if (at === null) return;
@@ -360,11 +566,15 @@ function ViewerCanvas({
 	const onPointerMove = (event: React.PointerEvent) => {
 		const held = drag.current;
 		const at = camera.get();
+		if (placing && (held === null || !held.moved)) hoverAt(event.clientX, event.clientY);
 		if (held === null || held.id !== event.pointerId || at === null) return;
 		const dx = event.clientX - held.x;
 		const dy = event.clientY - held.y;
 		if (!held.moved && Math.hypot(dx, dy) < 3) return;
-		if (!held.moved) event.currentTarget.setPointerCapture(event.pointerId);
+		if (!held.moved) {
+			event.currentTarget.setPointerCapture(event.pointerId);
+			hoverOff();
+		}
 		held.moved = true;
 		held.x = event.clientX;
 		held.y = event.clientY;
@@ -374,6 +584,11 @@ function ViewerCanvas({
 		const held = drag.current;
 		drag.current = null;
 		if (held === null || held.moved || held.id !== event.pointerId) return;
+		if (comments !== null) {
+			if (comments.tool === "comment") return placeAt(event);
+			// a click away puts down an open card or the composer before it plays anything
+			if (clickAway(comments.store)) return;
+		}
 		// a click, not a drag: on a frame it plays the frame
 		const frame = (event.target as Element).closest<HTMLElement>("[data-viewer-frame]")?.dataset.viewerFrame;
 		if (frame !== undefined) play(frame);
@@ -447,14 +662,38 @@ function ViewerCanvas({
 					if (frame !== undefined) flyTo(frame);
 				}}
 				onPlay={play}
+				foot={
+					outsiderMe !== null ? (
+						<>
+							<span className="truncate" data-viewer-signed-in="">
+								{outsiderMe.name}
+							</span>
+							{/* a link's host is signed in on alone, so it signs out here too */}
+							{outsiderShare?.signIn === undefined ? null : (
+								<TextAction className="-mr-1.5" onClick={() => signOut(outsiderShare.signIn)}>
+									Sign out
+								</TextAction>
+							)}
+						</>
+					) : signIn !== undefined ? (
+						<>
+							<span className="truncate">not signed in</span>
+							<TextAction className="-mr-1.5" onClick={() => askSignIn("none")}>
+								Sign in
+							</TextAction>
+						</>
+					) : undefined
+				}
 			/>
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-surface-canvas">
 				<div
 					ref={viewport}
 					data-viewer-field=""
-					className="absolute inset-0 cursor-default touch-none"
+					className="absolute inset-0 touch-none"
+					style={{ cursor: placing ? COMMENT_CURSOR : "default" }}
 					onPointerDown={onPointerDown}
 					onPointerMove={onPointerMove}
+					onPointerLeave={hoverOff}
 					onPointerUp={onPointerUp}
 					onPointerCancel={() => {
 						drag.current = null;
@@ -472,6 +711,7 @@ function ViewerCanvas({
 									src={live.has(frame.name) ? `${project.frames}${encodeURIComponent(frame.name)}` : null}
 									revision={revisions.get(frame.name) ?? 0}
 									cover={project.covers?.[frame.name]}
+									placing={placing}
 									onPlay={() => play(frame.name)}
 								/>
 							))}
@@ -497,19 +737,68 @@ function ViewerCanvas({
 							nothing on this page yet
 						</div>
 					)}
+					{hoverFrame !== undefined && hover !== null && (
+						<div className="pointer-events-none absolute inset-0" data-comment-hover={hover.selector}>
+							<PreviewIn camera={camera} frame={hoverFrame} preview={hover} />
+						</div>
+					)}
 					{room !== undefined && <PresenceLayer room={room} camera={camera} frames={frames} page={page} />}
+					{comments !== null && (
+						<CommentsLayer
+							context={comments.context}
+							store={comments.store}
+							camera={camera}
+							frames={frames}
+							page={page}
+							comments={comments.comments}
+						/>
+					)}
 				</div>
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
 					{project.shared !== undefined && <SharedLine shared={project.shared} />}
+					{comments !== null ? (
+						<CommentsButton
+							comments={comments}
+							open={comments.panel}
+							onClick={() => comments.setPanel(!comments.panel)}
+						/>
+					) : signIn !== undefined ? (
+						<CommentsButton comments={null} open={false} onClick={() => askSignIn("list")} />
+					) : null}
 					{project.shares !== undefined && <ProjectShared address={project.shares} manage={edits(project.role)} />}
 					{edits(project.role) && <OpenInSpool project={project} onNotice={onNotice} />}
 					{room !== undefined && (
 						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
 					)}
 				</div>
+				{comments?.writes === true ? (
+					<ViewerTools tool={comments.tool} onTool={comments.setTool} />
+				) : signIn !== undefined ? (
+					<ViewerTools
+						tool="pointer"
+						onTool={(tool) => tool === "comment" && askSignIn("tool")}
+						signedOut
+						tip={tip ? <CommentsTip by={sharedBy} onDone={closeTip} /> : undefined}
+					/>
+				) : null}
+				{asked !== null && signIn !== undefined && (
+					<SignInDialog
+						signIn={signIn}
+						by={sharedBy}
+						onSignedIn={(me) => {
+							setCutOff(false);
+							setSignedInHere(me);
+							setReached(asked);
+							setAsked(null);
+						}}
+						onClose={() => setAsked(null)}
+					/>
+				)}
 				{toast !== null && (
-					<div className="-translate-x-1/2 pointer-events-none absolute bottom-4 left-1/2">
+					<div
+						className={`-translate-x-1/2 pointer-events-none absolute left-1/2 ${comments === null && signIn === undefined ? "bottom-4" : "bottom-20"}`}
+					>
 						<Toast message={toast} />
 					</div>
 				)}
@@ -541,6 +830,16 @@ function ViewerCanvas({
 					</button>
 				</div>
 			</div>
+			{comments !== null && (
+				<CommentsPanel open={comments.panel} onClose={() => comments.setPanel(false)}>
+					<ViewerCommentsList
+						comments={comments}
+						page={page}
+						project={project.project}
+						onPick={(comment) => setAim({ id: comment.id, link: false })}
+					/>
+				</CommentsPanel>
+			)}
 			{played !== null && (
 				<ViewerPlayer
 					project={project.project}
@@ -604,12 +903,15 @@ function FieldFrame({
 	src,
 	revision,
 	cover,
+	placing,
 	onPlay,
 }: {
 	frame: DesignFrame;
 	camera: CameraStore;
 	near: NearScreen;
 	src: string | null;
+	/** the Comment tool is on: a press places a pin rather than playing the frame */
+	placing: boolean;
 	/** How many times the frame has been made again since the canvas opened. */
 	revision: number;
 	cover: string | undefined;
@@ -653,7 +955,8 @@ function FieldFrame({
 				<button
 					type="button"
 					aria-label={`Play ${pageName(frame.name)}`}
-					className="absolute inset-0 cursor-pointer bg-transparent"
+					className="absolute inset-0 bg-transparent"
+					style={{ cursor: placing ? COMMENT_CURSOR : "pointer" }}
 					onPointerDown={(event) => event.preventDefault()}
 					onClick={(event) => event.detail === 0 && onPlay()}
 				/>
@@ -787,6 +1090,7 @@ function PagesRail({
 	onPage,
 	onFrame,
 	onPlay,
+	foot,
 }: {
 	project: ViewerProject;
 	page: string;
@@ -794,6 +1098,8 @@ function PagesRail({
 	onPage: (page: string) => void;
 	onFrame: (frame: string) => void;
 	onPlay: (frame: string) => void;
+	/** an outsider's foot (spool#174): their name once signed in, or Sign in on a link share */
+	foot?: ReactNode;
 }) {
 	const { canvas } = project;
 	const tree = useMemo(() => mergePageTree(canvas.order.pages, canvas.pages), [canvas]);
@@ -904,14 +1210,19 @@ function PagesRail({
 					) : null,
 				)}
 			</ScrollArea>
-			{project.account !== null && (
+			{foot !== undefined ? (
+				<StatusLine>{foot}</StatusLine>
+			) : project.account !== null ? (
 				<StatusLine>
 					<span className="truncate">{project.account}</span>
 				</StatusLine>
-			)}
+			) : null}
 		</Panel>
 	);
 }
+
+/** What a link share's holder reached for before signing in, which carries on once they have (spool#174). */
+type Reached = "tool" | "list" | "none";
 
 /** The zoom, as a percentage, written as the camera moves and never rendered. */
 function ZoomReadout({ camera }: { camera: CameraStore }) {

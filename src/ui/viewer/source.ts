@@ -1,13 +1,18 @@
 import type { DesignProjection } from "../../daemon/design-projection";
 import { reconnectBackoff } from "../../reconnect-backoff";
-import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
+import { type ProjectShares, readCommenters, type SharesSource, type ShareView } from "../../share-view";
 import {
+	CLOSE_SIGNED_OUT,
+	type CommentsMessage,
+	isRecord,
 	type Presence,
 	type PresenceState,
+	readCommentsMessage,
 	readPresence,
 	readPresenceHidden,
 	readPresences,
 } from "../../team-sync-protocol";
+import type { ViewerLinkSignIn } from "./link-sign-in";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -55,12 +60,39 @@ export interface ViewerProject {
 	 * the page's own origin. An outsider has none: they see nobody and are seen by nobody.
 	 */
 	presence?: string;
+	/**
+	 * For a member: where their comments are written, on the page's own origin (spool#173): a new comment is posted to
+	 * it, and each one is changed under `<comments>/<id>`. The comments themselves arrive on the presence socket. An
+	 * outsider has none, so sees no comments and no Comment tool.
+	 */
+	comments?: string;
+	/** For a member: where the team's people are read, whom a comment can @mention. */
+	people?: string;
+	/** For a member: their account, which tells their own comments from everyone else's. */
+	me?: string;
 	/** Each frame's cover, by its name: an image a member's daemon took, on the page's own origin. */
 	covers?: Record<string, string>;
+	/** For an admin of a lapsed team: its comments are read, never written, until it pays again. */
+	unpaid?: boolean;
 	/** Where spool for Mac is got, for whoever has no spool. */
 	download?: string;
 	/** For a member: the frames saved to last, newest first, from the team's history. */
 	recent?: ViewerRecent[];
+	/** For an outsider on a team project's share: their share's comments (spool#174). */
+	outsider?: ViewerOutsider;
+}
+
+/**
+ * What an outsider's canvas is told of their share's comments (spool#174): the share, whom it names by name (none for
+ * a link share), who they are once signed in (null until then), where its comments are written and heard, and on a
+ * link share's own host where its sign-in runs.
+ */
+export interface ViewerOutsider {
+	share: { id: string; kind: "people" | "link"; who: string[] };
+	me: { id: string; name: string } | null;
+	comments: string;
+	socket: string;
+	signIn?: ViewerLinkSignIn;
 }
 
 /** A frame as saved to last: who saved it, by name, and when (seconds). */
@@ -103,11 +135,18 @@ const SILENT_MS = 10_000;
  * Hold a WebSocket to an address on the page's own origin open for as long as the canvas is, connecting again after
  * a spread-out, growing wait when it drops (`reconnectBackoff`). It asks whether it is still there every `PING_MS`, and straight away when the
  * page comes back into view or the network returns; one that stays silent past `SILENT_MS` died without a close,
- * as one does when the laptop sleeps, and is dropped and opened again rather than waited on.
+ * as one does when the laptop sleeps, and is dropped and opened again rather than waited on. One spool.page closes
+ * as signed out (blocked, cut off, or its session gone) is never opened again, which would only be refused: `ended`
+ * says so.
  */
 function keepOpen(
 	address: string,
-	on: { opened?: (socket: WebSocket) => void; heard: (data: unknown) => void; dropped?: () => void },
+	on: {
+		opened?: (socket: WebSocket) => void;
+		heard: (data: unknown) => void;
+		dropped?: () => void;
+		ended?: (reason: string) => void;
+	},
 ): () => void {
 	const url = new URL(address, window.location.href);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -124,12 +163,16 @@ function keepOpen(
 		deadline = undefined;
 	};
 	/** The socket is gone, said once whether it closed or died silent; a later word from it is never heard. */
-	const lost = (gone: WebSocket) => {
+	const lost = (gone: WebSocket, closed?: { code: number; reason: string }) => {
 		if (socket !== gone) return;
 		socket = undefined;
 		quiet();
 		if (stopped) return;
 		on.dropped?.();
+		if (closed?.code === CLOSE_SIGNED_OUT) {
+			stopped = true;
+			return on.ended?.(closed.reason);
+		}
 		retry = setTimeout(connect, backoff.next());
 	};
 	const awaitWord = (from: WebSocket) => {
@@ -163,7 +206,7 @@ function keepOpen(
 			deadline = undefined;
 			on.heard(event.data);
 		});
-		opening.addEventListener("close", () => lost(opening));
+		opening.addEventListener("close", (event) => lost(opening, event));
 	};
 	/** Back in view or back online: a socket that died meanwhile is found now, and a wait to reconnect is cut short. */
 	const recheck = () => {
@@ -210,10 +253,21 @@ export interface PresenceLink {
  * Take part in presence on the project's canvas (DEV-197), as the Mac's canvas does through its daemon: hear where
  * everyone else is, and say where this person is. A connection that comes back is told who's here afresh, so
  * `dropped` forgets everyone first, and it is told where this person last was again.
+ *
+ * The same socket brings a member's comments (spool#173): every one they may read when it opens, then each change as
+ * it is made, heard by `comments`. `opened` says it is connected, which is when a comment can be written.
  */
 export function joinPresence(
 	address: string,
-	on: { heard: (presence: Presence) => void; hidden?: (hidden: boolean) => void; dropped: () => void },
+	on: {
+		heard: (presence: Presence) => void;
+		hidden?: (hidden: boolean) => void;
+		dropped: () => void;
+		opened?: () => void;
+		comments?: (message: CommentsMessage) => void;
+		/** spool.page closed it as signed out, saying why ("blocked", say): it isn't opened again */
+		ended?: (reason: string) => void;
+	},
 ): PresenceLink {
 	let open: WebSocket | null = null;
 	let latest: string | null = null;
@@ -224,20 +278,30 @@ export function joinPresence(
 		opened: (socket) => {
 			open = socket;
 			if (latest !== null) socket.send(latest);
+			on.opened?.();
 		},
 		heard: (data) => {
 			const message = readJson(data);
 			if (message === undefined) return;
 			const presence = readPresence(message);
 			if (presence !== undefined) return on.heard(presence);
-			for (const one of readPresences(message) ?? []) on.heard(one);
+			const many = readPresences(message);
+			if (many !== undefined) {
+				for (const one of many) on.heard(one);
+				return;
+			}
 			const hidden = readPresenceHidden(message);
-			if (hidden !== undefined) on.hidden?.(hidden);
+			if (hidden !== undefined) return on.hidden?.(hidden);
+			if (on.comments === undefined || typeof message.type !== "string" || !message.type.startsWith("comment"))
+				return;
+			const comments = readCommentsMessage(message);
+			if (comments !== undefined) on.comments(comments);
 		},
 		dropped: () => {
 			open = null;
 			on.dropped();
 		},
+		...(on.ended === undefined ? {} : { ended: on.ended }),
 	});
 	return {
 		say: (state) => {
@@ -285,13 +349,67 @@ export function readConfig(): ViewerConfig {
 }
 
 /**
- * The project, read. The canvas only ever reads: there is no request here, or
- * anywhere in the viewer, that asks anything to change.
+ * The project, read. Its outsider part is checked field by field before the canvas trusts it, since it names the one
+ * origin a sign-in's message is taken from and every address an outsider writes to; one that isn't whole is dropped,
+ * and the canvas opens as it would for nobody signed in.
  */
 export async function readProject(config: ViewerConfig): Promise<ViewerProject | undefined> {
 	const response = await fetch(config.api, { credentials: "same-origin", headers: { accept: "application/json" } });
 	if (!response.ok) return undefined;
-	return (await response.json()) as ViewerProject;
+	const value: unknown = await response.json().catch(() => undefined);
+	if (!isRecord(value)) return undefined;
+	const { outsider, ...rest } = value;
+	const read = outsider === undefined ? undefined : readViewerOutsider(outsider);
+	// the rest is spool.page's own shape, drawn as it comes
+	const project = rest as unknown as ViewerProject;
+	return read === undefined ? project : { ...project, outsider: read };
+}
+
+/** An outsider's part of the canvas, as spool.page sends it; undefined when any field isn't what it must be. */
+export function readViewerOutsider(value: unknown): ViewerOutsider | undefined {
+	if (!isRecord(value) || !isRecord(value.share)) return undefined;
+	const { id, kind, who } = value.share;
+	if (typeof id !== "string" || (kind !== "people" && kind !== "link")) return undefined;
+	if (!Array.isArray(who) || !who.every((one) => typeof one === "string")) return undefined;
+	const { me, comments, socket, signIn } = value;
+	const signedIn =
+		me === null
+			? null
+			: isRecord(me) && typeof me.id === "string" && typeof me.name === "string"
+				? { id: me.id, name: me.name }
+				: undefined;
+	if (signedIn === undefined || !isPath(comments) || !isPath(socket)) return undefined;
+	const base: ViewerOutsider = { share: { id, kind, who }, me: signedIn, comments, socket };
+	if (signIn === undefined) return base;
+	const link = readLinkSignIn(signIn);
+	return link === undefined ? undefined : { ...base, signIn: link };
+}
+
+/** A link host's sign-in addresses: its own paths, Google's on spool.page, and spool.page's exact origin. */
+function readLinkSignIn(value: unknown): ViewerLinkSignIn | undefined {
+	if (!isRecord(value)) return undefined;
+	const { code, resend, verify, name, exchange, signOut, google, origin } = value;
+	if (!isPath(code) || !isPath(resend) || !isPath(verify) || !isPath(name) || !isPath(exchange) || !isPath(signOut))
+		return undefined;
+	if (typeof google !== "string" || typeof origin !== "string" || !isOrigin(origin)) return undefined;
+	if (!URL.canParse(google) || new URL(google).origin !== origin) return undefined;
+	return { code, resend, verify, name, exchange, signOut, google, origin };
+}
+
+/** A path on the page's own origin. */
+function isPath(value: unknown): value is string {
+	return typeof value === "string" && value.startsWith("/") && !value.startsWith("//");
+}
+
+/** An https origin and nothing more, as `URL.origin` writes one. */
+function isOrigin(value: string): boolean {
+	return URL.canParse(value) && new URL(value).origin === value && value.startsWith("https://");
+}
+
+/** The comment a canvas URL opens on, from its Copy link (`?comment=<id>`); null for none. */
+export function linkedComment(url: URL): string | null {
+	const id = url.searchParams.get("comment");
+	return id === null || id === "" ? null : id;
 }
 
 /** The page and the played frame a canvas URL names. */
@@ -346,5 +464,22 @@ export function viewerShares(address: string, manage: boolean): SharesSource {
 				body: JSON.stringify(change),
 			}),
 		stop: (share) => send(`${address}/${encodeURIComponent(share)}`, { method: "DELETE" }),
+		async commenters(share) {
+			try {
+				const response = await fetch(`${address}/${encodeURIComponent(share)}/commenters`, {
+					credentials: "same-origin",
+					headers: { accept: "application/json" },
+				});
+				return response.ok ? readCommenters(await response.json()) : null;
+			} catch {
+				return null;
+			}
+		},
+		block: (share, account) =>
+			send(`${address}/${encodeURIComponent(share)}/commenters/${encodeURIComponent(account)}/block`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: "{}",
+			}),
 	};
 }

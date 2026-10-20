@@ -68,6 +68,8 @@ async function open(
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const asked: string[] = [];
 	const left: string[] = [];
+	let name: string | null = null;
+	let commentEmails = "for-you";
 	const macs = [
 		{ id: "d1", name: "Vic’s MacBook Pro", signedInAt: NOW - 4 * 86400, usedAt: NOW },
 		{ id: "d2", name: "Studio", signedInAt: NOW - 40 * 86400, usedAt: NOW - 30 * 86400 },
@@ -85,6 +87,20 @@ async function open(
 			const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "font/woff2";
 			return route.fulfill({ body: readFileSync(file), contentType: type });
 		}
+		if (url.pathname === "/account/name") {
+			asked.push(`${request.method()} ${url.pathname} ${request.postData()}`);
+			const given = (request.postDataJSON() as { name: string }).name;
+			// spool.page's rule: 1 to 64 characters
+			if (given === "" || [...given].length > 64)
+				return route.fulfill({ status: 400, json: { error: "invalid_name" } });
+			name = given;
+			return route.fulfill({ json: { name } });
+		}
+		if (url.pathname === "/account/comment-emails") {
+			asked.push(`${request.method()} ${url.pathname} ${request.postData()}`);
+			commentEmails = (request.postDataJSON() as { emails: string }).emails;
+			return route.fulfill({ json: { commentEmails } });
+		}
 		if (url.pathname === "/account/summary" || /^\/account\/devices\/[^/]+\/revoke$/u.test(url.pathname)) {
 			asked.push(`${request.method()} ${url.pathname}`);
 			const revoked = url.pathname.match(/devices\/([^/]+)\/revoke/u)?.[1];
@@ -94,7 +110,9 @@ async function open(
 					1,
 				);
 			return route.fulfill({
-				json: revoked ? { revoked: true } : { email: "vic@devosurf.com", devices: macs, passkeys: [] },
+				json: revoked
+					? { revoked: true }
+					: { email: "vic@devosurf.com", name, commentEmails, devices: macs, passkeys: [] },
 			});
 		}
 		if (url.pathname.startsWith("/api/")) {
@@ -209,6 +227,46 @@ describe("Home in a browser", () => {
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
 		await page.goBack();
 		await page.getByRole("heading", { name: "Account" }).waitFor();
+	});
+
+	it("names the account on its page, everywhere at once, and says the rule when spool.page refuses a name", {
+		timeout: 60_000,
+	}, async () => {
+		const { page, asked } = await open("/devosurf", { teams: [] });
+		const main = page.locator("main");
+		await main.getByText("Not in a team yet.", { exact: true }).waitFor();
+		// no name yet: everyone sees the address before the @, which the field offers as its placeholder
+		const field = main.getByRole("textbox", { name: "Name" });
+		expect(await field.inputValue()).toBe("");
+		expect(await field.getAttribute("placeholder")).toBe("vic");
+		const save = main.getByRole("button", { name: "Save" });
+		expect(await save.isDisabled()).toBe(true);
+
+		await field.fill("Vic Berg");
+		await save.click();
+		await expect.poll(() => asked).toContain('POST /account/name {"name":"Vic Berg"}');
+		await main.getByText("Vic Berg", { exact: true }).waitFor();
+		expect(await field.inputValue()).toBe("Vic Berg");
+		expect(await save.isDisabled()).toBe(true);
+
+		await field.fill("x".repeat(65));
+		await save.click();
+		await main.getByRole("alert").getByText("A name is 1 to 64 characters, with no hidden ones.").waitFor();
+		expect(await field.inputValue()).toBe("x".repeat(65));
+		await main.getByText("Vic Berg", { exact: true }).waitFor();
+	});
+
+	it("turns comment emails off and on again on the account page", { timeout: 60_000 }, async () => {
+		const { page, asked } = await open("/account");
+		const emails = page.locator("main").getByRole("radiogroup", { name: "Comment emails" });
+		await emails.waitFor();
+		expect(await emails.getByRole("radio", { name: "For you" }).isChecked()).toBe(true);
+		await emails.getByText("Off", { exact: true }).click();
+		await expect.poll(() => asked).toContain('POST /account/comment-emails {"emails":"off"}');
+		await expect.poll(() => emails.getByRole("radio", { name: "Off" }).isChecked()).toBe(true);
+		await emails.getByText("For you", { exact: true }).click();
+		await expect.poll(() => asked).toContain('POST /account/comment-emails {"emails":"for-you"}');
+		await expect.poll(() => emails.getByRole("radio", { name: "For you" }).isChecked()).toBe(true);
 	});
 
 	it("takes an account in no team to Account, with the way to start one", { timeout: 60_000 }, async () => {

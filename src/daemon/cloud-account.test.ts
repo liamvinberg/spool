@@ -5,7 +5,13 @@ import { makeTempDir, sseReader } from "../test-helpers";
 import { createDaemonApp } from "./app";
 import type { CloudAccountServices } from "./cloud-account";
 
-const ADA: CloudAccount = { accountId: "account", email: "ada@tidemark.app", sessionId: "device", expiresAt: 1 };
+const ADA: CloudAccount = {
+	accountId: "account",
+	email: "ada@tidemark.app",
+	name: "Ada",
+	sessionId: "device",
+	expiresAt: 1,
+};
 
 function harness() {
 	let signedIn: CloudAccount | null = null;

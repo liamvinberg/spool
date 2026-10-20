@@ -314,6 +314,35 @@
 		}
 	}
 
+	/* comments on a team canvas (spool#173), on the Mac and in a browser alike: a card grows
+	 * out of its pin and shrinks back into it, a little quicker; a pin pops up from its tip,
+	 * a page of them in a ripple (the delay is each pin's own). The numbers are
+	 * `design/frames/explore/cloud/comments-browser`'s. */
+	--animate-comment-card-in: comment-card-in 200ms var(--ease-snap) both;
+	--animate-comment-card-out: comment-card-out 120ms var(--ease-out) forwards;
+	--animate-comment-pin-in: comment-pin-in 260ms var(--ease-snap) backwards;
+
+	@keyframes comment-card-in {
+		from {
+			opacity: 0;
+			transform: scale(0.94) translateY(4px);
+		}
+	}
+
+	@keyframes comment-card-out {
+		to {
+			opacity: 0;
+			transform: scale(0.96);
+		}
+	}
+
+	@keyframes comment-pin-in {
+		from {
+			opacity: 0;
+			transform: scale(0.3);
+		}
+	}
+
 	/* a teammate arriving on a team canvas (presence): their pointer and face come up out
 	 * of nothing, at the pace the prototype's take settled on; leaving is the reverse,
 	 * drawn as a transition because it starts from wherever they were */
@@ -867,6 +896,13 @@
 	}
 
 	.animate-boot-in {
+		animation: none;
+	}
+
+	/* a card and a pin are simply there, and a card put away is gone */
+	.animate-comment-card-in,
+	.animate-comment-card-out,
+	.animate-comment-pin-in {
 		animation: none;
 	}
 

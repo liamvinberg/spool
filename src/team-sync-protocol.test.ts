@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+	COMMENT_BODY_LIMIT,
+	type Comment,
+	type CommentPost,
+	commentBodyRefusal,
 	PRESENCE_AGENT_WORDS,
 	PRESENCE_AGENT_WORK,
 	type PresenceAgent,
 	type PresenceState,
+	readComment,
+	readCommentChange,
+	readCommentPost,
+	readCommentReplyPost,
+	readCommentStillAsk,
+	readCommentsMessage,
 	readPresence,
 	readPresenceState,
 } from "./team-sync-protocol";
@@ -82,5 +92,226 @@ describe("a presence state's agent (#378)", () => {
 			still: 0,
 		};
 		expect(readPresence(message)?.state).toEqual({ ...here, agent });
+	});
+});
+
+/**
+ * Comments as the object, a daemon and a browser read them off the socket: one definition, copied field by field,
+ * so what reaches a reader is only ever what the protocol says a comment is.
+ */
+describe("comments on the sync socket", () => {
+	const post: CommentPost = {
+		type: "comment-post",
+		ref: "r1",
+		page: "app",
+		frame: "app/receipt",
+		at: { x: 197, y: 428 },
+		element: {
+			name: "h2",
+			path: "design/frames/app/receipt/frame.tsx",
+			lines: [12, 14],
+			selector: "main > h2",
+			excerpt: "<h2>Thanks!</h2>",
+		},
+		revision: "a".repeat(64),
+		body: "Thanks! is loud for a receipt.",
+	};
+	const ana = { accountId: "acc-ana", name: "ana", color: "#7aa7ff" };
+	const comment: Comment = {
+		id: "k3m9p2qa",
+		audience: "team",
+		page: "app",
+		frame: "app/receipt",
+		at: { x: 197, y: 428 },
+		element: post.element,
+		revision: post.revision,
+		still: true,
+		author: ana,
+		agent: false,
+		body: post.body,
+		created: 1_000,
+		edited: null,
+		resolved: null,
+		standing: "placed",
+		replies: [
+			{
+				id: "r7x2",
+				author: ana,
+				agent: false,
+				body: "Or the order number.",
+				created: 2_000,
+				edited: null,
+				draftFor: null,
+			},
+		],
+	};
+
+	it("takes a post on a frame or on the field, and only the fields it knows", () => {
+		expect(readCommentPost({ ...post })).toEqual(post);
+		expect(readCommentPost({ ...post, author: "someone else", extra: 1 })).toEqual(post);
+		const field = { ...post, frame: null, element: null, revision: null, at: { x: -40.5, y: 1200 } };
+		expect(readCommentPost(field)).toEqual(field);
+		expect(readCommentPost({ ...post, page: "" })).toEqual({ ...post, page: "" });
+		expect(readCommentPost({ ...post, agent: true })).toEqual({ ...post, agent: true });
+	});
+
+	it("refuses a post whose words are empty or too long, or that is not well formed", () => {
+		const wrong = [
+			{ ...post, body: "" },
+			{ ...post, body: "  \n " },
+			{ ...post, body: "x".repeat(COMMENT_BODY_LIMIT + 1) },
+			{ ...post, at: { x: Number.NaN, y: 1 } },
+			{ ...post, frame: "" },
+			{ ...post, revision: "not a hash" },
+			{ ...post, element: { ...post.element, lines: [1] } },
+			// the field has no frame, so no element and no revision
+			{ ...post, frame: null },
+			{ ...post, ref: "" },
+			{ ...post, agent: false },
+		];
+		for (const message of wrong) expect(readCommentPost(message)).toBeUndefined();
+		expect(readCommentPost({ ...post, body: "x".repeat(COMMENT_BODY_LIMIT) })).toBeDefined();
+	});
+
+	it("takes a reply to a comment by its id", () => {
+		const reply = { type: "comment-reply", ref: "r2", comment: comment.id, body: "On it." };
+		expect(readCommentReplyPost(reply)).toEqual(reply);
+		expect(readCommentReplyPost({ ...reply, comment: "" })).toBeUndefined();
+		expect(readCommentReplyPost({ ...reply, body: " " })).toBeUndefined();
+	});
+
+	it("reads a comment back as it was sent, its replies in order", () => {
+		const sent = JSON.parse(JSON.stringify(comment)) as unknown;
+		expect(readComment(sent)).toEqual(comment);
+		expect(readComment({ ...comment, audience: { share: "s1" } })).toEqual({ ...comment, audience: { share: "s1" } });
+		const resolved = { ...comment, resolved: { by: ana, at: 3_000, agent: true } };
+		expect(readComment(resolved)).toEqual(resolved);
+		expect(readComment({ ...comment, resolved: { by: ana, at: 3_000, agent: false } })).toBeUndefined();
+		expect(readComment({ ...comment, standing: "gone" })).toBeUndefined();
+		expect(readComment({ ...comment, author: { accountId: "acc-ana" } })).toBeUndefined();
+		expect(readComment({ ...comment, replies: [{ id: "r" }] })).toBeUndefined();
+	});
+
+	it("reads the object's messages about comments, and nothing else", () => {
+		expect(readCommentsMessage({ type: "comments", comments: [comment], first: true, last: true })).toEqual({
+			type: "comments",
+			comments: [comment],
+			first: true,
+			last: true,
+		});
+		expect(readCommentsMessage({ type: "comment-added", comment })).toEqual({ type: "comment-added", comment });
+		expect(readCommentsMessage({ type: "comment-posted", ref: "r1", id: comment.id })).toEqual({
+			type: "comment-posted",
+			ref: "r1",
+			id: comment.id,
+		});
+		expect(readCommentsMessage({ type: "comment-refused", ref: "r1", reason: "not_editor" })).toEqual({
+			type: "comment-refused",
+			ref: "r1",
+			reason: "not_editor",
+		});
+		expect(readCommentsMessage({ type: "comment-refused", ref: "r1", reason: "because" })).toBeUndefined();
+		expect(readCommentsMessage({ type: "comments", comments: [{}], first: true, last: true })).toBeUndefined();
+		expect(readCommentsMessage({ type: "presence" })).toBeUndefined();
+	});
+
+	it("takes the members a post, a reply or an edit mentions, once each", () => {
+		expect(readCommentPost({ ...post, mentions: ["acc-ben", "acc-ben", "acc-cy"] })).toEqual({
+			...post,
+			mentions: ["acc-ben", "acc-cy"],
+		});
+		expect(readCommentPost({ ...post, mentions: [] })).toEqual(post);
+		expect(readCommentPost({ ...post, mentions: [""] })).toBeUndefined();
+		expect(readCommentPost({ ...post, mentions: Array.from({ length: 51 }, (_, at) => `a${at}`) })).toBeUndefined();
+		const reply = { type: "comment-reply", ref: "r2", comment: comment.id, body: "@ben?", mentions: ["acc-ben"] };
+		expect(readCommentReplyPost(reply)).toEqual(reply);
+		const mentioned = { ...comment, mentions: [ana] };
+		expect(readComment(JSON.parse(JSON.stringify(mentioned)))).toEqual(mentioned);
+		expect(readComment({ ...comment, mentions: ["acc-ana"] })).toBeUndefined();
+	});
+
+	it("takes each change to a comment by its id, and only the fields it knows", () => {
+		for (const type of ["comment-resolve", "comment-reopen", "comment-read", "comment-unread"])
+			expect(readCommentChange({ type, ref: "r3", comment: comment.id, body: "x" })).toEqual({
+				type,
+				ref: "r3",
+				comment: comment.id,
+			});
+		// a resolve or reopen by the person's agent says so; a read has nothing to mark
+		for (const type of ["comment-resolve", "comment-reopen"])
+			expect(readCommentChange({ type, ref: "r3", comment: comment.id, agent: true })).toEqual({
+				type,
+				ref: "r3",
+				comment: comment.id,
+				agent: true,
+			});
+		expect(readCommentChange({ type: "comment-resolve", ref: "r3", comment: comment.id, agent: 1 })).toBeUndefined();
+		expect(readCommentChange({ type: "comment-read", ref: "r3", comment: comment.id, agent: true })).toEqual({
+			type: "comment-read",
+			ref: "r3",
+			comment: comment.id,
+		});
+		const edit = { type: "comment-edit", ref: "r4", comment: comment.id, reply: "r7x2", body: "Or the date." };
+		expect(readCommentChange(edit)).toEqual(edit);
+		expect(readCommentChange({ ...edit, reply: undefined })).toEqual({
+			type: "comment-edit",
+			ref: "r4",
+			comment: comment.id,
+			body: "Or the date.",
+		});
+		expect(readCommentChange({ ...edit, body: "" })).toBeUndefined();
+		const remove = { type: "comment-delete", ref: "r5", comment: comment.id };
+		expect(readCommentChange(remove)).toEqual(remove);
+		expect(readCommentChange({ ...remove, reply: "r7x2" })).toEqual({ ...remove, reply: "r7x2" });
+		expect(readCommentChange({ ...remove, comment: "" })).toBeUndefined();
+		expect(readCommentChange({ type: "comment-bury", ref: "r6", comment: comment.id })).toBeUndefined();
+	});
+
+	it("says words that are too long apart from words that are none", () => {
+		expect(commentBodyRefusal("fine")).toBeUndefined();
+		expect(commentBodyRefusal("x".repeat(COMMENT_BODY_LIMIT + 1))).toBe("too_long");
+		expect(commentBodyRefusal(" ")).toBe("invalid_comment");
+		expect(commentBodyRefusal(7)).toBe("invalid_comment");
+	});
+
+	it("reads a comment changed whole, one removed, and a person's own reads", () => {
+		const changed = { ...comment, resolved: { by: ana, at: 3_000 } };
+		expect(readCommentsMessage({ type: "comment-changed", comment: changed })).toEqual({
+			type: "comment-changed",
+			comment: changed,
+		});
+		expect(readCommentsMessage({ type: "comment-removed", id: comment.id })).toEqual({
+			type: "comment-removed",
+			id: comment.id,
+		});
+		expect(readCommentsMessage({ type: "comment-seen", comment: comment.id, read: 4_000 })).toEqual({
+			type: "comment-seen",
+			comment: comment.id,
+			read: 4_000,
+		});
+		expect(readCommentsMessage({ type: "comment-seen", comment: comment.id, read: null })).toEqual({
+			type: "comment-seen",
+			comment: comment.id,
+			read: null,
+		});
+		const part = { type: "comments", comments: [comment], first: true, last: true, reads: { [comment.id]: 5 } };
+		expect(readCommentsMessage(part)).toEqual(part);
+		expect(readCommentsMessage({ ...part, reads: { [comment.id]: "now" } })).toBeUndefined();
+		expect(
+			readCommentsMessage({ type: "comment-refused", ref: "r1", reason: "rate_limited", retryAfter: 2 }),
+		).toEqual({ type: "comment-refused", ref: "r1", reason: "rate_limited", retryAfter: 2 });
+	});
+
+	it("asks for a comment's still by its id, and reads the answer the still rides", () => {
+		const ask = { type: "comment-still-ask", ref: "r3", comment: comment.id };
+		expect(readCommentStillAsk({ ...ask, extra: 1 })).toEqual(ask);
+		expect(readCommentStillAsk({ ...ask, comment: "" })).toBeUndefined();
+		expect(readCommentStillAsk({ ...ask, ref: 3 })).toBeUndefined();
+		expect(readCommentsMessage({ type: "comment-still", ref: "r3", comment: comment.id })).toEqual({
+			type: "comment-still",
+			ref: "r3",
+			comment: comment.id,
+		});
+		expect(readCommentsMessage({ type: "comment-still", ref: "r3" })).toBeUndefined();
 	});
 });

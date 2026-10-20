@@ -36,7 +36,13 @@ function memoryVault() {
 	};
 }
 
-const ACCOUNT = { accountId: "account", email: "ada@tidemark.app", sessionId: "device", expiresAt: 2_000_000_000 };
+const ACCOUNT = {
+	accountId: "account",
+	email: "ada@tidemark.app",
+	name: "Ada Lovelace",
+	sessionId: "device",
+	expiresAt: 2_000_000_000,
+};
 
 async function authServer() {
 	let exchange: Record<string, unknown> | undefined;
@@ -252,6 +258,12 @@ describe("Cloud account sign-in", () => {
 				origin: "https://cloud.test",
 			}),
 		).resolves.toEqual(ACCOUNT);
+		// an older spool.page says no name: the account is its address before the @, as everywhere else
+		const { name: _, ...unnamed } = ACCOUNT;
+		await expect(account("/tmp/spool-one", { vault, fetch: async () => Response.json(unnamed) })).resolves.toEqual({
+			...ACCOUNT,
+			name: "ada",
+		});
 		await expect(
 			account("/tmp/spool-one", {
 				vault,
