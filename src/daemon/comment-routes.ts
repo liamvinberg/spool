@@ -3,7 +3,7 @@ import type { CloudRequestOptions } from "../cloud-auth";
 import { cloudTeams } from "../cloud-teams";
 import { isFramePath, isPagePath } from "../page-path";
 import { personName } from "../person-name";
-import { readProjectLink } from "../team-project";
+import { localCopyOf, readProjectLink } from "../team-project";
 import { COMMENT_MENTIONS, type CommentElement, type CommentPoint, isCommentBody } from "../team-sync-protocol";
 import type { ResolveProject } from "./project-route";
 import { type ElementPut, elementEntry } from "./selection";
@@ -125,62 +125,69 @@ export function commentRoutes(deps: {
 		);
 	const simple = (type: "comment-resolve" | "comment-reopen" | "comment-read" | "comment-unread") => (c: Context) =>
 		withRoot(c, (root) => change(c, root, { type, comment: c.req.param("comment") ?? "" }));
-	return new Hono()
-		.get("/:project/comments", (c) => withRoot(c, async (root) => c.json(deps.comments(root))))
-		.get("/:project/comments/people", (c) => withRoot(c, async (root) => c.json({ people: await deps.people(root) })))
-		.post("/:project/comments/:comment/resolve", simple("comment-resolve"))
-		.post("/:project/comments/:comment/reopen", simple("comment-reopen"))
-		.post("/:project/comments/:comment/read", simple("comment-read"))
-		.post("/:project/comments/:comment/unread", simple("comment-unread"))
-		.patch("/:project/comments/:comment", (c) => edit(c))
-		.delete("/:project/comments/:comment", (c) => remove(c))
-		.patch("/:project/comments/:comment/replies/:reply", (c) => edit(c, c.req.param("reply")))
-		.delete("/:project/comments/:comment/replies/:reply", (c) => remove(c, c.req.param("reply")))
-		.post("/:project/comments", (c) =>
-			withRoot(c, async (root) => {
-				const input = readCommentInput(await c.req.json().catch(() => undefined));
-				if (input === undefined)
-					return c.text(
-						"a comment is { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated } | null, body, mentions? }",
-						400,
+	return (
+		new Hono()
+			// with the project's address at the team, which a comment's link is made from
+			.get("/:project/comments", (c) =>
+				withRoot(c, async (root) => c.json({ ...deps.comments(root), url: localCopyOf(root)?.url ?? null })),
+			)
+			.get("/:project/comments/people", (c) =>
+				withRoot(c, async (root) => c.json({ people: await deps.people(root) })),
+			)
+			.post("/:project/comments/:comment/resolve", simple("comment-resolve"))
+			.post("/:project/comments/:comment/reopen", simple("comment-reopen"))
+			.post("/:project/comments/:comment/read", simple("comment-read"))
+			.post("/:project/comments/:comment/unread", simple("comment-unread"))
+			.patch("/:project/comments/:comment", (c) => edit(c))
+			.delete("/:project/comments/:comment", (c) => remove(c))
+			.patch("/:project/comments/:comment/replies/:reply", (c) => edit(c, c.req.param("reply")))
+			.delete("/:project/comments/:comment/replies/:reply", (c) => remove(c, c.req.param("reply")))
+			.post("/:project/comments", (c) =>
+				withRoot(c, async (root) => {
+					const input = readCommentInput(await c.req.json().catch(() => undefined));
+					if (input === undefined)
+						return c.text(
+							"a comment is { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated } | null, body, mentions? }",
+							400,
+						);
+					const { page, frame, at, body, mentions } = input;
+					const element: CommentElement | null =
+						frame === null || input.element === null ? null : handlesOf(root, { ...input.element, frame });
+					const now = frame === null ? { revision: null, still: undefined } : await deps.frameNow(root, frame);
+					return answered(c, () =>
+						deps.comment(
+							root,
+							{
+								page,
+								frame,
+								at,
+								element,
+								revision: now.revision,
+								body,
+								...(mentions === undefined ? {} : { mentions }),
+							},
+							now.still,
+						),
 					);
-				const { page, frame, at, body, mentions } = input;
-				const element: CommentElement | null =
-					frame === null || input.element === null ? null : handlesOf(root, { ...input.element, frame });
-				const now = frame === null ? { revision: null, still: undefined } : await deps.frameNow(root, frame);
-				return answered(c, () =>
-					deps.comment(
-						root,
-						{
-							page,
-							frame,
-							at,
-							element,
-							revision: now.revision,
+				}),
+			)
+			.post("/:project/comments/:comment/replies", (c) =>
+				withRoot(c, async (root) => {
+					const input: unknown = await c.req.json().catch(() => undefined);
+					const body = isRecord(input) ? input.body : undefined;
+					const mentions = isRecord(input) ? readMentions(input.mentions) : undefined;
+					if (!isCommentBody(body) || mentions === null)
+						return c.text("a reply is { body, mentions? } with 1 to 4,000 characters", 400);
+					return answered(c, () =>
+						deps.reply(root, {
+							comment: c.req.param("comment") ?? "",
 							body,
 							...(mentions === undefined ? {} : { mentions }),
-						},
-						now.still,
-					),
-				);
-			}),
-		)
-		.post("/:project/comments/:comment/replies", (c) =>
-			withRoot(c, async (root) => {
-				const input: unknown = await c.req.json().catch(() => undefined);
-				const body = isRecord(input) ? input.body : undefined;
-				const mentions = isRecord(input) ? readMentions(input.mentions) : undefined;
-				if (!isCommentBody(body) || mentions === null)
-					return c.text("a reply is { body, mentions? } with 1 to 4,000 characters", 400);
-				return answered(c, () =>
-					deps.reply(root, {
-						comment: c.req.param("comment") ?? "",
-						body,
-						...(mentions === undefined ? {} : { mentions }),
-					}),
-				);
-			}),
-		);
+						}),
+					);
+				}),
+			)
+	);
 }
 
 /** The team's answer: the new id, or why it wasn't taken. */
