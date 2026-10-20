@@ -433,6 +433,14 @@ export const HOTKEYS = [
 	{ id: "canvas.tool-select", scope: "canvas", group: "Tools", label: "Select tool", keys: ["v"] },
 	{ id: "canvas.tool-edit", scope: "canvas", group: "Tools", label: "Edit tool", keys: ["e"] },
 	{
+		id: "canvas.tool-comment",
+		scope: "canvas",
+		group: "Tools",
+		label: "Comment tool, on a team project",
+		keys: ["c"],
+		gesture: "hold c",
+	},
+	{
 		id: "canvas.tool-hand",
 		scope: "canvas",
 		group: "Tools",

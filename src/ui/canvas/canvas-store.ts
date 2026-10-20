@@ -5,6 +5,7 @@ import { ROOT_PAGE } from "../../page-path";
 import type { FlowEdge, Place, ProjectedFrame } from "../api";
 import type { ShareContext } from "../share-control";
 import type { CanvasTool } from "./canvas-tools";
+import type { CommentDraft } from "./comments-layer";
 import type { HandEdit } from "./hand-edit";
 import type { Staging } from "./history";
 import type { PickedSelection } from "./overlays";
@@ -69,6 +70,10 @@ export interface CanvasState {
 	exporting: boolean;
 	/** whether the frame finder (/) is open */
 	finding: boolean;
+	/** the comment the Comment tool placed, its composer open at its pin (spool#169) */
+	commentDraft: CommentDraft | null;
+	/** the comment whose card is open, by id */
+	commentOpen: string | null;
 }
 
 export interface CanvasContextMenu {
@@ -116,6 +121,8 @@ export function createCanvasStore(): CanvasStore {
 		exportDialog: null,
 		exporting: false,
 		finding: false,
+		commentDraft: null,
+		commentOpen: null,
 	};
 	const listeners = new Set<() => void>();
 	return {

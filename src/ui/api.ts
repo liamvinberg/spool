@@ -43,7 +43,7 @@ import type { SyncState } from "../daemon/team-sync";
 import type { MoveProgress } from "../move-in";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import type { ProjectShares, ShareRequest, SharesSource, ShareView } from "../share-view";
-import type { PresenceState } from "../team-sync-protocol";
+import { type Comment, type PresenceState, readComment } from "../team-sync-protocol";
 import { base64Logo, TeamActionRefused, type TeamsSource, teamSays, teamsAt } from "./team-source";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
@@ -2033,4 +2033,72 @@ export function daemonShares(project: string): SharesSource & {
 			return error === null ? { share: (await response.json()) as ShareView } : { error };
 		},
 	};
+}
+
+/** A team project's comments as this Mac knows them (ADR 0011), and whether one written now reaches the team. */
+export interface CommentsRead {
+	online: boolean;
+	comments: Comment[];
+}
+
+export async function fetchComments(project: string): Promise<CommentsRead> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/comments`);
+		const body: unknown = response.ok ? await response.json() : null;
+		if (typeof body !== "object" || body === null || !("comments" in body) || !Array.isArray(body.comments))
+			return { online: false, comments: [] };
+		const online = "online" in body && body.online === true;
+		return { online, comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []) };
+	} catch {
+		return { online: false, comments: [] };
+	}
+}
+
+/** What the canvas says of a new comment: where it stands, the element as the frame's shim saw it, the words. */
+export interface CommentWrite {
+	page: string;
+	frame: string | null;
+	at: { x: number; y: number };
+	element: { selector: string; outerHtml: string; source: string | null; generated: boolean } | null;
+	body: string;
+}
+
+/** The team took it, under this id; or it didn't, offline or for a reason said in words. */
+export type CommentSent = { id: string } | { error: string; message: string };
+
+async function sentComment(response: Promise<Response>): Promise<CommentSent> {
+	try {
+		const answer = await response;
+		const body: unknown = await answer.json().catch(() => null);
+		if (answer.ok && typeof body === "object" && body !== null && "id" in body && typeof body.id === "string")
+			return { id: body.id };
+		const error = typeof body === "object" && body !== null && "error" in body ? String(body.error) : "failed";
+		const message =
+			typeof body === "object" && body !== null && "message" in body
+				? String(body.message)
+				: "the comment didn't send";
+		return { error, message };
+	} catch {
+		return { error: "offline", message: "spool isn't answering" };
+	}
+}
+
+export function postComment(project: string, comment: CommentWrite): Promise<CommentSent> {
+	return sentComment(
+		controlFetch(`/api/p/${encodeURIComponent(project)}/comments`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(comment),
+		}),
+	);
+}
+
+export function postReply(project: string, comment: string, body: string): Promise<CommentSent> {
+	return sentComment(
+		controlFetch(`/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment)}/replies`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ body }),
+		}),
+	);
 }

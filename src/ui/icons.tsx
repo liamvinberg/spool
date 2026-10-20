@@ -234,6 +234,16 @@ export function EditIcon({ className }: CanvasToolIconProps) {
 	);
 }
 
+/** Comment: the pin with a plus inside, for placing one (spool#169). */
+export function CommentToolIcon({ className }: CanvasToolIconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path d="M3.5 20.5V12a8.5 8.5 0 1 1 8.5 8.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+			<path d="M12 8.5v7M8.5 12h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 /** Hand: the canvas panning tool. */
 export function HandIcon({ className }: CanvasToolIconProps) {
 	return (
