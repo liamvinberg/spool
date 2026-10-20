@@ -2857,6 +2857,8 @@ function CanvasField({
 	const resync = useCallback(() => {
 		void refetchFrames();
 		void refetchFlows();
+		// a wait that ended while the stream was down would otherwise stay said until the window is focused again
+		window.dispatchEvent(new CustomEvent(SYNC_CHANGED));
 		for (const frame of store.get().frames) reloadFrameDocument(frame.name);
 	}, [refetchFrames, refetchFlows, reloadFrameDocument, store]);
 
