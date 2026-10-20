@@ -124,6 +124,7 @@ import {
 	type CommentDraft,
 	type CommentsContext,
 	CommentsLayer,
+	clickAway,
 	commentChip,
 	commentWorld,
 	MAC_OFFLINE,
@@ -3823,8 +3824,7 @@ function CanvasField({
 		camera.stop();
 		setMenu(null);
 		// a press anywhere on the field puts an open comment card or composer down (spool#169)
-		if (event.button === 0 && (store.get().commentOpen !== null || store.get().commentDraft !== null))
-			store.set({ commentOpen: null, commentDraft: null });
+		if (event.button === 0) clickAway(store);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		hideFrameHover();
 		const p = localPoint(event);

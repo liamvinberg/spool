@@ -22,7 +22,7 @@ import { Menu, MenuItem, MenuSeparator, Popover } from "../primitives/overlays";
 import { KindGlyph } from "../shares";
 import type { Box, Point } from "./camera";
 import type { CameraStore } from "./camera-store";
-import { type CanvasStore, useCanvasField } from "./canvas-store";
+import { type CanvasStore, useCanvasField, useCanvasSetter } from "./canvas-store";
 import {
 	type AudienceShare,
 	audienceKind,
@@ -82,6 +82,17 @@ const CARD_OUT_MS = 120;
 /** How far apart pins that arrive together pop up, and the most a ripple takes over all. */
 const RIPPLE_MS = 40;
 const RIPPLE_MAX_MS = 480;
+
+/**
+ * A click away from the comments on either canvas (spool#169): it puts an open card down, and the composer unless it
+ * holds words, which stay as they are for the person to send or cancel. Whether anything was open to put down.
+ */
+export function clickAway(store: CanvasStore): boolean {
+	const { commentDraft, commentOpen, commentWritten } = store.get();
+	if (commentDraft === null && commentOpen === null) return false;
+	store.set({ commentOpen: null, ...(commentWritten ? {} : { commentDraft: null }) });
+	return true;
+}
 
 /** A comment the Comment tool placed and its person is writing: where it stands, and what was under the pin. */
 export interface CommentDraft {
@@ -175,6 +186,7 @@ export function CommentsLayer({
 	onSendToAgent?: ((comment: Comment) => void) | undefined;
 }) {
 	const [draft, setDraft] = useCanvasField(store, "commentDraft");
+	const setWritten = useCanvasSetter(store, "commentWritten");
 	const [open, setOpen] = useCanvasField(store, "commentOpen");
 	const [hidden] = useCanvasField(store, "pinsHidden");
 	const [filters] = useCanvasField(store, "commentFilters");
@@ -299,6 +311,7 @@ export function CommentsLayer({
 					<Composer
 						context={context}
 						draft={drafting.shown}
+						onWritten={setWritten}
 						onClose={() => setDraft(null)}
 						onSent={(id) => {
 							setDraft(null);
@@ -1033,11 +1046,14 @@ export function asSentence(words: string): string {
 function Composer({
 	context,
 	draft,
+	onWritten,
 	onClose,
 	onSent,
 }: {
 	context: CommentsContext;
 	draft: CommentDraft;
+	/** Whether it holds words, each time that changes, and that it holds none once it goes */
+	onWritten: (written: boolean) => void;
 	onClose: () => void;
 	onSent: (id: string) => void;
 }) {
@@ -1045,6 +1061,9 @@ function Composer({
 	// an outsider mentions nobody: the team's people are not theirs to see
 	const people = outsider === undefined ? context.people : NOBODY;
 	const [text, setText] = useState("");
+	const written = text.trim() !== "";
+	useEffect(() => onWritten(written), [onWritten, written]);
+	useEffect(() => () => onWritten(false), [onWritten]);
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
 	const [audience, setAudience] = useState<string | null>(null);

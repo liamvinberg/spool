@@ -168,6 +168,11 @@ it("places a pin on a frame at the frame's own point, sends it on Enter, and sho
 	// placing hands back the pointer
 	expect(await toolIn(page)).toBe("select");
 	await composer.locator("textarea").fill("Two coffees reads like a heading.");
+	// words written stay through a press on the field, for their person to send or cancel
+	const away = await pagePointOf(page, { x: 700, y: 500 });
+	await page.mouse.click(away.x, away.y);
+	expect(await composer.count()).toBe(1);
+	expect(await composer.locator("textarea").inputValue()).toBe("Two coffees reads like a heading.");
 	await composer.locator("textarea").press("Enter");
 
 	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(1);

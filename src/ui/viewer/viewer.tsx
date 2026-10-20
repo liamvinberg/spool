@@ -21,7 +21,7 @@ import {
 } from "../canvas/camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/camera-store";
 import { COMMENT_CURSOR } from "../canvas/comment-cursor";
-import { CommentsLayer, commentWorld } from "../canvas/comments-layer";
+import { CommentsLayer, clickAway, commentWorld } from "../canvas/comments-layer";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
@@ -580,9 +580,7 @@ function ViewerCanvas({
 		if (comments !== null) {
 			if (comments.tool === "comment") return placeAt(event);
 			// a click away puts down an open card or the composer before it plays anything
-			const { commentDraft, commentOpen } = comments.store.get();
-			if (commentDraft !== null || commentOpen !== null)
-				return comments.store.set({ commentDraft: null, commentOpen: null });
+			if (clickAway(comments.store)) return;
 		}
 		// a click, not a drag: on a frame it plays the frame
 		const frame = (event.target as Element).closest<HTMLElement>("[data-viewer-frame]")?.dataset.viewerFrame;

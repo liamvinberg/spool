@@ -73,6 +73,8 @@ export interface CanvasState {
 	finding: boolean;
 	/** the comment the Comment tool placed, its composer open at its pin (spool#169) */
 	commentDraft: CommentDraft | null;
+	/** the composer holds words, which a click away keeps (the prototype's composer) */
+	commentWritten: boolean;
 	/** the comment whose card is open, by id */
 	commentOpen: string | null;
 	/** Shift+C put every comment pin away (spool#170) */
@@ -127,6 +129,7 @@ export function createCanvasStore(): CanvasStore {
 		exporting: false,
 		finding: false,
 		commentDraft: null,
+		commentWritten: false,
 		commentOpen: null,
 		pinsHidden: false,
 		commentFilters: FILTERS,

@@ -315,7 +315,7 @@ it("places a pin on a frame with what is under it, hands back the Pointer, and p
 	expect((pin?.y ?? 0) + (pin?.height ?? 0)).toBeCloseTo(on.y, 0);
 });
 
-it("places a pin on the field, and a click away puts the composer down before anything plays", {
+it("places a pin on the field, and a click away puts the composer down before anything plays, unless it holds words", {
 	timeout: 60_000,
 }, async () => {
 	const { page } = await open();
@@ -326,6 +326,11 @@ it("places a pin on the field, and a click away puts the composer down before an
 	const composer = page.locator("[data-comment-composer]");
 	await composer.waitFor();
 	expect(await composer.textContent()).toContain("on the field");
+	// words written stay through a click away, for their person to send or cancel
+	await composer.locator("textarea").fill("Half a thought");
+	await page.mouse.click(home.x + 40, home.y + 40);
+	expect(await composer.locator("textarea").inputValue()).toBe("Half a thought");
+	await composer.locator("textarea").fill("");
 	await page.mouse.click(home.x + 40, home.y + 40);
 	await composer.waitFor({ state: "detached" });
 	expect(await page.locator("[data-viewer-player]").count()).toBe(0);
