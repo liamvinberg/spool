@@ -9,6 +9,8 @@
  * Control messages are JSON text frames. A message carrying a file's bytes is a binary frame: a 4-byte
  * big-endian length, that many bytes of JSON header, then the file's bytes exactly as they are on disk.
  */
+import { COMMENT_REFUSAL_STATUS } from "./team-sync-comments";
+
 export const PROTOCOL_VERSION = 2;
 
 /** A team version: the number the object gave the save that made it. Versions only grow. */
@@ -926,7 +928,7 @@ export type CommentRefusal =
 /**
  * Why a share's comments refused a post (spool#174). `blocked`: the share's editors blocked this person from its
  * comments. `share_ended`: the share was stopped, so nothing new is posted to it. `share_limited`: a link share's
- * outsiders together posted `LINK_SHARE_COMMENTS_PER_DAY` within the day (`retryAfter` says when one fits).
+ * outsiders together posted `LINK_SHARE_COMMENTS_PER_DAY` within 24 hours.
  */
 export type CommentShareRefusal = "blocked" | "share_ended" | "share_limited";
 
@@ -970,8 +972,8 @@ export const COMMENTS_PER_MINUTE = 30;
 /** How many open comments a project may hold before a new one is refused. Cloud's default, which a maintainer can raise. */
 export const COMMENTS_OPEN = 5_000;
 /**
- * How many comments and replies a link share's outsiders post together in a day: a bucket that holds this many and
- * refills over the day (spool#174). Cloud's default, which a maintainer can raise.
+ * How many comments and replies a link share's outsiders post together in any 24 hours (spool#174). Cloud's default,
+ * which a maintainer can raise.
  */
 export const LINK_SHARE_COMMENTS_PER_DAY = 300;
 /** The most members one message may @mention. */
@@ -1168,26 +1170,13 @@ export function readCommentsMessage(message: Record<string, unknown>): CommentsM
 	}
 }
 
-const COMMENT_REFUSALS: readonly CommentRefusal[] = [
-	"invalid_comment",
-	"still_too_large",
-	"comment_not_found",
-	"signed_out",
-	"not_editor",
-	"unpaid",
-	"unavailable",
-	"too_long",
-	"rate_limited",
-	"too_many_open",
-	"not_author",
-	"blocked",
-	"share_ended",
-	"share_limited",
-];
-
 /** The refusal a reason names, if it names one: as a socket says it, or spool.page's comments API answers it. */
 export function commentRefusal(reason: unknown): CommentRefusal | undefined {
-	return COMMENT_REFUSALS.find((one) => one === reason);
+	return typeof reason === "string" && isCommentRefusal(reason) ? reason : undefined;
+}
+
+function isCommentRefusal(reason: string): reason is CommentRefusal {
+	return Object.hasOwn(COMMENT_REFUSAL_STATUS, reason);
 }
 
 /** A well-formed comment, copied field by field; undefined for anything else. */
@@ -1546,3 +1535,5 @@ export async function frameRevision(hashes: readonly string[]): Promise<string> 
 	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", said));
 	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+export * from "./team-sync-comments";
