@@ -9,6 +9,8 @@ import {
 	type PresenceState,
 	readCommentsMessage,
 	readPresence,
+	readPresenceHidden,
+	readPresences,
 } from "../../team-sync-protocol";
 import type { ViewerLinkSignIn } from "./link-sign-in";
 
@@ -259,6 +261,7 @@ export function joinPresence(
 	address: string,
 	on: {
 		heard: (presence: Presence) => void;
+		hidden?: (hidden: boolean) => void;
 		dropped: () => void;
 		opened?: () => void;
 		comments?: (message: CommentsMessage) => void;
@@ -268,7 +271,10 @@ export function joinPresence(
 ): PresenceLink {
 	let open: WebSocket | null = null;
 	let latest: string | null = null;
-	const stop = keepOpen(address, {
+	// everyone who changed comes a tick at a time (#107); an older spool.page ignores the ask and tells each alone
+	const ticking = new URL(address, window.location.href);
+	ticking.searchParams.set("ticks", "1");
+	const stop = keepOpen(ticking.href, {
 		opened: (socket) => {
 			open = socket;
 			if (latest !== null) socket.send(latest);
@@ -279,6 +285,13 @@ export function joinPresence(
 			if (message === undefined) return;
 			const presence = readPresence(message);
 			if (presence !== undefined) return on.heard(presence);
+			const many = readPresences(message);
+			if (many !== undefined) {
+				for (const one of many) on.heard(one);
+				return;
+			}
+			const hidden = readPresenceHidden(message);
+			if (hidden !== undefined) return on.hidden?.(hidden);
 			if (on.comments === undefined || typeof message.type !== "string" || !message.type.startsWith("comment"))
 				return;
 			const comments = readCommentsMessage(message);

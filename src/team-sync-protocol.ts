@@ -31,6 +31,8 @@ export interface Hello {
 	moving?: true;
 	/** The daemon reads `files`: what a teammate sent as one bundle comes down as one. */
 	bundles?: true;
+	/** The daemon reads `presences`: everyone who changed comes down a tick at a time, in one message (#107). */
+	ticks?: true;
 }
 
 /**
@@ -464,6 +466,8 @@ export interface PresenceState {
 	 * spool is older. Set by their daemon, never by their canvas.
 	 */
 	agent?: PresenceAgent;
+	/** The account whose view they follow: that person's pointer is always shown to them (#107). */
+	following?: string;
 }
 
 /** What a person's agent is doing, small enough to ride every presence message. */
@@ -516,6 +520,32 @@ export interface Presence {
 }
 
 /**
+ * Object → daemon or browser, to a connection whose hello said `ticks` (#107): everyone who changed since the last
+ * tick, each as a `Presence` would say them. Someone on another page, or past the cap, comes as an outline: their
+ * page and their agent, nothing they point at. A connection that didn't say `ticks` hears the same, one `Presence`
+ * each.
+ */
+export interface Presences {
+	type: "presences";
+	people: Presence[];
+}
+
+/**
+ * Object → daemon or browser: this person's pointer is hidden from the others on their page, past the first
+ * `PRESENCE_SHOWN`, or shown again. While hidden, their canvas stops sending its pointer; its page still goes.
+ * An older daemon never hears it as anything.
+ */
+export interface PresenceHidden {
+	type: "presence-hidden";
+	hidden: boolean;
+}
+
+/** How often the sync object tells everyone who changed, and so how often a canvas need say where it is. */
+export const PRESENCE_TICK_MS = 100;
+/** The pointers shown on one page at most, editors first, then by who came first; someone followed doesn't count. */
+export const PRESENCE_SHOWN = 50;
+
+/**
  * How long a person has to change nothing of their own to be idle: an agent of theirs at work doesn't count. Long
  * enough that reading a frame or thinking isn't idle, short enough that someone who walked away reads as gone soon.
  */
@@ -552,11 +582,25 @@ export function readPresence(message: Record<string, unknown>): Presence | undef
 	return { type: "presence", person: { accountId, name, color }, state, still };
 }
 
+/** Everyone a tick holds, each entry that isn't well formed left out; undefined for a message that isn't a tick. */
+export function readPresences(message: Record<string, unknown>): Presence[] | undefined {
+	if (message.type !== "presences" || !Array.isArray(message.people)) return undefined;
+	return message.people.flatMap((entry) => {
+		const presence = isRecord(entry) ? readPresence(entry) : undefined;
+		return presence === undefined ? [] : [presence];
+	});
+}
+
+/** Whether this person's pointer is hidden now; undefined for anything but a well-formed `presence-hidden`. */
+export function readPresenceHidden(message: Record<string, unknown>): boolean | undefined {
+	return message.type === "presence-hidden" && typeof message.hidden === "boolean" ? message.hidden : undefined;
+}
+
 /** A well-formed presence state, copied field by field; null for "left"; undefined for anything else. */
 export function readPresenceState(value: unknown): PresenceState | null | undefined {
 	if (value === null) return null;
 	if (!isRecord(value)) return undefined;
-	const { page, pointer, pressed, dragging, inside, view, clicks, scrolled, agent } = value;
+	const { page, pointer, pressed, dragging, inside, view, clicks, scrolled, agent, following } = value;
 	if (!isPresenceName(page) || typeof pressed !== "boolean" || !(inside === null || isPresenceName(inside)))
 		return undefined;
 	if (!Array.isArray(dragging) || dragging.length > PRESENCE_DRAGGING || !dragging.every(isPresenceName))
@@ -583,6 +627,7 @@ export function readPresenceState(value: unknown): PresenceState | null | undefi
 		view:
 			view === null ? null : { x: view.x as number, y: view.y as number, w: view.w as number, h: view.h as number },
 		...withAgent(readPresenceAgent(agent)),
+		...(isPresenceName(following) ? { following } : {}),
 	};
 }
 

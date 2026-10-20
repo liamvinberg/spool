@@ -33,6 +33,7 @@ export function useViewerPresence(address: string | undefined): ViewerPresence |
 		if (address === undefined) return;
 		const joined = joinPresence(address, {
 			heard: (presence) => room.hear(presence),
+			hidden: (hidden) => room.hide(hidden),
 			dropped: () => {
 				room.reset();
 				setOnline(false);
