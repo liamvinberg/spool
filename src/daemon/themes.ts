@@ -34,7 +34,8 @@ export function frameTheme(designDir: string, sources: { file: string; text: str
 	return themes[0];
 }
 
-const URL_TOKEN = /url\(\s*(["']?)([^"')\s]+)\1\s*\)/gi;
+// A quoted url is taken whole, so a url() inside a data URI is never a token of its own.
+const URL_TOKEN = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^"')\s]+))\s*\)/gi;
 
 /**
  * A theme stylesheet's relative `url()`s, rewritten to resolve from shared/ as
@@ -43,7 +44,9 @@ const URL_TOKEN = /url\(\s*(["']?)([^"')\s]+)\1\s*\)/gi;
  * names are then carried by the same rules as fonts.css's.
  */
 export function rebaseThemeUrls(css: string, file: string, sharedDir: string): string {
-	return css.replace(URL_TOKEN, (whole, quote: string, url: string) => {
+	return css.replace(URL_TOKEN, (whole, double?: string, single?: string, bare?: string) => {
+		const quote = double !== undefined ? '"' : single !== undefined ? "'" : "";
+		const url = (double ?? single ?? bare ?? "").trim();
 		if (url.startsWith("/") || url.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(url)) return whole;
 		const rebased = relative(sharedDir, resolve(file, "..", url))
 			.split(sep)
