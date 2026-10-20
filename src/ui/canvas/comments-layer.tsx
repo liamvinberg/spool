@@ -3,7 +3,6 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 	type RefObject,
-	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useReducer,
@@ -12,16 +11,7 @@ import {
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import type { Comment, CommentPerson, CommentReply } from "../../team-sync-protocol";
-import {
-	type CommentChanged,
-	type CommentMentionable,
-	type CommentsRead,
-	changeComment,
-	fetchCommentPeople,
-	fetchComments,
-	postComment,
-	postReply,
-} from "../api";
+import type { CommentChanged, CommentMentionable, CommentsClient } from "../api";
 import { cn } from "../cn";
 import { AgentIcon, CloseIcon, DotsIcon, ResolveIcon } from "../icons";
 import { Button, IconButton } from "../primitives/actions";
@@ -34,6 +24,7 @@ import type { CameraStore } from "./camera-store";
 import { type CanvasStore, useCanvasField } from "./canvas-store";
 import {
 	type CommentFrame,
+	type CommentStills,
 	DroppedLine,
 	droppedFrame,
 	EditedSince,
@@ -59,8 +50,11 @@ import { PRESENCE_INK } from "./presence-faces";
  * reply in, Resolve and each message's ⋯; and the composer the Comment tool opens at a pin it places. Pins stand in
  * screen pixels over the field, one size at every zoom, as presence does.
  *
- * What the canvas reads comes from the daemon, which keeps what the team last said so it shows offline too; writing
- * goes through it to the team while the project is connected, and is refused, words kept, while it isn't.
+ * The same layer stands on a Mac's canvas and on the browser canvas at spool.page (spool#173): what it reads and how it
+ * writes are the canvas's to hand it (`CommentsContext`), from the daemon on a Mac and from spool.page in a browser.
+ * Writing goes to the team while the canvas is connected, and is refused, words kept, while it isn't.
+ *
+ * Cards grow out of their pin and shrink back into it; pins pop up from their tip, a page of them in a ripple.
  */
 
 /** A pin's size on screen, at every zoom: round, with its bottom-left corner at the spot. */
@@ -69,6 +63,11 @@ export const PIN = 22;
 const CARD_W = 312;
 /** How far a card keeps from the canvas's edges. */
 const EDGE = 12;
+/** How long a card takes to shrink back into its pin: `--animate-comment-card-out`'s. */
+const CARD_OUT_MS = 120;
+/** How far apart pins that arrive together pop up, and the most a ripple takes over all. */
+const RIPPLE_MS = 40;
+const RIPPLE_MAX_MS = 480;
 
 /** A comment the Comment tool placed and its person is writing: where it stands, and what was under the pin. */
 export interface CommentDraft {
@@ -77,54 +76,6 @@ export interface CommentDraft {
 	frame: string | null;
 	at: Point;
 	element: { selector: string; tag: string; outerHtml: string; source: string | null; generated: boolean } | null;
-}
-
-/** The event the canvas passes the daemon's `comments` change on as. */
-export const COMMENTS_CHANGE = "spool-comments-change";
-
-const NOTHING_READ: CommentsRead = { online: false, unpaid: false, comments: [], reads: {}, url: null };
-
-/**
- * A team project's comments as this Mac knows them: read when the canvas opens, whenever the daemon says they
- * changed, and when the window comes back to the front.
- */
-export function useComments(project: string, team: boolean): CommentsRead & { refresh: () => void } {
-	const [read, setRead] = useState<CommentsRead>(NOTHING_READ);
-	const asked = useRef(0);
-	const refresh = useCallback(() => {
-		if (!team) return;
-		const mine = ++asked.current;
-		void fetchComments(project).then((next) => {
-			if (mine === asked.current) setRead(next);
-		});
-	}, [project, team]);
-	useEffect(() => {
-		refresh();
-		window.addEventListener(COMMENTS_CHANGE, refresh);
-		window.addEventListener("focus", refresh);
-		return () => {
-			asked.current++;
-			window.removeEventListener(COMMENTS_CHANGE, refresh);
-			window.removeEventListener("focus", refresh);
-		};
-	}, [refresh]);
-	return { ...read, refresh };
-}
-
-/** The members a comment on a team project can mention, asked once the canvas knows it is a team's. */
-export function useCommentPeople(project: string, team: boolean): readonly CommentMentionable[] {
-	const [people, setPeople] = useState<readonly CommentMentionable[]>([]);
-	useEffect(() => {
-		if (!team) return;
-		let live = true;
-		void fetchCommentPeople(project).then((found) => {
-			if (live) setPeople(found);
-		});
-		return () => {
-			live = false;
-		};
-	}, [project, team]);
-	return people;
 }
 
 /**
@@ -152,14 +103,21 @@ export function commentLink(url: string | null, id: string): string | null {
 	return url === null ? null : `${url}?comment=${encodeURIComponent(id)}`;
 }
 
-/** What the layer needs of the canvas besides the comments: who reads, whom they can mention, and how to say so. */
+/**
+ * What the layer needs of the canvas besides the comments: where it writes, who reads, whom they can mention, and how
+ * to say so.
+ */
 export interface CommentsContext {
-	project: string;
+	client: CommentsClient;
 	reader: Reader;
 	people: readonly CommentMentionable[];
 	online: boolean;
 	/** The team has gone local: comments are read, never written, until it pays (spool#160). */
 	unpaid?: boolean;
+	/** what the card says while it can't write: a Mac's project isn't connected, or a browser is offline */
+	offline: string;
+	/** where Compare reads a comment's still and its frame's cover now */
+	stills: CommentStills;
 	url: string | null;
 	refresh: () => void;
 	/** a word to the person: a link copied, or why something didn't go */
@@ -222,29 +180,32 @@ export function CommentsLayer({
 		return world === undefined ? [] : [{ comment, ...toScreen(world) }];
 	});
 	const groups = gather(here);
-	const openComment = open === null ? undefined : comments.find((comment) => comment.id === open);
+	const delayOf = useArrivals(hidden ? [] : groups.map((group) => group[0]?.comment.id ?? ""));
+	const openComment = useLinger(open === null ? null : (comments.find((comment) => comment.id === open) ?? null));
 	const openPin = here.find((one) => one.comment.id === open);
 	// a comment with no pin here, a deleted page's, opens beside the inbox, at the canvas's right
 	const parked = { x: Math.max(EDGE, size.w - CARD_W - PIN - 2 * EDGE), y: 64 };
-	const cardAt =
-		openComment === undefined
-			? undefined
-			: openPin !== undefined
-				? openPin
-				: openComment.standing === "deleted-page" || openComment.page === page
-					? parked
-					: undefined;
-	const drafted = draft === null || draft.page !== page ? undefined : commentWorld(draft, frames);
+	const cardOf = (comment: Comment | null) => {
+		if (comment === null) return undefined;
+		const pinned = here.find((one) => one.comment.id === comment.id);
+		if (pinned !== undefined) return pinned;
+		return comment.standing === "deleted-page" || comment.page === page ? parked : undefined;
+	};
+	const cardAt = openPin ?? cardOf(openComment.shown);
+	const drafting = useLinger(draft);
+	const drafted =
+		drafting.shown === null || drafting.shown.page !== page ? undefined : commentWorld(drafting.shown, frames);
 	const draftAt = drafted === undefined ? undefined : toScreen(drafted);
 	const toggle = (id: string) => {
 		setDraft(null);
 		setOpen(id === open ? null : id);
 	};
-	const pin = (comment: Comment, at: Point) => (
+	const pin = (comment: Comment, at: Point, delay = 0) => (
 		<Pin
 			key={comment.id}
 			comment={comment}
 			at={at}
+			delay={delay}
 			open={comment.id === open}
 			unread={isUnread(comment, context.reader)}
 			onOpen={() => toggle(comment.id)}
@@ -258,7 +219,7 @@ export function CommentsLayer({
 				: groups.map((group) => {
 						const [first] = group;
 						if (first === undefined) return null;
-						if (group.length === 1) return pin(first.comment, first);
+						if (group.length === 1) return pin(first.comment, first, delayOf(first.comment.id));
 						const centre = {
 							x: Math.round(group.reduce((sum, one) => sum + one.x, 0) / group.length),
 							y: Math.round(group.reduce((sum, one) => sum + one.y, 0) / group.length),
@@ -278,6 +239,7 @@ export function CommentsLayer({
 								) : null}
 								<Cluster
 									at={centre}
+									delay={delayOf(first.comment.id)}
 									people={group.map((one) => one.comment.author)}
 									unread={group.some((one) => isUnread(one.comment, context.reader))}
 									lit={isFanned}
@@ -286,24 +248,24 @@ export function CommentsLayer({
 							</span>
 						);
 					})}
-			{draftAt === undefined ? null : <GhostPin at={draftAt} />}
-			{openComment === undefined || cardAt === undefined || cam === null ? null : (
-				<CardAt at={cardAt} canvas={size}>
+			{draftAt === undefined || drafting.leaving ? null : <GhostPin at={draftAt} />}
+			{openComment.shown === null || cardAt === undefined || cam === null ? null : (
+				<CardAt key={openComment.shown.id} at={cardAt} canvas={size} leaving={openComment.leaving}>
 					<CommentCard
-						key={openComment.id}
 						context={context}
-						comment={openComment}
-						frame={frames.find((one) => one.name === openComment.frame)}
+						comment={openComment.shown}
+						frame={frames.find((one) => one.name === openComment.shown?.frame)}
+						leaving={openComment.leaving}
 						onClose={() => setOpen(null)}
 						onSendToAgent={onSendToAgent}
 					/>
 				</CardAt>
 			)}
-			{draft === null || draftAt === undefined ? null : (
-				<CardAt at={draftAt} canvas={size}>
+			{drafting.shown === null || draftAt === undefined ? null : (
+				<CardAt at={draftAt} canvas={size} leaving={drafting.leaving}>
 					<Composer
 						context={context}
-						draft={draft}
+						draft={drafting.shown}
 						onClose={() => setDraft(null)}
 						onSent={(id) => {
 							setDraft(null);
@@ -340,12 +302,15 @@ function Pin({
 	at,
 	open,
 	unread,
+	delay,
 	onOpen,
 }: {
 	comment: Comment;
 	at: Point;
 	open: boolean;
 	unread: boolean;
+	/** how long after the others arriving with it it pops up */
+	delay: number;
 	onOpen: () => void;
 }) {
 	const round = PIN / 2;
@@ -378,7 +343,7 @@ function Pin({
 					onOpen();
 				}}
 				className={cn(
-					"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-transform duration-fast ease-out",
+					"pointer-events-auto absolute flex animate-comment-pin-in cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-[scale,box-shadow] duration-fast ease-out",
 					open ? "z-20 scale-110" : "z-10 hover:scale-105",
 					hollow ? "bg-surface-raised text-secondary" : null,
 				)}
@@ -388,7 +353,9 @@ function Pin({
 					width: PIN,
 					height: PIN,
 					borderRadius: comment.agent ? 5 : `${round}px ${round}px ${round}px 2px`,
+					// it pops up from its tip, and grows there when open
 					transformOrigin: "0 100%",
+					animationDelay: `${delay}ms`,
 					...(hollow ? {} : { background: by.color, color: PRESENCE_INK }),
 					boxShadow: ringOf(open, unread),
 					...(orphan ? { outline: "1.25px dashed var(--color-secondary)", outlineOffset: -1.25 } : {}),
@@ -421,9 +388,11 @@ function Cluster({
 	people,
 	unread,
 	lit,
+	delay,
 	onClick,
 }: {
 	at: Point;
+	delay: number;
 	people: readonly CommentPerson[];
 	unread: boolean;
 	lit: boolean;
@@ -443,8 +412,9 @@ function Cluster({
 				event.stopPropagation();
 				onClick();
 			}}
-			className="pointer-events-auto absolute z-10 flex cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-transform duration-fast ease-out hover:scale-105"
+			className="pointer-events-auto absolute z-10 flex animate-comment-pin-in cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-[scale,box-shadow] duration-fast ease-out hover:scale-105"
 			style={{
+				animationDelay: `${delay}ms`,
 				left: at.x - PIN / 2,
 				top: at.y - PIN / 2,
 				height: PIN,
@@ -522,8 +492,9 @@ function GhostPin({ at }: { at: Point }) {
 		<span
 			aria-hidden="true"
 			data-comment-ghost=""
-			className="absolute z-20 flex items-center justify-center bg-surface-inverse text-[13px] text-on-inverse leading-none"
+			className="absolute z-20 flex animate-comment-pin-in items-center justify-center bg-surface-inverse text-[13px] text-on-inverse leading-none"
 			style={{
+				transformOrigin: "0 100%",
 				left: at.x,
 				top: at.y - PIN,
 				width: PIN,
@@ -539,26 +510,87 @@ function GhostPin({ at }: { at: Point }) {
 
 /**
  * Where a card stands by its pin: to its right, or to its left near the canvas's right edge; hanging down from a pin
- * in the top half, standing up from one in the bottom half, so it never leaves the canvas.
+ * in the top half, standing up from one in the bottom half, so it never leaves the canvas. It grows out of the pin's
+ * side of it, and when `leaving` shrinks back the same way, taking no presses on its way out.
  */
-function CardAt({ at, canvas, children }: { at: Point; canvas: { w: number; h: number }; children: ReactNode }) {
+function CardAt({
+	at,
+	canvas,
+	leaving = false,
+	children,
+}: {
+	at: Point;
+	canvas: { w: number; h: number };
+	leaving?: boolean;
+	children: ReactNode;
+}) {
 	const right = at.x + PIN + 10 + CARD_W < canvas.w - EDGE;
 	const left = right ? at.x + PIN + 10 : Math.max(EDGE, at.x - CARD_W - 10);
 	const low = at.y > canvas.h * 0.55;
 	const bottom = Math.max(16, canvas.h - at.y - 24);
 	const top = Math.max(16, at.y - PIN - 8);
+	// the pin's middle, from the card's own corner: where it grows from
+	const fromX = Math.round(at.x + PIN / 2 - left);
+	const fromY = low ? "100%" : `${Math.round(at.y - PIN / 2 - top)}px`;
+	const box = useRef<HTMLDivElement>(null);
+	// a card put away lets go of the keys at once, so the next press is the canvas's and not its reply's
+	useEffect(() => {
+		const active = document.activeElement;
+		if (leaving && active instanceof HTMLElement && box.current?.contains(active)) active.blur();
+	}, [leaving]);
 	return (
 		<div
-			className="pointer-events-auto absolute z-30 flex flex-col"
+			ref={box}
+			className={cn("absolute z-30 flex flex-col", leaving ? "pointer-events-none" : "pointer-events-auto")}
+			data-leaving={leaving ? "" : undefined}
+			inert={leaving}
 			style={{
 				left,
 				width: CARD_W,
 				...(low ? { bottom, maxHeight: canvas.h - bottom - 16 } : { top, maxHeight: canvas.h - top - 16 }),
 			}}
 		>
-			{children}
+			<div
+				className={cn("flex min-h-0 flex-col", leaving ? "animate-comment-card-out" : "animate-comment-card-in")}
+				style={{ transformOrigin: `${fromX}px ${fromY}` }}
+			>
+				{children}
+			</div>
 		</div>
 	);
+}
+
+/**
+ * What was shown, kept a moment after it goes so it can leave the way it came: `leaving` while it does. Another in
+ * its place takes it at once.
+ */
+export function useLinger<T>(value: T | null, ms = CARD_OUT_MS): { shown: T | null; leaving: boolean } {
+	const [last, setLast] = useState<T | null>(value);
+	useEffect(() => {
+		if (value !== null) {
+			setLast(value);
+			return;
+		}
+		const timer = setTimeout(() => setLast(null), ms);
+		return () => clearTimeout(timer);
+	}, [value, ms]);
+	return { shown: value ?? last, leaving: value === null && last !== null };
+}
+
+/**
+ * When each pin pops up, by its key: at once when it comes on its own, and in a ripple when several come together (a
+ * page opened, pins shown again, the comments first heard). A pin keeps its delay while it stands, so a camera that
+ * moves it never starts it again.
+ */
+function useArrivals(keys: readonly string[]): (key: string) => number {
+	const known = useRef(new Map<string, number>());
+	const now = new Set(keys);
+	for (const key of [...known.current.keys()]) if (!now.has(key)) known.current.delete(key);
+	const arriving = keys.filter((key) => !known.current.has(key));
+	arriving.forEach((key, index) => {
+		known.current.set(key, arriving.length === 1 ? 0 : Math.min(index * RIPPLE_MS, RIPPLE_MAX_MS));
+	});
+	return (key) => known.current.get(key) ?? 0;
 }
 
 /** A card's presses, wheel and menu are its own: none of them reaches the field under it. */
@@ -612,8 +644,8 @@ function ElementChip({ label }: { label: string }) {
 	);
 }
 
-/** Said when a comment can't go: the project isn't connected to the team, so nothing is sent or kept to send later. */
-const OFFLINE = "Offline: comments go to spool.page, so this waits until the project is connected again.";
+/** Said on a Mac when a comment can't go: the project isn't connected to the team, so nothing is sent or kept. */
+export const MAC_OFFLINE = "Offline: comments go to spool.page, so this waits until the project is connected again.";
 
 /** Words that name people: every @mention of someone the comment knows, or the team has, in the accent. */
 export function Said({
@@ -804,17 +836,17 @@ function MentionField({
 }
 
 /** A refusal said in the card: offline and a team gone local have their own words, and the rest are the team's. */
-function RefusalLine({ refusal, online, unpaid }: { refusal: string | null; online: boolean; unpaid: boolean }) {
-	if (unpaid || refusal === "unpaid")
+function RefusalLine({ refusal, context }: { refusal: string | null; context: CommentsContext }) {
+	if (context.unpaid === true || refusal === "unpaid")
 		return (
 			<span className="text-secondary type-label" data-comment-offline="">
 				{UNPAID}
 			</span>
 		);
-	if (!online || refusal === "offline")
+	if (!context.online || refusal === "offline")
 		return (
 			<span className="text-secondary type-label" data-comment-offline="">
-				{OFFLINE}
+				{context.offline}
 			</span>
 		);
 	return refusal === null ? null : (
@@ -836,7 +868,7 @@ function Composer({
 	onClose: () => void;
 	onSent: (id: string) => void;
 }) {
-	const { project, online, people, unpaid = false } = context;
+	const { client, online, people, unpaid = false } = context;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
@@ -845,21 +877,23 @@ function Composer({
 		if (text.trim() === "" || sending || offline) return;
 		setSending(true);
 		const { selector, outerHtml, source, generated } = draft.element ?? {};
-		void postComment(project, {
-			page: draft.page,
-			frame: draft.frame,
-			at: draft.at,
-			element:
-				selector === undefined || outerHtml === undefined || source === undefined || generated === undefined
-					? null
-					: { selector, outerHtml, source, generated },
-			body: text,
-			mentions: mentionedIn(text, people),
-		}).then((sent) => {
-			setSending(false);
-			if ("id" in sent) onSent(sent.id);
-			else setRefusal(sent.error === "offline" ? "offline" : sent.message);
-		});
+		void client
+			.post({
+				page: draft.page,
+				frame: draft.frame,
+				at: draft.at,
+				element:
+					selector === undefined || outerHtml === undefined || source === undefined || generated === undefined
+						? null
+						: { selector, outerHtml, source, generated },
+				body: text,
+				mentions: mentionedIn(text, people),
+			})
+			.then((sent) => {
+				setSending(false);
+				if ("id" in sent) onSent(sent.id);
+				else setRefusal(sent.error === "offline" ? "offline" : sent.message);
+			});
 	};
 	return (
 		<Popover pad="none" className="w-full overflow-visible" data-comment-composer="" {...OWN_POINTER}>
@@ -885,7 +919,7 @@ function Composer({
 					onSend={send}
 					onEscape={onClose}
 				/>
-				<RefusalLine refusal={refusal} online={online} unpaid={unpaid} />
+				<RefusalLine refusal={refusal} context={context} />
 				<div className="flex items-center gap-2">
 					<TeamLabel />
 					<span className="min-w-0 flex-1" />
@@ -919,6 +953,7 @@ export function CommentCard({
 	context,
 	comment,
 	frame,
+	leaving = false,
 	onClose,
 	onSendToAgent,
 }: {
@@ -926,10 +961,12 @@ export function CommentCard({
 	comment: Comment;
 	/** Its frame as the canvas has it now, for Compare's "now"; none when it isn't on this page. */
 	frame?: CommentFrame | undefined;
+	/** put away, and shrinking back into its pin: it reads nothing more */
+	leaving?: boolean;
 	onClose: () => void;
 	onSendToAgent?: ((comment: Comment) => void) | undefined;
 }) {
-	const { project, online, people, reader, refresh, unpaid = false } = context;
+	const { client, online, people, reader, refresh, unpaid = false } = context;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
@@ -938,9 +975,9 @@ export function CommentCard({
 	const unread = isUnread(comment, reader);
 	// opening the card reads it, and anything said while it stands open is read as it arrives
 	useEffect(() => {
-		if (!unread || !online) return;
-		void changeComment(project, comment.id, { type: "read" }).then(refresh);
-	}, [project, comment.id, unread, online, refresh]);
+		if (!unread || !online || leaving) return;
+		void client.change(comment.id, { type: "read" }).then(refresh);
+	}, [client, comment.id, unread, online, leaving, refresh]);
 	/** a change sent: the canvas hears the result, or the card says why not */
 	const change = (sent: Promise<CommentChanged>, then?: () => void) => {
 		void sent.then((done) => {
@@ -952,12 +989,11 @@ export function CommentCard({
 			}
 		});
 	};
-	const toggleResolved = () =>
-		change(changeComment(project, comment.id, { type: resolved === null ? "resolve" : "reopen" }));
+	const toggleResolved = () => change(client.change(comment.id, { type: resolved === null ? "resolve" : "reopen" }));
 	const send = () => {
 		if (text.trim() === "" || sending || offline) return;
 		setSending(true);
-		void postReply(project, comment.id, text, mentionedIn(text, people)).then((sent) => {
+		void client.reply(comment.id, text, mentionedIn(text, people)).then((sent) => {
 			setSending(false);
 			if ("id" in sent) {
 				setText("");
@@ -970,7 +1006,7 @@ export function CommentCard({
 		context,
 		comment,
 		onChange: change,
-		onUnread: () => change(changeComment(project, comment.id, { type: "unread" }), onClose),
+		onUnread: () => change(client.change(comment.id, { type: "unread" }), onClose),
 	};
 	return (
 		<Popover pad="none" className="flex min-h-0 w-full flex-col" data-comment-card={comment.id} {...OWN_POINTER}>
@@ -1038,7 +1074,9 @@ export function CommentCard({
 							acts={{ ...menu, reply }}
 						/>
 					))}
-				{comment.editedSince === true ? <EditedSince project={project} comment={comment} frame={frame} /> : null}
+				{comment.editedSince === true ? (
+					<EditedSince comment={comment} frame={frame} stills={context.stills} />
+				) : null}
 			</div>
 			<div className="flex shrink-0 flex-col gap-1.5 border-line-default border-t px-3 py-2.5">
 				<div className="flex items-end gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 py-1.5 focus-within:border-line-focus">
@@ -1067,7 +1105,7 @@ export function CommentCard({
 						Reply
 					</Button>
 				</div>
-				<RefusalLine refusal={refusal} online={online} unpaid={unpaid} />
+				<RefusalLine refusal={refusal} context={context} />
 			</div>
 		</Popover>
 	);
@@ -1113,7 +1151,7 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 	const remove = () => {
 		setOpen(false);
 		onChange(
-			changeComment(context.project, comment.id, {
+			context.client.change(comment.id, {
 				type: "delete",
 				...(reply === undefined ? {} : { reply: reply.id }),
 			}),
@@ -1222,7 +1260,7 @@ function EditField({ acts, text, onDone }: { acts: MessageActs; text: string; on
 		if (value.trim() === "") return;
 		if (value === text) return onDone();
 		acts.onChange(
-			changeComment(context.project, comment.id, {
+			context.client.change(comment.id, {
 				type: "edit",
 				body: value,
 				mentions: mentionedIn(value, context.people),

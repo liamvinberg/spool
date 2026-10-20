@@ -33,6 +33,7 @@ import type {
 import {
 	beaconTrash,
 	coverUrl,
+	daemonComments,
 	daemonShares,
 	fetchCanvasState,
 	fetchCloudAccount,
@@ -116,15 +117,14 @@ import {
 	visiblePlaceholdersOf,
 } from "./canvas-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
+import { COMMENTS_CHANGE, daemonStills, useCommentPeople, useComments } from "./comments-daemon";
 import {
-	COMMENTS_CHANGE,
 	type CommentDraft,
 	type CommentsContext,
 	CommentsLayer,
 	commentChip,
 	commentWorld,
-	useCommentPeople,
-	useComments,
+	MAC_OFFLINE,
 } from "./comments-layer";
 import { counts as commentCounts, pageCount } from "./comments-model";
 import { CommentsPane } from "./comments-pane";
@@ -568,12 +568,16 @@ function CanvasField({
 	const [commentFilters] = useCanvasField(store, "commentFilters");
 	const [commentOpen] = useCanvasField(store, "commentOpen");
 	const [pinsHidden] = useCanvasField(store, "pinsHidden");
+	const commentsClient = useMemo(() => daemonComments(project), [project]);
+	const commentStills = useMemo(() => daemonStills(project), [project]);
 	const commentsContext: CommentsContext = {
-		project,
+		client: commentsClient,
 		reader: commentReader,
 		people: commentPeople,
 		online: comments.online,
 		unpaid: comments.unpaid,
+		offline: MAC_OFFLINE,
+		stills: commentStills,
 		url: comments.url,
 		refresh: comments.refresh,
 		notice: setNotice,

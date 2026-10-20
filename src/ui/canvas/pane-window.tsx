@@ -117,6 +117,14 @@ export function PaneActions({ children }: { children: ReactNode }) {
 	return slot === null ? null : createPortal(children, slot);
 }
 
+/**
+ * A pane's actions drawn into a head of the caller's own, for a pane standing outside the pane window: the browser
+ * canvas's Comments panel (spool#173). Null while that head isn't drawn yet.
+ */
+export function PaneActionsSlot({ slot, children }: { slot: HTMLElement | null; children: ReactNode }) {
+	return <PaneSlot.Provider value={slot}>{children}</PaneSlot.Provider>;
+}
+
 const PaneCommands = createContext<readonly PaletteCommand[]>([]);
 
 /** the layout's commands, for the ⌘K palette */

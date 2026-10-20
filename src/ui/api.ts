@@ -2148,6 +2148,12 @@ async function commentAnswer(
 	}
 }
 
+/** A change a person makes to a comment: resolve or reopen it, read or mark it unread, edit or delete it or a reply. */
+export type CommentAct =
+	| { type: "resolve" | "reopen" | "read" | "unread" }
+	| { type: "edit"; body: string; mentions: string[]; reply?: string }
+	| { type: "delete"; reply?: string };
+
 /** A comment's change as the team took it: done, or refused, offline or for a reason said in words. */
 export type CommentChanged = { ok: true } | { error: string; message: string };
 
@@ -2155,14 +2161,7 @@ export type CommentChanged = { ok: true } | { error: string; message: string };
  * Change a comment as this Mac's person: resolve or reopen it, mark it read or unread, edit its words or a reply's,
  * delete it or a reply. The canvas hears the result as every other canvas does, through its comments changing.
  */
-export async function changeComment(
-	project: string,
-	comment: string,
-	change:
-		| { type: "resolve" | "reopen" | "read" | "unread" }
-		| { type: "edit"; body: string; mentions: string[]; reply?: string }
-		| { type: "delete"; reply?: string },
-): Promise<CommentChanged> {
+export async function changeComment(project: string, comment: string, change: CommentAct): Promise<CommentChanged> {
 	const base = `/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment)}`;
 	const at = (reply: string | undefined) =>
 		reply === undefined ? base : `${base}/replies/${encodeURIComponent(reply)}`;
@@ -2204,4 +2203,24 @@ export function postReply(
 			body: JSON.stringify({ body, mentions }),
 		}),
 	);
+}
+
+/**
+ * Where a canvas writes comments (spool#173): a Mac's through its daemon, which sends them to the team on the
+ * project's sync connection; a browser's straight to spool.page. The comments layer and the card write through it
+ * and never ask which.
+ */
+export interface CommentsClient {
+	post(comment: CommentWrite): Promise<CommentSent>;
+	reply(comment: string, body: string, mentions: string[]): Promise<CommentSent>;
+	change(comment: string, change: CommentAct): Promise<CommentChanged>;
+}
+
+/** This Mac's daemon, writing for one of its team projects. */
+export function daemonComments(project: string): CommentsClient {
+	return {
+		post: (comment) => postComment(project, comment),
+		reply: (comment, body, mentions) => postReply(project, comment, body, mentions),
+		change: (comment, change) => changeComment(project, comment, change),
+	};
 }

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { Cover } from "../../cover";
 import { type Comment, within } from "../../team-sync-protocol";
-import { coverUrl } from "../api";
 import { cn } from "../cn";
 import { TextAction } from "../primitives/feedback";
 import type { Box, Point } from "./camera";
@@ -56,14 +55,14 @@ export function DroppedLine({ comment }: { comment: Comment }) {
 
 /** A card's note that its frame changed after it was made, opening the still it kept beside the frame now. */
 export function EditedSince({
-	project,
 	comment,
 	frame,
+	stills,
 }: {
-	project: string;
 	comment: Comment;
 	/** The frame as the canvas has it now, for the "now" still; none when it isn't on this page. */
 	frame: CommentFrame | undefined;
+	stills: CommentStills;
 }) {
 	const [comparing, setComparing] = useState(false);
 	if (comment.frame === null) return null;
@@ -83,26 +82,26 @@ export function EditedSince({
 			{comparing ? (
 				<div className="flex gap-2">
 					<Still
-						src={
-							comment.still
-								? `/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment.id)}/still`
-								: undefined
-						}
+						src={comment.still ? stills.kept(comment) : undefined}
 						at={comment.at}
 						frame={frame}
 						label={rev === "" ? "then" : `then · ${rev}`}
 						then
 					/>
-					<Still
-						src={frame?.cover === undefined ? undefined : coverUrl(project, comment.frame, frame.cover.hash)}
-						at={comment.at}
-						frame={frame}
-						label="now"
-					/>
+					<Still src={stills.now(comment.frame, frame)} at={comment.at} frame={frame} label="now" />
 				</div>
 			) : null}
 		</div>
 	);
+}
+
+/**
+ * Where a canvas reads Compare's two pictures: the still a comment kept, from its team (through the daemon on a Mac,
+ * from spool.page in a browser), and its frame's cover now.
+ */
+export interface CommentStills {
+	kept: (comment: Comment) => string | undefined;
+	now: (frame: string, drawn: CommentFrame | undefined) => string | undefined;
 }
 
 /** A still's box on the card. */
