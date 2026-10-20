@@ -8,6 +8,7 @@ import {
 	launchHeadlessShell,
 	MissingHeadlessShellError,
 } from "../headless-shell";
+import type { NamedElement } from "../runtime/frame-shim/named-element";
 import { type BoothQueue, type BoothReason, keyOf, type Sitting } from "./booth-queue";
 import { frameShims } from "./frame-shims";
 import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
@@ -370,6 +371,11 @@ interface ShotRequest {
 	/** CSS px to scroll the document down once it commits, ahead of the settle or the first seek. */
 	scroll?: number | undefined;
 	scenario?: string | undefined;
+	/**
+	 * An element to find once the frame settles, by a CSS selector or a `path:line` element pointer
+	 * (`spool comments add --element`): the result says where it is and what the selection calls it.
+	 */
+	find?: string | undefined;
 }
 
 type ShotResult =
@@ -381,6 +387,8 @@ type ShotResult =
 			errors: string[];
 			contentHeight: number;
 			scheme: ColorScheme;
+			/** The element `find` named, or null when nothing in the frame matches it; absent when none was asked. */
+			found?: NamedElement | null;
 	  }
 	/** The document failed to serve after the compile probe passed: the source broke in between. */
 	| { kind: "unserved"; status: number };
@@ -1188,6 +1196,18 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 		const own = Number(await evaluate(tab, world, `${frameShims.boothProbes}.contentHeight()`));
 		const contentHeight =
 			own > 0 ? own : Number(await evaluate(tab, world, "document.documentElement.scrollHeight")) || 0;
+		const found =
+			request.find === undefined
+				? {}
+				: {
+						found: readNamedElement(
+							await evaluate(
+								tab,
+								world,
+								`${frameShims.boothProbes}.namedElement(${JSON.stringify(request.find)})`,
+							),
+						),
+					};
 		return {
 			kind: "booted",
 			shots,
@@ -1195,6 +1215,7 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			errors: [...tab.errors],
 			contentHeight,
 			scheme: taken,
+			...found,
 		};
 	}
 
@@ -1388,4 +1409,18 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			if (running !== undefined) await end(running);
 		},
 	};
+}
+
+/** What the find probe answered, as the daemon may trust it: a found element's handles and place, or null. */
+function readNamedElement(value: unknown): NamedElement | null {
+	if (!isRecord(value)) return null;
+	const { x, y, selector, outerHtml, source, generated } = value;
+	if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+	if (typeof selector !== "string" || typeof outerHtml !== "string" || typeof generated !== "boolean") return null;
+	if (!(source === null || typeof source === "string")) return null;
+	return { x, y, selector, outerHtml, source, generated };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
