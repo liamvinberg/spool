@@ -513,7 +513,7 @@ export function CommentsPanel({
 	const [slot, setSlot] = useState<HTMLElement | null>(null);
 	return (
 		<div
-			className="h-full shrink-0 overflow-hidden transition-[width] duration-base ease-snap"
+			className="h-full shrink-0 overflow-clip transition-[width] duration-base ease-snap"
 			style={{ width: open ? PANEL_W : 0 }}
 			data-comments-panel={open ? "open" : "closed"}
 			inert={!open}

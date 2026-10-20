@@ -384,6 +384,42 @@ it("shows a teammate's comments live, reads one when it opens, and replies", { t
 	await expect.poll(() => page.locator("[data-comment-pin]").count()).toBe(2);
 });
 
+it("never scrolls the page to reach a card's reply, wherever the card stands as the canvas moves", {
+	timeout: 60_000,
+}, async () => {
+	const { page } = await open(PATH, [comment("c1"), comment("c2", { frame: "menu", at: { x: 780, y: 580 } })]);
+	/** Whatever between the reply and the page has scrolled to show it. */
+	const scrolled = () =>
+		page.evaluate(() => {
+			const moved: string[] = [];
+			for (const at of document.querySelectorAll("*"))
+				if (at.scrollLeft !== 0 || at.scrollTop !== 0)
+					if (!at.closest("[data-comments-panel] [data-comments-list]"))
+						moved.push(`${at.tagName}.${at.className} ${at.scrollLeft},${at.scrollTop}`);
+			return moved;
+		});
+	await page.locator('[data-comment-pin="c1"]').click();
+	const reply = (id: string) => page.locator(`[data-comment-card="${id}"] textarea[aria-label="Reply"]`);
+	await reply("c1").waitFor();
+	// zoomed in far from the pin, which carries it and its card off the canvas's right and bottom edges
+	await page.mouse.move(400, 120);
+	for (let step = 0; step < 6; step += 1) {
+		await page.keyboard.down("Control");
+		await page.mouse.wheel(0, -400);
+		await page.keyboard.up("Control");
+	}
+	await page.keyboard.type("still here");
+	expect(await scrolled()).toEqual([]);
+	// a row in the panel flies to its pin, its card opening on the way
+	await page.locator("[data-comments-button]").click();
+	await page.locator("[data-comments-panel]").getByText("words of c2").click();
+	await reply("c2").waitFor();
+	expect(await scrolled()).toEqual([]);
+	await page.waitForTimeout(800);
+	await page.keyboard.type("and here");
+	expect(await scrolled()).toEqual([]);
+});
+
 it("closes a card's writing once spool.page says the team has gone local", { timeout: 60_000 }, async () => {
 	const { page } = await open(PATH, [comment("c1")], () => Response.json({ error: "unpaid" }, { status: 402 }));
 	await page.locator('[data-comment-pin="c1"]').click();
