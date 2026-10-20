@@ -4,7 +4,13 @@ import { cloudTeams } from "../cloud-teams";
 import { isFramePath, isPagePath } from "../page-path";
 import { personName } from "../person-name";
 import { localCopyOf, readProjectLink } from "../team-project";
-import { COMMENT_MENTIONS, type CommentElement, type CommentPoint, isCommentBody } from "../team-sync-protocol";
+import {
+	COMMENT_MENTIONS,
+	type Comment,
+	type CommentElement,
+	type CommentPoint,
+	isCommentBody,
+} from "../team-sync-protocol";
 import type { ResolveProject } from "./project-route";
 import { type ElementPut, elementEntry } from "./selection";
 import {
@@ -16,7 +22,11 @@ import {
 	type NewReply,
 } from "./team-comments";
 
-/** What the canvas sends to place a comment: where, on which element as the frame's shim saw it, and the words. */
+/**
+ * What the canvas sends to place a comment: where, on which element as the frame's shim saw it, and the words. An
+ * agent's (`spool comments add`) is marked `agent`, and may name its element by `find` (a selector or an element
+ * pointer) for the daemon to find in the frame; it then stands at that element's top-left.
+ */
 interface CommentInput {
 	page: string;
 	frame: string | null;
@@ -24,6 +34,14 @@ interface CommentInput {
 	element: Omit<ElementPut, "frame"> | null;
 	body: string;
 	mentions: string[] | undefined;
+	agent?: true;
+	find?: string;
+}
+
+/** An element found in a frame: its place in the frame's own pixels, and its handles as the shim names them. */
+export interface FoundElement extends Omit<ElementPut, "frame"> {
+	x: number;
+	y: number;
 }
 
 /** Someone a comment can mention: a member of the project's team, by account. */
@@ -83,6 +101,15 @@ export function commentRoutes(deps: {
 	people: (root: string) => Promise<Mentionable[]>;
 	/** The frame's source revision and current still, for a comment made on it now. */
 	frameNow: (root: string, frame: string) => Promise<FrameNow>;
+	/** The ids of the comments whose frame was edited since they were made. */
+	editedSince: (root: string, comments: readonly Comment[]) => Promise<string[]>;
+	/** An element named in a frame as it boots now: null when nothing matches, a message when it won't boot. */
+	findElement: (
+		root: string,
+		project: string,
+		frame: string,
+		target: string,
+	) => Promise<FoundElement | null | { broken: string }>;
 }) {
 	const withRoot = async (c: Context, act: (root: string) => Promise<Response>) => {
 		const project = deps.resolve(c, c.req.param("project") ?? "");
@@ -129,7 +156,12 @@ export function commentRoutes(deps: {
 		new Hono()
 			// with the project's address at the team, which a comment's link is made from
 			.get("/:project/comments", (c) =>
-				withRoot(c, async (root) => c.json({ ...deps.comments(root), url: localCopyOf(root)?.url ?? null })),
+				withRoot(c, async (root) => {
+					const read = { ...deps.comments(root), url: localCopyOf(root)?.url ?? null };
+					// an agent's read (`spool comments`) asks which frames moved on since; the canvas doesn't
+					if (c.req.query("edited") === undefined) return c.json(read);
+					return c.json({ ...read, edited: await deps.editedSince(root, read.comments) });
+				}),
 			)
 			.get("/:project/comments/people", (c) =>
 				withRoot(c, async (root) => c.json({ people: await deps.people(root) })),
@@ -147,13 +179,30 @@ export function commentRoutes(deps: {
 					const input = readCommentInput(await c.req.json().catch(() => undefined));
 					if (input === undefined)
 						return c.text(
-							"a comment is { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated } | null, body, mentions? }",
+							'a comment is { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated } | null, body, mentions?, agent?: true, find?: "selector or path:line" }',
 							400,
 						);
-					const { page, frame, at, body, mentions } = input;
+					const { page, frame, body, mentions } = input;
+					let { at } = input;
+					let put = input.element;
+					if (input.find !== undefined) {
+						if (frame === null)
+							return c.json({ error: "no_frame", message: "an element is found on a frame" }, 400);
+						const found = await deps.findElement(root, c.req.param("project") ?? "", frame, input.find);
+						if (found === null)
+							return c.json(
+								{ error: "element_not_found", message: `nothing on ${frame} matches "${input.find}"` },
+								404,
+							);
+						if ("broken" in found) return c.json({ error: "frame_broken", message: found.broken }, 422);
+						const { x, y, ...handles } = found;
+						at = { x, y };
+						put = handles;
+					}
 					const element: CommentElement | null =
-						frame === null || input.element === null ? null : handlesOf(root, { ...input.element, frame });
+						frame === null || put === null ? null : handlesOf(root, { ...put, frame });
 					const now = frame === null ? { revision: null, still: undefined } : await deps.frameNow(root, frame);
+					const agent = input.agent === true ? AGENT : {};
 					return answered(c, () =>
 						deps.comment(
 							root,
@@ -165,6 +214,7 @@ export function commentRoutes(deps: {
 								revision: now.revision,
 								body,
 								...(mentions === undefined ? {} : { mentions }),
+								...agent,
 							},
 							now.still,
 						),
@@ -176,19 +226,24 @@ export function commentRoutes(deps: {
 					const input: unknown = await c.req.json().catch(() => undefined);
 					const body = isRecord(input) ? input.body : undefined;
 					const mentions = isRecord(input) ? readMentions(input.mentions) : undefined;
-					if (!isCommentBody(body) || mentions === null)
-						return c.text("a reply is { body, mentions? } with 1 to 4,000 characters", 400);
+					const marked = isRecord(input) ? input.agent : undefined;
+					if (!isCommentBody(body) || mentions === null || !(marked === undefined || marked === true))
+						return c.text("a reply is { body, mentions?, agent?: true } with 1 to 4,000 characters", 400);
 					return answered(c, () =>
 						deps.reply(root, {
 							comment: c.req.param("comment") ?? "",
 							body,
 							...(mentions === undefined ? {} : { mentions }),
+							...(marked === true ? AGENT : {}),
 						}),
 					);
 				}),
 			)
 	);
 }
+
+/** The agent mark on what `spool comments` writes: the person's account, shown as their agent. */
+const AGENT: { agent: true } = { agent: true };
 
 /** The team's answer: the new id, or why it wasn't taken. */
 function answered(c: Context, send: () => Promise<string>): Promise<Response> {
@@ -246,20 +301,24 @@ function handlesOf(root: string, put: ElementPut): CommentElement | null {
 
 function readCommentInput(value: unknown): CommentInput | undefined {
 	if (!isRecord(value)) return undefined;
-	const { page, frame, at, element, body } = value;
+	const { page, frame, at, element, body, agent, find } = value;
 	const mentions = readMentions(value.mentions);
 	if (mentions === null) return undefined;
+	if (!(agent === undefined || agent === true)) return undefined;
+	if (!(find === undefined || (typeof find === "string" && find.trim() !== ""))) return undefined;
+	const extra = { ...(agent === true ? AGENT : {}), ...(find === undefined ? {} : { find: find.trim() }) };
 	if (typeof page !== "string" || !(page === "" || isPagePath(page)) || !isCommentBody(body)) return undefined;
 	if (!(frame === null || (typeof frame === "string" && isFramePath(frame)))) return undefined;
 	if (!isRecord(at)) return undefined;
 	const { x, y } = at;
 	if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return undefined;
-	if (element === null || element === undefined) return { page, frame, at: { x, y }, element: null, body, mentions };
+	if (element === null || element === undefined)
+		return { page, frame, at: { x, y }, element: null, body, mentions, ...extra };
 	if (!isRecord(element)) return undefined;
 	const { selector, outerHtml, source, generated } = element;
 	if (typeof selector !== "string" || typeof outerHtml !== "string") return undefined;
 	if (!(source === null || typeof source === "string") || typeof generated !== "boolean") return undefined;
-	return { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated }, body, mentions };
+	return { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated }, body, mentions, ...extra };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

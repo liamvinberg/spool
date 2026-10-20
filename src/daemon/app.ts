@@ -38,6 +38,7 @@ import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
+import { editedSince } from "./comment-edited";
 import { commentRoutes, teamPeople } from "./comment-routes";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError } from "./design-path";
@@ -76,6 +77,7 @@ import {
 	frameNames,
 	listProjectFrames,
 	listProjectFramesAwaited,
+	readFrameGeometry,
 } from "./projection";
 import { createResolvePass } from "./resolve-pass";
 import {
@@ -1647,6 +1649,29 @@ export function createDaemonApp({
 				const cover = readCover(root, frame);
 				const image = cover === undefined ? undefined : readCoverImage(root, frame, cover.hash);
 				return { revision: doc.kind === "ok" ? doc.source : null, still: image?.bytes };
+			},
+			editedSince: (root, comments) =>
+				editedSince(comments, async (frame) => {
+					const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+					return doc.kind === "ok" ? doc.source : null;
+				}),
+			// the element an agent names, found in the frame booted at its own size, as a pick would see it
+			findElement: async (root, project, frame, target) => {
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				if (doc.kind === "missing") return { broken: doc.message };
+				if (doc.kind === "error") return { broken: `${frame} doesn't compile: ${doc.message}` };
+				const { w, h } = readFrameGeometry(root, frame);
+				const shot = await booth.shoot({
+					project,
+					frame,
+					width: Math.round(w),
+					height: Math.round(h),
+					scale: 1,
+					tiles: [],
+					find: target,
+				});
+				if (shot.kind === "unserved") return { broken: `${frame} failed to serve` };
+				return shot.found ?? null;
 			},
 		}),
 	);
