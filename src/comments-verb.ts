@@ -2,7 +2,7 @@ import { commentBlock, commentBlocks } from "./daemon/comment-block";
 import { CONTROL_HEADER } from "./daemon/security";
 import { SpoolError } from "./errors";
 import { pageParent } from "./page-path";
-import { type Comment, isOpenComment, readComment } from "./team-sync-protocol";
+import { type Comment, draftFor, isOpenComment, readComment } from "./team-sync-protocol";
 import { refusalOf } from "./verbs";
 
 /**
@@ -77,9 +77,18 @@ export async function showComment(daemon: CommentsDaemon, id: string, now = Date
 	return `${age(read, now)}\n\n${blocksOf([comment])}`;
 }
 
-/** A reply under a comment, as the person's agent. Its id. */
-export async function replyToComment(daemon: CommentsDaemon, id: string, body: string): Promise<string> {
-	return idOf(await written(daemon, `/${encodeURIComponent(id)}/replies`, "POST", { body, agent: true }));
+/**
+ * A reply under a comment, as the person's agent: its id, and whether it is a draft. On a share's comment it is
+ * (spool#174): someone outside the team reads it, so it waits on its card for the person to send it.
+ */
+export async function replyToComment(
+	daemon: CommentsDaemon,
+	id: string,
+	body: string,
+): Promise<{ id: string; draft: boolean }> {
+	const comment = (await readComments(daemon)).comments.find((one) => one.id === id);
+	const reply = idOf(await written(daemon, `/${encodeURIComponent(id)}/replies`, "POST", { body, agent: true }));
+	return { id: reply, draft: comment !== undefined && draftFor(comment.audience, true, "") !== null };
 }
 
 /** Resolve a comment, or reopen one, as the person's agent. */

@@ -574,7 +574,11 @@ comments
 	.argument("<words...>", "what to say")
 	.action(async (id: string, words: string[]) => {
 		const reply = await replyToComment(await commentsContext(), id, wordsOf(words));
-		process.stdout.write(`replied to ${id} (reply ${reply})\n`);
+		process.stdout.write(
+			reply.draft
+				? `drafted a reply to ${id} (reply ${reply.id}): it's a share's comment, so the reply waits on its card for your person to send it\n`
+				: `replied to ${id} (reply ${reply.id})\n`,
+		);
 	});
 
 comments

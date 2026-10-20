@@ -84,6 +84,8 @@ async function mac(machine: Machine) {
 		};
 	return {
 		read,
+		url: daemon.url,
+		token: daemon.controlToken,
 		/** What the person's canvas sends, as themself: a POST to one of the comment routes, with no body. */
 		call: (path: string) =>
 			fetch(`${daemon.url}/api/p/checkout/comments/${path}`, {
@@ -264,11 +266,43 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		const added = await anas.spool("add", "receipt", "Here.", "--element", "footer");
 		expect(added.status).toBe(1);
 		expect(added.stderr).toContain('nothing on receipt matches "footer"');
+
 		// a frame that isn't there takes no pin, which nobody would ever see
 		const nowhere = await anas.spool("add", "receipts", "Here.");
 		expect(nowhere.status).toBe(1);
 		expect(nowhere.stderr).toContain("there's no frame receipts");
 		expect((await anas.read()).comments).toEqual([]);
+	});
+
+	it("says a reply on a share's comment is a draft that waits for its person", async () => {
+		const { cloud, ana, ben } = await team();
+		const anas = await mac(ana);
+		const bens = await mac(ben);
+		await anas.online();
+		await bens.online();
+		cloud.share("checkout", "s1", { pages: [""], by: "ana" });
+		const posted = await fetch(`${anas.url}/api/p/checkout/comments`, {
+			method: "POST",
+			headers: { [CONTROL_HEADER]: anas.token, "content-type": "application/json" },
+			body: JSON.stringify({
+				page: "",
+				frame: "receipt",
+				at: { x: 0, y: 0 },
+				body: "For the client",
+				audience: { share: "s1" },
+			}),
+		});
+		const { id } = (await posted.json()) as { id: string };
+		await bens.until((comments) => comments.some((comment) => comment.id === id));
+
+		const replied = await bens.spool("reply", id, "Fixed", "it.");
+		expect(replied.stderr).toBe("");
+		expect(replied.stdout).toMatch(
+			new RegExp(
+				`^drafted a reply to ${id} \\(reply \\S+\\): it's a share's comment, so the reply waits on its card for your person to send it\\n$`,
+			),
+		);
+		expect((await bens.spool("show", id)).stdout).toContain("\nben's agent, a draft not sent: Fixed it.\n");
 	});
 
 	it("files a deleted page's comments with the closed ones, as the canvas does", async () => {
