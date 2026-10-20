@@ -3,11 +3,12 @@ import { personName } from "../../person-name";
 import { cn } from "../cn";
 import { Button } from "../primitives/actions";
 import { TextField } from "../primitives/inputs";
-import type { AccountSource, AccountSummary } from "./account-source";
+import { Segment, SegmentedControl } from "../primitives/selection";
+import type { AccountSource, AccountSummary, CommentEmails } from "./account-source";
 
 /**
- * spool.page/account, in Home's sidebar like a team's pages: who is signed in and their name, the Macs signed in as
- * them, their passkeys and the way out of this browser. Passkeys are made here, since a passkey belongs to spool.page.
+ * spool.page/account, in Home's sidebar like a team's pages: who is signed in and their name, whether they get
+ * comment emails, the Macs signed in as them, their passkeys and the way out of this browser. Passkeys are made here, since a passkey belongs to spool.page.
  */
 export function AccountPage({
 	source,
@@ -97,6 +98,35 @@ export function AccountPage({
 							refused={refused}
 						/>
 					</Group>
+
+					{summary.commentEmails !== undefined && (
+						<Group
+							title="Comment emails"
+							says="One email a few minutes after a comment is meant for you, unless you read it first."
+						>
+							<Row
+								title="Comments for you"
+								says="Mentions of you, replies in comments you’re in, and outsiders’ comments on shares you made. Every email can turn them off too."
+								control={
+									<SegmentedControl
+										label="Comment emails"
+										value={summary.commentEmails}
+										onValueChange={(value) => {
+											const emails: CommentEmails = value === "off" ? "off" : "for-you";
+											void act("emails", () => source.setCommentEmails(emails));
+										}}
+									>
+										<Segment value="for-you" disabled={busy !== null}>
+											For you
+										</Segment>
+										<Segment value="off" disabled={busy !== null}>
+											Off
+										</Segment>
+									</SegmentedControl>
+								}
+							/>
+						</Group>
+					)}
 
 					<Group
 						title="Macs"
