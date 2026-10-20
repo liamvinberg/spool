@@ -237,6 +237,20 @@ describe("comments on the sync socket", () => {
 				ref: "r3",
 				comment: comment.id,
 			});
+		// a resolve or reopen by the person's agent says so; a read has nothing to mark
+		for (const type of ["comment-resolve", "comment-reopen"])
+			expect(readCommentChange({ type, ref: "r3", comment: comment.id, agent: true })).toEqual({
+				type,
+				ref: "r3",
+				comment: comment.id,
+				agent: true,
+			});
+		expect(readCommentChange({ type: "comment-resolve", ref: "r3", comment: comment.id, agent: 1 })).toBeUndefined();
+		expect(readCommentChange({ type: "comment-read", ref: "r3", comment: comment.id, agent: true })).toEqual({
+			type: "comment-read",
+			ref: "r3",
+			comment: comment.id,
+		});
 		const edit = { type: "comment-edit", ref: "r4", comment: comment.id, reply: "r7x2", body: "Or the date." };
 		expect(readCommentChange(edit)).toEqual(edit);
 		expect(readCommentChange({ ...edit, reply: undefined })).toEqual({

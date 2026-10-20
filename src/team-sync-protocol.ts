@@ -741,11 +741,15 @@ export interface CommentReplyPost {
  * them, or unread again.
  */
 
-/** Resolve a comment, or reopen one that was resolved. */
+/**
+ * Resolve a comment, or reopen one that was resolved. `agent` when the person's agent does it (`spool comments`): a
+ * resolve keeps it, so it shows as theirs.
+ */
 export interface CommentResolve {
 	type: "comment-resolve" | "comment-reopen";
 	ref: string;
 	comment: string;
+	agent?: true;
 }
 
 /** New words for the author's own comment, or with `reply`, one of its replies. Marked edited. */
@@ -975,11 +979,13 @@ export function readCommentReplyPost(message: Record<string, unknown>): CommentR
 
 /** A well-formed change to a comment, copied field by field; undefined for anything else. */
 export function readCommentChange(message: Record<string, unknown>): CommentChange | undefined {
-	const { type, ref, comment, reply, body, mentions } = message;
+	const { type, ref, comment, reply, body, mentions, agent } = message;
 	if (!isId(ref) || !isId(comment)) return undefined;
 	switch (type) {
 		case "comment-resolve":
 		case "comment-reopen":
+			if (!(agent === undefined || agent === true)) return undefined;
+			return { type, ref, comment, ...(agent === true ? { agent } : {}) };
 		case "comment-read":
 		case "comment-unread":
 			return { type, ref, comment };

@@ -780,7 +780,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				return;
 			}
 			case "comment-resolve":
-				if (comment.resolved === null) comment.resolved = { by: personOf(from.person), at: now };
+				if (comment.resolved === null)
+					comment.resolved = {
+						by: personOf(from.person),
+						at: now,
+						...(change.agent === true ? { agent: change.agent } : {}),
+					};
 				break;
 			case "comment-reopen":
 				comment.resolved = null;
