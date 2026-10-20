@@ -139,7 +139,7 @@ async function open(
 		route.send(JSON.stringify({ type: "head", head: 1 }));
 	});
 	let presence: WebSocketRoute | undefined;
-	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence`, (route) => {
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence?ticks=1`, (route) => {
 		presence = route;
 		route.onMessage(() => {});
 		// a member's browser is sent every comment it may read as it joins, with when it last read each

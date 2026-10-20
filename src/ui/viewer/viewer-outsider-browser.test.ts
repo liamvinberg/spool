@@ -128,7 +128,8 @@ async function open(
 	let socket: WebSocketRoute | undefined;
 	let connections = 0;
 	const said: string[] = [];
-	await page.routeWebSocket(`${WSS}${options.socket ?? "/_spool/comments/socket"}`, (route) => {
+	// asked a tick at a time, as every presence socket is (#107)
+	await page.routeWebSocket(`${WSS}${options.socket ?? "/_spool/comments/socket"}?ticks=1`, (route) => {
 		socket = route;
 		connections += 1;
 		route.onMessage((message) => said.push(String(message)));
