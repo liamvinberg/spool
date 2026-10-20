@@ -449,6 +449,17 @@ describe("the read-only canvas", () => {
 		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
 	});
 
+	it("offers play beside the name of the frame pointed at", { timeout: 60_000 }, async () => {
+		const { page } = await open();
+		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+		const label = page.locator('[data-frame-label="home"]');
+		expect(await label.getByRole("button", { name: "Play home" }).count()).toBe(0);
+		await page.locator('[data-viewer-frame="home"]').hover();
+		await label.getByRole("button", { name: "Play home" }).click();
+		await page.locator("[data-viewer-player]").waitFor();
+		expect(new URL(page.url()).searchParams.get("frame")).toBe("home");
+	});
+
 	it("offers Open in spool to editors only, and shows covers until a frame draws", { timeout: 60_000 }, async () => {
 		const viewer = await open(PATH, { spool: true });
 		await viewer.page.waitForTimeout(300);

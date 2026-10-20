@@ -579,6 +579,16 @@ function ViewerCanvas({
 
 	// a drag on the field pans it, from wherever it starts
 	const drag = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+	/** The frame under the pointer, or its name: its name lights and offers play, as on the Mac. */
+	const [pointed, setPointed] = useState<string | null>(null);
+	const point = (target: EventTarget | null) => {
+		const at = target instanceof Element ? target : null;
+		const name =
+			at?.closest<HTMLElement>("[data-viewer-frame]")?.dataset.viewerFrame ??
+			at?.closest<HTMLElement>("[data-frame-label]")?.dataset.frameLabel ??
+			null;
+		setPointed((was) => (was === name ? was : name));
+	};
 	const onPointerDown = (event: React.PointerEvent) => {
 		if (event.button !== 0) return;
 		camera.stop();
@@ -588,6 +598,7 @@ function ViewerCanvas({
 		const held = drag.current;
 		const at = camera.get();
 		if (placing && (held === null || !held.moved)) hoverAt(event.clientX, event.clientY);
+		if (held === null || !held.moved) point(placing ? null : event.target);
 		if (held === null || held.id !== event.pointerId || at === null) return;
 		const dx = event.clientX - held.x;
 		const dy = event.clientY - held.y;
@@ -595,6 +606,7 @@ function ViewerCanvas({
 		if (!held.moved) {
 			event.currentTarget.setPointerCapture(event.pointerId);
 			hoverOff();
+			point(null);
 		}
 		held.moved = true;
 		held.x = event.clientX;
@@ -714,7 +726,10 @@ function ViewerCanvas({
 					style={{ cursor: placing ? COMMENT_CURSOR : "default" }}
 					onPointerDown={onPointerDown}
 					onPointerMove={onPointerMove}
-					onPointerLeave={hoverOff}
+					onPointerLeave={() => {
+						hoverOff();
+						point(null);
+					}}
 					onPointerUp={onPointerUp}
 					onPointerCancel={() => {
 						drag.current = null;
@@ -747,8 +762,9 @@ function ViewerCanvas({
 									near={near}
 									entered={false}
 									selected={false}
-									hovered={false}
+									hovered={pointed === frame.name}
 									unseen={marks.get(frame.name)}
+									onPlay={play}
 								/>
 							))}
 						</LabelField>
