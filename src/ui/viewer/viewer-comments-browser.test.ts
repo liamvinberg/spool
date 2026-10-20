@@ -111,11 +111,19 @@ interface Opened {
 	page: Page;
 	/** What the canvas wrote to spool.page's comments API. */
 	written: Written[];
+	/** The stills and covers the canvas asked spool.page for, by path. */
+	pictures: string[];
 	/** The presence socket, once the canvas has joined it. */
 	presence: () => Promise<WebSocketRoute>;
 	/** Tell the canvas something on its presence socket. */
 	tell: (message: Record<string, unknown>) => Promise<void>;
 }
+
+/** A picture, one pixel, for a still or a cover. */
+const PNG = Buffer.from(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+	"base64",
+);
 
 async function open(
 	path = PATH,
@@ -126,6 +134,7 @@ async function open(
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const written: Written[] = [];
+	const pictures: string[] = [];
 	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
 		route.send(JSON.stringify({ type: "head", head: 1 }));
 	});
@@ -145,7 +154,12 @@ async function open(
 			const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "font/woff2";
 			return route.fulfill({ body: readFileSync(file), contentType: type });
 		}
-		if (url.origin === APP && url.pathname === "/api/canvas") return route.fulfill({ json: { ...project, ...shape } });
+		if (url.origin === APP && url.pathname === "/api/canvas")
+			return route.fulfill({ json: { ...project, ...shape } });
+		if (url.origin === APP && (url.pathname.endsWith("/still") || url.pathname.startsWith("/covers/"))) {
+			pictures.push(url.pathname);
+			return route.fulfill({ body: PNG, contentType: "image/png" });
+		}
 		if (url.origin === APP && url.pathname === "/api/people")
 			return route.fulfill({
 				json: {
@@ -189,6 +203,7 @@ async function open(
 	return {
 		page,
 		written,
+		pictures,
 		presence: joined,
 		tell: async (message) => (await joined()).send(JSON.stringify(message)),
 	} satisfies Opened;
@@ -448,6 +463,32 @@ it("outlines the element under the Comment tool's pin, from the frame, and nothi
 	await page.mouse.move(on.x + 10, on.y);
 	await page.waitForTimeout(200);
 	expect(await hover.count()).toBe(0);
+});
+
+it("says a comment's frame was edited since, as spool.page says it, and compares its still with the cover now", {
+	timeout: 60_000,
+}, async () => {
+	const made = comment("c1", { still: true, revision: "abcdef01".repeat(8) });
+	const { page, pictures, tell } = await open(PATH, [made], undefined, { covers: { home: "/covers/home.png" } });
+	await page.locator('[data-comment-pin="c1"]').click();
+	const card = page.locator('[data-comment-card="c1"]');
+	await card.waitFor();
+	expect(await card.locator("[data-comment-edited]").count()).toBe(0);
+	// the frame's source is edited on someone's Mac: spool.page says so, live
+	await tell({ type: "comment-changed", comment: { ...made, editedSince: true } });
+	await card.locator("[data-comment-edited]").waitFor();
+	expect(await card.locator("[data-comment-edited]").textContent()).toContain("home edited since");
+	await card.getByRole("button", { name: "Compare" }).click();
+	// then, the still spool.page kept of it, on the member's own session; now, the frame's cover
+	const stills = card.locator("[data-comment-still] img");
+	await expect.poll(() => stills.count()).toBe(2);
+	expect(await stills.evaluateAll((all) => all.map((one) => one.getAttribute("src")))).toEqual([
+		"/api/comments/c1/still",
+		"/covers/home.png",
+	]);
+	await expect.poll(() => pictures).toContain("/api/comments/c1/still");
+	expect(await card.locator('[data-comment-still="then"]').textContent()).toContain("then · abcdef0");
+	expect(await card.locator('[data-comment-still="now"]').textContent()).toContain("now");
 });
 
 it("reads a lapsed team's comments but writes none: no Comment tool, composer or reply field", {
