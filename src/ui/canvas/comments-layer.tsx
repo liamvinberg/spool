@@ -1011,6 +1011,14 @@ function MentionField({
 	);
 }
 
+/**
+ * A refused write as a card holds it: offline and a team gone local by name, since each closes the card's writing and
+ * has its own words; any other as the sentence spool.page or the daemon said.
+ */
+function heldRefusal(refused: { error: string; message: string }): string {
+	return refused.error === "offline" || refused.error === "unpaid" ? refused.error : refused.message;
+}
+
 /** A refusal said in the card: offline and a team gone local have their own words, and the rest are the team's. */
 function RefusalLine({ refusal, context }: { refusal: string | null; context: CommentsContext }) {
 	if (context.unpaid === true || refusal === "unpaid")
@@ -1067,7 +1075,7 @@ function Composer({
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
 	const [audience, setAudience] = useState<string | null>(null);
-	const offline = !online || refusal === "offline" || unpaid;
+	const offline = !online || refusal === "offline" || refusal === "unpaid" || unpaid;
 	const shares = outsider === undefined ? audiencesOn(context.shares ?? [], draft.page) : [];
 	const picked = shares.find((share) => share.id === audience);
 	const send = () => {
@@ -1090,7 +1098,7 @@ function Composer({
 			.then((sent) => {
 				setSending(false);
 				if ("id" in sent) onSent(sent.id);
-				else setRefusal(sent.error === "offline" ? "offline" : sent.message);
+				else setRefusal(heldRefusal(sent));
 			});
 	};
 	return (
@@ -1109,7 +1117,7 @@ function Composer({
 					value={text}
 					onValue={(next) => {
 						setText(next);
-						if (refusal !== null && refusal !== "offline") setRefusal(null);
+						if (refusal !== null && refusal !== "offline" && refusal !== "unpaid") setRefusal(null);
 					}}
 					people={people}
 					rows={2}
@@ -1179,7 +1187,7 @@ export function CommentCard({
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
-	const offline = !online || refusal === "offline" || unpaid;
+	const offline = !online || refusal === "offline" || refusal === "unpaid" || unpaid;
 	const resolved = comment.resolved;
 	const unread = isUnread(comment, reader);
 	// opening the card reads it, and anything said while it stands open is read as it arrives
@@ -1190,7 +1198,7 @@ export function CommentCard({
 	/** a change sent: the canvas hears the result, or the card says why not */
 	const change = (sent: Promise<CommentChanged>, then?: () => void) => {
 		void sent.then((done) => {
-			if ("error" in done) setRefusal(done.error === "offline" ? "offline" : done.message);
+			if ("error" in done) setRefusal(heldRefusal(done));
 			else {
 				setRefusal(null);
 				then?.();
@@ -1207,7 +1215,7 @@ export function CommentCard({
 			if ("id" in sent) {
 				setText("");
 				refresh();
-			} else setRefusal(sent.error === "offline" ? "offline" : sent.message);
+			} else setRefusal(heldRefusal(sent));
 		});
 	};
 	const named = namesIn(comment, people);
@@ -1310,7 +1318,7 @@ export function CommentCard({
 								value={text}
 								onValue={(next) => {
 									setText(next);
-									if (refusal !== null && refusal !== "offline") setRefusal(null);
+									if (refusal !== null && refusal !== "offline" && refusal !== "unpaid") setRefusal(null);
 								}}
 								people={people}
 								rows={1}

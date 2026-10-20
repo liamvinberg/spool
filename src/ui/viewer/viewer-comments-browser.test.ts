@@ -384,6 +384,17 @@ it("shows a teammate's comments live, reads one when it opens, and replies", { t
 	await expect.poll(() => page.locator("[data-comment-pin]").count()).toBe(2);
 });
 
+it("closes a card's writing once spool.page says the team has gone local", { timeout: 60_000 }, async () => {
+	const { page } = await open(PATH, [comment("c1")], () => Response.json({ error: "unpaid" }, { status: 402 }));
+	await page.locator('[data-comment-pin="c1"]').click();
+	const card = page.locator('[data-comment-card="c1"]');
+	const resolve = card.getByRole("button", { name: "Resolve" });
+	await resolve.click();
+	await card.locator("[data-comment-offline]").waitFor();
+	expect(await card.locator("[data-comment-offline]").textContent()).toContain("This team has gone local");
+	expect(await resolve.isDisabled()).toBe(true);
+});
+
 it("says a refusal in the composer's words, and offline while the socket is down", { timeout: 60_000 }, async () => {
 	const { page, presence } = await open(PATH, [], () =>
 		Response.json({ error: "rate_limited", retryAfter: 12 }, { status: 429 }),
