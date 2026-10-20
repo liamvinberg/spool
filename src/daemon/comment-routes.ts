@@ -11,6 +11,7 @@ import {
 	type CommentElement,
 	type CommentPoint,
 	isCommentBody,
+	isRecord,
 	readAudience,
 } from "../team-sync-protocol";
 import type { ResolveProject } from "./project-route";
@@ -351,8 +352,4 @@ function readCommentInput(value: unknown): CommentInput | undefined {
 	if (typeof selector !== "string" || typeof outerHtml !== "string") return undefined;
 	if (!(source === null || typeof source === "string") || typeof generated !== "boolean") return undefined;
 	return { page, frame, at: { x, y }, element: { selector, outerHtml, source, generated }, body, mentions, ...extra };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
