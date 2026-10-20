@@ -3,7 +3,7 @@ import type { CloudRequestOptions } from "../cloud-auth";
 import { cloudTeams } from "../cloud-teams";
 import { isFramePath, isPagePath } from "../page-path";
 import { personName } from "../person-name";
-import { localCopyOf, readProjectLink } from "../team-project";
+import { localCopyOf } from "../team-project";
 import {
 	COMMENT_MENTIONS,
 	COMMENT_REFUSAL_STATUS,
@@ -65,7 +65,10 @@ const PEOPLE_MS = 5 * 60_000;
 export function teamPeople(spoolDir: string, request?: CloudRequestOptions): (root: string) => Promise<Mentionable[]> {
 	const known = new Map<string, { at: number; people: Mentionable[] }>();
 	return async (root) => {
-		const team = readProjectLink(root).team;
+		// a project that isn't a team's has nobody to mention
+		const link = localCopyOf(root);
+		if (link === undefined) return [];
+		const { team } = link;
 		const was = known.get(team);
 		if (was !== undefined && Date.now() - was.at < PEOPLE_MS) return was.people;
 		try {
