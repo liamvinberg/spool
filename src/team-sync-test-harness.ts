@@ -14,19 +14,28 @@ import {
 	type CommentPerson,
 	type CommentReply,
 	commentBodyRefusal,
+	type CommentPlace,
+	type CopyChange,
+	type DesignNow,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
+	isRecord,
 	joinParts,
 	type Limited,
+	type Moved,
 	mergeCanvas,
+	movesComments,
 	PROTOCOL_VERSION,
 	type PresenceState,
 	readCommentChange,
+	placeAfter,
 	readCommentPost,
 	readCommentReplyPost,
 	readCommentStillAsk,
+	readMoved,
 	readPresenceState,
+	sameSourceMoves,
 	travels,
 } from "./team-sync-protocol";
 
@@ -99,6 +108,12 @@ interface Project {
 	reads: Map<string, Map<string, number>>;
 	/** Each person's comment bucket: its level when last taken from, and when. */
 	buckets: Map<string, { level: number; at: number }>;
+	/** Where each comment stands, with the frame it belongs to, by the comment's id: what saves move (spool#160). */
+	places: Map<string, CommentPlace>;
+	/** What each message that carried saves said Spool moved, in order: undefined where it said nothing. */
+	moved: (Moved | undefined)[];
+	/** Every path's last bytes, kept after it is deleted: where a deleted frame last stood. */
+	last: Map<string, Uint8Array>;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -115,6 +130,7 @@ interface Told {
 	answers: Record<string, unknown>[];
 	after: (string | Uint8Array)[];
 	relayed: { path: string; version: number; deleted: boolean; content: Uint8Array | undefined; restores?: Person }[];
+	changes: CopyChange[];
 }
 
 interface TeamVersion {
@@ -289,7 +305,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 						.map((one) => ({ name: one.accountId, color: one.color })),
 				})),
 			});
-		const match = /^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move)?$/u.exec(path);
+		const match =
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+				path,
+			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
 		const named = match[2];
 		const at = named === undefined ? undefined : projects.get(`${address}/${named}`);
@@ -322,6 +341,9 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					stills: new Map(),
 					reads: new Map(),
 					buckets: new Map(),
+					places: new Map(),
+					moved: [],
+					last: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -333,6 +355,16 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				at.repo = body.repo;
 				return Response.json(described(at));
 			});
+		// how many comments the project holds, and the still one kept: any member's to read
+		if (match[3] === "/comments/count" && request.method === "GET")
+			return Response.json({ comments: at.comments.length });
+		if (match[3]?.endsWith("/still") === true && request.method === "GET") {
+			// a lapsed team's stills are its admins' in a browser, and every caller here is a Mac
+			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			const still = at.stills.get(match[3].split("/")[2] ?? "");
+			if (still === undefined) return Response.json({ error: "still_not_found" }, { status: 404 });
+			return new Response(arrayBuffer(still), { headers: { "content-type": "image/png" } });
+		}
 		if (match[3] === "/move" && request.method === "GET") {
 			const to = url.searchParams.get("to") ?? "";
 			const name = url.searchParams.get("name") ?? at.name;
@@ -359,6 +391,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		if (request.method === "DELETE" && match[3] === undefined) {
 			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
 			remove(at, url.searchParams.get("out") === "1");
+			// its comments go with the team, as spool.page deletes them
+			at.comments = [];
+			at.stills.clear();
+			at.places.clear();
 			return Response.json({});
 		}
 		asked++;
@@ -527,15 +563,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			}));
 		}
 		at.sends.push(entries.length);
-		take(at, from, entries, lone);
+		const said = readMoved(message.moved);
+		at.moved.push(said);
+		follow(at, take(at, from, entries, lone), said);
 	}
 
 	/**
 	 * Saves sent alone or together, as spool.page takes them: each checked and ordered on its own, the bundle taking
 	 * one save from the bucket, answered in one message, and relayed as one to every copy that reads bundles.
 	 */
-	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): void {
-		const told: Told = { answers: [], after: [], relayed: [] };
+	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): CopyChange[] {
+		const told: Told = { answers: [], after: [], relayed: [], changes: [] };
 		const refuse = ({ ref, path }: Entry, reason: string, retryAfter?: number) => {
 			at.refused.push({ path, reason });
 			told.answers.push({ type: "refused", ref, path, reason, ...(retryAfter === undefined ? {} : { retryAfter }) });
@@ -581,7 +619,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		else from.deliver(encodeFrame({ type: "answers", answers: told.answers, ...pace(at, from) }));
 		for (const frame of told.after) from.deliver(frame);
 		if (revoked) from.close(from.person.revoked ? CLOSE_SIGNED_OUT : CLOSE_NOT_EDITOR);
-		if (told.relayed.length === 0) return;
+		if (told.relayed.length === 0) return told.changes;
 		const by = { accountId: from.person.accountId, device: from.person.device };
 		for (const other of at.sockets) {
 			if (other === from || !other.live) continue;
@@ -607,6 +645,61 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			for (const { path, version, restores } of told.relayed)
 				if (restores !== undefined && other.person === restores && restores !== from.person)
 					other.deliver(encodeFrame({ type: "restored", path, version, by }));
+		}
+		return told.changes;
+	}
+
+	/**
+	 * Saves changed the team's copy: every comment stands where it now belongs, by core's rules as the sync object
+	 * keeps them, and every live copy is told of each that changed (spool#160).
+	 */
+	function follow(at: Project, changes: CopyChange[], said: Moved | undefined): void {
+		if (!movesComments(changes, said)) return;
+		const holds = (path: string) => (at.files.get(path)?.bytes ?? null) !== null;
+		const design: DesignNow = {
+			frame: (name) => holds(`frames/${name}/frame.tsx`),
+			page: (page) =>
+				page === "" ||
+				[...at.files].some(([path, file]) => file.bytes !== null && path.startsWith(`frames/${page}/`)),
+			geometry: (name) => {
+				const bytes = at.last.get(`frames/${name}/frame.json`);
+				if (bytes === undefined) return undefined;
+				try {
+					const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+					if (!isRecord(value)) return undefined;
+					const { x, y, w, h } = value;
+					return typeof x === "number" && typeof y === "number" && typeof w === "number" && typeof h === "number"
+						? { x, y, w, h }
+						: undefined;
+				} catch {
+					return undefined;
+				}
+			},
+		};
+		const moved = {
+			frames: [...(said?.frames ?? []), ...sameSourceMoves(changes)].filter(({ from }) => !design.frame(from)),
+			pages: (said?.pages ?? []).filter(({ from }) => !design.page(from)),
+		};
+		for (const [index, comment] of at.comments.entries()) {
+			const was = at.places.get(comment.id);
+			if (was === undefined) continue;
+			const place = placeAfter(was, moved, design, Date.now());
+			if (JSON.stringify(place) === JSON.stringify(was)) continue;
+			at.places.set(comment.id, place);
+			const { dropped: _, ...rest } = comment;
+			const now: Comment = {
+				...rest,
+				page: place.page,
+				frame: place.frame,
+				at: place.at,
+				standing: place.standing,
+				...(place.frame === null && place.home !== null && place.dropped !== null
+					? { dropped: { frame: place.home.frame, at: place.dropped } }
+					: {}),
+			};
+			at.comments[index] = now;
+			for (const socket of at.sockets)
+				if (socket.live) socket.deliver(encodeFrame({ type: "comment-changed", comment: now }));
 		}
 	}
 
@@ -657,6 +750,14 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				...(named.length > 0 ? { mentions: named } : {}),
 			};
 			at.comments.push(comment);
+			at.places.set(id, {
+				page: comment.page,
+				frame: comment.frame,
+				at: comment.at,
+				standing: "placed",
+				home: comment.frame === null ? null : { frame: comment.frame, at: comment.at },
+				dropped: null,
+			});
 			if (bytes !== undefined) at.stills.set(id, bytes);
 			told = { type: "comment-added", comment };
 			for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
@@ -872,6 +973,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return;
 		}
 		const content = merged ?? bytes ?? null;
+		told.changes.push({ path, was: hash(current?.bytes ?? null), now: hash(content) });
+		if (content !== null) at.last.set(path, content);
 		const file = { version: at.version, bytes: content, by: from.person };
 		at.files.set(path, file);
 		at.versions.set(file.version, file);
@@ -1055,6 +1158,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		comments: (name: string) => project(name)?.comments ?? [],
 		/** The still a comment kept of its frame, if it kept one. */
 		still: (name: string, comment: string) => project(name)?.stills.get(comment),
+		/** What each message that carried saves said Spool moved, where it said anything. */
+		moved: (name: string) => (project(name)?.moved ?? []).filter((said) => said !== undefined),
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
