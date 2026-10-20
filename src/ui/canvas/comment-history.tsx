@@ -148,14 +148,15 @@ function Still({
 	/** ring the pin's point, where it is known on the frame */
 	ring?: boolean;
 }) {
-	const [failed, setFailed] = useState(false);
+	// a still that didn't load is tried again once there is another to show
+	const [failed, setFailed] = useState<string | undefined>(undefined);
 	const k = 0.5;
 	const w = frame?.w ?? STILL_W / k;
 	const h = frame?.h ?? STILL_H / k;
 	const pin = frame === undefined ? at : pinOnFrame(at, frame);
 	const left = Math.min(0, Math.max(STILL_W - w * k, STILL_W / 2 - pin.x * k));
 	const top = Math.min(0, Math.max(STILL_H - h * k, STILL_H / 2 - pin.y * k));
-	const shown = src !== undefined && !failed;
+	const shown = src !== undefined && failed !== src;
 	return (
 		<div className="flex min-w-0 flex-col gap-1" data-comment-still={then ? "then" : "now"}>
 			<div
@@ -167,7 +168,7 @@ function Still({
 						src={src}
 						alt=""
 						draggable={false}
-						onError={() => setFailed(true)}
+						onError={() => setFailed(src)}
 						className="absolute max-w-none origin-top-left select-none"
 						style={{ left, top, width: w * k, height: h * k }}
 					/>
