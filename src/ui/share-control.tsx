@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { pageChain, pageName, ROOT_PAGE } from "../page-path";
+import { pageChain, pageName, pageParent, ROOT_PAGE } from "../page-path";
 import {
 	type ProjectShares,
 	type ShareKind,
@@ -17,6 +17,7 @@ import { BackIcon, ShareIcon } from "./icons";
 import { Button, IconButton } from "./primitives/actions";
 import { SearchField, TextField } from "./primitives/inputs";
 import { MenuItem, MenuSeparator, PaletteEmpty, Popover } from "./primitives/overlays";
+import { Checkbox } from "./primitives/selection";
 import { ListRow, ScrollArea, TreeRow } from "./primitives/structure";
 import { QrCode } from "./qr-code";
 import {
@@ -52,6 +53,8 @@ export interface ShareContext {
 	/** How many frames stand on each page. */
 	frames: ReadonlyMap<string, number>;
 	walks: readonly ShareWalk[];
+	/** The one frame held, which a share may open on; null when none is, or several. */
+	frame: string | null;
 }
 
 /** Where a project's shares come from, and where a new one is made. */
@@ -92,7 +95,7 @@ export function ShareControl({
 	const show = (page?: string) => {
 		const box = button.current?.getBoundingClientRect();
 		if (box === undefined) return;
-		const read = context?.() ?? { page: ROOT_PAGE, pages: [], frames: new Map(), walks: [] };
+		const read = context?.() ?? { page: ROOT_PAGE, pages: [], frames: new Map(), walks: [], frame: null };
 		setStart((was) => ({ context: page === undefined ? read : { ...read, page }, key: (was?.key ?? 0) + 1 }));
 		setAt({ right: window.innerWidth - box.right, top: box.bottom + 6 });
 		setOpen(true);
@@ -263,6 +266,9 @@ function NewShare({
 	const [folders, setFolders] = useState<ReadonlySet<string>>(() => new Set(pageChain(context.page).slice(0, -1)));
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// a frame held when Share opened is where the link opens, played, while its page is one of those shared
+	const [starting, setStarting] = useState(true);
+	const start = context.frame !== null && chosen.has(pageParent(context.frame)) ? context.frame : null;
 	const addresses = people
 		.split(/[\s,;]+/u)
 		.map((one) => one.trim())
@@ -279,6 +285,7 @@ function NewShare({
 			kind,
 			pages: [...chosen].sort(),
 			...(kind === "people" ? { people: addresses } : {}),
+			...(start !== null && starting ? { start } : {}),
 		});
 		setBusy(false);
 		if ("error" in answer) setError(refusalSaid(answer.error));
@@ -372,6 +379,13 @@ function NewShare({
 							</button>
 						</p>
 					))}
+				</div>
+			)}
+			{start !== null && (
+				<div className="flex flex-col gap-1 px-3 pt-1 pb-1.5">
+					{start !== null && (
+						<Checkbox checked={starting} onCheckedChange={setStarting} label={`Start on ${pageName(start)}`} />
+					)}
 				</div>
 			)}
 			<MenuSeparator />

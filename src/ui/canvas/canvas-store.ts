@@ -292,5 +292,6 @@ export const unseenOf = derived(
 export function shareContextOf(state: CanvasState): ShareContext {
 	const frames = new Map<string, number>();
 	for (const frame of navigatorFramesOf(state)) frames.set(pageOf(frame), (frames.get(pageOf(frame)) ?? 0) + 1);
-	return { page: state.activePage, pages: navigatorPagesOf(state), frames, walks: state.edges };
+	const frame = state.selected.length === 1 ? (state.selected[0] ?? null) : null;
+	return { page: state.activePage, pages: navigatorPagesOf(state), frames, walks: state.edges, frame };
 }

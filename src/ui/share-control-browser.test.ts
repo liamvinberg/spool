@@ -29,11 +29,14 @@ beforeAll(async () => {
 				const made = [];
 				const source = {
 					read: async () => ({ state: "ready", shares: made, manage: true }),
-					change: async () => null,
+					change: async (id, change) => {
+						window.changed = change;
+						return null;
+					},
 					stop: async () => null,
 					create: async (request) => {
 						window.created = request;
-						const share = { id: "s1", kind: request.kind, pages: request.pages, people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page" };
+						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.pages, people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page" };
 						made.push(share);
 						return { share };
 					},
@@ -46,7 +49,7 @@ beforeAll(async () => {
 						createElement(ShareControl, {
 							source: home ? null : source,
 							shares,
-							context: home ? undefined : () => ({ page: "area2/part1", pages, frames, walks: [] }),
+							context: home ? undefined : () => ({ page: "area2/part1", pages, frames, walks: [], frame: window.shareFrame ?? null }),
 							onSignIn: () => { window.signedIn = true; },
 						}),
 					);
@@ -78,15 +81,18 @@ afterAll(async () => {
 	for (const page of pages) await page.close();
 });
 
-async function open(state: "ready" | "signed-out" = "ready"): Promise<Page> {
+async function open(state: "ready" | "signed-out" = "ready", frame: string | null = null): Promise<Page> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1200, height: 700 }, reducedMotion: "reduce" });
 	pages.push(page);
 	await page.setContent(`<style>body { margin: 0; }</style><div id="root"></div>`);
 	for (const style of styles) await page.addStyleTag({ content: style });
-	await page.evaluate((shareState) => {
-		(window as unknown as { shareState: string }).shareState = shareState;
-	}, state);
+	await page.evaluate(
+		([shareState, shareFrame]) => {
+			Object.assign(window, { shareState, shareFrame });
+		},
+		[state, frame] as const,
+	);
 	await page.addScriptTag({ content: script });
 	await page.getByRole("button", { name: "Share" }).waitFor();
 	return page;

@@ -26,6 +26,8 @@ export interface ShareView {
 	opens: number;
 	/** Where it is opened; only for those who may change it. A viewer sees the rows and never the link. */
 	link?: string;
+	/** The frame its link opens playing, when it opens on one. */
+	start?: string;
 }
 
 /** What a project's Shared control knows: its shares and whether this person may change them, or why not. */
@@ -97,6 +99,8 @@ export interface ShareRequest {
 	kind: ShareKind;
 	pages: string[];
 	people?: string[];
+	/** The frame its link opens playing, on one of its pages. */
+	start?: string;
 }
 
 /** How a share names the root page, which has no folder to name it. */
