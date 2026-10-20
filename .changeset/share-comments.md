@@ -1,0 +1,5 @@
+---
+"spool.page": minor
+---
+
+Comments reach the people you share with. A new comment is for your team by default; pick one of the page's shares in the composer and the people on that share read it and its replies too. Members still see every comment, and a share's comment carries its tag, says who outside the team reads a reply, and says "share ended" once the share stops. On a share, people sign in to read and write that share's comments: anyone holding a link signs in with Google or an email code on the link itself, with no pins until they do. Their pins are hollow, their composer just says who reads it, and they never see your element's code or mention anyone. Your agent's reply to a share's comment waits as a draft only you see, for you to send or edit. Share settings list who has commented through a share, and admins and editors can block someone there, which removes what they wrote. "For you" now includes outside comments on shares you made.
