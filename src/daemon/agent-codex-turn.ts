@@ -8,6 +8,8 @@ import {
 	codexHandshake,
 	codexInstructions,
 	planCodexSpawn,
+	SPOOL_COMMENTS_READS,
+	SPOOL_COMMENTS_VALUED,
 	SPOOL_READ_VERBS,
 	versionAtLeast,
 } from "./agent-codex-spawn";
@@ -88,7 +90,18 @@ const SHELL = /[;&|<>`$(){}\n\\]/;
 export function isSpoolRead(command: string): boolean {
 	const words = command.trim().split(/\s+/);
 	if (SHELL.test(command) || words[0] !== "spool") return false;
+	if (words[1] === "comments") return commentsRead(words.slice(2));
 	return words[1] !== undefined && SPOOL_READ_VERBS.includes(words[1]);
+}
+
+/** `spool comments` with these words after it only reads: its subcommand, the first word that is one, lists or shows. */
+function commentsRead(words: readonly string[]): boolean {
+	for (let at = 0; at < words.length; at += 1) {
+		const word = words[at] ?? "";
+		if (SPOOL_COMMENTS_VALUED.includes(word)) at += 1;
+		else if (!word.startsWith("-")) return SPOOL_COMMENTS_READS.includes(word);
+	}
+	return true;
 }
 
 /**

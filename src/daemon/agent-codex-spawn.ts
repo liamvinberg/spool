@@ -58,6 +58,14 @@ export const SPOOL_READ_VERBS: readonly string[] = [
 ];
 
 /**
+ * `spool comments` is the one verb that writes (spool#164): only its reads, `list` (also the bare verb) and `show`,
+ * never ask. A reply, resolve, reopen or add goes out as the person's agent, so under Ask first Codex asks.
+ */
+export const SPOOL_COMMENTS_READS: readonly string[] = ["list", "show"];
+/** The options of `spool comments list` that take a value, so the value isn't read as a subcommand. */
+export const SPOOL_COMMENTS_VALUED: readonly string[] = ["--page", "--frame", "--share"];
+
+/**
  * Codex's spawn tool can fork the parent's turns into the child. A designer works from its
  * brief, so the hint asks for none of them. Codex 0.161 offered its v1 spawn tool here,
  * which takes `fork_context` rather than `fork_turns`, so the hint names both.
