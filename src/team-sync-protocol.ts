@@ -1117,8 +1117,8 @@ const COMMENT_REFUSALS: readonly CommentRefusal[] = [
 	"not_author",
 ];
 
-/** The refusal a reason names, if it names one. */
-function commentRefusal(reason: unknown): CommentRefusal | undefined {
+/** The refusal a reason names, if it names one: as a socket says it, or spool.page's comments API answers it. */
+export function commentRefusal(reason: unknown): CommentRefusal | undefined {
 	return COMMENT_REFUSALS.find((one) => one === reason);
 }
 

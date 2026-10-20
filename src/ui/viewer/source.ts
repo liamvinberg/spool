@@ -1,7 +1,13 @@
 import type { DesignProjection } from "../../daemon/design-projection";
 import { reconnectBackoff } from "../../reconnect-backoff";
 import type { ProjectShares, SharesSource, ShareView } from "../../share-view";
-import { type Presence, type PresenceState, readPresence } from "../../team-sync-protocol";
+import {
+	type CommentsMessage,
+	type Presence,
+	type PresenceState,
+	readCommentsMessage,
+	readPresence,
+} from "../../team-sync-protocol";
 
 /**
  * Where the read-only canvas finds its project. The page that serves it says,
@@ -49,6 +55,16 @@ export interface ViewerProject {
 	 * the page's own origin. An outsider has none: they see nobody and are seen by nobody.
 	 */
 	presence?: string;
+	/**
+	 * For a member: where their comments are written, on the page's own origin (spool#173): a new comment is posted to
+	 * it, and each one is changed under `<comments>/<id>`. The comments themselves arrive on the presence socket. An
+	 * outsider has none, so sees no comments and no Comment tool.
+	 */
+	comments?: string;
+	/** For a member: where the team's people are read, whom a comment can @mention. */
+	people?: string;
+	/** For a member: their account, which tells their own comments from everyone else's. */
+	me?: string;
 	/** Each frame's cover, by its name: an image a member's daemon took, on the page's own origin. */
 	covers?: Record<string, string>;
 	/** Where spool for Mac is got, for whoever has no spool. */
@@ -204,10 +220,18 @@ export interface PresenceLink {
  * Take part in presence on the project's canvas (DEV-197), as the Mac's canvas does through its daemon: hear where
  * everyone else is, and say where this person is. A connection that comes back is told who's here afresh, so
  * `dropped` forgets everyone first, and it is told where this person last was again.
+ *
+ * The same socket brings a member's comments (spool#173): every one they may read when it opens, then each change as
+ * it is made, heard by `comments`. `opened` says it is connected, which is when a comment can be written.
  */
 export function joinPresence(
 	address: string,
-	on: { heard: (presence: Presence) => void; dropped: () => void },
+	on: {
+		heard: (presence: Presence) => void;
+		dropped: () => void;
+		opened?: () => void;
+		comments?: (message: CommentsMessage) => void;
+	},
 ): PresenceLink {
 	let open: WebSocket | null = null;
 	let latest: string | null = null;
@@ -215,11 +239,17 @@ export function joinPresence(
 		opened: (socket) => {
 			open = socket;
 			if (latest !== null) socket.send(latest);
+			on.opened?.();
 		},
 		heard: (data) => {
 			const message = readJson(data);
-			const presence = message === undefined ? undefined : readPresence(message);
-			if (presence !== undefined) on.heard(presence);
+			if (message === undefined) return;
+			const presence = readPresence(message);
+			if (presence !== undefined) return on.heard(presence);
+			if (on.comments === undefined || typeof message.type !== "string" || !message.type.startsWith("comment"))
+				return;
+			const comments = readCommentsMessage(message);
+			if (comments !== undefined) on.comments(comments);
 		},
 		dropped: () => {
 			open = null;
@@ -279,6 +309,12 @@ export async function readProject(config: ViewerConfig): Promise<ViewerProject |
 	const response = await fetch(config.api, { credentials: "same-origin", headers: { accept: "application/json" } });
 	if (!response.ok) return undefined;
 	return (await response.json()) as ViewerProject;
+}
+
+/** The comment a canvas URL opens on, from its Copy link (`?comment=<id>`); null for none. */
+export function linkedComment(url: URL): string | null {
+	const id = url.searchParams.get("comment");
+	return id === null || id === "" ? null : id;
 }
 
 /** The page and the played frame a canvas URL names. */

@@ -20,6 +20,7 @@ import {
 	zoomFloor,
 } from "../canvas/camera";
 import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/camera-store";
+import { CommentsLayer, commentWorld } from "../canvas/comments-layer";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
 import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
@@ -41,6 +42,7 @@ import { SharedLink } from "./shared-link";
 import {
 	address,
 	edits,
+	linkedComment,
 	listen,
 	locate,
 	readProject,
@@ -50,6 +52,15 @@ import {
 	type ViewerShared,
 	viewerShares,
 } from "./source";
+import {
+	CommentsButton,
+	CommentsPanel,
+	placeComment,
+	useCommentKeys,
+	useViewerComments,
+	ViewerCommentsList,
+	ViewerTools,
+} from "./viewer-comments";
 import { ViewerPlayer } from "./viewer-player";
 import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
 
@@ -57,10 +68,13 @@ import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
  * The read-only canvas (DEV-114): the shipped canvas with every authoring
  * control taken off, for anyone looking at a team project in a browser. The
  * pages rail stays, the camera is this browser's own, frames are live, and a
- * click grows a frame into the player. There is no tool, pane, agent or
- * selection, and nothing here sends anything anywhere but reads: it is fed one
- * project by `readProject`, and every frame's document comes from the frames'
- * own origin.
+ * click grows a frame into the player. There is no pane, agent or selection,
+ * and nothing about the project changes from here: it is fed one project by
+ * `readProject`, and every frame's document comes from the frames' own origin.
+ *
+ * A member comments here as on the Mac (spool#173): a Pointer and a Comment
+ * tool, the Mac's pins and cards, and the Comments list in a panel. Comments
+ * are the one thing the canvas writes, besides an editor's shares.
  */
 export function Viewer({ config }: { config: ViewerConfig }) {
 	// undefined while it is being read, null when there is no project to read
@@ -325,6 +339,68 @@ function ViewerCanvas({
 		return () => window.removeEventListener("popstate", onPop);
 	}, [config]);
 
+	// --- comments (spool#173): a member's, written to spool.page and heard on the presence socket
+	const commentsUrl = useMemo(() => new URL(address(config, ROOT_PAGE, null), window.location.href).href, [config]);
+	const comments = useViewerComments(project, presence, commentsUrl, onNotice);
+	useCommentKeys(played === null ? comments : null);
+	/**
+	 * The comment to go to: its page first, then its pin, flown to with the zoom kept, and its card opened. A Copy
+	 * link (`?comment=<id>`) names one when the canvas opens, and is taken off the address once it is open; a row
+	 * in the Comments list names one when pressed.
+	 */
+	const [aim, setAim] = useState<{ id: string; link: boolean } | null>(() => {
+		const id = linkedComment(new URL(window.location.href));
+		return id === null ? null : { id, link: true };
+	});
+	useEffect(() => {
+		if (aim === null || comments === null) return;
+		const comment = comments.comments.find((each) => each.id === aim.id);
+		if (comment === undefined) {
+			// not among them yet: wait until every comment has been heard, then it isn't there
+			if (!comments.heard) return;
+			if (aim.link) {
+				window.history.replaceState(window.history.state, "", address(config, page, played));
+				onNotice("That comment isn’t here anymore");
+			}
+			setAim(null);
+			return;
+		}
+		const goes = comment.standing !== "deleted-page" && (comment.page === ROOT_PAGE || known.has(comment.page));
+		if (goes && comment.page !== page) {
+			go({ page: comment.page, frame: null }, aim.link ? "replace" : "push");
+			return;
+		}
+		if (size.w === 0) return;
+		comments.store.set({ commentOpen: comment.id, commentDraft: null });
+		const world = goes ? commentWorld(comment, frames) : undefined;
+		const at = camera.get();
+		if (world !== undefined && at !== null)
+			camera.fly({ k: at.k, x: size.w / 2 - world.x * at.k, y: size.h / 2 - world.y * at.k });
+		if (aim.link) window.history.replaceState(window.history.state, "", address(config, page, played));
+		setAim(null);
+	}, [aim, comments, config, page, played, known, frames, go, camera, size.w, size.h, onNotice]);
+	const placing = comments?.tool === "comment";
+	/** A press under the Comment tool: a pin on the frame under it, at the frame's own point, or on the field. */
+	const placeAt = (event: React.PointerEvent) => {
+		const box = viewport.current?.getBoundingClientRect();
+		const at = camera.get();
+		if (comments === null || box === undefined || at === null) return;
+		const world = { x: (event.clientX - box.left - at.x) / at.k, y: (event.clientY - box.top - at.y) / at.k };
+		// the frame drawn on top, where frames overlap
+		const frame = [...frames]
+			.reverse()
+			.find(
+				(each) =>
+					world.x >= each.x && world.x <= each.x + each.w && world.y >= each.y && world.y <= each.y + each.h,
+			);
+		if (frame === undefined) return placeComment(comments, { page, frame: null, at: world }, null);
+		const document =
+			viewport.current?.querySelector<HTMLIFrameElement>(
+				`[data-viewer-frame="${CSS.escape(frame.name)}"] iframe[title="${CSS.escape(frame.name)}"]`,
+			) ?? null;
+		placeComment(comments, { page, frame: frame.name, at: { x: world.x - frame.x, y: world.y - frame.y } }, document);
+	};
+
 	// out no further than the whole page fitting the view (DEV-289); a ref, so the wheel reads today's page
 	const floor = useRef<number | undefined>(undefined);
 	floor.current = frames.length === 0 ? undefined : zoomFloor(boundsOf(frames), size.w, size.h);
@@ -334,6 +410,9 @@ function ViewerCanvas({
 		const el = viewport.current;
 		if (el === null) return;
 		const onWheel = (event: WheelEvent) => {
+			// a comment's card scrolls its own words
+			if (event.target instanceof Element && event.target.closest("[data-comment-card], [data-comment-composer]"))
+				return;
 			event.preventDefault();
 			const at = camera.get();
 			if (at === null) return;
@@ -374,6 +453,13 @@ function ViewerCanvas({
 		const held = drag.current;
 		drag.current = null;
 		if (held === null || held.moved || held.id !== event.pointerId) return;
+		if (comments !== null) {
+			if (comments.tool === "comment") return placeAt(event);
+			// a click away puts down an open card or the composer before it plays anything
+			const { commentDraft, commentOpen } = comments.store.get();
+			if (commentDraft !== null || commentOpen !== null)
+				return comments.store.set({ commentDraft: null, commentOpen: null });
+		}
 		// a click, not a drag: on a frame it plays the frame
 		const frame = (event.target as Element).closest<HTMLElement>("[data-viewer-frame]")?.dataset.viewerFrame;
 		if (frame !== undefined) play(frame);
@@ -450,7 +536,7 @@ function ViewerCanvas({
 				<div
 					ref={viewport}
 					data-viewer-field=""
-					className="absolute inset-0 cursor-default touch-none"
+					className={`absolute inset-0 touch-none ${placing ? "cursor-crosshair" : "cursor-default"}`}
 					onPointerDown={onPointerDown}
 					onPointerMove={onPointerMove}
 					onPointerUp={onPointerUp}
@@ -470,6 +556,7 @@ function ViewerCanvas({
 									src={live.has(frame.name) ? `${project.frames}${encodeURIComponent(frame.name)}` : null}
 									revision={revisions.get(frame.name) ?? 0}
 									cover={project.covers?.[frame.name]}
+									placing={placing}
 									onPlay={() => play(frame.name)}
 								/>
 							))}
@@ -496,18 +583,39 @@ function ViewerCanvas({
 						</div>
 					)}
 					{room !== undefined && <PresenceLayer room={room} camera={camera} frames={frames} page={page} />}
+					{comments !== null && (
+						<CommentsLayer
+							context={comments.context}
+							store={comments.store}
+							camera={camera}
+							frames={frames}
+							page={page}
+							comments={comments.comments}
+						/>
+					)}
 				</div>
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
 					{project.shared !== undefined && <SharedLine shared={project.shared} />}
+					{comments !== null && (
+						<CommentsButton
+							comments={comments}
+							page={page}
+							open={comments.panel}
+							onClick={() => comments.setPanel(!comments.panel)}
+						/>
+					)}
 					{project.shares !== undefined && <ProjectShared address={project.shares} manage={edits(project.role)} />}
 					{edits(project.role) && <OpenInSpool project={project} onNotice={onNotice} />}
 					{room !== undefined && (
 						<PresenceFaces room={room} page={page} following={following} onFollow={setFollowing} />
 					)}
 				</div>
+				{comments !== null && <ViewerTools tool={comments.tool} onTool={comments.setTool} />}
 				{toast !== null && (
-					<div className="-translate-x-1/2 pointer-events-none absolute bottom-4 left-1/2">
+					<div
+						className={`-translate-x-1/2 pointer-events-none absolute left-1/2 ${comments === null ? "bottom-4" : "bottom-20"}`}
+					>
 						<Toast message={toast} />
 					</div>
 				)}
@@ -539,6 +647,16 @@ function ViewerCanvas({
 					</button>
 				</div>
 			</div>
+			{comments !== null && (
+				<CommentsPanel open={comments.panel} onClose={() => comments.setPanel(false)}>
+					<ViewerCommentsList
+						comments={comments}
+						page={page}
+						project={project.project}
+						onPick={(comment) => setAim({ id: comment.id, link: false })}
+					/>
+				</CommentsPanel>
+			)}
 			{played !== null && (
 				<ViewerPlayer
 					project={project.project}
@@ -602,12 +720,15 @@ function FieldFrame({
 	src,
 	revision,
 	cover,
+	placing,
 	onPlay,
 }: {
 	frame: DesignFrame;
 	camera: CameraStore;
 	near: NearScreen;
 	src: string | null;
+	/** the Comment tool is on: a press places a pin rather than playing the frame */
+	placing: boolean;
 	/** How many times the frame has been made again since the canvas opened. */
 	revision: number;
 	cover: string | undefined;
@@ -651,7 +772,7 @@ function FieldFrame({
 				<button
 					type="button"
 					aria-label={`Play ${pageName(frame.name)}`}
-					className="absolute inset-0 cursor-pointer bg-transparent"
+					className={`absolute inset-0 bg-transparent ${placing ? "cursor-crosshair" : "cursor-pointer"}`}
 					onPointerDown={(event) => event.preventDefault()}
 					onClick={(event) => event.detail === 0 && onPlay()}
 				/>
