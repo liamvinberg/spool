@@ -645,7 +645,8 @@ describe("a collision", () => {
 			kind: "set-aside",
 			deleted: false,
 			frames: ["home"],
-			by: "ana@devosurf.com",
+			// named as spool.page names her, never by her address
+			by: "ana",
 		});
 		expect(readFileSync(join(ben.root, mark?.file ?? ""), "utf8")).toBe("ben's\n");
 		// the editor whose save won isn't told
@@ -701,7 +702,7 @@ describe("a collision", () => {
 		expect(text(ana.root, "frames/home/frame.tsx")).toBe("ana kept going\n");
 		await until(() => existsSync(join(ben.root, "design/.spool/set-aside/marks.json")));
 		expect(await marks(ben.daemon)).toMatchObject([
-			{ path: "frames/home/frame.tsx", kind: "restored", deleted: true, frames: ["home"], by: "ana@devosurf.com" },
+			{ path: "frames/home/frame.tsx", kind: "restored", deleted: true, frames: ["home"], by: "ana" },
 		]);
 		expect(await marks(ana.daemon)).toEqual([]);
 

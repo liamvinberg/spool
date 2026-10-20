@@ -4,6 +4,7 @@ import { type Context, Hono } from "hono";
 import { writeAtomic } from "../atomic-write";
 import type { CloudRequestOptions } from "../cloud-auth";
 import { cloudTeams } from "../cloud-teams";
+import { personName } from "../person-name";
 import { isTeamProject, readProjectLink } from "../team-project";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { frameOfPath } from "./events";
@@ -18,7 +19,7 @@ export interface ShownSetAside {
 	deleted: boolean;
 	/** The frames that render the file; none means it is only in the summary. */
 	frames: string[];
-	/** The teammate whose save stands: their address, or null where spool.page couldn't say. */
+	/** The teammate whose save stands, by name (`personName`), or null where spool.page couldn't say. */
 	by: string | null;
 	/** Where this machine's side is kept, relative to the project root, for an agent to read. */
 	file: string | null;
@@ -27,7 +28,7 @@ export interface ShownSetAside {
 	together: number;
 }
 
-/** How long a team's addresses are trusted before spool.page is asked again. */
+/** How long a team's names are trusted before spool.page is asked again. */
 const NAMES_MS = 5 * 60_000;
 
 /**
@@ -44,21 +45,21 @@ export function setAsideRoutes(deps: {
 	framesUsing: (root: string, path: string) => Promise<readonly string[] | undefined>;
 	changed: (root: string) => void;
 }) {
-	const names = new Map<string, { at: number; emails: Map<string, string> }>();
+	const names = new Map<string, { at: number; names: Map<string, string> }>();
 
-	/** A teammate's address by account, from the team's people, remembered a while. */
+	/** A teammate's name by account, from the team's people, remembered a while. */
 	const nameOf = async (team: string, accountId: string): Promise<string | null> => {
 		let known = names.get(team);
-		if (known === undefined || Date.now() - known.at > NAMES_MS || !known.emails.has(accountId)) {
+		if (known === undefined || Date.now() - known.at > NAMES_MS || !known.names.has(accountId)) {
 			try {
 				const { members } = await cloudTeams(deps.spoolDir, deps.request).people(team);
-				known = { at: Date.now(), emails: new Map(members.map((member) => [member.accountId, member.email])) };
+				known = { at: Date.now(), names: new Map(members.map((member) => [member.accountId, personName(member)])) };
 				names.set(team, known);
 			} catch {
 				// unreachable or signed out: the mark says "a teammate" instead
 			}
 		}
-		return known?.emails.get(accountId) ?? null;
+		return known?.names.get(accountId) ?? null;
 	};
 
 	const framesOf = async (root: string, designDir: string, path: string): Promise<string[]> => {

@@ -71,7 +71,7 @@ const SHARES = [
 		kind: "people",
 		pages: ["shop"],
 		people: ["kim@client.com", "ola.n@client.com"],
-		by: "ana@devosurf.com",
+		by: "Ana Berg",
 		at: Math.floor(Date.now() / 1000) - 3 * 86400,
 		opens: 14,
 		link: "https://cloud.test/shared/people-share",
@@ -81,7 +81,7 @@ const SHARES = [
 		kind: "link",
 		pages: ["home", "shop"],
 		people: [],
-		by: "ben@devosurf.com",
+		by: "ben",
 		at: Math.floor(Date.now() / 1000) - 8 * 86400,
 		opens: 41,
 		link: "https://s1.onspool.test/",
@@ -559,7 +559,7 @@ describe("the read-only canvas", () => {
 		const viewer = await open(PATH, { as: { ...project, shares: "/api/shares" } });
 		await viewer.page.getByRole("button", { name: /^Shared/u }).click();
 		const read = viewer.page.getByRole("dialog", { name: "Shared" });
-		await read.getByText("kim and ola").waitFor();
+		await read.getByText("kim and ola.n").waitFor();
 		await read.getByText("anyone with the link").waitFor();
 		for (const button of await read.getByRole("button").all()) expect(await button.isDisabled()).toBe(true);
 		expect(await read.getByText(/Copy link|Stop sharing/u).count()).toBe(0);
@@ -568,9 +568,9 @@ describe("the read-only canvas", () => {
 		const { page, requests } = await open(PATH, { as: { ...editor, shares: "/api/shares" } });
 		await page.getByRole("button", { name: /^Shared/u }).click();
 		const shared = page.getByRole("dialog", { name: "Shared" });
-		await shared.getByRole("button", { name: /kim and ola/u }).click();
+		await shared.getByRole("button", { name: /kim and ola\.n/u }).click();
 		await shared.getByText("ola.n@client.com").waitFor();
-		await shared.getByText("ana · 3 days ago · 14 opens").waitFor();
+		await shared.getByText("Ana Berg · 3 days ago · 14 opens").waitFor();
 		await shared.getByRole("button", { name: "Copy link" }).waitFor();
 		await shared.getByRole("button", { name: "Remove ola.n@client.com" }).click();
 		await shared.getByLabel("Add someone by email").fill("sam@client.com");

@@ -69,7 +69,7 @@ export interface TeamSetup {
 		/** Invites ever sent, in any state, or skipped. */
 		invited: null | { editors: number; viewers: number } | "skipped";
 		/** The member whose Mac signed in first, once one has. */
-		mac: null | { email: string };
+		mac: null | { name?: string; email: string };
 		/** The team's first project, once it has one; or skipped, to start with a new project or none yet. */
 		moved: null | { project: string } | "skipped";
 	};
@@ -96,7 +96,8 @@ export interface CloudTeams {
 export type NewTeamStart = "trial" | "free" | "paid";
 
 export interface TeamPeople {
-	members: { accountId: string; email: string; role: TeamRole; you: boolean }[];
+	/** `name` is what everyone else calls them; an older spool.page sends none (`personName`). */
+	members: { accountId: string; name?: string; email: string; role: TeamRole; you: boolean }[];
 	invites: {
 		id: string;
 		email: string;

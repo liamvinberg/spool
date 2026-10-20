@@ -159,6 +159,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json({
 				accountId: person.accountId,
 				email: `${person.accountId}@devosurf.com`,
+				// named as presence names them
+				name: person.accountId,
 				sessionId: `${person.accountId}-session`,
 				expiresAt: Date.now() + 86_400_000,
 			});
@@ -213,6 +215,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					.filter((one) => roleIn(one, address) !== null)
 					.map((one) => ({
 						accountId: one.accountId,
+						name: one.accountId,
 						email: `${one.accountId}@devosurf.com`,
 						role: roleIn(one, address),
 					})),

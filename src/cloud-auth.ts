@@ -6,6 +6,7 @@ import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { openInBrowser } from "./browser";
 import { SpoolError } from "./errors";
+import { personName } from "./person-name";
 
 export const CLOUD_ORIGIN = "https://spool.page";
 /** A sign-in at spool.page lasts ten minutes, from the page to its last step. */
@@ -37,6 +38,8 @@ export function cloudOrigin(env: Record<string, string | undefined>): string {
 export interface CloudAccount {
 	accountId: string;
 	email: string;
+	/** What everyone else calls this account (`personName`). */
+	name: string;
 	sessionId: string;
 	expiresAt: number;
 }
@@ -381,7 +384,14 @@ export async function account(spoolDir: string, options: CloudRequestOptions = {
 		typeof body.expiresAt !== "number"
 	)
 		throw new SpoolError("spool.page returned an invalid account");
-	return { accountId: body.accountId, email: body.email, sessionId: body.sessionId, expiresAt: body.expiresAt };
+	return {
+		accountId: body.accountId,
+		email: body.email,
+		// an older spool.page sends no name
+		name: personName({ name: typeof body.name === "string" ? body.name : null, email: body.email }),
+		sessionId: body.sessionId,
+		expiresAt: body.expiresAt,
+	};
 }
 
 const SESSION_PATHS = ["/auth/account/session"];

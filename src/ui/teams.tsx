@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { personName } from "../person-name";
 import {
 	type BillingCycle,
 	type CloudAccountState,
@@ -444,7 +445,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 		const change = () => teamActions.setRole(team.address, person.accountId, role);
 		if (person.role !== "viewer" && role === "viewer")
 			setConfirming({
-				title: person.you ? "Make yourself a viewer?" : `Make ${person.email} a viewer?`,
+				title: person.you ? "Make yourself a viewer?" : `Make ${personName(person)} a viewer?`,
 				says: `${person.you ? "This" : "Their"} Mac stops syncing ${team.name}. The folders stay on it.`,
 				label: "Make viewer",
 				act: async () => {
@@ -466,7 +467,7 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 						},
 					}
 				: {
-						title: `Remove ${person.email} from ${team.name}?`,
+						title: `Remove ${personName(person)} from ${team.name}?`,
 						says: `They lose ${team.name}’s projects at once. Folders on their Mac stay as ordinary projects.`,
 						label: "Remove",
 						act: async () => {
@@ -497,10 +498,12 @@ export function TeamPeoplePage({ team, onChanged }: { team: CloudTeam; onChanged
 						key={person.accountId}
 						className="flex h-[58px] items-center gap-[14px] border-line-default border-t"
 					>
-						<Initial email={person.email} />
+						<Initial name={personName(person)} />
+						{/* People is the one place a teammate's address shows, beside their name */}
 						<span className="min-w-0 flex-1 truncate type-control">
-							{person.email}
+							{personName(person)}
 							{person.you && <span className="text-secondary"> (you)</span>}
+							<span className="text-secondary"> · {person.email}</span>
 						</span>
 						{admin ? (
 							<span className="relative shrink-0">
@@ -657,14 +660,14 @@ function daysLeft(expiresAt: number): string {
 	return days === 1 ? "1 day left" : `${days} days left`;
 }
 
-/** A member's face: the first letter of their address, as there are no display names. */
-function Initial({ email }: { email: string }) {
+/** A member's face: the first letter of their name. */
+function Initial({ name }: { name: string }) {
 	return (
 		<span
 			className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-surface-control text-primary uppercase type-detail"
 			aria-hidden="true"
 		>
-			{email.slice(0, 1)}
+			{[...name][0]}
 		</span>
 	);
 }

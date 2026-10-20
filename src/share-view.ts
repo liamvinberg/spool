@@ -5,6 +5,7 @@
  * who sign in, or anyone with its link. Pure, so the canvas, the viewer and the daemon spell it alike.
  */
 import { pageName, ROOT_PAGE } from "./page-path";
+import { personName } from "./person-name";
 
 export type ShareKind = "people" | "link";
 
@@ -60,15 +61,10 @@ export function sharedPageName(page: string): string {
 	return page === ROOT_PAGE ? TOP_PAGE : pageName(page);
 }
 
-/** A person as their address is said aloud: its first part, `kim` for kim.berg@client.com. */
-export function personName(email: string): string {
-	return email.split(/[.@]/u)[0] || email;
-}
-
 /** "kim and ola", "kim, ola and sam", or "anyone with the link": whom a share is for, as its row says it. */
 export function shareWho(share: Pick<ShareView, "kind" | "people">): string {
 	if (share.kind === "link") return "anyone with the link";
-	return saidList(share.people.map(personName));
+	return saidList(share.people.map((email) => personName({ email })));
 }
 
 /** A list said as a sentence says it: "a", "a and b", "a, b and c". */

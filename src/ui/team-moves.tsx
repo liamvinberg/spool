@@ -1,5 +1,6 @@
 import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
-import { personName, saidList } from "../share-view";
+import { personName } from "../person-name";
+import { saidList } from "../share-view";
 import {
 	type BranchesTouchingDesign,
 	type CloudTeam,
@@ -647,11 +648,7 @@ export function MoveOutSheet({
 			.people(team.address)
 			.then((people) => {
 				if (current)
-					setOthers(
-						people.members
-							.filter((member) => !member.you && member.role !== "viewer")
-							.map((member) => personName(member.email)),
-					);
+					setOthers(people.members.filter((member) => !member.you && member.role !== "viewer").map(personName));
 			})
 			.catch(() => {});
 		return () => {

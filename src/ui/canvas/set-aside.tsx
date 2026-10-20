@@ -32,14 +32,9 @@ export function setAsideAsk(marks: readonly ShownSetAside[]): string {
 	].join("\n");
 }
 
-/** Who a mark's teammate is, as the canvas names people: their address before the @. */
-function nameOf(by: string | null): string | null {
-	return by === null ? null : (by.split("@")[0] ?? by);
-}
-
 /** The notice's one line: who, and what both changed. */
 export function setAsideSays(marks: readonly ShownSetAside[]): string {
-	const names = new Set(marks.map((mark) => nameOf(mark.by)));
+	const names = new Set(marks.map((mark) => mark.by));
 	const [only] = names;
 	const who = names.size === 1 && only != null ? `You and ${only}` : "You and a teammate";
 	const [first] = marks;

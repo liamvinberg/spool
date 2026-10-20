@@ -1,15 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ROOT_PAGE } from "../page-path";
-import {
-	type ProjectShares,
-	personName,
-	type SharesSource,
-	type ShareView,
-	saidAgo,
-	shareWho,
-	TOP_PAGE,
-} from "../share-view";
+import { type ProjectShares, type SharesSource, type ShareView, saidAgo, shareWho, TOP_PAGE } from "../share-view";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
 import { TextField } from "./primitives/inputs";
@@ -231,7 +223,7 @@ function OpenedShare({
 				</>
 			)}
 			<p className="truncate border-line-strong border-t px-3.5 pt-2 text-secondary type-detail">
-				{personName(share.by)} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
+				{share.by} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
 			</p>
 			<div className="flex h-8 items-center justify-between px-3.5">
 				{share.link === undefined ? (

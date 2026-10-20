@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { pageChain, pageName, ROOT_PAGE } from "../page-path";
 import {
 	type ProjectShares,
-	personName,
 	type ShareKind,
 	type ShareRequest,
 	type SharesSource,
@@ -649,7 +648,7 @@ function ShareDetail({
 			<MenuSeparator />
 			<div className="flex h-row shrink-0 items-center gap-2 pr-1 pl-2">
 				<span className="min-w-0 flex-1 truncate text-secondary type-detail">
-					{personName(share.by)} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
+					{share.by} · {saidAgo(share.at)} · {share.opens} {share.opens === 1 ? "open" : "opens"}
 				</span>
 				{manage && (
 					<Button

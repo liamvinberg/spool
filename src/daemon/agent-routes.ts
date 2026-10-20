@@ -121,7 +121,7 @@ export function agentRoutes(deps: {
 	agentAppLauncher: AgentAppLauncher;
 	emitAppEvent: (event: AppEvent) => void;
 	/** This Mac's spool.page account, for the placeholders a team project's designers make. */
-	account: () => Promise<{ accountId: string; email: string }>;
+	account: () => Promise<{ accountId: string; name: string }>;
 }) {
 	const {
 		spoolDir,
@@ -147,7 +147,7 @@ export function agentRoutes(deps: {
 	const askWhoIsSignedIn = (): void =>
 		void deps.account().then(
 			(one) => {
-				signedInAs = { accountId: one.accountId, name: one.email.split("@")[0] || one.email };
+				signedInAs = { accountId: one.accountId, name: one.name };
 			},
 			() => {},
 		);
