@@ -53,6 +53,8 @@ export interface Save {
 	path: string;
 	base: Version | null;
 	deleted: boolean;
+	/** Frames and pages Spool moved, said on the save that deletes their old files: their comments follow them. */
+	moved?: Moved;
 }
 
 /** Object → daemon: the answer to `hello`, before any catch-up. */
@@ -77,6 +79,8 @@ export interface Welcome {
 export interface Saves {
 	type: "saves";
 	saves: BundledSave[];
+	/** Frames and pages Spool moved, said on the bundle that deletes their old files: their comments follow them. */
+	moved?: Moved;
 }
 
 export interface BundledSave {
@@ -698,6 +702,8 @@ export interface Comment {
 	/** Who resolved it and when; `agent` when their agent did, through `spool comments resolve`. */
 	resolved: { by: CommentPerson; at: number; agent?: true } | null;
 	standing: CommentStanding;
+	/** Off its frame (`deleted-frame`, or `deleted-page` after it was on one): the frame it was on, and when it went. */
+	dropped?: { frame: string; at: number };
 	replies: CommentReply[];
 	/** The members its first message @mentions, named as they are now; absent when it mentions nobody. */
 	mentions?: CommentPerson[];
@@ -1115,7 +1121,7 @@ function commentRefusal(reason: unknown): CommentRefusal | undefined {
 export function readComment(value: unknown): Comment | undefined {
 	if (!isRecord(value)) return undefined;
 	const { id, audience, page, frame, at, element, revision, still, author, agent, body, created, edited } = value;
-	const { resolved, standing, replies, mentions } = value;
+	const { resolved, standing, dropped, replies, mentions } = value;
 	if (!isId(id) || !isCommentName(page) || !(frame === null || isFrameName(frame))) return undefined;
 	const who = readCommentPerson(author);
 	const point = readPoint(at);
@@ -1134,6 +1140,11 @@ export function readComment(value: unknown): Comment | undefined {
 		const { agent: byAgent } = resolved;
 		if (!(byAgent === undefined || byAgent === true)) return undefined;
 		closed = { by, at: resolved.at, ...(byAgent === true ? { agent: byAgent } : {}) };
+	}
+	let off: Comment["dropped"];
+	if (dropped !== undefined) {
+		if (!isRecord(dropped) || !isFrameName(dropped.frame) || !isTime(dropped.at)) return undefined;
+		off = { frame: dropped.frame, at: dropped.at };
 	}
 	if (!Array.isArray(replies)) return undefined;
 	const read = replies.map(readCommentReply);
@@ -1156,6 +1167,7 @@ export function readComment(value: unknown): Comment | undefined {
 		edited,
 		resolved: closed,
 		standing,
+		...(off === undefined ? {} : { dropped: off }),
 		replies: read,
 		...(named.length > 0 ? { mentions: named } : {}),
 	};
@@ -1233,4 +1245,182 @@ function isLine(value: unknown): value is number {
 
 function isTime(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/*
+ * Comments over time (spool#160): the sync object keeps each comment standing where it belongs as saves change the
+ * frames and pages under it. A rename or move Spool makes, said on the save that deletes the old files, and a delete
+ * and an add of the same source within one bundle (an agent's `mv`), carry a frame's comments to its new name; a copy
+ * takes none. A frame deleted drops its comments onto its page's field where they stood, and one brought back at its
+ * name stands them on it again; a page deleted takes its comments off the canvas. The rules are here, pure, so the
+ * sync object and spool's stand-in for it keep the same ones.
+ */
+
+/** One rename or move: a frame's name, or a page's path, before and after. */
+export interface MovedPath {
+	from: string;
+	to: string;
+}
+
+/**
+ * Frames and pages Spool renamed or moved on a Mac. It is said on the save or bundle that deletes their old files,
+ * since the new ones may be sent apart from them, and walk targets rewritten in a moved frame change its source.
+ */
+export interface Moved {
+	frames?: MovedPath[];
+	pages?: MovedPath[];
+}
+
+/** One path as a save changed the team's copy: its content hash before and after, null where there was none. */
+export interface CopyChange {
+	path: string;
+	was: string | null;
+	now: string | null;
+}
+
+/** What the team's copy holds once saves are applied, as comments need to know it. */
+export interface DesignNow {
+	/** Whether a frame is there: its folder holds `frame.tsx`. */
+	frame(name: string): boolean;
+	/** Whether a page is there. The root page always is. */
+	page(path: string): boolean;
+	/** Where a frame stood, from its `frame.json`, now or, deleted, as it last stood; undefined if it never said. */
+	geometry(name: string): { x: number; y: number; w: number; h: number } | undefined;
+}
+
+/** Where a comment stands, as the sync object keeps it: what readers are told, and the frame it belongs to. */
+export interface CommentPlace {
+	page: string;
+	frame: string | null;
+	at: CommentPoint;
+	standing: CommentStanding;
+	/** The frame it was put on and its point there, kept while it is off it; null for a comment put on the field. */
+	home: { frame: string; at: CommentPoint } | null;
+	/** When it dropped off its frame; null while it is on it, and for a comment put on the field. */
+	dropped: number | null;
+}
+
+/** The frame a design/-relative path is the entry of: `frames/shop/checkout/frame.tsx` is `shop/checkout`. */
+export function frameOfEntry(path: string): string | undefined {
+	const match = /^frames\/(.+)\/frame\.tsx$/u.exec(path);
+	return match?.[1];
+}
+
+/** The page a frame or a page stands on: its path's parent, "" for the root page. */
+export function pageOf(name: string): string {
+	const cut = name.lastIndexOf("/");
+	return cut < 0 ? "" : name.slice(0, cut);
+}
+
+/**
+ * A frame's name or a page's path after moves: the move naming it, or one of a page that holds it. A page is only
+ * moved by a page's move; a frame by its own or its page's.
+ */
+export function movedName(name: string, moved: Moved, kind: "frame" | "page"): string {
+	if (kind === "frame") {
+		const own = moved.frames?.find((move) => move.from === name);
+		if (own !== undefined) return own.to;
+	}
+	for (const move of moved.pages ?? [])
+		if (name === move.from || name.startsWith(`${move.from}/`)) return `${move.to}${name.slice(move.from.length)}`;
+	return name;
+}
+
+/**
+ * Whether saves may change where comments stand: a frame's entry came or went, something under frames/ was
+ * deleted (a page may have gone with it), or Spool said it moved something. An edit in place changes nothing.
+ */
+export function movesComments(changes: readonly CopyChange[], moved?: Moved): boolean {
+	if ((moved?.frames?.length ?? 0) > 0 || (moved?.pages?.length ?? 0) > 0) return true;
+	return changes.some(
+		({ path, was, now }) =>
+			path.startsWith("frames/") &&
+			((was !== null && now === null) || (was === null && now !== null && frameOfEntry(path) !== undefined)),
+	);
+}
+
+/**
+ * Frames saves deleted and added with the same source: a frame whose `frame.tsx` went is the one whose `frame.tsx`
+ * came with the very same bytes, when exactly one of each has them. What a copy adds with no delete takes nothing.
+ */
+export function sameSourceMoves(changes: readonly CopyChange[]): MovedPath[] {
+	const first = new Map<string, CopyChange>();
+	const last = new Map<string, CopyChange>();
+	for (const change of changes) {
+		if (frameOfEntry(change.path) === undefined) continue;
+		if (!first.has(change.path)) first.set(change.path, change);
+		last.set(change.path, change);
+	}
+	const gone = new Map<string, string[]>();
+	const came = new Map<string, string[]>();
+	for (const [path, { was }] of first) {
+		const now = last.get(path)?.now ?? null;
+		const frame = frameOfEntry(path);
+		if (frame === undefined) continue;
+		if (was !== null && now === null) gone.set(was, [...(gone.get(was) ?? []), frame]);
+		else if (was === null && now !== null) came.set(now, [...(came.get(now) ?? []), frame]);
+	}
+	const moves: MovedPath[] = [];
+	for (const [source, from] of gone) {
+		const to = came.get(source);
+		const [one] = from;
+		const [other] = to ?? [];
+		if (from.length === 1 && to?.length === 1 && one !== undefined && other !== undefined)
+			moves.push({ from: one, to: other });
+	}
+	return moves;
+}
+
+/**
+ * Where a comment stands once saves are applied, `moved` being what Spool said and what the saves paired by source.
+ * A comment whose frame moved follows it, there yet or not; one whose frame is there stands on it, at its point; one
+ * whose frame just went drops onto the field where it stood, its point held inside the frame as it last stood, and
+ * stays there; a page that is gone takes its comments off the canvas, and one back puts them back.
+ */
+export function placeAfter(place: CommentPlace, moved: Moved, design: DesignNow, now: number): CommentPlace {
+	if (place.home === null) {
+		const page = movedName(place.page, moved, "page");
+		return { ...place, page, standing: design.page(page) ? "placed" : "deleted-page" };
+	}
+	const frame = movedName(place.home.frame, moved, "frame");
+	const home = { frame, at: place.home.at };
+	const page = pageOf(frame);
+	// a frame moved goes on standing on it before its new files are all there; one already gone stays gone
+	if (design.frame(frame) || (frame !== place.home.frame && place.standing === "placed"))
+		return { page, frame, at: home.at, standing: "placed", home, dropped: null };
+	let { at, dropped } = place;
+	if (place.standing === "placed") {
+		// it was on its frame until now: it drops where it stood, held inside the frame as the frame last stood
+		const stood = design.geometry(frame);
+		at =
+			stood === undefined
+				? home.at
+				: { x: stood.x + within(home.at.x, stood.w), y: stood.y + within(home.at.y, stood.h) };
+		dropped = now;
+	}
+	return { page, frame: null, at, standing: design.page(page) ? "deleted-frame" : "deleted-page", home, dropped };
+}
+
+/** A pin's offset held inside a frame's side: a frame made smaller keeps its pins on it. */
+export function within(offset: number, side: number): number {
+	return Math.min(Math.max(offset, 0), Math.max(side, 0));
+}
+
+/** A rename or move, if well formed: frames and pages by their paths, at most a bundle's worth of each. */
+export function readMoved(value: unknown): Moved | undefined {
+	if (!isRecord(value)) return undefined;
+	const paths = (list: unknown): MovedPath[] | undefined => {
+		if (list === undefined) return [];
+		if (!Array.isArray(list) || list.length > BUNDLE_SAVES) return undefined;
+		const read: MovedPath[] = [];
+		for (const move of list) {
+			if (!isRecord(move) || !isFrameName(move.from) || !isFrameName(move.to)) return undefined;
+			read.push({ from: move.from, to: move.to });
+		}
+		return read;
+	};
+	const frames = paths(value.frames);
+	const pages = paths(value.pages);
+	if (frames === undefined || pages === undefined) return undefined;
+	return { ...(frames.length > 0 ? { frames } : {}), ...(pages.length > 0 ? { pages } : {}) };
 }
