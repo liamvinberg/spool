@@ -71,9 +71,14 @@ export interface Filters {
 
 export const FILTERS: Filters = { show: "all", scope: "page", groupBy: "frame", sort: "newest", resolved: false };
 
-/** The comments in scope: this page's, or the whole project's. */
+/**
+ * The comments in scope: this page's, or the whole project's. A deleted page's are in every scope: no page they
+ * could be on is ever open, and they stay in the inbox under Resolved.
+ */
 export function inScope(comments: readonly Comment[], scope: Scope, page: string): Comment[] {
-	return comments.filter((comment) => scope === "project" || comment.page === page);
+	return comments.filter(
+		(comment) => scope === "project" || comment.page === page || comment.standing === "deleted-page",
+	);
 }
 
 /** What the filters leave, in the order the sort puts them: the newest word first, or the unread before it. */

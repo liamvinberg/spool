@@ -40,6 +40,7 @@ import {
 	droppedFrame,
 	EditedSince,
 	frameLeaf,
+	KeptStill,
 	pinOnFrame,
 	UNPAID,
 } from "./comment-history";
@@ -1265,6 +1266,7 @@ export function CommentCard({
 				{comment.editedSince === true ? (
 					<EditedSince comment={comment} frame={frame} stills={context.stills} />
 				) : null}
+				<KeptStill comment={comment} stills={context.stills} />
 			</div>
 			<div className="flex shrink-0 flex-col gap-1.5 border-line-default border-t px-3 py-2.5">
 				{/* a team gone local reads its comments and writes none: no field to reply in; nor does a share that ended */}

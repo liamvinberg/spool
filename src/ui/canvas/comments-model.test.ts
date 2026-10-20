@@ -90,6 +90,7 @@ describe("the inbox's list", () => {
 		expect(ids(listed(all, { ...FILTERS, resolved: true }, reader, "app"))).toEqual([
 			"talked",
 			"done",
+			"gone",
 			"new",
 			"mine",
 			"old",

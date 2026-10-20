@@ -96,6 +96,29 @@ export function EditedSince({
 }
 
 /**
+ * The still a comment kept, under a card whose frame or page was deleted (spool#160): the frame as it was when the
+ * comment was made, since nothing on the canvas shows it any more. None when it kept none, or for an outsider.
+ */
+export function KeptStill({ comment, stills }: { comment: Comment; stills: CommentStills }) {
+	const src = comment.still ? stills.kept(comment) : undefined;
+	if (comment.standing === "placed" || src === undefined) return null;
+	const rev = comment.revision?.slice(0, 7) ?? "";
+	return (
+		<div className="flex flex-col rounded-sm border border-line-default px-2.5 py-2" data-comment-kept={comment.id}>
+			<Still
+				src={src}
+				at={comment.at}
+				frame={undefined}
+				label={rev === "" ? "as it was" : `as it was · ${rev}`}
+				then
+				// on a deleted frame the pin is on the field now: where it stood on the frame is gone with it
+				ring={comment.frame !== null}
+			/>
+		</div>
+	);
+}
+
+/**
  * Where a canvas reads Compare's two pictures: the still a comment kept, from its team (through the daemon on a Mac,
  * from spool.page in a browser), and its frame's cover now.
  */
@@ -115,12 +138,15 @@ function Still({
 	frame,
 	label,
 	then = false,
+	ring = true,
 }: {
 	src: string | undefined;
 	at: Point;
 	frame: CommentFrame | undefined;
 	label: string;
 	then?: boolean;
+	/** ring the pin's point, where it is known on the frame */
+	ring?: boolean;
 }) {
 	const [failed, setFailed] = useState(false);
 	const k = 0.5;
@@ -150,7 +176,7 @@ function Still({
 						{then ? "No still" : "Not drawn yet"}
 					</span>
 				)}
-				{shown ? (
+				{shown && ring ? (
 					<span
 						className="absolute size-3 rounded-full border-2 border-accent"
 						style={{ left: left + pin.x * k - 6, top: top + pin.y * k - 6 }}

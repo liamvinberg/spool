@@ -413,6 +413,25 @@ it("lists comments in the panel, and a row flies to its pin on its own page", { 
 	await expect.poll(() => panel.getAttribute("data-comments-panel")).toBe("closed");
 });
 
+it("files a deleted page's comments under Resolved, wherever the canvas is, each card with the still it kept", {
+	timeout: 60_000,
+}, async () => {
+	const gone = comment("c9", { page: "promo", frame: "promo/hero", standing: "deleted-page", still: true });
+	const { page } = await open(PATH, [comment("c1"), gone]);
+	await page.locator("[data-comments-button]").click();
+	const panel = page.locator('[data-comments-panel="open"]');
+	await panel.waitFor();
+	await expect.poll(() => panel.locator("[data-comment-row]").count()).toBe(1);
+	await panel.getByRole("switch", { name: "Show resolved" }).check({ force: true });
+	const row = panel.locator('[data-comment-row="c9"]');
+	await row.waitFor();
+	expect(await row.textContent()).toContain("page deleted");
+	await row.click();
+	const card = page.locator('[data-comment-card="c9"]');
+	await card.waitFor();
+	expect(await card.locator("[data-comment-kept] img").getAttribute("src")).toBe("/api/comments/c9/still");
+});
+
 it("opens on the comment a link names, on its page, and takes the link off the address", {
 	timeout: 60_000,
 }, async () => {
