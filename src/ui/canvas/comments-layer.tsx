@@ -17,11 +17,22 @@ import { AgentIcon, CloseIcon, DotsIcon, ResolveIcon } from "../icons";
 import { Button, IconButton } from "../primitives/actions";
 import { Dot, Kbd } from "../primitives/display";
 import { TextAction } from "../primitives/feedback";
-import { TextareaBare } from "../primitives/inputs";
+import { SelectTrigger, TextareaBare } from "../primitives/inputs";
 import { Menu, MenuItem, MenuSeparator, Popover } from "../primitives/overlays";
+import { KindGlyph } from "../shares";
 import type { Box, Point } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { type CanvasStore, useCanvasField } from "./canvas-store";
+import {
+	type AudienceShare,
+	audienceKind,
+	audienceLabel,
+	audiencesOn,
+	composerNote,
+	outsiderNote,
+	replyNote,
+	replyPlaceholder,
+} from "./comment-audience";
 import {
 	type CommentFrame,
 	type CommentStills,
@@ -59,6 +70,8 @@ import { PRESENCE_INK } from "./presence-faces";
 
 /** A pin's size on screen, at every zoom: round, with its bottom-left corner at the spot. */
 export const PIN = 22;
+/** Whom an outsider can mention: nobody (spool#174). */
+const NOBODY: readonly CommentMentionable[] = [];
 /** A card's width beside its pin. */
 const CARD_W = 312;
 /** How far a card keeps from the canvas's edges. */
@@ -122,6 +135,18 @@ export interface CommentsContext {
 	refresh: () => void;
 	/** a word to the person: a link copied, or why something didn't go */
 	notice: (notice: { kind: "success" | "error"; message: string }) => void;
+	/**
+	 * The project's shares a member's new comment may be for besides the team (spool#174), the composer offering
+	 * those of its page; none where the project has none, or where they can't be read.
+	 */
+	shares?: readonly AudienceShare[] | undefined;
+	/** the team's name, as an outsider's composer says who reads it */
+	team?: string | undefined;
+	/**
+	 * Someone outside the team, writing through their share (spool#174): their composer picks nothing and says who
+	 * reads it, and no element's tag, no mention and no other share is ever theirs to see.
+	 */
+	outsider?: { kind: "people" | "link"; who: readonly string[] } | undefined;
 }
 
 export function CommentsLayer({
@@ -323,6 +348,8 @@ function Pin({
 	const resolved = comment.resolved !== null;
 	const orphan = comment.standing === "deleted-frame";
 	const hollow = resolved || orphan;
+	// someone outside the team wrote it, through a share: a ring in the ink, nobody's colour (spool#174)
+	const outsider = comment.outsider === true && !hollow;
 	const gone = droppedFrame(comment);
 	return (
 		<>
@@ -342,6 +369,7 @@ function Pin({
 				data-comment-dropped={gone}
 				data-unread={unread ? "" : undefined}
 				data-resolved={resolved ? "" : undefined}
+				data-outsider={comment.outsider === true ? "" : undefined}
 				{...OWN_PRESS}
 				onClick={(event) => {
 					event.stopPropagation();
@@ -353,6 +381,7 @@ function Pin({
 					delay === null ? null : "animate-comment-pin-in",
 					open ? "z-20 scale-110" : "z-10 hover:scale-105",
 					hollow ? "bg-surface-raised text-secondary" : null,
+					outsider ? "bg-surface-raised text-primary" : null,
 				)}
 				style={{
 					left: at.x,
@@ -363,9 +392,10 @@ function Pin({
 					// it pops up from its tip, and grows there when open
 					transformOrigin: "0 100%",
 					animationDelay: `${delay ?? 0}ms`,
-					...(hollow ? {} : { background: by.color, color: PRESENCE_INK }),
+					...(hollow || outsider ? {} : { background: by.color, color: PRESENCE_INK }),
 					boxShadow: ringOf(open, unread),
 					...(orphan ? { outline: "1.25px dashed var(--color-secondary)", outlineOffset: -1.25 } : {}),
+					...(outsider ? { outline: "1.25px solid var(--color-secondary)", outlineOffset: -1.25 } : {}),
 					opacity: resolved ? 0.75 : 1,
 				}}
 			>
@@ -630,12 +660,110 @@ const OWN_POINTER = {
 	onContextMenu: (event: { stopPropagation(): void }) => event.stopPropagation(),
 };
 
-/** Who reads it: the team. A share's audience comes with sharing comments (spool#174). */
+/** Who reads it: the team. */
 export function TeamLabel() {
 	return (
 		<span className="inline-flex shrink-0 items-center gap-1 text-secondary type-detail" data-comment-audience="team">
 			<TeamGlyph />
 			team
+		</span>
+	);
+}
+
+/**
+ * Who reads a comment (spool#174). Team is quiet; a share is a chip, because a member sees every audience and has to
+ * know before typing that someone outside the team reads the reply. A share that ended says so.
+ */
+export function AudienceTag({
+	share,
+}: {
+	share: { kind: "people" | "link"; who: readonly string[]; ended?: true } | undefined;
+}) {
+	if (share === undefined) return <TeamLabel />;
+	return (
+		<span className="inline-flex min-w-0 shrink items-center gap-1.5" data-comment-audience={share.kind}>
+			<span className="inline-flex min-w-0 shrink items-center gap-1 rounded-xs border border-line-strong px-1 text-primary type-label">
+				<KindGlyph kind={share.kind} className="size-3 shrink-0 text-secondary" />
+				<span className="truncate">{audienceLabel(share)}</span>
+			</span>
+			{share.ended === true ? (
+				<span className="shrink-0 text-tertiary type-detail" data-comment-share-ended="">
+					share ended
+				</span>
+			) : null}
+		</span>
+	);
+}
+
+/** The composer's picker: Team, or one of the shares this page is in. A reply never picks: it takes its comment's. */
+function AudiencePicker({
+	shares,
+	value,
+	onPick,
+}: {
+	shares: readonly AudienceShare[];
+	value: string | null;
+	onPick: (share: string | null) => void;
+}) {
+	const [open, setOpen] = useState(false);
+	const anchor = useRef<HTMLSpanElement>(null);
+	const picked = shares.find((share) => share.id === value);
+	const item = (share: AudienceShare | undefined) => (
+		<MenuItem
+			key={share?.id ?? "team"}
+			checked={(share?.id ?? null) === value}
+			label={
+				<span className="flex items-center gap-1.5">
+					{share === undefined ? (
+						<TeamGlyph />
+					) : (
+						<KindGlyph kind={share.kind} className="size-3 shrink-0 text-secondary" />
+					)}
+					{share === undefined ? "Team" : audienceLabel(share)}
+				</span>
+			}
+			meta={share === undefined ? "members" : audienceKind(share)}
+			onClick={() => {
+				setOpen(false);
+				onPick(share?.id ?? null);
+			}}
+		/>
+	);
+	return (
+		<span ref={anchor} className="relative flex min-w-0">
+			<SelectTrigger
+				open={open}
+				aria-label="Who reads it"
+				data-comment-audience-picker=""
+				onClick={() => setOpen(!open)}
+				value={
+					<>
+						{picked === undefined ? <TeamGlyph /> : <KindGlyph kind={picked.kind} className="size-3 shrink-0" />}
+						{picked === undefined ? "Team" : audienceLabel(picked)}
+					</>
+				}
+			/>
+			{open ? (
+				<FloatingMenu anchor={anchor} align="start" width={272} onDismiss={() => setOpen(false)}>
+					{item(undefined)}
+					<MenuSeparator />
+					{shares.map((share) => item(share))}
+					<MenuSeparator />
+					<span className="px-3 py-1.5 text-secondary type-label">
+						Members read every comment. A share reads only its own.
+					</span>
+				</FloatingMenu>
+			) : null}
+		</span>
+	);
+}
+
+/** Who reads it, said under the words: a share's people outside the team, or the outsider's own share and the team. */
+function AudienceNote({ share, says }: { share: { kind: "people" | "link" }; says: string }) {
+	return (
+		<span className="flex items-start gap-1.5 text-secondary type-label" data-comment-audience-note="">
+			<KindGlyph kind={share.kind} className="mt-[3px] size-3 shrink-0" />
+			{says}
 		</span>
 	);
 }
@@ -897,11 +1025,16 @@ function Composer({
 	onClose: () => void;
 	onSent: (id: string) => void;
 }) {
-	const { client, online, people, unpaid = false } = context;
+	const { client, online, unpaid = false, outsider } = context;
+	// an outsider mentions nobody: the team's people are not theirs to see
+	const people = outsider === undefined ? context.people : NOBODY;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
+	const [audience, setAudience] = useState<string | null>(null);
 	const offline = !online || refusal === "offline" || unpaid;
+	const shares = outsider === undefined ? audiencesOn(context.shares ?? [], draft.page) : [];
+	const picked = shares.find((share) => share.id === audience);
 	const send = () => {
 		if (text.trim() === "" || sending || offline) return;
 		setSending(true);
@@ -917,6 +1050,7 @@ function Composer({
 						: { selector, outerHtml, source, generated },
 				body: text,
 				mentions: mentionedIn(text, people),
+				...(picked === undefined ? {} : { audience: { share: picked.id } }),
 			})
 			.then((sent) => {
 				setSending(false);
@@ -930,7 +1064,8 @@ function Composer({
 				<span className="shrink-0 text-tertiary type-detail">
 					{draft.frame === null ? "on the field" : `on ${draft.frame}`}
 				</span>
-				{draft.element === null ? null : <ElementChip label={draft.element.tag} />}
+				{/* an outsider sees the outline alone: the element's tag is the team's, for its agents */}
+				{draft.element === null || outsider !== undefined ? null : <ElementChip label={draft.element.tag} />}
 				<span className="min-w-0 flex-1" />
 				<IconButton size="sm" icon={<CloseIcon />} label="Cancel" onClick={onClose} />
 			</div>
@@ -944,13 +1079,22 @@ function Composer({
 					people={people}
 					rows={2}
 					label="Comment"
-					placeholder="Comment, @ to mention"
+					placeholder={outsider === undefined ? "Comment, @ to mention" : "Comment"}
 					onSend={send}
 					onEscape={onClose}
 				/>
+				{outsider !== undefined ? (
+					<AudienceNote share={outsider} says={outsiderNote(context.team ?? "", outsider)} />
+				) : picked === undefined ? null : (
+					<AudienceNote share={picked} says={composerNote(picked)} />
+				)}
 				<RefusalLine refusal={refusal} context={context} />
 				<div className="flex items-center gap-2">
-					<TeamLabel />
+					{outsider !== undefined ? null : shares.length === 0 ? (
+						<TeamLabel />
+					) : (
+						<AudiencePicker shares={shares} value={audience} onPick={setAudience} />
+					)}
 					<span className="min-w-0 flex-1" />
 					<Kbd>↵</Kbd>
 					<Button
@@ -995,7 +1139,8 @@ export function CommentCard({
 	onClose: () => void;
 	onSendToAgent?: ((comment: Comment) => void) | undefined;
 }) {
-	const { client, online, people, reader, refresh, unpaid = false } = context;
+	const { client, online, reader, refresh, unpaid = false, outsider } = context;
+	const people = outsider === undefined ? context.people : NOBODY;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
@@ -1040,7 +1185,7 @@ export function CommentCard({
 	return (
 		<Popover pad="none" className="flex min-h-0 w-full flex-col" data-comment-card={comment.id} {...OWN_POINTER}>
 			<div className="flex h-10 shrink-0 items-center gap-2 border-line-default border-b pr-1.5 pl-3">
-				<TeamLabel />
+				<AudienceTag share={comment.share ?? outsider} />
 				<span className="min-w-0 flex-1 truncate text-tertiary type-detail">{placeSays(comment)}</span>
 				{onSendToAgent === undefined ? null : (
 					<IconButton
@@ -1100,14 +1245,16 @@ export function CommentCard({
 					chip={comment.element === null ? undefined : <ElementChip label={comment.element.name} />}
 				/>
 				{comment.replies
-					.filter((reply) => reply.draftFor === null)
+					// a draft is its person's alone: the agent's reply to a share waits for them to send it (spool#174)
+					.filter((reply) => reply.draftFor === null || reply.draftFor === reader.me)
 					.map((reply) => (
 						<Message
 							key={reply.id}
 							message={reply}
 							names={named}
-							unread={unreadMessage(reply, comment, reader)}
+							unread={reply.draftFor === null && unreadMessage(reply, comment, reader)}
 							acts={{ ...menu, reply }}
+							draft={reply.draftFor !== null}
 						/>
 					))}
 				{comment.editedSince === true ? (
@@ -1115,8 +1262,12 @@ export function CommentCard({
 				) : null}
 			</div>
 			<div className="flex shrink-0 flex-col gap-1.5 border-line-default border-t px-3 py-2.5">
-				{/* a team gone local reads its comments and writes none: no field to reply in */}
-				{unpaid ? null : (
+				{/* a team gone local reads its comments and writes none: no field to reply in; nor does a share that ended */}
+				{comment.share?.ended === true ? (
+					<span className="text-secondary type-label" data-comment-share-ended="">
+						This share ended. Members still read its comments; nothing more goes to it.
+					</span>
+				) : unpaid ? null : (
 					<div className="flex items-end gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 py-1.5 focus-within:border-line-focus">
 						<div className="min-w-0 flex-1">
 							<MentionField
@@ -1128,7 +1279,7 @@ export function CommentCard({
 								people={people}
 								rows={1}
 								label="Reply"
-								placeholder="Reply"
+								placeholder={replyPlaceholder(comment)}
 								onSend={send}
 								onEscape={onClose}
 							/>
@@ -1143,6 +1294,9 @@ export function CommentCard({
 							Reply
 						</Button>
 					</div>
+				)}
+				{comment.share === undefined || comment.share.ended === true ? null : (
+					<AudienceNote share={comment.share} says={replyNote(comment.share)} />
 				)}
 				<RefusalLine refusal={refusal} context={context} />
 			</div>
@@ -1178,6 +1332,8 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 	const mine = author.accountId === context.reader.me;
 	// a team gone local reads its comments: copying a link is all its menu does
 	const writes = context.unpaid !== true;
+	// an outsider changes only their own; a member deletes anyone's
+	const deletes = writes && (mine || context.outsider === undefined);
 	const replies = comment.replies.filter((one) => one.draftFor === null).length;
 	const what = reply === undefined ? "comment" : "reply";
 	const copy = () => {
@@ -1236,7 +1392,7 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 							}}
 						/>
 					)}
-					{writes ? (
+					{deletes ? (
 						<>
 							<MenuSeparator />
 							<MenuItem label={deleteSays} destructive disabled={!context.online} onClick={remove} />
@@ -1255,30 +1411,51 @@ function Message({
 	unread,
 	acts,
 	chip,
+	draft = false,
 }: {
 	message: Comment | CommentReply;
 	names: readonly Named[];
 	unread: boolean;
 	acts: MessageActs;
 	chip?: ReactNode;
+	/** an agent's reply on a share's comment, waiting for its person alone to send it or edit it first (spool#174) */
+	draft?: boolean;
 }) {
 	const [editing, setEditing] = useState(false);
 	const by = message.author;
+	const outsider = message.outsider === true;
+	const { context, comment } = acts;
+	const sendDraft = (body?: string) =>
+		acts.onChange(
+			context.client.change(comment.id, {
+				type: "send",
+				reply: message.id,
+				...(body === undefined ? {} : { body, mentions: mentionedIn(body, context.people) }),
+			}),
+			() => setEditing(false),
+		);
 	return (
-		<div className="group/msg relative flex gap-2.5" data-comment-message={message.id}>
+		<div
+			className={cn("group/msg relative flex gap-2.5", draft && "opacity-80")}
+			data-comment-message={message.id}
+			data-comment-draft={draft ? "" : undefined}
+		>
 			<span
 				aria-hidden="true"
 				className={cn(
 					"mt-px inline-flex size-5 shrink-0 items-center justify-center font-semibold text-[10px] uppercase leading-none",
 					message.agent ? "rounded-[5px]" : "rounded-full",
+					outsider && "border border-line-strong bg-surface-raised text-primary",
 				)}
-				style={{ background: by.color, color: PRESENCE_INK }}
+				style={outsider ? undefined : { background: by.color, color: PRESENCE_INK }}
 			>
 				{message.agent ? <AgentGlyph /> : by.name.charAt(0)}
 			</span>
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<div className="flex h-5 items-center gap-2">
 					<span className="truncate text-primary type-control">{nameOf(by, message.agent)}</span>
+					{outsider ? <span className="shrink-0 text-tertiary type-detail">via share</span> : null}
+					{draft ? <span className="shrink-0 text-tertiary type-detail">draft · only you see it</span> : null}
 					<span className="shrink-0 text-tertiary type-detail">{ago(message.created)}</span>
 					{message.edited === null ? null : <span className="shrink-0 text-tertiary type-detail">edited</span>}
 					{unread ? <Dot tone="accent" /> : null}
@@ -1287,22 +1464,53 @@ function Message({
 					</span>
 				</div>
 				{editing ? (
-					<EditField acts={acts} text={message.body} onDone={() => setEditing(false)} />
+					<EditField
+						acts={acts}
+						text={message.body}
+						onDone={() => setEditing(false)}
+						onSave={draft ? sendDraft : undefined}
+					/>
 				) : (
 					<Said text={message.body} people={names} />
 				)}
 				{chip === undefined ? null : <span className="flex pt-1">{chip}</span>}
+				{draft && !editing ? (
+					<span className="flex items-center gap-1.5 pt-1.5">
+						<span className="min-w-0 flex-1 text-secondary type-label">
+							Your agent wrote this for{" "}
+							{comment.share === undefined ? "the share" : audienceLabel(comment.share)}.
+						</span>
+						<Button size="sm" variant="ghost" disabled={!context.online} onClick={() => setEditing(true)}>
+							Edit
+						</Button>
+						<Button size="sm" variant="primary" disabled={!context.online} onClick={() => sendDraft()}>
+							Send
+						</Button>
+					</span>
+				) : null}
 			</div>
 		</div>
 	);
 }
 
 /** A message's words being edited by its author: Enter or Save sends them, marked edited; Esc or Cancel leaves them. */
-function EditField({ acts, text, onDone }: { acts: MessageActs; text: string; onDone: () => void }) {
+function EditField({
+	acts,
+	text,
+	onDone,
+	onSave,
+}: {
+	acts: MessageActs;
+	text: string;
+	onDone: () => void;
+	/** what saving does instead of an edit: a draft is sent with these words (spool#174) */
+	onSave?: ((body: string) => void) | undefined;
+}) {
 	const [value, setValue] = useState(text);
 	const { context, comment, reply } = acts;
 	const save = () => {
 		if (value.trim() === "") return;
+		if (onSave !== undefined) return onSave(value);
 		if (value === text) return onDone();
 		acts.onChange(
 			context.client.change(comment.id, {
@@ -1331,7 +1539,7 @@ function EditField({ acts, text, onDone }: { acts: MessageActs; text: string; on
 					Cancel
 				</Button>
 				<Button size="sm" variant="primary" disabled={value.trim() === ""} onClick={save}>
-					Save
+					{onSave === undefined ? "Save" : "Send"}
 				</Button>
 			</div>
 		</div>

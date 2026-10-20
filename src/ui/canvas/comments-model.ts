@@ -31,9 +31,13 @@ export function isUnread(comment: Comment, reader: Reader): boolean {
 	);
 }
 
-/** For this person: it mentions them, or they wrote it or replied in it. */
+/**
+ * For this person: it mentions them, or they wrote it or replied in it, or someone outside the team wrote it through
+ * a share they made (spool#174).
+ */
 export function isForYou(comment: Comment, me: string | null): boolean {
 	if (me === null) return false;
+	if (comment.share?.by === me && messagesOf(comment, me).some((message) => message.outsider === true)) return true;
 	return messagesOf(comment, me).some(
 		(message) =>
 			message.author.accountId === me || (message.mentions ?? []).some((person) => person.accountId === me),

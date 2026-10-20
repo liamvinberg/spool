@@ -117,6 +117,7 @@ import {
 	visiblePlaceholdersOf,
 } from "./canvas-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
+import { audienceOf } from "./comment-audience";
 import { COMMENT_CURSOR } from "./comment-cursor";
 import { COMMENTS_CHANGE, daemonStills, useCommentPeople, useComments } from "./comments-daemon";
 import {
@@ -567,6 +568,11 @@ function CanvasField({
 	const [pinsHidden] = useCanvasField(store, "pinsHidden");
 	const commentsClient = useMemo(() => daemonComments(project), [project]);
 	const commentStills = useMemo(() => daemonStills(project), [project]);
+	// the shares a new comment may be for besides the team (spool#174)
+	const commentShares = useMemo(
+		() => (projectShares?.state === "ready" ? projectShares.shares.map(audienceOf) : []),
+		[projectShares],
+	);
 	const commentsContext: CommentsContext = {
 		client: commentsClient,
 		reader: commentReader,
@@ -578,6 +584,7 @@ function CanvasField({
 		url: comments.url,
 		refresh: comments.refresh,
 		notice: setNotice,
+		shares: commentShares,
 	};
 	/**
 	 * Where each page stands on the field holding it (#265).

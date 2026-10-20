@@ -168,3 +168,28 @@ describe("mentions", () => {
 		expect(mentionAsked("@Ana done")).toBeNull();
 	});
 });
+
+describe("for you, on a share (spool#174)", () => {
+	it("is what someone outside the team wrote through a share you made", () => {
+		const share = { kind: "link" as const, who: [], by: "ana" };
+		const outsiders = comment("c1", 100, {
+			author: person("jonas"),
+			outsider: true,
+			share,
+			audience: { share: "s1" },
+		});
+		expect(isForYou(outsiders, "ana")).toBe(true);
+		expect(isForYou(outsiders, "ben")).toBe(false);
+		const answered = comment("c2", 100, {
+			author: person("ben"),
+			share,
+			audience: { share: "s1" },
+			replies: [reply("r1", "jonas", 200, { outsider: true })],
+		});
+		expect(isForYou(answered, "ana")).toBe(true);
+		// a member's words on the share alone aren't
+		expect(isForYou(comment("c3", 100, { author: person("ben"), share, audience: { share: "s1" } }), "ana")).toBe(
+			false,
+		);
+	});
+});
