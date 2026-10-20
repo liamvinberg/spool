@@ -290,6 +290,10 @@ describe("changing a comment on a team canvas", () => {
 		await bens.told();
 		expect((await bens.read()).comments[0]?.resolved).toBeNull();
 		expect((await anas.call("nothere1/resolve", "POST")).status).toBe(404);
+		// the person's agent's resolve says so, and nothing else marks one
+		const byAgent = await anas.call(`${id}/resolve`, "POST", { agent: true });
+		expect(await byAgent.json()).toMatchObject({ comment: { resolved: { by: { name: "ana" }, agent: true } } });
+		expect((await anas.call(`${id}/reopen`, "POST", { agent: "yes" })).status).toBe(400);
 	});
 
 	it("edits the author's own words only, and deletes a reply or the whole comment", async () => {

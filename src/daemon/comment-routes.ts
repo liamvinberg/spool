@@ -150,8 +150,16 @@ export function commentRoutes(deps: {
 				...(reply === undefined ? {} : { reply }),
 			}),
 		);
-	const simple = (type: "comment-resolve" | "comment-reopen" | "comment-read" | "comment-unread") => (c: Context) =>
+	const simple = (type: "comment-read" | "comment-unread") => (c: Context) =>
 		withRoot(c, (root) => change(c, root, { type, comment: c.req.param("comment") ?? "" }));
+	/** A resolve or reopen, the canvas's with no body and an agent's (`spool comments`) as `{ agent: true }`. */
+	const settle = (type: "comment-resolve" | "comment-reopen") => (c: Context) =>
+		withRoot(c, async (root) => {
+			const input: unknown = await c.req.json().catch(() => undefined);
+			const marked = isRecord(input) ? input.agent : undefined;
+			if (!(marked === undefined || marked === true)) return c.text("a resolve or reopen is { agent?: true }", 400);
+			return change(c, root, { type, comment: c.req.param("comment") ?? "", ...(marked === true ? AGENT : {}) });
+		});
 	return (
 		new Hono()
 			// with the project's address at the team, which a comment's link is made from
@@ -166,8 +174,8 @@ export function commentRoutes(deps: {
 			.get("/:project/comments/people", (c) =>
 				withRoot(c, async (root) => c.json({ people: await deps.people(root) })),
 			)
-			.post("/:project/comments/:comment/resolve", simple("comment-resolve"))
-			.post("/:project/comments/:comment/reopen", simple("comment-reopen"))
+			.post("/:project/comments/:comment/resolve", settle("comment-resolve"))
+			.post("/:project/comments/:comment/reopen", settle("comment-reopen"))
 			.post("/:project/comments/:comment/read", simple("comment-read"))
 			.post("/:project/comments/:comment/unread", simple("comment-unread"))
 			.patch("/:project/comments/:comment", (c) => edit(c))
