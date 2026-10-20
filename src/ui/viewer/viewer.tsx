@@ -237,6 +237,11 @@ function Quiet({ children }: { children: ReactNode }) {
 const NEAR_MARGIN = 0.25;
 /** How many documents one page keeps live at once; the rest wait as their names. */
 const LIVE_LIMIT = 24;
+/**
+ * How wide a frame with a cover draws before its document is made, as on the Mac: smaller, its cover is what anyone
+ * can read of it, and a page fitted whole loads nothing but pictures.
+ */
+const READABLE_PX = 400;
 /** What the chrome takes off the top (the buttons by the faces) and the foot (the tools) of a fitted page. */
 const FIT_TOP = 40;
 const FIT_FOOT = 48;
@@ -325,19 +330,6 @@ function ViewerCanvas({
 		(at, box) => intersects(box, visibleWorldRect(at, size.w, size.h, NEAR_MARGIN)),
 		[size.w, size.h],
 	);
-	/** The documents standing: what the camera came to rest near, nearest the middle first. */
-	const live = useMemo(() => {
-		if (rest === null || size.w === 0) return new Set<string>();
-		const middle = { x: (size.w / 2 - rest.x) / rest.k, y: (size.h / 2 - rest.y) / rest.k };
-		const distance = (box: Box) => Math.hypot(box.x + box.w / 2 - middle.x, box.y + box.h / 2 - middle.y);
-		return new Set(
-			frames
-				.filter((frame) => near(rest, frame))
-				.sort((a, b) => distance(a) - distance(b))
-				.slice(0, LIVE_LIMIT)
-				.map((frame) => frame.name),
-		);
-	}, [frames, near, rest, size.w, size.h]);
 
 	const go = useCallback(
 		(next: { page: string; frame: string | null }, how: "push" | "replace" = "push") => {
@@ -462,6 +454,26 @@ function ViewerCanvas({
 		setAim(null);
 	}, [aim, comments, config, page, played, known, frames, go, camera, size.w, size.h, onNotice]);
 	const placing = comments?.tool === "comment";
+	/**
+	 * The documents standing: what the camera came to rest near, nearest the middle first. A frame drawn too small to
+	 * read shows its cover instead, unless it has none, a teammate's save made it again since the cover was taken, or
+	 * the Comment tool is out, which reads the document under a pin.
+	 */
+	const covers = project.covers;
+	const live = useMemo(() => {
+		if (rest === null || size.w === 0) return new Set<string>();
+		const middle = { x: (size.w / 2 - rest.x) / rest.k, y: (size.h / 2 - rest.y) / rest.k };
+		const distance = (box: Box) => Math.hypot(box.x + box.w / 2 - middle.x, box.y + box.h / 2 - middle.y);
+		const readable = (frame: DesignFrame) =>
+			placing || frame.w * rest.k >= READABLE_PX || covers?.[frame.name] === undefined || revisions.has(frame.name);
+		return new Set(
+			frames
+				.filter((frame) => near(rest, frame) && readable(frame))
+				.sort((a, b) => distance(a) - distance(b))
+				.slice(0, LIVE_LIMIT)
+				.map((frame) => frame.name),
+		);
+	}, [frames, near, rest, size.w, size.h, placing, covers, revisions]);
 	/**
 	 * What is under a point on screen: the world point, and the frame drawn on top there, where frames overlap, with
 	 * the point in its own pixels and its live document, when it has one.

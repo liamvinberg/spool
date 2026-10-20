@@ -431,6 +431,24 @@ describe("the read-only canvas", () => {
 		await expect.poll(() => player.frameLocator('iframe[title="menu"]').locator("h1").textContent()).toBe("menu v2");
 	});
 
+	it("shows a frame too small to read as its cover, and makes its document once it is readable", {
+		timeout: 60_000,
+	}, async () => {
+		const { page } = await open(PATH, { as: editor });
+		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+		// out until home draws under 400px wide: its cover stands, and menu, which has none, stays live
+		await page.getByRole("button", { name: "Zoom out" }).click();
+		await page.getByRole("button", { name: "Zoom out" }).click();
+		await page.getByRole("button", { name: "Zoom out" }).click();
+		await expect.poll(() => page.locator('iframe[title="home"]').count()).toBe(0);
+		expect(await page.locator('[data-viewer-frame="home"] [data-viewer-cover]').isVisible()).toBe(true);
+		expect(await page.locator('iframe[title="menu"]').count()).toBe(1);
+		await page.getByRole("button", { name: "Zoom in" }).click();
+		await page.getByRole("button", { name: "Zoom in" }).click();
+		await page.getByRole("button", { name: "Zoom in" }).click();
+		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+	});
+
 	it("offers Open in spool to editors only, and shows covers until a frame draws", { timeout: 60_000 }, async () => {
 		const viewer = await open(PATH, { spool: true });
 		await viewer.page.waitForTimeout(300);
