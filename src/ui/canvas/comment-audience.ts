@@ -18,12 +18,12 @@ export interface AudienceShare {
 	pages: readonly string[];
 }
 
-/** A project's share as the composer's picker offers it. */
-export function audienceOf(share: Pick<ShareView, "id" | "kind" | "people" | "pages">): AudienceShare {
+/** A project's share as the composer's picker offers it: its people by the names spool.page gives them, as cards say. */
+export function audienceOf(share: Pick<ShareView, "id" | "kind" | "people" | "names" | "pages">): AudienceShare {
 	return {
 		id: share.id,
 		kind: share.kind,
-		who: share.people.map((email) => personName({ email })),
+		who: share.names ?? share.people.map((email) => personName({ email })),
 		pages: share.pages,
 	};
 }

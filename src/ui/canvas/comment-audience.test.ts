@@ -20,6 +20,15 @@ describe("a comment's audience, said (spool#174)", () => {
 	});
 
 	it("names a share by whom it names, or as a link's", () => {
+		const named = audienceOf({
+			id: "s4",
+			kind: "people",
+			people: ["ines@torsgatan.se", "ola@torsgatan.se"],
+			names: ["Ines Holm", "ola"],
+			pages: [],
+		});
+		// by the names spool.page gives, as a card's share says them
+		expect(audienceLabel(named)).toBe("Ines Holm and ola");
 		expect(audienceLabel(link)).toBe("Link share");
 		expect(audienceLabel(ines)).toBe("ines");
 		expect(audienceLabel(two)).toBe("ines and ola");

@@ -16,6 +16,8 @@ export interface ShareView {
 	pages: string[];
 	/** Whom a people share names, by address; none for a link share. */
 	people: string[];
+	/** The same people by name, in the same order, as spool.page says them everywhere; absent from an older spool.page. */
+	names?: string[];
 	/** Who made it, by address. */
 	by: string;
 	/** When it was made, in seconds. */
