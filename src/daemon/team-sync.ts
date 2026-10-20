@@ -625,13 +625,17 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	const sayWait = () => {
 		const refill = pace?.refill ?? SAVES_PER_MINUTE;
 		const ms = untilRoom() + ((sendsFor(waiting.size) - 1) * 60_000) / refill;
+		// a wait long enough to say is said until its last change has gone, however short what is left becomes
+		const long = ms > SENDING_SAID_MS || (sending !== null && (waiting.size > 0 || inflight.size > 0));
 		const said =
-			waiting.size > 0 && ms > SENDING_SAID_MS
+			waiting.size > 0 && long
 				? `Sending ${waiting.size.toLocaleString("en")} ${waiting.size === 1 ? "change" : "changes"} to ${link.team}, ${aboutHowLong(ms)}`
 				: null;
 		// said as it begins and ends, and again now and then as it counts down
 		const tell =
 			(said === null) !== (sending === null) || (said !== null && Date.now() - toldSending >= SENDING_RETOLD_MS);
+		// a save still out may come back refused and wait again: the wait ends once every save has been answered
+		if (said === null && sending !== null && inflight.size > 0) return;
 		sending = said;
 		if (!tell) return;
 		toldSending = Date.now();
@@ -995,6 +999,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const left = (sendsOut.get(sent.sent) ?? 1) - 1;
 		if (left > 0) sendsOut.set(sent.sent, left);
 		else sendsOut.delete(sent.sent);
+		// once this answer is heard out (a refusal waits again first), a wait said may end
+		if (sending !== null) queueMicrotask(sayWait);
 		if (message.type === "saved" && typeof message.version === "number") {
 			state.files[sent.path] = { version: message.version, hash: sent.hash };
 			persistSoon();
