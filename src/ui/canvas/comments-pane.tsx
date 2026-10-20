@@ -292,7 +292,7 @@ function Row({
 			data-comment-row={comment.id}
 			data-unread={unread ? "" : undefined}
 			className={cn(
-				"relative mx-1.5 flex w-[calc(100%-12px)] gap-2.5 rounded-sm py-2 pr-2.5 pl-4 text-left transition-colors duration-fast ease-out",
+				"relative mx-1.5 flex w-[calc(100%-12px)] gap-2.5 rounded-sm py-2 pr-2.5 pl-4 text-left transition-colors duration-fast ease-out focus-ring-inset",
 				lit ? "bg-state-selected-strong" : "hover:bg-state-hover",
 			)}
 		>
@@ -300,7 +300,7 @@ function Row({
 			<span
 				aria-hidden="true"
 				className={cn(
-					"mt-px inline-flex size-5 shrink-0 items-center justify-center font-semibold text-[10px] uppercase leading-none",
+					"mt-px inline-flex size-5 shrink-0 items-center justify-center font-semibold text-2xs uppercase leading-none",
 					comment.agent ? "rounded-[5px]" : "rounded-full",
 					closed && "opacity-50",
 				)}

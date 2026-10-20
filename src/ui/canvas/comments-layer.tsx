@@ -383,7 +383,7 @@ function Pin({
 				}}
 				onAnimationEnd={(event) => event.target === event.currentTarget && onLanded()}
 				className={cn(
-					"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-[scale,box-shadow] duration-fast ease-out",
+					"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-2xs uppercase leading-none transition-[scale,box-shadow] duration-fast ease-out focus-ring",
 					delay === null ? null : "animate-comment-pin-in",
 					open ? "z-20 scale-110" : "z-10 hover:scale-105",
 					hollow ? "bg-surface-raised text-secondary" : null,
@@ -459,7 +459,7 @@ function Cluster({
 			}}
 			onAnimationEnd={(event) => event.target === event.currentTarget && onLanded()}
 			className={cn(
-				"pointer-events-auto absolute z-10 flex cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-[scale,box-shadow] duration-fast ease-out hover:scale-105",
+				"pointer-events-auto absolute z-10 flex cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-[scale,box-shadow] duration-fast ease-out hover:scale-105 focus-ring",
 				delay === null ? null : "animate-comment-pin-in",
 			)}
 			style={{
@@ -487,7 +487,7 @@ function Cluster({
 					</span>
 				))}
 			</span>
-			<span className="font-semibold text-[11px] tabular-nums leading-none">{people.length}</span>
+			<span className="font-semibold text-xs tabular-nums leading-none">{people.length}</span>
 			{unread ? (
 				<span
 					className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-accent"
@@ -1460,7 +1460,7 @@ function Message({
 			<span
 				aria-hidden="true"
 				className={cn(
-					"mt-px inline-flex size-5 shrink-0 items-center justify-center font-semibold text-[10px] uppercase leading-none",
+					"mt-px inline-flex size-5 shrink-0 items-center justify-center font-semibold text-2xs uppercase leading-none",
 					message.agent ? "rounded-[5px]" : "rounded-full",
 					outsider && "border border-line-strong bg-surface-raised text-primary",
 				)}

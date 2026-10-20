@@ -216,7 +216,7 @@ export function SignInDialog({
 							<div className="flex items-center gap-2 rounded-sm border border-line-default px-2.5 py-2">
 								<span
 									aria-hidden="true"
-									className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface-raised font-semibold text-[10px] text-primary uppercase leading-none"
+									className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface-raised font-semibold text-2xs text-primary uppercase leading-none"
 								>
 									{(name.trim() || step.fallback).charAt(0)}
 								</span>
