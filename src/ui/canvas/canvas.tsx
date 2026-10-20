@@ -541,7 +541,7 @@ function CanvasField({
 	const teamRef = useRef(team);
 	teamRef.current = team;
 	/** C pressed: the tool it took over from and when, so letting go of a held C hands that tool back (spool#169). */
-	const commentHold = useRef<{ before: CanvasTool; at: number } | null>(null);
+	const commentHold = useRef<{ before: CanvasTool; at: number; placed?: true } | null>(null);
 	const comments = useComments(project, team);
 	const commentPeople = useCommentPeople(project, team);
 	const [following, setFollowing] = useState<string | null>(null);
@@ -4005,6 +4005,11 @@ function CanvasField({
 	 * or at the world point on the page's empty field, and the composer open at it. A page standing on the field is
 	 * still gone inside. Placing hands back the pointer; what was under the pin is asked of the frame meanwhile.
 	 */
+	/** A pin placed while C is held: letting go hands back the tool C took over from, however short the hold. */
+	const placedUnderHold = () => {
+		const held = commentHold.current;
+		if (held !== null) commentHold.current = { ...held, placed: true };
+	};
 	const placeComment = (world: Point, pressedPage: string | null) => {
 		const page = store.get().activePage;
 		const frame = frameAtWorld(world);
@@ -4016,6 +4021,7 @@ function CanvasField({
 			}
 			store.set({ commentDraft: { page, frame: null, at: world, element: null }, commentOpen: null });
 			setTool("select");
+			placedUnderHold();
 			return;
 		}
 		const local = frameLocalAt(frame, world);
@@ -4023,6 +4029,7 @@ function CanvasField({
 		const draft: CommentDraft = { page, frame, at: local, element: null };
 		store.set({ commentDraft: draft, commentOpen: null, selected: [], picked: [] });
 		setTool("select");
+		placedUnderHold();
 		beginPick(
 			frame,
 			local,
@@ -4847,12 +4854,9 @@ function CanvasField({
 		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
-			// a C held past a tap borrowed the Comment tool: letting go hands back the one it took over from
-			const held = commentHold.current;
-			if (event.code === "KeyC" && held !== null) {
-				commentHold.current = null;
-				if (Date.now() - held.at >= COMMENT_HOLD_MS) setTool(held.before);
-			}
+			// a C held past a tap, or one a pin was placed under, borrowed the Comment tool: letting go hands back the
+			// one it took over from
+			if (event.code === "KeyC") letGoOfC();
 			// releasing accel puts the borrowed Edit down, and the outline it drew
 			// goes from under a pointer that has not moved since (#254, #339)
 			if (event.key === accelKeyName()) {
@@ -4865,12 +4869,20 @@ function CanvasField({
 		};
 		// any other key under a held ⌥ ends the overview unopened (⌥2 is @ on a
 		// Swedish board); the step keys are what move it
+		const letGoOfC = () => {
+			const held = commentHold.current;
+			if (held === null) return;
+			commentHold.current = null;
+			if (held.placed === true || Date.now() - held.at >= COMMENT_HOLD_MS) setTool(held.before);
+		};
 		const onKeyDownFirst = (event: KeyboardEvent) => {
 			if (event.key === "Alt" || !liveRef.current.isOpen()) return;
 			if (event.altKey && stepDirection(event) !== undefined) return;
 			liveRef.current.cancel();
 		};
 		const clearModifiers = () => {
+			// a window left with C held never hears it let go
+			letGoOfC();
 			liveRef.current.accel(false, false);
 			liveRef.current.cancel();
 			setAccelDown(false);

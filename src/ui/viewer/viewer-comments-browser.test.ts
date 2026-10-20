@@ -250,6 +250,12 @@ it("takes the Comment tool with C, borrows it while C is held, and leaves it on 
 	await page.waitForTimeout(350);
 	await page.keyboard.up("c");
 	expect(await toolIn(page)).toBe("pointer");
+	// a window left with C held hands the Pointer back too, never hearing C let go
+	await page.keyboard.down("c");
+	await page.waitForTimeout(350);
+	await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+	expect(await toolIn(page)).toBe("pointer");
+	await page.keyboard.up("c");
 
 	// the buttons do the same
 	await page.getByRole("button", { name: "comment", exact: true }).click();

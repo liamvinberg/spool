@@ -363,11 +363,15 @@ export function useCommentKeys(comments: ViewerComments | null): void {
 			// held, it was borrowed: letting go hands the Pointer back
 			if (held !== null && Date.now() - held.at >= HOLD_MS) latest.current?.setTool("pointer");
 		};
+		// a window left with C held never hears it let go
+		const blur = () => up(new KeyboardEvent("keyup", { code: "KeyC" }));
 		window.addEventListener("keydown", down);
 		window.addEventListener("keyup", up);
+		window.addEventListener("blur", blur);
 		return () => {
 			window.removeEventListener("keydown", down);
 			window.removeEventListener("keyup", up);
+			window.removeEventListener("blur", blur);
 		};
 	}, []);
 }

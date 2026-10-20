@@ -129,6 +129,13 @@ it("takes the Comment tool with C, borrows it while C is held, and leaves it on 
 	await page.waitForTimeout(450);
 	await page.keyboard.up("c");
 	expect(await toolIn(page)).toBe("edit");
+	// a window left with C held hands it back too, never hearing C let go
+	await page.keyboard.down("c");
+	await page.waitForTimeout(450);
+	await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+	expect(await toolIn(page)).toBe("edit");
+	await page.keyboard.up("c");
+	expect(await toolIn(page)).toBe("edit");
 
 	// placing under a held C hands back the pointer, and letting go the tool C took over from
 	await page.keyboard.down("c");
@@ -137,7 +144,10 @@ it("takes the Comment tool with C, borrows it while C is held, and leaves it on 
 	await page.locator("[data-comment-composer]").waitFor();
 	expect(await page.locator("[data-comment-composer]").textContent()).toContain("on the field");
 	expect(await toolIn(page)).toBe("select");
-	await page.waitForTimeout(350);
+	// the C still held repeats into the composer it opened, which takes none of it; let go at once, however quick,
+	// the hold that placed a pin hands back the tool it took over from
+	await page.keyboard.down("c");
+	expect(await page.locator("[data-comment-composer] textarea").inputValue()).toBe("");
 	await page.keyboard.up("c");
 	expect(await toolIn(page)).toBe("edit");
 	// Esc in the composer puts it down, unsent
