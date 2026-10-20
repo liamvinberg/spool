@@ -131,6 +131,8 @@ describe("a comment sent to the agent", () => {
 
 		// Ben's Mac changes the frame: the comment was made on what it was, so the agent sees that too
 		writeFileSync(join(ben.root, "design", "frames", "receipt", "frame.tsx"), RECEIPT.replace("Thanks!", "Paid"));
+		// the team takes the save and says the comment's frame was edited since: the one word every reader goes by
+		await eventually(async () => (await read(bens)).comments[0]?.editedSince === true);
 		await sayWith(bens, "1f0e2d3c-4b5a-4697-8899-aabbccddee02", [id]);
 		const content = sent(agent.spawned[1]?.inputs[0]);
 		expect(content.find((one) => one.type === "text")?.text).toContain(

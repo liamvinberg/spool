@@ -12,12 +12,11 @@ import { refusalOf } from "./verbs";
  * with the agent mark: shown as "Ana's agent", with Ana's permissions. Offline, a write is refused, never queued.
  */
 
-/** What the daemon answers a read with: its snapshot, when it was heard, and which frames moved on since. */
+/** What the daemon answers a read with: its snapshot, and when it was heard. Each comment says if its frame moved on. */
 interface CommentsRead {
 	online: boolean;
 	heard: number | null;
 	comments: Comment[];
-	edited: string[];
 }
 
 /** Which comments `list` prints: the open ones, narrowed to a page, a frame or a share, or the resolved ones too. */
@@ -59,7 +58,7 @@ export async function listComments(daemon: CommentsDaemon, filters: CommentFilte
 	});
 	const what = filters.resolved === true ? "comment" : "open comment";
 	const head = `${kept.length} ${what}${kept.length === 1 ? "" : "s"}, ${age(read, now)}`;
-	return kept.length === 0 ? head : `${head}\n\n${blocksOf(kept, read)}`;
+	return kept.length === 0 ? head : `${head}\n\n${blocksOf(kept)}`;
 }
 
 /** One comment, by its id, with every reply: open or resolved. */
@@ -71,7 +70,7 @@ export async function showComment(daemon: CommentsDaemon, id: string, now = Date
 			`no comment ${id} in what spool.page sent, ${age(read, now)}; \`spool comments\` lists them`,
 		);
 	}
-	return `${age(read, now)}\n\n${blocksOf([comment], read)}`;
+	return `${age(read, now)}\n\n${blocksOf([comment])}`;
 }
 
 /** A reply under a comment, as the person's agent. Its id. */
@@ -107,26 +106,22 @@ export async function addComment(
 }
 
 async function readComments(daemon: CommentsDaemon): Promise<CommentsRead> {
-	const res = await call(daemon, "?edited");
+	const res = await call(daemon, "");
 	if (!res.ok) throw await refusalOf(res, daemon.daemonUrl);
 	const value: unknown = await res.json();
 	if (!isRecord(value)) throw new SpoolError("the daemon's answer about comments wasn't one");
-	const { online, heard, comments, edited } = value;
+	const { online, heard, comments } = value;
 	const read = Array.isArray(comments) ? comments.map(readComment) : [];
 	const all = read.filter((comment): comment is Comment => comment !== undefined);
-	if (
-		typeof online !== "boolean" ||
-		!(heard === null || typeof heard === "number") ||
-		all.length !== read.length ||
-		!Array.isArray(edited)
-	)
+	if (typeof online !== "boolean" || !(heard === null || typeof heard === "number") || all.length !== read.length)
 		throw new SpoolError("the daemon's answer about comments wasn't one");
-	return { online, heard, comments: all, edited: edited.filter((id): id is string => typeof id === "string") };
+	return { online, heard, comments: all };
 }
 
-function blocksOf(comments: readonly Comment[], read: CommentsRead): string {
-	const edited = new Set(read.edited);
-	return commentBlocks(comments.map((comment) => commentBlock(comment, { editedSince: edited.has(comment.id) })));
+function blocksOf(comments: readonly Comment[]): string {
+	return commentBlocks(
+		comments.map((comment) => commentBlock(comment, { editedSince: comment.editedSince === true })),
+	);
 }
 
 /** How old what the verb read is: live while the copy is connected, else when it was last heard. */

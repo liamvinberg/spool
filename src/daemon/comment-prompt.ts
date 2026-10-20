@@ -21,13 +21,11 @@ export async function commentsForPrompt(
 	ids: readonly string[],
 	deps: {
 		comments: readonly Comment[];
-		editedSince: (comments: readonly Comment[]) => Promise<string[]>;
 		still: (comment: string) => Promise<Uint8Array | undefined>;
 	},
 ): Promise<CommentPrompt> {
 	const sent = [...new Set(ids)];
 	const found = sent.flatMap((id) => deps.comments.filter((comment) => comment.id === id));
-	const edited = new Set(await deps.editedSince(found));
 	const blocks: string[] = [];
 	const attachments: Attachment[] = [];
 	for (const id of sent) {
@@ -36,7 +34,8 @@ export async function commentsForPrompt(
 			blocks.push(`<comment id="${id}">\nthis comment isn't there anymore\n</comment>`);
 			continue;
 		}
-		const editedSince = edited.has(id);
+		// the team says which frames moved on since (spool#160): one rule for the canvas, the verb and the prompt
+		const editedSince = comment.editedSince === true;
 		const still = editedSince && comment.still ? pictureOf(await deps.still(id).catch(() => undefined)) : undefined;
 		if (still !== undefined) attachments.push(still);
 		blocks.push(commentBlock(comment, { editedSince, still: still !== undefined }));

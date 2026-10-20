@@ -95,8 +95,6 @@ export function commentRoutes(deps: {
 	people: (root: string) => Promise<Mentionable[]>;
 	/** The frame's source revision and current still, for a comment made on it now. */
 	frameNow: (root: string, frame: string) => Promise<FrameNow>;
-	/** The ids of the comments whose frame was edited since they were made. */
-	editedSince: (root: string, comments: readonly Comment[]) => Promise<string[]>;
 	/** An element named in a frame as it boots now: null when nothing matches, a message when it won't boot. */
 	findElement: (
 		root: string,
@@ -160,12 +158,7 @@ export function commentRoutes(deps: {
 		new Hono()
 			// with the project's address at the team, which a comment's link is made from
 			.get("/:project/comments", (c) =>
-				withRoot(c, async (root) => {
-					const read = { ...deps.comments(root), url: localCopyOf(root)?.url ?? null };
-					// an agent's read (`spool comments`) asks which frames moved on since; the canvas doesn't
-					if (c.req.query("edited") === undefined) return c.json(read);
-					return c.json({ ...read, edited: await deps.editedSince(root, read.comments) });
-				}),
+				withRoot(c, async (root) => c.json({ ...deps.comments(root), url: localCopyOf(root)?.url ?? null })),
 			)
 			.get("/:project/comments/:comment/still", (c) =>
 				withRoot(c, async (root) => {

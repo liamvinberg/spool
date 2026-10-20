@@ -78,6 +78,7 @@ async function mac(machine: Machine) {
 				agent: boolean;
 				resolved: { by: { name: string }; agent?: true } | null;
 				replies: { agent: boolean; body: string }[];
+				editedSince?: true;
 			}[];
 		};
 	return {
@@ -149,6 +150,17 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		expect(shown.status).toBe(0);
 		expect(shown.stdout).toContain(
 			"\nben's agent: Thanks! is loud for a receipt.\nana's agent: Toned it down.\n</comment>\n",
+		);
+		expect(shown.stdout).not.toContain("edited since");
+
+		// Ana edits the frame's source: the team says the comment's frame moved on, and so does the verb
+		writeFileSync(
+			join(ana.root, "design", "frames", "receipt", "frame.tsx"),
+			"export default function Receipt() {\n\treturn (\n\t\t<main>\n\t\t\t<h2>Paid</h2>\n\t\t</main>\n\t);\n}\n",
+		);
+		await bens.until((comments) => comments.some((comment) => comment.editedSince === true));
+		expect((await bens.spool("show", id)).stdout).toContain(
+			"\nedited since: the frame changed after this comment was made",
 		);
 	});
 
