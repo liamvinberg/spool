@@ -2035,22 +2035,62 @@ export function daemonShares(project: string): SharesSource & {
 	};
 }
 
-/** A team project's comments as this Mac knows them (ADR 0011), and whether one written now reaches the team. */
+/**
+ * A team project's comments as this Mac knows them (ADR 0011), whether one written now reaches the team, when this
+ * Mac's person last read each one they have read, and the project's address at the team, which a comment's link
+ * is made from.
+ */
 export interface CommentsRead {
 	online: boolean;
 	comments: Comment[];
+	reads: Readonly<Record<string, number>>;
+	url: string | null;
 }
+
+const NO_COMMENTS: CommentsRead = { online: false, comments: [], reads: {}, url: null };
 
 export async function fetchComments(project: string): Promise<CommentsRead> {
 	try {
 		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/comments`);
 		const body: unknown = response.ok ? await response.json() : null;
 		if (typeof body !== "object" || body === null || !("comments" in body) || !Array.isArray(body.comments))
-			return { online: false, comments: [] };
+			return NO_COMMENTS;
 		const online = "online" in body && body.online === true;
-		return { online, comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []) };
+		const reads: Record<string, number> = {};
+		if ("reads" in body && typeof body.reads === "object" && body.reads !== null)
+			for (const [id, at] of Object.entries(body.reads)) if (typeof at === "number") reads[id] = at;
+		const url = "url" in body && typeof body.url === "string" ? body.url : null;
+		return { online, comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []), reads, url };
 	} catch {
-		return { online: false, comments: [] };
+		return NO_COMMENTS;
+	}
+}
+
+/** Someone a comment can mention: a member of the project's team. */
+export interface CommentMentionable {
+	accountId: string;
+	name: string;
+	you: boolean;
+}
+
+/** The members a comment on this project can mention; none while spool.page can't say. */
+export async function fetchCommentPeople(project: string): Promise<CommentMentionable[]> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/comments/people`);
+		const body: unknown = response.ok ? await response.json() : null;
+		if (typeof body !== "object" || body === null || !("people" in body) || !Array.isArray(body.people)) return [];
+		return body.people.flatMap((one: unknown) =>
+			typeof one === "object" &&
+			one !== null &&
+			"accountId" in one &&
+			typeof one.accountId === "string" &&
+			"name" in one &&
+			typeof one.name === "string"
+				? [{ accountId: one.accountId, name: one.name, you: "you" in one && one.you === true }]
+				: [],
+		);
+	} catch {
+		return [];
 	}
 }
 
@@ -2061,17 +2101,30 @@ export interface CommentWrite {
 	at: { x: number; y: number };
 	element: { selector: string; outerHtml: string; source: string | null; generated: boolean } | null;
 	body: string;
+	/** the members it mentions, by account */
+	mentions?: string[];
 }
 
 /** The team took it, under this id; or it didn't, offline or for a reason said in words. */
 export type CommentSent = { id: string } | { error: string; message: string };
 
 async function sentComment(response: Promise<Response>): Promise<CommentSent> {
+	const answered = await commentAnswer(response);
+	if ("error" in answered) return answered;
+	const { body } = answered;
+	return typeof body === "object" && body !== null && "id" in body && typeof body.id === "string"
+		? { id: body.id }
+		: { error: "failed", message: "the comment didn't send" };
+}
+
+/** What the daemon answered a comment's write: its body, or the refusal with its words. */
+async function commentAnswer(
+	response: Promise<Response>,
+): Promise<{ body: unknown } | { error: string; message: string }> {
 	try {
 		const answer = await response;
 		const body: unknown = await answer.json().catch(() => null);
-		if (answer.ok && typeof body === "object" && body !== null && "id" in body && typeof body.id === "string")
-			return { id: body.id };
+		if (answer.ok) return { body };
 		const error = typeof body === "object" && body !== null && "error" in body ? String(body.error) : "failed";
 		const message =
 			typeof body === "object" && body !== null && "message" in body
@@ -2081,6 +2134,39 @@ async function sentComment(response: Promise<Response>): Promise<CommentSent> {
 	} catch {
 		return { error: "offline", message: "spool isn't answering" };
 	}
+}
+
+/** A comment's change as the team took it: done, or refused, offline or for a reason said in words. */
+export type CommentChanged = { ok: true } | { error: string; message: string };
+
+/**
+ * Change a comment as this Mac's person: resolve or reopen it, mark it read or unread, edit its words or a reply's,
+ * delete it or a reply. The canvas hears the result as every other canvas does, through its comments changing.
+ */
+export async function changeComment(
+	project: string,
+	comment: string,
+	change:
+		| { type: "resolve" | "reopen" | "read" | "unread" }
+		| { type: "edit"; body: string; mentions: string[]; reply?: string }
+		| { type: "delete"; reply?: string },
+): Promise<CommentChanged> {
+	const base = `/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment)}`;
+	const at = (reply: string | undefined) =>
+		reply === undefined ? base : `${base}/replies/${encodeURIComponent(reply)}`;
+	const json = { "content-type": "application/json" };
+	const sent =
+		change.type === "edit"
+			? controlFetch(at(change.reply), {
+					method: "PATCH",
+					headers: json,
+					body: JSON.stringify({ body: change.body, mentions: change.mentions }),
+				})
+			: change.type === "delete"
+				? controlFetch(at(change.reply), { method: "DELETE" })
+				: controlFetch(`${base}/${change.type}`, { method: "POST" });
+	const answered = await commentAnswer(sent);
+	return "error" in answered ? answered : { ok: true };
 }
 
 export function postComment(project: string, comment: CommentWrite): Promise<CommentSent> {
@@ -2093,12 +2179,17 @@ export function postComment(project: string, comment: CommentWrite): Promise<Com
 	);
 }
 
-export function postReply(project: string, comment: string, body: string): Promise<CommentSent> {
+export function postReply(
+	project: string,
+	comment: string,
+	body: string,
+	mentions: string[] = [],
+): Promise<CommentSent> {
 	return sentComment(
 		controlFetch(`/api/p/${encodeURIComponent(project)}/comments/${encodeURIComponent(comment)}/replies`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ body }),
+			body: JSON.stringify({ body, mentions }),
 		}),
 	);
 }
