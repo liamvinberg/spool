@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { personName } from "../person-name";
 import type { BillingCycle, BillingState, BillingSummary, CloudTeam, TeamPeople } from "./api";
 import { cn } from "./cn";
 import { Button } from "./primitives/actions";
@@ -248,9 +249,11 @@ export function PayChoice({
 	const seats = admins.length + kept.length;
 	const monthly = cycle === "monthly" ? prices.monthly : prices.yearly / 12;
 	const who = (person: TeamPeople["members"][number]) => (
+		// the team's people as People lists them: the name, with the address beside it
 		<span>
-			{person.email}
+			{personName(person)}
 			{person.you && <span className="text-secondary"> (you)</span>}
+			<span className="text-secondary"> · {person.email}</span>
 		</span>
 	);
 	return (
