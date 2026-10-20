@@ -147,6 +147,11 @@ export interface CommentsContext {
 	 * reads it, and no element's tag, no mention and no other share is ever theirs to see.
 	 */
 	outsider?: { kind: "people" | "link"; who: readonly string[] } | undefined;
+	/**
+	 * Whether this person deletes anyone's comment, as spool.page lets admins and editors: a viewer, like an outsider,
+	 * deletes only their own. Unsaid on a Mac, whose copy is always an editor's or an admin's.
+	 */
+	edits?: boolean;
 }
 
 export function CommentsLayer({
@@ -1332,8 +1337,8 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 	const mine = author.accountId === context.reader.me;
 	// a team gone local reads its comments: copying a link is all its menu does
 	const writes = context.unpaid !== true;
-	// an outsider changes only their own; a member deletes anyone's
-	const deletes = writes && (mine || context.outsider === undefined);
+	// an outsider or a viewer changes only their own; an editor or admin deletes anyone's
+	const deletes = writes && (mine || (context.outsider === undefined && context.edits !== false));
 	const replies = comment.replies.filter((one) => one.draftFor === null).length;
 	const what = reply === undefined ? "comment" : "reply";
 	const copy = () => {

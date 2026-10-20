@@ -16,7 +16,7 @@ import { IconButton, ToolGroup } from "../primitives/actions";
 import { Kbd } from "../primitives/display";
 import { Bar, Panel } from "../primitives/structure";
 import { useShares } from "../shares";
-import { joinPresence, type ViewerProject, viewerShares } from "./source";
+import { edits, joinPresence, type ViewerProject, viewerShares } from "./source";
 import type { ViewerPresence } from "./viewer-presence";
 
 /**
@@ -246,6 +246,7 @@ export function useViewerComments(
 			shares: audiences,
 			team: project.team?.name,
 			outsider: outsider?.share,
+			edits: edits(project.role),
 		},
 		writes: !unpaid,
 		tool: unpaid ? "pointer" : tool,

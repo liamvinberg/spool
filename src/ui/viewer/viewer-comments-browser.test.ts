@@ -354,6 +354,14 @@ it("shows a teammate's comments live, reads one when it opens, and replies", { t
 	});
 	await expect.poll(() => card.locator("[data-comment-body]").allTextContents()).toEqual(["words of c1", "On it."]);
 
+	// Vic is a viewer: Ben's comment is not theirs to delete, as spool.page holds it
+	await card.getByRole("button", { name: "Comment options" }).click();
+	expect(await page.locator("[data-comment-menu]").getByRole("menuitem").allTextContents()).toEqual([
+		"Copy link",
+		"Mark as unread",
+	]);
+	await page.keyboard.press("Escape");
+
 	// a teammate's new comment arrives as a pin, and Shift+C puts every pin away and back
 	await tell({ type: "comment-added", comment: comment("c2", { frame: "menu" }) });
 	await page.locator('[data-comment-pin="c2"]').waitFor();
