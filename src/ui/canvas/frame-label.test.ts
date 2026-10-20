@@ -38,6 +38,8 @@ function label(props: {
 	camera: CameraStore;
 	near?: NearScreen;
 	selected?: boolean;
+	hovered?: boolean;
+	entered?: boolean;
 }): {
 	el: HTMLElement;
 	root: Root;
@@ -58,15 +60,23 @@ function label(props: {
 /** where every label's frame stands in these tests, in world units */
 const AT = { x: 100, y: 50 };
 
-function element({ name, frameWidth, camera, near = ON_SCREEN, selected = false }: Parameters<typeof label>[0]) {
+function element({
+	name,
+	frameWidth,
+	camera,
+	near = ON_SCREEN,
+	selected = false,
+	hovered = false,
+	entered = false,
+}: Parameters<typeof label>[0]) {
 	return createElement(FrameLabel, {
 		name,
 		frame: { ...AT, w: frameWidth, h: 800 },
 		camera,
 		near,
-		entered: false,
+		entered,
 		selected,
-		hovered: false,
+		hovered,
 		onPlay: () => {},
 	});
 }
@@ -129,7 +139,30 @@ describe("FrameLabel", () => {
 		expect(el.style.width).toBe("240px");
 	});
 
-	it("keeps the selected label's width, and the play button at its end, exact through every frame of a zoom", () => {
+	it("offers play on the frame pointed at, the selection and the live frame, and on no other", () => {
+		const camera = cameraAt({ x: 0, y: 0, k: 0.5 });
+		const play = (props: { hovered?: boolean; selected?: boolean; entered?: boolean }) =>
+			label({ name: "landing", frameWidth: 1000, camera, ...props }).el.querySelector(
+				'button[aria-label="Play landing"]',
+			);
+		expect(play({})).toBeNull();
+		expect(play({ hovered: true })).not.toBeNull();
+		expect(play({ selected: true })).not.toBeNull();
+		expect(play({ entered: true })).not.toBeNull();
+	});
+
+	it("sets play right after the name, clear of the far end where teammates' names dock", () => {
+		const { el } = label({
+			name: "landing",
+			frameWidth: 1000,
+			camera: cameraAt({ x: 0, y: 0, k: 0.5 }),
+			hovered: true,
+		});
+		const button = el.querySelector('button[aria-label="Play landing"]');
+		expect(button?.className).not.toContain("ml-auto");
+	});
+
+	it("keeps the selected label's width, and its play button, exact through every frame of a zoom", () => {
 		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
 		act(() => vi.advanceTimersByTime(REST_MS));
 		const { el } = label({ name: "landing", frameWidth: 1000, camera, selected: true });

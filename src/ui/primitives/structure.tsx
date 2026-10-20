@@ -522,7 +522,7 @@ export function ScrollArea({ fade = "end", className, style, onScroll, children,
 				onScroll?.(event);
 			}}
 			className={cn(
-				"min-h-0 overflow-y-auto overscroll-contain [scrollbar-color:var(--color-line-strong)_transparent] [scrollbar-width:thin]",
+				"min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-color:var(--color-line-strong)_transparent] [scrollbar-width:thin]",
 				className,
 			)}
 			style={{ maskImage: mask, WebkitMaskImage: mask, ...style }}
