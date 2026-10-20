@@ -42,7 +42,8 @@ export interface Side {
 }
 
 export interface Layout {
-	readonly v: 3;
+	/** 4 since a team project's Comments pane (spool#170); a stored 3 is read as a 4 */
+	readonly v: 4;
 	readonly clock: number;
 	readonly left: Side;
 	readonly right: Side;
@@ -91,7 +92,7 @@ export type Verdict = "ok" | "noop" | "cap" | "height" | "floor";
 /** Pages on the left; Properties and Agent as tabs of one group on the right, Properties showing. */
 export function defaultLayout(): Layout {
 	return {
-		v: 3,
+		v: 4,
 		clock: 2,
 		left: { groups: [{ tabs: ["pages"], active: "pages", weight: 1 }], open: true, width: null, touched: 1 },
 		right: {
@@ -237,7 +238,7 @@ interface DraftSide {
 }
 
 interface Draft {
-	v: 3;
+	v: 4;
 	clock: number;
 	left: DraftSide;
 	right: DraftSide;
@@ -376,6 +377,44 @@ export function check(layout: Layout, pane: string, to: Drop, env: Env): Verdict
 	return "ok";
 }
 
+/* ── the window's panes ─────────────────────────────────────────────── */
+
+/**
+ * The layout for the panes this window has: one a project hasn't (a team project's Comments, on a solo canvas) is
+ * left out, and one the layout never placed goes where a fresh layout would put it, after the pane registered before
+ * it. So one stored layout serves every canvas, and a team project's and a solo one's never reset each other.
+ */
+export function fitPanes(layout: Layout, panes: readonly string[]): Layout {
+	const known = new Set(panes);
+	const placed = SIDES.flatMap((id) => panesOf(layout[id]));
+	const missing = panes.filter((pane) => !placed.includes(pane));
+	if (placed.every((pane) => known.has(pane)) && missing.length === 0) return layout;
+	const next = draft(layout);
+	for (const id of SIDES) {
+		const groups = next[id].groups;
+		for (const group of [...groups]) {
+			const at = group.tabs.indexOf(group.active);
+			group.tabs = group.tabs.filter((pane) => known.has(pane));
+			if (!group.tabs.includes(group.active) && group.tabs.length > 0)
+				group.active = group.tabs[Math.max(0, Math.min(at, group.tabs.length) - 1)] as string;
+			if (group.tabs.length > 0) continue;
+			const index = groups.indexOf(group);
+			const heir = groups[index - 1] ?? groups[index + 1];
+			if (heir !== undefined) heir.weight += group.weight;
+			groups.splice(index, 1);
+		}
+	}
+	for (const pane of missing) {
+		const before = panes.slice(0, panes.indexOf(pane)).reverse();
+		const anchor = before.map((one) => ({ one, at: whereIs(next, one) })).find(({ at }) => at !== null);
+		const group = anchor?.at == null ? next.right.groups[0] : next[anchor.at.side].groups[anchor.at.group];
+		if (group === undefined) next.right.groups.push({ tabs: [pane], active: pane, weight: 1 });
+		else group.tabs.splice(anchor === undefined ? group.tabs.length : group.tabs.indexOf(anchor.one) + 1, 0, pane);
+	}
+	for (const id of SIDES) if (next[id].groups.length === 0) next[id].open = false;
+	return next;
+}
+
 /* ── storage ─────────────────────────────────────────────────────────── */
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -383,15 +422,15 @@ const isCount = (value: unknown): value is number => typeof value === "number" &
 const isWeight = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 
 /**
- * The guard `remembered.ts` reads a stored layout through: exactly these panes,
- * each once in one group, every group's lit tab its own, no side past three
- * groups, and no width a side is never left at. Anything else is discarded,
- * never migrated.
+ * The guard `remembered.ts` reads a stored layout through: each pane once in one
+ * group, every group's lit tab its own, no side past three groups, and no width
+ * a side is never left at. Which panes it holds is `fitPanes`'s to settle, for
+ * the canvas reading it. A 3, from before Comments, reads as it is; anything
+ * else is discarded, never migrated.
  */
-export function isLayout(panes: readonly string[]) {
+export function isLayout() {
 	return (value: unknown): value is Layout => {
-		if (!isObject(value) || value.v !== 3 || !isCount(value.clock)) return false;
-		const known = new Set(panes);
+		if (!isObject(value) || !(value.v === 3 || value.v === 4) || !isCount(value.clock)) return false;
 		const placed = new Set<string>();
 		for (const id of SIDES) {
 			const side = value[id];
@@ -404,11 +443,15 @@ export function isLayout(panes: readonly string[]) {
 				if (!isObject(group) || !Array.isArray(group.tabs) || group.tabs.length === 0) return false;
 				if (!isWeight(group.weight) || !group.tabs.includes(group.active)) return false;
 				for (const pane of group.tabs as unknown[]) {
-					if (typeof pane !== "string" || !known.has(pane) || placed.has(pane)) return false;
+					if (typeof pane !== "string" || pane === "" || placed.has(pane)) return false;
 					placed.add(pane);
 				}
 			}
 		}
-		return placed.size === known.size;
+		return placed.size > 0;
 	};
 }
+
+/** A stored layout as today's, for the window's panes: a 3 is a 4 with nothing else to change. */
+export const storedLayout = (layout: Layout, panes: readonly string[]): Layout =>
+	fitPanes(layout.v === 4 ? layout : { ...layout, v: 4 }, panes);

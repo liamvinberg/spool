@@ -28,6 +28,7 @@ import {
 	type SideId,
 	sideMin,
 	stackHeights,
+	storedLayout,
 	type Verdict,
 	whereIs,
 } from "./pane-layout";
@@ -205,8 +206,10 @@ export function PaneWindow({
 	const byId = new Map(panes.map((pane) => [pane.id, pane]));
 	const registry = useRef(panes);
 	registry.current = panes;
-	const guard = useMemo(() => isLayout(ids), [ids]);
-	const [layout, setLayout] = useRemembered<Layout>(STORAGE_KEY, defaultLayout(), guard);
+	const guard = useMemo(() => isLayout(), []);
+	const [stored, setLayout] = useRemembered<Layout>(STORAGE_KEY, defaultLayout(), guard);
+	// the stored layout for this canvas's panes: a team project's Comments placed, or left out on a solo one
+	const layout = useMemo(() => storedLayout(stored, ids), [stored, ids]);
 	const reduced = useReducedMotion();
 
 	const root = useRef<HTMLDivElement>(null);
