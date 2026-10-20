@@ -1,0 +1,199 @@
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { spoolAsync } from "./cli-test-helpers";
+import { CONTROL_HEADER } from "./daemon/security";
+import { serveDaemon } from "./daemon/server";
+import { initTeamProject } from "./init";
+import { fetchLocalCopy, openProject } from "./open";
+import { fakeTeam, TEAM_ORIGIN } from "./team-sync-test-harness";
+import { makeTempDir } from "./test-helpers";
+
+/**
+ * `spool comments` through the real CLI against the fake spool.page (spool#172): what an agent prints and writes on
+ * a team project, read from the daemon's snapshot and written through it as the person's agent. Assertions are on
+ * what the verb prints and on what a teammate's Mac then reads, never on the messages in between.
+ */
+
+function repo(): string {
+	const root = join(makeTempDir(), "checkout");
+	mkdirSync(root);
+	execFileSync("git", ["init", "--quiet", "--initial-branch=main", "."], { cwd: root });
+	return realpathSync(root);
+}
+
+/** Ana starts the team project with a receipt frame on the root page and a cart on the shop page; Ben's clone fetches it. */
+async function team() {
+	const cloud = fakeTeam();
+	const ana = cloud.machine("ana");
+	const ben = cloud.machine("ben");
+	const anaState = join(makeTempDir(), ".spool");
+	const benState = join(makeTempDir(), ".spool");
+	const { root: anaRoot } = await initTeamProject(repo(), anaState, {
+		team: "devosurf",
+		origin: TEAM_ORIGIN,
+		request: ana.request,
+		openSocket: ana.openSocket,
+	});
+	const receipt = join(anaRoot, "design", "frames", "receipt");
+	mkdirSync(receipt, { recursive: true });
+	writeFileSync(
+		join(receipt, "frame.tsx"),
+		"export default function Receipt() {\n\treturn (\n\t\t<main>\n\t\t\t<h2>Thanks!</h2>\n\t\t</main>\n\t);\n}\n",
+	);
+	const benRoot = repo();
+	copyFileSync(join(anaRoot, "spool.json"), join(benRoot, "spool.json"));
+	await fetchLocalCopy(benRoot, benState, { origin: TEAM_ORIGIN, request: ben.request, openSocket: ben.openSocket });
+	openProject(benRoot, benState);
+	return {
+		cloud,
+		ana: { root: anaRoot, state: anaState, cloud: ana.cloud },
+		ben: { root: benRoot, state: benState, cloud: ben.cloud },
+	};
+}
+
+type Machine = { root: string; state: string; cloud: ReturnType<ReturnType<typeof fakeTeam>["machine"]>["cloud"] };
+
+/** The machine's daemon, really served, and its `spool` at a terminal in the project. */
+async function mac(machine: Machine) {
+	const daemon = await serveDaemon({
+		spoolDir: machine.state,
+		version: "0.0.0-test",
+		host: "127.0.0.1",
+		port: 0,
+		cloud: machine.cloud,
+		teamNotice: () => {},
+	});
+	onTestFinished(() => daemon.close());
+	const home = makeTempDir();
+	const read = async () =>
+		(await (
+			await fetch(`${daemon.url}/api/p/checkout/comments`, { headers: { [CONTROL_HEADER]: daemon.controlToken } })
+		).json()) as {
+			online: boolean;
+			comments: { id: string; body: string; agent: boolean; replies: { agent: boolean; body: string }[] }[];
+		};
+	return {
+		read,
+		async online(): Promise<void> {
+			const start = Date.now();
+			while (!(await read()).online) {
+				if (Date.now() - start > 8000) throw new Error("never connected");
+				await new Promise((wake) => setTimeout(wake, 25));
+			}
+		},
+		async until(holds: (comments: Awaited<ReturnType<typeof read>>["comments"]) => boolean): Promise<void> {
+			const start = Date.now();
+			while (!holds((await read()).comments)) {
+				if (Date.now() - start > 8000) throw new Error("it never held");
+				await new Promise((wake) => setTimeout(wake, 25));
+			}
+		},
+		spool: (...args: string[]) => spoolAsync(["comments", ...args], home, machine.root, { SPOOL_DIR: machine.state }),
+	};
+}
+
+describe("spool comments", { timeout: 90_000 }, () => {
+	it("adds a comment as the person's agent, which a teammate's agent lists, shows and answers", async () => {
+		const { ana, ben } = await team();
+		const anas = await mac(ana);
+		const bens = await mac(ben);
+		await anas.online();
+		await bens.online();
+
+		const added = await bens.spool("add", "receipt", "Thanks! is loud for a receipt.", "--element", "main > h2");
+		expect(added.stderr).toBe("");
+		expect(added.status).toBe(0);
+		const id = /^added (\S+) on receipt\n$/.exec(added.stdout)?.[1] ?? "";
+		expect(id).not.toBe("");
+		await anas.until((comments) => comments.some((comment) => comment.id === id));
+
+		const listed = await anas.spool();
+		expect(listed.status).toBe(0);
+		expect(listed.stdout).toBe(
+			[
+				"1 open comment, live from spool.page",
+				"",
+				`<comment id="${id}">`,
+				"ben's agent, to the team, open",
+				"on receipt · h2 — design/frames/receipt/frame.tsx:4-4",
+				"  <h2>Thanks!</h2>",
+				"ben's agent: Thanks! is loud for a receipt.",
+				"</comment>",
+				"",
+			].join("\n"),
+		);
+
+		const replied = await anas.spool("reply", id, "Toned", "it", "down.");
+		expect(replied.status).toBe(0);
+		expect(replied.stdout).toMatch(new RegExp(`^replied to ${id} \\(reply \\S+\\)\\n$`));
+		// on Ben's Mac, the reply is Ana's agent's
+		await bens.until((comments) => comments.some((comment) => comment.replies.length > 0));
+		const reply = (await bens.read()).comments[0]?.replies[0];
+		expect(reply).toMatchObject({ agent: true, body: "Toned it down." });
+
+		const shown = await bens.spool("show", id);
+		expect(shown.status).toBe(0);
+		expect(shown.stdout).toContain(
+			"\nben's agent: Thanks! is loud for a receipt.\nana's agent: Toned it down.\n</comment>\n",
+		);
+	});
+
+	it("filters by page and frame, and lists nothing with a line that still says how old it is", async () => {
+		const { ana } = await team();
+		const anas = await mac(ana);
+		await anas.online();
+		const added = await anas.spool("add", "receipt", "No pointer here.");
+		expect(added.status).toBe(0);
+
+		const onFrame = await anas.spool("list", "--frame", "receipt");
+		expect(onFrame.stdout).toContain("1 open comment, live from spool.page\n\n");
+		expect(onFrame.stdout).toContain("on receipt — design/frames/receipt/frame.tsx\n");
+
+		const elsewhere = await anas.spool("--page", "shop");
+		expect(elsewhere.status).toBe(0);
+		expect(elsewhere.stdout).toBe("0 open comments, live from spool.page\n");
+	});
+
+	it("reads offline from the snapshot and says when it was heard, and refuses to write", async () => {
+		const { cloud, ana, ben } = await team();
+		const anas = await mac(ana);
+		const bens = await mac(ben);
+		await anas.online();
+		await bens.online();
+		const added = await bens.spool("add", "receipt", "The total is cut off.");
+		const id = /^added (\S+)/.exec(added.stdout)?.[1] ?? "";
+		await anas.until((comments) => comments.length === 1);
+
+		cloud.offline("ana");
+		const listed = await anas.spool();
+		expect(listed.status).toBe(0);
+		expect(listed.stdout).toMatch(
+			/^1 open comment, offline: as spool\.page sent them under a minute ago\n\n<comment /,
+		);
+		expect(listed.stdout).toContain("ben's agent: The total is cut off.\n");
+
+		const replied = await anas.spool("reply", id, "On it.");
+		expect(replied.status).toBe(1);
+		expect(replied.stderr).toContain("offline: comments need spool.page");
+	});
+
+	it("says what isn't there: a comment by id, and an element on the frame", async () => {
+		const { ana } = await team();
+		const anas = await mac(ana);
+		await anas.online();
+
+		const shown = await anas.spool("show", "nothere1");
+		expect(shown.status).toBe(1);
+		expect(shown.stderr).toContain("no comment nothere1 in what spool.page sent, live from spool.page");
+
+		const replied = await anas.spool("reply", "nothere1", "Hello?");
+		expect(replied.status).toBe(1);
+		expect(replied.stderr).toContain("that comment isn't there anymore");
+
+		const added = await anas.spool("add", "receipt", "Here.", "--element", "footer");
+		expect(added.status).toBe(1);
+		expect(added.stderr).toContain('nothing on receipt matches "footer"');
+	});
+});

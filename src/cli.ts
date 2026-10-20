@@ -11,6 +11,15 @@ import { hasLocalBrowser, openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkStart, runCheck } from "./check-command";
 import { cliName } from "./cli-name";
 import { cloudOrigin, login, logout } from "./cloud-auth";
+import {
+	addComment,
+	type CommentFilters,
+	type CommentsDaemon,
+	listComments,
+	replyToComment,
+	settleComment,
+	showComment,
+} from "./comments-verb";
 import { readCanvasFields } from "./daemon/canvas-file";
 import {
 	daemonUrl,
@@ -521,6 +530,83 @@ program
 					: await mintPlayerUrl(daemonUrl, name, frame, controlToken)
 			}\n`,
 		);
+	});
+
+/** The project's daemon for `spool comments`, refusing a project that isn't on a team: comments live on spool.page. */
+async function commentsContext(): Promise<CommentsDaemon> {
+	const { root, name, daemonUrl, controlToken } = await verbContext();
+	if (followedLink(root) === undefined) {
+		throw new SpoolError("comments are on team projects, and this one is only on this Mac");
+	}
+	return { daemonUrl, name, controlToken };
+}
+
+/** Words given as arguments, one space between: quote them to keep line breaks. */
+const wordsOf = (words: readonly string[]) => words.join(" ");
+
+const comments = program
+	.command("comments")
+	.description("read and answer the team's comments on this project, as your agent");
+
+comments
+	.command("list", { isDefault: true })
+	.description("print the open comments, each as a <comment> block, and how old they are")
+	.option("--page <page>", "only the comments on this page")
+	.option("--frame <frame>", "only the comments on this frame, its path under design/frames", parseFrame)
+	.option("--share <share>", "only the comments to this share, by its id")
+	.option("--resolved", "the resolved comments too")
+	.action(async (filters: CommentFilters) => {
+		process.stdout.write(`${await listComments(await commentsContext(), filters)}\n`);
+	});
+
+comments
+	.command("show")
+	.description("print one comment with every reply, open or resolved")
+	.argument("<id>", "the comment's id, as its block names it")
+	.action(async (id: string) => {
+		process.stdout.write(`${await showComment(await commentsContext(), id)}\n`);
+	});
+
+comments
+	.command("reply")
+	.description("reply under a comment, as your person's agent")
+	.argument("<id>", "the comment's id")
+	.argument("<words...>", "what to say")
+	.action(async (id: string, words: string[]) => {
+		const reply = await replyToComment(await commentsContext(), id, wordsOf(words));
+		process.stdout.write(`replied to ${id} (reply ${reply})\n`);
+	});
+
+comments
+	.command("resolve")
+	.description("resolve a comment, as your person's agent; anyone who reads it can reopen it")
+	.argument("<id>", "the comment's id")
+	.action(async (id: string) => {
+		await settleComment(await commentsContext(), id, "resolve");
+		process.stdout.write(`resolved ${id}\n`);
+	});
+
+comments
+	.command("reopen")
+	.description("reopen a resolved comment, as your person's agent")
+	.argument("<id>", "the comment's id")
+	.action(async (id: string) => {
+		await settleComment(await commentsContext(), id, "reopen");
+		process.stdout.write(`reopened ${id}\n`);
+	});
+
+comments
+	.command("add")
+	.description("leave a comment for the team on a frame, as your person's agent")
+	.argument("<frame>", "the frame, its path under design/frames", parseFrame)
+	.argument("<words...>", "what to say")
+	.option(
+		"--element <element>",
+		"pin it to this element: a CSS selector, or a pointer like frames/receipt/frame.tsx:12",
+	)
+	.action(async (frame: string, words: string[], options: { element?: string }) => {
+		const id = await addComment(await commentsContext(), frame, wordsOf(words), options.element);
+		process.stdout.write(`added ${id} on ${frame}\n`);
 	});
 
 program
