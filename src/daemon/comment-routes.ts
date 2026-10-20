@@ -6,6 +6,7 @@ import { personName } from "../person-name";
 import { localCopyOf, readProjectLink } from "../team-project";
 import {
 	COMMENT_MENTIONS,
+	COMMENT_REFUSAL_STATUS,
 	type CommentAudience,
 	type CommentElement,
 	type CommentPoint,
@@ -284,10 +285,7 @@ function answered(c: Context, send: () => Promise<string>): Promise<Response> {
 	return refusedOr(c, async () => c.json({ id: await send() }, 201));
 }
 
-/**
- * What the team answered, or why it wasn't taken: offline (409), no such comment (404), not the person's to change
- * (403), too soon again (429, with when), the team unreachable (503), or otherwise not a comment it takes (400).
- */
+/** What the team answered, or why it wasn't taken: offline (409), or a refusal as spool.page answers it. */
 async function refusedOr(c: Context, send: () => Promise<Response>): Promise<Response> {
 	try {
 		return await send();
@@ -295,22 +293,10 @@ async function refusedOr(c: Context, send: () => Promise<Response>): Promise<Res
 		if (error instanceof CommentsOffline) return c.json({ error: "offline", message: error.message }, 409);
 		if (error instanceof CommentRefused) {
 			const { reason, retryAfter } = error;
-			const status =
-				reason === "comment_not_found"
-					? 404
-					: reason === "not_author" || reason === "not_editor"
-						? 403
-						: reason === "rate_limited"
-							? 429
-							: reason === "unpaid"
-								? 402
-								: reason === "unavailable"
-									? 503
-									: 400;
 			if (retryAfter !== undefined) c.header("retry-after", String(retryAfter));
 			return c.json(
 				{ error: reason, message: error.message, ...(retryAfter === undefined ? {} : { retryAfter }) },
-				status,
+				COMMENT_REFUSAL_STATUS[reason],
 			);
 		}
 		throw error;
