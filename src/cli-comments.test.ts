@@ -72,10 +72,22 @@ async function mac(machine: Machine) {
 			await fetch(`${daemon.url}/api/p/checkout/comments`, { headers: { [CONTROL_HEADER]: daemon.controlToken } })
 		).json()) as {
 			online: boolean;
-			comments: { id: string; body: string; agent: boolean; replies: { agent: boolean; body: string }[] }[];
+			comments: {
+				id: string;
+				body: string;
+				agent: boolean;
+				resolved: { by: { name: string }; agent?: true } | null;
+				replies: { agent: boolean; body: string }[];
+			}[];
 		};
 	return {
 		read,
+		/** What the person's canvas sends, as themself: a POST to one of the comment routes, with no body. */
+		call: (path: string) =>
+			fetch(`${daemon.url}/api/p/checkout/comments/${path}`, {
+				method: "POST",
+				headers: { [CONTROL_HEADER]: daemon.controlToken },
+			}),
 		async online(): Promise<void> {
 			const start = Date.now();
 			while (!(await read()).online) {
@@ -177,6 +189,50 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		const replied = await anas.spool("reply", id, "On it.");
 		expect(replied.status).toBe(1);
 		expect(replied.stderr).toContain("offline: comments need spool.page");
+	});
+
+	it("resolves as the person's agent, which anyone can reopen, and resolves and reopens again", async () => {
+		const { cloud, ana, ben } = await team();
+		const anas = await mac(ana);
+		const bens = await mac(ben);
+		await anas.online();
+		await bens.online();
+		const added = await bens.spool("add", "receipt", "The total is cut off.");
+		const id = /^added (\S+)/.exec(added.stdout)?.[1] ?? "";
+		await anas.until((comments) => comments.some((comment) => comment.id === id));
+
+		const resolved = await anas.spool("resolve", id);
+		expect(resolved.stderr).toBe("");
+		expect(resolved.stdout).toBe(`resolved ${id}\n`);
+		// on Ben's Mac it is resolved by Ana's agent, and out of the open list
+		await bens.until((comments) => comments.some((comment) => comment.resolved !== null));
+		expect((await bens.read()).comments[0]?.resolved).toMatchObject({ by: { name: "ana" }, agent: true });
+		expect((await bens.spool()).stdout).toBe("0 open comments, live from spool.page\n");
+		const all = await bens.spool("--resolved");
+		expect(all.stdout).toContain(`<comment id="${id}">\nben's agent, to the team, resolved by ana's agent\n`);
+
+		// Ben reopens it on his canvas, as himself
+		expect((await bens.call(`${id}/reopen`)).status).toBe(200);
+		await anas.until((comments) => comments.every((comment) => comment.resolved === null));
+		expect((await anas.spool()).stdout).toContain("1 open comment, live from spool.page\n");
+
+		// and Ben's agent resolves it, and Ana's agent reopens that
+		expect((await bens.spool("resolve", id)).status).toBe(0);
+		await anas.until((comments) => comments.some((comment) => comment.resolved !== null));
+		expect((await anas.spool("show", id)).stdout).toContain("ben's agent, to the team, resolved by ben's agent\n");
+		const reopened = await anas.spool("reopen", id);
+		expect(reopened.stderr).toBe("");
+		expect(reopened.stdout).toBe(`reopened ${id}\n`);
+		await bens.until((comments) => comments.every((comment) => comment.resolved === null));
+
+		// a comment that isn't there, and no team to tell
+		const lost = await anas.spool("resolve", "nothere1");
+		expect(lost.status).toBe(1);
+		expect(lost.stderr).toContain("that comment isn't there anymore");
+		cloud.offline("ana");
+		const offline = await anas.spool("resolve", id);
+		expect(offline.status).toBe(1);
+		expect(offline.stderr).toContain("offline: comments need spool.page");
 	});
 
 	it("says what isn't there: a comment by id, and an element on the frame", async () => {
