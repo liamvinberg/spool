@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
 	type CommentPlace,
 	type DesignNow,
+	frameRevision,
+	isFrameSource,
 	movedName,
 	movesComments,
 	placeAfter,
@@ -167,5 +170,42 @@ describe("what a Mac says it moved", () => {
 			type: "comment-changed",
 			comment: { standing: "deleted-frame", dropped: { frame: "receipt", at: 5 } },
 		});
+	});
+});
+
+describe("a frame's source revision", () => {
+	const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+	/** A frame's revision from its files, by path, as a Mac or the team's copy holds them. */
+	const revisionOf = (frame: string, files: Record<string, string>) =>
+		frameRevision(Object.entries(files).flatMap(([path, text]) => (isFrameSource(frame, path) ? [sha(text)] : [])));
+
+	it("is the same wherever the frame stands and whatever its place, and changes with its source", async () => {
+		const at = await revisionOf("receipt", {
+			"frames/receipt/frame.tsx": "<p>Thanks</p>",
+			"frames/receipt/parts.tsx": "<b/>",
+			"frames/receipt/frame.json": '{"x":0,"y":0,"w":390,"h":844}',
+		});
+		expect(at).toMatch(/^[0-9a-f]{64}$/u);
+		// renamed and moved onto a page, dragged and resized, its files listed in another order
+		const moved = await revisionOf("shop/thanks", {
+			"frames/shop/thanks/frame.json": '{"x":900,"y":40,"w":200,"h":300}',
+			"frames/shop/thanks/parts.tsx": "<b/>",
+			"frames/shop/thanks/frame.tsx": "<p>Thanks</p>",
+		});
+		expect(moved).toBe(at);
+		const edited = await revisionOf("receipt", {
+			"frames/receipt/frame.tsx": "<p>Paid</p>",
+			"frames/receipt/parts.tsx": "<b/>",
+		});
+		expect(edited).not.toBe(at);
+	});
+
+	it("reads only the frame's own files that travel", () => {
+		expect(isFrameSource("receipt", "frames/receipt/frame.tsx")).toBe(true);
+		expect(isFrameSource("receipt", "frames/receipt/img/logo.svg")).toBe(true);
+		expect(isFrameSource("receipt", "frames/receipt/frame.json")).toBe(false);
+		expect(isFrameSource("receipt", "frames/receipt/.spool/cover.png")).toBe(false);
+		expect(isFrameSource("receipt", "frames/receipts/frame.tsx")).toBe(false);
+		expect(isFrameSource("receipt", "shared/button.tsx")).toBe(false);
 	});
 });

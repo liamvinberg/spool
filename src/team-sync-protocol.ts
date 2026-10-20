@@ -690,7 +690,7 @@ export interface Comment {
 	frame: string | null;
 	at: CommentPoint;
 	element: CommentElement | null;
-	/** The frame's source revision when the comment was made (core's `CompiledFrameDocument.source`); null on the field. */
+	/** The frame's source revision when the comment was made (`frameRevision`); null on the field. */
 	revision: string | null;
 	/** Cloud keeps the frame's still from when the comment was made. */
 	still: boolean;
@@ -704,6 +704,11 @@ export interface Comment {
 	standing: CommentStanding;
 	/** Off its frame (`deleted-frame`, or `deleted-page` after it was on one): the frame it was on, and when it went. */
 	dropped?: { frame: string; at: number };
+	/**
+	 * Its frame's source is no longer what it was when the comment was made: the team's copy of the frame has another
+	 * `frameRevision` now. Said only of a comment standing on its frame; absent otherwise.
+	 */
+	editedSince?: true;
 	replies: CommentReply[];
 	/** The members its first message @mentions, named as they are now; absent when it mentions nobody. */
 	mentions?: CommentPerson[];
@@ -930,7 +935,7 @@ const COMMENT_NAME = 512;
 const COMMENT_HANDLE = 4_000;
 /** An id or a ref. */
 const COMMENT_ID = 64;
-/** A source revision: core's source hash, hex. */
+/** A source revision: `frameRevision`'s, hex. */
 const REVISION = /^[0-9a-f]{64}$/u;
 
 /** Whether words may be a comment's or a reply's: not blank, and within the limit. */
@@ -1121,7 +1126,7 @@ function commentRefusal(reason: unknown): CommentRefusal | undefined {
 export function readComment(value: unknown): Comment | undefined {
 	if (!isRecord(value)) return undefined;
 	const { id, audience, page, frame, at, element, revision, still, author, agent, body, created, edited } = value;
-	const { resolved, standing, dropped, replies, mentions } = value;
+	const { resolved, standing, dropped, editedSince, replies, mentions } = value;
 	if (!isId(id) || !isCommentName(page) || !(frame === null || isFrameName(frame))) return undefined;
 	const who = readCommentPerson(author);
 	const point = readPoint(at);
@@ -1146,6 +1151,7 @@ export function readComment(value: unknown): Comment | undefined {
 		if (!isRecord(dropped) || !isFrameName(dropped.frame) || !isTime(dropped.at)) return undefined;
 		off = { frame: dropped.frame, at: dropped.at };
 	}
+	if (!(editedSince === undefined || typeof editedSince === "boolean")) return undefined;
 	if (!Array.isArray(replies)) return undefined;
 	const read = replies.map(readCommentReply);
 	if (!read.every((reply): reply is CommentReply => reply !== undefined)) return undefined;
@@ -1168,6 +1174,7 @@ export function readComment(value: unknown): Comment | undefined {
 		resolved: closed,
 		standing,
 		...(off === undefined ? {} : { dropped: off }),
+		...(editedSince === true ? { editedSince } : {}),
 		replies: read,
 		...(named.length > 0 ? { mentions: named } : {}),
 	};
@@ -1423,4 +1430,25 @@ export function readMoved(value: unknown): Moved | undefined {
 	const pages = paths(value.pages);
 	if (frames === undefined || pages === undefined) return undefined;
 	return { ...(frames.length > 0 ? { frames } : {}), ...(pages.length > 0 ? { pages } : {}) };
+}
+
+/**
+ * Whether a design/-relative path is part of a frame's own source: a file in its folder that travels, other than
+ * `frame.json`, which says only where the frame stands and how big it is.
+ */
+export function isFrameSource(frame: string, path: string): boolean {
+	return path.startsWith(`frames/${frame}/`) && path !== `frames/${frame}/frame.json` && travels(path);
+}
+
+/**
+ * A frame's source revision (spool#160): a hash of what its own source files hold and nothing else, made from each
+ * file's content hash (SHA-256, hex, as the team's copy names a file's bytes). Not their paths, nor the spool that
+ * made it, nor anything it compiles with: a rename, a move, a release or a Mac on another version leave it as it was,
+ * and only a change to what the frame's files say makes another. A Mac reads the hashes off its disk, spool.page off
+ * its copy, a browser off what it was sent; all three agree.
+ */
+export async function frameRevision(hashes: readonly string[]): Promise<string> {
+	const said = new TextEncoder().encode([...hashes].sort().join("\n"));
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", said));
+	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
