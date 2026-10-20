@@ -243,6 +243,10 @@ it("lists every comment in the Comments tab, filters them, and flies to a pin, r
 }, async () => {
 	const { cloud, page, benSays, benDoes } = await teamCanvas();
 	benSays({ frame: "menu", at: { x: 40, y: 40 }, body: "Is this the menu?" });
+	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(1);
+	// the second is said a moment later, so newest first is one order and never a tie
+	const first = cloud.comments("checkout")[0]?.created ?? 0;
+	await expect.poll(() => Date.now() > first).toBe(true);
 	benSays({ frame: null, at: { x: 1600, y: 1200 }, body: "@ana where does it start?", mentions: ["ana"] });
 	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(2);
 	const [menu, field] = cloud.comments("checkout").map((comment) => comment.id);
