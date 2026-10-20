@@ -335,7 +335,7 @@ function Pin({
 	return (
 		<button
 			type="button"
-			aria-label={`Comment by ${by.name}${resolved ? ", resolved" : ""}${unread ? ", unread" : ""}`}
+			aria-label={`Comment by ${nameOf(by, comment.agent)}${resolved ? ", resolved" : ""}${unread ? ", unread" : ""}`}
 			aria-expanded={open}
 			data-comment-pin={comment.id}
 			data-unread={unread ? "" : undefined}
@@ -1137,12 +1137,11 @@ function Message({
 				)}
 				style={{ background: by.color, color: PRESENCE_INK }}
 			>
-				{by.name.charAt(0)}
+				{message.agent ? <AgentGlyph /> : by.name.charAt(0)}
 			</span>
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<div className="flex h-5 items-center gap-2">
-					<span className="truncate text-primary type-control">{by.name}</span>
-					{message.agent ? <span className="shrink-0 text-tertiary type-detail">agent</span> : null}
+					<span className="truncate text-primary type-control">{nameOf(by, message.agent)}</span>
 					<span className="shrink-0 text-tertiary type-detail">{ago(message.created)}</span>
 					{message.edited === null ? null : <span className="shrink-0 text-tertiary type-detail">edited</span>}
 					{unread ? <Dot tone="accent" /> : null}
@@ -1206,6 +1205,22 @@ function EditField({ acts, text, onDone }: { acts: MessageActs; text: string; on
 function resolvedAgo(at: number): string {
 	const said = ago(at);
 	return said === "now" ? "just now" : `${said} ago`;
+}
+
+/** Who wrote a message: the person, or their agent writing as them through `spool comments` (spool#172). */
+export function nameOf(by: CommentPerson, agent: boolean): string {
+	return agent ? `${by.name}'s agent` : by.name;
+}
+
+/** An agent's face: its owner's colour as a rounded square, holding the agent's mark, as presence draws one. */
+function AgentGlyph() {
+	return (
+		<svg viewBox="0 0 16 16" width={11} height={11} fill="none" aria-hidden="true">
+			<circle cx="3.2" cy="5.4" r="1.4" fill="currentColor" />
+			<circle cx="3.2" cy="10.6" r="1.4" fill="currentColor" />
+			<path d="M6.4 5.4h7.2M6.4 10.6h4.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+		</svg>
+	);
 }
 
 /** How long ago, as a card says it: now, then minutes, hours and days. */
