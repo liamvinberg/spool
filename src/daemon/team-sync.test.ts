@@ -22,7 +22,7 @@ import { removeProject } from "../remove";
 import { encodeFrame } from "../team-sync-protocol";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
 import { SOLO_GITIGNORE } from "../templates";
-import { makeApp, makeTempDir, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
+import { makeApp, makeTempDir, SseTimeout, sseReader, until, writeDesignFile, writeFrame } from "../test-helpers";
 import { resolveRegisteredProject } from "../verbs";
 import { historyEnabled } from "./history";
 import { followLocalCopy, openWebSocket, openWebSocketWith, type SyncSocketEvents } from "./team-sync";
@@ -1185,8 +1185,13 @@ describe("the minute's bucket", () => {
 		cloud.bucket(0, 600, Date.now);
 		for (let n = 0; n < 150; n++) writeFrame(ana.root, `f${n}`, `export default () => <p>${n}</p>;\n`);
 		const told: string[] = [];
+		// what is said over the first seconds; a quiet stretch to their end is a wait that holds without a word
 		for (const end = Date.now() + 2_500; Date.now() < end; ) {
-			const event = await events.next(5_000);
+			const event = await events.next(Math.max(1, end - Date.now())).catch((error: unknown) => {
+				if (error instanceof SseTimeout) return undefined;
+				throw error;
+			});
+			if (event === undefined) break;
 			const { kind, message } = event.data as { kind?: string; message?: string };
 			if (kind === "sync" && (message === "" || message?.startsWith("Sending") === true)) told.push(message);
 		}
