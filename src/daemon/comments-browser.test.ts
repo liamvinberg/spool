@@ -414,10 +414,18 @@ it("says a comment's frame was edited since, compares, and keeps one whose frame
 	benSays({ frame: "menu", at: { x: 40, y: 40 }, body: "Before it went." });
 	await expect.poll(() => page.locator("[data-comment-pin]").count(), { timeout: 10_000 }).toBe(2);
 	const ben = cloud.comments("checkout")[1]?.id ?? "";
-	const before = await page.locator(`[data-comment-pin="${ben}"]`).boundingBox();
+	// measured once it has popped up: a pin grows from its tip as it comes
+	const arrived = page.locator(`[data-comment-pin="${ben}"]`);
+	await arrived.evaluate((one) =>
+		Promise.all(one.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+	);
+	const before = await arrived.boundingBox();
 	rmSync(join(root, "design", "frames", "menu"), { recursive: true });
 	const pin = page.locator(`[data-comment-pin="${ben}"][data-comment-dropped="menu"]`);
 	await pin.waitFor({ timeout: 20_000 });
+	await pin.evaluate((one) =>
+		Promise.all(one.getAnimations().map((animation) => animation.finished.catch(() => undefined))),
+	);
 	const after = await pin.boundingBox();
 	expect(after?.x).toBeCloseTo(before?.x ?? 0, 0);
 	expect(after?.y).toBeCloseTo(before?.y ?? 0, 0);

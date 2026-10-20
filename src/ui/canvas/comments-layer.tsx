@@ -180,7 +180,7 @@ export function CommentsLayer({
 		return world === undefined ? [] : [{ comment, ...toScreen(world) }];
 	});
 	const groups = gather(here);
-	const delayOf = useArrivals(hidden ? [] : groups.map((group) => group[0]?.comment.id ?? ""));
+	const arrivals = useArrivals(hidden ? [] : groups.map((group) => group[0]?.comment.id ?? ""));
 	const openComment = useLinger(open === null ? null : (comments.find((comment) => comment.id === open) ?? null));
 	const openPin = here.find((one) => one.comment.id === open);
 	// a comment with no pin here, a deleted page's, opens beside the inbox, at the canvas's right
@@ -200,12 +200,13 @@ export function CommentsLayer({
 		setDraft(null);
 		setOpen(id === open ? null : id);
 	};
-	const pin = (comment: Comment, at: Point, delay = 0) => (
+	const pin = (comment: Comment, at: Point, arriving = false) => (
 		<Pin
 			key={comment.id}
 			comment={comment}
 			at={at}
-			delay={delay}
+			delay={arriving ? arrivals.delayOf(comment.id) : null}
+			onLanded={() => arrivals.landed(comment.id)}
 			open={comment.id === open}
 			unread={isUnread(comment, context.reader)}
 			onOpen={() => toggle(comment.id)}
@@ -219,7 +220,7 @@ export function CommentsLayer({
 				: groups.map((group) => {
 						const [first] = group;
 						if (first === undefined) return null;
-						if (group.length === 1) return pin(first.comment, first, delayOf(first.comment.id));
+						if (group.length === 1) return pin(first.comment, first, true);
 						const centre = {
 							x: Math.round(group.reduce((sum, one) => sum + one.x, 0) / group.length),
 							y: Math.round(group.reduce((sum, one) => sum + one.y, 0) / group.length),
@@ -239,7 +240,8 @@ export function CommentsLayer({
 								) : null}
 								<Cluster
 									at={centre}
-									delay={delayOf(first.comment.id)}
+									delay={arrivals.delayOf(first.comment.id)}
+									onLanded={() => arrivals.landed(first.comment.id)}
 									people={group.map((one) => one.comment.author)}
 									unread={group.some((one) => isUnread(one.comment, context.reader))}
 									lit={isFanned}
@@ -303,14 +305,17 @@ function Pin({
 	open,
 	unread,
 	delay,
+	onLanded,
 	onOpen,
 }: {
 	comment: Comment;
 	at: Point;
 	open: boolean;
 	unread: boolean;
-	/** how long after the others arriving with it it pops up */
-	delay: number;
+	/** how long after the others arriving with it it pops up; null once it has */
+	delay: number | null;
+	/** it has popped up */
+	onLanded: () => void;
 	onOpen: () => void;
 }) {
 	const round = PIN / 2;
@@ -342,8 +347,10 @@ function Pin({
 					event.stopPropagation();
 					onOpen();
 				}}
+				onAnimationEnd={(event) => event.target === event.currentTarget && onLanded()}
 				className={cn(
-					"pointer-events-auto absolute flex animate-comment-pin-in cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-[scale,box-shadow] duration-fast ease-out",
+					"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-[scale,box-shadow] duration-fast ease-out",
+					delay === null ? null : "animate-comment-pin-in",
 					open ? "z-20 scale-110" : "z-10 hover:scale-105",
 					hollow ? "bg-surface-raised text-secondary" : null,
 				)}
@@ -355,7 +362,7 @@ function Pin({
 					borderRadius: comment.agent ? 5 : `${round}px ${round}px ${round}px 2px`,
 					// it pops up from its tip, and grows there when open
 					transformOrigin: "0 100%",
-					animationDelay: `${delay}ms`,
+					animationDelay: `${delay ?? 0}ms`,
 					...(hollow ? {} : { background: by.color, color: PRESENCE_INK }),
 					boxShadow: ringOf(open, unread),
 					...(orphan ? { outline: "1.25px dashed var(--color-secondary)", outlineOffset: -1.25 } : {}),
@@ -389,10 +396,12 @@ function Cluster({
 	unread,
 	lit,
 	delay,
+	onLanded,
 	onClick,
 }: {
 	at: Point;
-	delay: number;
+	delay: number | null;
+	onLanded: () => void;
 	people: readonly CommentPerson[];
 	unread: boolean;
 	lit: boolean;
@@ -412,9 +421,13 @@ function Cluster({
 				event.stopPropagation();
 				onClick();
 			}}
-			className="pointer-events-auto absolute z-10 flex animate-comment-pin-in cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-[scale,box-shadow] duration-fast ease-out hover:scale-105"
+			onAnimationEnd={(event) => event.target === event.currentTarget && onLanded()}
+			className={cn(
+				"pointer-events-auto absolute z-10 flex cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-[scale,box-shadow] duration-fast ease-out hover:scale-105",
+				delay === null ? null : "animate-comment-pin-in",
+			)}
 			style={{
-				animationDelay: `${delay}ms`,
+				animationDelay: `${delay ?? 0}ms`,
 				left: at.x - PIN / 2,
 				top: at.y - PIN / 2,
 				height: PIN,
@@ -580,17 +593,33 @@ export function useLinger<T>(value: T | null, ms = CARD_OUT_MS): { shown: T | nu
 /**
  * When each pin pops up, by its key: at once when it comes on its own, and in a ripple when several come together (a
  * page opened, pins shown again, the comments first heard). A pin keeps its delay while it stands, so a camera that
- * moves it never starts it again.
+ * moves it never starts it again, and once it has popped up (`landed`) it never pops again, whatever draws it anew
+ * (its frame deleted, its count fanned).
  */
-function useArrivals(keys: readonly string[]): (key: string) => number {
-	const known = useRef(new Map<string, number>());
+function useArrivals(keys: readonly string[]): {
+	delayOf: (key: string) => number | null;
+	landed: (key: string) => void;
+} {
+	const known = useRef(new Map<string, { delay: number; landed: boolean }>());
 	const now = new Set(keys);
 	for (const key of [...known.current.keys()]) if (!now.has(key)) known.current.delete(key);
 	const arriving = keys.filter((key) => !known.current.has(key));
 	arriving.forEach((key, index) => {
-		known.current.set(key, arriving.length === 1 ? 0 : Math.min(index * RIPPLE_MS, RIPPLE_MAX_MS));
+		known.current.set(key, {
+			delay: arriving.length === 1 ? 0 : Math.min(index * RIPPLE_MS, RIPPLE_MAX_MS),
+			landed: false,
+		});
 	});
-	return (key) => known.current.get(key) ?? 0;
+	return {
+		delayOf: (key) => {
+			const arrived = known.current.get(key);
+			return arrived === undefined || arrived.landed ? null : arrived.delay;
+		},
+		landed: (key) => {
+			const arrived = known.current.get(key);
+			if (arrived !== undefined) arrived.landed = true;
+		},
+	};
 }
 
 /** A card's presses, wheel and menu are its own: none of them reaches the field under it. */
