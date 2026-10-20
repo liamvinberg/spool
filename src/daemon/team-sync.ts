@@ -224,6 +224,8 @@ export interface LocalCopy {
 	reply(reply: NewReply): Promise<string>;
 	/** Change a comment as this machine's person; refused as offline until the copy has caught up. */
 	change(change: NewChange): Promise<string>;
+	/** The still a comment kept of its frame, asked of the team: undefined when it kept none. */
+	still(comment: string): Promise<Uint8Array | undefined>;
 	close(): void;
 }
 
@@ -1016,7 +1018,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (framed === null) return;
 		const { message, bytes } = framed;
 		if (message.type === "presence") return presence.hear(message);
-		if (comments.hear(message)) return;
+		if (comments.hear(message, bytes)) return;
 		if (message.type === "welcome") {
 			// a move's connection is paced by nothing
 			pace = undefined;
@@ -1198,6 +1200,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		comment: (comment, still) => comments.post(caughtUp ? socket : undefined, comment, still),
 		reply: (reply) => comments.reply(caughtUp ? socket : undefined, reply),
 		change: (change) => comments.change(caughtUp ? socket : undefined, change),
+		still: (comment) => comments.still(caughtUp ? socket : undefined, comment),
 		turnEnded: () => {
 			const said = setTimeout(() => {
 				const waited = isIdle()
@@ -1760,6 +1763,11 @@ export function createTeamSync(deps: {
 		changeComment(root: string, change: NewChange): Promise<string> {
 			const copy = copies.get(root);
 			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.change(change);
+		},
+		/** The still a comment on a root's team project kept of its frame, asked of the team; offline, refused. */
+		still(root: string, comment: string): Promise<Uint8Array | undefined> {
+			const copy = copies.get(root);
+			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.still(comment);
 		},
 		/** Hear who else is on a root's team canvas as it changes. Returns the unsubscribe. */
 		watchPresence(root: string, watcher: (presence: Presence) => void): () => void {

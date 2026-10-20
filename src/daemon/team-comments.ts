@@ -93,8 +93,8 @@ const REFUSALS: Record<CommentRefusal, string> = {
 const ANSWER_MS = 15_000;
 
 export interface CopyComments {
-	/** Hear one message from the team: true when it was about comments. */
-	hear(message: Record<string, unknown>): boolean;
+	/** Hear one message from the team, with the bytes riding it: true when it was about comments. */
+	hear(message: Record<string, unknown>, bytes?: Uint8Array): boolean;
 	/** Every comment this copy knows, in the order they were made, and when it last heard them. */
 	list(): KeptComments;
 	/** Send a new comment on a caught-up connection, with the frame's still if there is one. Its id. */
@@ -103,6 +103,8 @@ export interface CopyComments {
 	reply(socket: SyncSocket | undefined, reply: NewReply): Promise<string>;
 	/** Send a change to a comment on a caught-up connection; settled once the team took it and said what changed. */
 	change(socket: SyncSocket | undefined, change: NewChange): Promise<string>;
+	/** Ask the team for the still a comment kept of its frame: its bytes, or undefined when it kept none. */
+	still(socket: SyncSocket | undefined, comment: string): Promise<Uint8Array | undefined>;
 	/** The connection went: whatever waits on an answer fails as offline. */
 	lost(): void;
 }
@@ -115,7 +117,7 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 	let refs = 0;
 	const waiting = new Map<
 		string,
-		{ resolve(id: string): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
+		{ resolve(answer: Answer): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 	>();
 
 	let kept = JSON.stringify({ comments, reads });
@@ -131,19 +133,19 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 		kept = now;
 		onChange?.();
 	};
-	const settle = (ref: string, outcome: { id: string } | { error: Error }): void => {
+	const settle = (ref: string, outcome: Answer | { error: Error }): void => {
 		const waiter = waiting.get(ref);
 		if (waiter === undefined) return;
 		waiting.delete(ref);
 		clearTimeout(waiter.timer);
-		if ("id" in outcome) waiter.resolve(outcome.id);
-		else waiter.reject(outcome.error);
+		if ("error" in outcome) waiter.reject(outcome.error);
+		else waiter.resolve(outcome);
 	};
 	const send = (socket: SyncSocket | undefined, message: Record<string, unknown>, bytes?: Uint8Array) => {
 		if (socket === undefined) return Promise.reject(new CommentsOffline());
 		refs += 1;
 		const ref = `c${refs}`;
-		return new Promise<string>((resolve, reject) => {
+		return new Promise<Answer>((resolve, reject) => {
 			const timer = setTimeout(() => settle(ref, { error: new CommentRefused("unavailable") }), ANSWER_MS);
 			timer.unref?.();
 			waiting.set(ref, { resolve, reject, timer });
@@ -152,7 +154,7 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 	};
 
 	return {
-		hear(message) {
+		hear(message, bytes) {
 			if (!String(message.type).startsWith("comment")) return false;
 			const heard = readCommentsMessage(message);
 			if (heard === undefined) return true;
@@ -210,6 +212,9 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 				case "comment-posted":
 					settle(heard.ref, { id: heard.id });
 					break;
+				case "comment-still":
+					settle(heard.ref, { still: bytes });
+					break;
 				case "comment-refused":
 					settle(heard.ref, { error: new CommentRefused(heard.reason, heard.retryAfter) });
 					break;
@@ -217,14 +222,27 @@ export function copyComments(file: string | undefined, onChange?: () => void): C
 			return true;
 		},
 		list: () => ({ heard, comments, reads }),
-		post: (socket, comment, still) => send(socket, { type: "comment-post", ...comment }, still),
-		reply: (socket, reply) => send(socket, { type: "comment-reply", ...reply }),
-		change: (socket, change) => send(socket, { ...change }),
+		post: (socket, comment, still) => send(socket, { type: "comment-post", ...comment }, still).then(posted),
+		reply: (socket, reply) => send(socket, { type: "comment-reply", ...reply }).then(posted),
+		change: (socket, change) => send(socket, { ...change }).then(posted),
+		still: (socket, comment) =>
+			send(socket, { type: "comment-still-ask", comment }).then((answer) =>
+				"still" in answer ? answer.still : undefined,
+			),
 		lost() {
 			incoming = undefined;
 			for (const ref of [...waiting.keys()]) settle(ref, { error: new CommentsOffline() });
 		},
 	};
+}
+
+/** What the team answers a write or an ask with: the new id, or a still's bytes (none when it kept none). */
+type Answer = { id: string } | { still: Uint8Array | undefined };
+
+/** A write's answer: the id the team gave it. */
+function posted(answer: Answer): string {
+	if ("id" in answer) return answer.id;
+	throw new CommentRefused("unavailable");
 }
 
 /** The comments a copy last heard and when, as it kept them; none when it kept none or they can't be read. */
