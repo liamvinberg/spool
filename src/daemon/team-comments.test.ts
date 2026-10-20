@@ -500,6 +500,9 @@ describe("a comment for a share (spool#174)", () => {
 		await anas.online();
 		await bens.online();
 		expect((await anas.write({ body: "For the client", audience: { share: 3 } })).status).toBe(400);
+		// only to a share of this project, of the page it is on
+		expect((await anas.write({ body: "For the client", audience: { share: "s1" } })).status).toBe(400);
+		made.cloud.share("checkout", "s1", { pages: [""], by: "ana" });
 		const { id } = (await (await anas.write({ body: "For the client", audience: { share: "s1" } })).json()) as {
 			id: string;
 		};
