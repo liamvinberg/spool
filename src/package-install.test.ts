@@ -3,6 +3,7 @@ import { cpSync, existsSync, readFileSync, symlinkSync, unlinkSync, writeFileSyn
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PROTOCOL_VERSION } from "./team-sync-protocol";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { buildEntry } from "./ui/viewer/build-entry";
 
@@ -68,7 +69,7 @@ describe("packed install", () => {
 		const protocolProbe =
 			'const protocol = await import("spool.page/sync-protocol"); process.stdout.write(JSON.stringify([protocol.PROTOCOL_VERSION, typeof protocol.decodeFrame, protocol.travels("frames/home/frame.tsx")]));';
 		expect(JSON.parse(run(process.execPath, ["--input-type=module", "--eval", protocolProbe], prefix))).toEqual([
-			1,
+			PROTOCOL_VERSION,
 			"function",
 			true,
 		]);

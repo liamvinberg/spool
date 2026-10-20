@@ -9,7 +9,7 @@
  * Control messages are JSON text frames. A message carrying a file's bytes is a binary frame: a 4-byte
  * big-endian length, that many bytes of JSON header, then the file's bytes exactly as they are on disk.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** A team version: the number the object gave the save that made it. Versions only grow. */
 export type Version = number;
@@ -225,7 +225,7 @@ export interface TurnEnded {
 	type: "turn-ended";
 }
 
-export type DaemonMessage = Hello | Save | Saves | Resend | TurnEnded;
+export type DaemonMessage = Hello | Save | Saves | Resend | TurnEnded | CommentPost | CommentReplyPost;
 export type ObjectMessage =
 	| Welcome
 	| TeamFile
@@ -235,7 +235,8 @@ export type ObjectMessage =
 	| SetAside
 	| Refused
 	| Answers
-	| MonthCount;
+	| MonthCount
+	| CommentsMessage;
 
 /** A message and the bytes riding with it, if any. */
 export interface Framed<T> {
@@ -605,4 +606,374 @@ function isPresenceName(value: unknown): value is string {
 
 function finite(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value);
+}
+
+/*
+ * Comments (ADR 0011): what people leave on a team project's canvas for each other. They live in the project's sync
+ * object, in tables of their own outside the save path, and ride the sockets that are already open: a daemon that
+ * has caught up, and a member's browser looking at the canvas, is sent a snapshot of every comment it may read, then
+ * each change as it happens. Nothing here is a save: a comment takes nothing from the bucket or the month, makes no
+ * history and wakes no compile. A daemon writes on its socket; the object answers the writer by its `ref`.
+ */
+
+/** Who reads a comment: the team, or one share of the page it stands on, by the share's id. Replies keep it. */
+export type CommentAudience = "team" | { share: string };
+
+/**
+ * Where a comment stands now. `placed`: where it was put, on its frame or on its page's field. `deleted-frame`: its
+ * frame was deleted, so it dropped onto the field at the frame's last place. `deleted-page`: its page was deleted,
+ * so it is off the canvas.
+ */
+export type CommentStanding = "placed" | "deleted-frame" | "deleted-page";
+
+/** A person as comments name them: the same as presence does, resolved by Cloud from the account when it is read. */
+export type CommentPerson = PresencePerson;
+
+/** A pin's point: in its frame's own pixels from the frame's top-left, or a world point on the page's field. */
+export interface CommentPoint {
+	x: number;
+	y: number;
+}
+
+/**
+ * The element under the pin when it was placed, as the selection names one: its four handles (the frame is the
+ * comment's own, then the source path and lines, the selector, the excerpt) and what spool calls it. Context for
+ * agents only: the pin never follows the element.
+ */
+export interface CommentElement {
+	name: string;
+	path: string;
+	lines: [number, number];
+	selector: string;
+	excerpt: string;
+	/** The stamp is an ancestor's: JS-created DOM. */
+	generated?: true;
+}
+
+/** One reply under a comment, one level deep, in the order they were made. */
+export interface CommentReply {
+	id: string;
+	author: CommentPerson;
+	/** Written by the author's agent through `spool comments`. */
+	agent: boolean;
+	body: string;
+	/** Milliseconds since the epoch. */
+	created: number;
+	edited: number | null;
+	/** An agent's reply on a share's comment waits for this account to send it; null for a reply that went out. */
+	draftFor: string | null;
+}
+
+/** One comment as a reader gets it: its first message, where it stands, and every reply. */
+export interface Comment {
+	/** Short and printable, so a person and an agent can name it in a terminal. */
+	id: string;
+	audience: CommentAudience;
+	/** The page it stands on, by its path; "" for the root page. */
+	page: string;
+	/** The frame it is pinned to, by its path under frames/; null for the page's empty field. */
+	frame: string | null;
+	at: CommentPoint;
+	element: CommentElement | null;
+	/** The frame's source revision when the comment was made (core's `CompiledFrameDocument.source`); null on the field. */
+	revision: string | null;
+	/** Cloud keeps the frame's still from when the comment was made. */
+	still: boolean;
+	author: CommentPerson;
+	agent: boolean;
+	body: string;
+	created: number;
+	edited: number | null;
+	resolved: { by: CommentPerson; at: number } | null;
+	standing: CommentStanding;
+	replies: CommentReply[];
+}
+
+/**
+ * Daemon → object: a new comment, made by the person whose connection it is. The frame's still from the moment it
+ * was made rides the binary frame, when the daemon has one.
+ */
+export interface CommentPost {
+	type: "comment-post";
+	/** The daemon's own reference, echoed in the answer. */
+	ref: string;
+	page: string;
+	frame: string | null;
+	at: CommentPoint;
+	element: CommentElement | null;
+	revision: string | null;
+	body: string;
+	/** Written by the person's agent rather than by them. */
+	agent?: true;
+}
+
+/** Daemon → object: a reply to a comment, by the person whose connection it is. */
+export interface CommentReplyPost {
+	type: "comment-reply";
+	ref: string;
+	comment: string;
+	body: string;
+	agent?: true;
+}
+
+/**
+ * Object → reader: every comment it may read, in the order they were made, in parts. The part that is `first`
+ * replaces whatever the reader held; the one that is `last` ends it.
+ */
+export interface CommentsSnapshot {
+	type: "comments";
+	comments: Comment[];
+	first: boolean;
+	last: boolean;
+}
+
+/** Object → every reader of its audience: a comment was made. */
+export interface CommentAdded {
+	type: "comment-added";
+	comment: Comment;
+}
+
+/** Object → every reader of its comment's audience: a reply was made. */
+export interface CommentReplied {
+	type: "comment-replied";
+	comment: string;
+	reply: CommentReply;
+}
+
+/** Object → the writer: its comment or reply was taken, under this id. Readers hear it as `comment-added` first. */
+export interface CommentPosted {
+	type: "comment-posted";
+	ref: string;
+	id: string;
+}
+
+/**
+ * Why a comment or reply was not taken. `invalid_comment`: malformed, or its words empty or past
+ * `COMMENT_BODY_LIMIT`. `still_too_large`: its still is past `COMMENT_STILL_BYTES`, or no image.
+ * `comment_not_found`: a reply to a comment that isn't there, or that this person can't read.
+ */
+export type CommentRefusal =
+	| "invalid_comment"
+	| "still_too_large"
+	| "comment_not_found"
+	| Unauthorized
+	| "unpaid"
+	| "unavailable";
+
+/** Object → the writer: its comment or reply was not taken. */
+export interface CommentRefused {
+	type: "comment-refused";
+	ref: string;
+	reason: CommentRefusal;
+}
+
+export type CommentsMessage = CommentsSnapshot | CommentAdded | CommentReplied | CommentPosted | CommentRefused;
+
+/** The most a comment's or a reply's words may be; they are never empty. */
+export const COMMENT_BODY_LIMIT = 4_000;
+/** The largest still a comment keeps of its frame: a booth's cover is far smaller. */
+export const COMMENT_STILL_BYTES = 4 * 1024 * 1024;
+/** How many comments one part of a snapshot carries. */
+export const COMMENTS_PER_PART = 200;
+/** The most a page's, a frame's or an element handle's name or path may be. */
+const COMMENT_NAME = 512;
+/** The most an element's selector or excerpt may be. */
+const COMMENT_HANDLE = 4_000;
+/** An id or a ref. */
+const COMMENT_ID = 64;
+/** A source revision: core's source hash, hex. */
+const REVISION = /^[0-9a-f]{64}$/u;
+
+/** Whether words may be a comment's or a reply's: not blank, and within the limit. */
+export function isCommentBody(value: unknown): value is string {
+	return typeof value === "string" && value.trim() !== "" && value.length <= COMMENT_BODY_LIMIT;
+}
+
+/** A well-formed `comment-post`, copied field by field; undefined for anything else. */
+export function readCommentPost(message: Record<string, unknown>): CommentPost | undefined {
+	const { type, ref, page, frame, at, element, revision, body, agent } = message;
+	if (type !== "comment-post" || !isId(ref) || !isCommentName(page) || !(frame === null || isFrameName(frame)))
+		return undefined;
+	const point = readPoint(at);
+	const handles = element === null ? null : readCommentElement(element);
+	if (point === undefined || handles === undefined || !isCommentBody(body)) return undefined;
+	if (!(revision === null || (typeof revision === "string" && REVISION.test(revision)))) return undefined;
+	// a pin on the field stands on no frame, so takes no element and no revision
+	if (frame === null && (handles !== null || revision !== null)) return undefined;
+	if (!(agent === undefined || agent === true)) return undefined;
+	return {
+		type,
+		ref,
+		page,
+		frame,
+		at: point,
+		element: handles,
+		revision,
+		body,
+		...(agent === true ? { agent } : {}),
+	};
+}
+
+/** A well-formed `comment-reply`, copied field by field; undefined for anything else. */
+export function readCommentReplyPost(message: Record<string, unknown>): CommentReplyPost | undefined {
+	const { type, ref, comment, body, agent } = message;
+	if (type !== "comment-reply" || !isId(ref) || !isId(comment) || !isCommentBody(body)) return undefined;
+	if (!(agent === undefined || agent === true)) return undefined;
+	return { type, ref, comment, body, ...(agent === true ? { agent } : {}) };
+}
+
+/**
+ * A well-formed comments message from the object, as a daemon or a browser hears it, copied field by field;
+ * undefined for anything else, and for a message that isn't about comments.
+ */
+export function readCommentsMessage(message: Record<string, unknown>): CommentsMessage | undefined {
+	switch (message.type) {
+		case "comments": {
+			const { comments, first, last } = message;
+			if (!Array.isArray(comments) || typeof first !== "boolean" || typeof last !== "boolean") return undefined;
+			const read = comments.map(readComment);
+			if (!read.every((comment): comment is Comment => comment !== undefined)) return undefined;
+			return { type: "comments", comments: read, first, last };
+		}
+		case "comment-added": {
+			const comment = readComment(message.comment);
+			return comment === undefined ? undefined : { type: "comment-added", comment };
+		}
+		case "comment-replied": {
+			const reply = readCommentReply(message.reply);
+			if (!isId(message.comment) || reply === undefined) return undefined;
+			return { type: "comment-replied", comment: message.comment, reply };
+		}
+		case "comment-posted": {
+			const { ref, id } = message;
+			return isId(ref) && isId(id) ? { type: "comment-posted", ref, id } : undefined;
+		}
+		case "comment-refused": {
+			const { ref, reason } = message;
+			return isId(ref) && typeof reason === "string" && COMMENT_REFUSALS.has(reason)
+				? { type: "comment-refused", ref, reason: reason as CommentRefusal }
+				: undefined;
+		}
+		default:
+			return undefined;
+	}
+}
+
+const COMMENT_REFUSALS: ReadonlySet<string> = new Set<CommentRefusal>([
+	"invalid_comment",
+	"still_too_large",
+	"comment_not_found",
+	"signed_out",
+	"not_editor",
+	"unpaid",
+	"unavailable",
+]);
+
+/** A well-formed comment, copied field by field; undefined for anything else. */
+export function readComment(value: unknown): Comment | undefined {
+	if (!isRecord(value)) return undefined;
+	const { id, audience, page, frame, at, element, revision, still, author, agent, body, created, edited } = value;
+	const { resolved, standing, replies } = value;
+	if (!isId(id) || !isCommentName(page) || !(frame === null || isFrameName(frame))) return undefined;
+	const who = readCommentPerson(author);
+	const point = readPoint(at);
+	const handles = element === null ? null : readCommentElement(element);
+	const heard = readAudience(audience);
+	if (who === undefined || point === undefined || handles === undefined || heard === undefined) return undefined;
+	if (!(revision === null || (typeof revision === "string" && REVISION.test(revision)))) return undefined;
+	if (typeof still !== "boolean" || typeof agent !== "boolean" || typeof body !== "string") return undefined;
+	if (!isTime(created) || !(edited === null || isTime(edited))) return undefined;
+	if (standing !== "placed" && standing !== "deleted-frame" && standing !== "deleted-page") return undefined;
+	let closed: Comment["resolved"] = null;
+	if (resolved !== null) {
+		if (!isRecord(resolved) || !isTime(resolved.at)) return undefined;
+		const by = readCommentPerson(resolved.by);
+		if (by === undefined) return undefined;
+		closed = { by, at: resolved.at };
+	}
+	if (!Array.isArray(replies)) return undefined;
+	const read = replies.map(readCommentReply);
+	if (!read.every((reply): reply is CommentReply => reply !== undefined)) return undefined;
+	return {
+		id,
+		audience: heard,
+		page,
+		frame,
+		at: point,
+		element: handles,
+		revision,
+		still,
+		author: who,
+		agent,
+		body,
+		created,
+		edited,
+		resolved: closed,
+		standing,
+		replies: read,
+	};
+}
+
+/** A well-formed reply, copied field by field; undefined for anything else. */
+export function readCommentReply(value: unknown): CommentReply | undefined {
+	if (!isRecord(value)) return undefined;
+	const { id, author, agent, body, created, edited, draftFor } = value;
+	const who = readCommentPerson(author);
+	if (!isId(id) || who === undefined || typeof agent !== "boolean" || typeof body !== "string") return undefined;
+	if (!isTime(created) || !(edited === null || isTime(edited))) return undefined;
+	if (!(draftFor === null || isId(draftFor))) return undefined;
+	return { id, author: who, agent, body, created, edited, draftFor };
+}
+
+/** An element's handles, copied field by field; undefined for anything not well formed or past its bounds. */
+export function readCommentElement(value: unknown): CommentElement | undefined {
+	if (!isRecord(value)) return undefined;
+	const { name, path, lines, selector, excerpt, generated } = value;
+	if (!isCommentName(name) || !isCommentName(path) || !isHandle(selector) || !isHandle(excerpt)) return undefined;
+	if (!Array.isArray(lines) || lines.length !== 2) return undefined;
+	const [from, to] = lines;
+	if (!isLine(from) || !isLine(to)) return undefined;
+	if (!(generated === undefined || generated === true)) return undefined;
+	return { name, path, lines: [from, to], selector, excerpt, ...(generated === true ? { generated } : {}) };
+}
+
+function readCommentPerson(value: unknown): CommentPerson | undefined {
+	if (!isRecord(value)) return undefined;
+	const { accountId, name, color } = value;
+	if (typeof accountId !== "string" || typeof name !== "string" || typeof color !== "string") return undefined;
+	return { accountId, name, color };
+}
+
+function readAudience(value: unknown): CommentAudience | undefined {
+	if (value === "team") return "team";
+	return isRecord(value) && isId(value.share) ? { share: value.share } : undefined;
+}
+
+function readPoint(value: unknown): CommentPoint | undefined {
+	return isRecord(value) && finite(value.x) && finite(value.y) ? { x: value.x, y: value.y } : undefined;
+}
+
+function isId(value: unknown): value is string {
+	return typeof value === "string" && value !== "" && value.length <= COMMENT_ID;
+}
+
+/** A page's path: "" is the root page. */
+function isCommentName(value: unknown): value is string {
+	return typeof value === "string" && value.length <= COMMENT_NAME;
+}
+
+function isFrameName(value: unknown): value is string {
+	return isCommentName(value) && value !== "";
+}
+
+function isHandle(value: unknown): value is string {
+	return typeof value === "string" && value.length <= COMMENT_HANDLE;
+}
+
+function isLine(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isTime(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
