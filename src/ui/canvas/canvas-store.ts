@@ -6,6 +6,7 @@ import type { FlowEdge, Place, ProjectedFrame } from "../api";
 import type { ShareContext } from "../share-control";
 import type { CanvasTool } from "./canvas-tools";
 import type { CommentDraft } from "./comments-layer";
+import { FILTERS, type Filters } from "./comments-model";
 import type { HandEdit } from "./hand-edit";
 import type { Staging } from "./history";
 import type { PickedSelection } from "./overlays";
@@ -74,6 +75,10 @@ export interface CanvasState {
 	commentDraft: CommentDraft | null;
 	/** the comment whose card is open, by id */
 	commentOpen: string | null;
+	/** Shift+C put every comment pin away (spool#170) */
+	pinsHidden: boolean;
+	/** the Comments tab's filters, its Resolved switch showing resolved pins too */
+	commentFilters: Filters;
 }
 
 export interface CanvasContextMenu {
@@ -123,6 +128,8 @@ export function createCanvasStore(): CanvasStore {
 		finding: false,
 		commentDraft: null,
 		commentOpen: null,
+		pinsHidden: false,
+		commentFilters: FILTERS,
 	};
 	const listeners = new Set<() => void>();
 	return {

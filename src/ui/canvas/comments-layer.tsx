@@ -1,6 +1,8 @@
 import {
+	type ComponentProps,
 	type KeyboardEvent,
 	type ReactNode,
+	type RefObject,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -8,24 +10,45 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { flushSync } from "react-dom";
-import type { Comment, CommentPerson } from "../../team-sync-protocol";
-import { type CommentsRead, fetchComments, postComment, postReply } from "../api";
+import { createPortal, flushSync } from "react-dom";
+import type { Comment, CommentPerson, CommentReply } from "../../team-sync-protocol";
+import {
+	type CommentChanged,
+	type CommentMentionable,
+	type CommentsRead,
+	changeComment,
+	fetchCommentPeople,
+	fetchComments,
+	postComment,
+	postReply,
+} from "../api";
 import { cn } from "../cn";
-import { CloseIcon } from "../icons";
+import { CloseIcon, DotsIcon, ResolveIcon } from "../icons";
 import { Button, IconButton } from "../primitives/actions";
-import { Kbd } from "../primitives/display";
+import { Dot, Kbd } from "../primitives/display";
+import { TextAction } from "../primitives/feedback";
 import { TextareaBare } from "../primitives/inputs";
-import { Popover } from "../primitives/overlays";
+import { Menu, MenuItem, MenuSeparator, Popover } from "../primitives/overlays";
 import type { Box, Point } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { type CanvasStore, useCanvasField } from "./canvas-store";
+import {
+	fanOut,
+	gather,
+	isUnread,
+	mentionAsked,
+	mentionedIn,
+	mentionRuns,
+	type Named,
+	type Reader,
+} from "./comments-model";
 import { PRESENCE_INK } from "./presence-faces";
 
 /**
- * Comments on a team canvas (ADR 0011, spool#169): a pin for each comment on this page, where it was put, and the
- * card a pin opens, with the comment, its replies in order and a field to reply in; and the composer the Comment tool
- * opens at a pin it places. Pins stand in screen pixels over the field, one size at every zoom, as presence does.
+ * Comments on a team canvas (ADR 0011, spool#169, spool#170): a pin for each comment on this page, where it was put,
+ * gathered into a count where pins crowd; the card a pin opens, with the comment, its replies in order, a field to
+ * reply in, Resolve and each message's ⋯; and the composer the Comment tool opens at a pin it places. Pins stand in
+ * screen pixels over the field, one size at every zoom, as presence does.
  *
  * What the canvas reads comes from the daemon, which keeps what the team last said so it shows offline too; writing
  * goes through it to the team while the project is connected, and is refused, words kept, while it isn't.
@@ -50,12 +73,14 @@ export interface CommentDraft {
 /** The event the canvas passes the daemon's `comments` change on as. */
 export const COMMENTS_CHANGE = "spool-comments-change";
 
+const NOTHING_READ: CommentsRead = { online: false, comments: [], reads: {}, url: null };
+
 /**
  * A team project's comments as this Mac knows them: read when the canvas opens, whenever the daemon says they
  * changed, and when the window comes back to the front.
  */
 export function useComments(project: string, team: boolean): CommentsRead & { refresh: () => void } {
-	const [read, setRead] = useState<CommentsRead>({ online: false, comments: [] });
+	const [read, setRead] = useState<CommentsRead>(NOTHING_READ);
 	const asked = useRef(0);
 	const refresh = useCallback(() => {
 		if (!team) return;
@@ -77,6 +102,22 @@ export function useComments(project: string, team: boolean): CommentsRead & { re
 	return { ...read, refresh };
 }
 
+/** The members a comment on a team project can mention, asked once the canvas knows it is a team's. */
+export function useCommentPeople(project: string, team: boolean): readonly CommentMentionable[] {
+	const [people, setPeople] = useState<readonly CommentMentionable[]>([]);
+	useEffect(() => {
+		if (!team) return;
+		let live = true;
+		void fetchCommentPeople(project).then((found) => {
+			if (live) setPeople(found);
+		});
+		return () => {
+			live = false;
+		};
+	}, [project, team]);
+	return people;
+}
+
 /** Where a comment stands on its page's field, in world units; undefined when its frame isn't on this page. */
 export function commentWorld(
 	comment: { frame: string | null; at: Point },
@@ -92,28 +133,45 @@ export function placeSays(comment: { frame: string | null }): string {
 	return comment.frame === null ? "on the field" : comment.frame;
 }
 
+/** A comment's link, for a teammate: the project's canvas at the team, opened on it. */
+export function commentLink(url: string | null, id: string): string | null {
+	return url === null ? null : `${url}?comment=${encodeURIComponent(id)}`;
+}
+
+/** What the layer needs of the canvas besides the comments: who reads, whom they can mention, and how to say so. */
+export interface CommentsContext {
+	project: string;
+	reader: Reader;
+	people: readonly CommentMentionable[];
+	online: boolean;
+	url: string | null;
+	refresh: () => void;
+	/** a word to the person: a link copied, or why something didn't go */
+	notice: (notice: { kind: "success" | "error"; message: string }) => void;
+}
+
 export function CommentsLayer({
-	project,
+	context,
 	store,
 	camera,
 	frames,
 	page,
 	comments,
-	online,
-	refresh,
 }: {
-	project: string;
+	context: CommentsContext;
 	store: CanvasStore;
 	camera: CameraStore;
 	/** The frames on this page, in world units. */
 	frames: readonly (Box & { name: string })[];
 	page: string;
 	comments: readonly Comment[];
-	online: boolean;
-	refresh: () => void;
 }) {
 	const [draft, setDraft] = useCanvasField(store, "commentDraft");
 	const [open, setOpen] = useCanvasField(store, "commentOpen");
+	const [hidden] = useCanvasField(store, "pinsHidden");
+	const [filters] = useCanvasField(store, "commentFilters");
+	/** the count fanned out, by its first pin's comment */
+	const [fanned, setFanned] = useState<string | null>(null);
 	const [, redraw] = useReducer((n: number) => n + 1, 0);
 	const field = useRef<HTMLDivElement>(null);
 	const [size, setSize] = useState({ w: 0, h: 0 });
@@ -128,58 +186,108 @@ export function CommentsLayer({
 	}, []);
 	// pins stand in screen pixels, so a camera drawn is drawn here in the same frame
 	useEffect(() => camera.subscribe(() => flushSync(redraw)), [camera]);
+	// a fanned count folds as the camera moves on
+	useEffect(() => camera.subscribe(() => setFanned(null)), [camera]);
+	// and when the pins are put away
+	useEffect(() => {
+		if (hidden) setFanned(null);
+	}, [hidden]);
 
 	const cam = camera.get();
 	const toScreen = (at: Point) => (cam === null ? at : { x: at.x * cam.k + cam.x, y: at.y * cam.k + cam.y });
+	// resolved pins stand only while the inbox's Resolved switch is on; a deleted page's never do
 	const here = comments.flatMap((comment) => {
 		if (comment.page !== page || comment.standing === "deleted-page") return [];
+		if (comment.resolved !== null && !filters.resolved && comment.id !== open) return [];
 		const world = commentWorld(comment, frames);
-		return world === undefined ? [] : [{ comment, at: toScreen(world) }];
+		return world === undefined ? [] : [{ comment, ...toScreen(world) }];
 	});
-	const opened = open === null ? undefined : here.find((one) => one.comment.id === open);
+	const groups = gather(here);
+	const openComment = open === null ? undefined : comments.find((comment) => comment.id === open);
+	const openPin = here.find((one) => one.comment.id === open);
+	// a comment with no pin here, a deleted page's, opens beside the inbox, at the canvas's right
+	const parked = { x: Math.max(EDGE, size.w - CARD_W - PIN - 2 * EDGE), y: 64 };
+	const cardAt =
+		openComment === undefined
+			? undefined
+			: openPin !== undefined
+				? openPin
+				: openComment.standing === "deleted-page" || openComment.page === page
+					? parked
+					: undefined;
 	const drafted = draft === null || draft.page !== page ? undefined : commentWorld(draft, frames);
 	const draftAt = drafted === undefined ? undefined : toScreen(drafted);
+	const toggle = (id: string) => {
+		setDraft(null);
+		setOpen(id === open ? null : id);
+	};
+	const pin = (comment: Comment, at: Point) => (
+		<Pin
+			key={comment.id}
+			comment={comment}
+			at={at}
+			open={comment.id === open}
+			unread={isUnread(comment, context.reader)}
+			onOpen={() => toggle(comment.id)}
+		/>
+	);
 
 	return (
 		<div ref={field} className="pointer-events-none absolute inset-0 overflow-hidden" data-comments-layer="">
-			{here.map(({ comment, at }) => (
-				<Pin
-					key={comment.id}
-					id={comment.id}
-					by={comment.author}
-					agent={comment.agent}
-					at={at}
-					open={comment.id === open}
-					onOpen={() => {
-						setDraft(null);
-						setOpen(comment.id === open ? null : comment.id);
-					}}
-				/>
-			))}
+			{hidden
+				? null
+				: groups.map((group) => {
+						const [first] = group;
+						if (first === undefined) return null;
+						if (group.length === 1) return pin(first.comment, first);
+						const centre = {
+							x: Math.round(group.reduce((sum, one) => sum + one.x, 0) / group.length),
+							y: Math.round(group.reduce((sum, one) => sum + one.y, 0) / group.length),
+						};
+						const isFanned = fanned === first.comment.id;
+						return (
+							<span key={first.comment.id} data-comment-count={group.length}>
+								{isFanned ? (
+									<Fan
+										spots={group}
+										places={fanOut(group.length, centre)}
+										pin={(at, index) => {
+											const one = group[index];
+											return one === undefined ? null : pin(one.comment, at);
+										}}
+									/>
+								) : null}
+								<Cluster
+									at={centre}
+									people={group.map((one) => one.comment.author)}
+									unread={group.some((one) => isUnread(one.comment, context.reader))}
+									lit={isFanned}
+									onClick={() => setFanned(isFanned ? null : first.comment.id)}
+								/>
+							</span>
+						);
+					})}
 			{draftAt === undefined ? null : <GhostPin at={draftAt} />}
-			{opened === undefined || cam === null ? null : (
-				<CardAt at={opened.at} canvas={size}>
+			{openComment === undefined || cardAt === undefined || cam === null ? null : (
+				<CardAt at={cardAt} canvas={size}>
 					<CommentCard
-						key={opened.comment.id}
-						project={project}
-						comment={opened.comment}
-						online={online}
+						key={openComment.id}
+						context={context}
+						comment={openComment}
 						onClose={() => setOpen(null)}
-						onSent={refresh}
 					/>
 				</CardAt>
 			)}
 			{draft === null || draftAt === undefined ? null : (
 				<CardAt at={draftAt} canvas={size}>
 					<Composer
-						project={project}
+						context={context}
 						draft={draft}
-						online={online}
 						onClose={() => setDraft(null)}
 						onSent={(id) => {
 							setDraft(null);
 							setOpen(id);
-							refresh();
+							context.refresh();
 						}}
 					/>
 				</CardAt>
@@ -188,34 +296,51 @@ export function CommentsLayer({
 	);
 }
 
+/** A press on a pin or a count is its own: it never reaches the field under it. */
+const OWN_PRESS = {
+	onPointerDown: (event: { stopPropagation(): void }) => event.stopPropagation(),
+	onDoubleClick: (event: { stopPropagation(): void }) => event.stopPropagation(),
+};
+
+/** The ring a pin wears: open thicker, unread in the accent, otherwise only the gap to what is under it. */
+function ringOf(open: boolean, unread: boolean): string {
+	if (open) return "0 0 0 1.5px var(--color-surface-window), 0 0 0 3.5px var(--color-accent)";
+	if (unread) return "0 0 0 1.5px var(--color-surface-window), 0 0 0 3px var(--color-accent)";
+	return "0 0 0 1.5px var(--color-surface-window)";
+}
+
 /**
  * A pin: its author's initial in their presence colour, its bottom-left corner on the spot. An agent's is
- * square-cornered. Under any tool, a click on it opens its card.
+ * square-cornered; a resolved one hollow with a check; one whose frame is gone dashed. Unread wears the accent as a
+ * ring, open a thicker one. Under any tool, a click on it opens its card.
  */
 function Pin({
-	id,
-	by,
-	agent,
+	comment,
 	at,
 	open,
+	unread,
 	onOpen,
 }: {
-	id: string;
-	by: CommentPerson;
-	agent: boolean;
+	comment: Comment;
 	at: Point;
 	open: boolean;
+	unread: boolean;
 	onOpen: () => void;
 }) {
 	const round = PIN / 2;
+	const by = comment.author;
+	const resolved = comment.resolved !== null;
+	const orphan = comment.standing === "deleted-frame";
+	const hollow = resolved || orphan;
 	return (
 		<button
 			type="button"
-			aria-label={`Comment by ${by.name}`}
+			aria-label={`Comment by ${by.name}${resolved ? ", resolved" : ""}${unread ? ", unread" : ""}`}
 			aria-expanded={open}
-			data-comment-pin={id}
-			onPointerDown={(event) => event.stopPropagation()}
-			onDoubleClick={(event) => event.stopPropagation()}
+			data-comment-pin={comment.id}
+			data-unread={unread ? "" : undefined}
+			data-resolved={resolved ? "" : undefined}
+			{...OWN_PRESS}
 			onClick={(event) => {
 				event.stopPropagation();
 				onOpen();
@@ -223,23 +348,137 @@ function Pin({
 			className={cn(
 				"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-transform duration-fast ease-out",
 				open ? "z-20 scale-110" : "z-10 hover:scale-105",
+				hollow ? "bg-surface-raised text-secondary" : null,
 			)}
 			style={{
 				left: at.x,
 				top: at.y - PIN,
 				width: PIN,
 				height: PIN,
-				borderRadius: agent ? 5 : `${round}px ${round}px ${round}px 2px`,
+				borderRadius: comment.agent ? 5 : `${round}px ${round}px ${round}px 2px`,
 				transformOrigin: "0 100%",
-				background: by.color,
-				color: PRESENCE_INK,
-				boxShadow: open
-					? "0 0 0 1.5px var(--color-surface-window), 0 0 0 3.5px var(--color-accent)"
-					: "0 0 0 1.5px var(--color-surface-window)",
+				...(hollow ? {} : { background: by.color, color: PRESENCE_INK }),
+				boxShadow: ringOf(open, unread),
+				...(orphan ? { outline: "1.25px dashed var(--color-secondary)", outlineOffset: -1.25 } : {}),
+				opacity: resolved ? 0.75 : 1,
 			}}
 		>
-			{by.name.charAt(0)}
+			{resolved ? <CheckGlyph /> : by.name.charAt(0)}
 		</button>
+	);
+}
+
+function CheckGlyph() {
+	return (
+		<svg viewBox="0 0 12 12" width="12" height="12" fill="none" aria-hidden="true">
+			<path
+				d="m2.5 6.25 2.25 2.25 4.75-5"
+				stroke="currentColor"
+				strokeWidth="1.6"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** Pins closer than 32 screen px as one: a count where they meet, with two faces, a dot when one is unread. */
+function Cluster({
+	at,
+	people,
+	unread,
+	lit,
+	onClick,
+}: {
+	at: Point;
+	people: readonly CommentPerson[];
+	unread: boolean;
+	lit: boolean;
+	onClick: () => void;
+}) {
+	const faces = people.filter(
+		(one, index) => people.findIndex((other) => other.accountId === one.accountId) === index,
+	);
+	return (
+		<button
+			type="button"
+			aria-label={`${people.length} comments here`}
+			aria-expanded={lit}
+			data-comment-cluster={people.length}
+			{...OWN_PRESS}
+			onClick={(event) => {
+				event.stopPropagation();
+				onClick();
+			}}
+			className="pointer-events-auto absolute z-10 flex cursor-pointer items-center justify-center gap-1 rounded-full bg-surface-inverse pr-1.5 pl-[3px] text-on-inverse transition-transform duration-fast ease-out hover:scale-105"
+			style={{
+				left: at.x - PIN / 2,
+				top: at.y - PIN / 2,
+				height: PIN,
+				minWidth: PIN,
+				boxShadow: ringOf(lit, false),
+			}}
+		>
+			<span className="flex">
+				{faces.slice(0, 2).map((person, index) => (
+					<span
+						key={person.accountId}
+						className="flex size-4 items-center justify-center rounded-full font-semibold text-[8px] uppercase leading-none"
+						style={{
+							background: person.color,
+							color: PRESENCE_INK,
+							marginLeft: index === 0 ? 0 : -5,
+							boxShadow: "0 0 0 1.5px var(--color-surface-inverse)",
+						}}
+					>
+						{person.name.charAt(0)}
+					</span>
+				))}
+			</span>
+			<span className="font-semibold text-[11px] tabular-nums leading-none">{people.length}</span>
+			{unread ? (
+				<span
+					className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-accent"
+					style={{ boxShadow: "0 0 0 1.5px var(--color-surface-window)" }}
+				/>
+			) : null}
+		</button>
+	);
+}
+
+/** A count clicked open: its pins on an arc above it, each tied by a hair to where it really stands. */
+function Fan({
+	spots,
+	places,
+	pin,
+}: {
+	spots: readonly Point[];
+	places: readonly Point[];
+	pin: (at: Point, index: number) => ReactNode;
+}) {
+	return (
+		<>
+			<svg className="pointer-events-none absolute inset-0 z-[9] size-full" aria-hidden="true">
+				{places.map((place, index) => {
+					const spot = spots[index];
+					return spot === undefined ? null : (
+						// biome-ignore lint/suspicious/noArrayIndexKey: one hair per pin, in the fan's order
+						<g key={index}>
+							<line
+								x1={place.x}
+								y1={place.y}
+								x2={spot.x}
+								y2={spot.y}
+								stroke="var(--color-line-strong)"
+								strokeWidth="1"
+							/>
+							<circle cx={spot.x} cy={spot.y} r="2.5" fill="var(--color-accent)" />
+						</g>
+					);
+				})}
+			</svg>
+			{places.map((place, index) => pin(place, index))}
+		</>
 	);
 }
 
@@ -298,7 +537,7 @@ const OWN_POINTER = {
 };
 
 /** Who reads it: the team. A share's audience comes with sharing comments (spool#174). */
-function TeamLabel() {
+export function TeamLabel() {
 	return (
 		<span className="inline-flex shrink-0 items-center gap-1 text-secondary type-detail" data-comment-audience="team">
 			<TeamGlyph />
@@ -343,10 +582,91 @@ function ElementChip({ label }: { label: string }) {
 /** Said when a comment can't go: the project isn't connected to the team, so nothing is sent or kept to send later. */
 const OFFLINE = "Offline: comments go to spool.page, so this waits until the project is connected again.";
 
-/** The words field both the composer and a reply use: Enter sends, Shift+Enter is a new line, Esc closes. */
-function Words({
+/** Words that name people: every @mention of someone the comment knows, or the team has, in the accent. */
+export function Said({
+	text,
+	people,
+	className,
+}: {
+	text: string;
+	people: readonly Named[];
+	className?: string | undefined;
+}) {
+	return (
+		<p className={cn("whitespace-pre-wrap break-words text-primary type-body", className)} data-comment-body="">
+			{mentionRuns(text, people).map((run, at) =>
+				run.mention ? (
+					// biome-ignore lint/suspicious/noArrayIndexKey: the runs of one message's words
+					<span key={at} className="font-medium text-accent-strong" data-comment-mention="">
+						{run.text}
+					</span>
+				) : (
+					run.text
+				),
+			)}
+		</p>
+	);
+}
+
+/**
+ * A menu over everything, its own layer on the page, so the card's scrolling list never clips it: under its anchor,
+ * or over it when the window's foot is too near. A press anywhere else puts it away.
+ */
+function FloatingMenu({
+	anchor,
+	align,
+	width,
+	onDismiss,
+	style,
+	...rest
+}: ComponentProps<"div"> & {
+	anchor: RefObject<HTMLElement | null>;
+	align: "start" | "end";
+	width: number;
+	onDismiss?: () => void;
+}) {
+	const menu = useRef<HTMLDivElement>(null);
+	const [box, setBox] = useState<DOMRect | null>(null);
+	useLayoutEffect(() => setBox(anchor.current?.getBoundingClientRect() ?? null), [anchor]);
+	useEffect(() => {
+		if (onDismiss === undefined) return;
+		const away = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node)) return;
+			if (menu.current?.contains(target) || anchor.current?.contains(target)) return;
+			onDismiss();
+		};
+		document.addEventListener("pointerdown", away, true);
+		return () => document.removeEventListener("pointerdown", away, true);
+	}, [anchor, onDismiss]);
+	if (box === null) return null;
+	const left = Math.max(8, align === "end" ? box.right - width : box.left);
+	const above = box.bottom + 200 > window.innerHeight;
+	return createPortal(
+		<Menu
+			ref={menu}
+			{...rest}
+			className="fixed z-50"
+			style={{
+				...style,
+				left,
+				width,
+				...(above ? { bottom: window.innerHeight - box.top + 4 } : { top: box.bottom + 4 }),
+			}}
+		/>,
+		document.body,
+	);
+}
+
+/**
+ * The words field the composer, a reply and an edit use: a bare field with its ink drawn behind it, so an @mention
+ * reads in the accent while it is typed, and a trailing `@` with letters opens the members to name. Enter sends
+ * (or picks the lit member), Shift+Enter is a new line, Esc closes the menu first, then the card.
+ */
+function MentionField({
 	value,
 	onValue,
+	people,
 	placeholder,
 	rows,
 	onSend,
@@ -355,48 +675,129 @@ function Words({
 }: {
 	value: string;
 	onValue: (value: string) => void;
+	people: readonly CommentMentionable[];
 	placeholder: string;
 	rows: number;
 	onSend: () => void;
 	onEscape: () => void;
 	label: string;
 }) {
+	const [dismissed, setDismissed] = useState(false);
+	const [lit, setLit] = useState(0);
+	const field = useRef<HTMLDivElement>(null);
+	const asked = mentionAsked(value);
+	const typed = asked?.typed.toLowerCase() ?? "";
+	const matches =
+		asked === null || dismissed
+			? []
+			: people
+					.filter((person) =>
+						person.name
+							.toLowerCase()
+							.split(/\s+/u)
+							.some((word) => word.startsWith(typed)),
+					)
+					.slice(0, 8);
+	const pick = (person: CommentMentionable) => {
+		if (asked === null) return;
+		onValue(`${value.slice(0, asked.at)}@${person.name} `);
+	};
 	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+		if (matches.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+			event.preventDefault();
+			setLit((was) => (was + (event.key === "ArrowDown" ? 1 : matches.length - 1)) % matches.length);
+			return;
+		}
 		if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
 			event.preventDefault();
-			onSend();
+			const chosen = matches[Math.min(lit, matches.length - 1)];
+			if (chosen !== undefined) pick(chosen);
+			else onSend();
 		} else if (event.key === "Escape") {
 			event.preventDefault();
-			onEscape();
+			if (matches.length > 0) setDismissed(true);
+			else onEscape();
 		}
 	};
 	return (
-		<TextareaBare
-			value={value}
-			onValueChange={onValue}
-			rows={rows}
-			autoFocus
-			aria-label={label}
-			placeholder={placeholder}
-			onKeyDown={onKeyDown}
-		/>
+		<div ref={field} className="relative">
+			<div
+				aria-hidden="true"
+				className="pointer-events-none absolute inset-0 whitespace-pre-wrap break-words text-primary type-body"
+			>
+				{mentionRuns(value, people).map((run, at) =>
+					run.mention ? (
+						// biome-ignore lint/suspicious/noArrayIndexKey: the runs of the field's words
+						<span key={at} className="rounded-xs bg-accent-subtle text-accent-strong">
+							{run.text}
+						</span>
+					) : (
+						// biome-ignore lint/suspicious/noArrayIndexKey: the runs of the field's words
+						<span key={at}>{run.text}</span>
+					),
+				)}
+				{"\u200b"}
+			</div>
+			<TextareaBare
+				value={value}
+				onValueChange={(next) => {
+					onValue(next);
+					setLit(0);
+					setDismissed(false);
+				}}
+				rows={rows}
+				autoFocus
+				aria-label={label}
+				placeholder={placeholder}
+				onKeyDown={onKeyDown}
+				className="relative break-words text-transparent caret-primary"
+			/>
+			{matches.length === 0 ? null : (
+				<FloatingMenu anchor={field} align="start" width={240} data-comment-mentions="">
+					{matches.map((person, at) => (
+						<MenuItem
+							key={person.accountId}
+							label={person.name}
+							meta={person.you ? "you" : undefined}
+							data-state={at === Math.min(lit, matches.length - 1) ? "hover" : undefined}
+							onMouseDown={(event) => event.preventDefault()}
+							onClick={() => pick(person)}
+						/>
+					))}
+				</FloatingMenu>
+			)}
+		</div>
+	);
+}
+
+/** A refusal said in the card: offline has its own words, and the rest are the team's. */
+function RefusalLine({ refusal, online }: { refusal: string | null; online: boolean }) {
+	if (!online || refusal === "offline")
+		return (
+			<span className="text-secondary type-label" data-comment-offline="">
+				{OFFLINE}
+			</span>
+		);
+	return refusal === null ? null : (
+		<span className="text-danger type-label" data-comment-refusal="">
+			{refusal}
+		</span>
 	);
 }
 
 /** Writing a comment at a pin just placed: what was under it, who reads it, the words. Enter sends. */
 function Composer({
-	project,
+	context,
 	draft,
-	online,
 	onClose,
 	onSent,
 }: {
-	project: string;
+	context: CommentsContext;
 	draft: CommentDraft;
-	online: boolean;
 	onClose: () => void;
 	onSent: (id: string) => void;
 }) {
+	const { project, online, people } = context;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
@@ -414,6 +815,7 @@ function Composer({
 					? null
 					: { selector, outerHtml, source, generated },
 			body: text,
+			mentions: mentionedIn(text, people),
 		}).then((sent) => {
 			setSending(false);
 			if ("id" in sent) onSent(sent.id);
@@ -421,7 +823,7 @@ function Composer({
 		});
 	};
 	return (
-		<Popover pad="none" className="w-full" data-comment-composer="" {...OWN_POINTER}>
+		<Popover pad="none" className="w-full overflow-visible" data-comment-composer="" {...OWN_POINTER}>
 			<div className="flex min-h-10 shrink-0 items-center gap-1.5 border-line-default border-b pr-1.5 pl-3">
 				<span className="shrink-0 text-tertiary type-detail">
 					{draft.frame === null ? "on the field" : `on ${draft.frame}`}
@@ -431,25 +833,20 @@ function Composer({
 				<IconButton size="sm" icon={<CloseIcon />} label="Cancel" onClick={onClose} />
 			</div>
 			<div className="flex flex-col gap-2.5 px-3 pt-2.5 pb-2.5">
-				<Words
+				<MentionField
 					value={text}
 					onValue={(next) => {
 						setText(next);
 						if (refusal !== null && refusal !== "offline") setRefusal(null);
 					}}
+					people={people}
 					rows={2}
 					label="Comment"
-					placeholder="Comment"
+					placeholder="Comment, @ to mention"
 					onSend={send}
 					onEscape={onClose}
 				/>
-				{offline ? (
-					<span className="text-secondary type-label" data-comment-offline="">
-						{OFFLINE}
-					</span>
-				) : refusal === null ? null : (
-					<span className="text-danger type-label">{refusal}</span>
-				)}
+				<RefusalLine refusal={refusal} online={online} />
 				<div className="flex items-center gap-2">
 					<TeamLabel />
 					<span className="min-w-0 flex-1" />
@@ -469,63 +866,136 @@ function Composer({
 	);
 }
 
-/** An open comment: who reads it and where it is, the first message and its replies in order, and a reply field. */
-function CommentCard({
-	project,
+/** Who a comment can name: the members, and whoever it already names, by the name each has now. */
+function namesIn(comment: Comment, people: readonly Named[]): Named[] {
+	const said = [comment, ...comment.replies].flatMap((message) => message.mentions ?? []);
+	return [...people, ...said];
+}
+
+/**
+ * An open comment: who reads it and where it is, Resolve and close; who resolved it, or that its page is gone; the
+ * first message and its replies in order, each with its ⋯; and a reply field. Opened, it is read.
+ */
+export function CommentCard({
+	context,
 	comment,
-	online,
 	onClose,
-	onSent,
 }: {
-	project: string;
+	context: CommentsContext;
 	comment: Comment;
-	online: boolean;
 	onClose: () => void;
-	onSent: () => void;
 }) {
+	const { project, online, people, reader, refresh } = context;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
 	const offline = !online || refusal === "offline";
+	const resolved = comment.resolved;
+	const unread = isUnread(comment, reader);
+	// opening the card reads it, and anything said while it stands open is read as it arrives
+	useEffect(() => {
+		if (!unread || !online) return;
+		void changeComment(project, comment.id, { type: "read" }).then(refresh);
+	}, [project, comment.id, unread, online, refresh]);
+	/** a change sent: the canvas hears the result, or the card says why not */
+	const change = (sent: Promise<CommentChanged>, then?: () => void) => {
+		void sent.then((done) => {
+			if ("error" in done) setRefusal(done.error === "offline" ? "offline" : done.message);
+			else {
+				setRefusal(null);
+				then?.();
+				refresh();
+			}
+		});
+	};
+	const toggleResolved = () =>
+		change(changeComment(project, comment.id, { type: resolved === null ? "resolve" : "reopen" }));
 	const send = () => {
 		if (text.trim() === "" || sending || offline) return;
 		setSending(true);
-		void postReply(project, comment.id, text).then((sent) => {
+		void postReply(project, comment.id, text, mentionedIn(text, people)).then((sent) => {
 			setSending(false);
 			if ("id" in sent) {
 				setText("");
-				onSent();
+				refresh();
 			} else setRefusal(sent.error === "offline" ? "offline" : sent.message);
 		});
+	};
+	const named = namesIn(comment, people);
+	const menu = {
+		context,
+		comment,
+		onChange: change,
+		onUnread: () => change(changeComment(project, comment.id, { type: "unread" }), onClose),
 	};
 	return (
 		<Popover pad="none" className="flex min-h-0 w-full flex-col" data-comment-card={comment.id} {...OWN_POINTER}>
 			<div className="flex h-10 shrink-0 items-center gap-2 border-line-default border-b pr-1.5 pl-3">
 				<TeamLabel />
 				<span className="min-w-0 flex-1 truncate text-tertiary type-detail">{placeSays(comment)}</span>
+				<IconButton
+					size="sm"
+					icon={
+						<ResolveIcon done={resolved !== null} className={cn("size-4", resolved !== null && "text-accent")} />
+					}
+					label={resolved === null ? "Resolve" : "Reopen"}
+					disabled={offline}
+					onClick={toggleResolved}
+				/>
 				<IconButton size="sm" icon={<CloseIcon />} label="Close" onClick={onClose} />
 			</div>
+			{resolved === null ? null : (
+				<div
+					className="flex h-9 shrink-0 items-center gap-2 border-line-default border-b bg-surface-panel px-3"
+					data-comment-resolved=""
+				>
+					<ResolveIcon done className="size-3.5 text-accent" />
+					<span className="min-w-0 flex-1 truncate text-secondary type-label">
+						Resolved by {resolved.by.name}, {resolvedAgo(resolved.at)}
+					</span>
+					<TextAction className="-mr-1.5" disabled={offline} onClick={toggleResolved}>
+						Reopen
+					</TextAction>
+				</div>
+			)}
+			{comment.standing !== "deleted-page" ? null : (
+				<div className="flex shrink-0 items-start gap-2 border-line-default border-b bg-surface-panel px-3 py-2">
+					<span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-danger-strong" />
+					<span className="min-w-0 flex-1 text-secondary type-label">
+						Its page, {comment.page || "the root page"}, was deleted. The comment stays here, under Resolved.
+					</span>
+				</div>
+			)}
 			<div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-3 py-3">
 				<Message
-					by={comment.author}
-					agent={comment.agent}
-					when={comment.created}
-					body={comment.body}
+					message={comment}
+					names={named}
+					unread={unreadMessage(comment, comment, reader)}
+					acts={menu}
 					chip={comment.element === null ? undefined : <ElementChip label={comment.element.name} />}
 				/>
-				{comment.replies.map((reply) => (
-					<Message key={reply.id} by={reply.author} agent={reply.agent} when={reply.created} body={reply.body} />
-				))}
+				{comment.replies
+					.filter((reply) => reply.draftFor === null)
+					.map((reply) => (
+						<Message
+							key={reply.id}
+							message={reply}
+							names={named}
+							unread={unreadMessage(reply, comment, reader)}
+							acts={{ ...menu, reply }}
+						/>
+					))}
 			</div>
 			<div className="flex shrink-0 flex-col gap-1.5 border-line-default border-t px-3 py-2.5">
 				<div className="flex items-end gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 py-1.5 focus-within:border-line-focus">
 					<div className="min-w-0 flex-1">
-						<Words
+						<MentionField
 							value={text}
 							onValue={(next) => {
 								setText(next);
 								if (refusal !== null && refusal !== "offline") setRefusal(null);
 							}}
+							people={people}
 							rows={1}
 							label="Reply"
 							placeholder="Reply"
@@ -543,39 +1013,127 @@ function CommentCard({
 						Reply
 					</Button>
 				</div>
-				{offline ? (
-					<span className="text-secondary type-label" data-comment-offline="">
-						{OFFLINE}
-					</span>
-				) : refusal === null ? null : (
-					<span className="text-danger type-label">{refusal}</span>
-				)}
+				<RefusalLine refusal={refusal} online={online} />
 			</div>
 		</Popover>
 	);
 }
 
-/** One message: the face, the name and when, the words; under the first, what was under the pin. */
+/** One message is unread when it came after the person last read its comment, and isn't theirs. */
+function unreadMessage(message: Comment | CommentReply, comment: Comment, reader: Reader): boolean {
+	const read = reader.reads[comment.id] ?? Number.NEGATIVE_INFINITY;
+	return message.author.accountId !== reader.me && message.created > read;
+}
+
+/** What a message's ⋯ and its edit need: the card's comment and how a change is sent. */
+interface MessageActs {
+	context: CommentsContext;
+	comment: Comment;
+	/** the reply it is, or the first message when left out */
+	reply?: CommentReply | undefined;
+	onChange: (sent: Promise<CommentChanged>, then?: () => void) => void;
+	onUnread: () => void;
+}
+
+/**
+ * A message's ⋯: on your own, Edit, Copy link and Delete (the first message's delete takes its replies with it); on
+ * anyone else's, Copy link, Mark unread and Delete, which every Mac's person may, a local copy being an editor's or
+ * an admin's.
+ */
+function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: MessageActs & { onEdit?: () => void }) {
+	const [open, setOpen] = useState(false);
+	const anchor = useRef<HTMLSpanElement>(null);
+	const author = (reply ?? comment).author;
+	const mine = author.accountId === context.reader.me;
+	const replies = comment.replies.filter((one) => one.draftFor === null).length;
+	const what = reply === undefined ? "comment" : "reply";
+	const copy = () => {
+		setOpen(false);
+		const link = commentLink(context.url, comment.id);
+		if (link === null) return;
+		void navigator.clipboard
+			?.writeText(link)
+			.then(() => context.notice({ kind: "success", message: "Copied the comment's link" }))
+			.catch(() => context.notice({ kind: "error", message: "Could not copy the link" }));
+	};
+	const remove = () => {
+		setOpen(false);
+		onChange(
+			changeComment(context.project, comment.id, {
+				type: "delete",
+				...(reply === undefined ? {} : { reply: reply.id }),
+			}),
+		);
+	};
+	const deleteSays =
+		reply !== undefined
+			? "Delete reply"
+			: replies > 0
+				? `Delete with ${replies} ${replies === 1 ? "reply" : "replies"}`
+				: "Delete comment";
+	return (
+		<span ref={anchor} className="relative flex">
+			<IconButton
+				size="sm"
+				icon={<DotsIcon />}
+				label={what === "comment" ? "Comment options" : "Reply options"}
+				aria-expanded={open}
+				onClick={() => setOpen(!open)}
+			/>
+			{open ? (
+				<FloatingMenu anchor={anchor} align="end" width={232} onDismiss={() => setOpen(false)} data-comment-menu="">
+					{mine && onEdit !== undefined ? (
+						<MenuItem
+							label="Edit"
+							disabled={!context.online}
+							onClick={() => {
+								setOpen(false);
+								onEdit();
+							}}
+						/>
+					) : null}
+					<MenuItem label="Copy link" disabled={context.url === null} onClick={copy} />
+					{mine ? null : (
+						<MenuItem
+							label="Mark as unread"
+							disabled={!context.online}
+							onClick={() => {
+								setOpen(false);
+								onUnread();
+							}}
+						/>
+					)}
+					<MenuSeparator />
+					<MenuItem label={deleteSays} destructive disabled={!context.online} onClick={remove} />
+				</FloatingMenu>
+			) : null}
+		</span>
+	);
+}
+
+/** One message: the face, the name and when, the words or the field editing them; under the first, the element. */
 function Message({
-	by,
-	agent,
-	when,
-	body,
+	message,
+	names,
+	unread,
+	acts,
 	chip,
 }: {
-	by: CommentPerson;
-	agent: boolean;
-	when: number;
-	body: string;
+	message: Comment | CommentReply;
+	names: readonly Named[];
+	unread: boolean;
+	acts: MessageActs;
 	chip?: ReactNode;
 }) {
+	const [editing, setEditing] = useState(false);
+	const by = message.author;
 	return (
-		<div className="flex gap-2.5" data-comment-message="">
+		<div className="group/msg relative flex gap-2.5" data-comment-message={message.id}>
 			<span
 				aria-hidden="true"
 				className={cn(
 					"mt-px inline-flex size-5 shrink-0 items-center justify-center font-semibold text-[10px] uppercase leading-none",
-					agent ? "rounded-[5px]" : "rounded-full",
+					message.agent ? "rounded-[5px]" : "rounded-full",
 				)}
 				style={{ background: by.color, color: PRESENCE_INK }}
 			>
@@ -584,16 +1142,70 @@ function Message({
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<div className="flex h-5 items-center gap-2">
 					<span className="truncate text-primary type-control">{by.name}</span>
-					{agent ? <span className="shrink-0 text-tertiary type-detail">agent</span> : null}
-					<span className="shrink-0 text-tertiary type-detail">{ago(when)}</span>
+					{message.agent ? <span className="shrink-0 text-tertiary type-detail">agent</span> : null}
+					<span className="shrink-0 text-tertiary type-detail">{ago(message.created)}</span>
+					{message.edited === null ? null : <span className="shrink-0 text-tertiary type-detail">edited</span>}
+					{unread ? <Dot tone="accent" /> : null}
+					<span className="ml-auto opacity-0 group-hover/msg:opacity-100 has-[[aria-expanded=true]]:opacity-100 group-focus-within/msg:opacity-100">
+						<MessageMenu {...acts} onEdit={() => setEditing(true)} />
+					</span>
 				</div>
-				<p className="whitespace-pre-wrap break-words text-primary type-body" data-comment-body="">
-					{body}
-				</p>
+				{editing ? (
+					<EditField acts={acts} text={message.body} onDone={() => setEditing(false)} />
+				) : (
+					<Said text={message.body} people={names} />
+				)}
 				{chip === undefined ? null : <span className="flex pt-1">{chip}</span>}
 			</div>
 		</div>
 	);
+}
+
+/** A message's words being edited by its author: Enter or Save sends them, marked edited; Esc or Cancel leaves them. */
+function EditField({ acts, text, onDone }: { acts: MessageActs; text: string; onDone: () => void }) {
+	const [value, setValue] = useState(text);
+	const { context, comment, reply } = acts;
+	const save = () => {
+		if (value.trim() === "") return;
+		if (value === text) return onDone();
+		acts.onChange(
+			changeComment(context.project, comment.id, {
+				type: "edit",
+				body: value,
+				mentions: mentionedIn(value, context.people),
+				...(reply === undefined ? {} : { reply: reply.id }),
+			}),
+			onDone,
+		);
+	};
+	return (
+		<div className="flex flex-col gap-2 pt-1" data-comment-edit="">
+			<MentionField
+				value={value}
+				onValue={setValue}
+				people={context.people}
+				rows={2}
+				label="Edit"
+				placeholder="Comment"
+				onSend={save}
+				onEscape={onDone}
+			/>
+			<div className="flex justify-end gap-1.5">
+				<Button size="sm" variant="ghost" onClick={onDone}>
+					Cancel
+				</Button>
+				<Button size="sm" variant="primary" disabled={value.trim() === ""} onClick={save}>
+					Save
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+/** When it was resolved, as the resolved line says it: just now, or how long ago. */
+function resolvedAgo(at: number): string {
+	const said = ago(at);
+	return said === "now" ? "just now" : `${said} ago`;
 }
 
 /** How long ago, as a card says it: now, then minutes, hours and days. */

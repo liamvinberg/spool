@@ -71,6 +71,8 @@ export interface PaneDef {
 	 * person or landed unread (#364). One small dot on its tab or rail icon, in sight or not.
 	 */
 	readonly elsewhere?: boolean | undefined;
+	/** What that dot says to a screen reader: the agent's "another chat has news" unless a pane says its own. */
+	readonly elsewhereSays?: string | undefined;
 	/**
 	 * Something in the pane stopped and only a person can move it: for the agent, a turn
 	 * waiting on an answer (#366). Its tab or rail icon wears the waiting mark, in sight or not.
@@ -474,7 +476,7 @@ export function PaneWindow({
 				: kind === "unread"
 					? `${def.title}, new reply`
 					: kind === "elsewhere"
-						? `${def.title}, another chat has news`
+						? `${def.title}, ${def.elsewhereSays ?? "another chat has news"}`
 						: def.title;
 
 	/* ── the drag ────────────────────────────────────────────────────── */

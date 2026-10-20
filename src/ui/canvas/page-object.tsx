@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { coverUrl } from "../api";
-import { FolderIcon } from "../icons";
+import { CommentIcon, FolderIcon } from "../icons";
+import { Dot } from "../primitives/display";
 import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
 import type { PageObject } from "./page-objects";
 
@@ -109,12 +110,15 @@ export function PageObjectLabel({
 	camera,
 	selected,
 	hovered,
+	comments,
 }: {
 	object: PageObject;
 	/** The name holds one size on screen through the zoom, the way a frame's does (#81). */
 	camera: CameraStore;
 	selected: boolean;
 	hovered: boolean;
+	/** On a team canvas, the open comments on the page and the pages in it: a page object shows a count, never pins. */
+	comments?: { open: number; unread: boolean } | undefined;
 }) {
 	const box = useRef<HTMLDivElement | null>(null);
 	const label = useRef<HTMLDivElement | null>(null);
@@ -148,6 +152,17 @@ export function PageObjectLabel({
 					{object.name}
 				</span>
 				<span className="shrink-0 pl-1 text-secondary type-detail">{object.count}</span>
+				{comments === undefined || comments.open === 0 ? null : (
+					<span
+						className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 text-secondary"
+						title={`${comments.open} open ${comments.open === 1 ? "comment" : "comments"}`}
+						data-page-comments={comments.open}
+					>
+						{comments.unread ? <Dot tone="accent" /> : null}
+						<CommentIcon className="size-3.5" />
+						<span className="tabular-nums type-detail">{comments.open}</span>
+					</span>
+				)}
 			</div>
 		</div>
 	);

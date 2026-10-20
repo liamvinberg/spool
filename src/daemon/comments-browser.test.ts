@@ -97,6 +97,8 @@ async function teamCanvas() {
 		/** Ben replies under a comment. */
 		benReplies: (comment: string, body: string) =>
 			socket.send(encodeFrame({ type: "comment-reply", ref: `b${++refs}`, comment, body })),
+		/** Ben changes a comment: resolves, reopens, edits or deletes it. */
+		benDoes: (change: Record<string, unknown>) => socket.send(encodeFrame({ ref: `b${++refs}`, ...change })),
 	};
 }
 
@@ -229,4 +231,146 @@ it("shows the comments it had offline, and says it's offline rather than sending
 	// the words stay where they were written
 	expect(await composer.locator("textarea").inputValue()).toBe("In the tunnel.");
 	expect(await page.locator("[data-comment-pin]").count()).toBe(1);
+});
+
+/** The ids of the rows the Comments tab lists, in order. */
+const rowsIn = (page: Page) =>
+	page.locator("[data-comment-row]").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-comment-row")));
+
+it("lists every comment in the Comments tab, filters them, and flies to a pin, reading it", {
+	timeout: 120_000,
+}, async () => {
+	const { cloud, page, benSays, benDoes } = await teamCanvas();
+	benSays({ frame: "menu", at: { x: 40, y: 40 }, body: "Is this the menu?" });
+	benSays({ frame: null, at: { x: 1600, y: 1200 }, body: "@ana where does it start?", mentions: ["ana"] });
+	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(2);
+	const [menu, field] = cloud.comments("checkout").map((comment) => comment.id);
+
+	// the tab stands beside Properties and Agent, and says there is news while it is out of sight
+	const tab = page.locator('[data-pane-tab="comments"]');
+	await expect.poll(() => tab.getAttribute("aria-label"), { timeout: 10_000 }).toBe("Comments, unread comments");
+	await tab.click();
+	await expect.poll(() => rowsIn(page)).toEqual([field, menu]);
+	expect(await page.locator("[data-comment-row][data-unread]").count()).toBe(2);
+	expect(await tab.getAttribute("aria-label")).toBe("Comments");
+
+	// for you: what mentions Ana; unread: both
+	await page.locator("[data-comments-pane]").getByText("for you", { exact: false }).click();
+	await expect.poll(() => rowsIn(page)).toEqual([field]);
+	await page.locator("[data-comments-pane]").getByText("all", { exact: false }).first().click();
+
+	// a row flies to the pin, opens it, and opening reads it, at the team too
+	await page.locator(`[data-comment-row="${field}"]`).click();
+	await page.locator(`[data-comment-card="${field}"]`).waitFor();
+	const pin = await page.locator(`[data-comment-pin="${field}"]`).boundingBox();
+	const view = page.viewportSize();
+	expect(pin).not.toBeNull();
+	expect(pin?.x ?? -1).toBeGreaterThan(0);
+	expect(pin?.x ?? 1e9).toBeLessThan(view?.width ?? 0);
+	expect(await page.locator(`[data-comment-card="${field}"] [data-comment-mention]`).textContent()).toBe("@ana");
+	await expect.poll(() => cloud.reads("checkout", "ana").has(field ?? ""), { timeout: 10_000 }).toBe(true);
+	await expect.poll(() => page.locator(`[data-comment-row="${field}"][data-unread]`).count()).toBe(0);
+
+	// resolved by a teammate, it leaves the list and the canvas until the Resolved switch is on
+	benDoes({ type: "comment-resolve", comment: menu });
+	await expect.poll(() => rowsIn(page)).toEqual([field]);
+	expect(await page.locator(`[data-comment-pin="${menu}"]`).count()).toBe(0);
+	await page.getByRole("switch", { name: "Show resolved" }).check({ force: true });
+	await expect.poll(() => rowsIn(page)).toEqual([field, menu]);
+	expect(await page.locator(`[data-comment-row="${menu}"]`).textContent()).toContain("resolved");
+	await page.locator(`[data-comment-pin="${menu}"][data-resolved]`).waitFor();
+});
+
+it("merges pins closer than 32px into a count that fans out, and Shift+C hides them all", {
+	timeout: 120_000,
+}, async () => {
+	const { cloud, page, benSays } = await teamCanvas();
+	benSays({ frame: null, at: { x: 700, y: 500 }, body: "one" });
+	benSays({ frame: null, at: { x: 712, y: 510 }, body: "two" });
+	benSays({ frame: "menu", at: { x: 300, y: 300 }, body: "far off" });
+	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(3);
+	const count = page.locator('[data-comment-cluster="2"]');
+	await count.waitFor({ timeout: 10_000 });
+	expect(await page.locator("[data-comment-pin]").count()).toBe(1);
+
+	await count.click();
+	await expect.poll(() => page.locator("[data-comment-pin]").count()).toBe(3);
+	const [one] = cloud.comments("checkout").map((comment) => comment.id);
+	await page.locator(`[data-comment-pin="${one}"]`).click();
+	await page.locator(`[data-comment-card="${one}"]`).waitFor();
+	await page.keyboard.press("Escape");
+
+	await page.keyboard.press("Shift+C");
+	await expect.poll(() => page.locator("[data-comment-pin], [data-comment-cluster]").count()).toBe(0);
+	await page.keyboard.press("Shift+C");
+	await expect.poll(() => page.locator("[data-comment-pin], [data-comment-cluster]").count()).toBe(2);
+});
+
+it("edits and deletes your own from its menu, marks a teammate's unread, and resolves from the card", {
+	timeout: 120_000,
+}, async () => {
+	const { cloud, page, benSays } = await teamCanvas();
+	await page.keyboard.press("c");
+	const on = await pagePointOf(page, { x: 100, y: 60 });
+	await page.mouse.click(on.x, on.y);
+	const composer = page.locator("[data-comment-composer]");
+	await composer.locator("textarea").fill("@be");
+	// an @ lists the members to name; Enter picks the lit one
+	await page.locator("[data-comment-mentions]").getByText("ben").waitFor();
+	await composer.locator("textarea").press("Enter");
+	expect(await composer.locator("textarea").inputValue()).toBe("@ben ");
+	await composer.locator("textarea").pressSequentially("is this loud?");
+	await composer.locator("textarea").press("Enter");
+	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(1);
+	const mine = cloud.comments("checkout")[0];
+	expect(mine?.mentions).toMatchObject([{ accountId: "ben" }]);
+	const id = mine?.id ?? "";
+
+	// your own: Edit, Copy link, Delete
+	const card = page.locator(`[data-comment-card="${id}"]`);
+	await card.waitFor();
+	await card.locator("[data-comment-message]").first().hover();
+	await card.getByRole("button", { name: "Comment options" }).click();
+	const menu = page.locator("[data-comment-menu]");
+	expect(await menu.getByRole("menuitem").allTextContents()).toEqual(["Edit", "Copy link", "Delete comment"]);
+	await menu.getByRole("menuitem", { name: "Edit" }).click();
+	await card.locator('textarea[aria-label="Edit"]').fill("@ben is this too loud?");
+	await card.locator('textarea[aria-label="Edit"]').press("Enter");
+	await expect.poll(() => cloud.comments("checkout")[0]?.body).toBe("@ben is this too loud?");
+	await expect.poll(() => card.locator("[data-comment-message]").first().textContent()).toContain("edited");
+
+	// resolve from the card's head, and reopen from its line
+	await card.getByRole("button", { name: "Resolve" }).click();
+	await expect.poll(() => cloud.comments("checkout")[0]?.resolved?.by.accountId).toBe("ana");
+	await card.locator("[data-comment-resolved]").getByText("Reopen").click();
+	await expect.poll(() => cloud.comments("checkout")[0]?.resolved).toBeNull();
+
+	// a teammate's: Copy link, Mark as unread, and Delete, which an editor may
+	benSays({ frame: "menu", at: { x: 40, y: 40 }, body: "Bigger?" });
+	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(2);
+	const bens = cloud.comments("checkout")[1]?.id ?? "";
+	await page.keyboard.press("Escape");
+	await page.locator(`[data-comment-pin="${bens}"]`).click();
+	const theirs = page.locator(`[data-comment-card="${bens}"]`);
+	await theirs.waitFor();
+	await expect.poll(() => cloud.reads("checkout", "ana").has(bens), { timeout: 10_000 }).toBe(true);
+	await theirs.locator("[data-comment-message]").first().hover();
+	await theirs.getByRole("button", { name: "Comment options" }).click();
+	expect(await page.locator("[data-comment-menu]").getByRole("menuitem").allTextContents()).toEqual([
+		"Copy link",
+		"Mark as unread",
+		"Delete comment",
+	]);
+	await page.getByRole("menuitem", { name: "Mark as unread" }).click();
+	await theirs.waitFor({ state: "detached" });
+	await expect.poll(() => cloud.reads("checkout", "ana").has(bens)).toBe(false);
+	await page.locator(`[data-comment-pin="${bens}"][data-unread]`).waitFor();
+
+	// deleting your own takes it off every canvas
+	await page.locator(`[data-comment-pin="${id}"]`).click();
+	await card.locator("[data-comment-message]").first().hover();
+	await card.getByRole("button", { name: "Comment options" }).click();
+	await page.getByRole("menuitem", { name: "Delete comment" }).click();
+	await expect.poll(() => cloud.comments("checkout").map((comment) => comment.id)).toEqual([bens]);
+	await expect.poll(() => page.locator(`[data-comment-pin="${id}"]`).count()).toBe(0);
 });
