@@ -1004,9 +1004,9 @@ export function CommentCard({
 	const unread = isUnread(comment, reader);
 	// opening the card reads it, and anything said while it stands open is read as it arrives
 	useEffect(() => {
-		if (!unread || !online || leaving) return;
+		if (!unread || !online || leaving || unpaid) return;
 		void client.change(comment.id, { type: "read" }).then(refresh);
-	}, [client, comment.id, unread, online, leaving, refresh]);
+	}, [client, comment.id, unread, online, leaving, unpaid, refresh]);
 	/** a change sent: the canvas hears the result, or the card says why not */
 	const change = (sent: Promise<CommentChanged>, then?: () => void) => {
 		void sent.then((done) => {
@@ -1050,15 +1050,20 @@ export function CommentCard({
 						onClick={() => onSendToAgent(comment)}
 					/>
 				)}
-				<IconButton
-					size="sm"
-					icon={
-						<ResolveIcon done={resolved !== null} className={cn("size-4", resolved !== null && "text-accent")} />
-					}
-					label={resolved === null ? "Resolve" : "Reopen"}
-					disabled={offline}
-					onClick={toggleResolved}
-				/>
+				{unpaid ? null : (
+					<IconButton
+						size="sm"
+						icon={
+							<ResolveIcon
+								done={resolved !== null}
+								className={cn("size-4", resolved !== null && "text-accent")}
+							/>
+						}
+						label={resolved === null ? "Resolve" : "Reopen"}
+						disabled={offline}
+						onClick={toggleResolved}
+					/>
+				)}
 				<IconButton size="sm" icon={<CloseIcon />} label="Close" onClick={onClose} />
 			</div>
 			{resolved === null ? null : (
@@ -1070,9 +1075,11 @@ export function CommentCard({
 					<span className="min-w-0 flex-1 truncate text-secondary type-label">
 						Resolved by {nameOf(resolved.by, resolved.agent === true)}, {resolvedAgo(resolved.at)}
 					</span>
-					<TextAction className="-mr-1.5" disabled={offline} onClick={toggleResolved}>
-						Reopen
-					</TextAction>
+					{unpaid ? null : (
+						<TextAction className="-mr-1.5" disabled={offline} onClick={toggleResolved}>
+							Reopen
+						</TextAction>
+					)}
 				</div>
 			)}
 			{comment.standing !== "deleted-page" ? null : (
@@ -1108,32 +1115,35 @@ export function CommentCard({
 				) : null}
 			</div>
 			<div className="flex shrink-0 flex-col gap-1.5 border-line-default border-t px-3 py-2.5">
-				<div className="flex items-end gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 py-1.5 focus-within:border-line-focus">
-					<div className="min-w-0 flex-1">
-						<MentionField
-							value={text}
-							onValue={(next) => {
-								setText(next);
-								if (refusal !== null && refusal !== "offline") setRefusal(null);
-							}}
-							people={people}
-							rows={1}
-							label="Reply"
-							placeholder="Reply"
-							onSend={send}
-							onEscape={onClose}
-						/>
+				{/* a team gone local reads its comments and writes none: no field to reply in */}
+				{unpaid ? null : (
+					<div className="flex items-end gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 py-1.5 focus-within:border-line-focus">
+						<div className="min-w-0 flex-1">
+							<MentionField
+								value={text}
+								onValue={(next) => {
+									setText(next);
+									if (refusal !== null && refusal !== "offline") setRefusal(null);
+								}}
+								people={people}
+								rows={1}
+								label="Reply"
+								placeholder="Reply"
+								onSend={send}
+								onEscape={onClose}
+							/>
+						</div>
+						<Button
+							size="sm"
+							variant="primary"
+							disabled={text.trim() === "" || offline}
+							loading={sending}
+							onClick={send}
+						>
+							Reply
+						</Button>
 					</div>
-					<Button
-						size="sm"
-						variant="primary"
-						disabled={text.trim() === "" || offline}
-						loading={sending}
-						onClick={send}
-					>
-						Reply
-					</Button>
-				</div>
+				)}
 				<RefusalLine refusal={refusal} context={context} />
 			</div>
 		</Popover>
@@ -1166,6 +1176,8 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 	const anchor = useRef<HTMLSpanElement>(null);
 	const author = (reply ?? comment).author;
 	const mine = author.accountId === context.reader.me;
+	// a team gone local reads its comments: copying a link is all its menu does
+	const writes = context.unpaid !== true;
 	const replies = comment.replies.filter((one) => one.draftFor === null).length;
 	const what = reply === undefined ? "comment" : "reply";
 	const copy = () => {
@@ -1203,7 +1215,7 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 			/>
 			{open ? (
 				<FloatingMenu anchor={anchor} align="end" width={232} onDismiss={() => setOpen(false)} data-comment-menu="">
-					{mine && onEdit !== undefined ? (
+					{mine && onEdit !== undefined && writes ? (
 						<MenuItem
 							label="Edit"
 							disabled={!context.online}
@@ -1214,7 +1226,7 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 						/>
 					) : null}
 					<MenuItem label="Copy link" disabled={context.url === null} onClick={copy} />
-					{mine ? null : (
+					{mine || !writes ? null : (
 						<MenuItem
 							label="Mark as unread"
 							disabled={!context.online}
@@ -1224,8 +1236,12 @@ function MessageMenu({ context, comment, reply, onChange, onUnread, onEdit }: Me
 							}}
 						/>
 					)}
-					<MenuSeparator />
-					<MenuItem label={deleteSays} destructive disabled={!context.online} onClick={remove} />
+					{writes ? (
+						<>
+							<MenuSeparator />
+							<MenuItem label={deleteSays} destructive disabled={!context.online} onClick={remove} />
+						</>
+					) : null}
 				</FloatingMenu>
 			) : null}
 		</span>

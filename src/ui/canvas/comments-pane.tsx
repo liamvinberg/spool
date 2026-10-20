@@ -58,7 +58,8 @@ export function CommentsPane({
 	pinsHidden: boolean;
 	onFilters: (filters: Filters) => void;
 	onPick: (comment: Comment) => void;
-	onNew: () => void;
+	/** left out where nobody may write, as on a team gone local */
+	onNew?: (() => void) | undefined;
 	onTogglePins: () => void;
 }) {
 	const set = (change: Partial<Filters>) => onFilters({ ...filters, ...change });
@@ -68,9 +69,11 @@ export function CommentsPane({
 	const pageName = page === "" ? "root page" : page;
 	return (
 		<div className="flex h-full min-w-0 flex-col bg-surface-window" data-comments-pane="">
-			<PaneActions>
-				<IconButton size="sm" icon={<PlusIcon />} label="New comment (C)" onClick={onNew} />
-			</PaneActions>
+			{onNew === undefined ? null : (
+				<PaneActions>
+					<IconButton size="sm" icon={<PlusIcon />} label="New comment (C)" onClick={onNew} />
+				</PaneActions>
+			)}
 			<Head
 				filters={filters}
 				pageName={pageName}
