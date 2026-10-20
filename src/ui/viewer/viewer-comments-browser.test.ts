@@ -411,6 +411,14 @@ it("lists comments in the panel, and a row flies to its pin on its own page", { 
 	await expect.poll(() => button.locator("[data-comments-count]").textContent()).toBe("2");
 	await page.locator("[data-comments-button]").click();
 	await expect.poll(() => panel.getAttribute("data-comments-panel")).toBe("open");
+	// its menus close on Esc, or a press anywhere else
+	await panel.getByRole("button", { name: "Sort and group" }).click();
+	await panel.locator("[data-comments-menu]").waitFor();
+	await page.keyboard.press("Escape");
+	await panel.locator("[data-comments-menu]").waitFor({ state: "detached" });
+	await panel.getByRole("button", { name: "Sort and group" }).click();
+	await page.getByRole("navigation", { name: "Pages" }).click({ position: { x: 4, y: 4 } });
+	await panel.locator("[data-comments-menu]").waitFor({ state: "detached" });
 	// the whole project, so the other page's comment is listed too
 	await panel.getByText("root page", { exact: true }).first().click();
 	await panel.getByRole("menuitemcheckbox", { name: /Whole project/ }).click();
