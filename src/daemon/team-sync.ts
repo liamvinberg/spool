@@ -521,11 +521,14 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		return wait;
 	};
 
+	/** The waiting paths are being tried again: what waits on is said once they all have been, not one by one. */
+	let retrying = false;
+
 	/** A path waits for the bucket, read again when it is sent so only its latest bytes go. */
 	const wait = (path: string) => {
 		waiting.add(path);
 		flushSoon();
-		sayWait();
+		if (!retrying) sayWait();
 	};
 
 	const flushSoon = () => {
@@ -535,7 +538,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				flushing = undefined;
 				const paths = [...waiting];
 				waiting.clear();
-				for (const path of paths) check(path);
+				retrying = true;
+				try {
+					for (const path of paths) check(path);
+				} finally {
+					retrying = false;
+				}
 				flushSoon();
 				sayWait();
 				wake();
