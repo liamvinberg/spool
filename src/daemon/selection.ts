@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
+import { cap, elementHandles, type PickedElement } from "../element-handles";
 import { isFramePath } from "../page-path";
 import { parseStampRef } from "../stamp";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { extractJsxSpan, type JsxSpan } from "./jsx-span";
 import { frameFolder, frameGeometry, lookupFrame } from "./projection";
 
 /**
@@ -36,18 +36,10 @@ export type SelectionEntry =
 	  };
 
 /** One element as the shim saw it — the canvas sends a list of these. */
-export interface ElementPut {
-	frame: string;
-	selector: string;
-	outerHtml: string;
-	source: string | null;
-	generated: boolean;
-}
+export type ElementPut = PickedElement;
 
 /** The canvas's wire shape: a frame list, or the picked elements in pick order. */
 export type SelectionPut = { frames: string[] } | { elements: ElementPut[] };
-
-const EXCERPT_CAP = 240;
 
 export function parseSelectionPut(value: unknown): SelectionPut | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
@@ -168,44 +160,17 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 	return put.elements.map((element) => elementEntry(root, element));
 }
 
-export function elementEntry(
-	root: string,
-	{ frame, selector, outerHtml, source, generated }: ElementPut,
-): SelectionEntry {
-	const framePath = framePathOf(frame);
-	const stamp = source === null ? undefined : parseStamp(root, source);
-	if (stamp === undefined) {
-		// no stamp anywhere: JS-created DOM under an unstamped root (#6 degrade)
-		return {
-			kind: "element",
-			frame,
-			name: tagOf(outerHtml),
-			path: framePath,
-			lines: [1, 1],
-			selector,
-			excerpt: cap(outerHtml),
-			generated: true,
-		};
-	}
+export function elementEntry(root: string, put: ElementPut): SelectionEntry {
+	const stamp = put.source === null ? undefined : parseStamp(root, put.source);
+	return { kind: "element", frame: put.frame, ...elementHandles(put, stamp, stamp && readText(stamp.file)) };
+}
 
-	const span = spanOf(stamp);
-	const lines: [number, number] = span?.lines ?? [stamp.line, stamp.line];
-	// a generated element's own markup never exists in source: live outerHTML
-	// is the excerpt, the stamped ancestor lends its lines
-	const excerpt = generated ? cap(outerHtml) : (span?.excerpt ?? sourceLine(stamp) ?? cap(outerHtml));
-	// and its name comes from the same place its excerpt does — the stamped
-	// ancestor's authored name would be somebody else's word for it
-	const name = generated ? tagOf(outerHtml) : (span?.name ?? tagOf(outerHtml));
-	const entry: SelectionEntry = {
-		kind: "element",
-		frame,
-		name,
-		path: `design/${stamp.rel}`,
-		lines,
-		selector,
-		excerpt,
-	};
-	return generated ? { ...entry, generated: true } : entry;
+function readText(file: string): string | undefined {
+	try {
+		return readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
 }
 
 /** The frame's own source path, which its name already spells (#39, #336). */
@@ -241,39 +206,4 @@ export function parseStamp(root: string, source: string): Stamp | undefined {
 		return undefined;
 	}
 	return { file, rel: rel.split(sep).join("/"), line, column };
-}
-
-function spanOf(stamp: Stamp): JsxSpan | undefined {
-	let text: string;
-	try {
-		text = readFileSync(stamp.file, "utf8");
-	} catch {
-		return undefined;
-	}
-	return extractJsxSpan(text, stamp.line, stamp.column);
-}
-
-/** The stamped line verbatim — the needle when the span cannot be walked. */
-function sourceLine(stamp: Stamp): string | undefined {
-	try {
-		const line = readFileSync(stamp.file, "utf8").split("\n")[stamp.line - 1];
-		return line === undefined || line.trim() === "" ? undefined : line.trim();
-	} catch {
-		return undefined;
-	}
-}
-
-function cap(text: string): string {
-	return text.length <= EXCERPT_CAP ? text : `${text.slice(0, EXCERPT_CAP - 1)}…`;
-}
-
-/**
- * The live DOM's own word for an element, off the serialization it handed over.
- *
- * `outerHTML` always opens on the tag, so this is a read rather than a guess; the
- * fallback exists because a payload is somebody else's input and a noun is not
- * worth a 400.
- */
-function tagOf(outerHtml: string): string {
-	return /^<\s*([A-Za-z][\w$.:-]*)/.exec(outerHtml.slice(0, 80))?.[1] ?? "element";
 }
