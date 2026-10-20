@@ -849,17 +849,16 @@ export function readCommentsMessage(message: Record<string, unknown>): CommentsM
 			return isId(ref) && isId(id) ? { type: "comment-posted", ref, id } : undefined;
 		}
 		case "comment-refused": {
-			const { ref, reason } = message;
-			return isId(ref) && typeof reason === "string" && COMMENT_REFUSALS.has(reason)
-				? { type: "comment-refused", ref, reason: reason as CommentRefusal }
-				: undefined;
+			const { ref } = message;
+			const reason = commentRefusal(message.reason);
+			return isId(ref) && reason !== undefined ? { type: "comment-refused", ref, reason } : undefined;
 		}
 		default:
 			return undefined;
 	}
 }
 
-const COMMENT_REFUSALS: ReadonlySet<string> = new Set<CommentRefusal>([
+const COMMENT_REFUSALS: readonly CommentRefusal[] = [
 	"invalid_comment",
 	"still_too_large",
 	"comment_not_found",
@@ -867,7 +866,12 @@ const COMMENT_REFUSALS: ReadonlySet<string> = new Set<CommentRefusal>([
 	"not_editor",
 	"unpaid",
 	"unavailable",
-]);
+];
+
+/** The refusal a reason names, if it names one. */
+function commentRefusal(reason: unknown): CommentRefusal | undefined {
+	return COMMENT_REFUSALS.find((one) => one === reason);
+}
 
 /** A well-formed comment, copied field by field; undefined for anything else. */
 export function readComment(value: unknown): Comment | undefined {
