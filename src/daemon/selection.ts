@@ -168,7 +168,10 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 	return put.elements.map((element) => elementEntry(root, element));
 }
 
-function elementEntry(root: string, { frame, selector, outerHtml, source, generated }: ElementPut): SelectionEntry {
+export function elementEntry(
+	root: string,
+	{ frame, selector, outerHtml, source, generated }: ElementPut,
+): SelectionEntry {
 	const framePath = framePathOf(frame);
 	const stamp = source === null ? undefined : parseStamp(root, source);
 	if (stamp === undefined) {

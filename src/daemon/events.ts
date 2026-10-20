@@ -52,6 +52,8 @@ export type ChangeEvent =
 	// a team project's set-aside marks changed: one of this machine's saves lost a
 	// collision, or a mark was acted on. .spool is invisible to the watcher, so sync says it
 	| { kind: "set-aside" }
+	// the comments a team project's local copy knows changed (ADR 0011): the team said so, or sent them all again
+	| { kind: "comments" }
 	// team sync has something to say about this local copy: a file that didn't
 	// travel, a pause on a limit, or the team project ending on this machine
 	| { kind: "sync"; message: string };

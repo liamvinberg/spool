@@ -38,6 +38,7 @@ import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
 import { cloudTeamRoutes } from "./cloud-teams";
+import { commentRoutes } from "./comment-routes";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError } from "./design-path";
 import {
@@ -547,6 +548,8 @@ export function createDaemonApp({
 		onEnded: () => emitAppEvent({ kind: "registry" }),
 		// who else is in a team project, for its tab while another is focused (task 139)
 		onRoster: (root, people) => emitAppEvent({ kind: "presence", root, people }),
+		// the comments a copy knows changed: its open canvases read them again (ADR 0011)
+		onComments: (root) => hub.publish(root, { kind: "comments" }),
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
 	});
@@ -1628,6 +1631,22 @@ export function createDaemonApp({
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
 	app.post("/api/p/:project/sync/untold", (c) =>
 		withProject(c, resolveProject, (root) => c.json({ lines: teamSync.untold(root) })),
+	);
+	app.route(
+		"/api/p",
+		commentRoutes({
+			resolve: resolveProject,
+			comments: (root) => teamSync.comments(root),
+			comment: (root, comment, still) => teamSync.comment(root, comment, still),
+			reply: (root, reply) => teamSync.reply(root, reply),
+			// the frame as it is now: its source revision, and the cover this Mac has of it, the comment's still
+			frameNow: async (root, frame) => {
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				const cover = readCover(root, frame);
+				const image = cover === undefined ? undefined : readCoverImage(root, frame, cover.hash);
+				return { revision: doc.kind === "ok" ? doc.source : null, still: image?.bytes };
+			},
+		}),
 	);
 	app.route(
 		"/api/p",

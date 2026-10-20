@@ -7,6 +7,8 @@ import {
 	CLOSE_NOT_EDITOR,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNPAID,
+	COMMENTS_PER_PART,
+	type Comment,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
@@ -15,6 +17,8 @@ import {
 	mergeCanvas,
 	PROTOCOL_VERSION,
 	type PresenceState,
+	readCommentPost,
+	readCommentReplyPost,
 	readPresenceState,
 	travels,
 } from "./team-sync-protocol";
@@ -70,6 +74,10 @@ interface Project {
 	turns: { by: string; saves: number }[];
 	/** Where its code lives, as `host/path`. */
 	repo: string | null;
+	/** Every comment made on it, in order, with its replies: kept outside the save path, as the sync object keeps them. */
+	comments: Comment[];
+	/** The still each comment kept of its frame, by the comment's id. */
+	stills: Map<string, Uint8Array>;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -123,6 +131,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
 	let ids = 0;
+	let commentIds = 0;
 	/** Machines that can't reach the team right now, by account. */
 	const away = new Set<string>();
 	/** While set, spool.page doesn't answer at all: every request fails as a network that is down does. */
@@ -285,6 +294,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					resent: [],
 					turns: [],
 					repo: body.repo ?? null,
+					comments: [],
+					stills: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -403,6 +414,19 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
 			from.live = true;
 			greet(at, from);
+			for (let start = 0; start === 0 || start < at.comments.length; start += COMMENTS_PER_PART)
+				from.deliver(
+					encodeFrame({
+						type: "comments",
+						comments: at.comments.slice(start, start + COMMENTS_PER_PART),
+						first: start === 0,
+						last: start + COMMENTS_PER_PART >= at.comments.length,
+					}),
+				);
+			return;
+		}
+		if (message.type === "comment-post" || message.type === "comment-reply") {
+			commented(at, from, message, bytes);
 			return;
 		}
 		if (message.type === "presence") {
@@ -530,6 +554,68 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				if (restores !== undefined && other.person === restores && restores !== from.person)
 					other.deliver(encodeFrame({ type: "restored", path, version, by }));
 		}
+	}
+
+	/** A comment or a reply from a caught-up copy: kept, sent to every live copy, and its writer answered. */
+	function commented(at: Project, from: Connected, message: Record<string, unknown>, bytes?: Uint8Array): void {
+		const ref = typeof message.ref === "string" ? message.ref : "-";
+		const refuse = (reason: string) => from.deliver(encodeFrame({ type: "comment-refused", ref, reason }));
+		if (!from.live) {
+			from.close();
+			return;
+		}
+		if (from.person.revoked || !edits(from.person, at.team)) {
+			refuse("not_editor");
+			return;
+		}
+		const author = { accountId: from.person.accountId, name: from.person.accountId, color: from.person.color };
+		const id = `c${++commentIds}`.padEnd(8, "x");
+		const now = Date.now();
+		let told: Record<string, unknown>;
+		if (message.type === "comment-post") {
+			const post = readCommentPost(message);
+			if (post === undefined) {
+				refuse("invalid_comment");
+				return;
+			}
+			const { type: _type, ref: _ref, agent, ...where } = post;
+			const comment: Comment = {
+				id,
+				audience: "team",
+				...where,
+				still: bytes !== undefined,
+				author,
+				agent: agent === true,
+				created: now,
+				edited: null,
+				resolved: null,
+				standing: "placed",
+				replies: [],
+			};
+			at.comments.push(comment);
+			if (bytes !== undefined) at.stills.set(id, bytes);
+			told = { type: "comment-added", comment };
+		} else {
+			const post = readCommentReplyPost(message);
+			const comment = post === undefined ? undefined : at.comments.find((comment) => comment.id === post.comment);
+			if (post === undefined || comment === undefined) {
+				refuse(post === undefined ? "invalid_comment" : "comment_not_found");
+				return;
+			}
+			const reply = {
+				id,
+				author,
+				agent: post.agent === true,
+				body: post.body,
+				created: now,
+				edited: null,
+				draftFor: null,
+			};
+			comment.replies.push(reply);
+			told = { type: "comment-replied", comment: comment.id, reply };
+		}
+		for (const socket of at.sockets) if (socket.live) socket.deliver(encodeFrame(told));
+		from.deliver(encodeFrame({ type: "comment-posted", ref, id }));
 	}
 
 	/**
@@ -752,6 +838,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		},
 		resent: (name: string) => project(name)?.resent ?? [],
 		turns: (name: string) => project(name)?.turns ?? [],
+		/** Every comment the project holds, as the team keeps them. */
+		comments: (name: string) => project(name)?.comments ?? [],
+		/** The still a comment kept of its frame, if it kept one. */
+		still: (name: string, comment: string) => project(name)?.stills.get(comment),
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
