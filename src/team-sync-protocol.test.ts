@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	COMMENT_BODY_LIMIT,
+	commentBodyRefusal,
 	type Comment,
 	type CommentPost,
 	PRESENCE_AGENT_WORDS,
@@ -8,6 +9,7 @@ import {
 	type PresenceAgent,
 	type PresenceState,
 	readComment,
+	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
 	readCommentsMessage,
@@ -207,5 +209,78 @@ describe("comments on the sync socket", () => {
 		expect(readCommentsMessage({ type: "comment-refused", ref: "r1", reason: "because" })).toBeUndefined();
 		expect(readCommentsMessage({ type: "comments", comments: [{}], first: true, last: true })).toBeUndefined();
 		expect(readCommentsMessage({ type: "presence" })).toBeUndefined();
+	});
+
+	it("takes the members a post, a reply or an edit mentions, once each", () => {
+		expect(readCommentPost({ ...post, mentions: ["acc-ben", "acc-ben", "acc-cy"] })).toEqual({
+			...post,
+			mentions: ["acc-ben", "acc-cy"],
+		});
+		expect(readCommentPost({ ...post, mentions: [] })).toEqual(post);
+		expect(readCommentPost({ ...post, mentions: [""] })).toBeUndefined();
+		expect(readCommentPost({ ...post, mentions: Array.from({ length: 51 }, (_, at) => `a${at}`) })).toBeUndefined();
+		const reply = { type: "comment-reply", ref: "r2", comment: comment.id, body: "@ben?", mentions: ["acc-ben"] };
+		expect(readCommentReplyPost(reply)).toEqual(reply);
+		const mentioned = { ...comment, mentions: [ana] };
+		expect(readComment(JSON.parse(JSON.stringify(mentioned)))).toEqual(mentioned);
+		expect(readComment({ ...comment, mentions: ["acc-ana"] })).toBeUndefined();
+	});
+
+	it("takes each change to a comment by its id, and only the fields it knows", () => {
+		for (const type of ["comment-resolve", "comment-reopen", "comment-read", "comment-unread"])
+			expect(readCommentChange({ type, ref: "r3", comment: comment.id, body: "x" })).toEqual({
+				type,
+				ref: "r3",
+				comment: comment.id,
+			});
+		const edit = { type: "comment-edit", ref: "r4", comment: comment.id, reply: "r7x2", body: "Or the date." };
+		expect(readCommentChange(edit)).toEqual(edit);
+		expect(readCommentChange({ ...edit, reply: undefined })).toEqual({
+			type: "comment-edit",
+			ref: "r4",
+			comment: comment.id,
+			body: "Or the date.",
+		});
+		expect(readCommentChange({ ...edit, body: "" })).toBeUndefined();
+		const remove = { type: "comment-delete", ref: "r5", comment: comment.id };
+		expect(readCommentChange(remove)).toEqual(remove);
+		expect(readCommentChange({ ...remove, reply: "r7x2" })).toEqual({ ...remove, reply: "r7x2" });
+		expect(readCommentChange({ ...remove, comment: "" })).toBeUndefined();
+		expect(readCommentChange({ type: "comment-bury", ref: "r6", comment: comment.id })).toBeUndefined();
+	});
+
+	it("says words that are too long apart from words that are none", () => {
+		expect(commentBodyRefusal("fine")).toBeUndefined();
+		expect(commentBodyRefusal("x".repeat(COMMENT_BODY_LIMIT + 1))).toBe("too_long");
+		expect(commentBodyRefusal(" ")).toBe("invalid_comment");
+		expect(commentBodyRefusal(7)).toBe("invalid_comment");
+	});
+
+	it("reads a comment changed whole, one removed, and a person's own reads", () => {
+		const changed = { ...comment, resolved: { by: ana, at: 3_000 } };
+		expect(readCommentsMessage({ type: "comment-changed", comment: changed })).toEqual({
+			type: "comment-changed",
+			comment: changed,
+		});
+		expect(readCommentsMessage({ type: "comment-removed", id: comment.id })).toEqual({
+			type: "comment-removed",
+			id: comment.id,
+		});
+		expect(readCommentsMessage({ type: "comment-seen", comment: comment.id, read: 4_000 })).toEqual({
+			type: "comment-seen",
+			comment: comment.id,
+			read: 4_000,
+		});
+		expect(readCommentsMessage({ type: "comment-seen", comment: comment.id, read: null })).toEqual({
+			type: "comment-seen",
+			comment: comment.id,
+			read: null,
+		});
+		const part = { type: "comments", comments: [comment], first: true, last: true, reads: { [comment.id]: 5 } };
+		expect(readCommentsMessage(part)).toEqual(part);
+		expect(readCommentsMessage({ ...part, reads: { [comment.id]: "now" } })).toBeUndefined();
+		expect(
+			readCommentsMessage({ type: "comment-refused", ref: "r1", reason: "rate_limited", retryAfter: 2 }),
+		).toEqual({ type: "comment-refused", ref: "r1", reason: "rate_limited", retryAfter: 2 });
 	});
 });

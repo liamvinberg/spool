@@ -65,6 +65,10 @@ const REFUSALS: Record<CommentRefusal, string> = {
 	not_editor: "you aren't an editor of this project anymore",
 	unpaid: "the team has no paid time left",
 	unavailable: "spool.page couldn't take the comment just now",
+	too_long: "a comment or reply is at most 4,000 characters",
+	rate_limited: "that's more comments than spool.page takes from one person in a minute; wait a moment and send again",
+	too_many_open: "this project has as many open comments as it can hold; resolve some to make room",
+	not_author: "only its author can change that",
 };
 
 /** How long a comment waits on the team's answer before it is said to have failed. */

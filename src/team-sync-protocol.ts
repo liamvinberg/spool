@@ -225,7 +225,7 @@ export interface TurnEnded {
 	type: "turn-ended";
 }
 
-export type DaemonMessage = Hello | Save | Saves | Resend | TurnEnded | CommentPost | CommentReplyPost;
+export type DaemonMessage = Hello | Save | Saves | Resend | TurnEnded | CommentPost | CommentReplyPost | CommentChange;
 export type ObjectMessage =
 	| Welcome
 	| TeamFile
@@ -662,6 +662,8 @@ export interface CommentReply {
 	edited: number | null;
 	/** An agent's reply on a share's comment waits for this account to send it; null for a reply that went out. */
 	draftFor: string | null;
+	/** The members its words @mention, named as they are now; absent when it mentions nobody. */
+	mentions?: CommentPerson[];
 }
 
 /** One comment as a reader gets it: its first message, where it stands, and every reply. */
@@ -687,6 +689,8 @@ export interface Comment {
 	resolved: { by: CommentPerson; at: number } | null;
 	standing: CommentStanding;
 	replies: CommentReply[];
+	/** The members its first message @mentions, named as they are now; absent when it mentions nobody. */
+	mentions?: CommentPerson[];
 }
 
 /**
@@ -705,6 +709,8 @@ export interface CommentPost {
 	body: string;
 	/** Written by the person's agent rather than by them. */
 	agent?: true;
+	/** The members its words @mention, by account; the object keeps only the team's members. */
+	mentions?: string[];
 }
 
 /** Daemon → object: a reply to a comment, by the person whose connection it is. */
@@ -714,7 +720,50 @@ export interface CommentReplyPost {
 	comment: string;
 	body: string;
 	agent?: true;
+	mentions?: string[];
 }
+
+/*
+ * Daemon → object: a change to a comment that is there, by the person whose connection it is, each with a `ref` the
+ * answer echoes. Who may make it is the object's to say (the spec's "who may do what"): anyone who reads a comment
+ * resolves and reopens it; only its author edits it; its author, or an admin or editor, deletes it, and deleting the
+ * first message deletes the comment with its replies. Reading is the person's own: it marks the comment read for
+ * them, or unread again.
+ */
+
+/** Resolve a comment, or reopen one that was resolved. */
+export interface CommentResolve {
+	type: "comment-resolve" | "comment-reopen";
+	ref: string;
+	comment: string;
+}
+
+/** New words for the author's own comment, or with `reply`, one of its replies. Marked edited. */
+export interface CommentEdit {
+	type: "comment-edit";
+	ref: string;
+	comment: string;
+	reply?: string;
+	body: string;
+	mentions?: string[];
+}
+
+/** Delete a comment with its replies, or with `reply`, only that reply. */
+export interface CommentDelete {
+	type: "comment-delete";
+	ref: string;
+	comment: string;
+	reply?: string;
+}
+
+/** The person opened the comment: read for them now. Or, `comment-unread`, Mark unread: as if they never had. */
+export interface CommentReadMark {
+	type: "comment-read" | "comment-unread";
+	ref: string;
+	comment: string;
+}
+
+export type CommentChange = CommentResolve | CommentEdit | CommentDelete | CommentReadMark;
 
 /**
  * Object → reader: every comment it may read, in the order they were made, in parts. The part that is `first`
@@ -725,6 +774,8 @@ export interface CommentsSnapshot {
 	comments: Comment[];
 	first: boolean;
 	last: boolean;
+	/** When the reader's person last read each of this part's comments they have read, by id. */
+	reads?: Record<string, number>;
 }
 
 /** Object → every reader of its audience: a comment was made. */
@@ -740,7 +791,35 @@ export interface CommentReplied {
 	reply: CommentReply;
 }
 
-/** Object → the writer: its comment or reply was taken, under this id. Readers hear it as `comment-added` first. */
+/**
+ * Object → every reader of its audience: a comment changed (resolved, reopened, edited, a reply deleted, or moved
+ * with its frame), sent whole as it now is, replies and all, in place of what the reader held.
+ */
+export interface CommentChanged {
+	type: "comment-changed";
+	comment: Comment;
+}
+
+/** Object → every reader of its audience: a comment was deleted, with its replies. */
+export interface CommentRemoved {
+	type: "comment-removed";
+	id: string;
+}
+
+/**
+ * Object → every socket of one person, Macs and browsers: when they last read a comment, or null once they marked it
+ * unread. A comment is unread for them while it or a reply that isn't theirs came after it.
+ */
+export interface CommentSeen {
+	type: "comment-seen";
+	comment: string;
+	read: number | null;
+}
+
+/**
+ * Object → the writer: its comment, reply or change was taken, under this id: the new comment's or reply's, or the
+ * changed comment's. Readers hear what changed first.
+ */
 export interface CommentPosted {
 	type: "comment-posted";
 	ref: string;
@@ -758,21 +837,50 @@ export type CommentRefusal =
 	| "comment_not_found"
 	| Unauthorized
 	| "unpaid"
-	| "unavailable";
+	| "unavailable"
+	| CommentLimited
+	| "not_author";
+
+/**
+ * A limit a comment or reply would pass. `too_long`: its words are past `COMMENT_BODY_LIMIT`. `rate_limited`: its
+ * person posted `COMMENTS_PER_MINUTE` in the project within the minute (`retryAfter` says when one fits).
+ * `too_many_open`: the project holds `COMMENTS_OPEN` open comments; a reply still goes. `not_author`: an edit of
+ * someone else's words, or a delete of them by someone who neither wrote them nor edits the project.
+ */
+export type CommentLimited = "too_long" | "rate_limited" | "too_many_open";
 
 /** Object → the writer: its comment or reply was not taken. */
 export interface CommentRefused {
 	type: "comment-refused";
 	ref: string;
 	reason: CommentRefusal;
+	/** For `rate_limited`: seconds until one fits. */
+	retryAfter?: number;
 }
 
-export type CommentsMessage = CommentsSnapshot | CommentAdded | CommentReplied | CommentPosted | CommentRefused;
+export type CommentsMessage =
+	| CommentsSnapshot
+	| CommentAdded
+	| CommentReplied
+	| CommentChanged
+	| CommentRemoved
+	| CommentSeen
+	| CommentPosted
+	| CommentRefused;
 
 /** The most a comment's or a reply's words may be; they are never empty. */
 export const COMMENT_BODY_LIMIT = 4_000;
 /** The largest still a comment keeps of its frame: a booth's cover is far smaller. */
 export const COMMENT_STILL_BYTES = 4 * 1024 * 1024;
+/**
+ * How many comments and replies one person may post in a project a minute: a bucket that holds this many and
+ * refills at this rate. Cloud's default, which a maintainer can raise for one project.
+ */
+export const COMMENTS_PER_MINUTE = 30;
+/** How many open comments a project may hold before a new one is refused. Cloud's default, which a maintainer can raise. */
+export const COMMENTS_OPEN = 5_000;
+/** The most members one message may @mention. */
+export const COMMENT_MENTIONS = 50;
 /** How many comments one part of a snapshot carries. */
 export const COMMENTS_PER_PART = 200;
 /** The most a page's, a frame's or an element handle's name or path may be. */
@@ -791,7 +899,7 @@ export function isCommentBody(value: unknown): value is string {
 
 /** A well-formed `comment-post`, copied field by field; undefined for anything else. */
 export function readCommentPost(message: Record<string, unknown>): CommentPost | undefined {
-	const { type, ref, page, frame, at, element, revision, body, agent } = message;
+	const { type, ref, page, frame, at, element, revision, body, agent, mentions } = message;
 	if (type !== "comment-post" || !isId(ref) || !isCommentName(page) || !(frame === null || isFrameName(frame)))
 		return undefined;
 	const point = readPoint(at);
@@ -801,6 +909,8 @@ export function readCommentPost(message: Record<string, unknown>): CommentPost |
 	// a pin on the field stands on no frame, so takes no element and no revision
 	if (frame === null && (handles !== null || revision !== null)) return undefined;
 	if (!(agent === undefined || agent === true)) return undefined;
+	const named = readMentionIds(mentions);
+	if (named === undefined) return undefined;
 	return {
 		type,
 		ref,
@@ -811,15 +921,72 @@ export function readCommentPost(message: Record<string, unknown>): CommentPost |
 		revision,
 		body,
 		...(agent === true ? { agent } : {}),
+		...(named.length > 0 ? { mentions: named } : {}),
 	};
 }
 
 /** A well-formed `comment-reply`, copied field by field; undefined for anything else. */
 export function readCommentReplyPost(message: Record<string, unknown>): CommentReplyPost | undefined {
-	const { type, ref, comment, body, agent } = message;
+	const { type, ref, comment, body, agent, mentions } = message;
 	if (type !== "comment-reply" || !isId(ref) || !isId(comment) || !isCommentBody(body)) return undefined;
 	if (!(agent === undefined || agent === true)) return undefined;
-	return { type, ref, comment, body, ...(agent === true ? { agent } : {}) };
+	const named = readMentionIds(mentions);
+	if (named === undefined) return undefined;
+	return {
+		type,
+		ref,
+		comment,
+		body,
+		...(agent === true ? { agent } : {}),
+		...(named.length > 0 ? { mentions: named } : {}),
+	};
+}
+
+/** A well-formed change to a comment, copied field by field; undefined for anything else. */
+export function readCommentChange(message: Record<string, unknown>): CommentChange | undefined {
+	const { type, ref, comment, reply, body, mentions } = message;
+	if (!isId(ref) || !isId(comment)) return undefined;
+	switch (type) {
+		case "comment-resolve":
+		case "comment-reopen":
+		case "comment-read":
+		case "comment-unread":
+			return { type, ref, comment };
+		case "comment-delete":
+			if (!(reply === undefined || isId(reply))) return undefined;
+			return { type, ref, comment, ...(reply === undefined ? {} : { reply }) };
+		case "comment-edit": {
+			if (!(reply === undefined || isId(reply)) || !isCommentBody(body)) return undefined;
+			const named = readMentionIds(mentions);
+			if (named === undefined) return undefined;
+			return {
+				type,
+				ref,
+				comment,
+				...(reply === undefined ? {} : { reply }),
+				body,
+				...(named.length > 0 ? { mentions: named } : {}),
+			};
+		}
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * Why words can't be a comment's or a reply's, said apart: `too_long` past the limit, `invalid_comment` when they are
+ * no words at all; undefined when they can.
+ */
+export function commentBodyRefusal(body: unknown): "too_long" | "invalid_comment" | undefined {
+	if (isCommentBody(body)) return undefined;
+	return typeof body === "string" && body.length > COMMENT_BODY_LIMIT ? "too_long" : "invalid_comment";
+}
+
+/** Mentioned accounts as a message names them: none, or distinct ids within bounds; undefined when malformed. */
+function readMentionIds(value: unknown): string[] | undefined {
+	if (value === undefined) return [];
+	if (!Array.isArray(value) || value.length > COMMENT_MENTIONS || !value.every(isId)) return undefined;
+	return [...new Set(value)];
 }
 
 /**
@@ -829,11 +996,29 @@ export function readCommentReplyPost(message: Record<string, unknown>): CommentR
 export function readCommentsMessage(message: Record<string, unknown>): CommentsMessage | undefined {
 	switch (message.type) {
 		case "comments": {
-			const { comments, first, last } = message;
+			const { comments, first, last, reads } = message;
 			if (!Array.isArray(comments) || typeof first !== "boolean" || typeof last !== "boolean") return undefined;
 			const read = comments.map(readComment);
 			if (!read.every((comment): comment is Comment => comment !== undefined)) return undefined;
-			return { type: "comments", comments: read, first, last };
+			if (reads === undefined) return { type: "comments", comments: read, first, last };
+			if (!isRecord(reads)) return undefined;
+			const seen: Record<string, number> = {};
+			for (const [id, at] of Object.entries(reads)) {
+				if (!isId(id) || !isTime(at)) return undefined;
+				seen[id] = at;
+			}
+			return { type: "comments", comments: read, first, last, reads: seen };
+		}
+		case "comment-changed": {
+			const comment = readComment(message.comment);
+			return comment === undefined ? undefined : { type: "comment-changed", comment };
+		}
+		case "comment-removed":
+			return isId(message.id) ? { type: "comment-removed", id: message.id } : undefined;
+		case "comment-seen": {
+			const { comment, read } = message;
+			if (!isId(comment) || !(read === null || isTime(read))) return undefined;
+			return { type: "comment-seen", comment, read };
 		}
 		case "comment-added": {
 			const comment = readComment(message.comment);
@@ -849,9 +1034,11 @@ export function readCommentsMessage(message: Record<string, unknown>): CommentsM
 			return isId(ref) && isId(id) ? { type: "comment-posted", ref, id } : undefined;
 		}
 		case "comment-refused": {
-			const { ref } = message;
+			const { ref, retryAfter } = message;
 			const reason = commentRefusal(message.reason);
-			return isId(ref) && reason !== undefined ? { type: "comment-refused", ref, reason } : undefined;
+			if (!isId(ref) || reason === undefined) return undefined;
+			if (!(retryAfter === undefined || isTime(retryAfter))) return undefined;
+			return { type: "comment-refused", ref, reason, ...(retryAfter === undefined ? {} : { retryAfter }) };
 		}
 		default:
 			return undefined;
@@ -866,6 +1053,10 @@ const COMMENT_REFUSALS: readonly CommentRefusal[] = [
 	"not_editor",
 	"unpaid",
 	"unavailable",
+	"too_long",
+	"rate_limited",
+	"too_many_open",
+	"not_author",
 ];
 
 /** The refusal a reason names, if it names one. */
@@ -877,7 +1068,7 @@ function commentRefusal(reason: unknown): CommentRefusal | undefined {
 export function readComment(value: unknown): Comment | undefined {
 	if (!isRecord(value)) return undefined;
 	const { id, audience, page, frame, at, element, revision, still, author, agent, body, created, edited } = value;
-	const { resolved, standing, replies } = value;
+	const { resolved, standing, replies, mentions } = value;
 	if (!isId(id) || !isCommentName(page) || !(frame === null || isFrameName(frame))) return undefined;
 	const who = readCommentPerson(author);
 	const point = readPoint(at);
@@ -898,6 +1089,8 @@ export function readComment(value: unknown): Comment | undefined {
 	if (!Array.isArray(replies)) return undefined;
 	const read = replies.map(readCommentReply);
 	if (!read.every((reply): reply is CommentReply => reply !== undefined)) return undefined;
+	const named = readMentioned(mentions);
+	if (named === undefined) return undefined;
 	return {
 		id,
 		audience: heard,
@@ -915,18 +1108,29 @@ export function readComment(value: unknown): Comment | undefined {
 		resolved: closed,
 		standing,
 		replies: read,
+		...(named.length > 0 ? { mentions: named } : {}),
 	};
 }
 
 /** A well-formed reply, copied field by field; undefined for anything else. */
 export function readCommentReply(value: unknown): CommentReply | undefined {
 	if (!isRecord(value)) return undefined;
-	const { id, author, agent, body, created, edited, draftFor } = value;
+	const { id, author, agent, body, created, edited, draftFor, mentions } = value;
 	const who = readCommentPerson(author);
 	if (!isId(id) || who === undefined || typeof agent !== "boolean" || typeof body !== "string") return undefined;
 	if (!isTime(created) || !(edited === null || isTime(edited))) return undefined;
 	if (!(draftFor === null || isId(draftFor))) return undefined;
-	return { id, author: who, agent, body, created, edited, draftFor };
+	const named = readMentioned(mentions);
+	if (named === undefined) return undefined;
+	return { id, author: who, agent, body, created, edited, draftFor, ...(named.length > 0 ? { mentions: named } : {}) };
+}
+
+/** The people a message mentions, as a reader gets them: none, or each well formed. */
+function readMentioned(value: unknown): CommentPerson[] | undefined {
+	if (value === undefined) return [];
+	if (!Array.isArray(value) || value.length > COMMENT_MENTIONS) return undefined;
+	const people = value.map(readCommentPerson);
+	return people.every((person): person is CommentPerson => person !== undefined) ? people : undefined;
 }
 
 /** An element's handles, copied field by field; undefined for anything not well formed or past its bounds. */
