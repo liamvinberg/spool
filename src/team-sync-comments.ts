@@ -65,23 +65,21 @@ export const COMMENT_REFUSAL_STATUS = {
 
 /**
  * Who reads comments on one socket or through one request: a member (`share` null), who reads every audience, or
- * someone on one share's page, who reads only that share's (spool#174).
+ * someone on one share's page, who reads only that share's, and only on the pages it shows (spool#174): a comment
+ * whose frame moved to another page is no longer theirs, nor are that page's and frame's names.
  */
-export interface CommentReader {
-	accountId: string;
-	share: string | null;
-}
+export type CommentReader =
+	| { accountId: string; share: null }
+	| { accountId: string; share: string; pages: readonly string[] };
 
 /**
- * Who changes a comment: a reader, and whether they edit the project (admins and editors do), which lets them delete
- * anyone's words.
+ * Who changes a comment: a member or someone on one share's page, and whether they edit the project (admins and
+ * editors do), which lets them delete anyone's words.
  */
-export interface CommentWriter extends CommentReader {
-	edits: boolean;
-}
+export type CommentWriter = CommentReader & { edits: boolean };
 
 /** Whether a reader reads a comment of this audience, as stored (`team` or a share's id) or as a reader gets it. */
-export function readsAudience(reader: CommentReader, audience: CommentAudience | string): boolean {
+export function readsAudience(reader: Pick<CommentReader, "share">, audience: CommentAudience | string): boolean {
 	if (reader.share === null) return true;
 	return (typeof audience === "string" ? audience : audience.share) === reader.share;
 }
@@ -97,7 +95,7 @@ function seesReply(reader: CommentReader, reply: Pick<CommentReply, "draftFor">)
  * handles, revision, still, "edited since", mentions or share.
  */
 export function forReader(comment: Comment, reader: CommentReader): Comment | undefined {
-	if (!readsAudience(reader, comment.audience)) return undefined;
+	if (!readsAudience(reader, comment.audience) || !onReadersPage(reader, comment)) return undefined;
 	const replies = comment.replies.filter((reply) => seesReply(reader, reply));
 	if (reader.share === null) return replies.length === comment.replies.length ? comment : { ...comment, replies };
 	const { share: _share, mentions: _mentions, editedSince: _edited, ...seen } = comment;
@@ -107,11 +105,17 @@ export function forReader(comment: Comment, reader: CommentReader): Comment | un
 /** A reply made under a comment, as one reader hears it; undefined when it isn't theirs to hear. */
 export function replyForReader(
 	reader: CommentReader,
-	comment: Pick<Comment, "audience">,
+	comment: Pick<Comment, "audience" | "page">,
 	reply: CommentReply,
 ): CommentReply | undefined {
-	if (!readsAudience(reader, comment.audience) || !seesReply(reader, reply)) return undefined;
+	if (!readsAudience(reader, comment.audience) || !onReadersPage(reader, comment) || !seesReply(reader, reply))
+		return undefined;
 	return reader.share === null ? reply : replyForOutsider(reply);
+}
+
+/** Whether a comment stands where its reader looks: anywhere for a member, on one of the share's pages for its reader. */
+function onReadersPage(reader: CommentReader, comment: Pick<Comment, "page">): boolean {
+	return reader.share === null || reader.pages.includes(comment.page);
 }
 
 /** A reply as someone on a share reads it: whom it mentions is the team's. */
