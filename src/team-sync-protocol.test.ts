@@ -12,6 +12,7 @@ import {
 	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
+	readCommentStillAsk,
 	readCommentsMessage,
 	readPresence,
 	readPresenceState,
@@ -282,5 +283,18 @@ describe("comments on the sync socket", () => {
 		expect(
 			readCommentsMessage({ type: "comment-refused", ref: "r1", reason: "rate_limited", retryAfter: 2 }),
 		).toEqual({ type: "comment-refused", ref: "r1", reason: "rate_limited", retryAfter: 2 });
+	});
+
+	it("asks for a comment's still by its id, and reads the answer the still rides", () => {
+		const ask = { type: "comment-still-ask", ref: "r3", comment: comment.id };
+		expect(readCommentStillAsk({ ...ask, extra: 1 })).toEqual(ask);
+		expect(readCommentStillAsk({ ...ask, comment: "" })).toBeUndefined();
+		expect(readCommentStillAsk({ ...ask, ref: 3 })).toBeUndefined();
+		expect(readCommentsMessage({ type: "comment-still", ref: "r3", comment: comment.id })).toEqual({
+			type: "comment-still",
+			ref: "r3",
+			comment: comment.id,
+		});
+		expect(readCommentsMessage({ type: "comment-still", ref: "r3" })).toBeUndefined();
 	});
 });

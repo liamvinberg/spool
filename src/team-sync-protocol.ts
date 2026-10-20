@@ -225,7 +225,16 @@ export interface TurnEnded {
 	type: "turn-ended";
 }
 
-export type DaemonMessage = Hello | Save | Saves | Resend | TurnEnded | CommentPost | CommentReplyPost | CommentChange;
+export type DaemonMessage =
+	| Hello
+	| Save
+	| Saves
+	| Resend
+	| TurnEnded
+	| CommentPost
+	| CommentReplyPost
+	| CommentChange
+	| CommentStillAsk;
 export type ObjectMessage =
 	| Welcome
 	| TeamFile
@@ -766,6 +775,16 @@ export interface CommentReadMark {
 export type CommentChange = CommentResolve | CommentEdit | CommentDelete | CommentReadMark;
 
 /**
+ * Daemon → object: the still a comment kept of its frame, which its person's agent is shown when the frame was edited
+ * since, so it sees what the commenter saw. Answered to this socket alone, by `ref`.
+ */
+export interface CommentStillAsk {
+	type: "comment-still-ask";
+	ref: string;
+	comment: string;
+}
+
+/**
  * Object → reader: every comment it may read, in the order they were made, in parts. The part that is `first`
  * replaces whatever the reader held; the one that is `last` ends it.
  */
@@ -827,6 +846,16 @@ export interface CommentPosted {
 }
 
 /**
+ * Object → the asker: a comment's still, riding the binary frame as the image's bytes. With no bytes, the comment kept
+ * none. A comment that isn't there, or that the asker can't read, is refused as `comment_not_found`.
+ */
+export interface CommentStill {
+	type: "comment-still";
+	ref: string;
+	comment: string;
+}
+
+/**
  * Why a comment or reply was not taken. `invalid_comment`: malformed, or its words empty or past
  * `COMMENT_BODY_LIMIT`. `still_too_large`: its still is past `COMMENT_STILL_BYTES`, or no image.
  * `comment_not_found`: a reply to a comment that isn't there, or that this person can't read.
@@ -866,7 +895,8 @@ export type CommentsMessage =
 	| CommentRemoved
 	| CommentSeen
 	| CommentPosted
-	| CommentRefused;
+	| CommentRefused
+	| CommentStill;
 
 /** The most a comment's or a reply's words may be; they are never empty. */
 export const COMMENT_BODY_LIMIT = 4_000;
@@ -989,6 +1019,12 @@ function readMentionIds(value: unknown): string[] | undefined {
 	return [...new Set(value)];
 }
 
+/** A well-formed `comment-still-ask`, copied field by field; undefined for anything else. */
+export function readCommentStillAsk(message: Record<string, unknown>): CommentStillAsk | undefined {
+	const { type, ref, comment } = message;
+	return type === "comment-still-ask" && isId(ref) && isId(comment) ? { type, ref, comment } : undefined;
+}
+
 /**
  * A well-formed comments message from the object, as a daemon or a browser hears it, copied field by field;
  * undefined for anything else, and for a message that isn't about comments.
@@ -1032,6 +1068,10 @@ export function readCommentsMessage(message: Record<string, unknown>): CommentsM
 		case "comment-posted": {
 			const { ref, id } = message;
 			return isId(ref) && isId(id) ? { type: "comment-posted", ref, id } : undefined;
+		}
+		case "comment-still": {
+			const { ref, comment } = message;
+			return isId(ref) && isId(comment) ? { type: "comment-still", ref, comment } : undefined;
 		}
 		case "comment-refused": {
 			const { ref, retryAfter } = message;

@@ -25,6 +25,7 @@ import {
 	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
+	readCommentStillAsk,
 	readPresenceState,
 	travels,
 } from "./team-sync-protocol";
@@ -461,6 +462,21 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		}
 		if (message.type === "comment-post" || message.type === "comment-reply") {
 			commented(at, from, message, bytes);
+			return;
+		}
+		if (message.type === "comment-still-ask") {
+			const ask = readCommentStillAsk(message);
+			if (ask === undefined || !from.live) {
+				from.close();
+				return;
+			}
+			if (!at.comments.some((comment) => comment.id === ask.comment)) {
+				from.deliver(encodeFrame({ type: "comment-refused", ref: ask.ref, reason: "comment_not_found" }));
+				return;
+			}
+			from.deliver(
+				encodeFrame({ type: "comment-still", ref: ask.ref, comment: ask.comment }, at.stills.get(ask.comment)),
+			);
 			return;
 		}
 		if (typeof message.type === "string" && COMMENT_CHANGES.has(message.type)) {
