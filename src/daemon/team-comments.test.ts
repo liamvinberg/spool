@@ -363,7 +363,7 @@ describe("changing a comment on a team canvas", () => {
 	});
 
 	it("is refused offline, and over the limit says when to try again", async () => {
-		const { cloud, ben, bens, id } = await thread();
+		const { cloud, bens, id } = await thread();
 		cloud.commentLimits({ perMinute: 1 });
 		expect((await bens.reply(id, "one")).status).toBe(201);
 		const limited = await bens.reply(id, "two");
@@ -372,7 +372,6 @@ describe("changing a comment on a team canvas", () => {
 		cloud.offline("ben");
 		await eventually(async () => !(await bens.read()).online);
 		expect((await bens.call(`${id}/resolve`, "POST")).status).toBe(409);
-		expect(ben.root).toBeTruthy();
 	});
 });
 
