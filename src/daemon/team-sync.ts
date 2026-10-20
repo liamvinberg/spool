@@ -1040,6 +1040,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			burst = undefined;
 			presence.joined(socket);
 			options.caughtUp?.();
+			// comments can be written again: a canvas reads that they can
+			options.onComments?.();
 			// what git wrote over before the connection dropped is still waiting on the team's version
 			if (restoring.size > 0) askSoon();
 		} else if (message.type === "restored") {
@@ -1094,6 +1096,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			close: (code) => {
 				socket = undefined;
 				connectedWith = undefined;
+				// comments can't be written now: a canvas that could reads that it can't
+				if (caughtUp && !closed) options.onComments?.();
 				caughtUp = false;
 				burst = undefined;
 				// what was in flight is settled by the next catch-up: applied saves come back as the team's version
