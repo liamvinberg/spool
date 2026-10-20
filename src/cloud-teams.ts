@@ -275,6 +275,9 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 				"DELETE",
 				`${team(address)}/projects/${encodeURIComponent(name)}${options.out === true ? "?out=1" : ""}`,
 			),
+		/** How many comments a team project holds: what its leaving the team would delete with it. */
+		commentCount: (address: string, name: string) =>
+			call<{ comments: number }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}/comments/count`),
 		/**
 		 * One team project, and this account's role in its team: what a local copy asks after a close or a refused
 		 * connect. `standing` is `unpaid` while the team has gone local, whatever the role.

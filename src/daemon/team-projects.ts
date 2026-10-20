@@ -206,6 +206,19 @@ export function teamProjectRoutes(options: {
 					}
 				},
 			)
+			/** How many comments a team project holds, for the sheet that moves it out of its team to say so. */
+			.get("/teams/:team/projects/:project/comments/count", async (c) => {
+				try {
+					return c.json(
+						await cloudTeams(options.spoolDir, { ...options.cloud, origin: origin() }).commentCount(
+							c.req.param("team"),
+							c.req.param("project"),
+						),
+					);
+				} catch (error) {
+					return refused(c, error);
+				}
+			})
 			/** D1: what moving a team project to another team would do, here and at spool.page. */
 			.get("/teams/:team/projects/:project/move", async (c) => {
 				const to = c.req.query("to");

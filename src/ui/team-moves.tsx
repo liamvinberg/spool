@@ -640,8 +640,22 @@ export function MoveOutSheet({
 }) {
 	const source = useContext(TeamsSourceContext);
 	const [others, setOthers] = useState<string[]>([]);
+	const [comments, setComments] = useState(0);
 	const [moving, setMoving] = useState(false);
 	const progress = useProgressWhile(path, moving);
+	useEffect(() => {
+		let current = true;
+		// its comments go with the team's copy (spool#160): the sheet says how many before they do
+		void source
+			.commentCount(team.address, project)
+			.then((count) => {
+				if (current && count !== undefined) setComments(count);
+			})
+			.catch(() => {});
+		return () => {
+			current = false;
+		};
+	}, [source, team.address, project]);
 	useEffect(() => {
 		let current = true;
 		void source
@@ -696,6 +710,12 @@ export function MoveOutSheet({
 				<Says>
 					{saidList(others)} {others.length === 1 ? "edits" : "edit"} in {team.name}. Any copy they have stops
 					syncing and becomes a local project too, and its design/ comes back into git when they pull.
+				</Says>
+			)}
+			{comments > 0 && (
+				<Says>
+					{comments === 1 ? "Its 1 comment goes" : `Its ${comments.toLocaleString("en")} comments go`} with{" "}
+					{team.name}’s copy: {comments === 1 ? "it is" : "they are"} deleted when the project goes local.
 				</Says>
 			)}
 			{moving && <MoveProgressLine progress={progress} team={undefined} />}

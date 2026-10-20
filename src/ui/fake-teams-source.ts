@@ -33,6 +33,8 @@ export function fakeTeamsSource(start: {
 	losing?: Record<string, LosingPerson[]>;
 	/** What a move does on this Mac; none in a browser. */
 	mac?: FakeMac;
+	/** How many comments each project holds, by `<team>/<project>`; none said is none. */
+	comments?: Record<string, number>;
 }) {
 	const state = { ...start };
 	const asked: string[] = [];
@@ -70,6 +72,7 @@ export function fakeTeamsSource(start: {
 		}),
 		here: async () => new Map(),
 		projects: async (address) => listed(address),
+		commentCount: async (address, project) => state.comments?.[`${address}/${project}`] ?? 0,
 		movePreview: async (address, project, to, name = project) => {
 			ask(`preview ${address}/${project} ${to} ${name}`);
 			teamOf(address);
