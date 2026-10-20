@@ -487,6 +487,11 @@ describe("a comment over its frame's life (spool#160)", () => {
 		const refused = await bens.write({ body: "After." });
 		expect(refused.status).toBe(402);
 		expect(await refused.json()).toMatchObject({ error: "unpaid" });
+		// a change to one already there is refused for the same reason, never as offline
+		const id = (await bens.read()).comments[0]?.id ?? "";
+		const resolve = await bens.call(`${id}/resolve`, "POST", {});
+		expect(resolve.status).toBe(402);
+		expect(await resolve.json()).toMatchObject({ error: "unpaid" });
 		expect((await bens.read()).comments.map((comment) => comment.body)).toEqual(["Before it lapsed."]);
 		expect(cloud.comments("checkout")).toHaveLength(1);
 	});

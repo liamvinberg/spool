@@ -1785,7 +1785,7 @@ export function createTeamSync(deps: {
 		/** Resolve, reopen, edit, delete, read or mark unread a comment on a root's team project as this Mac's person. */
 		changeComment(root: string, change: NewChange): Promise<string> {
 			const copy = copies.get(root);
-			return copy === undefined ? Promise.reject(new CommentsOffline()) : copy.change(change);
+			return copy === undefined ? Promise.reject(notWritable(root)) : copy.change(change);
 		},
 		/** The still a comment on a root's team project kept of its frame, asked of the team; offline, refused. */
 		still(root: string, comment: string): Promise<Uint8Array | undefined> {
