@@ -47,10 +47,10 @@ export interface AccountSource {
 
 interface Summary {
 	email: string;
-	/** An older spool.page sends none. */
-	name?: string | null;
-	/** An older spool.page sends none. */
-	commentEmails?: string;
+	/** An older spool.page sends none; read as anything until checked. */
+	name?: unknown;
+	/** An older spool.page sends none; read as anything until checked. */
+	commentEmails?: unknown;
 	devices: AccountMac[];
 	passkeys: AccountPasskey[];
 }
@@ -74,7 +74,7 @@ export const cloudAccount: AccountSource = {
 		const summary = (await response.json()) as Summary;
 		return {
 			email: summary.email,
-			name: summary.name ?? null,
+			name: typeof summary.name === "string" ? summary.name : null,
 			commentEmails:
 				summary.commentEmails === "for-you" || summary.commentEmails === "off" ? summary.commentEmails : undefined,
 			macs: summary.devices,
