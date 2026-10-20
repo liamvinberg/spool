@@ -366,7 +366,7 @@ export function readViewerOutsider(value: unknown): ViewerOutsider | undefined {
 				? { id: me.id, name: me.name }
 				: undefined;
 	if (signedIn === undefined || !isPath(comments) || !isPath(socket)) return undefined;
-	const base = { share: { id, kind, who }, me: signedIn, comments, socket };
+	const base: ViewerOutsider = { share: { id, kind, who }, me: signedIn, comments, socket };
 	if (signIn === undefined) return base;
 	const link = readLinkSignIn(signIn);
 	return link === undefined ? undefined : { ...base, signIn: link };
