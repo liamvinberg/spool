@@ -27,7 +27,7 @@ export interface FrameNow {
  */
 export function commentRoutes(deps: {
 	resolve: ResolveProject;
-	comments: (root: string) => { online: boolean; comments: Comment[] };
+	comments: (root: string) => { online: boolean; heard: number | null; comments: Comment[] };
 	comment: (root: string, comment: NewComment, still?: Uint8Array) => Promise<string>;
 	reply: (root: string, reply: NewReply) => Promise<string>;
 	/** The frame's source revision and current still, for a comment made on it now. */

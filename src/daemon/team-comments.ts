@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { SpoolError } from "../errors";
+import type { ProjectLink } from "../team-project";
 import {
 	type Comment,
 	type CommentPost,
@@ -14,12 +15,26 @@ import {
 import type { SyncSocket } from "./team-sync";
 
 /**
- * A local copy's share of its team project's comments (ADR 0011): every comment it was last told of, kept on disk
- * in `design/.spool/comments.json` so a canvas shows them offline and after a restart, and what this machine's
- * person writes, sent on the copy's sync connection while it is caught up and answered by the team.
+ * A local copy's share of its team project's comments (ADR 0011): every comment it was last told of and when, kept
+ * in this machine's own state (never in `design/`) so a canvas shows them offline and after a restart, and what this
+ * machine's person writes, sent on the copy's sync connection while it is caught up and answered by the team.
  *
- * Comments are never saves: they ride the socket, never the files, and nothing here touches `design/`'s own files.
+ * Comments are never saves: they ride the socket, never the files, and nothing here touches `design/`.
  */
+
+/**
+ * Where this machine keeps a team project's comments: in its own state, by the project's address, so every local
+ * copy of one project reads the same, and a copy reads them offline from nothing but its `spool.json`.
+ */
+export function keptCommentsFile(spoolDir: string, link: ProjectLink): string {
+	return join(spoolDir, "comments", new URL(link.origin).host, link.team, `${link.project}.json`);
+}
+
+/** The comments a copy last heard, and when it heard them: null when it never has. */
+export interface KeptComments {
+	heard: number | null;
+	comments: Comment[];
+}
 
 /** What a person writes for a new comment: where it stands and its words. The team says who wrote it. */
 export type NewComment = Omit<CommentPost, "type" | "ref">;
@@ -58,8 +73,8 @@ const ANSWER_MS = 15_000;
 export interface CopyComments {
 	/** Hear one message from the team: true when it was about comments. */
 	hear(message: Record<string, unknown>): boolean;
-	/** Every comment this copy knows, in the order they were made. */
-	list(): Comment[];
+	/** Every comment this copy knows, in the order they were made, and when it last heard them. */
+	list(): KeptComments;
 	/** Send a new comment on a caught-up connection, with the frame's still if there is one. Its id. */
 	post(socket: SyncSocket | undefined, comment: NewComment, still?: Uint8Array): Promise<string>;
 	/** Send a reply on a caught-up connection. Its id. */
@@ -68,8 +83,9 @@ export interface CopyComments {
 	lost(): void;
 }
 
-export function copyComments(file: string, onChange?: () => void): CopyComments {
-	let comments = readKept(file);
+/** A copy's comments, kept in `file`; with none, they're only held while the copy runs. */
+export function copyComments(file: string | undefined, onChange?: () => void): CopyComments {
+	let { heard, comments } = file === undefined ? { heard: null, comments: [] } : readKept(file);
 	/** A snapshot arriving in parts, put together until its last part. */
 	let incoming: Comment[] | undefined;
 	let refs = 0;
@@ -78,13 +94,17 @@ export function copyComments(file: string, onChange?: () => void): CopyComments 
 		{ resolve(id: string): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 	>();
 
-	let kept = JSON.stringify({ comments });
-	/** Keep what changed, and say so; a snapshot that brings nothing new says nothing. */
+	let kept = JSON.stringify(comments);
+	/** Keep what was heard and when; a canvas is told only when it brought something new. */
 	const keep = () => {
-		const now = JSON.stringify({ comments });
+		heard = Date.now();
+		if (file !== undefined) {
+			mkdirSync(dirname(file), { recursive: true });
+			writeAtomic(file, `${JSON.stringify({ heard, comments })}\n`);
+		}
+		const now = JSON.stringify(comments);
 		if (now === kept) return;
 		kept = now;
-		if (existsSync(dirname(file))) writeAtomic(file, `${now}\n`);
 		onChange?.();
 	};
 	const settle = (ref: string, outcome: { id: string } | { error: Error }) => {
@@ -146,7 +166,7 @@ export function copyComments(file: string, onChange?: () => void): CopyComments 
 			}
 			return true;
 		},
-		list: () => comments,
+		list: () => ({ heard, comments }),
 		post: (socket, comment, still) => send(socket, { type: "comment-post", ...comment }, still),
 		reply: (socket, reply) => send(socket, { type: "comment-reply", ...reply }),
 		lost() {
@@ -156,14 +176,16 @@ export function copyComments(file: string, onChange?: () => void): CopyComments 
 	};
 }
 
-/** The comments a copy last knew, as it kept them; none when it kept none or they can't be read. */
-export function readKept(file: string): Comment[] {
+/** The comments a copy last heard and when, as it kept them; none when it kept none or they can't be read. */
+export function readKept(file: string): KeptComments {
 	let kept: unknown;
 	try {
 		kept = JSON.parse(readFileSync(file, "utf8"));
 	} catch {
-		return [];
+		return { heard: null, comments: [] };
 	}
-	if (typeof kept !== "object" || kept === null || !("comments" in kept) || !Array.isArray(kept.comments)) return [];
-	return kept.comments.flatMap((comment: unknown) => readComment(comment) ?? []);
+	if (typeof kept !== "object" || kept === null || !("comments" in kept) || !Array.isArray(kept.comments))
+		return { heard: null, comments: [] };
+	const heard = "heard" in kept && typeof kept.heard === "number" && Number.isFinite(kept.heard) ? kept.heard : null;
+	return { heard, comments: kept.comments.flatMap((comment: unknown) => readComment(comment) ?? []) };
 }

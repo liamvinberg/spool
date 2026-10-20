@@ -19,7 +19,6 @@ import {
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNAVAILABLE,
 	CLOSE_UNPAID,
-	type Comment,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
@@ -43,7 +42,15 @@ import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
-import { CommentsOffline, copyComments, type NewComment, type NewReply, readKept } from "./team-comments";
+import {
+	CommentsOffline,
+	copyComments,
+	type KeptComments,
+	keptCommentsFile,
+	type NewComment,
+	type NewReply,
+	readKept,
+} from "./team-comments";
 import { baseOf, keepBase, mergeText, pruneBases } from "./team-merge";
 import { rescanAfterWatchStarts, type TreeWatch, watchTree } from "./watch-tree";
 
@@ -162,6 +169,8 @@ export interface LocalCopyOptions {
 	caughtUp?: () => void;
 	/** The comments this copy knows changed: the team said so, or sent them all again. */
 	onComments?: () => void;
+	/** Where this machine keeps the comments the copy hears, so they show offline; with none, they aren't kept. */
+	commentsFile?: string;
 	/**
 	 * A solo project moving into this team project (DEV-190): it has no `spool.json` until the team has every file,
 	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
@@ -204,8 +213,8 @@ export interface LocalCopy {
 	 * up, so the pages they touched settle for outsiders. Offline, nothing is said, and a quiet spell does it.
 	 */
 	turnEnded(): void;
-	/** Every comment on the project this copy knows, kept from the last time it was told when offline. */
-	comments(): Comment[];
+	/** Every comment on the project this copy knows and when it heard them, kept from the last time when offline. */
+	comments(): KeptComments;
 	/** Whether a comment written now reaches the team: the copy is caught up with it. */
 	online(): boolean;
 	/** Write a comment as this machine's person, with the frame's still: its id, once the team took it. */
@@ -213,11 +222,6 @@ export interface LocalCopy {
 	/** Reply under a comment as this machine's person: its id, once the team took it. */
 	reply(reply: NewReply): Promise<string>;
 	close(): void;
-}
-
-/** Where a local copy keeps the comments it was last told, for a canvas offline and after a restart. */
-function commentsFile(designDir: string): string {
-	return join(designDir, ".spool", "comments.json");
 }
 
 /** Why a file git put in design/ that the team doesn't have stays on this machine. */
@@ -412,7 +416,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let watch: TreeWatch | undefined;
 	let waiters: { resolve(): void; reject(error: Error): void }[] = [];
 	const presence = copyPresence(options.onPresence, options.onRoster);
-	const comments = copyComments(commentsFile(designDir), options.onComments);
+	const comments = copyComments(options.commentsFile, options.onComments);
 	/** Paths that didn't travel and why, each said once until it travels or goes. */
 	const held = new Map<string, string>();
 	/** A limit paused sync: why, and until when nothing is sent. What changes meanwhile waits on disk. */
@@ -1568,6 +1572,7 @@ export function createTeamSync(deps: {
 					},
 					onRoster: () => deps.onRoster?.(root, copies.get(root)?.roster() ?? []),
 					...(deps.onComments === undefined ? {} : { onComments: () => deps.onComments?.(root) }),
+					commentsFile: keptCommentsFile(deps.spoolDir, link),
 				}),
 			);
 			const said = canvases.get(root);
@@ -1730,11 +1735,12 @@ export function createTeamSync(deps: {
 		 * A team project's comments as this Mac knows them: what its copy was last told, kept on disk, so they show
 		 * offline too; `online` says whether a comment written now reaches the team.
 		 */
-		comments(root: string): { online: boolean; comments: Comment[] } {
+		comments(root: string): { online: boolean } & KeptComments {
 			const copy = copies.get(root);
-			if (copy !== undefined) return { online: copy.online(), comments: copy.comments() };
-			if (followedLink(root) === undefined) return { online: false, comments: [] };
-			return { online: false, comments: readKept(commentsFile(realDesignDir(root))) };
+			if (copy !== undefined) return { online: copy.online(), ...copy.comments() };
+			const link = followedLink(root);
+			if (link === undefined) return { online: false, heard: null, comments: [] };
+			return { online: false, ...readKept(keptCommentsFile(deps.spoolDir, link)) };
 		},
 		/** Write a comment on a root's team project as this Mac's person; refused as offline when it can't reach it. */
 		comment(root: string, comment: NewComment, still?: Uint8Array): Promise<string> {

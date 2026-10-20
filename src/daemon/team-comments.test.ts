@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initTeamProject } from "../init";
 import { fetchLocalCopy, openProject } from "../open";
@@ -59,6 +59,21 @@ async function team() {
 	};
 }
 
+/** The files under a folder whose bytes hold some words, by their path in it. */
+function filesSaying(dir: string, words: string): string[] {
+	const found: string[] = [];
+	const walk = (at: string) => {
+		for (const entry of readdirSync(at, { withFileTypes: true })) {
+			const full = join(at, entry.name);
+			if (entry.name === ".git") continue;
+			if (entry.isDirectory()) walk(full);
+			else if (readFileSync(full, "utf8").includes(words)) found.push(relative(dir, full));
+		}
+	};
+	walk(dir);
+	return found;
+}
+
 /** Wait for something a daemon answers to hold. */
 async function eventually(holds: () => Promise<boolean>, ms = 8000): Promise<void> {
 	const start = Date.now();
@@ -77,7 +92,11 @@ async function canvas(app: ReturnType<typeof daemon>) {
 	const sse = sseReader(await app.request("/api/p/checkout/events"));
 	await sse.next();
 	const read = async () =>
-		(await (await app.request("/api/p/checkout/comments")).json()) as { online: boolean; comments: Comment[] };
+		(await (await app.request("/api/p/checkout/comments")).json()) as {
+			online: boolean;
+			heard: number | null;
+			comments: Comment[];
+		};
 	return {
 		read,
 		/** Once its copy is connected to the team, so what it writes reaches it. */
@@ -206,6 +225,12 @@ describe("a comment on a team canvas", () => {
 		await anas.write({ body: "Before the train." });
 		await bens.told();
 
+		// what it heard, and when, is this Mac's own: kept in its state, never anywhere in the project
+		const heard = (await bens.read()).heard;
+		expect(heard).toBeGreaterThan(0);
+		expect(filesSaying(ben.root, "Before the train.")).toEqual([]);
+		expect(filesSaying(ben.state, "Before the train.")).toHaveLength(1);
+
 		const back = cloud.offline("ben");
 		await eventually(async () => !(await bens.read()).online);
 		const refused = await bens.write({ body: "In the tunnel." });
@@ -219,7 +244,7 @@ describe("a comment on a team canvas", () => {
 		await bens.close();
 		await benDaemon.close();
 		const restarted = await canvas(daemon(ben));
-		expect(await restarted.read()).toMatchObject({ online: false, comments: [{ body: "Before the train." }] });
+		expect(await restarted.read()).toMatchObject({ online: false, heard, comments: [{ body: "Before the train." }] });
 
 		// back online, what was missed meanwhile arrives
 		await anas.write({ body: "While you were away." });
