@@ -371,3 +371,37 @@ export function MachineIcon({ className }: { className?: string }) {
 		</svg>
 	);
 }
+
+/** Comments: the pin drawn as itself, a round with one corner at the spot (spool#170). */
+export function CommentIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className ?? "size-4"} fill="none" aria-hidden="true">
+			<path d="M2.6 13.4V8a5.4 5.4 0 1 1 5.4 5.4Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+/** Resolve: a ring with the check, filled once resolved; pressing it again reopens. */
+export function ResolveIcon({ done, className }: { done: boolean; className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className ?? "size-4"} fill="none" aria-hidden="true">
+			<circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" fill={done ? "currentColor" : "none"} />
+			<path
+				d="m5.4 8.2 1.8 1.8 3.5-3.7"
+				stroke={done ? "var(--color-surface-raised)" : "currentColor"}
+				strokeWidth="1.4"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** Sort and group: three lines, each shorter. */
+export function FilterIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className ?? "size-4"} fill="none" aria-hidden="true">
+			<path d="M2.5 4.5h11M4.5 8h7M6.5 11.5h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
