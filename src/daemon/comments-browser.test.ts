@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
@@ -79,6 +79,7 @@ async function teamCanvas() {
 	return {
 		cloud,
 		page,
+		root,
 		offline: () => cloud.offline("ana"),
 		/** Ben comments, from his own Mac. */
 		benSays: (comment: Record<string, unknown>) =>
@@ -373,4 +374,52 @@ it("edits and deletes your own from its menu, marks a teammate's unread, and res
 	await page.getByRole("menuitem", { name: "Delete comment" }).click();
 	await expect.poll(() => cloud.comments("checkout").map((comment) => comment.id)).toEqual([bens]);
 	await expect.poll(() => page.locator(`[data-comment-pin="${id}"]`).count()).toBe(0);
+});
+
+it("says a comment's frame was edited since, compares, and keeps one whose frame was deleted on the field, dashed", {
+	timeout: 120_000,
+}, async () => {
+	const { cloud, page, root, benSays } = await teamCanvas();
+	// Ana's comment on home, made at its revision now
+	await page.keyboard.press("c");
+	const on = await pagePointOf(page, { x: 100, y: 60 });
+	await page.mouse.click(on.x, on.y);
+	const composer = page.locator("[data-comment-composer]");
+	await composer.locator("textarea").fill("Two coffees reads like a heading.");
+	await composer.locator("textarea").press("Enter");
+	await expect.poll(() => cloud.comments("checkout").length, { timeout: 10_000 }).toBe(1);
+	const id = cloud.comments("checkout")[0]?.id ?? "";
+	const card = page.locator(`[data-comment-card="${id}"]`);
+	await card.waitFor();
+	expect(await card.locator("[data-comment-edited]").count()).toBe(0);
+
+	// the frame is edited: the open card says so, and Compare shows the still it kept beside the frame now
+	writeFrame(root, "home", "export default function Frame() { return <main><h1>One coffee</h1></main>; }\n");
+	await card.locator("[data-comment-edited]").waitFor({ timeout: 20_000 });
+	expect(await card.locator("[data-comment-edited]").textContent()).toContain("home edited since");
+	await card.getByRole("button", { name: "Compare" }).click();
+	expect(
+		await card
+			.locator("[data-comment-still]")
+			.evaluateAll((all) => all.map((one) => one.getAttribute("data-comment-still"))),
+	).toEqual(["then", "now"]);
+	await card.getByRole("button", { name: "Hide" }).click();
+	expect(await card.locator("[data-comment-still]").count()).toBe(0);
+	await page.keyboard.press("Escape");
+
+	// Ben's comment on menu stays on the field where it stood once menu is deleted: dashed, marked, and said in its card
+	benSays({ frame: "menu", at: { x: 40, y: 40 }, body: "Before it went." });
+	await expect.poll(() => page.locator("[data-comment-pin]").count(), { timeout: 10_000 }).toBe(2);
+	const ben = cloud.comments("checkout")[1]?.id ?? "";
+	const before = await page.locator(`[data-comment-pin="${ben}"]`).boundingBox();
+	rmSync(join(root, "design", "frames", "menu"), { recursive: true });
+	const pin = page.locator(`[data-comment-pin="${ben}"][data-comment-dropped="menu"]`);
+	await pin.waitFor({ timeout: 20_000 });
+	const after = await pin.boundingBox();
+	expect(after?.x).toBeCloseTo(before?.x ?? 0, 0);
+	expect(after?.y).toBeCloseTo(before?.y ?? 0, 0);
+	await pin.click();
+	expect(await page.locator(`[data-comment-card="${ben}"] [data-comment-dropped]`).textContent()).toContain(
+		"menu was deleted today. The comment stays on the field, where its pin stood.",
+	);
 });

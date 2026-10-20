@@ -2045,12 +2045,16 @@ export function daemonShares(project: string): SharesSource & {
  */
 export interface CommentsRead {
 	online: boolean;
+	/** The team has gone local: its comments read, and none can be written until it pays (spool#160). */
+	unpaid: boolean;
 	comments: Comment[];
 	reads: Readonly<Record<string, number>>;
 	url: string | null;
+	/** The comments whose frame was edited since they were made, by id (spool#160). */
+	edited: string[];
 }
 
-const NO_COMMENTS: CommentsRead = { online: false, comments: [], reads: {}, url: null };
+const NO_COMMENTS: CommentsRead = { online: false, unpaid: false, comments: [], reads: {}, url: null, edited: [] };
 
 export async function fetchComments(project: string): Promise<CommentsRead> {
 	try {
@@ -2063,7 +2067,19 @@ export async function fetchComments(project: string): Promise<CommentsRead> {
 		if ("reads" in body && typeof body.reads === "object" && body.reads !== null)
 			for (const [id, at] of Object.entries(body.reads)) if (typeof at === "number") reads[id] = at;
 		const url = "url" in body && typeof body.url === "string" ? body.url : null;
-		return { online, comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []), reads, url };
+		const unpaid = "unpaid" in body && body.unpaid === true;
+		const edited =
+			"edited" in body && Array.isArray(body.edited)
+				? body.edited.filter((id: unknown): id is string => typeof id === "string")
+				: [];
+		return {
+			online,
+			unpaid,
+			comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []),
+			reads,
+			url,
+			edited,
+		};
 	} catch {
 		return NO_COMMENTS;
 	}
