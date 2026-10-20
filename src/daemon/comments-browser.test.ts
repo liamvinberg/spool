@@ -129,6 +129,14 @@ it("takes the Comment tool with C, borrows it while C is held, and leaves it on 
 	await page.waitForTimeout(450);
 	await page.keyboard.up("c");
 	expect(await toolIn(page)).toBe("edit");
+	// on a board where C is another key's place (Dvorak's KeyI), letting go of it hands back the tool too
+	const press = (type: string) =>
+		page.evaluate((kind) => window.dispatchEvent(new KeyboardEvent(kind, { key: "c", code: "KeyI" })), type);
+	await press("keydown");
+	expect(await toolIn(page)).toBe("comment");
+	await page.waitForTimeout(450);
+	await press("keyup");
+	expect(await toolIn(page)).toBe("edit");
 	// a window left with C held hands it back too, never hearing C let go
 	await page.keyboard.down("c");
 	await page.waitForTimeout(450);

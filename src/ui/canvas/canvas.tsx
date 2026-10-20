@@ -4856,7 +4856,8 @@ function CanvasField({
 			if (event.code === "Space") setSpaceDown(false);
 			// a C held past a tap, or one a pin was placed under, borrowed the Comment tool: letting go hands back the
 			// one it took over from
-			if (event.code === "KeyC") letGoOfC();
+			// by the key, as the hotkey took it: on Dvorak the C is where KeyI is
+			if (event.key.toLowerCase() === "c") letGoOfC();
 			// releasing accel puts the borrowed Edit down, and the outline it drew
 			// goes from under a pointer that has not moved since (#254, #339)
 			if (event.key === accelKeyName()) {
