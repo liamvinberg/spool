@@ -573,6 +573,7 @@ function CanvasField({
 		reader: commentReader,
 		people: commentPeople,
 		online: comments.online,
+		unpaid: comments.unpaid,
 		url: comments.url,
 		refresh: comments.refresh,
 		notice: setNotice,

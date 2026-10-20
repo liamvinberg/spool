@@ -327,6 +327,11 @@ function Row({
 							{replies} {replies === 1 ? "reply" : "replies"}
 						</span>
 					) : null}
+					{comment.editedSince === true ? (
+						<span className="shrink-0 text-tertiary type-detail" data-comment-edited-since="">
+							· edited since
+						</span>
+					) : null}
 					{comment.standing === "deleted-page" ? (
 						<span className="ml-auto shrink-0 text-danger-strong type-detail">page deleted</span>
 					) : comment.resolved !== null ? (

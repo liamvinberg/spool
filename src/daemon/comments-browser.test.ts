@@ -406,6 +406,9 @@ it("says a comment's frame was edited since, compares, and keeps one whose frame
 	await card.getByRole("button", { name: "Hide" }).click();
 	expect(await card.locator("[data-comment-still]").count()).toBe(0);
 	await page.keyboard.press("Escape");
+	// and its row in the Comments tab is marked so
+	await page.locator('[data-pane-tab="comments"]').click();
+	await page.locator(`[data-comment-row="${id}"] [data-comment-edited-since]`).waitFor();
 
 	// Ben's comment on menu stays on the field where it stood once menu is deleted: dashed, marked, and said in its card
 	benSays({ frame: "menu", at: { x: 40, y: 40 }, body: "Before it went." });

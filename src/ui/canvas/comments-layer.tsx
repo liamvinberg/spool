@@ -33,6 +33,15 @@ import type { Box, Point } from "./camera";
 import type { CameraStore } from "./camera-store";
 import { type CanvasStore, useCanvasField } from "./canvas-store";
 import {
+	type CommentFrame,
+	DroppedLine,
+	droppedFrame,
+	EditedSince,
+	frameLeaf,
+	pinOnFrame,
+	UNPAID,
+} from "./comment-history";
+import {
 	fanOut,
 	gather,
 	isUnread,
@@ -73,7 +82,7 @@ export interface CommentDraft {
 /** The event the canvas passes the daemon's `comments` change on as. */
 export const COMMENTS_CHANGE = "spool-comments-change";
 
-const NOTHING_READ: CommentsRead = { online: false, comments: [], reads: {}, url: null };
+const NOTHING_READ: CommentsRead = { online: false, unpaid: false, comments: [], reads: {}, url: null };
 
 /**
  * A team project's comments as this Mac knows them: read when the canvas opens, whenever the daemon says they
@@ -118,14 +127,19 @@ export function useCommentPeople(project: string, team: boolean): readonly Comme
 	return people;
 }
 
-/** Where a comment stands on its page's field, in world units; undefined when its frame isn't on this page. */
+/**
+ * Where a comment stands on its page's field, in world units; undefined when its frame isn't on this page. On a frame
+ * resized smaller since, it stays inside it (spool#160).
+ */
 export function commentWorld(
 	comment: { frame: string | null; at: Point },
 	frames: readonly (Box & { name: string })[],
 ): Point | undefined {
 	if (comment.frame === null) return comment.at;
 	const frame = frames.find((one) => one.name === comment.frame);
-	return frame === undefined ? undefined : { x: frame.x + comment.at.x, y: frame.y + comment.at.y };
+	if (frame === undefined) return undefined;
+	const at = pinOnFrame(comment.at, frame);
+	return { x: frame.x + at.x, y: frame.y + at.y };
 }
 
 /** Where a comment was put, as its card says: the frame's name, or the field. */
@@ -144,6 +158,8 @@ export interface CommentsContext {
 	reader: Reader;
 	people: readonly CommentMentionable[];
 	online: boolean;
+	/** The team has gone local: comments are read, never written, until it pays (spool#160). */
+	unpaid?: boolean;
 	url: string | null;
 	refresh: () => void;
 	/** a word to the person: a link copied, or why something didn't go */
@@ -162,8 +178,8 @@ export function CommentsLayer({
 	context: CommentsContext;
 	store: CanvasStore;
 	camera: CameraStore;
-	/** The frames on this page, in world units. */
-	frames: readonly (Box & { name: string })[];
+	/** The frames on this page, in world units, with the cover this Mac has of each. */
+	frames: readonly CommentFrame[];
 	page: string;
 	comments: readonly Comment[];
 	/** Put a comment in the agent composer as a chip (spool#172); absent where there is no agent to send it to. */
@@ -277,6 +293,7 @@ export function CommentsLayer({
 						key={openComment.id}
 						context={context}
 						comment={openComment}
+						frame={frames.find((one) => one.name === openComment.frame)}
 						onClose={() => setOpen(null)}
 						onSendToAgent={onSendToAgent}
 					/>
@@ -336,39 +353,51 @@ function Pin({
 	const resolved = comment.resolved !== null;
 	const orphan = comment.standing === "deleted-frame";
 	const hollow = resolved || orphan;
+	const gone = droppedFrame(comment);
 	return (
-		<button
-			type="button"
-			aria-label={`Comment by ${nameOf(by, comment.agent)}${resolved ? ", resolved" : ""}${unread ? ", unread" : ""}`}
-			aria-expanded={open}
-			data-comment-pin={comment.id}
-			data-unread={unread ? "" : undefined}
-			data-resolved={resolved ? "" : undefined}
-			{...OWN_PRESS}
-			onClick={(event) => {
-				event.stopPropagation();
-				onOpen();
-			}}
-			className={cn(
-				"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-transform duration-fast ease-out",
-				open ? "z-20 scale-110" : "z-10 hover:scale-105",
-				hollow ? "bg-surface-raised text-secondary" : null,
+		<>
+			{gone === undefined ? null : (
+				<span
+					className="pointer-events-none absolute z-10 whitespace-nowrap text-tertiary type-detail"
+					style={{ left: at.x + PIN + 6, top: at.y - PIN + 3 }}
+				>
+					{frameLeaf(gone)} · <span className="text-danger-strong">deleted</span>
+				</span>
 			)}
-			style={{
-				left: at.x,
-				top: at.y - PIN,
-				width: PIN,
-				height: PIN,
-				borderRadius: comment.agent ? 5 : `${round}px ${round}px ${round}px 2px`,
-				transformOrigin: "0 100%",
-				...(hollow ? {} : { background: by.color, color: PRESENCE_INK }),
-				boxShadow: ringOf(open, unread),
-				...(orphan ? { outline: "1.25px dashed var(--color-secondary)", outlineOffset: -1.25 } : {}),
-				opacity: resolved ? 0.75 : 1,
-			}}
-		>
-			{resolved ? <CheckGlyph /> : by.name.charAt(0)}
-		</button>
+			<button
+				type="button"
+				aria-label={`Comment by ${nameOf(by, comment.agent)}${resolved ? ", resolved" : ""}${unread ? ", unread" : ""}`}
+				aria-expanded={open}
+				data-comment-pin={comment.id}
+				data-comment-dropped={gone}
+				data-unread={unread ? "" : undefined}
+				data-resolved={resolved ? "" : undefined}
+				{...OWN_PRESS}
+				onClick={(event) => {
+					event.stopPropagation();
+					onOpen();
+				}}
+				className={cn(
+					"pointer-events-auto absolute flex cursor-pointer items-center justify-center font-semibold text-[10px] uppercase leading-none transition-transform duration-fast ease-out",
+					open ? "z-20 scale-110" : "z-10 hover:scale-105",
+					hollow ? "bg-surface-raised text-secondary" : null,
+				)}
+				style={{
+					left: at.x,
+					top: at.y - PIN,
+					width: PIN,
+					height: PIN,
+					borderRadius: comment.agent ? 5 : `${round}px ${round}px ${round}px 2px`,
+					transformOrigin: "0 100%",
+					...(hollow ? {} : { background: by.color, color: PRESENCE_INK }),
+					boxShadow: ringOf(open, unread),
+					...(orphan ? { outline: "1.25px dashed var(--color-secondary)", outlineOffset: -1.25 } : {}),
+					opacity: resolved ? 0.75 : 1,
+				}}
+			>
+				{resolved ? <CheckGlyph /> : by.name.charAt(0)}
+			</button>
+		</>
 	);
 }
 
@@ -774,8 +803,14 @@ function MentionField({
 	);
 }
 
-/** A refusal said in the card: offline has its own words, and the rest are the team's. */
-function RefusalLine({ refusal, online }: { refusal: string | null; online: boolean }) {
+/** A refusal said in the card: offline and a team gone local have their own words, and the rest are the team's. */
+function RefusalLine({ refusal, online, unpaid }: { refusal: string | null; online: boolean; unpaid: boolean }) {
+	if (unpaid || refusal === "unpaid")
+		return (
+			<span className="text-secondary type-label" data-comment-offline="">
+				{UNPAID}
+			</span>
+		);
 	if (!online || refusal === "offline")
 		return (
 			<span className="text-secondary type-label" data-comment-offline="">
@@ -801,11 +836,11 @@ function Composer({
 	onClose: () => void;
 	onSent: (id: string) => void;
 }) {
-	const { project, online, people } = context;
+	const { project, online, people, unpaid = false } = context;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
-	const offline = !online || refusal === "offline";
+	const offline = !online || refusal === "offline" || unpaid;
 	const send = () => {
 		if (text.trim() === "" || sending || offline) return;
 		setSending(true);
@@ -850,7 +885,7 @@ function Composer({
 					onSend={send}
 					onEscape={onClose}
 				/>
-				<RefusalLine refusal={refusal} online={online} />
+				<RefusalLine refusal={refusal} online={online} unpaid={unpaid} />
 				<div className="flex items-center gap-2">
 					<TeamLabel />
 					<span className="min-w-0 flex-1" />
@@ -883,19 +918,22 @@ function namesIn(comment: Comment, people: readonly Named[]): Named[] {
 export function CommentCard({
 	context,
 	comment,
+	frame,
 	onClose,
 	onSendToAgent,
 }: {
 	context: CommentsContext;
 	comment: Comment;
+	/** Its frame as the canvas has it now, for Compare's "now"; none when it isn't on this page. */
+	frame?: CommentFrame | undefined;
 	onClose: () => void;
 	onSendToAgent?: ((comment: Comment) => void) | undefined;
 }) {
-	const { project, online, people, reader, refresh } = context;
+	const { project, online, people, reader, refresh, unpaid = false } = context;
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
 	const [refusal, setRefusal] = useState<string | null>(null);
-	const offline = !online || refusal === "offline";
+	const offline = !online || refusal === "offline" || unpaid;
 	const resolved = comment.resolved;
 	const unread = isUnread(comment, reader);
 	// opening the card reads it, and anything said while it stands open is read as it arrives
@@ -980,6 +1018,7 @@ export function CommentCard({
 					</span>
 				</div>
 			)}
+			<DroppedLine comment={comment} />
 			<div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-3 py-3">
 				<Message
 					message={comment}
@@ -999,6 +1038,7 @@ export function CommentCard({
 							acts={{ ...menu, reply }}
 						/>
 					))}
+				{comment.editedSince === true ? <EditedSince project={project} comment={comment} frame={frame} /> : null}
 			</div>
 			<div className="flex shrink-0 flex-col gap-1.5 border-line-default border-t px-3 py-2.5">
 				<div className="flex items-end gap-2 rounded-sm border border-line-strong bg-surface-window px-2.5 py-1.5 focus-within:border-line-focus">
@@ -1027,7 +1067,7 @@ export function CommentCard({
 						Reply
 					</Button>
 				</div>
-				<RefusalLine refusal={refusal} online={online} />
+				<RefusalLine refusal={refusal} online={online} unpaid={unpaid} />
 			</div>
 		</Popover>
 	);

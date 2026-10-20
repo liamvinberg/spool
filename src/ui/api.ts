@@ -2050,11 +2050,9 @@ export interface CommentsRead {
 	comments: Comment[];
 	reads: Readonly<Record<string, number>>;
 	url: string | null;
-	/** The comments whose frame was edited since they were made, by id (spool#160). */
-	edited: string[];
 }
 
-const NO_COMMENTS: CommentsRead = { online: false, unpaid: false, comments: [], reads: {}, url: null, edited: [] };
+const NO_COMMENTS: CommentsRead = { online: false, unpaid: false, comments: [], reads: {}, url: null };
 
 export async function fetchComments(project: string): Promise<CommentsRead> {
 	try {
@@ -2068,17 +2066,12 @@ export async function fetchComments(project: string): Promise<CommentsRead> {
 			for (const [id, at] of Object.entries(body.reads)) if (typeof at === "number") reads[id] = at;
 		const url = "url" in body && typeof body.url === "string" ? body.url : null;
 		const unpaid = "unpaid" in body && body.unpaid === true;
-		const edited =
-			"edited" in body && Array.isArray(body.edited)
-				? body.edited.filter((id: unknown): id is string => typeof id === "string")
-				: [];
 		return {
 			online,
 			unpaid,
 			comments: body.comments.flatMap((comment: unknown) => readComment(comment) ?? []),
 			reads,
 			url,
-			edited,
 		};
 	} catch {
 		return NO_COMMENTS;
