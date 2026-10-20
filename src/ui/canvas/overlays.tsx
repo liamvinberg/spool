@@ -635,17 +635,9 @@ function HeldIn({
 /**
  * The element a click would take, outlined faintly (#339), gliding from the
  * one the pointer left when it is one box, quicker than the ring: it follows
- * the hand.
+ * the hand. The browser canvas draws it under its Comment tool too (spool#173).
  */
-function PreviewIn({
-	camera,
-	frame,
-	preview,
-}: {
-	camera: CameraStore;
-	frame: ProjectedFrame;
-	preview: ElementPreview;
-}) {
+export function PreviewIn({ camera, frame, preview }: { camera: CameraStore; frame: Box; preview: ElementPreview }) {
 	const rects = lineBoxes(preview);
 	const only = rects.length === 1 ? rects[0] : undefined;
 	const glide = useGlide(only ?? null, "quick");
