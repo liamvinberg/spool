@@ -151,6 +151,8 @@ body { margin: 0; background: #0e0e0e; }
 	cursor: pointer;
 }
 .spool-bar-icon:hover { background: #1c1c1c; color: #f0efed; }
+/* the copy link: as wide as the word that says it copied */
+.spool-bar-copy { width: auto; min-width: 20px; padding: 0 2px; }
 /* the bar put away (#227): the strip is where it was, the nub is its trace,
    and the bar sits inside the strip so hovering either is one hover. Resting
    there peeks it in over the page; leaving takes it away; pressing the nub

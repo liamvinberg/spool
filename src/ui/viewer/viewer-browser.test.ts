@@ -460,6 +460,21 @@ describe("the read-only canvas", () => {
 		expect(new URL(page.url()).searchParams.get("frame")).toBe("home");
 	});
 
+	it("says esc leaves the player, and copies the link to the screen on show", { timeout: 60_000 }, async () => {
+		const { page } = await open();
+		await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: APP });
+		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+		await page.locator('[data-viewer-frame="home"]').click();
+		const player = page.locator("[data-viewer-player]");
+		await player.waitFor();
+		expect(await player.locator(".spool-top").textContent()).toContain("esc exits");
+		await page.getByRole("button", { name: "Copy link to this screen" }).click();
+		await player.getByText("copied").waitFor();
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${APP}${PATH}?frame=home`);
+		await page.keyboard.press("Escape");
+		await player.waitFor({ state: "detached" });
+	});
+
 	it("offers Open in spool to editors only, and shows covers until a frame draws", { timeout: 60_000 }, async () => {
 		const viewer = await open(PATH, { spool: true });
 		await viewer.page.waitForTimeout(300);

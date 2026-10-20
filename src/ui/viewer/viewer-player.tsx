@@ -242,6 +242,9 @@ export function ViewerPlayer({
 						frames={{}}
 						controller={controller}
 						closeLabel="Back to the canvas"
+						// the player stands over the page here, so the tab's own close would take the canvas with it
+						exitKey="esc"
+						linkable
 						loading={waiting && cover === undefined}
 						host={
 							<PlayedDocument

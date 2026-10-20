@@ -62,6 +62,8 @@ export function Player({
 	loading = false,
 	onInset,
 	closeLabel = "Close the tab",
+	exitKey = EXIT_KEY,
+	linkable = false,
 }: {
 	project: string;
 	frames: Record<string, ComponentType>;
@@ -78,6 +80,10 @@ export function Player({
 	onInset?: (px: number) => void;
 	/** What leaving is called: a tab closes, and the read-only canvas in a browser goes back to the canvas. */
 	closeLabel?: string;
+	/** The key the bar says leaves: the tab's own close, or esc where the player stands over a page. */
+	exitKey?: string;
+	/** Whether the bar copies the address of the screen on show, for an address someone else can open. */
+	linkable?: boolean;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
 	const { frame, arrival, externalHref } = controller.read();
@@ -147,6 +153,8 @@ export function Player({
 						onHide: hide,
 						onClose: close,
 						closeLabel,
+						exitKey,
+						linkable,
 					}
 				: { desk })}
 		/>
@@ -424,6 +432,8 @@ function TopBar({
 	onHide,
 	onClose,
 	closeLabel = "Close the tab",
+	exitKey = EXIT_KEY,
+	linkable = false,
 }: {
 	project: string;
 	frame: string;
@@ -443,6 +453,8 @@ function TopBar({
 	onHide?: (hidden: boolean) => void;
 	onClose?: () => void;
 	closeLabel?: string;
+	exitKey?: string;
+	linkable?: boolean;
 }) {
 	const layout = barLayout(viewport.vw);
 	// Said once and then gone, the way a toast is; pressing reset ends it early
@@ -495,7 +507,13 @@ function TopBar({
 						{viewport.vw} × {viewport.vh}
 					</span>
 				)}
-				{desk === undefined && layout.size && <span className="spool-bar-hint">{exitHint} exits</span>}
+				{desk === undefined && layout.size && <span className="spool-bar-hint">{exitKey} exits</span>}
+				{desk === undefined && linkable && (
+					<>
+						<span className="spool-bar-rule" />
+						<CopyLinkButton />
+					</>
+				)}
 				{desk === undefined && onHide !== undefined && (
 					<>
 						<span className="spool-bar-rule" />
@@ -602,4 +620,47 @@ export function BrokenFrame({ frame, file, error }: { frame: string; file: strin
 }
 
 /** How this platform closes a tab, printed on the bar so nothing has to be taught. */
-const exitHint = `${accelLabel()}w`;
+const EXIT_KEY = `${accelLabel()}w`;
+
+/** How long the bar says the link was copied. */
+const COPIED_MS = 1600;
+
+/** Copy the address of the screen on show: the address bar's, which names it. */
+function CopyLinkButton() {
+	const [copied, setCopied] = useState(false);
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), COPIED_MS);
+		return () => clearTimeout(timer);
+	}, [copied]);
+	return (
+		<button
+			type="button"
+			className="spool-bar-icon spool-bar-copy"
+			aria-label="Copy link to this screen"
+			onClick={() => {
+				void navigator.clipboard?.writeText(window.location.href).then(
+					() => setCopied(true),
+					() => {},
+				);
+			}}
+		>
+			{copied ? <span className="spool-bar-hint">copied</span> : <LinkGlyph />}
+		</button>
+	);
+}
+
+/** Two links of a chain: the address of what is on show. */
+function LinkGlyph() {
+	return (
+		<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+			<path
+				d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.4"
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
