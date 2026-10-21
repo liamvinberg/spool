@@ -12,8 +12,10 @@ export type ShareKind = "people" | "link";
 export interface ShareView {
 	id: string;
 	kind: ShareKind;
-	/** The page paths it shows. */
+	/** The page paths it shows; for a whole-project share, every page as the project now stands. */
 	pages: string[];
+	/** A whole-project share (spool#182): every page, and pages added later. */
+	whole?: true;
 	/** Whom a people share names, by address; none for a link share. */
 	people: string[];
 	/** The same people by name, in the same order, as spool.page says them everywhere; absent from an older spool.page. */
@@ -95,15 +97,18 @@ export function readCommenters(value: unknown): ShareCommenter[] | null {
 }
 
 /** What a new share asks for. */
-export interface ShareRequest {
+export type ShareRequest = (
+	| { pages: string[]; whole?: undefined }
+	/** The whole project, pages added later included (spool#182): no pages to name. */
+	| { whole: true; pages?: undefined }
+) & {
 	kind: ShareKind;
-	pages: string[];
 	people?: string[];
-	/** The frame its link opens playing, on one of its pages. */
+	/** The frame its link opens playing, on one of its pages, or any frame of a whole-project share. */
 	start?: string;
 	/** Email the people it names a link that opens it. */
 	notify?: boolean;
-}
+};
 
 /** People named on a people share or taken off it; whoever is named is emailed a link to it when `notify` is set. */
 export interface ShareChange {
@@ -118,6 +123,14 @@ export const TOP_PAGE = "the top page";
 /** A shared page as a share's sheet and line say it: its own name, or the top page. */
 export function sharedPageName(page: string): string {
 	return page === ROOT_PAGE ? TOP_PAGE : pageName(page);
+}
+
+/** What a share shows, as its row says it: "whole project", or its pages by name. */
+export function sharedWhat(
+	share: Pick<ShareView, "pages" | "whole">,
+	name: (page: string) => string = sharedPageName,
+): string {
+	return share.whole === true ? "whole project" : share.pages.map(name).join(", ");
 }
 
 /** "kim and ola", "kim, ola and sam", or "anyone with the link": whom a share is for, as its row says it. */
