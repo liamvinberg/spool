@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { initTeamProject } from "../init";
@@ -21,7 +21,7 @@ const BUTTON = 'export const OrderButton = () => <button type="button">Order</bu
 const using = (name: string) =>
 	`import { OrderButton } from "shared/ui/order-button";\n\nexport default function F() {\n\treturn <main style={{ padding: 40 }}><h1>${name}</h1><OrderButton /></main>;\n}\n`;
 
-async function teamCanvas() {
+async function teamCanvas(options: { deleteMenu?: boolean } = {}) {
 	const cloud = fakeTeam();
 	let now = NINE;
 	cloud.clock(() => now);
@@ -61,6 +61,13 @@ async function teamCanvas() {
 	await bens.save("shared/ui/order-button.tsx", BUTTON.replace(">Order<", ">Order now<"));
 	await until(() => readFileSync(join(root, "design/frames/cart/frame.tsx"), "utf8").includes("Ben's cart"), 15_000);
 	await until(() => readFileSync(join(root, "design/shared/ui/order-button.tsx"), "utf8").includes("now"), 15_000);
+	if (options.deleteMenu === true) {
+		// and Ana deletes menu
+		now = NINE + 65 * MINUTE;
+		rmSync(join(root, "design/frames/menu"), { recursive: true });
+		await until(() => cloud.file("checkout", "frames/menu/frame.tsx") === null, 15_000);
+		await until(() => !existsSync(join(root, "design/frames/menu")), 15_000);
+	}
 	now = NINE + 70 * MINUTE;
 	return { url: daemon.url };
 }
@@ -130,4 +137,39 @@ it("moves nothing under reduced motion", { timeout: 180_000 }, async () => {
 		[layer, ...layer.querySelectorAll("*")].map((element) => getComputedStyle(element).transitionDuration),
 	);
 	expect(durations.every((duration) => duration.split(", ").every((one) => one === "0s"))).toBe(true);
+});
+
+it("brings a frame deleted since back dashed in its old place", { timeout: 180_000 }, async () => {
+	const { url } = await teamCanvas({ deleteMenu: true });
+	const page = await (await testBrowser()).newPage({ viewport: { width: 1600, height: 900 } });
+	await page.goto(`${url}/p/checkout`);
+	await page.locator('[data-pane-tab="comments"]').waitFor({ timeout: 30_000 });
+	await page.locator(".project-tab-label").first().click({ button: "right" });
+	await page.getByRole("menuitem", { name: "History…" }).click();
+	const rows = page.locator("[data-history-pane] [data-history-stretch]:not([inert] *)");
+	// Ana's first stretch made cart and menu
+	const first = rows.last();
+	await expect
+		.poll(() => first.locator("[data-history-touched]").textContent(), { timeout: 15_000 })
+		.toContain("menu");
+	await first.hover();
+	// menu is gone from the canvas, so only cart is outlined
+	await expect.poll(() => page.locator("[data-history-touched-frame]").count()).toBe(1);
+	await first.locator("button[aria-expanded]").first().click();
+	await first.getByRole("button", { name: "Compare with now" }).click();
+	const compare = page.locator('[data-compare][data-compare-shown="true"]');
+	await compare.waitFor({ timeout: 15_000 });
+	const menu = compare.locator('[data-compare-then="menu"]');
+	expect(await menu.locator("[data-compare-deleted]").count()).toBe(1);
+	expect(await menu.locator("[data-compare-label]").textContent()).toMatch(/deleted since$/u);
+	await expect
+		.poll(() => page.frameLocator('[data-compare-then="menu"] iframe').locator("h1").textContent(), {
+			timeout: 15_000,
+		})
+		.toBe("Menu");
+	// cart stands where it stood, beside its own now; menu has no now
+	expect(await compare.locator('[data-compare-now="cart"]').count()).toBe(1);
+	expect(await compare.locator('[data-compare-now="menu"]').count()).toBe(0);
+	await page.keyboard.press("Escape");
+	await expect.poll(() => page.locator("[data-compare]").count(), { timeout: 5_000 }).toBe(0);
 });
