@@ -53,6 +53,9 @@ const SETTLE_MS = 1500;
 /** What an open stretch holds beyond its files: Compare with now (#188) and Restore… (#189) hang here. */
 export type StretchActions = (stretch: HistoryStretch, scope: HistoryScope) => ReactNode;
 
+/** A stretch coming under the pointer, or leaving it (null). */
+export type StretchHover = (stretch: HistoryStretch | null, scope: HistoryScope) => void;
+
 /**
  * The project's stretches in a scope, read while the pane is in sight: when it comes into sight or the scope
  * changes, when the window comes back to the front, and a moment after the design changes. Older days are read on
@@ -113,6 +116,7 @@ export function HistoryPane({
 	onScope,
 	actions,
 	restore,
+	onHover,
 }: {
 	project: string;
 	scope: HistoryScope;
@@ -122,8 +126,17 @@ export function HistoryPane({
 	actions?: StretchActions | undefined;
 	/** Restore on a file's line and Put back under a set-aside save (spool#188); an editor's alone */
 	restore?: FileRestore | undefined;
+	/** A stretch under the pointer, or none: the canvas outlines the frames it touched (spool#189) */
+	onHover?: StretchHover | undefined;
 }) {
 	const { read, more, older } = useHistory(project, scope, visible);
+	const hoverRef = useRef(onHover);
+	hoverRef.current = onHover;
+	// a pane out of sight has nothing under the pointer
+	useEffect(() => {
+		if (!visible) hoverRef.current?.(null, scope);
+	}, [visible, scope]);
+	useEffect(() => () => hoverRef.current?.(null, { kind: "project" }), []);
 	const [person, setPerson] = useState<string | null>(null);
 	const [picked, setPicked] = useState<string | null>(null);
 	const scopeKey = scope.kind === "frame" ? scope.frame : "";
@@ -195,6 +208,7 @@ export function HistoryPane({
 													onPick={() => setPicked(picked === key ? null : key)}
 													actions={actions}
 													restore={restore}
+													onHover={onHover}
 												/>
 											</Fold>
 										);
@@ -343,6 +357,7 @@ function StretchRow({
 	onPick,
 	actions,
 	restore,
+	onHover,
 }: {
 	project: string;
 	scope: HistoryScope;
@@ -356,6 +371,7 @@ function StretchRow({
 	onPick: () => void;
 	actions: StretchActions | undefined;
 	restore: FileRestore | undefined;
+	onHover: StretchHover | undefined;
 }) {
 	const { space, quiet } = paceOf(above, stretch);
 	// a restore is a row of its own (spool#188): ↺ for its mark, what went back to when, washed in as it arrives
@@ -363,7 +379,13 @@ function StretchRow({
 	const through = throughOf(stretch, frame);
 	const ring = `color-mix(in srgb, ${stretch.by.color} 33%, transparent)`;
 	return (
-		<div className="group/stretch relative flex flex-col" style={{ paddingTop: space }} data-history-stretch="">
+		<div
+			className="group/stretch relative flex flex-col"
+			style={{ paddingTop: space }}
+			data-history-stretch=""
+			onPointerEnter={() => onHover?.(stretch, scope)}
+			onPointerLeave={() => onHover?.(null, scope)}
+		>
 			{/* the spine the marks hang on, from the day's first to its last */}
 			<span
 				aria-hidden="true"
