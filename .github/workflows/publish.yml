@@ -105,6 +105,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
         run: node --experimental-strip-types .github/scripts/wait-for-ci.ts "$RELEASE_SHA"
+      # The cloud is deployed before the release that needs it: a daemon whose
+      # sync protocol spool.page doesn't accept would be refused by every team.
+      - name: Require the deployed cloud to accept the release's sync protocol
+        env:
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+        run: node --experimental-strip-types .github/scripts/cloud-protocols.ts "$RELEASE_SHA"
 
   publish:
     needs: [release, validate]
