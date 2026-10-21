@@ -4,10 +4,13 @@ import { saidList } from "../share-view";
 import {
 	type BranchesTouchingDesign,
 	type CloudTeam,
+	fetchGetItPlaces,
 	fetchMoveBranches,
 	fetchMoveProgress,
 	fetchMoveStays,
+	fetchPlaceSurvey,
 	fetchTeamProjects,
+	type GetItPlaces,
 	getTeamProjectAt,
 	type HerePerson,
 	type MoveOutcome,
@@ -16,6 +19,7 @@ import {
 	moveProjectOut,
 	moveProjectToTeam,
 	type ProjectCard,
+	type Survey,
 	TeamActionRefused,
 	type TeamProjectOnMac,
 } from "./api";
@@ -247,8 +251,11 @@ export function FoundAway({
 type Place = { kind: "checkout"; path: string } | { kind: "pick" } | { kind: "mac" };
 
 /**
- * "Get it": a checkout of the project's repo already on this Mac first, then "In a checkout…" to pick another, then
- * "Just on this Mac" with no repo at all. Spool never clones: the repo's clone command is shown to copy.
+ * "Get it": the checkouts of the project's repo on this Mac first, best first, then "In a checkout…" to pick
+ * another, then "Just on this Mac" with no repo at all. Each place says on its own line what the daemon found there
+ * (spool#193), and one sentence under them what Get it will do with the place chosen. Another project's place is
+ * dimmed; a branch from before the move waits for the move commit, and Get it carries on by itself once it is in.
+ * Spool never clones: the repo's clone command is shown to copy.
  */
 export function GetItDialog({
 	team,
@@ -263,8 +270,62 @@ export function GetItDialog({
 }) {
 	const first = project.checkouts[0];
 	const [place, setPlace] = useState<Place>(first === undefined ? { kind: "mac" } : { kind: "checkout", path: first });
-	const [picked, setPicked] = useState<string | null>(null);
+	const [places, setPlaces] = useState<GetItPlaces | undefined>(undefined);
+	const [picked, setPicked] = useState<{ path: string; survey?: Survey } | null>(null);
 	const [picking, setPicking] = useState(false);
+	const [waitRefused, setWaitRefused] = useState<string | null>(null);
+	/** The person chose a place: what the daemon finds later no longer chooses for them. */
+	const chose = useRef(false);
+	const choose = (next: Place) => {
+		chose.current = true;
+		setWaitRefused(null);
+		setPlace(next);
+	};
+	useEffect(() => {
+		let current = true;
+		void fetchGetItPlaces(team.address, project.name).then((found) => {
+			if (!current || found === undefined) return;
+			setPlaces(found);
+			if (chose.current) return;
+			const best = found.checkouts.find((one) => usableSurvey(one.survey));
+			if (best !== undefined) setPlace({ kind: "checkout", path: best.path });
+			else if (usableSurvey(found.mac.survey)) setPlace({ kind: "mac" });
+		});
+		return () => {
+			current = false;
+		};
+	}, [team.address, project.name]);
+	const checkouts: { path: string; survey?: Survey }[] =
+		places?.checkouts ?? project.checkouts.map((path) => ({ path }));
+	const macSurvey = places?.mac.survey;
+	const chosen: Survey | undefined =
+		place.kind === "mac"
+			? macSurvey
+			: place.kind === "pick"
+				? picked?.survey
+				: checkouts.find((one) => one.path === place.path)?.survey;
+	const where =
+		place.kind === "mac"
+			? ({ where: "mac" } as const)
+			: ({ where: "checkout", path: place.kind === "pick" ? (picked?.path ?? "") : place.path } as const);
+	const waiting = chosen?.kind === "pre-move";
+	// a branch from before the move: the daemon waits for its move commit, and the sheet with it
+	const waitingFor = waiting && where.where === "checkout" ? where.path : null;
+	const got = useRef(onGot);
+	got.current = onGot;
+	useEffect(() => {
+		if (waitingFor === null) return;
+		const stop = new AbortController();
+		getTeamProjectAt(team.address, project.name, { where: "checkout", path: waitingFor }, stop.signal).then(
+			(done) => {
+				if (!stop.signal.aborted) got.current(done);
+			},
+			(error: unknown) => {
+				if (!stop.signal.aborted) setWaitRefused(error instanceof Error ? error.message : String(error));
+			},
+		);
+		return () => stop.abort();
+	}, [waitingFor, team.address, project.name]);
 	if (picking)
 		return (
 			<ProjectPicker
@@ -273,19 +334,32 @@ export function GetItDialog({
 				onOpened={() => {}}
 				onClose={() => setPicking(false)}
 				onLocation={async (path) => {
-					setPicked(path);
-					setPlace({ kind: "pick" });
+					setPicked({ path });
+					choose({ kind: "pick" });
+					void fetchPlaceSurvey(team.address, project.name, path).then((found) => {
+						if (found !== undefined)
+							setPicked((now) => (now?.path === path ? { path, survey: found.survey } : now));
+					});
 					return { ok: true };
 				}}
 			/>
 		);
 	/** One place; `detail` is a path, said as the machine says it, unless it is a sentence. */
-	const choice = (key: string, selected: boolean, select: () => void, title: string, detail: string, path = true) => (
+	const choice = (
+		key: string,
+		selected: boolean,
+		select: () => void,
+		title: string,
+		detail: string,
+		path = true,
+		disabled = false,
+	) => (
 		<RadioCard
 			key={key}
 			name="get-it-place"
 			value={key}
 			checked={selected}
+			disabled={disabled}
 			onSelect={select}
 			label={title}
 			description={
@@ -299,26 +373,25 @@ export function GetItDialog({
 		<ConfirmDialog
 			title={`Get ${project.name}`}
 			description={`Put ${team.name}’s ${project.name} on this Mac. Its design/ stays in step with the team and out of git.`}
-			confirmLabel="Get it"
-			disabled={place.kind === "pick" && picked === null}
+			confirmLabel={waiting ? "Waiting for the merge…" : "Get it"}
+			disabled={
+				waiting || (place.kind === "pick" && picked === null) || (chosen !== undefined && !usableSurvey(chosen))
+			}
 			onConfirm={async () => {
-				const where =
-					place.kind === "mac"
-						? ({ where: "mac" } as const)
-						: ({ where: "checkout", path: place.kind === "pick" ? (picked ?? "") : place.path } as const);
 				onGot(await getTeamProjectAt(team.address, project.name, where));
 			}}
 			onClose={onClose}
 		>
 			<RadioGroup label="Where it goes">
-				{project.checkouts.map((path) =>
+				{checkouts.map(({ path, survey }) =>
 					choice(
 						path,
 						place.kind === "checkout" && place.path === path,
-						() => setPlace({ kind: "checkout", path }),
+						() => choose({ kind: "checkout", path }),
 						`In ${tilde(path)}`,
-						`Your checkout of ${project.repo}`,
+						placeDetail(survey, team, project.repo),
 						false,
+						survey !== undefined && !usableSurvey(survey),
 					),
 				)}
 				{choice(
@@ -326,17 +399,25 @@ export function GetItDialog({
 					place.kind === "pick",
 					() => setPicking(true),
 					"In a checkout…",
-					picked === null ? "Choose a clone of the repo" : tilde(picked),
-					picked !== null,
+					picked === null
+						? "Choose a clone of the repo"
+						: picked.survey === undefined || picked.survey.kind === "empty"
+							? tilde(picked.path)
+							: `${tilde(picked.path)}: ${placeDetail(picked.survey, team, project.repo)}`,
+					picked !== null && (picked.survey === undefined || picked.survey.kind === "empty"),
 				)}
 				{choice(
 					"mac",
 					place.kind === "mac",
-					() => setPlace({ kind: "mac" }),
+					() => choose({ kind: "mac" }),
 					"Just on this Mac",
-					tilde(project.home),
+					macSurvey?.kind === "other" ? `${tilde(project.home)}: ${macSurvey.why}` : tilde(project.home),
+					macSurvey?.kind !== "other",
+					macSurvey !== undefined && !usableSurvey(macSurvey),
 				)}
 			</RadioGroup>
+			{chosen !== undefined && <GetItSays survey={chosen} team={team} />}
+			{waitRefused !== null && <p className="mb-[8px] text-secondary type-body">{waitRefused}</p>}
 			{project.clone !== null && (
 				<div className="mb-[8px] flex flex-col gap-[6px]">
 					<span className="text-secondary type-label">
@@ -349,6 +430,60 @@ export function GetItDialog({
 			)}
 		</ConfirmDialog>
 	);
+}
+
+/** A place Get it can put the project: anything but another project's. */
+function usableSurvey(survey: Survey): boolean {
+	return survey.kind !== "other";
+}
+
+/** What the daemon found at a checkout, said on its own line. */
+export function placeDetail(survey: Survey | undefined, team: CloudTeam, repo: string | null): string {
+	const yours = repo === null ? "Your checkout" : `Your checkout of ${repo}`;
+	switch (survey?.kind) {
+		case undefined:
+		case "empty":
+		case "synced":
+			return yours;
+		case "identical":
+			return `Your checkout, with ${team.name}’s design/ already in it`;
+		case "design":
+			return "Your checkout, with a design/ already in it";
+		case "pre-move":
+			return `On ${survey.branch}, from before ${survey.author} moved design/ out of git`;
+		case "other":
+			return survey.why;
+	}
+}
+
+/** What Get it will do with the place chosen, in one sentence under the places; nothing for a place it simply fills. */
+function GetItSays({ survey, team }: { survey: Survey; team: CloudTeam }) {
+	const say = getItSentence(survey, team);
+	if (say === null) return null;
+	return (
+		<div className="mb-[8px] flex flex-col gap-[10px]">
+			<p className="m-0 text-secondary type-body">{say}</p>
+			{survey.kind === "pre-move" && (
+				<code className="select-all overflow-x-auto rounded-[6px] border border-line-strong bg-surface-window px-[10px] py-[8px] type-detail">
+					{survey.command}
+				</code>
+			)}
+		</div>
+	);
+}
+
+/** The sentence under the places for what is at the place chosen. */
+export function getItSentence(survey: Survey, team: CloudTeam): string | null {
+	switch (survey.kind) {
+		case "identical":
+			return `That design/ is ${team.name}’s already, so Get it takes it as it is.`;
+		case "design":
+			return `That design/ differs from ${team.name}’s, and Get it can’t bring it level yet. Choose another place.`;
+		case "pre-move":
+			return `Bring in the move commit, ${survey.short} on ${survey.base.replace(/^origin\//u, "")}, and Get it carries on by itself.`;
+		default:
+			return null;
+	}
 }
 
 /**

@@ -308,16 +308,16 @@ describe("Get it on a branch from before the move", () => {
 		});
 
 		let answered = false;
-		const getting = ben
-			.controlRequest("/api/cloud/teams/devosurf/projects/site/get", {
+		const getting = Promise.resolve(
+			ben.controlRequest("/api/cloud/teams/devosurf/projects/site/get", {
 				method: "POST",
 				headers: json,
 				body: JSON.stringify({ where: "checkout", path: clone }),
-			})
-			.then((response) => {
-				answered = true;
-				return response;
-			});
+			}),
+		).then((response) => {
+			answered = true;
+			return response;
+		});
 		await new Promise((resolve) => setTimeout(resolve, 1_500));
 		expect(answered).toBe(false);
 		expect(existsSync(join(clone, "spool.json"))).toBe(false);

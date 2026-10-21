@@ -40,6 +40,7 @@ import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { ShownSetAside } from "../daemon/set-aside-routes";
 import type { MoveOutcome, MoveReading, TeamProjectOnMac } from "../daemon/team-projects";
 import type { SyncState } from "../daemon/team-sync";
+import type { PlaceSurvey, Survey } from "../get-it-places";
 import type { MoveProgress } from "../move-in";
 import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 import {
@@ -1771,7 +1772,16 @@ export {
 	TeamActionRefused,
 	type TeamMoveOutcome,
 } from "./team-source";
-export type { BranchesTouchingDesign, MoveOutcome, MoveProgress, MoveReading, SyncState, TeamProjectOnMac };
+export type {
+	BranchesTouchingDesign,
+	MoveOutcome,
+	MoveProgress,
+	MoveReading,
+	PlaceSurvey,
+	Survey,
+	SyncState,
+	TeamProjectOnMac,
+};
 
 const team = (address: string) => `/teams/${encodeURIComponent(address)}`;
 
@@ -1787,13 +1797,14 @@ export async function fetchTeamProjects(address: string): Promise<TeamProjectOnM
 }
 
 /** The daemon's answer to Get it or Move to team: what it made, or what it said instead. */
-async function teamProjectAction<T>(path: string, body: unknown): Promise<T> {
+async function teamProjectAction<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
 	let response: Response;
 	try {
 		response = await controlFetch(`/api/cloud${path}`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(body),
+			...(signal === undefined ? {} : { signal }),
 		});
 	} catch {
 		throw new Error("spool could not be reached. Try again.");
@@ -1817,8 +1828,43 @@ export function getTeamProjectAt(
 	address: string,
 	project: string,
 	place: { where: "checkout"; path: string } | { where: "mac" },
+	signal?: AbortSignal,
 ): Promise<{ root: string; name: string }> {
-	return teamProjectAction(`${team(address)}/projects/${encodeURIComponent(project)}/get`, place);
+	return teamProjectAction(`${team(address)}/projects/${encodeURIComponent(project)}/get`, place, signal);
+}
+
+/** Where Get it can put a team project, as the daemon found them: its checkouts best first, and "Just on this Mac". */
+export interface GetItPlaces {
+	checkouts: PlaceSurvey[];
+	mac: { path: string; survey: Survey };
+}
+
+/** The places Get it offers for a team project, each with what is there; undefined while the daemon can't say. */
+export async function fetchGetItPlaces(address: string, project: string): Promise<GetItPlaces | undefined> {
+	try {
+		const response = await controlFetch(`/api/cloud${team(address)}/projects/${encodeURIComponent(project)}/places`);
+		const body = (response.ok ? await response.json() : null) as Partial<GetItPlaces> | null;
+		return Array.isArray(body?.checkouts) && body.mac !== undefined ? (body as GetItPlaces) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** What is at a folder picked for Get it; undefined while the daemon can't say. */
+export async function fetchPlaceSurvey(
+	address: string,
+	project: string,
+	path: string,
+): Promise<PlaceSurvey | undefined> {
+	try {
+		const response = await controlFetch(
+			`/api/cloud${team(address)}/projects/${encodeURIComponent(project)}/places/survey?${new URLSearchParams({ path })}`,
+		);
+		const body = (response.ok ? await response.json() : null) as Partial<PlaceSurvey> | null;
+		return body?.survey !== undefined ? (body as PlaceSurvey) : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /** "Move to team…": the project goes up whole, then one commit takes design/ out of git. */

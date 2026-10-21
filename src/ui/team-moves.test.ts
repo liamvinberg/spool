@@ -87,6 +87,7 @@ it("offers the checkout here first, then a picked one, then just this Mac, and s
 	await act(async () => button(host, "Get it").click());
 	await settle();
 	expect(asked).toEqual([
+		"GET /api/cloud/teams/devosurf/projects/app/places",
 		'POST /api/cloud/teams/devosurf/projects/app/get {"where":"checkout","path":"/Users/ben/code/app"}',
 	]);
 	expect(onGot).toHaveBeenCalledWith({ root: "/Users/ben/code/app", name: "app" });
@@ -109,8 +110,101 @@ it("gets it just on this Mac when no checkout here holds the repo, and says why 
 	expect(host.querySelector("code")).toBeNull();
 	await act(async () => button(host, "Get it").click());
 	await settle();
-	expect(asked).toEqual(['POST /api/cloud/teams/devosurf/projects/app/get {"where":"mac"}']);
+	expect(asked).toEqual([
+		"GET /api/cloud/teams/devosurf/projects/app/places",
+		'POST /api/cloud/teams/devosurf/projects/app/get {"where":"mac"}',
+	]);
 	expect(host.textContent).toContain("You're a viewer of devosurf");
+});
+
+/** The places the daemon found for Get it, each with what is there. */
+const places = (checkouts: { path: string; linked?: boolean; survey: Record<string, unknown> }[]) =>
+	Response.json({
+		checkouts: checkouts.map(({ path, linked = false, survey }) => ({
+			path,
+			root: path,
+			linked,
+			survey,
+			common: 0,
+			usedAt: 0,
+		})),
+		mac: { path: "/Users/ben/spool/devosurf/app", survey: { kind: "empty" } },
+	});
+
+it("says on each place what the daemon found there, dims another project's, and picks the best", async () => {
+	daemon((url) =>
+		url.endsWith("/places")
+			? places([
+					{ path: "/Users/ben/code/app", survey: { kind: "identical", files: 4 } },
+					{
+						path: "/Users/ben/code/tidemark-app",
+						survey: { kind: "other", why: "Already holds its own project, tidemark-app" },
+					},
+					{
+						path: "/Users/ben/dev/app",
+						survey: { kind: "design", counts: { same: 2, older: 1, changed: 6, only: 2 } },
+					},
+				])
+			: Response.json({}),
+	);
+	const host = mount(
+		createElement(GetItDialog, {
+			team: DEVOSURF,
+			project: project({ checkouts: [] }),
+			onGot: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	await settle();
+	const choices = Array.from(host.querySelectorAll("label")).map((label) => label.textContent);
+	expect(choices).toEqual([
+		"In ~/code/appYour checkout, with Devosurf’s design/ already in it",
+		"In ~/code/tidemark-appAlready holds its own project, tidemark-app",
+		"In ~/dev/appYour checkout, with a design/ already in it",
+		"In a checkout…Choose a clone of the repo",
+		"Just on this Mac~/spool/devosurf/app",
+	]);
+	const radios = Array.from(host.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
+	expect(radios.map((radio) => radio.checked)).toEqual([true, false, false, false, false]);
+	expect(radios.map((radio) => radio.disabled)).toEqual([false, true, false, false, false]);
+	expect(host.textContent).toContain("That design/ is Devosurf’s already, so Get it takes it as it is.");
+});
+
+it("waits on a branch from before the move, naming the commit and the command, and carries on by itself", async () => {
+	let merged: (response: Response) => void = () => {};
+	const asked = daemon((url) =>
+		url.endsWith("/places")
+			? places([
+					{
+						path: "/Users/ben/code/app",
+						survey: {
+							kind: "pre-move",
+							commit: "3f2a1c9e",
+							short: "3f2a1c9",
+							author: "Ada",
+							branch: "feature/signup",
+							base: "origin/main",
+							command: "git merge origin/main",
+						},
+					},
+				])
+			: new Promise<Response>((resolve) => {
+					merged = resolve;
+				}),
+	);
+	const onGot = vi.fn();
+	const host = mount(createElement(GetItDialog, { team: DEVOSURF, project: project(), onGot, onClose: vi.fn() }));
+	await settle();
+	expect(host.textContent).toContain("On feature/signup, from before Ada moved design/ out of git");
+	expect(host.textContent).toContain("Bring in the move commit, 3f2a1c9 on main, and Get it carries on by itself.");
+	expect(Array.from(host.querySelectorAll("code")).map((code) => code.textContent)).toContain("git merge origin/main");
+	expect(button(host, "Waiting for the merge…").disabled).toBe(true);
+	expect(asked.at(-1)).toBe(
+		'POST /api/cloud/teams/devosurf/projects/app/get {"where":"checkout","path":"/Users/ben/code/app"}',
+	);
+	await act(async () => merged(Response.json({ root: "/Users/ben/code/app", name: "app" })));
+	await settle();
+	expect(onGot).toHaveBeenCalledWith({ root: "/Users/ben/code/app", name: "app" });
 });
 
 it("names what stays on this Mac and in git before it moves", async () => {
