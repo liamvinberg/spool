@@ -13,6 +13,12 @@ import { COMMENT_REFUSAL_STATUS } from "./team-sync-comments";
 
 export const PROTOCOL_VERSION = 2;
 
+/**
+ * The protocols spool.page takes a `hello` in (#206): the current one and the one before, so a release never stops a
+ * whole team at once. A daemon two behind is closed with `CLOSE_PROTOCOL` and pauses until it is updated.
+ */
+export const ACCEPTED_PROTOCOLS: readonly number[] = [PROTOCOL_VERSION - 1, PROTOCOL_VERSION];
+
 /** A team version: the number the object gave the save that made it. Versions only grow. */
 export type Version = number;
 
@@ -67,7 +73,7 @@ export interface Save {
 export interface Welcome {
 	type: "welcome";
 	protocol: number;
-	/** The format the team project was started in. */
+	/** The team project's format: the one it was started in, raised by every canvas.json save that says a higher one. */
 	format: number;
 	/** The newest team version. */
 	head: Version;
@@ -472,10 +478,31 @@ export const CLOSE_SIGNED_OUT = 4401;
 export const CLOSE_UNPAID = 4402;
 /** The account no longer edits this team project, or it is gone. A browser watching a canvas: no longer a member. */
 export const CLOSE_NOT_EDITOR = 4403;
-/** The daemon speaks another `PROTOCOL_VERSION`. */
+/** The daemon speaks a protocol outside `ACCEPTED_PROTOCOLS`: it pauses until it is updated. */
 export const CLOSE_PROTOCOL = 4406;
+/**
+ * The daemon writes an older design/ format than the team's (#206): a teammate's newer Spool moved the team forward.
+ * Said on its `hello`, or the moment the team's format rises past it. It pauses until it is updated.
+ */
+export const CLOSE_FORMAT = 4426;
 /** The object couldn't check who may sync just now: the daemon reconnects, as after any dropped line. */
 export const CLOSE_UNAVAILABLE = 1011;
+
+/**
+ * The design/ format a canvas.json says, a whole number from 0 up, or none. The sync object keeps the team's format
+ * and raises it when a canvas.json save says a higher one (#206).
+ */
+export function canvasFormat(bytes: Uint8Array): number | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(new TextDecoder().decode(bytes));
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(parsed)) return undefined;
+	const { format } = parsed;
+	return typeof format === "number" && Number.isSafeInteger(format) && format >= 0 ? format : undefined;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

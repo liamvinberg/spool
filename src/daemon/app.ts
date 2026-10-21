@@ -22,6 +22,7 @@ import { lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, themeInline } from "../settings/registry";
 import { backInGitOffered, finishOwedCommits, putBackInGit } from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
+import { type UpdateHow, updateLine } from "../update-how";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
 import { createAgentDefaults } from "./agent-defaults";
@@ -207,6 +208,10 @@ export interface DaemonOptions {
 	movedAskMs?: number;
 	/** How long a team project's copy goes without a connection before its canvas says it is offline: 30 s (#205). */
 	offlineMs?: number;
+	/** How long a team project's copy paused for an update first waits to ask again: a minute, doubling (#206). */
+	updateAskMs?: number;
+	/** How this Spool is updated, as a test says it: read off the running CLI otherwise (#206). */
+	updateHow?: UpdateHow;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
@@ -307,6 +312,8 @@ export function createDaemonApp({
 	goneLocalRetryMs,
 	movedAskMs,
 	offlineMs,
+	updateAskMs,
+	updateHow,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
 }: DaemonOptions) {
@@ -588,11 +595,15 @@ export function createDaemonApp({
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
 		...(offlineMs === undefined ? {} : { offlineMs }),
+		...(updateAskMs === undefined ? {} : { updateAskMs }),
+		...(updateHow === undefined ? {} : { updateHow }),
+		// a team project's copy takes this Spool's format once caught up, and its writes go up as saves (#206)
+		migrate: (root) => migrateNow(root),
 	});
 	/** What a copy's tab and cover show of its sync: a pause on a limit, or the copy gone local. */
 	const syncMarks = (root: string) => {
-		const { paused, goneLocal } = teamSync.state(root);
-		return { paused, goneLocal };
+		const { paused, goneLocal, update } = teamSync.state(root);
+		return { paused: paused ?? (update === null ? null : updateLine(update.team)), goneLocal };
 	};
 	teamSync.keeping(registeredRoots());
 	// what this machine's agent is doing on a team project, said to the team with its person's presence (#378)
@@ -884,12 +895,16 @@ export function createDaemonApp({
 	 * The first read of a project by this daemon renames its walks, when it still
 	 * names frames by folder (#336). Once per root per daemon: after that the
 	 * stamp says it is done, and a project that failed to migrate answers with
-	 * missing walks, which is the flow map's own repair list.
+	 * missing walks, which is the flow map's own repair list. A team project's
+	 * local copy is migrated by its sync instead, once it has caught up (#206).
 	 */
 	const migrated = new Set<string>();
 	function migrateOnce(root: string): void {
-		if (migrated.has(root)) return;
+		if (migrated.has(root) || followedLink(root) !== undefined) return;
 		migrated.add(root);
+		migrateNow(root);
+	}
+	function migrateNow(root: string): void {
 		try {
 			const done = migrateFrameNames(root);
 			if (done === undefined) return;

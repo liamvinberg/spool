@@ -14,6 +14,7 @@ import {
 } from "./daemon/lifecycle";
 import { fetchLatestVersion, isNewer } from "./daemon/update-check";
 import { RefusedError, SpoolError } from "./errors";
+import { cameWithApp, NPM_UPDATE_COMMAND as NPM_COMMAND } from "./update-how";
 
 /**
  * The update loop's one orchestrator (#30): always a CLI process, never the
@@ -40,7 +41,6 @@ import { RefusedError, SpoolError } from "./errors";
 // posix literals: spool is macOS-first and launchd is already the one
 // platform-specific piece — path matching follows suit
 const PACKAGE_SUFFIX = "/node_modules/spool.page/dist/cli.js";
-const NPM_COMMAND = "npm install -g spool.page@latest";
 const PNPM_COMMAND = "pnpm add -g spool.page@latest";
 
 export type InstallPlan =
@@ -80,7 +80,7 @@ export function planUpgrade(realCliPath: string, io: PlanIo = {}): InstallPlan {
 	}
 	// the Mac app's own copy, reached through the spool command it links: the app
 	// replaces itself, and an npm install beside it would fork two spools
-	if (realCliPath.includes(".app/Contents/Resources/cli/")) {
+	if (cameWithApp(realCliPath)) {
 		return { ok: false, message: "this spool came with the Spool app — update it from the app's Check for Updates" };
 	}
 	const packageDir = realCliPath.slice(0, -"/dist/cli.js".length);
