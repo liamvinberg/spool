@@ -11,7 +11,8 @@ export function directoryDialogOptions(request: unknown): OpenDialogOptions {
 	if (typeof request !== "object" || request === null) throw new Error("Invalid folder request.");
 	if (!("purpose" in request) || !("defaultPath" in request)) throw new Error("Invalid folder request.");
 	const { purpose, defaultPath } = request;
-	if (purpose !== "location" && purpose !== "add" && purpose !== "open" && purpose !== "export") throw new Error("Invalid folder action.");
+	if (purpose !== "location" && purpose !== "add" && purpose !== "open" && purpose !== "export")
+		throw new Error("Invalid folder action.");
 	if (typeof defaultPath !== "string" || defaultPath.includes("\0")) throw new Error("Invalid folder path.");
 	const path =
 		defaultPath === "~"
