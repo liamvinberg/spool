@@ -154,7 +154,7 @@ export function TouchedLayer({
 							width: frame.w,
 							height: frame.h,
 							borderRadius: "var(--compare-radius)",
-							boxShadow: `0 0 0 calc(2px / var(--compare-k, 1)) ${lit ? hovered.color : "transparent"}`,
+							boxShadow: `0 0 0 calc(2px / var(--compare-k, 1)) ${lit && hovered !== null ? hovered.color : "transparent"}`,
 						}}
 					/>
 				);
