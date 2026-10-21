@@ -413,6 +413,43 @@ describe("a solo project's whole-project share (spool#185)", () => {
 		shares.close();
 	});
 
+	it("keeps following a whole project that has no page yet, so its first page goes up", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		let saved = () => {};
+		let stopped = false;
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: (_root, onSave) => {
+				saved = onSave;
+				return () => {
+					stopped = true;
+				};
+			},
+		});
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			expect((await share(shares, name, { kind: "link", whole: true })).status).toBe(200);
+			// a quiet spell with nothing on any page still leaves it followed
+			saved();
+			vi.advanceTimersByTime(SOLO_QUIET_MS);
+			await shares.settled();
+			expect(stopped).toBe(false);
+			writePageFrame(root, "menu", "list", frame("Tonight's menu"));
+			saved();
+			vi.advanceTimersByTime(SOLO_QUIET_MS);
+			await shares.settled();
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(cloud.copy()["frames/menu/list/frame.tsx"]).toContain("Tonight's menu");
+		shares.close();
+	});
+
 	it("takes a page added later up after its agent's turn, and stopping it leaves what other shares show", async () => {
 		const cloud = fakeCloud();
 		const spoolDir = makeTempDir();

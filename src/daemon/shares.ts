@@ -159,7 +159,9 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			if (cover !== undefined && cover.source === sources.get(frame)) await sendCover(id, frame, cover);
 		}
 		if (asking !== undefined) return;
-		if (pages.length === 0) stopWatching(root);
+		// a whole-project share follows the project even while it has no page: one added later goes up
+		if (asked.length === 0 || (pages.length === 0 && !asked.some((share) => share.whole === true)))
+			stopWatching(root);
 		else follow(root);
 	}
 
