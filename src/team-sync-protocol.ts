@@ -1603,4 +1603,5 @@ export async function frameRevision(hashes: readonly string[]): Promise<string> 
 	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export { APP_PATH_SEGMENTS } from "./app-paths";
 export * from "./team-sync-comments";

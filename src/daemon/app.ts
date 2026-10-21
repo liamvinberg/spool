@@ -12,6 +12,7 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_
 import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
+import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves } from "../move-in";
 import { fetchLocalCopy } from "../open";
@@ -1746,6 +1747,10 @@ export function createDaemonApp({
 					.catch(() => {}),
 		);
 	}
+
+	// Home's places at their own addresses (`/recent`, `/<team>/people`…), beneath every route above: the app reads
+	// which place from the path. Any other path is no page of the app's.
+	app.get("*", (c) => (c.req.path === "/" || placeOf(c.req.path) === null ? c.notFound() : serveUiIndex(c)));
 
 	app.onError((error, c) => {
 		if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
