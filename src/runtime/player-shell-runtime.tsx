@@ -4,7 +4,7 @@ import { SPOOL_MARK_PATH } from "../brand";
 import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
-import { DESK_BAR_PX, deskWindow, readBarHidden } from "./player-page";
+import { DESK_BAR_PX } from "./player-page";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -79,12 +79,6 @@ export interface PlayerShell {
 	geometryApplied(revision: number, frames: { name: string; w: number; h: number }[]): void;
 	/** Replay the last geometry the shell was given, at a fresh revision. */
 	geometryReplay(): void;
-	/**
-	 * How much of the window the bar stands in front of. The tab's bar can be
-	 * put away and worn again, and the frame's box is the window less the bar,
-	 * so each change is a geometry change: re-derived and replayed like a resize.
-	 */
-	inset(px: number): void;
 	destroy(): void;
 }
 
@@ -298,25 +292,16 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	/**
-	 * What the bar spends of the window (#275, #227). Worn, it stands above the
-	 * page and the frame's box is that much shorter than the window; put away in
-	 * a tab, it costs the frame nothing, and a peek floats over the page rather
-	 * than insetting it. The first value is read here so the first played box is
-	 * right before the chrome has mounted to say so; the chrome keeps it current.
-	 */
-	let chromeInset = deskWindow() !== null || !readBarHidden() ? DESK_BAR_PX : 0;
-
-	/**
 	 * The box the page really gives a frame (#227): the authored width as a cap
 	 * and the real viewport below it, over the whole height of the window less
-	 * whatever chrome stands above it. The frame is never scaled, so this is both
+	 * the 30px bar both shells wear. The frame is never scaled, so this is both
 	 * what the iframe is sized to and what the runtime inside it will measure —
 	 * which is why every w/h that crosses the port is in this space and not the
 	 * authored one, and why being 30px out here wedges the reveal shut.
 	 */
 	const playedBox = (geometry: FrameGeometry): FrameGeometry => ({
 		w: Math.min(window.innerWidth, geometry.w),
-		h: Math.max(window.innerHeight - chromeInset, 1),
+		h: Math.max(window.innerHeight - DESK_BAR_PX, 1),
 	});
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
 		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame) } : frame));
@@ -452,11 +437,6 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		const revision = geometryRevision + 1;
 		geometryPending(revision);
 		geometryApplied(revision, authoredGeometry);
-	};
-	const inset = (px: number) => {
-		if (px === chromeInset) return;
-		chromeInset = px;
-		geometryReplay();
 	};
 
 	const onWindowMessage = (event: MessageEvent) => {
@@ -921,7 +901,6 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		geometryPending,
 		geometryApplied,
 		geometryReplay,
-		inset,
 		destroy: () => {
 			disarmBootstrapDeadline();
 			for (const undo of teardown.splice(0)) undo();
@@ -1078,7 +1057,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			frames: {},
 			controller: shell.controller,
 			host: createElement(Host),
-			onInset: shell.inset,
 		});
 	}
 	createRoot(root).render(createElement(Page));

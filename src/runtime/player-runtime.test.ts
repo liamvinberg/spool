@@ -176,18 +176,9 @@ function rememberIn(store: Map<string, string>): void {
 	});
 }
 
-/**
- * The hand arriving on the strip, or leaving it, as React sees it: it draws
- * enter and leave from the pair the browser bubbles, so that pair is what a
- * test sends.
- */
-function hover(target: Element, on: boolean): void {
-	target.dispatchEvent(new MouseEvent(on ? "mouseover" : "mouseout", { bubbles: true, relatedTarget: document.body }));
-}
-
 /** The bar is worn, not summoned: it is there as soon as the page is. */
 async function summonEdgeBar(): Promise<HTMLElement> {
-	await vi.waitFor(() => expect(document.querySelector(".spool-top:not(.is-away)")).not.toBeNull());
+	await vi.waitFor(() => expect(document.querySelector(".spool-top")).not.toBeNull());
 	return document.querySelector(".spool-page") as HTMLElement;
 }
 
@@ -375,13 +366,6 @@ describe("the player session", () => {
 		click("#go-back");
 		await waitForFrame("menu");
 		expect(calls.at(-1)?.types).toEqual(["back"]);
-
-		// the switcher walks like anything else, so its swap is filmed like one
-		await summonEdgeBar();
-		click("#spool-switcher");
-		click(".spool-picker-row:not(.is-here)");
-		await waitForFrame("cart");
-		expect(calls.at(-1)?.types).toEqual(["forward"]);
 	});
 
 	it("a missing walk target is loud but harmless", async () => {
@@ -499,70 +483,34 @@ describe("the played page and its bar (#227)", () => {
 		expect(screen.style.transform).toBe("");
 	});
 
-	it("wears the bar, puts it away on the eye, and peeks it back on a rest against the top edge", async () => {
+	it("wears the bar always, with nothing on it that puts it away", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
-		const remembered = new Map<string, string>();
-		rememberIn(remembered);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
-		const page = document.querySelector(".spool-page") as HTMLElement;
-		const away = () => document.querySelector(".spool-top.is-away");
+		const page = await summonEdgeBar();
 
-		// worn by default, and the page is inset by it
-		expect(document.querySelector(".spool-top")).not.toBeNull();
-		expect(away()).toBeNull();
+		// worn, and the page is inset by it
 		expect(page.classList.contains("has-bar")).toBe(true);
-		expect(document.querySelector(".spool-nub")).toBeNull();
-
-		// the eye puts it away: the page gets its 30px back, the nub is the trace,
-		// and the choice is remembered
-		click("#spool-bar-eye");
-		await vi.waitFor(() => expect(away()).not.toBeNull());
-		expect(page.classList.contains("has-bar")).toBe(false);
-		expect(document.querySelector(".spool-nub")).not.toBeNull();
-		expect(remembered.get("spool:player-bar-hidden")).toBe("1");
-
-		// resting against the top edge peeks it in over the page, and the dwell
-		// is what makes it a rest rather than a pass
-		const strip = document.querySelector(".spool-peek") as HTMLElement;
-		hover(strip, true);
-		expect(away()).not.toBeNull();
-		await vi.waitFor(() => expect(away()).toBeNull());
-		expect(document.querySelector(".spool-peek.is-open")).not.toBeNull();
-		expect(page.classList.contains("has-bar")).toBe(false);
-
-		// leaving takes it away at once
-		hover(strip, false);
-		await vi.waitFor(() => expect(away()).not.toBeNull());
-
-		// a pass through the strip on the way out never peeks it
-		hover(strip, true);
-		hover(strip, false);
-		await new Promise((resolve) => setTimeout(resolve, 300));
-		expect(away()).not.toBeNull();
-
-		// pressing the nub puts it back on
-		click(".spool-nub");
-		await vi.waitFor(() => expect(document.querySelector(".spool-peek")).toBeNull());
-		expect(page.classList.contains("has-bar")).toBe(true);
-		expect(remembered.has("spool:player-bar-hidden")).toBe(false);
+		// the eye and the nub it left behind are gone: a way home that can be put
+		// away is a way home that can be lost
+		for (const gone of ["#spool-bar-eye", ".spool-nub", ".spool-peek"]) {
+			expect(document.querySelector(gone), gone).toBeNull();
+		}
 	});
 
-	it("opens put away when it was put away last time", async () => {
+	it("still wears the bar for a browser that put it away under the old eye", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 		rememberIn(new Map([["spool:player-bar-hidden", "1"]]));
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
-		expect(document.querySelector(".spool-top.is-away")).not.toBeNull();
-		expect(document.querySelector(".spool-nub")).not.toBeNull();
-		expect((document.querySelector(".spool-page") as HTMLElement).classList.contains("has-bar")).toBe(false);
+		expect((await summonEdgeBar()).classList.contains("has-bar")).toBe(true);
 	});
 
-	it("carries the switcher and the exits, and nothing the pill used to", async () => {
+	it("carries the name and the exits, and nothing the pill used to", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
@@ -579,19 +527,12 @@ describe("the played page and its bar (#227)", () => {
 			expect(document.querySelector(gone), gone).toBeNull();
 		}
 		expect(document.querySelector("#spool-close")).not.toBeNull();
-
-		// the switcher is closed by default, and names every screen when opened
-		expect(document.querySelector(".spool-picker.is-open")).toBeNull();
-		click("#spool-switcher");
-		await vi.waitFor(() => expect(document.querySelector(".spool-picker.is-open")).not.toBeNull());
-		expect([...document.querySelectorAll(".spool-picker-row")].map((row) => row.textContent)).toEqual([
-			"cart",
-			"menu",
-			"pay--done",
-		]);
+		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
+		// the switcher went with the bar's redesign: a frame is reached by walking to it
+		expect(document.querySelector("#spool-switcher")).toBeNull();
 	});
 
-	it("walks from the switcher and names the arrival in the URL and the title", async () => {
+	it("names the arrival in the URL and the title", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
@@ -636,10 +577,8 @@ describe("the played page and its bar (#227)", () => {
 		expect(calls.at(-1)?.types).toEqual(["back"]);
 		expect(witnessed()).toBe(1);
 
-		// and the switcher is the same: spool's own chrome never mints an edge
-		await summonEdgeBar();
-		click("#spool-switcher");
-		click(".spool-picker-row:not(.is-here)");
+		// and forward is the same: spool's own chrome never mints an edge
+		window.history.forward();
 		await waitForFrame("cart");
 		expect(calls.at(-1)?.types).toEqual(["forward"]);
 		expect(witnessed()).toBe(1);
