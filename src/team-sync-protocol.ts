@@ -85,6 +85,13 @@ export interface Welcome {
 	 * older one doesn't say, and its daemons check nothing.
 	 */
 	checks?: true;
+	/**
+	 * Which life of the team's copy this is (spool#191): absent until Spool first restores the project from a backup,
+	 * new with every restore. A copy that meets a new one lists the team's copy and brings back what it holds newer.
+	 */
+	epoch?: string;
+	/** The newest team version the restored backup held, said with `epoch`: what a copy holds above it is newer work. */
+	restoredHead?: Version;
 }
 
 /**
