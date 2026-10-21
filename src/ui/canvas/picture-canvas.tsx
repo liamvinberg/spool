@@ -43,6 +43,7 @@ export function PictureCanvas({
 	frames,
 	claims,
 	booting,
+	onDrawing,
 }: {
 	camera: CameraStore;
 	/** The page's frames in drawing order, each with its still's address. */
@@ -50,14 +51,18 @@ export function PictureCanvas({
 	claims: PictureClaims;
 	/** Whether a frame's document is booting, which the rest of the page's stills wait out (`setBooting`). */
 	booting: boolean;
+	/** Whether the layer can draw at all: not with no WebGL2, nor while a lost context is away. */
+	onDrawing?: (drawing: boolean) => void;
 }) {
 	const element = useRef<PictureCanvasElement | null>(null);
 	const layer = useRef<PictureLayer | null>(null);
+	const drawing = useRef(onDrawing);
+	drawing.current = onDrawing;
 
 	useLayoutEffect(() => {
 		const canvas = element.current;
 		if (canvas === null) return;
-		const made = new PictureLayer(canvas);
+		const made = new PictureLayer(canvas, (now) => drawing.current?.(now));
 		layer.current = made;
 		claims.attach(made);
 		canvas.spoolPictures = () => made.report();

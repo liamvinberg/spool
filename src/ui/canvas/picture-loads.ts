@@ -1,5 +1,5 @@
 import { bucketOf } from "./bucket";
-import type { Drawing, LoaderAsk, LoaderReply } from "./picture-loader";
+import { type Drawing, type LoaderAsk, type LoaderPort, type LoaderReply, serveLoader } from "./picture-loader";
 import { type PixelSize, Priority } from "./picture-plan";
 
 /**
@@ -68,12 +68,97 @@ export interface LoadHooks {
 
 /** Makes one loader: a worker of `picture-loader.ts`, or a stand-in for one in a test. */
 export type LoaderFactory = () => Pick<Worker, "postMessage" | "addEventListener" | "terminate">;
+type Loader = ReturnType<LoaderFactory>;
 
-const worker: LoaderFactory = () => new Worker(new URL("./picture-loader.ts", import.meta.url), { type: "module" });
+/**
+ * A loader on the page's own thread, for a page that may make no worker: the
+ * same loader as a worker runs, its messages passed a microtask apart as a
+ * worker's are a task apart. Fetching and decoding still run off the page's
+ * thread, in the network stack and Chrome's image threads; only the shrinking
+ * steps run here.
+ */
+export const inPageLoader: LoaderFactory = () => {
+	const listeners = new Set<EventListener>();
+	let alive = true;
+	const port: LoaderPort = {
+		onmessage: null,
+		postMessage: (reply) =>
+			queueMicrotask(() => {
+				if (!alive) {
+					if ("bitmap" in reply) reply.bitmap.close();
+					return;
+				}
+				const event = new MessageEvent("message", { data: reply });
+				for (const listener of listeners) listener(event);
+			}),
+	};
+	serveLoader(port);
+	const loader = {
+		postMessage: (asks: LoaderAsk[]) =>
+			queueMicrotask(() => {
+				if (alive) port.onmessage?.(new MessageEvent("message", { data: asks }));
+			}),
+		addEventListener: (type: string, listener: EventListener) => {
+			if (type === "message") listeners.add(listener);
+		},
+		terminate: () => {
+			alive = false;
+		},
+	};
+	return loader as unknown as Loader;
+};
+
+/**
+ * A worker of `picture-loader.ts` where the page may make one, and the loader
+ * on the page where it may not. A worker is made only of a script on the
+ * page's own origin, and a link share's host runs spool.page's script
+ * (`viewer-page.ts` in spool-cloud), so there it is the page's loader from the
+ * start. A worker whose script never runs (refused by the page's policy, say)
+ * says so with an error before it ever answers: everything asked of it is
+ * asked again of a loader on the page.
+ */
+const worker: LoaderFactory = () => {
+	if (new URL(import.meta.url).origin !== location.origin) return inPageLoader();
+	let made: Worker;
+	try {
+		made = new Worker(new URL("./picture-loader-worker.ts", import.meta.url), { type: "module" });
+	} catch {
+		return inPageLoader();
+	}
+	let current: Loader = made;
+	const listeners: EventListener[] = [];
+	/** What it was asked before it first answered, to ask again of the page's loader if it never does. */
+	let unanswered: LoaderAsk[][] | null = [];
+	made.addEventListener("message", () => {
+		unanswered = null;
+	});
+	made.addEventListener("error", () => {
+		if (unanswered === null) return;
+		const asked = unanswered;
+		unanswered = null;
+		made.terminate();
+		current = inPageLoader();
+		for (const listener of listeners) current.addEventListener("message", listener);
+		for (const asks of asked) current.postMessage(asks);
+	});
+	const loader = {
+		postMessage: (asks: LoaderAsk[]) => {
+			unanswered?.push(asks);
+			current.postMessage(asks);
+		},
+		addEventListener: (type: string, listener: EventListener) => {
+			if (type !== "message") return;
+			listeners.push(listener);
+			current.addEventListener("message", listener);
+		},
+		terminate: () => current.terminate(),
+	};
+	return loader as unknown as Loader;
+};
 
 export class StillLoads {
-	private loaders: ReturnType<LoaderFactory>[] = [];
-	private readonly outbox = new Map<ReturnType<LoaderFactory>, LoaderAsk[]>();
+	private loaders: Loader[] = [];
+	private readonly outbox = new Map<Loader, LoaderAsk[]>();
 	private readonly out = new Map<string, Job>();
 	private landed: Landed[] = [];
 	/** Bumped when the context goes, so a decode begun before it lands nowhere. */
@@ -212,14 +297,14 @@ export class StillLoads {
 		this.send();
 	}
 
-	private tell(loader: ReturnType<LoaderFactory> | undefined, ask: LoaderAsk): void {
+	private tell(loader: Loader | undefined, ask: LoaderAsk): void {
 		if (loader === undefined) return;
 		const waiting = this.outbox.get(loader);
 		if (waiting === undefined) this.outbox.set(loader, [ask]);
 		else waiting.push(ask);
 	}
 
-	private loaderOf(still: string): ReturnType<LoaderFactory> | undefined {
+	private loaderOf(still: string): Loader | undefined {
 		return this.loaders[bucketOf(still, this.loaders.length)];
 	}
 

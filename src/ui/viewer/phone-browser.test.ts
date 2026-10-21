@@ -173,7 +173,7 @@ async function onPhone(
 	const requests: { method: string; url: string }[] = [];
 	page.on("request", (request) => requests.push({ method: request.method(), url: request.url() }));
 	let socket: WebSocketRoute | undefined;
-	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live?covered=1`, (route) => {
 		socket = route;
 		route.send(JSON.stringify({ type: "head", head: 1 }));
 	});
