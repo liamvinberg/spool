@@ -151,6 +151,28 @@ it("says before a team is made whether it starts the trial, is paid for from the
 	expect(says("free")).toContain("Teams you start are free.");
 });
 
+it("says that starting a team agrees to the Terms and the DPA, linking both on spool.page", () => {
+	mount(
+		createElement(NewTeamDialog, {
+			allowed: true,
+			starts: "trial",
+			origin: "https://spool.page",
+			onCreate: vi.fn(),
+			onClose: vi.fn(),
+		}),
+	);
+	const line = Array.from(document.body.querySelectorAll("p")).find((node) =>
+		node.textContent?.startsWith("Starting a team agrees"),
+	);
+	expect(line?.textContent).toBe("Starting a team agrees to the Terms and the DPA.");
+	expect(
+		Array.from(line?.querySelectorAll("a") ?? []).map((link) => [link.textContent, link.getAttribute("href")]),
+	).toEqual([
+		["Terms", "https://spool.page/legal/terms"],
+		["DPA", "https://spool.page/legal/dpa"],
+	]);
+});
+
 it("lists the team's projects on this Mac and starts a new one in the team", () => {
 	const devosurf: CloudTeam = {
 		id: "t",

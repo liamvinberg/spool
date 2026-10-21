@@ -949,16 +949,21 @@ const NEW_TEAM_STARTS: Record<NewTeamStart, string> = {
 	free: "Teams you start are free.",
 };
 
+const LEGAL_LINK = "underline underline-offset-[3px] [&:hover]:text-primary";
+
 /** "New team…": a name, and spool.page decides whether this account may start one yet. */
 export function NewTeamDialog({
 	allowed,
 	starts,
+	origin,
 	onCreate,
 	onClose,
 }: {
 	allowed: boolean;
 	/** What spool.page says the team begins as; unsaid by an older spool.page. */
 	starts?: NewTeamStart | undefined;
+	/** spool.page, where the Terms and the DPA that starting a team agrees to live. */
+	origin?: string | undefined;
 	onCreate: (name: string) => Promise<void>;
 	onClose: () => void;
 }) {
@@ -991,6 +996,19 @@ export function NewTeamDialog({
 			<Field label="Name">
 				{(id) => <TextField size="lg" value={name} onValueChange={setName} inputProps={{ id, maxLength: 64 }} />}
 			</Field>
+			{origin ? (
+				<p className="mt-[12px] text-secondary type-detail">
+					Starting a team agrees to the{" "}
+					<a className={LEGAL_LINK} href={`${origin}/legal/terms`} target="_blank" rel="noreferrer">
+						Terms
+					</a>{" "}
+					and the{" "}
+					<a className={LEGAL_LINK} href={`${origin}/legal/dpa`} target="_blank" rel="noreferrer">
+						DPA
+					</a>
+					.
+				</p>
+			) : null}
 		</ConfirmDialog>
 	);
 }
@@ -1155,6 +1173,7 @@ export function useTeamHome(
 				<NewTeamDialog
 					allowed={ready.mayCreateTeam}
 					starts={ready.newTeam}
+					origin={ready.origin}
 					onCreate={async (name) => {
 						const created = await teamActions.create(name);
 						await refresh();
