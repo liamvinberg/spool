@@ -98,6 +98,40 @@ export interface Saves {
 	saves: BundledSave[];
 	/** Frames and pages Spool moved, said on the bundle that deletes their old files: their comments follow them. */
 	moved?: Moved;
+	/** The bundle is a restore (spool#188): every save in it puts its path back to what it held at `restore.to`. */
+	restore?: RestoreRef;
+}
+
+/**
+ * A restore as its saves carry it (spool#188): an editor putting a file, a frame, a page or the whole project back to
+ * how it stood at team version `to`. The object takes each save only if its bytes are what the path held then (the
+ * save at exactly `to` when it is one to that path, a set-aside save put back too; else the last applied save to it
+ * by then; a delete when it didn't exist), refusing any other as `restore_mismatch`. A checked restore counts against
+ * no fair-use limit but the size caps; each save still lands on its own base under the collision rule. The history
+ * keeps it on each save and shows it as a stretch of its own.
+ */
+export interface RestoreRef {
+	/** The restore's own id, the same on every save in it: at most `RESTORE_ID_MAX` characters. */
+	id: string;
+	kind: "file" | "frame" | "page" | "project";
+	/** What went back: a design/-relative path, a frame's name, a page's path, or "" for the whole project. */
+	target: string;
+	/** The team version it went back to. */
+	to: Version;
+}
+
+/** The longest id a restore carries. */
+export const RESTORE_ID_MAX = 64;
+
+/** A restore as a bundle carries it; null when it is no such thing. */
+export function readRestore(value: unknown): RestoreRef | null {
+	if (typeof value !== "object" || value === null) return null;
+	const { id, kind, target, to } = value as Record<string, unknown>;
+	if (typeof id !== "string" || id.length === 0 || id.length > RESTORE_ID_MAX) return null;
+	if (kind !== "file" && kind !== "frame" && kind !== "page" && kind !== "project") return null;
+	if (typeof target !== "string" || target.length > 1_024) return null;
+	if (typeof to !== "number" || !Number.isSafeInteger(to) || to < 0) return null;
+	return { id, kind, target, to };
 }
 
 export interface BundledSave {
@@ -211,7 +245,7 @@ export interface Refused {
 	type: "refused";
 	ref: string;
 	path: string;
-	reason: "outside_layout" | "invalid_save" | "too_large" | Unauthorized | Limited;
+	reason: "outside_layout" | "invalid_save" | "too_large" | "restore_mismatch" | Unauthorized | Limited;
 	/** For a limit: seconds until it may lift, when the object can say. */
 	retryAfter?: number;
 	pace?: Pace;

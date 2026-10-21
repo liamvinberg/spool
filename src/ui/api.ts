@@ -2345,3 +2345,219 @@ export function daemonComments(project: string): CommentsClient {
 		unsent: "the comment didn't send",
 	});
 }
+
+/* ── the team history (spool#187) ─────────────────────────────────────── */
+
+/** One stretch of a team project's history as spool.page groups it: one person's saves from one machine, no 10-minute gap. */
+export interface HistoryStretch {
+	/** its first and last save's team versions: the last is the moment Compare with now and Restore go back to */
+	from: number;
+	to: number;
+	start: number;
+	end: number;
+	by: { accountId: string; name: string; color: string; device: string };
+	saves: number;
+	setAside: number;
+	/** the paths it touched, the first 50 */
+	paths: string[];
+	/** how many more it touched */
+	more: number;
+	/** the restore it is (spool#188), with when the version it went back to was made; null or absent for saves */
+	restore?: HistoryRestore | null;
+}
+
+/** A restore as the history shows one: what went back, to which version, and when that version was made. */
+export interface HistoryRestore {
+	id: string;
+	kind: RestoreKind;
+	/** a design/-relative path, a frame's name, a page's path, or "" for the whole project */
+	target: string;
+	to: number;
+	toAt: number | null;
+}
+
+export type RestoreKind = "file" | "frame" | "page" | "project";
+
+export interface HistoryDay {
+	/** the asker's midnight, in ms */
+	day: number;
+	/** newest first, by their end */
+	stretches: HistoryStretch[];
+}
+
+/** When, by whom and in which commit the project moved in from git; the commit unknown for one moved in before it was told. */
+export interface HistoryMovedIn {
+	at: number;
+	by: { accountId: string; name: string };
+	commit: string | null;
+}
+
+/** Which history: a frame's (its own saves and those to the shared files it imports) or the whole project's. */
+export type HistoryScope = { kind: "frame"; frame: string } | { kind: "project" };
+
+export type HistoryRead =
+	| { state: "ready"; days: HistoryDay[]; next: number | null; movedIn: HistoryMovedIn | null }
+	| { state: "failed"; message: string };
+
+/** One file a stretch touched: its last save there, how many it made, each one set aside and whose save stood over it. */
+export interface HistoryStretchFile {
+	path: string;
+	version: number;
+	hash: string | null;
+	saves: number;
+	setAside: {
+		version: number;
+		hash: string | null;
+		at: number;
+		stood: { version: number; at: number; by: { accountId: string; name: string } } | null;
+	}[];
+}
+
+const historyUrl = (project: string, read: string, scope: HistoryScope, query: Record<string, string>) => {
+	const search = new URLSearchParams(query);
+	if (scope.kind === "frame") search.set("frame", scope.frame);
+	return `/api/p/${encodeURIComponent(project)}/history/${read}?${search}`;
+};
+
+/** Why a read of the history failed, as the daemon or spool.page says it. */
+async function historyFailure(response: Response): Promise<string> {
+	const body = (await response.json().catch(() => null)) as { error?: unknown; message?: unknown } | null;
+	if (typeof body?.message === "string") return body.message;
+	if (body?.error === "unpaid") return "The team has no paid time left, so its history can't be read.";
+	return "spool.page could not be reached.";
+}
+
+/**
+ * A few days of the project's stretches, newest first, before a time: through this Mac's daemon, which asks spool.page
+ * with its device session. Days are this browser's own.
+ */
+export async function fetchHistory(
+	project: string,
+	scope: HistoryScope,
+	before: number | null = null,
+): Promise<HistoryRead> {
+	const query: Record<string, string> = { tz: String(-new Date().getTimezoneOffset()), days: "7" };
+	if (before !== null) query.before = String(before);
+	try {
+		const response = await controlFetch(historyUrl(project, "stretches", scope, query));
+		if (!response.ok) return { state: "failed", message: await historyFailure(response) };
+		const body = (await response.json()) as {
+			days: HistoryDay[];
+			next: number | null;
+			movedIn: HistoryMovedIn | null;
+		};
+		return { state: "ready", days: body.days, next: body.next, movedIn: body.movedIn };
+	} catch {
+		return { state: "failed", message: "spool could not be reached." };
+	}
+}
+
+/** The files one stretch touched, in the scope it shows in; null when they can't be read. */
+export async function fetchStretchFiles(
+	project: string,
+	scope: HistoryScope,
+	stretch: HistoryStretch,
+): Promise<HistoryStretchFile[] | null> {
+	const query = {
+		from: String(stretch.from),
+		to: String(stretch.to),
+		account: stretch.by.accountId,
+		device: stretch.by.device,
+		limit: "200",
+	};
+	try {
+		const response = await controlFetch(historyUrl(project, "stretch", scope, query));
+		if (!response.ok) return null;
+		return ((await response.json()) as { files: HistoryStretchFile[] }).files;
+	} catch {
+		return null;
+	}
+}
+
+/* ── restoring from the team history (spool#188) ─────────────────────── */
+
+/** What to put back, and to which team version: a frame's shared files ticked, or exactly the paths an undo names. */
+export interface RestoreAsk {
+	kind: RestoreKind;
+	target: string;
+	to: number;
+	also?: string[];
+	paths?: string[];
+}
+
+/** What a restore would change: how many of its own files, and a frame's shared files that changed since. */
+export interface RestorePlan {
+	files: number;
+	shared: { path: string; frames: string[] }[];
+}
+
+/** A restore done: what the team applied and set aside, and the restore that undoes it (null when nothing changed). */
+export interface RestoreDone {
+	id: string;
+	applied: string[];
+	setAside: string[];
+	refused: string[];
+	undo: Required<Omit<RestoreAsk, "also">> | null;
+}
+
+const restoreUrl = (project: string) => `/api/p/${encodeURIComponent(project)}/history/restore`;
+
+/** What a restore would change, asked of this Mac's daemon; null when it can't say now. */
+export async function fetchRestorePlan(project: string, ask: RestoreAsk): Promise<RestorePlan | null> {
+	const query = new URLSearchParams({ kind: ask.kind, target: ask.target, to: String(ask.to) });
+	try {
+		const response = await controlFetch(`${restoreUrl(project)}?${query}`);
+		return response.ok ? ((await response.json()) as RestorePlan) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Put something back as it stood: done, or why not, as the daemon says it. */
+export async function restoreFromHistory(project: string, ask: RestoreAsk): Promise<RestoreDone> {
+	let response: Response;
+	try {
+		response = await controlFetch(restoreUrl(project), {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(ask),
+		});
+	} catch {
+		throw new Error("spool could not be reached.");
+	}
+	const body = (await response.json().catch(() => null)) as (RestoreDone & { message?: unknown }) | null;
+	if (!response.ok || body === null)
+		throw new Error(typeof body?.message === "string" ? body.message : "The restore couldn't be made. Try again.");
+	return body;
+}
+
+/* ── comparing with now (spool#189) ──────────────────────────────────── */
+
+/** A moment Compare goes back to: a team version, and a set-aside save's own file in place when it is one. */
+export interface CompareMoment {
+	at: number;
+	saved?: { path: string; hash: string | null } | undefined;
+}
+
+/** A frame at a moment: served at its own address, placed where its sidecar stood it; absent when it didn't exist. */
+export type CompareRead =
+	| { state: "ready"; url: string; place: { x: number; y: number; w: number; h: number } | null }
+	| { state: "absent" }
+	| { state: "failed"; message: string };
+
+/** How a frame stood at a moment, asked of this Mac's daemon, which reads and keeps the bytes from the team history. */
+export async function fetchCompare(project: string, frame: string, moment: CompareMoment): Promise<CompareRead> {
+	const query = new URLSearchParams({ frame, at: String(moment.at) });
+	if (moment.saved !== undefined) {
+		query.set("path", moment.saved.path);
+		query.set("hash", moment.saved.hash ?? "");
+	}
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/history/compare?${query}`);
+		if (!response.ok) return { state: "failed", message: await historyFailure(response) };
+		const body = (await response.json()) as CompareRead;
+		return body.state === "ready" ? { ...body, url: new URL(body.url, renderOrigin).href } : body;
+	} catch {
+		return { state: "failed", message: "spool could not be reached." };
+	}
+}

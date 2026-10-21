@@ -19,6 +19,7 @@ export function ProjectTabMenu({
 	onChangeIcon,
 	onRemoveIcon,
 	onMatchTeam,
+	onHistory,
 }: {
 	project: TabProject;
 	x: number;
@@ -32,6 +33,8 @@ export function ProjectTabMenu({
 	onRemoveIcon?: () => void;
 	/** Offered on a team project's tab only: makes its local copy the team's, keeping each difference as a mark. */
 	onMatchTeam?: () => void;
+	/** "History…": the project's team history in its History pane, offered on a team project's tab (spool#187). */
+	onHistory?: () => void;
 }) {
 	const team = useMarkTeam(project.teamAddress);
 	const ref = useRef<HTMLDivElement>(null);
@@ -106,6 +109,9 @@ export function ProjectTabMenu({
 			<MenuItem label="Export project…" onClick={() => act(onExport)} />
 			{onMatchTeam && project.teamAddress !== undefined && (
 				<MenuItem label="Match the team" onClick={() => act(onMatchTeam)} />
+			)}
+			{onHistory && project.teamAddress !== undefined && (
+				<MenuItem label="History…" onClick={() => act(onHistory)} />
 			)}
 			<MenuSeparator />
 			<MenuItem label="Close tab" onClick={() => act(onCloseTab)} />

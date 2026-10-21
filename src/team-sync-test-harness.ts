@@ -46,6 +46,7 @@ import {
 	PROTOCOL_VERSION,
 	type PresenceState,
 	placeAfter,
+	type RestoreRef,
 	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
@@ -53,6 +54,7 @@ import {
 	readDrift,
 	readMoved,
 	readPresenceState,
+	readRestore,
 	replyForReader,
 	SEEN_FILES,
 	samePlace,
@@ -136,6 +138,49 @@ interface Project {
 	had: Map<string, Set<string | null>>;
 	/** The team's design/ format: its first hello's, raised by every canvas.json save that says a higher one (#206). */
 	format?: number;
+	/** The team history (spool#114): every save taken, applied or set aside, in order, as the object keeps them. */
+	log: LogRow[];
+	/** The bytes behind every hash a save carried, set-aside ones too. */
+	blobs: Map<string, Uint8Array>;
+	/** When and by whom it moved in from git, from its first move's save, and the commit the mover's daemon reported. */
+	movedIn?: { at: number; account: string; commit: string | null };
+}
+
+/** The quiet that ends a stretch, as spool.page reads one. */
+const STRETCH_GAP_MS = 10 * 60_000;
+/** The most paths a stretch names: the rest are counted. */
+const STRETCH_PATHS = 50;
+const DAY_MS = 86_400_000;
+/** A commit as git names it in full. */
+const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/u;
+
+/** One stretch as the object groups it: one person's saves from one machine, no 10-minute gap, newest save last. */
+interface StretchRow {
+	from: number;
+	to: number;
+	start: number;
+	end: number;
+	account: string;
+	device: string;
+	saves: number;
+	setAside: number;
+	paths: string[];
+	more: number;
+	/** The restore it is, with when the version it went back to was made; null for ordinary saves. */
+	restore: (RestoreRef & { toAt: number | null }) | null;
+}
+
+/** One save in the team history, as the object's history routes answer it. */
+interface LogRow {
+	version: number;
+	path: string;
+	hash: string | null;
+	account: string;
+	device: string;
+	at: number;
+	outcome: "applied" | "set_aside";
+	/** The restore it was part of (spool#188); null for an ordinary save. */
+	restore: RestoreRef | null;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -199,8 +244,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const trash = new Map<string, { at: Project; by: string; when: number }>();
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
+	/** Every read of a project's team history, by `<team>/<name>`: its route and query, in order. */
+	const historyAsks = new Map<string, string[]>();
 	let ids = 0;
 	let commentIds = 0;
+	/** The clock every save is filed at in the team history: the test's to turn. */
+	let clock = () => Date.now();
 	/** The comment limits every project here keeps: core's, unless a test raised or lowered them as a maintainer. */
 	let commentLimits = { perMinute: COMMENTS_PER_MINUTE, open: COMMENTS_OPEN };
 	/** Machines that can't reach the team right now, by account. */
@@ -225,6 +274,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const roleIn = (person: Person, address: string): Role =>
 		address === team ? person.role : (person.roles.get(address) ?? null);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
+	/** A teammate's save to take just before a project's next restore arrives, by project. */
+	const landing = new Map<Project, { by: string; path: string; text: string }>();
 	/** The object takes bundles, as spool.page does since it learned them; off, it is an older one. */
 	let takesBundles = true;
 	/** The object sends presence a tick at a time to a connection that reads them, as spool.page does since #107. */
@@ -380,7 +431,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json(described(held.at));
 		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still|\/history\/(?:saves|files|stretches|stretch|moved-in|blobs\/[^/]+))?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -436,6 +487,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					moved: [],
 					last: new Map(),
 					had: new Map(),
+					log: [],
+					blobs: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -469,6 +522,23 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				const held = [...at.files.values()].filter((file) => file.bytes !== null).length;
 				return Response.json({ files, held });
 			});
+		// the mover's daemon reports the commit that took design/ out of git, once git took it: kept once (spool#187)
+		if (match[3] === "/history/moved-in" && request.method === "PUT")
+			return request.json().then((body: { commit?: unknown }) => {
+				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				if (typeof body.commit !== "string" || !COMMIT.test(body.commit))
+					return Response.json({ error: "invalid_input" }, { status: 400 });
+				if (at.movedIn !== undefined && at.movedIn.commit === null) at.movedIn.commit = body.commit;
+				return new Response(null, { status: 204 });
+			});
+		// the team history (spool#114): any member's to read, a page at a time
+		if (match[3]?.startsWith("/history/") === true && request.method === "GET") {
+			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			const asks = historyAsks.get(`${at.team}/${at.name}`) ?? [];
+			asks.push(`${match[3]}${url.search}`);
+			historyAsks.set(`${at.team}/${at.name}`, asks);
+			return historyRead(at, match[3], url.searchParams);
+		}
 		// how many comments the project holds, and the still one kept: any member's to read
 		if (match[3] === "/shares" && request.method === "GET")
 			return Response.json({
@@ -524,6 +594,187 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		}
 		asked++;
 		return Response.json({ ...described(at), role, ...(lapsed(address) ? { standing: "unpaid" } : {}) });
+	}
+
+	/**
+	 * What a path held at a version, as a restore names it: the bytes of the save that version is when it is a save to
+	 * the path (a set-aside one put back too), else of the last save applied to it by then; null where it didn't exist.
+	 */
+	function hashAt(at: Project, path: string, version: number): string | null {
+		const exact = at.log.find((row) => row.version === version && row.path === path);
+		if (exact !== undefined) return exact.hash;
+		return (
+			at.log.filter((row) => row.path === path && row.version < version && row.outcome === "applied").at(-1)?.hash ??
+			null
+		);
+	}
+
+	/** One of the team history's reads, as the object answers it: saves to a path, files at a version, or bytes. */
+	function historyRead(at: Project, route: string, query: URLSearchParams): Response {
+		const limit = Number(query.get("limit") ?? 100);
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		if (route.startsWith("/history/blobs/")) {
+			const bytes = at.blobs.get(route.slice("/history/blobs/".length));
+			if (bytes === undefined) return Response.json({ error: "blob_not_found" }, { status: 404 });
+			return new Response(arrayBuffer(bytes));
+		}
+		if (route === "/history/stretches") return stretchesRead(at, query);
+		if (route === "/history/stretch") return stretchRead(at, query, limit);
+		if (route === "/history/saves") {
+			const path = query.get("path");
+			if (!path) return Response.json({ error: "invalid_input" }, { status: 400 });
+			const before = Number(query.get("before") ?? Number.MAX_SAFE_INTEGER);
+			const until = Number(query.get("until") ?? Number.MAX_SAFE_INTEGER);
+			const rows = at.log
+				.filter((row) => row.path === path && row.version < before && row.at <= until)
+				.reverse()
+				.slice(0, limit + 1);
+			const saves = rows.slice(0, limit).map(({ account, device, ...row }) => ({
+				...row,
+				by: { accountId: account, name: account, device },
+			}));
+			return Response.json({ saves, next: rows.length > limit ? (saves.at(-1)?.version ?? null) : null });
+		}
+		const version = Number(query.get("at"));
+		const paths = query.getAll("path");
+		const prefixes = query.getAll("prefix");
+		if (!Number.isSafeInteger(version) || paths.length + prefixes.length === 0)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		const after = query.get("after") ?? "";
+		const last = new Map<string, LogRow>();
+		for (const row of at.log)
+			if (
+				row.outcome === "applied" &&
+				row.version <= version &&
+				row.path > after &&
+				(paths.includes(row.path) || prefixes.some((prefix) => row.path.startsWith(prefix)))
+			)
+				last.set(row.path, row);
+		const rows = [...last.values()].sort((a, b) => (a.path < b.path ? -1 : 1)).slice(0, limit + 1);
+		const files = rows.slice(0, limit).map(({ path, version, hash }) => ({ path, version, hash }));
+		return Response.json({ files, next: rows.length > limit ? (files.at(-1)?.path ?? null) : null });
+	}
+
+	/** Who an account is, named and coloured as on the canvas. */
+	function whoIs(account: string): { name: string; color: string } {
+		const found = [...people.values()].find((one) => one.accountId === account);
+		return { name: account, color: found?.color ?? "#888888" };
+	}
+
+	/** The saves a read keeps: one person's (`person=`), and those to paths (`path=`) and under prefixes (`prefix=`). */
+	function keeps(query: URLSearchParams): (row: LogRow) => boolean {
+		const person = query.get("person");
+		const paths = query.getAll("path");
+		const prefixes = query.getAll("prefix");
+		return (row) =>
+			(person === null || row.account === person) &&
+			(paths.length + prefixes.length === 0 ||
+				paths.includes(row.path) ||
+				prefixes.some((prefix) => row.path.startsWith(prefix)));
+	}
+
+	/**
+	 * The history as stretches, a few of the asker's days at a time (`days=`, 7 unless said), newest first, before a
+	 * time (`before=`), their day `tz=` minutes ahead of UTC; and the moved-in line. As spool.page's `stretchPage`.
+	 */
+	function stretchesRead(at: Project, query: URLSearchParams): Response {
+		const days = Number(query.get("days") ?? 7);
+		const tz = Number(query.get("tz") ?? 0);
+		const before = query.get("before");
+		if (!Number.isSafeInteger(days) || days < 1 || days > 31 || !Number.isSafeInteger(tz) || Math.abs(tz) > 840)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		const kept = at.log.filter(keeps(query));
+		const offset = tz * 60_000;
+		const dayOf = (when: number) => Math.floor((when + offset) / DAY_MS) * DAY_MS - offset;
+		const page: { day: number; stretches: StretchRow[] }[] = [];
+		let cursor = before === null ? Number.MAX_SAFE_INTEGER : Number(before);
+		while (page.length < days) {
+			const older = kept.filter((row) => row.at < cursor);
+			const newest = older.reduce<number | undefined>((most, row) => Math.max(most ?? row.at, row.at), undefined);
+			if (newest === undefined) {
+				cursor = Number.NaN;
+				break;
+			}
+			const day = dayOf(newest);
+			const rows = older.filter((row) => row.at >= day).sort((a, b) => b.version - a.version);
+			const stretches = stretchesOf(rows);
+			for (const { restore } of stretches)
+				if (restore !== null) restore.toAt = at.log.find((row) => row.version === restore.to)?.at ?? null;
+			page.push({ day, stretches });
+			cursor = day;
+		}
+		const next = Number.isNaN(cursor) || !kept.some((row) => row.at < cursor) ? null : cursor;
+		const movedIn = at.movedIn;
+		return Response.json({
+			days: page.map(({ day, stretches }) => ({
+				day,
+				stretches: stretches.map(({ account, device, ...stretch }) => ({
+					...stretch,
+					by: { accountId: account, ...whoIs(account), device },
+				})),
+			})),
+			next,
+			movedIn:
+				movedIn === undefined
+					? null
+					: {
+							at: movedIn.at,
+							by: { accountId: movedIn.account, name: whoIs(movedIn.account).name },
+							commit: movedIn.commit,
+						},
+		});
+	}
+
+	/** The files one stretch touched (`from`, `to`, `account`, `device`), by path, each set-aside save with whose stood. */
+	function stretchRead(at: Project, query: URLSearchParams, limit: number): Response {
+		const from = Number(query.get("from"));
+		const to = Number(query.get("to"));
+		const account = query.get("account");
+		const device = query.get("device");
+		if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || !account || device === null)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		const after = query.get("after") ?? "";
+		const kept = keeps(query);
+		const mine = at.log.filter(
+			(row) =>
+				row.version >= from && row.version <= to && row.account === account && row.device === device && kept(row),
+		);
+		const paths = [...new Set(mine.map((row) => row.path))]
+			.filter((path) => path > after)
+			.sort()
+			.slice(0, limit + 1);
+		const files = paths.slice(0, limit).map((path) => {
+			const rows = mine.filter((row) => row.path === path);
+			const last = rows.at(-1);
+			return {
+				path,
+				version: last?.version ?? to,
+				hash: last?.hash ?? null,
+				saves: rows.length,
+				setAside: rows
+					.filter((row) => row.outcome === "set_aside")
+					.map((row) => {
+						const stood = at.log
+							.filter((one) => one.path === path && one.version < row.version && one.outcome === "applied")
+							.at(-1);
+						return {
+							version: row.version,
+							hash: row.hash,
+							at: row.at,
+							stood:
+								stood === undefined
+									? null
+									: {
+											version: stood.version,
+											at: stood.at,
+											by: { accountId: stood.account, name: whoIs(stood.account).name },
+										},
+						};
+					}),
+			};
+		});
+		return Response.json({ files, next: paths.length > limit ? (files.at(-1)?.path ?? null) : null });
 	}
 
 	/** Today's described project, at its team and name now. */
@@ -744,17 +995,39 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				bytes: parts[index],
 			}));
 		}
+		const restore = lone || message.restore === undefined ? undefined : readRestore(message.restore);
+		if (restore === null) {
+			from.close();
+			return;
+		}
+		const first = restore === undefined ? undefined : landing.get(at);
+		if (first !== undefined) {
+			landing.delete(at);
+			const by = [...at.sockets].find((socket) => socket.live && socket.person.accountId === first.by);
+			const bytes = new TextEncoder().encode(first.text);
+			const base = at.files.get(first.path)?.version ?? null;
+			if (by !== undefined) {
+				follow(
+					at,
+					take(at, by, [{ ref: "landed-first", path: first.path, base, deleted: false, bytes }], true),
+					undefined,
+				);
+				// made on that machine, as its own save is: its copy holds it too
+				const landed = at.files.get(first.path);
+				if (landed !== undefined) by.deliver(fileFrame(first.path, landed));
+			}
+		}
 		at.sends.push(entries.length);
 		const said = readMoved(message.moved);
 		at.moved.push(said);
-		follow(at, take(at, from, entries, lone), said);
+		follow(at, take(at, from, entries, lone, restore), said);
 	}
 
 	/**
 	 * Saves sent alone or together, as spool.page takes them: each checked and ordered on its own, the bundle taking
 	 * one save from the bucket, answered in one message, and relayed as one to every copy that reads bundles.
 	 */
-	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): CopyChange[] {
+	function take(at: Project, from: Connected, entries: Entry[], lone: boolean, restore?: RestoreRef): CopyChange[] {
 		const told: Told = { answers: [], after: [], relayed: [], changes: [] };
 		const refuse = ({ ref, path }: Entry, reason: string, retryAfter?: number) => {
 			at.refused.push({ path, reason });
@@ -768,12 +1041,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			: entries.filter((entry) => {
 					if (!travels(entry.path)) refuse(entry, "outside_layout");
 					else if ((entry.bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) refuse(entry, "too_large");
+					// a restore puts back only what the path held at the version it names: anything else claims to be one
+					else if (restore !== undefined && hash(entry.bytes ?? null) !== hashAt(at, entry.path, restore.to))
+						refuse(entry, "restore_mismatch");
 					else return true;
 					return false;
 				});
 		if (taking.length > 0) {
 			let held: { reason: string; retryAfter: number } | undefined;
-			if (limited !== undefined) held = limited;
+			// a checked restore is held only to the size caps
+			if (restore !== undefined) held = limited?.reason === "project_full" ? limited : undefined;
+			else if (limited !== undefined) held = limited;
 			else {
 				const wait = overRate();
 				const room = level();
@@ -793,7 +1071,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				const current = at.files.get(entry.path);
 				if (current !== undefined && hash(current.bytes) === hash(entry.bytes ?? null))
 					told.answers.push({ type: "saved", ref: entry.ref, path: entry.path, version: current.version });
-				else apply(at, from, entry, current, moved, told);
+				else apply(at, from, entry, current, moved, told, restore);
 			}
 		}
 		const [only] = told.answers;
@@ -1201,6 +1479,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		current: TeamVersion | undefined,
 		moved: boolean,
 		told: Told,
+		restore?: RestoreRef,
 	): void {
 		const stale = current !== undefined && current.version !== base;
 		const merged =
@@ -1215,6 +1494,19 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const beatsDelete = stale && current.bytes === null && bytes !== undefined;
 		const applies = !stale || merged !== null || beatsDelete;
 		at.version += 1;
+		const kept = merged ?? bytes ?? null;
+		const keptHash = hash(applies ? kept : (bytes ?? null));
+		if (keptHash !== null) at.blobs.set(keptHash, (applies ? kept : bytes) as Uint8Array);
+		at.log.push({
+			version: at.version,
+			path,
+			hash: keptHash,
+			account: from.person.accountId,
+			device: from.person.device,
+			at: clock(),
+			outcome: applies ? "applied" : "set_aside",
+			restore: restore ?? null,
+		});
 		at.saves.push({
 			path,
 			base,
@@ -1224,6 +1516,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			moved,
 		});
 		at.mover = moved ? from.person.accountId : null;
+		// the moved-in line: when and by whom, from the move's first save (spool#187)
+		if (moved && at.movedIn === undefined) at.movedIn = { at: clock(), account: from.person.accountId, commit: null };
 		if (!applies) {
 			const by = current.by ?? from.person;
 			told.answers.push({
@@ -1426,6 +1720,16 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		bytes: (name: string, path: string) => project(name)?.files.get(path)?.bytes,
 		paths: (name: string) => [...(project(name)?.files.keys() ?? [])].sort(),
 		saves: (name: string) => project(name)?.saves ?? [],
+		/** Every save in the team history, in order: version, path, hash, who, which machine, when and outcome. */
+		history: (name: string) => project(name)?.log ?? [],
+		/** Every read of the project's team history, its route and query (`/history/files?at=3…`), in order. */
+		historyReads: (name: string) => historyAsks.get(name.includes("/") ? name : `${team}/${name}`) ?? [],
+		/** When and by whom the project moved in from git, and the commit reported for it; undefined for one started here. */
+		movedIn: (name: string) => project(name)?.movedIn,
+		/** The clock saves are filed at in the team history from now on. */
+		clock(now: () => number) {
+			clock = now;
+		},
 		/** Every save the project refused, and why. */
 		refused: (name: string) => project(name)?.refused ?? [],
 		/** How many saves each message that carried saves held, in order. */
@@ -1481,6 +1785,14 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
+		},
+		/**
+		 * A teammate's save (`by`, connected to the project) lands just before the project's next restore is taken: what
+		 * the restorer's copy can't have heard of yet, so the restore's save to that path is built on an older version.
+		 */
+		landFirst(name: string, by: string, path: string, text: string) {
+			const at = project(name);
+			if (at !== undefined) landing.set(at, { by, path, text });
 		},
 		/** One machine loses the team until it comes back: what it saves waits, and it catches up on reconnect. */
 		offline(accountId: string) {
@@ -1652,6 +1964,46 @@ function fileFrame(path: string, file: TeamVersion): string | Uint8Array {
 	);
 }
 
+/** Saves, newest first, as stretches, newest first by their end: as spool.page's `stretchesOf`. */
+function stretchesOf(rows: readonly LogRow[]): StretchRow[] {
+	const stretches: StretchRow[] = [];
+	const open = new Map<string, { stretch: StretchRow; paths: Set<string> }>();
+	for (const row of rows) {
+		// a restore is always a stretch of its own
+		const key = `${row.account}\n${row.device}\n${row.restore?.id ?? ""}`;
+		const run = open.get(key);
+		if (run !== undefined && run.stretch.start - row.at <= STRETCH_GAP_MS) {
+			const { stretch, paths } = run;
+			stretch.from = row.version;
+			stretch.start = row.at;
+			stretch.saves += 1;
+			if (row.outcome === "set_aside") stretch.setAside += 1;
+			if (!paths.has(row.path)) {
+				paths.add(row.path);
+				if (stretch.paths.length < STRETCH_PATHS) stretch.paths.push(row.path);
+				else stretch.more += 1;
+			}
+			continue;
+		}
+		const stretch: StretchRow = {
+			from: row.version,
+			to: row.version,
+			start: row.at,
+			end: row.at,
+			account: row.account,
+			device: row.device,
+			saves: 1,
+			setAside: row.outcome === "set_aside" ? 1 : 0,
+			paths: [row.path],
+			more: 0,
+			restore: row.restore === null ? null : { ...row.restore, toAt: null },
+		};
+		stretches.push(stretch);
+		open.set(key, { stretch, paths: new Set([row.path]) });
+	}
+	return stretches;
+}
+
 function hash(bytes: Uint8Array | null): string | null {
 	return bytes === null ? null : createHash("sha256").update(bytes).digest("hex");
 }
@@ -1662,4 +2014,106 @@ function encode(text: string): Uint8Array {
 
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
 	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+/**
+ * A person's own sync connection to a project of the fake team, saving whole files as their Mac would, each save
+ * taken before the next is sent: what a test drives the team history with, the team's clock turned between saves.
+ */
+export async function teamWriter(
+	cloud: ReturnType<typeof fakeTeam>,
+	machine: ReturnType<ReturnType<typeof fakeTeam>["machine"]>,
+	project: string,
+	options: { team?: string; moving?: boolean } = {},
+) {
+	const team = options.team ?? "devosurf";
+	const history = () => cloud.history(project);
+	const token = await machine.cloud.vault.read();
+	let open = false;
+	const socket = machine.openSocket(
+		`${TEAM_ORIGIN.replace(/^https:/u, "wss:")}/api/teams/${team}/projects/${project}/sync`,
+		token,
+		{
+			open: () => {
+				socket.send(
+					encodeFrame({
+						type: "hello",
+						protocol: PROTOCOL_VERSION,
+						format: 2,
+						since: 0,
+						...(options.moving === true ? { moving: true } : {}),
+					}),
+				);
+				open = true;
+			},
+			message: (data) => {
+				const framed = decodeFrame(data);
+				if (framed?.message.type === "answers") answers.push(framed.message.answers as Record<string, unknown>[]);
+			},
+			close: () => {},
+		},
+	);
+	/** Each `answers` the object sent this connection, in order. */
+	const answers: Record<string, unknown>[][] = [];
+	await settled(() => open);
+	let refs = 0;
+	return {
+		/** Saves a file; `base` names the version it was built on, the team's latest unless said, so an older one loses. */
+		async save(path: string, text: string, base?: number | null): Promise<void> {
+			const count = history().length;
+			const head =
+				history()
+					.filter((row) => row.path === path && row.outcome === "applied")
+					.at(-1)?.version ?? null;
+			socket.send(
+				encodeFrame(
+					{ type: "save", ref: `w${++refs}`, path, base: base === undefined ? head : base, deleted: false },
+					new TextEncoder().encode(text),
+				),
+			);
+			await settled(() => history().length > count);
+		},
+		/**
+		 * Sends saves as one restore's bundle, `text` null for a delete, each built on the team's latest version of its
+		 * path unless `base` says: the object's answers to them.
+		 */
+		async restore(
+			restore: RestoreRef,
+			saves: { path: string; text: string | null; base?: number | null }[],
+		): Promise<Record<string, unknown>[]> {
+			const heard = answers.length;
+			const parts = saves.map(({ text }) => (text === null ? undefined : new TextEncoder().encode(text)));
+			const head = (path: string) =>
+				history()
+					.filter((row) => row.path === path && row.outcome === "applied")
+					.at(-1)?.version ?? null;
+			socket.send(
+				encodeFrame(
+					{
+						type: "saves",
+						saves: saves.map(({ path, text, base }, index) => ({
+							ref: `w${++refs}`,
+							path,
+							base: base === undefined ? head(path) : base,
+							deleted: text === null,
+							size: parts[index]?.byteLength ?? 0,
+						})),
+						restore,
+					},
+					joinParts(parts),
+				),
+			);
+			await settled(() => answers.length > heard);
+			return answers[heard] ?? [];
+		},
+		close: () => socket.close(),
+	};
+}
+
+/** Lets the fake's deliveries run until something holds. */
+async function settled(holds: () => boolean): Promise<void> {
+	for (let turns = 0; !holds(); turns += 1) {
+		if (turns > 10_000) throw new Error("the fake team never took it");
+		await new Promise((wake) => setImmediate(wake));
+	}
 }

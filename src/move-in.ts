@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { addAgentsLine } from "./agents-line";
 import { writeAtomic } from "./atomic-write";
+import { authorizedCloudRequest, type CloudRequestOptions, originOf } from "./cloud-auth";
 import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
 import { commitMoveIn, type MoveCommit, onBranch } from "./daemon/history";
 import { carrySharesOver } from "./daemon/shares";
@@ -125,7 +126,14 @@ export async function moveIntoTeam(targetDir: string, spoolDir: string, options:
 	rmSync(record, { force: true });
 	// the registry's change is what sets the daemon following the new local copy
 	registerProject(spoolDir, root);
-	return { root, link, commit: commitMove(root, options) };
+	return {
+		root,
+		link,
+		commit: commitMove(root, options).then((made) => {
+			void tellMoveCommit(root, spoolDir, request);
+			return made;
+		}),
+	};
 }
 
 /**
@@ -252,6 +260,8 @@ async function commitMove(root: string, options: Pick<MoveOptions, "wait" | "sig
 		...(options.signal === undefined ? {} : { signal: options.signal }),
 	});
 	if (commit.kind === "committed" || commit.kind === "no-git") rmSync(owed(root), { force: true });
+	// the team's history is told which commit it was, once (spool#187): owed until spool.page has heard it
+	if (commit.kind === "committed") writeAtomic(untold(root), `${JSON.stringify({ commit: commit.commit })}\n`);
 	return commit;
 }
 
@@ -268,6 +278,53 @@ export function redoMoveIn(
 ): Promise<MoveCommit> {
 	writeAtomic(owed(root), `${JSON.stringify({ project: link.url, ...(agents === undefined ? {} : { agents }) })}\n`);
 	return commitMove(root, options);
+}
+
+/** Where a move commit the team's history hasn't heard yet is kept, until it has. */
+function untold(root: string): string {
+	return join(root, "design", ".spool", "moved-in.json");
+}
+
+/**
+ * Tells the team's history which commit took `design/` out of git, for its moved-in line (spool#187), if this Mac
+ * made one it hasn't told yet. spool.page keeps the first it hears and answers any later one alike, so it is said
+ * at most until it is heard: an answer that it can't take lets it go, and no answer at all keeps it for the next start.
+ */
+export async function tellMoveCommit(root: string, spoolDir: string, request: CloudRequestOptions): Promise<void> {
+	let commit: unknown;
+	try {
+		commit = (JSON.parse(readFileSync(untold(root), "utf8")) as { commit?: unknown }).commit;
+	} catch {
+		return;
+	}
+	const link = isTeamProject(root) ? readProjectLink(root) : undefined;
+	if (typeof commit !== "string" || link === undefined) {
+		rmSync(untold(root), { force: true });
+		return;
+	}
+	// a link to another cloud is never sent this Mac's session
+	if (link.origin !== originOf(request)) return;
+	try {
+		const response = await authorizedCloudRequest(
+			spoolDir,
+			`/api/teams/${encodeURIComponent(link.team)}/projects/${encodeURIComponent(link.project)}/history/moved-in`,
+			{ method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ commit }) },
+			request,
+		);
+		if (response.status >= 500) return;
+	} catch {
+		return;
+	}
+	rmSync(untold(root), { force: true });
+}
+
+/** Every move commit among these roots the team hasn't heard yet, told: what a daemon does at start. */
+export async function tellMoveCommits(
+	roots: readonly string[],
+	spoolDir: string,
+	request: CloudRequestOptions,
+): Promise<void> {
+	for (const root of roots) if (existsSync(untold(root))) await tellMoveCommit(root, spoolDir, request);
 }
 
 /** Every move among these roots whose commit is still owed, its commit tried again: what a daemon does at start. */

@@ -197,6 +197,19 @@ describe("the keys", () => {
 		expect(side(host, "right")?.hasAttribute("data-side-open")).toBe(true);
 		expect(lit(host, "agent")).toBe(true);
 	});
+
+	it("closes a toggling pane's side by its key while it shows, and opens it on it again (spool#187)", async () => {
+		const { host, render } = await mount();
+		await render({ toggles: true });
+		const agentKey = { key: "K", code: "KeyK", metaKey: true, shiftKey: true };
+		await key(agentKey);
+		expect(lit(host, "agent")).toBe(true);
+		await key(agentKey);
+		expect(side(host, "right")?.style.width).toBe("44px");
+		await key(agentKey);
+		expect(side(host, "right")?.hasAttribute("data-side-open")).toBe(true);
+		expect(lit(host, "agent")).toBe(true);
+	});
 });
 
 describe("what is kept", () => {
@@ -230,7 +243,7 @@ describe("what is kept", () => {
 
 /* ── the stand-in window ─────────────────────────────────────────────── */
 
-function panes(props: { working?: boolean }): PaneDef[] {
+function panes(props: { working?: boolean; toggles?: boolean }): PaneDef[] {
 	const text =
 		(words: string, extra: ReactNode = null) =>
 		() =>
@@ -257,6 +270,7 @@ function panes(props: { working?: boolean }): PaneDef[] {
 			icon: "A",
 			hotkey: "panes.agent",
 			working: props.working,
+			toggles: props.toggles,
 			render: text(
 				"the agent",
 				createElement(
@@ -307,7 +321,7 @@ async function key(init: KeyboardEventInit) {
 
 async function mount(): Promise<{
 	host: HTMLDivElement;
-	render: (props: { working?: boolean }) => Promise<void>;
+	render: (props: { working?: boolean; toggles?: boolean }) => Promise<void>;
 	unmount: () => void;
 }> {
 	const host = document.createElement("div");
@@ -324,7 +338,7 @@ async function mount(): Promise<{
 		host.remove();
 	};
 	onTestFinished(unmount);
-	const render = async (props: { working?: boolean }) => {
+	const render = async (props: { working?: boolean; toggles?: boolean }) => {
 		await act(async () => {
 			root.render(createElement(PaneWindow, { panes: panes(props) }, createElement("main", null, "canvas")));
 		});

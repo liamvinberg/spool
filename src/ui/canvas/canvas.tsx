@@ -24,6 +24,7 @@ import type {
 	Camera,
 	FrameCopy,
 	Geometry,
+	HistoryScope,
 	Place,
 	ProjectedFrame,
 	SelectionEntry,
@@ -59,7 +60,7 @@ import { experimentOn } from "../experiments";
 import { isLetGo } from "../gone-projects";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
-import { AgentIcon, CommentIcon, FolderIcon, PropertiesIcon } from "../icons";
+import { AgentIcon, ClockIcon, CommentIcon, FolderIcon, PropertiesIcon } from "../icons";
 import { ProjectEmpty } from "../project-empty";
 import { useSetting, useWriteSetting } from "../settings";
 import { openShare, type ShareContext } from "../share-control";
@@ -167,6 +168,10 @@ import {
 	takeUndo,
 	type Way,
 } from "./history";
+import { CompareLayer, TouchedLayer, useComparing } from "./history-compare";
+import { onProjectHistory } from "./history-door";
+import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
+import { useRestoring } from "./history-restore";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { FrameLife, type LifecycleStore, useDocumentsBooting, useFrameLifecycle, useFrameReady } from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
@@ -527,6 +532,17 @@ function CanvasField({
 	// read too, and the read has to carry the fingerprint the next write needs
 	const [saves, setSaves] = useState<Record<string, number>>({});
 	const [agentRequest, setAgentRequest] = useState<AgentRequest>();
+	/** which history the History pane shows (spool#187), and the last ask to open it, made since which agent request */
+	const [historyScope, setHistoryScope] = useState<HistoryScope>({ kind: "project" });
+	const [historyAsk, setHistoryAsk] = useState<{ key: number; agent: string | undefined } | null>(null);
+	const agentAsked = useRef<string | undefined>(undefined);
+	agentAsked.current = agentRequest?.id;
+	const openHistory = useCallback((scope: HistoryScope) => {
+		setHistoryScope(scope);
+		setHistoryAsk((was) => ({ key: (was?.key ?? 0) + 1, agent: agentAsked.current }));
+	}, []);
+	// History… on the project's tab
+	useEffect(() => onProjectHistory(project, () => openHistory({ kind: "project" })), [project, openHistory]);
 	const [agentHandoff, setAgentHandoff] = useState(false);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
@@ -659,6 +675,15 @@ function CanvasField({
 	);
 	const permissions = useAgentPermissions(project, deckOpen, turnPhase, agentDefaults.mode);
 	const syncState = useSyncState(project, root);
+	// restoring from the team history (spool#188): the question, the toast with its Undo, and ⌘Z while it stands
+	const restoring = useRestoring(project);
+	// comparing with now (spool#189): the frames as they stood beside today's, and what a stretch under the pointer touched
+	const comparing = useComparing(historyScope);
+	const closeCompare = comparing.close;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: another page puts the canvas back
+	useEffect(() => closeCompare(), [activePage, closeCompare]);
+	const restoringRef = useRef(restoring);
+	restoringRef.current = restoring;
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
@@ -3026,6 +3051,9 @@ function CanvasField({
 					};
 					if (event.kind === "set-aside") window.dispatchEvent(new CustomEvent("spool-set-aside-change"));
 					if (event.kind === "comments") window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE));
+					// a save here or a teammate's arriving is the team's history by now, or nearly (spool#187)
+					if (["frame", "shared", "geometry", "set-aside"].includes(event.kind))
+						window.dispatchEvent(new CustomEvent(HISTORY_CHANGE));
 					if (event.kind === "frame" && event.frame !== undefined) {
 						const frame = event.frame;
 						const own = saved.current.get(frame);
@@ -4388,7 +4416,7 @@ function CanvasField({
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to Select's click, double-click and ⌘-click gestures.
 		cancelPicks();
-		const menuSize = contextMenuSize(!elementSelection);
+		const menuSize = contextMenuSize(!elementSelection, team);
 		const viewport = viewportRef.current;
 		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - menuSize.w - 8);
 		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - menuSize.h - 8);
@@ -4612,6 +4640,7 @@ function CanvasField({
 			"canvas.undo": (event) => {
 				event?.preventDefault();
 				if (store.get().pendingTrash !== null) undoTrash();
+				else if (restoringRef.current.undoLast()) return;
 				else if (gestureStill()) walk("undo");
 			},
 			"canvas.redo": (event) => {
@@ -5145,6 +5174,38 @@ function CanvasField({
 			/>
 		),
 	};
+	// a team project's history (spool#187): a frame's from its right-click, the project's from its tab's menu
+	const historyPane: PaneDef = {
+		id: "history",
+		title: "History",
+		icon: <ClockIcon className="h-4 w-4" />,
+		hotkey: "panes.history",
+		toggles: true,
+		render: ({ visible }) => (
+			<HistoryPane
+				project={project}
+				scope={historyScope}
+				visible={visible}
+				onScope={setHistoryScope}
+				actions={(stretch, scope) => (
+					<>
+						{comparing.action(stretch, scope)}
+						{restoring.actions(stretch, scope)}
+					</>
+				)}
+				restore={{
+					line: restoring.file.line,
+					setAside: (file, save, stretch) => (
+						<>
+							{comparing.setAside(file, save, stretch)}
+							{restoring.file.setAside(file, save, stretch)}
+						</>
+					),
+				}}
+				onHover={comparing.hover}
+			/>
+		),
+	};
 	const panes: readonly PaneDef[] = [
 		{
 			id: "pages",
@@ -5232,7 +5293,7 @@ function CanvasField({
 			),
 		},
 		// a team project's inbox, beside Properties and Agent (spool#170)
-		...(team ? [commentsPane] : []),
+		...(team ? [commentsPane, historyPane] : []),
 	];
 
 	// what each frame is to the ⌥ overview while it is up (DEV-295)
@@ -5257,7 +5318,14 @@ function CanvasField({
 		<div className="relative flex h-full w-full">
 			<PaneWindow
 				panes={panes}
-				reveal={agentRequest === undefined ? undefined : { pane: "agent", key: agentRequest.id }}
+				reveal={
+					// History asked for since the last agent request shows it, once the canvas knows it is a team's
+					team && historyAsk !== null && historyAsk.agent === agentRequest?.id
+						? { pane: "history", key: `history-${historyAsk.key}` }
+						: agentRequest === undefined
+							? undefined
+							: { pane: "agent", key: agentRequest.id }
+				}
 				onShown={(panes) => {
 					setRailShown(panes.includes("agent"));
 					setCommentsShown(panes.includes("comments"));
@@ -5584,6 +5652,19 @@ function CanvasField({
 									onPick={live.pick}
 								/>
 							)}
+							{/* a team project's history on the canvas (spool#189): the frames a stretch under the pointer
+						    touched, and Compare with now over everything on the field */}
+							{team && <TouchedLayer hovered={comparing.hovered} frames={visibleFrames} camera={camera} />}
+							{team && (
+								<CompareLayer
+									project={project}
+									comparing={comparing.comparing}
+									frames={visibleFrames}
+									page={activePage}
+									camera={camera}
+									onClose={closeCompare}
+								/>
+							)}
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
@@ -5632,6 +5713,15 @@ function CanvasField({
 								copySourcePath(pick !== undefined ? sourcePathOf(pick) : frameSourcePath(menu.frame));
 								setMenu(null);
 							}}
+							onHistory={
+								team
+									? () => {
+											const frame = menu.frame;
+											setMenu(null);
+											openHistory({ kind: "frame", frame });
+										}
+									: undefined
+							}
 							onReload={() => {
 								const frame = menu.frame;
 								reloadFrameDocument(frame);
@@ -5679,6 +5769,7 @@ function CanvasField({
 								onUndo={undoTrash}
 							/>
 						)}
+						{restoring.toast}
 						{notice !== null ? <NoticeToast notice={notice} /> : null}
 					</NoticeStack>
 					{/* The agent rail stays available beside an empty canvas. The path also
@@ -5730,6 +5821,7 @@ function CanvasField({
 					) : null}
 				</div>
 			</PaneWindow>
+			{restoring.question}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

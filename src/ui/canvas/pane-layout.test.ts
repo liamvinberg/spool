@@ -324,11 +324,11 @@ describe("the stored layout", () => {
 
 describe("the panes a canvas has (spool#170)", () => {
 	const SOLO = ["pages", "properties", "agent"];
-	const TEAM = ["pages", "properties", "agent", "comments"];
+	const TEAM = ["pages", "properties", "agent", "comments", "history"];
 
-	it("puts a team project's Comments beside Properties and Agent, and leaves it out of a solo one", () => {
+	it("puts a team project's Comments and History beside Properties and Agent, and leaves them out of a solo one", () => {
 		const team = fitPanes(defaultLayout(), TEAM);
-		expect(tabsOf(team, "right")).toEqual([["properties", "agent", "comments"]]);
+		expect(tabsOf(team, "right")).toEqual([["properties", "agent", "comments", "history"]]);
 		expect(activeOf(team, "right")).toEqual(["properties"]);
 		const solo = defaultLayout();
 		expect(fitPanes(solo, SOLO)).toBe(solo);
@@ -346,8 +346,8 @@ describe("the panes a canvas has (spool#170)", () => {
 		expect(tabsOf(solo, "left")).toEqual([["pages"]]);
 		expect(activeOf(solo, "left")).toEqual(["pages"]);
 		expect(tabsOf(solo, "right")).toEqual([["properties", "agent"]]);
-		// and back on a team canvas, Comments comes back after Agent, nothing else moved
-		expect(tabsOf(fitPanes(solo, TEAM), "right")).toEqual([["properties", "agent", "comments"]]);
+		// and back on a team canvas, Comments comes back after Agent and History after it, nothing else moved
+		expect(tabsOf(fitPanes(solo, TEAM), "right")).toEqual([["properties", "agent", "comments", "history"]]);
 		// a pane alone in its group takes its group with it, and a side left empty closes
 		const alone = move(fitPanes(defaultLayout(), TEAM), "comments", {
 			kind: "split",
@@ -357,7 +357,11 @@ describe("the panes a canvas has (spool#170)", () => {
 		});
 		expect(tabsOf(fitPanes(alone, SOLO), "right")).toEqual([["properties", "agent"]]);
 		const lonely = move(fitPanes(defaultLayout(), TEAM), "pages", { kind: "row", side: "right", group: 0, index: 0 });
-		const leftComments = move(lonely, "comments", { kind: "row", side: "left", group: 0, index: 0 });
+		const leftComments = move(
+			move(lonely, "comments", { kind: "row", side: "left", group: 0, index: 0 }),
+			"history",
+			{ kind: "row", side: "left", group: 0, index: 1 },
+		);
 		expect(fitPanes(leftComments, SOLO).left).toMatchObject({ groups: [], open: false });
 	});
 
@@ -366,6 +370,6 @@ describe("the panes a canvas has (spool#170)", () => {
 		if (!isLayout()(before)) throw new Error("a stored 3 is read");
 		const read = storedLayout(before, TEAM);
 		expect(read.v).toBe(4);
-		expect(tabsOf(read, "right")).toEqual([["properties", "agent", "comments"]]);
+		expect(tabsOf(read, "right")).toEqual([["properties", "agent", "comments", "history"]]);
 	});
 });

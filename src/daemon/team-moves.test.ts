@@ -604,6 +604,55 @@ describe("Move to team", () => {
 		await until(() => status(project.root).length === 0, 10_000);
 	});
 
+	it("tells the team's history which commit the move was, once git took it", { timeout: 30_000 }, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		const daemon = makeApp(project.state, { cloud: ana.cloud, teamNotice: () => {} });
+		const moved = await daemon.controlRequest("/api/cloud/teams/devosurf/move", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ path: project.root }),
+		});
+		expect(moved.status).toBe(200);
+		const commit = git(project.root, "rev-parse", "HEAD");
+		await until(() => cloud.movedIn("site")?.commit === commit, 10_000);
+		expect(cloud.movedIn("site")).toMatchObject({ account: "ana", commit });
+		expect(status(project.root)).toEqual([]);
+	});
+
+	it("tells the team a move commit made at the next start, and one it couldn't tell then at the start after", {
+		timeout: 30_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const ana = cloud.machine("ana");
+		const project = existingProject();
+		const lock = join(project.root, ".git", "index.lock");
+		writeFileSync(lock, "");
+		const moved = await moveIntoTeam(project.root, project.state, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+			wait: async () => {},
+		});
+		expect(await moved.commit).toEqual({ kind: "failed" });
+		rmSync(lock);
+
+		// spool.page is out of reach as the commit is made: what it is owed waits for the next start
+		const back = cloud.unreachable();
+		const first = makeApp(project.state, { cloud: ana.cloud, teamNotice: () => {} });
+		await until(() => git(project.root, "log", "-1", "--format=%s") === MOVE_MESSAGE, 10_000);
+		await new Promise((wake) => setTimeout(wake, 300));
+		await first.close();
+		back();
+		expect(cloud.movedIn("site")?.commit).toBeNull();
+
+		makeApp(project.state, { cloud: ana.cloud, teamNotice: () => {} });
+		const commit = git(project.root, "rev-parse", "HEAD");
+		await until(() => cloud.movedIn("site")?.commit === commit, 10_000);
+	});
+
 	it("waits out a merge before it commits", { timeout: 30_000 }, async () => {
 		const project = existingProject();
 		writeFileSync(join(project.root, "spool.json"), '{ "project": "https://cloud.test/devosurf/site" }\n');

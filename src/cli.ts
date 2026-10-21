@@ -46,6 +46,7 @@ import { SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./daemon/verify-record";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
+import { historyAt, historyMoment, historyPath, listHistory } from "./history-verb";
 import { checkInitTarget, chooseInitTarget, initDestination, initProject, initTeamProject } from "./init";
 import { runMove } from "./move-verb";
 import { fetchLocalCopy, openProject } from "./open";
@@ -542,6 +543,24 @@ async function commentsContext(): Promise<CommentsDaemon> {
 	}
 	return { daemonUrl, name, controlToken };
 }
+
+program
+	.command("history")
+	.description("print every save to a file of a team project in the team history, or the file as it stood at a time")
+	.argument("<path>", "the file's path in design/, as frames/<frame>/frame.tsx or shared/<file>")
+	.option("--at <time>", "print the file as it stood at this time (2026-10-21 14:02, as the list prints it)")
+	.action(async (path: string, options: { at?: string }) => {
+		const named = historyPath(path);
+		const at = options.at === undefined ? undefined : historyMoment(options.at);
+		const { root, name, daemonUrl, controlToken } = await verbContext();
+		if (followedLink(root) === undefined)
+			throw new SpoolError(
+				`this project isn't a team project: its history is git's (\`git log -p -- design/${named}\`)`,
+			);
+		const daemon = { daemonUrl, name, controlToken };
+		if (at === undefined) process.stdout.write(`${await listHistory(daemon, named)}\n`);
+		else process.stdout.write(await historyAt(daemon, named, at));
+	});
 
 /** Words given as arguments, one space between: quote them to keep line breaks. */
 const wordsOf = (words: readonly string[]) => words.join(" ");

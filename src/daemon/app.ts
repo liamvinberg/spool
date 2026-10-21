@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, stream, streamSSE } from "hono/streaming";
@@ -15,7 +15,7 @@ import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
-import { finishMoves } from "../move-in";
+import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
@@ -45,7 +45,7 @@ import { commentsForPrompt } from "./comment-prompt";
 import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
-import { DesignBoundaryError } from "./design-path";
+import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
 	captureWorkerCsp,
 	captureWorkerDocument,
@@ -65,6 +65,7 @@ import { refreshIndex } from "./fs-list";
 import { createGoReader } from "./go-reader";
 import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
+import { historyCache } from "./history-cache";
 import { homeRoutes } from "./home-routes";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
@@ -104,8 +105,11 @@ import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import { beatWhileOpen } from "./sse-beat";
 import { mapBootStacks } from "./stack-map";
+import { teamCompareRoutes } from "./team-compare";
 import { createTeamCovers } from "./team-covers";
+import { teamHistoryRoutes } from "./team-history";
 import { teamProjectRoutes } from "./team-projects";
+import { teamRestoreRoutes } from "./team-restore";
 import {
 	createTeamSync,
 	followedLink,
@@ -216,6 +220,8 @@ export interface DaemonOptions {
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
 	webfonts?: Webfonts;
+	/** How much of the team history this Mac keeps read for Compare with now (spool#189): 128 MB unless a test says. */
+	historyCacheBytes?: number;
 }
 
 /** spool.page as the daemon reaches it: where it is, the session vault, the fetch, and the sync socket. */
@@ -316,6 +322,7 @@ export function createDaemonApp({
 	updateHow,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
+	historyCacheBytes,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -642,6 +649,9 @@ export function createDaemonApp({
 		for (const { root, commit } of finished)
 			if (commit.kind === "committed")
 				teamNotice(`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`, root);
+		// and the team's history is told the move commits it hasn't heard (spool#187)
+		if (!moving.signal.aborted)
+			void tellMoveCommits(registeredRoots(), spoolDir, { ...cloud, origin: originOf(cloud) });
 	});
 	// task 136: so is one moving a project to another team, out of one, or into a checkout
 	void finishOwedCommits(registeredRoots(), { signal: moving.signal }).then((finished) => {
@@ -996,12 +1006,17 @@ export function createDaemonApp({
 		return /^\/api\/p\/[^/]+\/scenarios\/[^/]+$/.test(path);
 	}
 
+	/** A frame's document: today's, or as it stood at a team version (spool#189). */
+	function isFrameDocumentPath(path: string): boolean {
+		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || /^\/p\/[^/]+\/history\/\d+\/frames\/[^/]+$/.test(path);
+	}
+
 	function isExecutableRenderPath(path: string): boolean {
-		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || /^\/play\/[^/]+$/.test(path);
+		return isFrameDocumentPath(path) || /^\/play\/[^/]+$/.test(path);
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
-		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
+		return isFrameDocumentPath(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
 	}
 
 	function normalizedOrigin(value: string): string | undefined {
@@ -1785,6 +1800,50 @@ export function createDaemonApp({
 					? undefined
 					: commentStill(spoolDir, link, comment, { ...cloud, origin: originOf(cloud) });
 			},
+		}),
+	);
+	// a frame's history reaches what it imports: its source graph, outside its own folder (spool#187)
+	const importsOf = async (root: string, frame: string) => {
+		const graph = (await flowGraph.sources(root).catch(() => undefined))?.get(frame);
+		if (graph === undefined) return undefined;
+		const designDir = realDesignDir(root);
+		const own = join(designDir, "frames", ...frame.split("/")) + sep;
+		return graph.files.filter((file) => !file.startsWith(own)).map((file) => designRelativePath(designDir, file));
+	};
+	// a frame as it stood at a team version, beside today's (spool#189): ahead of the history's reads too
+	const comparing = teamCompareRoutes({
+		spoolDir,
+		version,
+		request: () => ({ ...cloud, origin: originOf(cloud) }),
+		resolve: resolveProject,
+		link: followedLink,
+		cache: historyCache(join(spoolDir, "history-cache"), { maxBytes: historyCacheBytes ?? 128 * 1024 * 1024 }),
+		authority: frameAuthority,
+		webfonts,
+	});
+	app.route("/api/p", comparing.api);
+	app.route("/p", comparing.served);
+	// restoring from the team history (spool#188), ahead of the history's reads, which take every other route under it
+	app.route(
+		"/api/p",
+		teamRestoreRoutes({
+			spoolDir,
+			request: () => ({ ...cloud, origin: originOf(cloud) }),
+			resolve: resolveProject,
+			link: followedLink,
+			copy: (root) => teamSync.copy(root),
+			importsOf,
+			framesUsing: (root, path) => framesUsingIn(root).framesUsing(path),
+		}),
+	);
+	app.route(
+		"/api/p",
+		teamHistoryRoutes({
+			spoolDir,
+			request: () => ({ ...cloud, origin: originOf(cloud) }),
+			resolve: resolveProject,
+			link: followedLink,
+			importsOf,
 		}),
 	);
 	app.route(
