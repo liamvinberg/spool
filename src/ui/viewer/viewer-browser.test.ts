@@ -279,6 +279,22 @@ describe("the read-only canvas", () => {
 		await expect.poll(() => zoom.textContent()).toBe(fitted);
 	});
 
+	it("pans with the middle button held, from over a frame too, and plays nothing", { timeout: 60_000 }, async () => {
+		const { page } = await open();
+		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
+		const box = await page.locator('[data-viewer-frame="home"]').boundingBox();
+		if (box === null) throw new Error("home isn't drawn");
+		const before = await cameraOf(page);
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down({ button: "middle" });
+		await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 40, { steps: 4 });
+		await page.mouse.up({ button: "middle" });
+		await expect.poll(() => cameraOf(page)).not.toBe(before);
+		await page.waitForTimeout(200);
+		expect(await page.locator("[data-viewer-player]").count()).toBe(0);
+		expect(new URL(page.url()).searchParams.get("frame")).toBeNull();
+	});
+
 	it("grows a frame into the player, walks it, and closes back to the canvas", { timeout: 60_000 }, async () => {
 		const { page, requests } = await open();
 		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();

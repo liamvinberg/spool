@@ -590,9 +590,18 @@ function ViewerCanvas({
 		setPointed((was) => (was === name ? was : name));
 	};
 	const onPointerDown = (event: React.PointerEvent) => {
-		if (event.button !== 0) return;
+		if (event.button !== 0 && event.button !== 1) return;
 		camera.stop();
-		drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+		// a middle-button drag pans from the first pixel and never clicks, as on the Mac's canvas
+		const middle = event.button === 1;
+		if (middle) {
+			// the browser's own middle press scrolls the page or opens a link; here it pans
+			event.preventDefault();
+			event.currentTarget.setPointerCapture(event.pointerId);
+			hoverOff();
+			point(null);
+		}
+		drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: middle };
 	};
 	const onPointerMove = (event: React.PointerEvent) => {
 		const held = drag.current;
@@ -725,6 +734,8 @@ function ViewerCanvas({
 					className="absolute inset-0 touch-none"
 					style={{ cursor: placing ? COMMENT_CURSOR : "default" }}
 					onPointerDown={onPointerDown}
+					// Chrome starts its autoscroll from the middle button's mousedown, past the pointerdown
+					onMouseDown={(event) => event.button === 1 && event.preventDefault()}
 					onPointerMove={onPointerMove}
 					onPointerLeave={() => {
 						hoverOff();
