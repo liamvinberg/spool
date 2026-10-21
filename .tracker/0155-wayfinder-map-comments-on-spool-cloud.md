@@ -1,9 +1,10 @@
 # #155 · Wayfinder map: comments on Spool Cloud
 
-- State: open
+- State: closed
 - Labels: wayfinder:map
 - Created: 2026-10-18T17:43:56.937Z
-- Updated: 2026-10-19T19:46:43.922Z
+- Updated: 2026-10-20T06:52:28.401Z
+- Closed: 2026-10-20T06:52:28.401Z
 
 ## Destination
 
@@ -28,12 +29,12 @@ A spec for comments on Spool Cloud team projects, ready to turn into build ticke
 - [Decide what a comment is pinned to (#160)](https://devobee.tail9e5223.ts.net/spool/tickets/160): a point on a frame in the frame's pixels (or on a page's empty field, never a page object), carrying the element's handles as context but never following it. Comments are made on the canvas only and remember the source revision and its still. Pins follow moves and Spool's renames, keep their pixel offset on resize, stay put and say "edited since" on edits, and drop onto the page when their frame is deleted.
 - Decide how people get a display name (#159): a required name step after the first email-code sign-in, prefilled from the address with a live pointer preview as in Figma; Google's name taken without asking; the name alone shown everywhere (the email only on People and your own account); renames apply everywhere; no photos; without a name, the address before the @. Added **Name** to spool-cloud's glossary.
 - [Decide how agents read, act on and answer comments (#164)](https://devobee.tail9e5223.ts.net/spool/tickets/164): one verb, `spool comments`, reads them from the daemon and is the one verb that writes; "Send to agent" puts a comment in the composer as a chip; the agent gets a `<comment>` block; it replies and resolves Team comments as "Ana's agent" but only drafts on a share's; it may start Team comments when asked; a comment never starts an agent. ADR-0005 amended.
+- [Prototype leaving and reading comments in the Mac app (#162)](https://devobee.tail9e5223.ts.net/spool/tickets/162): Comment is a fourth tool, one icon in the group (C switches, hold C borrows it, a + in the Comments tab turns it on). A comment opens as a card at its pin, and a Comments tab beside Properties and Agent is the inbox. Pins are the author's face at 22px, gathering into counts. Names: Comment, Reply, Pin, Audience.
+- [Prototype comments in the browser for viewers and outsiders (#163)](https://devobee.tail9e5223.ts.net/spool/tickets/163): the Mac's model cut to the browser: a Pointer and Comment tool group, the Mac's card at the pin, and the inbox as a panel from a Comments button by Shared. Placing a pin hands back the Pointer, on the Mac too. As Figma does it, a link opens without an account but comments, reading included, need sign-in through one dialog (refines #158). Every motion is smooth.
 
 ## Not yet specified
 
-- **Notifications**: how people learn about new comments and replies (in the app, Home, email, mentions), and who gets told. Comments sit per project in the sync DO, so finding someone's comments across projects may need a D1 index (#161).
-- **Comments over time**: what happens to comments on a restore from history, when a frame or page is deleted, when a project leaves the team, when a team goes local for not paying, and when an account is deleted.
-- **Limits and abuse**: link visitors may comment once signed in (#158), so how spam is held back, and who may resolve, edit or delete someone else's comment (Figma: anyone who can comment resolves, authors edit their own, owners and editors delete any).
+Nothing left. The last fog (notifications, comments over time, limits and abuse) was decided in [Spec: comments on Spool Cloud (#167)](https://devobee.tail9e5223.ts.net/spool/tickets/167), confirmed by Cata 2026-10-20.
 
 ## Out of scope
 
@@ -43,3 +44,9 @@ A spec for comments on Spool Cloud team projects, ready to turn into build ticke
 - **Building**: the spec and its build tickets are the handoff after this map.
 
 Plane: SPOOL-155
+
+## Comments
+
+### agent, 2026-10-20T06:52:28.401Z
+
+Map done. The way is clear: Spec: comments on Spool Cloud (spool#167), with its build tickets spool#168 to spool#175 (agent-hub task 189). Cata confirmed the spec's choices for the last fog.

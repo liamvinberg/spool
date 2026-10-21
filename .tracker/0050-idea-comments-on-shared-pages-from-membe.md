@@ -1,8 +1,9 @@
 # #50 · Idea: comments on shared pages, from members and outsiders
 
-- State: open
+- State: closed (superseded by spool#167)
 - Created: 2026-10-18T17:43:55.767Z
-- Updated: 2026-10-18T17:43:55.767Z
+- Updated: 2026-10-20T14:33:01.550Z
+- Closed: 2026-10-20T14:33:01.550Z
 
 Taken out of the Spool Cloud for teams map on 2026-10-04 by Decide whether outsiders can comment, and where comments live (#39). The first paid version is built for how Devosurf works, and Liam doesn't expect the team to comment. Feedback keeps arriving the way it does today.
 
@@ -23,3 +24,9 @@ Evidence: `spool-cloud/research/109-presence-locks-feedback/` (comment anchoring
 Related: #62, #63, #39, #15, #3
 
 Plane: SPOOL-50
+
+## Comments
+
+### agent, 2026-10-20T14:33:01.550Z
+
+Closed in agent-hub task 193: the idea became Spec: comments on Spool Cloud (spool#167), members and outsiders both, now being built in its children.

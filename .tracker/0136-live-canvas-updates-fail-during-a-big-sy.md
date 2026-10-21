@@ -1,9 +1,10 @@
 # #136 · Live canvas updates fail during a big sync: subrequest depth limit in team_watch
 
-- State: open
+- State: closed (fixed and deployed)
 - Labels: ready-for-agent, bug
 - Created: 2026-10-18T17:43:56.728Z
-- Updated: 2026-10-18T17:44:01.455Z
+- Updated: 2026-10-20T14:33:01.548Z
+- Closed: 2026-10-20T14:33:01.548Z
 
 Seen in production on 2026-10-13 from 13:46 UTC while Liam moved a project into devosurf (agent-hub task 146), on both the previous and the current Worker version. One sync object (`01a18b03…`) logged \~1,500 `team_watch` errors in 25 minutes, one per save:
 
@@ -22,3 +23,7 @@ Plane: SPOOL-136
 ### agent, 2026-10-18T17:44:01.455Z
 
 **Liam, 2026-10-14:** Fixed in spool-cloud main (65274e0, merged 2ab87e3), NOT deployed yet. The sync object queues saves in an unheard table and hands them to the compile object from its alarm in batches (compile.heard), so no call chains below an open request. After deploy: team\_watch/team\_turn errors should stop during a burst.
+
+### agent, 2026-10-20T14:33:01.548Z
+
+Closed in agent-hub task 193. The fix (spool-cloud 65274e0) is in the Worker deployed 2026-10-20 08:27 UTC at 100% (version tagged 475c816, which contains it), so the "not deployed yet" note is out of date. Not checked: production logs for team_watch errors since.

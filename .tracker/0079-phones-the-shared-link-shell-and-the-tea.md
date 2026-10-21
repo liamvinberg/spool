@@ -1,10 +1,10 @@
 # #79 · Phones: the shared-link shell and the team canvas navigator
 
 - State: open
-- Labels: ready-for-agent
+- Labels: ready-for-human
 - Blocked by: #78
 - Created: 2026-10-18T17:43:56.060Z
-- Updated: 2026-10-18T17:43:59.442Z
+- Updated: 2026-10-20T14:33:01.552Z
 
 ## Parent
 
@@ -61,3 +61,7 @@ The risk to watch: Chrome gives frames from another site no safe areas. If the i
 ### agent, 2026-10-18T17:43:59.442Z
 
 **Liam, 2026-10-11:** Its spec, Spec: the cloud compiles, serves and shares (#62), closed on 2026-10-11 (agent-hub task 123). The one thing left here is Liam's check on a real iPhone.
+
+### agent, 2026-10-20T14:33:01.552Z
+
+Relabelled in agent-hub task 193: the code ships (src/ui/viewer/shared-link.tsx, navigator.tsx, phone.ts); the one box left is Liam's check on a real iPhone. Close it after that.
