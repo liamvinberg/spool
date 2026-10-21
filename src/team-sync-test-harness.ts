@@ -140,6 +140,30 @@ interface Project {
 	log: LogRow[];
 	/** The bytes behind every hash a save carried, set-aside ones too. */
 	blobs: Map<string, Uint8Array>;
+	/** When and by whom it moved in from git, from its first move's save, and the commit the mover's daemon reported. */
+	movedIn?: { at: number; account: string; commit: string | null };
+}
+
+/** The quiet that ends a stretch, as spool.page reads one. */
+const STRETCH_GAP_MS = 10 * 60_000;
+/** The most paths a stretch names: the rest are counted. */
+const STRETCH_PATHS = 50;
+const DAY_MS = 86_400_000;
+/** A commit as git names it in full. */
+const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/u;
+
+/** One stretch as the object groups it: one person's saves from one machine, no 10-minute gap, newest save last. */
+interface StretchRow {
+	from: number;
+	to: number;
+	start: number;
+	end: number;
+	account: string;
+	device: string;
+	saves: number;
+	setAside: number;
+	paths: string[];
+	more: number;
 }
 
 /** One save in the team history, as the object's history routes answer it. */
@@ -397,7 +421,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json(described(held.at));
 		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still|\/history\/saves|\/history\/files|\/history\/blobs\/[^/]+)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still|\/history\/(?:saves|files|stretches|stretch|moved-in|blobs\/[^/]+))?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -488,6 +512,15 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				const held = [...at.files.values()].filter((file) => file.bytes !== null).length;
 				return Response.json({ files, held });
 			});
+		// the mover's daemon reports the commit that took design/ out of git, once git took it: kept once (spool#187)
+		if (match[3] === "/history/moved-in" && request.method === "PUT")
+			return request.json().then((body: { commit?: unknown }) => {
+				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				if (typeof body.commit !== "string" || !COMMIT.test(body.commit))
+					return Response.json({ error: "invalid_input" }, { status: 400 });
+				if (at.movedIn !== undefined && at.movedIn.commit === null) at.movedIn.commit = body.commit;
+				return new Response(null, { status: 204 });
+			});
 		// the team history (spool#114): any member's to read, a page at a time
 		if (match[3]?.startsWith("/history/") === true && request.method === "GET") {
 			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
@@ -560,6 +593,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			if (bytes === undefined) return Response.json({ error: "blob_not_found" }, { status: 404 });
 			return new Response(arrayBuffer(bytes));
 		}
+		if (route === "/history/stretches") return stretchesRead(at, query);
+		if (route === "/history/stretch") return stretchRead(at, query, limit);
 		if (route === "/history/saves") {
 			const path = query.get("path");
 			if (!path) return Response.json({ error: "invalid_input" }, { status: 400 });
@@ -593,6 +628,124 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const rows = [...last.values()].sort((a, b) => (a.path < b.path ? -1 : 1)).slice(0, limit + 1);
 		const files = rows.slice(0, limit).map(({ path, version, hash }) => ({ path, version, hash }));
 		return Response.json({ files, next: rows.length > limit ? (files.at(-1)?.path ?? null) : null });
+	}
+
+	/** Who an account is, named and coloured as on the canvas. */
+	function whoIs(account: string): { name: string; color: string } {
+		const found = [...people.values()].find((one) => one.accountId === account);
+		return { name: account, color: found?.color ?? "#888888" };
+	}
+
+	/** The saves a read keeps: one person's (`person=`), and those to paths (`path=`) and under prefixes (`prefix=`). */
+	function keeps(query: URLSearchParams): (row: LogRow) => boolean {
+		const person = query.get("person");
+		const paths = query.getAll("path");
+		const prefixes = query.getAll("prefix");
+		return (row) =>
+			(person === null || row.account === person) &&
+			(paths.length + prefixes.length === 0 ||
+				paths.includes(row.path) ||
+				prefixes.some((prefix) => row.path.startsWith(prefix)));
+	}
+
+	/**
+	 * The history as stretches, a few of the asker's days at a time (`days=`, 7 unless said), newest first, before a
+	 * time (`before=`), their day `tz=` minutes ahead of UTC; and the moved-in line. As spool.page's `stretchPage`.
+	 */
+	function stretchesRead(at: Project, query: URLSearchParams): Response {
+		const days = Number(query.get("days") ?? 7);
+		const tz = Number(query.get("tz") ?? 0);
+		const before = query.get("before");
+		if (!Number.isSafeInteger(days) || days < 1 || days > 31 || !Number.isSafeInteger(tz) || Math.abs(tz) > 840)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		const kept = at.log.filter(keeps(query));
+		const offset = tz * 60_000;
+		const dayOf = (when: number) => Math.floor((when + offset) / DAY_MS) * DAY_MS - offset;
+		const page: { day: number; stretches: StretchRow[] }[] = [];
+		let cursor = before === null ? Number.MAX_SAFE_INTEGER : Number(before);
+		while (page.length < days) {
+			const older = kept.filter((row) => row.at < cursor);
+			const newest = older.reduce<number | undefined>((most, row) => Math.max(most ?? row.at, row.at), undefined);
+			if (newest === undefined) {
+				cursor = Number.NaN;
+				break;
+			}
+			const day = dayOf(newest);
+			const rows = older.filter((row) => row.at >= day).sort((a, b) => b.version - a.version);
+			page.push({ day, stretches: stretchesOf(rows) });
+			cursor = day;
+		}
+		const next = Number.isNaN(cursor) || !kept.some((row) => row.at < cursor) ? null : cursor;
+		const movedIn = at.movedIn;
+		return Response.json({
+			days: page.map(({ day, stretches }) => ({
+				day,
+				stretches: stretches.map(({ account, device, ...stretch }) => ({
+					...stretch,
+					by: { accountId: account, ...whoIs(account), device },
+				})),
+			})),
+			next,
+			movedIn:
+				movedIn === undefined
+					? null
+					: {
+							at: movedIn.at,
+							by: { accountId: movedIn.account, name: whoIs(movedIn.account).name },
+							commit: movedIn.commit,
+						},
+		});
+	}
+
+	/** The files one stretch touched (`from`, `to`, `account`, `device`), by path, each set-aside save with whose stood. */
+	function stretchRead(at: Project, query: URLSearchParams, limit: number): Response {
+		const from = Number(query.get("from"));
+		const to = Number(query.get("to"));
+		const account = query.get("account");
+		const device = query.get("device");
+		if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || !account || device === null)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		const after = query.get("after") ?? "";
+		const kept = keeps(query);
+		const mine = at.log.filter(
+			(row) =>
+				row.version >= from && row.version <= to && row.account === account && row.device === device && kept(row),
+		);
+		const paths = [...new Set(mine.map((row) => row.path))]
+			.filter((path) => path > after)
+			.sort()
+			.slice(0, limit + 1);
+		const files = paths.slice(0, limit).map((path) => {
+			const rows = mine.filter((row) => row.path === path);
+			const last = rows.at(-1);
+			return {
+				path,
+				version: last?.version ?? to,
+				hash: last?.hash ?? null,
+				saves: rows.length,
+				setAside: rows
+					.filter((row) => row.outcome === "set_aside")
+					.map((row) => {
+						const stood = at.log
+							.filter((one) => one.path === path && one.version < row.version && one.outcome === "applied")
+							.at(-1);
+						return {
+							version: row.version,
+							hash: row.hash,
+							at: row.at,
+							stood:
+								stood === undefined
+									? null
+									: {
+											version: stood.version,
+											at: stood.at,
+											by: { accountId: stood.account, name: whoIs(stood.account).name },
+										},
+						};
+					}),
+			};
+		});
+		return Response.json({ files, next: paths.length > limit ? (files.at(-1)?.path ?? null) : null });
 	}
 
 	/** Today's described project, at its team and name now. */
@@ -1305,6 +1458,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			moved,
 		});
 		at.mover = moved ? from.person.accountId : null;
+		// the moved-in line: when and by whom, from the move's first save (spool#187)
+		if (moved && at.movedIn === undefined) at.movedIn = { at: clock(), account: from.person.accountId, commit: null };
 		if (!applies) {
 			const by = current.by ?? from.person;
 			told.answers.push({
@@ -1509,6 +1664,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		saves: (name: string) => project(name)?.saves ?? [],
 		/** Every save in the team history, in order: version, path, hash, who, which machine, when and outcome. */
 		history: (name: string) => project(name)?.log ?? [],
+		/** When and by whom the project moved in from git, and the commit reported for it; undefined for one started here. */
+		movedIn: (name: string) => project(name)?.movedIn,
 		/** The clock saves are filed at in the team history from now on. */
 		clock(now: () => number) {
 			clock = now;
@@ -1737,6 +1894,44 @@ function fileFrame(path: string, file: TeamVersion): string | Uint8Array {
 		{ type: "file", path, version: file.version, deleted: file.bytes === null },
 		file.bytes ?? undefined,
 	);
+}
+
+/** Saves, newest first, as stretches, newest first by their end: as spool.page's `stretchesOf`. */
+function stretchesOf(rows: readonly LogRow[]): StretchRow[] {
+	const stretches: StretchRow[] = [];
+	const open = new Map<string, { stretch: StretchRow; paths: Set<string> }>();
+	for (const row of rows) {
+		const key = `${row.account}\n${row.device}`;
+		const run = open.get(key);
+		if (run !== undefined && run.stretch.start - row.at <= STRETCH_GAP_MS) {
+			const { stretch, paths } = run;
+			stretch.from = row.version;
+			stretch.start = row.at;
+			stretch.saves += 1;
+			if (row.outcome === "set_aside") stretch.setAside += 1;
+			if (!paths.has(row.path)) {
+				paths.add(row.path);
+				if (stretch.paths.length < STRETCH_PATHS) stretch.paths.push(row.path);
+				else stretch.more += 1;
+			}
+			continue;
+		}
+		const stretch: StretchRow = {
+			from: row.version,
+			to: row.version,
+			start: row.at,
+			end: row.at,
+			account: row.account,
+			device: row.device,
+			saves: 1,
+			setAside: row.outcome === "set_aside" ? 1 : 0,
+			paths: [row.path],
+			more: 0,
+		};
+		stretches.push(stretch);
+		open.set(key, { stretch, paths: new Set([row.path]) });
+	}
+	return stretches;
 }
 
 function hash(bytes: Uint8Array | null): string | null {
