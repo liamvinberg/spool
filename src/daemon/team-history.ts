@@ -9,7 +9,9 @@ import type { ProjectLink } from "../team-project";
  */
 
 /** The reads the team's history routes answer, and the only ones the daemon passes on. */
-const READS = /^\/(saves|files|blobs\/[0-9a-f]{64})$/u;
+const READS = /^\/(saves|files|stretches|stretch|blobs\/[0-9a-f]{64})$/u;
+/** The reads a frame's history narrows with `frame=`: to its folder and the files it imports. */
+const FRAMED = /^\/(stretches|stretch)$/u;
 
 /** One save as the team history answers it. */
 export interface TeamHistorySave {
@@ -22,14 +24,21 @@ export interface TeamHistorySave {
 }
 
 /**
- * The project's history reads, passed on to spool.page as this Mac's account: `/saves`, `/files` and `/blobs/<hash>`
- * under `/api/p/<project>/history`, with their query as given. A project that isn't a team's has no team history.
+ * The project's history reads, passed on to spool.page as this Mac's account: `/saves`, `/files`, `/stretches`,
+ * `/stretch` and `/blobs/<hash>` under `/api/p/<project>/history`, with their query as given. A project that isn't a
+ * team's has no team history.
+ *
+ * A frame's history (spool#187) is its own saves and those to the files it imports, which only this Mac knows: on
+ * `/stretches` and `/stretch`, `frame=<name>` becomes `prefix=frames/<name>/` and a `path=` for each file outside its
+ * folder that its source graph reaches, transitively. `/imports?frame=<name>` answers those paths alone.
  */
 export function teamHistoryRoutes(deps: {
 	spoolDir: string;
 	request: () => CloudRequestOptions;
 	resolve: (c: Context, name: string) => { root: string } | { response: Response };
 	link: (root: string) => ProjectLink | undefined;
+	/** The design-relative files outside a frame's folder that it imports, transitively; undefined for no such frame. */
+	importsOf: (root: string, frame: string) => Promise<readonly string[] | undefined>;
 }) {
 	return new Hono().get("/:project/history/*", async (c) => {
 		const project = deps.resolve(c, c.req.param("project") ?? "");
@@ -39,6 +48,15 @@ export function teamHistoryRoutes(deps: {
 			return c.json({ error: "not_team", message: "this project isn't a team project: its history is git's" }, 404);
 		const url = new URL(c.req.url);
 		const read = url.pathname.slice(url.pathname.indexOf("/history/") + "/history".length);
+		const frame = url.searchParams.get("frame");
+		if (frame !== null && (read === "/imports" || FRAMED.test(read))) {
+			const imports = await deps.importsOf(project.root, frame);
+			if (imports === undefined) return c.json({ error: "frame_not_found" }, 404);
+			if (read === "/imports") return c.json({ paths: [...imports].sort() });
+			url.searchParams.delete("frame");
+			url.searchParams.append("prefix", `frames/${frame}/`);
+			for (const path of imports) url.searchParams.append("path", path);
+		}
 		if (!READS.test(read)) return c.json({ error: "not_found" }, 404);
 		const request = deps.request();
 		// a link to another cloud is never sent this Mac's session

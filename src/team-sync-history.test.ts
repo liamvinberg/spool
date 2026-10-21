@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { syncUrl } from "./daemon/team-sync";
-import { encodeFrame, PROTOCOL_VERSION } from "./team-sync-protocol";
-import { fakeTeam, TEAM_COLORS, TEAM_ORIGIN } from "./team-sync-test-harness";
+import { fakeTeam, TEAM_COLORS, TEAM_ORIGIN, teamWriter } from "./team-sync-test-harness";
 
 /**
  * The fake spool.page reads its team history as spool.page does (spool#187): stretches by the asker's day, a stretch's
@@ -25,55 +23,16 @@ async function team() {
 		body: JSON.stringify({ name: "checkout" }),
 	});
 	if (made?.status !== 201) throw new Error("no project");
-	const link = { origin: TEAM_ORIGIN, team: "devosurf", project: "checkout", url: `${TEAM_ORIGIN}/devosurf/checkout` };
 	const history = () => cloud.history("checkout");
-	/** The saves to a path the team applied last, which a save built on it names as its base. */
-	const head = (path: string) =>
-		history()
-			.filter((row) => row.path === path && row.outcome === "applied")
-			.at(-1)?.version ?? null;
 
-	/** A person's own connection, saving whole files at the team's clock. */
+	/** A person's own connection, each save at a moment on the team's clock. */
 	const writer = async (name: string, options: { moving?: boolean } = {}) => {
-		const machine = name === "ana" ? ana : cloud.machine(name);
-		const token = await machine.cloud.vault.read();
-		let open = false;
-		const socket = machine.openSocket(syncUrl(link), token, {
-			open: () => {
-				socket.send(
-					encodeFrame({
-						type: "hello",
-						protocol: PROTOCOL_VERSION,
-						format: 2,
-						since: 0,
-						...(options.moving === true ? { moving: true } : {}),
-					}),
-				);
-				open = true;
-			},
-			message: () => {},
-			close: () => {},
-		});
-		await settle(() => open);
-		let refs = 0;
+		const own = await teamWriter(cloud, name === "ana" ? ana : cloud.machine(name), "checkout", options);
+		let saves = 0;
 		return {
-			/** Saves a path at a moment; `base` names an older version to build on, which loses to the team's. */
 			async save(path: string, when: number, base?: number | null) {
-				const count = history().length;
 				now = when;
-				socket.send(
-					encodeFrame(
-						{
-							type: "save",
-							ref: `${name}${++refs}`,
-							path,
-							base: base === undefined ? head(path) : base,
-							deleted: false,
-						},
-						new TextEncoder().encode(`${name} ${refs}\n`),
-					),
-				);
-				await settle(() => history().length > count);
+				await own.save(path, `${name} ${++saves}\n`, base);
 			},
 		};
 	};
@@ -90,14 +49,6 @@ async function team() {
 		return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 	};
 	return { cloud, writer, read, history, ana };
-}
-
-/** Lets the fake's deliveries run until something holds. */
-async function settle(holds: () => boolean): Promise<void> {
-	for (let turns = 0; !holds(); turns += 1) {
-		if (turns > 10_000) throw new Error("it never held");
-		await new Promise((wake) => setImmediate(wake));
-	}
 }
 
 interface Stretch {

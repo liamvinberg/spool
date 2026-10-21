@@ -1945,3 +1945,67 @@ function encode(text: string): Uint8Array {
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
 	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
+
+/**
+ * A person's own sync connection to a project of the fake team, saving whole files as their Mac would, each save
+ * taken before the next is sent: what a test drives the team history with, the team's clock turned between saves.
+ */
+export async function teamWriter(
+	cloud: ReturnType<typeof fakeTeam>,
+	machine: ReturnType<ReturnType<typeof fakeTeam>["machine"]>,
+	project: string,
+	options: { team?: string; moving?: boolean } = {},
+) {
+	const team = options.team ?? "devosurf";
+	const history = () => cloud.history(project);
+	const token = await machine.cloud.vault.read();
+	let open = false;
+	const socket = machine.openSocket(
+		`${TEAM_ORIGIN.replace(/^https:/u, "wss:")}/api/teams/${team}/projects/${project}/sync`,
+		token,
+		{
+			open: () => {
+				socket.send(
+					encodeFrame({
+						type: "hello",
+						protocol: PROTOCOL_VERSION,
+						format: 2,
+						since: 0,
+						...(options.moving === true ? { moving: true } : {}),
+					}),
+				);
+				open = true;
+			},
+			message: () => {},
+			close: () => {},
+		},
+	);
+	await settled(() => open);
+	let refs = 0;
+	return {
+		/** Saves a file; `base` names the version it was built on, the team's latest unless said, so an older one loses. */
+		async save(path: string, text: string, base?: number | null): Promise<void> {
+			const count = history().length;
+			const head =
+				history()
+					.filter((row) => row.path === path && row.outcome === "applied")
+					.at(-1)?.version ?? null;
+			socket.send(
+				encodeFrame(
+					{ type: "save", ref: `w${++refs}`, path, base: base === undefined ? head : base, deleted: false },
+					new TextEncoder().encode(text),
+				),
+			);
+			await settled(() => history().length > count);
+		},
+		close: () => socket.close(),
+	};
+}
+
+/** Lets the fake's deliveries run until something holds. */
+async function settled(holds: () => boolean): Promise<void> {
+	for (let turns = 0; !holds(); turns += 1) {
+		if (turns > 10_000) throw new Error("the fake team never took it");
+		await new Promise((wake) => setImmediate(wake));
+	}
+}

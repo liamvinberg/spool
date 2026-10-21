@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, stream, streamSSE } from "hono/streaming";
@@ -45,7 +45,7 @@ import { commentsForPrompt } from "./comment-prompt";
 import { commentRoutes, teamPeople } from "./comment-routes";
 import { commentStill } from "./comment-stills";
 import { createFrameCompiler } from "./compile";
-import { DesignBoundaryError } from "./design-path";
+import { DesignBoundaryError, designRelativePath, realDesignDir } from "./design-path";
 import {
 	captureWorkerCsp,
 	captureWorkerDocument,
@@ -1795,6 +1795,16 @@ export function createDaemonApp({
 			request: () => ({ ...cloud, origin: originOf(cloud) }),
 			resolve: resolveProject,
 			link: followedLink,
+			// a frame's history reaches what it imports: its source graph, outside its own folder (spool#187)
+			importsOf: async (root, frame) => {
+				const graph = (await flowGraph.sources(root).catch(() => undefined))?.get(frame);
+				if (graph === undefined) return undefined;
+				const designDir = realDesignDir(root);
+				const own = join(designDir, "frames", ...frame.split("/")) + sep;
+				return graph.files
+					.filter((file) => !file.startsWith(own))
+					.map((file) => designRelativePath(designDir, file));
+			},
 		}),
 	);
 	app.route(
