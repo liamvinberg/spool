@@ -64,7 +64,7 @@ it("offers an admin Move to team on a cover, and moves it with no commit or fold
 	const { host, fake } = browser([team("tidemark", "Tidemark", "admin"), team("northlight", "Northlight", "editor")]);
 	await settle();
 	await act(async () => (host.querySelector('[aria-label="Manage site"]') as HTMLButtonElement).click());
-	expect(menuItems(host)).toEqual(["Open", "Copy link", "Move to team…"]);
+	expect(menuItems(host)).toEqual(["Open", "Copy link", "Move to team…", "Export…"]);
 	const item = Array.from(host.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
 		(node) => node.textContent === "Move to team…",
 	);
@@ -82,7 +82,7 @@ it("offers an admin Move to team on a cover, and moves it with no commit or fold
 	expect(location.pathname).toBe("/northlight");
 });
 
-it("offers an editor no Move to team", async () => {
+it("offers an editor no Move to team and no Export", async () => {
 	const { host } = browser([team("tidemark", "Tidemark", "editor"), team("northlight", "Northlight", "editor")]);
 	await settle();
 	await act(async () => (host.querySelector('[aria-label="Manage site"]') as HTMLButtonElement).click());

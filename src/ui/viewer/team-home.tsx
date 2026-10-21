@@ -8,10 +8,12 @@ import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
 import { EmptyFrames, EmptyState } from "../primitives/feedback";
 import { CloudCovers } from "../team-covers";
+import { handOffExport } from "../team-export";
 import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
 import { type SetupHost, useSetUpToast } from "../team-setup";
 import type { ListedTeamProject, TeamsSource } from "../team-source";
 import {
+	DeletedTeamPage,
 	HomePlaces,
 	InviteLine,
 	NewTeamDialog,
@@ -137,6 +139,11 @@ function Home({
 	const current = onAccount
 		? (ready?.teams.find((team) => team.address === lastTeam) ?? ready?.teams[0] ?? null)
 		: (ready?.teams.find((team) => team.address === place?.team) ?? null);
+	// a deleted team this account is an admin of, until its purge: its page is Export all alone
+	const deleted =
+		onAccount || current !== null
+			? null
+			: (ready?.deletedTeams?.find((team) => team.address === place?.team) ?? null);
 	const signIn = useCallback(() => location.assign(`/sign-in?next=${encodeURIComponent(location.pathname)}`), []);
 	const signOut = useCallback(() => {
 		void fetch("/sign-out", { method: "POST", credentials: "same-origin" }).finally(() =>
@@ -146,10 +153,10 @@ function Home({
 	// a team left, deleted or never this account's: the next one it is in, or the account page when none
 	useEffect(() => {
 		if (teams?.state === "signed-out") signIn();
-		if (ready === null || current !== null || onAccount) return;
+		if (ready === null || current !== null || deleted !== null || onAccount) return;
 		const next = ready.teams[0];
 		go(next === undefined ? ACCOUNT_PLACE : { team: next.address, page: "projects" }, true);
-	}, [teams, ready, current, onAccount, go, signIn]);
+	}, [teams, ready, current, deleted, onAccount, go, signIn]);
 	useEffect(() => {
 		if (onAccount) document.title = "Account · spool";
 		else if (current !== null) document.title = `${current.name} · spool`;
@@ -196,10 +203,11 @@ function Home({
 			}
 			nav={
 				ready &&
-				ready.teams.length > 0 && (
+				(ready.teams.length > 0 || (ready.deletedTeams ?? []).length > 0) && (
 					<HomePlaces
 						teams={ready.teams}
-						current={current?.address ?? null}
+						deleted={ready.deletedTeams}
+						current={current?.address ?? deleted?.address ?? null}
 						page={needle === "" ? page : null}
 						onTeam={(address) => go({ team: address, page: "projects" })}
 						onPage={(to) => current && go({ team: current.address, page: to })}
@@ -229,6 +237,12 @@ function Home({
 							onSignOut={signOut}
 							onDelete={() => location.assign("/account/delete")}
 						/>
+					) : deleted !== null ? (
+						<DeletedTeamPage
+							key={deleted.address}
+							team={deleted}
+							onExport={(address) => handOffExport(address, undefined, HAND_OFF)}
+						/>
 					) : current === null || ready === null ? null : needle !== "" ? (
 						<CloudFound teams={ready.teams} needle={needle} query={query} onClear={() => setQuery("")} />
 					) : page === "people" ? (
@@ -246,6 +260,7 @@ function Home({
 							onChanged={() => void refresh()}
 							onMoved={(address) => go({ team: address, page: "settings", tab: tab ?? "general" }, true)}
 							onDeleted={() => void refresh()}
+							onExport={(address) => handOffExport(address, undefined, HAND_OFF)}
 						/>
 					) : (
 						<Projects
@@ -303,6 +318,9 @@ function Home({
 	);
 }
 
+/** Export at spool.page: handed to spool on this Mac, whose download opens in this tab when it isn't there. */
+const HAND_OFF = { open: (url: string) => location.assign(url) };
+
 /**
  * The team's projects, every one of them, each a cover that opens its read-only canvas. An admin can move one to
  * another team here; the moves that touch a Mac's folders are the app's.
@@ -326,6 +344,8 @@ function Projects({
 	const [projects, setProjects] = useState<ListedTeamProject[] | undefined>();
 	const [menu, setMenu] = useState<string | null>(null);
 	const [moving, setMoving] = useState<ListedTeamProject | null>(null);
+	/** What Export… on a cover said, when spool on this Mac didn't answer. */
+	const [exportNote, setExportNote] = useState<ReactNode>(null);
 	// a project restored from the trash is read again with the rest
 	const [restored, setRestored] = useState(0);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a restore is why it reads again
@@ -342,7 +362,12 @@ function Projects({
 	return (
 		<TeamProjects
 			team={team}
-			notice={notice}
+			notice={
+				<>
+					{exportNote && <p className="mb-[22px] text-secondary type-control">{exportNote}</p>}
+					{notice}
+				</>
+			}
 			setup={setup}
 			cycle={setup.cycle}
 			empty={`${team.name} has no projects yet`}
@@ -361,6 +386,11 @@ function Projects({
 							menu={menu}
 							onMenu={setMenu}
 							onMove={mayMoveFrom(teams, team.address) ? setMoving : undefined}
+							onExport={
+								team.role === "admin"
+									? (project) => void handOffExport(team.address, project.name, HAND_OFF).then(setExportNote)
+									: undefined
+							}
 						/>
 						{moving !== null && (
 							<MoveTeamSheet

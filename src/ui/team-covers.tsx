@@ -17,6 +17,7 @@ export function CloudCovers({
 	menu,
 	onMenu,
 	onMove,
+	onExport,
 	link = (team, project) => `/${team.address}/${encodeURIComponent(project.name)}`,
 	external = false,
 }: {
@@ -30,6 +31,8 @@ export function CloudCovers({
 	onMenu: (url: string | null) => void;
 	/** "Move to team…", for an admin with another team to move a project to. */
 	onMove?: ((project: ListedTeamProject) => void) | undefined;
+	/** "Export…", for an admin: handed to spool on this Mac. */
+	onExport?: ((project: ListedTeamProject) => void) | undefined;
 	/** Where a cover opens its project's live canvas. */
 	link?: (team: CloudTeam, project: ListedTeamProject) => string;
 	/** It opens outside this window: on a Mac, in the system browser. */
@@ -81,6 +84,15 @@ export function CloudCovers({
 											onClick={() => {
 												close();
 												onMove(project);
+											}}
+										/>
+									)}
+									{onExport && (
+										<MenuItem
+											label="Export…"
+											onClick={() => {
+												close();
+												onExport(project);
 											}}
 										/>
 									)}
