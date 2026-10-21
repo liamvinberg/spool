@@ -79,7 +79,9 @@ const SHARES = [
 	{
 		id: "link-share",
 		kind: "link",
+		// a whole-project share still lists every page it shows now, for an older spool (spool#182)
 		pages: ["home", "shop"],
+		whole: true,
 		people: [],
 		by: "ben",
 		at: Math.floor(Date.now() / 1000) - 8 * 86400,
@@ -622,6 +624,7 @@ describe("the read-only canvas", () => {
 		const read = viewer.page.getByRole("dialog", { name: "Shared" });
 		await read.getByText("kim and ola.n").waitFor();
 		await read.getByText("anyone with the link").waitFor();
+		await read.getByRole("button", { name: "anyone with the link whole project" }).waitFor();
 		for (const button of await read.getByRole("button").all()) expect(await button.isDisabled()).toBe(true);
 		expect(await read.getByText(/Copy link|Stop sharing/u).count()).toBe(0);
 		expect(viewer.requests.filter((request) => request.method !== "GET")).toEqual([]);

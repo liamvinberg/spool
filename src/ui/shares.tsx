@@ -7,6 +7,7 @@ import {
 	type SharesSource,
 	type ShareView,
 	saidAgo,
+	sharedWhat,
 	shareWho,
 	TOP_PAGE,
 } from "../share-view";
@@ -133,6 +134,11 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 	);
 }
 
+/** A page as a row says it: its whole path, or the top page. */
+function sharedPath(page: string): string {
+	return page === ROOT_PAGE ? TOP_PAGE : page;
+}
+
 function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean; onOpen: () => void }) {
 	return (
 		<button
@@ -146,9 +152,7 @@ function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean
 		>
 			<KindGlyph kind={share.kind} className="shrink-0 text-secondary" />
 			<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
-			<span className="min-w-0 flex-1 truncate text-secondary type-detail">
-				{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
-			</span>
+			<span className="min-w-0 flex-1 truncate text-secondary type-detail">{sharedWhat(share, sharedPath)}</span>
 			{manage && (
 				<span className="h-2.5 w-2.5 shrink-0 text-secondary">
 					<ChevronIcon />
@@ -191,9 +195,7 @@ function OpenedShare({
 			>
 				<KindGlyph kind={share.kind} className="shrink-0 text-primary" />
 				<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
-				<span className="min-w-0 flex-1 truncate text-secondary type-detail">
-					{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
-				</span>
+				<span className="min-w-0 flex-1 truncate text-secondary type-detail">{sharedWhat(share, sharedPath)}</span>
 				<span className="h-2.5 w-2.5 shrink-0 rotate-90 text-secondary">
 					<ChevronIcon />
 				</span>
