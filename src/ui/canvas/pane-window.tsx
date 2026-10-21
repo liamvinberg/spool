@@ -78,6 +78,8 @@ export interface PaneDef {
 	 * waiting on an answer (#366). Its tab or rail icon wears the waiting mark, in sight or not.
 	 */
 	readonly waiting?: boolean | undefined;
+	/** Its key closes its side while it shows, rather than only showing it: History's ⇧⌘H (spool#187). */
+	readonly toggles?: boolean | undefined;
 }
 
 const STORAGE_KEY = "panes.layout";
@@ -248,9 +250,10 @@ export function PaneWindow({
 	const [splitting, setSplitting] = useState(false);
 	const [unread, setUnread] = useState<ReadonlySet<string>>(new Set());
 
-	const latest = useRef({ layout, env });
+	const latest = useRef({ layout, env, visible });
 	latest.current.env = env;
 	latest.current.layout = layout;
+	latest.current.visible = visible;
 
 	useLayoutEffect(() => {
 		const element = body.current;
@@ -412,8 +415,15 @@ export function PaneWindow({
 	};
 	const moveTo = (pane: string, to: Drop) => apply({ type: "move", pane, to }, { flip: true });
 
-	const acts = useRef({ showPane, toggleSide });
-	acts.current = { showPane, toggleSide };
+	/** a toggling pane's key: its side closes while it shows, and it shows otherwise */
+	const keyPane = (id: string) => {
+		const at = whereIs(latest.current.layout, id);
+		const toggles = registry.current.find((pane) => pane.id === id)?.toggles === true;
+		if (toggles && at !== null && latest.current.visible.includes(id)) toggleSide(at.side);
+		else showPane(id, true);
+	};
+	const acts = useRef({ showPane, toggleSide, keyPane });
+	acts.current = { showPane, toggleSide, keyPane };
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the shape is the registry's keys
 	useEffect(() => {
@@ -430,7 +440,7 @@ export function PaneWindow({
 		for (const pane of registry.current) {
 			handlers[pane.hotkey] = (event) => {
 				event?.preventDefault();
-				acts.current.showPane(pane.id, true);
+				acts.current.keyPane(pane.id);
 			};
 		}
 		return attachHotkeyLayer({ scope: "panes", handlers });
