@@ -46,15 +46,15 @@ import {
 	PROTOCOL_VERSION,
 	type PresenceState,
 	placeAfter,
+	type RestoreRef,
 	readCommentChange,
 	readCommentPost,
 	readCommentReplyPost,
 	readCommentStillAsk,
 	readDrift,
 	readMoved,
-	readRestore,
-	type RestoreRef,
 	readPresenceState,
+	readRestore,
 	replyForReader,
 	SEEN_FILES,
 	samePlace,
@@ -272,6 +272,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const roleIn = (person: Person, address: string): Role =>
 		address === team ? person.role : (person.roles.get(address) ?? null);
 	let limited: { reason: Limited; retryAfter: number } | undefined;
+	/** A teammate's save to take just before a project's next restore arrives, by project. */
+	const landing = new Map<Project, { by: string; path: string; text: string }>();
 	/** The object takes bundles, as spool.page does since it learned them; off, it is an older one. */
 	let takesBundles = true;
 	/** The object sends presence a tick at a time to a connection that reads them, as spool.page does since #107. */
@@ -992,6 +994,23 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		if (restore === null) {
 			from.close();
 			return;
+		}
+		const first = restore === undefined ? undefined : landing.get(at);
+		if (first !== undefined) {
+			landing.delete(at);
+			const by = [...at.sockets].find((socket) => socket.live && socket.person.accountId === first.by);
+			const bytes = new TextEncoder().encode(first.text);
+			const base = at.files.get(first.path)?.version ?? null;
+			if (by !== undefined) {
+				follow(
+					at,
+					take(at, by, [{ ref: "landed-first", path: first.path, base, deleted: false, bytes }], true),
+					undefined,
+				);
+				// made on that machine, as its own save is: its copy holds it too
+				const landed = at.files.get(first.path);
+				if (landed !== undefined) by.deliver(fileFrame(first.path, landed));
+			}
 		}
 		at.sends.push(entries.length);
 		const said = readMoved(message.moved);
@@ -1759,6 +1778,14 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		/** A message the team never sends: what a compromised cloud might. */
 		forge(name: string, message: object, bytes?: Uint8Array) {
 			for (const socket of project(name)?.sockets ?? []) socket.deliver(encodeFrame(message, bytes));
+		},
+		/**
+		 * A teammate's save (`by`, connected to the project) lands just before the project's next restore is taken: what
+		 * the restorer's copy can't have heard of yet, so the restore's save to that path is built on an older version.
+		 */
+		landFirst(name: string, by: string, path: string, text: string) {
+			const at = project(name);
+			if (at !== undefined) landing.set(at, { by, path, text });
 		},
 		/** One machine loses the team until it comes back: what it saves waits, and it catches up on reconnect. */
 		offline(accountId: string) {
