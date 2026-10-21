@@ -2009,10 +2009,21 @@ export async function fetchSyncState(project: string): Promise<CanvasSync | unde
 			moved: typeof body.moved === "object" && body.moved !== null ? body.moved : null,
 			...(body.backInGit === true ? { backInGit: true } : {}),
 			offline: body.offline === true,
+			update: updateOf(body.update),
 		};
 	} catch {
 		return undefined;
 	}
+}
+
+/** A copy paused for an update as the daemon says it, or none for anything that isn't one. */
+function updateOf(value: unknown): SyncState["update"] {
+	if (typeof value !== "object" || value === null) return null;
+	const { team, how, command } = value as Record<string, unknown>;
+	if (typeof team !== "string") return null;
+	if (how === "app") return { team, how };
+	if (how === "cli" && typeof command === "string") return { team, how, command };
+	return null;
 }
 
 /**

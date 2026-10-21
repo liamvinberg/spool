@@ -15,7 +15,9 @@ import {
 	BUNDLE_SAVES,
 	bundleParts,
 	CANVAS_PATH,
+	CLOSE_FORMAT,
 	CLOSE_NOT_EDITOR,
+	CLOSE_PROTOCOL,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNAVAILABLE,
 	CLOSE_UNPAID,
@@ -46,6 +48,7 @@ import {
 	travels,
 } from "../team-sync-protocol";
 import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
+import { howToUpdate, runningCli, type UpdateHow, updateLineWithHow } from "../update-how";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
@@ -207,6 +210,17 @@ export interface LocalCopyOptions {
 	synced?: SyncedCopies;
 	/** How long without a caught-up connection before the copy says it is offline: `OFFLINE_MS`. */
 	offlineMs?: number;
+	/** How long a copy paused for an update first waits to ask again, doubling up to an hour: `UPDATE_ASK_MS`. */
+	updateAskMs?: number;
+	/** How this Spool is updated, said with the pause: read off the running CLI unless a test says. */
+	updateHow?: UpdateHow;
+	/** What the team is called, to say which team an update keeps it syncing with: its address until it answers. */
+	teamName?: () => Promise<string>;
+	/**
+	 * Bring the copy's design/ up to this Spool's format (#206), once it is caught up and before anything it holds goes
+	 * up: what it writes, its unsent changes included, goes up as ordinary saves.
+	 */
+	migrate?: () => void;
 	/**
 	 * A solo project moving into this team project (DEV-190): it has no `spool.json` until the team has every file,
 	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
@@ -239,13 +253,21 @@ export interface SyncState {
 	 * paused (#205): its changes wait on this Mac. A shorter drop says nothing.
 	 */
 	offline: boolean;
+	/**
+	 * Sync is paused because this Spool is too old for the team project (#206): its protocol, or a teammate's newer
+	 * Spool moved the team's format forward. Which team, and how this Spool is updated; it lifts once it is.
+	 */
+	update: UpdateNeeded | null;
 }
+
+/** A copy paused until this Spool is updated: the team's name, and how to update it, from the Mac app or with npm. */
+export type UpdateNeeded = { team: string } & UpdateHow;
 
 export interface LocalCopy {
 	/** Resolves whenever the copy is caught up and nothing it sent is waiting on an answer. */
 	idle(): Promise<void>;
 	/** Sync paused, changes waiting on a long wait, what didn't travel, and whether it is offline, now. */
-	state(): Pick<SyncState, "paused" | "sending" | "held" | "offline">;
+	state(): Pick<SyncState, "paused" | "sending" | "held" | "offline" | "update">;
 	/**
 	 * Match the team (#205): every travelling path takes the team's version, and each local difference, an addition or
 	 * a delete too, becomes a set-aside mark that Put mine back restores. Files that didn't travel stay. Resolves with
@@ -343,6 +365,11 @@ export class MatchOffline extends SpoolError {
  */
 export const OFFLINE_MS = 30_000;
 
+/** How long a copy paused for an update first waits before it asks spool.page again (#206). */
+export const UPDATE_ASK_MS = 60_000;
+/** The longest it waits between asks: an update made outside the app is picked up within the hour. */
+export const UPDATE_ASK_MAX_MS = 3_600_000;
+
 /** How long a pause lasts when spool.page can't say when its limit lifts. */
 const RETRY_LIMIT_SECONDS = 60;
 /**
@@ -438,11 +465,13 @@ function onceSeen(root: string, spoolDir: string, options: SyncOnceOptions): Ask
 }
 
 /** Why a one-off sync's connection closed, from the close code spool.page gave, if any. */
-function closedOnce(code: number | undefined): SpoolError {
+function closedOnce(code: number | undefined, team?: string): SpoolError {
 	if (code === CLOSE_SIGNED_OUT) return new SyncRefused("not signed in; run `spool login`");
 	if (code === CLOSE_NOT_EDITOR) return new SyncRefused("you can't edit this team project");
 	if (code === CLOSE_UNPAID) return new SyncRefused("the team has gone local; it syncs again once the team pays");
 	if (code === CLOSE_UNAVAILABLE) return new SyncDropped("spool.page is unavailable");
+	if ((code === CLOSE_PROTOCOL || code === CLOSE_FORMAT) && team !== undefined)
+		return new SyncRefused(updateLineWithHow(team, howToUpdate(runningCli())));
 	return new SyncDropped("the connection to spool.page dropped");
 }
 
@@ -559,6 +588,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** No caught-up connection for `OFFLINE_MS`: the canvas says so (#205). */
 	let offline = false;
 	let offlineTimer: NodeJS.Timeout | undefined;
+	/**
+	 * spool.page closed the connection because this Spool is too old for the team (#206): sync is paused, its changes
+	 * wait on disk, and it asks again, less and less often, until the daemon runs a newer Spool.
+	 */
+	let outdated: UpdateNeeded | undefined;
+	let updateWait = options.updateAskMs ?? UPDATE_ASK_MS;
 
 	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
 	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
@@ -1307,6 +1342,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			toldSignedOut = false;
 			toldOther = undefined;
 			online();
+			updated();
 			if (live) options.synced?.now(options.root, link.url);
 			recordAccount();
 			prune();
@@ -1315,6 +1351,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				holding = true;
 				list("lost_record");
 			}
+			// caught up, and only now: this Spool's format migration, whose writes go up below with what waited (#206)
+			else if (live) migrate();
 			checkEverything();
 			ownWork = false;
 			// what git did while nobody watched has been put back; from here the guard sees git as it goes
@@ -1349,7 +1387,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	// --- offline (#205): no caught-up connection for OFFLINE_MS is said; a shorter drop says nothing ---
 
 	const goingOffline = () => {
-		if (!live || closed || offline || offlineTimer !== undefined) return;
+		if (!live || closed || offline || offlineTimer !== undefined || outdated !== undefined) return;
 		offlineTimer = setTimeout(() => {
 			offlineTimer = undefined;
 			if (closed || caughtUp) return;
@@ -1357,6 +1395,15 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			options.onPaused?.();
 		}, options.offlineMs ?? OFFLINE_MS);
 		offlineTimer.unref?.();
+	};
+
+	/** Bring design/ up to this Spool's format, its unsent changes too, before they are looked at to go up. */
+	const migrate = () => {
+		try {
+			options.migrate?.();
+		} catch (error) {
+			notice(`could not bring ${link.project} up to this Spool's format: ${(error as Error).message}`);
+		}
 	};
 
 	const online = () => {
@@ -1433,7 +1480,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				presence.lost();
 				comments.lost();
 				if (closed) return;
-				if (!live) return fail(closedOnce(code));
+				if (!live) return fail(closedOnce(code, link.team));
+				if (code === CLOSE_PROTOCOL || code === CLOSE_FORMAT) needsUpdate();
 				goingOffline();
 				if (code === CLOSE_SIGNED_OUT) signedOut();
 				// cut off, or refused before it opened: spool.page says whether this machine still edits the project
@@ -1502,9 +1550,46 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		// signed_out and not_editor: the connection closes next, and the close is what is answered
 	};
 
+	/**
+	 * This Spool is too old for the team (#206): sync pauses as on a limit, never as offline, and is said once until it
+	 * lifts. The next ask waits `updateWait`, doubling each time up to an hour.
+	 */
+	const needsUpdate = () => {
+		if (outdated !== undefined) return;
+		const asked: UpdateNeeded = { team: link.team, ...(options.updateHow ?? howToUpdate(runningCli())) };
+		outdated = asked;
+		if (offlineTimer !== undefined) clearTimeout(offlineTimer);
+		offlineTimer = undefined;
+		offline = false;
+		options.onPaused?.();
+		// said once the team's name is known: by its address when spool.page can't say
+		const say = (name: string) => {
+			if (closed || outdated !== asked) return;
+			outdated = { ...asked, team: name };
+			notice(`Sync paused: ${updateLineWithHow(name, asked)}. Changes stay on this Mac until it is updated.`);
+			if (name !== asked.team) options.onPaused?.();
+		};
+		(options.teamName?.() ?? Promise.resolve(link.team)).then(say, () => say(link.team));
+	};
+
+	/** A connection caught up again: a pause for an update has lifted, so this Spool is new enough after all. */
+	const updated = () => {
+		updateWait = options.updateAskMs ?? UPDATE_ASK_MS;
+		if (outdated === undefined) return;
+		outdated = undefined;
+		notice("Sync resumed.");
+		options.onPaused?.();
+	};
+
 	const reconnect = () => {
 		if (closed || retry !== undefined) return;
-		retry = setTimeout(() => void connect(), backoff.next());
+		let wait: number;
+		if (outdated === undefined) wait = backoff.next();
+		else {
+			wait = updateWait;
+			updateWait = Math.min(updateWait * 2, UPDATE_ASK_MAX_MS);
+		}
+		retry = setTimeout(() => void connect(), wait);
 		retry.unref?.();
 	};
 
@@ -1549,7 +1634,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			sending,
 			held: [...held].map(([path, why]) => ({ path, why })).sort((a, b) => (a.path < b.path ? -1 : 1)),
 			// a pause says what to do; offline would only say less
-			offline: offline && !isPaused(),
+			offline: offline && !isPaused() && outdated === undefined,
+			update: outdated ?? null,
 		}),
 		matchTeam: () => {
 			if (!caughtUp || socket === undefined || !checksOffered) return Promise.reject(new MatchOffline());
@@ -1772,6 +1858,15 @@ export function createTeamSync(deps: {
 	goneLocalRetryMs?: number;
 	/** How long a copy goes without a caught-up connection before it says it is offline: `OFFLINE_MS`, unless a test can't wait. */
 	offlineMs?: number;
+	/** How long a copy paused for an update first waits to ask again: `UPDATE_ASK_MS`, unless a test can't wait. */
+	updateAskMs?: number;
+	/** How this Spool is updated, unless a test says: read off the running CLI. */
+	updateHow?: UpdateHow;
+	/**
+	 * Bring a team project's design/ up to this Spool's format (#206): asked of each local copy once it has caught up,
+	 * never before, so the team's files are migrated rather than an old local read of them.
+	 */
+	migrate?: (root: string) => void;
 }) {
 	const copies = new Map<string, LocalCopy>();
 	/** Which copies this machine has synced, so one whose record is lost is matched rather than sent (#204). */
@@ -2013,6 +2108,10 @@ export function createTeamSync(deps: {
 					commentsFile: keptCommentsFile(deps.spoolDir, link),
 					synced,
 					...(deps.offlineMs === undefined ? {} : { offlineMs: deps.offlineMs }),
+					...(deps.updateAskMs === undefined ? {} : { updateAskMs: deps.updateAskMs }),
+					...(deps.updateHow === undefined ? {} : { updateHow: deps.updateHow }),
+					...(deps.migrate === undefined ? {} : { migrate: () => deps.migrate?.(root) }),
+					teamName: () => teamName(at),
 				}),
 			);
 			const said = canvases.get(root);
@@ -2164,7 +2263,13 @@ export function createTeamSync(deps: {
 		state: (root: string): SyncState => {
 			const ended = endedWith(root) ?? null;
 			const goneLocal = goneLocalWith(root) ?? null;
-			const copy = copies.get(root)?.state() ?? { paused: null, sending: null, held: [], offline: false };
+			const copy = copies.get(root)?.state() ?? {
+				paused: null,
+				sending: null,
+				held: [],
+				offline: false,
+				update: null,
+			};
 			// ended or gone local says why nothing travels; offline would only say less
 			return { ended, goneLocal, ...copy, offline: copy.offline && ended === null && goneLocal === null };
 		},
@@ -2184,11 +2289,12 @@ export function createTeamSync(deps: {
 		untold(root: string): string[] {
 			const copy = copies.get(root);
 			if (copy === undefined) return [];
-			const { paused, held: stuck } = copy.state();
+			const { paused, held: stuck, update } = copy.state();
 			const lines = [...stuck, ...staysOnThisMac(root)]
 				.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 				.map(({ path, why }) => `${path} didn't travel: ${why}`);
 			if (paused !== null) lines.push(`sync paused: ${paused}`);
+			if (update !== null) lines.push(`sync paused: ${updateLineWithHow(update.team, update)}`);
 			const now = new Set(lines);
 			const before = toldAgent.get(root) ?? new Set();
 			toldAgent.set(root, now);
