@@ -160,7 +160,7 @@ it("compares at a set-aside save with that save's own file, not what the team ap
 	const { cloud, app, ben, document } = await team();
 	const bens = await teamWriter(cloud, ben, "checkout");
 	// Ben's cart, built on the version before today's, loses to it and is set aside
-	const today = cloud.history("checkout").findLast((row) => row.path === "frames/cart/frame.tsx");
+	const today = [...cloud.history("checkout")].reverse().find((row) => row.path === "frames/cart/frame.tsx");
 	await bens.save("frames/cart/frame.tsx", CART_NOW.replace("cart now", "ben's cart"), (today?.version ?? 1) - 1);
 	const aside = cloud.history("checkout").at(-1);
 	expect(aside?.outcome).toBe("set_aside");
