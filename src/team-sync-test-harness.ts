@@ -594,13 +594,13 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			const old = tooOld.get(from.person.accountId);
 			if (old !== undefined) {
 				tooOldAsked++;
-				return from.close(old);
+				return void from.close(old);
 			}
 			if (typeof message.protocol !== "number" || !ACCEPTED_PROTOCOLS.includes(message.protocol))
-				return from.close(CLOSE_PROTOCOL);
+				return void from.close(CLOSE_PROTOCOL);
 			const format = typeof message.format === "number" ? message.format : 0;
 			at.format ??= format;
-			if (format < at.format) return from.close(CLOSE_FORMAT);
+			if (format < at.format) return void from.close(CLOSE_FORMAT);
 			from.format = format;
 			from.moving = message.moving === true;
 			from.bundles = message.bundles === true;
