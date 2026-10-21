@@ -2187,6 +2187,19 @@ export function unconfirmedFiles(root: string, link: ProjectLink): string[] {
 	);
 }
 
+/**
+ * Whether a project's `design/` has synced with this team project here before: its record names the team's files.
+ * One that hasn't is classed against the team's history before it first connects (spool#196).
+ */
+export function syncedBefore(root: string, link: ProjectLink): boolean {
+	try {
+		const { files } = readState(join(realDesignDir(root), ".spool", "sync.json"), link.url);
+		return Object.keys(files).length > 0;
+	} catch {
+		return false;
+	}
+}
+
 /** Every file on disk in a project's `design/` that goes to its team, design-relative: what a move uploads. */
 export function travellingFiles(root: string): string[] {
 	const designDir = realDesignDir(root);

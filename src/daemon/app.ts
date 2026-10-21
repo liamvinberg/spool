@@ -175,8 +175,8 @@ export interface DaemonOptions {
 	/** History's idle window (#157) — driven by tests instead of by the clock. */
 	historyClock?: HistoryClock;
 	/**
-	 * The home the picker's search walks (#251) — swapped by seam tests, so a walk
-	 * reads a fixture home rather than whatever is on the machine running them.
+	 * The home the picker's search walks (#251), and Get it's scan of the code folders (spool#193) — swapped by seam
+	 * tests, so a walk reads a fixture home rather than whatever is on the machine running them.
 	 */
 	home?: string | undefined;
 	/** Where history writes the one notice a project without git earns. */
@@ -1619,6 +1619,7 @@ export function createDaemonApp({
 		"/api/cloud",
 		teamProjectRoutes({
 			spoolDir,
+			home: fsIndex.home,
 			cloud,
 			location: () =>
 				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),

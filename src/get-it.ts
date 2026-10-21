@@ -1,12 +1,11 @@
-import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { addAgentsLine } from "./agents-line";
 import { CloudSignedOut } from "./cloud-auth";
-import { type CloudTeamProject, CloudTeamRefused, cloudTeams } from "./cloud-teams";
+import { type CloudTeamProject, CloudTeamRefused, cloudTeams, type SeenAsk } from "./cloud-teams";
 import { hasEnded, resumeLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
+import { hasCommit, surveyPlace } from "./get-it-places";
 import { checkoutOf } from "./git-remote";
 import type { TeamInitOptions } from "./init";
 import { linksTo } from "./move-in";
@@ -27,12 +26,22 @@ import { isTeamProject, PROJECT_LINK, parseProjectLink, refuseForeignLink, write
  */
 export type GetItPlace = { kind: "checkout"; path: string } | { kind: "mac"; location: string };
 
+export type GetItOptions = Omit<TeamInitOptions, "team"> & {
+	/** Whoever asked has gone: a Get it waiting for the move commit stops waiting. */
+	signal?: AbortSignal;
+	/** How often a branch from before the move is looked at for the move commit: a second. */
+	waitMs?: number;
+};
+
+/** How often a branch from before the move is looked at for its move commit. */
+const MOVE_WAIT_MS = 1_000;
+
 export async function getTeamProject(
 	team: string,
 	project: string,
 	place: GetItPlace,
 	spoolDir: string,
-	options: Omit<TeamInitOptions, "team">,
+	options: GetItOptions,
 ): Promise<{ root: string }> {
 	const request = { ...options.request, origin: options.origin };
 	const teams = cloudTeams(spoolDir, request);
@@ -53,7 +62,21 @@ export async function getTeamProject(
 	let made: string | undefined;
 	if (place.kind === "checkout") {
 		const chosen = realDir(place.path);
-		root = (await linkedIn(chosen, link.url)) ?? chosen;
+		const ask = (files: readonly SeenAsk[]) => teams.seen(link.team, link.project, files);
+		let found = await surveyPlace(chosen, link, ask);
+		// a branch from before the move: Get it carries on by itself once the move commit is merged in
+		while (found.survey.kind === "pre-move") {
+			const { commit } = found.survey;
+			while (!(await hasCommit(chosen, commit))) await waited(options.waitMs ?? MOVE_WAIT_MS, options.signal);
+			found = await surveyPlace(chosen, link, ask);
+		}
+		const { survey } = found;
+		if (survey.kind === "other") throw new SpoolError(`${chosen}: ${survey.why}. Choose another place.`);
+		if (survey.kind === "design" && !found.linked)
+			throw new SpoolError(
+				`${found.root} already has a design/ spool never synced, and it differs from ${team}'s. Choose another place.`,
+			);
+		root = found.root;
 	} else {
 		root = join(expandHome(place.location), link.team, link.project);
 		if (!existsSync(root)) {
@@ -66,7 +89,7 @@ export async function getTeamProject(
 	if (wrote) {
 		if (isTeamProject(root)) throw new SpoolError(`${root} already has a ${PROJECT_LINK} for another team project.`);
 		refuseForeignLink(root);
-		if (existsSync(join(root, "design")))
+		if (place.kind === "mac" && existsSync(join(root, "design")))
 			throw new SpoolError(`${root} already has a design/ folder. Choose another place.`);
 		if (place.kind === "mac" && made === undefined && readdirSync(root).length > 0)
 			throw new SpoolError(`${root} isn't empty. Choose another place.`);
@@ -100,30 +123,20 @@ export async function getTeamProject(
 	return { root };
 }
 
-/** Where a checkout already holds this project's `spool.json`: the folder picked, or a tracked one inside it. */
-async function linkedIn(dir: string, url: string): Promise<string | undefined> {
-	if (linksTo(dir, url)) return dir;
-	const checkout = await checkoutOf(dir);
-	if (checkout === undefined) return undefined;
-	if (linksTo(checkout.top, url)) return checkout.top;
-	let listed: string;
-	try {
-		listed = (
-			await promisify(execFile)("git", ["ls-files", "-z", "--", PROJECT_LINK, `**/${PROJECT_LINK}`], {
-				cwd: checkout.top,
-				env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined },
-				timeout: 10_000,
-			})
-		).stdout;
-	} catch {
-		return undefined;
-	}
-	for (const file of listed.split("\0")) {
-		if (file === "") continue;
-		const root = dirname(join(checkout.top, file));
-		if (linksTo(root, url)) return root;
-	}
-	return undefined;
+/** A wait of `ms`, cut short with a refusal when whoever asked has gone. */
+function waited(ms: number, signal: AbortSignal | undefined): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted === true) return reject(new SpoolError("Get it stopped waiting for the merge."));
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", stop);
+			resolve();
+		}, ms);
+		const stop = () => {
+			clearTimeout(timer);
+			reject(new SpoolError("Get it stopped waiting for the merge."));
+		};
+		signal?.addEventListener("abort", stop, { once: true });
+	});
 }
 
 /** The outermost folder of `path` that doesn't exist yet, so a refused Get it takes away exactly what it made. */
