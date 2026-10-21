@@ -274,7 +274,10 @@ describe("Get it after a restore", () => {
 		expect(got.status, await got.clone().text()).toBe(200);
 		expect(await got.json()).toEqual({ root: clone, name: "app" });
 		// the commit lands, and then the index follows it
-		await until(() => git(clone, "ls-files", "design") === "", 10_000);
+		await until(
+			() => git(clone, "ls-files", "design") === "" && git(clone, "ls-files", "spool.json") === "spool.json",
+			10_000,
+		);
 		expect(git(clone, "rev-list", "--count", `${before}..HEAD`)).toBe("1");
 		expect(git(clone, "log", "-1", "--format=%s")).toBe(MOVE_MESSAGE);
 		expect(git(clone, "show", "--name-status", "--format=", "HEAD")).toContain("A\tspool.json");
