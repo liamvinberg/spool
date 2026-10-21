@@ -300,6 +300,31 @@ it("closes a tab by the middle button, and puts its menu away with it", async ()
 	]);
 });
 
+it("offers History… on a team project's tab, and not on one that isn't a team's (spool#187)", async () => {
+	const onHistory = vi.fn();
+	const team = tabs.map((tab, at) => (at === 1 ? { ...tab, teamAddress: "spool.page/devosurf/beta" } : tab));
+	const { host } = await render({ onHistory, tabs: team });
+	const items = async (at: number) => {
+		const label = host.querySelectorAll<HTMLButtonElement>(".project-tab-label")[at];
+		await act(async () =>
+			label?.dispatchEvent(
+				new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 150, clientY: 20 }),
+			),
+		);
+		const found = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+		return found;
+	};
+	expect((await items(0)).map((item) => item.textContent)).not.toContain("History…");
+	await act(async () =>
+		document.activeElement?.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+		),
+	);
+	const history = (await items(1)).find((item) => item.textContent === "History…");
+	await act(async () => history?.click());
+	expect(onHistory).toHaveBeenCalledWith(team[1]);
+});
+
 describe("focusAfterClose", () => {
 	const roots = ["/w/alpha", "/w/beta", "/w/gamma"];
 	it("hands focus to the tab after the one that closed", () => {

@@ -28,6 +28,7 @@ import {
 import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { matchTheTeam } from "./canvas/sync-state";
+import { askProjectHistory } from "./canvas/history-door";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
@@ -839,6 +840,9 @@ export function App() {
 								// its canvas's Sync box says a refusal, so it comes to the front
 								focusProject(tab.root);
 								void matchTheTeam(tab.name);
+							onHistory={(project) => {
+								focusProject(project.root);
+								askProjectHistory(project.name);
 							}}
 							onPick={() => setPicking("new")}
 						/>

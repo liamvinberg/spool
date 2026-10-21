@@ -658,6 +658,15 @@ export const HOTKEYS = [
 		typing: true,
 	},
 	{
+		id: "panes.history",
+		scope: "panes",
+		group: "Panes",
+		label: "Open or close History, on a team project",
+		keys: ["accel+shift+h"],
+		repeats: false,
+		typing: true,
+	},
+	{
 		id: "panes.move",
 		scope: "panes",
 		group: "Panes",
