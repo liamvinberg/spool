@@ -224,7 +224,7 @@ describe("Home in a browser", () => {
 		await page.getByText("sam@devosurf.com").waitFor();
 		await page.getByRole("button", { name: "Signed in as vic@devosurf.com" }).click();
 		await page.getByRole("menuitem", { name: "Account" }).click();
-		await page.getByRole("heading", { name: "Account" }).waitFor();
+		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 		expect(new URL(page.url()).pathname).toBe("/account");
 		expect(await page.title()).toBe("Account · spool");
 		// the team stays in the sidebar, with none of its pages current
@@ -240,7 +240,7 @@ describe("Home in a browser", () => {
 		await page.getByRole("button", { name: "People" }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
 		await page.goBack();
-		await page.getByRole("heading", { name: "Account" }).waitFor();
+		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 	});
 
 	it("names the account on its page, everywhere at once, and says the rule when spool.page refuses a name", {
