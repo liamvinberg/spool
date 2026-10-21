@@ -100,6 +100,9 @@ function bensClone(from: string, state: string): string {
 	const checkout = realpathSync(makeTempDir());
 	git(checkout, "clone", "--quiet", from, "app");
 	const clone = join(checkout, "app");
+	// the daemon commits as whoever the clone says, as on a real Mac; a bare CI runner has nobody
+	git(clone, "config", "user.email", "ben@example.test");
+	git(clone, "config", "user.name", "Ben");
 	git(clone, "remote", "set-url", "origin", "https://github.com/devosurf/app.git");
 	mkdirSync(join(clone, "docs"));
 	initProject(join(clone, "docs"), state);

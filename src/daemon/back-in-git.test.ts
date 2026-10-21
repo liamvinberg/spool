@@ -67,6 +67,9 @@ async function teammate(cloud: ReturnType<typeof fakeTeam>, name: string, remote
 	const checkout = realpathSync(makeTempDir());
 	git(checkout, "clone", "--quiet", remote, "app");
 	const clone = join(checkout, "app");
+	// the daemon commits as whoever the clone says, as on a real Mac; a bare CI runner has nobody
+	git(clone, "config", "user.email", `${name}@example.test`);
+	git(clone, "config", "user.name", name);
 	const got = await daemon.controlRequest("/api/cloud/teams/devosurf/projects/app/get", {
 		method: "POST",
 		headers: json,
