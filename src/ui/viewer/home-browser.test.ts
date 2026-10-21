@@ -182,6 +182,13 @@ describe("Home in a browser", () => {
 				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
 		).toEqual(["Devosurf", "Projects", "People", "Settings", "Client Co", "New team…"]);
 		expect(await page.getByText("Recent", { exact: true }).count()).toBe(0);
+		// a team you only watch wears the eye here too
+		expect(await page.locator("[data-place=client] [data-watch]").isVisible()).toBe(true);
+		expect(await page.locator("[data-place=devosurf] [data-watch]").count()).toBe(0);
+		// each cover is the still spool.page keeps
+		await expect
+			.poll(() => checkout.locator("img").evaluate((node) => (node as HTMLImageElement).naturalWidth))
+			.toBeGreaterThan(0);
 		expect(await page.locator("[data-here]").getAttribute("data-here")).toBe("sam");
 		expect(await page.locator("main").textContent()).toContain("github.com/devosurf/checkout");
 		// the tab strip is the Mac window's: a browser has its own

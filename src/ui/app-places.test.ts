@@ -52,6 +52,22 @@ async function launch(path: string, teams: CloudTeam[] = TEAMS) {
 					members: [{ accountId: "a", email: "ada@tidemark.app", role: "admin", you: true }],
 					invites: [],
 				});
+			if (pathname === "/api/cloud/teams/harbour-bank/projects")
+				return Response.json({
+					projects: [
+						{
+							name: "brand",
+							url: "https://spool.page/harbour-bank/brand",
+							repo: "github.com/harbour/brand",
+							clone: null,
+							copies: [],
+							checkouts: [],
+							home: "~/spool/harbour-bank/brand",
+						},
+					],
+				});
+			if (pathname === "/api/cloud/teams/harbour-bank/projects/brand/cover")
+				return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
 			if (/^\/api\/cloud\/teams\/[^/]+\/projects$/u.test(pathname)) return Response.json({ projects: [] });
 			return new Response(null, { status: 404 });
 		}),
@@ -144,11 +160,38 @@ describe("Home's sidebar of places", () => {
 		expect(app.heading()).toBe("Northlight");
 	});
 
-	it("sends a team you only watch to its page at spool.page", async () => {
+	it("makes a team you only watch a place, marked with an eye, its projects opening live in the browser", async () => {
+		const opened = vi.fn();
 		const app = await launch("/");
-		const watched = app.host.querySelector<HTMLAnchorElement>(".pj-places a[title='Harbour Bank']");
-		expect(watched?.getAttribute("href")).toBe("https://spool.page/harbour-bank");
-		expect(watched?.getAttribute("target")).toBe("_blank");
+		vi.stubGlobal("open", opened);
+		expect(app.host.querySelector("[data-place=harbour-bank] [data-watch]")).not.toBeNull();
+		await app.press("Harbour Bank");
+		expect(opened).not.toHaveBeenCalled();
+		expect(window.location.pathname).toBe("/harbour-bank");
+		expect(app.heading()).toBe("Harbour Bank");
+		expect(app.places()).toEqual([
+			"Harbour Bank",
+			"Projects",
+			"People",
+			"Northlight",
+			"Tidemark",
+			"Your projects",
+			"New team…",
+		]);
+		const main = app.host.querySelector("main");
+		expect(main?.textContent).toContain(
+			"You watch Harbour Bank. A project opens live in your browser, and nothing comes to this Mac.",
+		);
+		expect([...(main?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).not.toContain(
+			"New project…",
+		);
+		const cover = main?.querySelector<HTMLAnchorElement>("a[aria-label='Open brand']");
+		expect(cover?.getAttribute("href")).toBe("https://spool.page/harbour-bank/brand");
+		expect(cover?.getAttribute("target")).toBe("_blank");
+		expect(cover?.querySelector("img")?.getAttribute("src")).toMatch(/^blob:/u);
+		await app.press("People");
+		expect(window.location.pathname).toBe("/harbour-bank/people");
+		expect(app.heading()).toBe("People");
 	});
 
 	it("titles Your projects so, with Open… beside New project and where they live", async () => {

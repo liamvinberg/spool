@@ -27,7 +27,7 @@ import {
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
 import { NARROW_NAV, ProjectsHead, type Sort } from "./home-find";
-import { ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
+import { ChevronIcon, CogIcon, EyeIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
@@ -126,7 +126,7 @@ export function TeamMark({
 /**
  * Home's sidebar of places: every team you're in, in spool.page's order (by name), the one you're in open to its
  * pages beneath it. On a Mac a rule follows, then Your projects; New team… comes last. A team you only watch is a
- * link to its page at spool.page from a Mac, since its projects never come to one; in a browser every team is a place.
+ * place like any other, marked with an eye. Below 720 px each place is its mark, its name on its title.
  */
 export function HomePlaces({
 	teams,
@@ -135,7 +135,6 @@ export function HomePlaces({
 	onTeam,
 	onPage,
 	own,
-	watchAt,
 	onNewTeam,
 }: {
 	teams: readonly CloudTeam[];
@@ -147,29 +146,12 @@ export function HomePlaces({
 	onPage: (page: TeamPage) => void;
 	/** Your projects, on a Mac. */
 	own?: { current: boolean; onOwn: () => void } | undefined;
-	/** On a Mac, spool.page: a team you only watch opens there. */
-	watchAt?: string | undefined;
 	onNewTeam: () => void;
 }) {
 	return (
 		<div className="pj-places flex flex-col gap-[2px]">
 			{teams.map((team) => {
 				const chosen = team.address === current;
-				if (watchAt !== undefined && team.role === "viewer")
-					return (
-						<a
-							key={team.id}
-							href={`${watchAt}/${team.address}`}
-							target="_blank"
-							rel="noreferrer"
-							title={team.name}
-							className={PLACE}
-						>
-							<TeamMark team={team} />
-							<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>{team.name}</span>
-							<span className={cn("shrink-0 type-detail", NARROW_HIDDEN)}>↗</span>
-						</a>
-					);
 				return (
 					<div key={team.id} className="flex flex-col gap-[2px]" data-place={team.address}>
 						<button
@@ -181,6 +163,11 @@ export function HomePlaces({
 						>
 							<TeamMark team={team} />
 							<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>{team.name}</span>
+							{team.role === "viewer" && (
+								<span data-watch="" title="You watch this team" className={cn("shrink-0", NARROW_HIDDEN)}>
+									<EyeIcon className="size-[14px] text-secondary" />
+								</span>
+							)}
 						</button>
 						{/* the team you're in opens to its pages: rows grow from 0fr, so the places below slide down, never jump */}
 						<div
@@ -263,6 +250,16 @@ export function InviteLine({
 				Join {invite.team.name}
 			</Button>
 		</div>
+	);
+}
+
+/** What watching a team means, said once on its page: a viewer's Mac holds none of its projects. */
+function WatchLine({ team }: { team: CloudTeam }) {
+	return (
+		<p className="pj-watch-line -mt-[14px] mb-[26px] flex items-center gap-[9px] text-secondary type-control">
+			<EyeIcon className="size-[15px] shrink-0" />
+			You watch {team.name}. A project opens live in your browser, and nothing comes to this Mac.
+		</p>
 	);
 }
 
@@ -1130,6 +1127,8 @@ export function useTeamHome(
 		revision?: (address: string) => number;
 		/** A line about a move's commit, kept above the covers until dismissed. */
 		note?: ReactNode;
+		/** The covers of a team this Mac only watches, as spool.page draws them, from its list; nothing for none. */
+		watched?: (team: CloudTeam, listed: readonly TeamProjectOnMac[], here: TeamHere) => ReactNode;
 	},
 	/** Whether Home stands in the window, so the address is Home's to say; false while a project's tab is in front. */
 	front = true,
@@ -1189,10 +1188,7 @@ export function useTeamHome(
 		return () => window.removeEventListener("popstate", moved);
 	}, []);
 	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
-	const current =
-		place.team === null
-			? null
-			: (ready?.teams.find((team) => team.address === place.team && team.role !== "viewer") ?? null);
+	const current = place.team === null ? null : (ready?.teams.find((team) => team.address === place.team) ?? null);
 	// a team left, deleted or never this account's falls back to Recent
 	useEffect(() => {
 		if (furnished && place.team !== null && current === null) go(RECENT_PLACE, true);
@@ -1226,7 +1222,6 @@ export function useTeamHome(
 				onTeam={(address) => go({ team: address, page: "projects" })}
 				onPage={(to) => current && go({ team: current.address, page: to })}
 				own={{ current: place.page === "own" && !searching, onOwn: () => go(OWN_PLACE) }}
-				watchAt={ready.origin}
 				onNewTeam={() => setCreating(true)}
 			/>
 			{creating && (
@@ -1258,8 +1253,7 @@ export function useTeamHome(
 						onJoin={async () => {
 							const joined = await teamActions.accept(invite.id);
 							await refresh();
-							if (joined.role === "viewer") open(`${ready.origin}/${joined.address}`);
-							else go({ team: joined.address, page: "projects" });
+							go({ team: joined.address, page: "projects" });
 						}}
 					/>
 				))}
@@ -1288,6 +1282,20 @@ export function useTeamHome(
 									go(OWN_PLACE, true);
 									void refresh();
 								}}
+							/>
+						) : current.role === "viewer" ? (
+							<TeamProjects
+								team={current}
+								notice={
+									<>
+										<WatchLine team={current} />
+										{notice}
+									</>
+								}
+								covers={projects?.watched?.(current, lists.get(current.address) ?? [], here)}
+								count={total === undefined ? undefined : { total }}
+								empty={`${current.name} has no projects yet`}
+								onOpen={open}
 							/>
 						) : (
 							<TeamProjects

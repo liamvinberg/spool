@@ -57,6 +57,7 @@ import {
 } from "./tab-keys";
 import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
+import { CloudCovers } from "./team-covers";
 import { type MoveDone, useMovedToast } from "./team-move";
 import {
 	FoundAway,
@@ -758,6 +759,20 @@ export function App() {
 				.map((project) => project.root)
 				.join("\n"),
 			note: moveNote === null ? undefined : <MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />,
+			// a team this Mac only watches: its projects as spool.page draws them, each opening live in the browser
+			watched: (team, listed, here) =>
+				listed.length === 0 ? undefined : (
+					<CloudCovers
+						covers={[...listed]
+							.sort((a, b) => a.name.localeCompare(b.name))
+							.map((project) => ({ team, project }))}
+						here={here}
+						menu={teamMenu}
+						onMenu={setTeamMenu}
+						link={(_, project) => project.url}
+						external
+					/>
+				),
 		},
 		booted && focused === null,
 	);

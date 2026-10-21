@@ -198,3 +198,24 @@ it("carries the setup list to spool.page: its facts, Skip and done, each answeri
 		"POST /api/teams/tidemark/setup/done",
 	]);
 });
+
+it("brings a team project's cover from spool.page, for a team this Mac only watches, and nothing where it has none", async () => {
+	const png = new Uint8Array([137, 80, 78, 71]);
+	const { daemon, asked } = harness({
+		token: TOKEN,
+		answer: (request) =>
+			new URL(request.url).pathname === "/api/teams/harbour-bank/projects/brand/cover"
+				? new Response(png, { headers: { "content-type": "image/png" } })
+				: Response.json({ error: "not_found" }, { status: 404 }),
+	});
+	const cover = (project: string) =>
+		daemon.app.request(`http://localhost/api/cloud/teams/harbour-bank/projects/${project}/cover`, {
+			headers: { "x-spool-control": "control-secret", origin: "http://localhost" },
+		});
+	const found = await cover("brand");
+	expect(found.status).toBe(200);
+	expect(found.headers.get("content-type")).toBe("image/png");
+	expect(new Uint8Array(await found.arrayBuffer())).toEqual(png);
+	expect(asked.at(-1)?.authorization).toBe(`Bearer ${TOKEN}`);
+	expect((await cover("ops")).status).toBe(404);
+});

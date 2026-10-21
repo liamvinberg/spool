@@ -1,10 +1,11 @@
 import { type ReactNode, type Ref, useState } from "react";
 import { cn } from "./cn";
-import { ClockIcon } from "./icons";
+import { ClockIcon, SearchIcon } from "./icons";
+import { IconButton } from "./primitives/actions";
 import { Count } from "./primitives/display";
 import { SearchField, SelectTrigger } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
-import { Menu, MenuItem } from "./primitives/overlays";
+import { Menu, MenuItem, Popover } from "./primitives/overlays";
 
 /**
  * Finding a project on Home once you are in a team (task 147): one search at the top of the sidebar that reaches every
@@ -22,7 +23,10 @@ export function finds(needle: string, ...words: readonly string[]): boolean {
 	return needle === "" || words.some((word) => word.toLowerCase().includes(needle));
 }
 
-/** The search and Recent, above the switcher: the two that reach every place. */
+/**
+ * The search and Recent, above the places: the two that reach every place. Below 720 px the search is an icon that
+ * opens the field over the page, so it is still one click away.
+ */
 export function FindNav({
 	query,
 	onQuery,
@@ -37,6 +41,8 @@ export function FindNav({
 	recent?: boolean | undefined;
 	onRecent?: (() => void) | undefined;
 }) {
+	const [over, setOver] = useState(false);
+	const searching = query.trim() !== "";
 	return (
 		<div className="pj-find mb-[18px] flex flex-col gap-[10px]">
 			<SearchField
@@ -48,11 +54,47 @@ export function FindNav({
 				label="Search projects"
 				inputProps={{ ref: inputRef }}
 			/>
+			<IconButton
+				icon={<SearchIcon className="size-4" />}
+				label="Search"
+				pressed={over || searching}
+				className="hidden self-center [@media(max-width:720px)]:inline-flex"
+				onClick={() => setOver(!over)}
+			/>
+			{(over || searching) && (
+				<Popover
+					pad="sm"
+					aria-label="Search projects"
+					className="pj-find-over fixed top-[64px] right-[16px] left-[80px] z-30 hidden [@media(max-width:720px)]:flex"
+				>
+					<SearchField
+						size="md"
+						className="w-full"
+						value={query}
+						onValueChange={onQuery}
+						placeholder="Search"
+						label="Search projects"
+						hotkey=""
+						inputProps={{
+							autoFocus: true,
+							onKeyDown: (event) => {
+								if (event.key !== "Escape") return;
+								onQuery("");
+								setOver(false);
+							},
+							onBlur: () => {
+								if (!searching) setOver(false);
+							},
+						}}
+					/>
+				</Popover>
+			)}
 			{onRecent && (
 				<NavItem
 					icon={<ClockIcon />}
 					label="Recent"
-					current={recent === true && query.trim() === ""}
+					title="Recent"
+					current={recent === true && !searching}
 					className={NARROW_NAV}
 					onClick={onRecent}
 				/>

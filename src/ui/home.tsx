@@ -829,7 +829,8 @@ export function CoverTile({
 	menu,
 }: {
 	name: string;
-	open: { onClick: () => void } | { href: string };
+	/** `external` opens it outside this window: from a Mac, in the system browser. */
+	open: { onClick: () => void } | { href: string; external?: boolean };
 	art: ReactNode;
 	here: readonly HerePerson[] | undefined;
 	line: ReactNode;
@@ -898,7 +899,12 @@ export function CoverTile({
 			style={transition === undefined ? undefined : { viewTransitionName: transition }}
 		>
 			{"href" in open ? (
-				<a className={opener} href={open.href} aria-label={`Open ${name}`}>
+				<a
+					className={opener}
+					href={open.href}
+					aria-label={`Open ${name}`}
+					{...(open.external ? { target: "_blank", rel: "noreferrer" } : {})}
+				>
 					{face}
 				</a>
 			) : (

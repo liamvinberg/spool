@@ -102,6 +102,8 @@ export interface TeamsSource {
 	here(address: string): Promise<ReadonlyMap<string, HerePerson[]> | undefined>;
 	/** Every project in the team; undefined while spool.page can't say. */
 	projects(address: string): Promise<ListedTeamProject[] | undefined>;
+	/** A project's cover as spool.page keeps it, the still a member's Mac took; undefined while it has none. */
+	cover(address: string, project: string): Promise<Blob | undefined>;
 	/** How many comments a project holds, which go if it leaves the team; undefined while spool.page can't say. */
 	commentCount(address: string, project: string): Promise<number | undefined>;
 	/** What moving `project` to the team at `to`, as `name` when given, would do; undefined while it can't be said. */
@@ -212,6 +214,17 @@ export function teamsAt(
 		async projects(address) {
 			const body = await read<{ projects?: unknown }>(`${team(address)}/projects`);
 			return Array.isArray(body?.projects) ? (body.projects as ListedTeamProject[]) : undefined;
+		},
+		async cover(address, project) {
+			try {
+				const response = await options.fetch(
+					`${base}${team(address)}/projects/${encodeURIComponent(project)}/cover`,
+				);
+				if (!response.ok || !(response.headers.get("content-type") ?? "").startsWith("image/")) return undefined;
+				return await response.blob();
+			} catch {
+				return undefined;
+			}
 		},
 		async commentCount(address, project) {
 			const body = await read<{ comments?: unknown }>(

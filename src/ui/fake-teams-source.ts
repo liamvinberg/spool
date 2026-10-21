@@ -72,6 +72,7 @@ export function fakeTeamsSource(start: {
 		}),
 		here: async () => new Map(),
 		projects: async (address) => listed(address),
+		cover: async () => undefined,
 		commentCount: async (address, project) => state.comments?.[`${address}/${project}`] ?? 0,
 		movePreview: async (address, project, to, name = project) => {
 			ask(`preview ${address}/${project} ${to} ${name}`);

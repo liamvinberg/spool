@@ -185,6 +185,21 @@ export function SearchIcon({ className }: { className?: string }) {
 	);
 }
 
+/** A team you only watch: Home's sidebar marks it, and its page says what watching means. */
+export function EyeIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z"
+				stroke="currentColor"
+				strokeWidth="1.3"
+				strokeLinejoin="round"
+			/>
+			<circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3" />
+		</svg>
+	);
+}
+
 /** A folder, wherever spool names one: a page in the rail, a directory in the picker. */
 export function FolderIcon({ className }: { className?: string }) {
 	return (

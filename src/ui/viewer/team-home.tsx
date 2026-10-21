@@ -2,13 +2,12 @@ import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } 
 import { ACCOUNT_PLACE, type HomePlace, pathOf, placeOf } from "../../home-places";
 import { AccountFoot } from "../account-foot";
 import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
-import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop, PlaceIn } from "../home";
+import { HOME_MAIN, HomeShell, PlaceIn } from "../home";
 import { FindNav, FoundHead, finds, useFoundPlace } from "../home-find";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
 import { EmptyFrames, EmptyState } from "../primitives/feedback";
-import { MenuItem } from "../primitives/overlays";
-import { ProjectIconView } from "../project-icon";
+import { CloudCovers } from "../team-covers";
 import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
 import { type SetupHost, useSetUpToast } from "../team-setup";
 import type { ListedTeamProject, TeamsSource } from "../team-source";
@@ -16,7 +15,6 @@ import {
 	HomePlaces,
 	InviteLine,
 	NewTeamDialog,
-	type TeamHere,
 	type TeamPage,
 	TeamPeoplePage,
 	TeamProjects,
@@ -375,84 +373,6 @@ function Projects({
 	);
 }
 
-function CloudCovers({
-	covers,
-	here,
-	said = false,
-	menu,
-	onMenu,
-	onMove,
-}: {
-	/** Each cover's project and the team it is in. */
-	covers: readonly { team: CloudTeam; project: ListedTeamProject }[];
-	/** Who is inside each, by its name, where every cover is one team's. */
-	here?: TeamHere | undefined;
-	/** Each cover names its team, where the covers come from several. */
-	said?: boolean;
-	menu: string | null;
-	onMenu: (url: string | null) => void;
-	/** "Move to team…", for an admin with another team to move a project to. */
-	onMove?: ((project: ListedTeamProject) => void) | undefined;
-}) {
-	return (
-		<>
-			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
-				{covers.map(({ team, project }) => {
-					const at = `/${team.address}/${encodeURIComponent(project.name)}`;
-					return (
-						<CoverTile
-							key={project.url}
-							name={project.name}
-							open={{ href: at }}
-							here={here?.get(project.name)}
-							art={<CloudCover team={team.address} project={project.name} />}
-							line={
-								<span className="mt-[5px] block truncate text-secondary type-detail">
-									{[said && team.name, project.repo ?? "no repo linked"].filter(Boolean).join(" · ")}
-								</span>
-							}
-							menuOpen={menu === project.url}
-							onToggleMenu={() => onMenu(menu === project.url ? null : project.url)}
-							onCloseMenu={() => onMenu(null)}
-							menu={({ close }) => (
-								<>
-									<MenuItem label="Open" href={at} onClick={close} />
-									{project.repo !== null && (
-										<MenuItem
-											label="Copy clone command"
-											onClick={() => {
-												close();
-												void navigator.clipboard?.writeText(`git clone https://${project.repo}.git`);
-											}}
-										/>
-									)}
-									<MenuItem
-										label="Copy link"
-										onClick={() => {
-											close();
-											void navigator.clipboard?.writeText(new URL(at, location.origin).toString());
-										}}
-									/>
-									{onMove && (
-										<MenuItem
-											label="Move to team…"
-											onClick={() => {
-												close();
-												onMove(project);
-											}}
-										/>
-									)}
-								</>
-							)}
-						/>
-					);
-				})}
-			</div>
-			{menu !== null && <MenuBackdrop onClose={() => onMenu(null)} />}
-		</>
-	);
-}
-
 /**
  * What the search in the sidebar found: every team's projects whose name or repo it finds, by name, with a tab per
  * team to narrow them to one. Each team's list is read once the search starts.
@@ -525,23 +445,5 @@ function CloudFound({
 				onMenu={setMenu}
 			/>
 		</>
-	);
-}
-
-/**
- * A team project's cover as spool.page keeps it: the still of its top-left frame a member's Mac took, or its letter
- * while it has none.
- */
-function CloudCover({ team, project }: { team: string; project: string }) {
-	const [none, setNone] = useState(false);
-	if (none) return <ProjectIconView project={project} name={project} size="md" />;
-	return (
-		<img
-			src={`/api/teams/${encodeURIComponent(team)}/projects/${encodeURIComponent(project)}/cover`}
-			alt=""
-			draggable={false}
-			className="h-full w-full object-contain"
-			onError={() => setNone(true)}
-		/>
 	);
 }
