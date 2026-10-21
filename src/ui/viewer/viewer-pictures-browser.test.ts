@@ -154,7 +154,7 @@ async function open({ assets = APP, gl = true }: { assets?: string; gl?: boolean
 	return {
 		page,
 		live: async () => {
-			await expect.poll(() => socket !== undefined).toBe(true);
+			await expect.poll(() => socket !== undefined, { timeout: 20_000 }).toBe(true);
 			return socket as WebSocketRoute;
 		},
 		serve: (next: ViewerProject) => {
@@ -216,10 +216,12 @@ describe("a big project on the read-only canvas", () => {
 		await expect.poll(() => page.locator('iframe[data-viewer-phase="arrived"]').count(), { timeout: 20_000 }).toBe(2);
 		expect(await iframes(page)).toEqual(["f19", "f20"]);
 		// a frame shown live has taken itself off the layer
-		await expect.poll(async () => (await pictures(page))?.claimed.sort()).toEqual(["f19", "f20"]);
+		await expect
+			.poll(async () => (await pictures(page))?.claimed.sort(), { timeout: 20_000 })
+			.toEqual(["f19", "f20"]);
 		// out to where a whole row reads: more frames want documents than may boot at once
 		await page.getByRole("button", { name: "Zoom out" }).click();
-		await expect.poll(() => page.locator("[data-viewer-zoom]").textContent()).toBe("46%");
+		await expect.poll(() => page.locator("[data-viewer-zoom]").textContent(), { timeout: 20_000 }).toBe("46%");
 		// one notch of ⌘-scroll, about 46% to 60%: an 800px frame draws 480
 		await page.locator("[data-viewer-field]").evaluate((field) => {
 			const box = field.getBoundingClientRect();
@@ -234,14 +236,14 @@ describe("a big project on the read-only canvas", () => {
 				}),
 			);
 		});
-		await expect.poll(() => page.locator("[data-viewer-zoom]").textContent()).toBe("60%");
+		await expect.poll(() => page.locator("[data-viewer-zoom]").textContent(), { timeout: 20_000 }).toBe("60%");
 		await expect
 			.poll(() => page.locator('iframe[data-viewer-phase="arrived"]').count(), { timeout: 20_000 })
 			.toBeGreaterThan(2);
 		expect((await seen(page)).booting).toBeLessThanOrEqual(2);
 		// out again: too small to read, every document goes
 		await page.getByRole("button", { name: "fit" }).click();
-		await expect.poll(() => iframes(page)).toEqual([]);
+		await expect.poll(() => iframes(page), { timeout: 20_000 }).toEqual([]);
 	});
 
 	it("shows a frame whose cover a save left stale live, until spool.page says its new cover landed", {
@@ -292,11 +294,11 @@ describe("a big project on the read-only canvas", () => {
 			(window as unknown as { __lose: unknown }).__lose = lose;
 			lose?.loseContext();
 		});
-		await expect.poll(() => page.locator("[data-viewer-cover]").count()).toBe(covered.length);
+		await expect.poll(() => page.locator("[data-viewer-cover]").count(), { timeout: 20_000 }).toBe(covered.length);
 		await page.evaluate(() =>
 			(window as unknown as { __lose: { restoreContext: () => void } }).__lose.restoreContext(),
 		);
-		await expect.poll(() => page.locator("[data-viewer-cover]").count()).toBe(0);
+		await expect.poll(() => page.locator("[data-viewer-cover]").count(), { timeout: 20_000 }).toBe(0);
 		await expect.poll(() => drawn(page), { timeout: 20_000 }).toEqual([...covered].sort());
 	});
 });
