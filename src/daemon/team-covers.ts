@@ -34,13 +34,13 @@ export function createTeamCovers({ spoolDir, request, log = () => {} }: TeamCove
 		const cloud = cloudShares(spoolDir, options);
 		const at = { kind: "team", team: link.team, project: link.project } as const;
 		try {
-			if (await cloud.hasCover(at, source)) return;
+			if (await cloud.knowsCover(at, source)) return;
 			await cloud.putCover(at, source, frame, bytes);
 		} catch (error) {
-			// a version spool.page holds a newer cover than (410), or a cover it filed since this one was taken
-			// (409 cover_stale), is no failure; signed out, or out of reach, the next shot of a new version tries again
+			// a version of the frame other than the one spool.page's files make now (409 cover_stale) is no failure;
+			// signed out, or out of reach, the next shot of a new version tries again
 			if (error instanceof CloudShareRefused) {
-				if (error.status !== 410 && error.code !== "cover_stale")
+				if (error.code !== "cover_stale")
 					log(`the cover of ${frame} wasn't sent to ${link.team}: ${error.status}`);
 			} else if (!(error instanceof CloudSignedOut))
 				log(`the cover of ${frame} wasn't sent: ${(error as Error).message}`);

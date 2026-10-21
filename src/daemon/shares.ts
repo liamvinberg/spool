@@ -86,7 +86,7 @@ export function createProjectShares(options: ProjectSharesOptions) {
 	const sendCover = async (id: string, frame: string, cover: { source: string; bytes: Uint8Array }) => {
 		const cloud = client();
 		const at = { kind: "solo", id } as const;
-		if (!(await cloud.hasCover(at, cover.source))) await cloud.putCover(at, cover.source, frame, cover.bytes);
+		if (!(await cloud.knowsCover(at, cover.source))) await cloud.putCover(at, cover.source, frame, cover.bytes);
 	};
 
 	const stateFile = (root: string) => join(root, "design", SHARE_STATE);

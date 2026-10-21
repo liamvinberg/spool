@@ -92,6 +92,19 @@ describe("a team project's covers", () => {
 		expect(cloud.requests).toEqual([]);
 	});
 
+	it("are not sent again once a newer version's cover replaced them", async () => {
+		const methods: string[] = [];
+		const mac = machine({
+			fetch: async (_input, init) => {
+				methods.push(init?.method ?? "GET");
+				return Response.json({ error: "cover_replaced" }, { status: 410 });
+			},
+		});
+		mac.stored(project(`${ORIGIN}/devosurf/checkout`), "home", "a".repeat(64), JPEG);
+		await mac.settled();
+		expect(methods).toEqual(["HEAD"]);
+	});
+
 	it("say nothing when spool.page already holds a newer cover", async () => {
 		const lines: string[] = [];
 		const fetch: typeof globalThis.fetch = async (_input, init) => {

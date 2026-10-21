@@ -76,16 +76,26 @@ export function cloudShares(spoolDir: string, options: CloudRequestOptions = {})
 		/** A solo project moved into a team project: its shares are the team project's from now on. */
 		moveSolo: (id: string, team: string, project: string) =>
 			call<{ shares: number }>("POST", `${solo(id)}/move`, { team, project }),
-		/** Whether spool.page holds this version's cover already, a team project's or a solo one's. */
-		hasCover: async (at: SharePlace, source: string) => {
+		/**
+		 * Whether spool.page knows this version's cover already, a team project's or a solo one's: it keeps it, or it
+		 * kept it until a newer version's replaced it (410), and either way it is sent no more.
+		 */
+		knowsCover: async (at: SharePlace, source: string) => {
 			try {
 				await call<null>("HEAD", `${place(at)}/covers/${source}`);
 				return true;
 			} catch (error) {
-				if (error instanceof CloudShareRefused && (error.status === 404 || error.status === 410)) return false;
+				if (error instanceof CloudShareRefused && error.status === 410) return true;
+				if (error instanceof CloudShareRefused && error.status === 404) return false;
 				throw error;
 			}
 		},
+		/**
+		 * Which version's cover spool.page keeps for each of a team project's frames, by frame; a frame it holds no
+		 * cover for is not named. A spool.page from before the list answers 404.
+		 */
+		covers: async (at: SharePlace & { kind: "team" }) =>
+			(await call<{ covers?: Record<string, string> } | null>("GET", `${place(at)}/covers`))?.covers ?? {},
 		/** A frame's cover, filed under the version of the frame it is of. */
 		putCover: (at: SharePlace, source: string, frame: string, bytes: Uint8Array) =>
 			call<null>(
