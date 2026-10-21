@@ -158,8 +158,9 @@ export function fakeTeamsSource(start: {
 			};
 			return moved;
 		},
-		create: async (name) => {
+		create: async (name, business) => {
 			ask(`create ${name}`);
+			if (business !== true) throw new TeamActionRefused("business_required");
 			return { address: name.toLowerCase(), name };
 		},
 		people: async (address) => {
@@ -210,9 +211,10 @@ export function fakeTeamsSource(start: {
 			if (!state.billing) throw new TeamActionRefused("not_found");
 			return state.billing;
 		},
-		checkout: async (address, editors, cycle) => {
+		checkout: async (address, editors, cycle, business) => {
 			ask(`checkout ${address} ${cycle} ${editors.join(",")}`);
 			admin(address);
+			if (business !== true) throw new TeamActionRefused("business_required");
 			if (state.billing?.state === "free") throw new TeamActionRefused("billing_free");
 			return { url: `https://checkout.stripe.test/${address}` };
 		},
@@ -222,22 +224,6 @@ export function fakeTeamsSource(start: {
 			if (state.billing?.state === "free" || state.billing?.plan == null)
 				throw new TeamActionRefused("no_subscription");
 			return { url: `https://billing.stripe.test/${address}` };
-		},
-		withdraw: async (address) => {
-			ask(`withdraw ${address}`);
-			admin(address);
-			const billing = state.billing;
-			if (!billing?.withdrawUntil || billing.withdrawUntil * 1000 < Date.now())
-				throw new TeamActionRefused("withdrawal_closed");
-			state.billing = {
-				...billing,
-				state: "lapsed",
-				paidBefore: true,
-				plan: null,
-				nextCharge: null,
-				withdrawUntil: null,
-			};
-			return { withdrawnAt: Math.floor(Date.now() / 1000), refunded: billing.plan?.amount ?? 0 };
 		},
 		setup: async (address) => {
 			ask(`setup ${address}`);

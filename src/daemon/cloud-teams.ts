@@ -81,10 +81,15 @@ export function cloudTeamRoutes(options: {
 			.post(
 				"/teams",
 				validator("json", (value, c) => {
-					const name = (value as { name?: unknown }).name;
-					return typeof name === "string" ? { name } : c.json({ error: "invalid_name" }, 400);
+					const { name, business } = value as { name?: unknown; business?: unknown };
+					return typeof name === "string"
+						? { name, business: business === true }
+						: c.json({ error: "invalid_name" }, 400);
 				}),
-				(c) => act(c, () => client().create(c.req.valid("json").name)),
+				(c) => {
+					const { name, business } = c.req.valid("json");
+					return act(c, () => client().create(name, business));
+				},
 			)
 			.get("/teams/:team/people", (c) => act(c, () => client().people(c.req.param("team"))))
 			// who is inside each of the team's projects now, for Home's covers
@@ -196,22 +201,21 @@ export function cloudTeamRoutes(options: {
 			.post(
 				"/teams/:team/billing/checkout",
 				validator("json", (value, c) => {
-					const { editors, cycle } = value as { editors?: unknown; cycle?: unknown };
+					const { editors, cycle, business } = value as { editors?: unknown; cycle?: unknown; business?: unknown };
 					if (
 						!Array.isArray(editors) ||
 						!editors.every((editor) => typeof editor === "string") ||
 						(cycle !== "monthly" && cycle !== "yearly")
 					)
 						return c.json({ error: "invalid_billing" }, 400);
-					return { editors: editors as string[], cycle: cycle as BillingCycle };
+					return { editors: editors as string[], cycle: cycle as BillingCycle, business: business === true };
 				}),
 				(c) => {
-					const { editors, cycle } = c.req.valid("json");
-					return act(c, () => client().checkout(c.req.param("team"), editors, cycle));
+					const { editors, cycle, business } = c.req.valid("json");
+					return act(c, () => client().checkout(c.req.param("team"), editors, cycle, business));
 				},
 			)
 			.post("/teams/:team/billing/portal", (c) => act(c, () => client().portal(c.req.param("team"))))
-			.post("/teams/:team/billing/withdraw", (c) => act(c, () => client().withdraw(c.req.param("team"))))
 			.get("/teams/:team/setup", (c) => act(c, () => client().setup(c.req.param("team"))))
 			.post("/teams/:team/setup/skip-invites", (c) => act(c, () => client().skipInvites(c.req.param("team"))))
 			.post("/teams/:team/setup/skip-projects", (c) => act(c, () => client().skipProjects(c.req.param("team"))))
