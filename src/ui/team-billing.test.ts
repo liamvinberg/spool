@@ -109,6 +109,16 @@ function rows(host: ParentNode): string[] {
 	return Array.from(host.querySelectorAll(".pj-team-billing li")).map((row) => row.textContent ?? "");
 }
 
+/** The tick that the team is bought for business or work, which paying waits for. */
+function business(host: ParentNode): HTMLInputElement {
+	const label = Array.from(host.querySelectorAll("label")).find(
+		(each) => each.textContent === "I’m buying for my business or work",
+	);
+	const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	if (!input) throw new Error("No business tick");
+	return input;
+}
+
 function box(host: ParentNode, email: string): HTMLInputElement {
 	const row = Array.from(host.querySelectorAll(".pj-team-billing li")).find((each) =>
 		each.textContent?.includes(email),
@@ -153,6 +163,9 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$40 a month");
 	expect(host.textContent).toContain("2 seats × $20 a month");
 
+	// paying waits for the business tick (spool#209)
+	expect(button(host, "Continue to payment").disabled).toBe(true);
+	act(() => business(host).click());
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(fake.asked).toContain("checkout tidemark monthly mira");
@@ -232,54 +245,6 @@ it("once paid shows the plan, the next charge and the card, and Manage billing o
 	await act(async () => button(host, "Manage billing").click());
 	await settle();
 	expect(opened).toEqual(["https://billing.stripe.test/tidemark"]);
-});
-
-it("offers an admin Withdraw from contract here for 14 days from the first payment, confirms it once, and shows the team gone local", async () => {
-	today(2026, 10, 15);
-	const fake = fakeTeamsSource({
-		teams: [team()],
-		people: PEOPLE,
-		billing: { ...PAYING, paidBefore: true, withdrawUntil: at(2026, 10, 25) },
-	});
-	const { host } = settings(fake);
-	await settle();
-	expect(host.textContent).toContain(
-		"Until October 25 you can withdraw from the contract: the payment is refunded in full and the subscription ends at once.",
-	);
-	await act(async () => button(host, "Withdraw from contract here").click());
-	const dialog = document.body.querySelector("dialog")?.textContent ?? "";
-	expect(dialog).toContain("Withdraw from Tidemark’s contract?");
-	expect(dialog).toContain(
-		"The payment is refunded in full and the subscription ends at once. Tidemark goes local: everyone’s copy stops syncing and its shares stop. You get a receipt by email.",
-	);
-	expect(fake.asked).not.toContain("withdraw tidemark");
-	await act(async () => button(document.body, "Confirm withdrawal").click());
-	await settle();
-	expect(fake.asked).toContain("withdraw tidemark");
-	expect(fake.asked.at(-1)).toBe("billing tidemark");
-	expect(host.textContent).toContain("Tidemark has gone local");
-	expect(host.textContent).not.toContain("Withdraw from contract here");
-});
-
-it("never offers withdrawing after its 14 days, from a spool.page that doesn't say, or to anyone but an admin", async () => {
-	today(2026, 10, 26);
-	for (const billing of [{ ...PAYING, withdrawUntil: at(2026, 10, 25) }, { ...PAYING, withdrawUntil: null }, PAYING]) {
-		const { host } = settings(fakeTeamsSource({ teams: [team()], people: PEOPLE, billing }));
-		await settle();
-		expect(host.textContent).toContain("Manage billing");
-		expect(host.textContent).not.toContain("withdraw");
-		expect(host.textContent).not.toContain("Withdraw");
-	}
-	const editor = settings(
-		fakeTeamsSource({
-			teams: [team("editor")],
-			people: PEOPLE,
-			billing: { ...PAYING, withdrawUntil: at(2026, 10, 30) },
-		}),
-		"editor",
-	);
-	await settle();
-	expect(editor.host.textContent).not.toContain("Withdraw");
 });
 
 it("says a failing team's card is being tried again until it goes local, above the plan", async () => {
@@ -362,6 +327,7 @@ it("says what spool.page refused when Checkout can't start", async () => {
 	};
 	const { host, opened } = settings(fake);
 	await settle();
+	tickBusiness(host);
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(host.querySelector('[role="status"]')?.textContent).toBe("This team is already paid for.");
@@ -431,6 +397,7 @@ it("after Checkout, reads again on coming back and keeps reading until Stripe sa
 		createElement(TeamBilling, { team: team(), onOpen: (url) => opened.push(url), pollMs: 20 }),
 	);
 	await settle();
+	tickBusiness(host);
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(opened).toHaveLength(1);
@@ -462,3 +429,13 @@ it("reads billing again when the window comes back, without a Checkout of its ow
 	await settle();
 	expect(host.textContent).toContain("3 seats, billed yearly");
 });
+
+/** Ticks that the team is bought for business or work, which paying waits for (spool#209). */
+function tickBusiness(host: ParentNode) {
+	const label = Array.from(host.querySelectorAll("label")).find(
+		(each) => each.textContent === "I’m buying for my business or work",
+	);
+	const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	if (!input) throw new Error("No business tick");
+	if (!input.checked) act(() => input.click());
+}

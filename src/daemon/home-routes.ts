@@ -10,6 +10,8 @@ import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
+import { backInGitOffered } from "../team-moves";
+import { updateLine } from "../update-how";
 import type { createAgentTurns } from "./agent-live";
 import { DesignBoundaryError } from "./design-path";
 import type { createChangeHub } from "./events";
@@ -399,14 +401,20 @@ export function homeRoutes(deps: {
 						const link = followedLink(project.root);
 						const ended = endedWith(project.root);
 						const movedOut = ended === undefined ? undefined : movedOutOf(project.root);
-						const paused = link === undefined ? null : teamSync.state(project.root).paused;
+						const sync = link === undefined ? undefined : teamSync.state(project.root);
+						// a copy paused for an update is paused on its cover too (#206)
+						const paused =
+							sync === undefined
+								? null
+								: (sync.paused ?? (sync.update === null ? null : updateLine(sync.update.team)));
 						const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
 						const moved = movedAway(project.root);
-						const [summary, icon, thumbnail, inRepo] = await Promise.all([
+						const [summary, icon, thumbnail, inRepo, backInGit] = await Promise.all([
 							summarizeProject(project.root),
 							findProjectIcon(project.root),
 							findProjectThumbnail(project.root),
 							link === undefined ? false : checkoutOf(project.root).then((found) => found !== undefined),
+							backInGitOffered(project.root),
 						]);
 						return {
 							name: basename(project.root),
@@ -422,6 +430,7 @@ export function homeRoutes(deps: {
 							...(paused === null ? {} : { syncPaused: paused }),
 							...(goneLocal === undefined ? {} : { goneLocal }),
 							...(moved === undefined ? {} : { moved }),
+							...(backInGit ? { backInGit: true as const } : {}),
 							...summary,
 						};
 					}),

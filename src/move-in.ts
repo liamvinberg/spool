@@ -255,6 +255,21 @@ async function commitMove(root: string, options: Pick<MoveOptions, "wait" | "sig
 	return commit;
 }
 
+/**
+ * The move-in commit made again (#197): a copy whose project was removed from its team and restored, its design/ put
+ * back in git meanwhile, takes it out once more, `spool.json` and the AGENTS.md line in. Owed until git takes it, as a
+ * move's is.
+ */
+export function redoMoveIn(
+	root: string,
+	link: ProjectLink,
+	agents: string | undefined,
+	options: Pick<MoveOptions, "wait" | "signal"> = {},
+): Promise<MoveCommit> {
+	writeAtomic(owed(root), `${JSON.stringify({ project: link.url, ...(agents === undefined ? {} : { agents }) })}\n`);
+	return commitMove(root, options);
+}
+
 /** Every move among these roots whose commit is still owed, its commit tried again: what a daemon does at start. */
 export async function finishMoves(
 	roots: readonly string[],

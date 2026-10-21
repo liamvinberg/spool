@@ -19,6 +19,7 @@ import {
 	moveProjectOut,
 	moveProjectToTeam,
 	type ProjectCard,
+	putBackInGit,
 	type Survey,
 	TeamActionRefused,
 	type TeamProjectOnMac,
@@ -35,6 +36,7 @@ import { Menu, MenuItem } from "./primitives/overlays";
 import { RadioCard, RadioGroup } from "./primitives/selection";
 import { systemTrashName } from "./system-trash";
 import {
+	backInGitDone,
 	folderName,
 	type MoveDone,
 	MoveTeamSheet,
@@ -797,15 +799,22 @@ export function MoveOutSheet({
 	const source = useContext(TeamsSourceContext);
 	const [others, setOthers] = useState<string[]>([]);
 	const [comments, setComments] = useState(0);
+	const [shares, setShares] = useState(0);
 	const [moving, setMoving] = useState(false);
 	const progress = useProgressWhile(path, moving);
 	useEffect(() => {
 		let current = true;
-		// its comments go with the team's copy (spool#160): the sheet says how many before they do
+		// it waits in the team's trash with its comments, its shares paused (#197): the sheet counts both
 		void source
 			.commentCount(team.address, project)
 			.then((count) => {
 				if (current && count !== undefined) setComments(count);
+			})
+			.catch(() => {});
+		void source
+			.shareCount(team.address, project)
+			.then((count) => {
+				if (current && count !== undefined) setShares(count);
 			})
 			.catch(() => {});
 		return () => {
@@ -868,10 +877,19 @@ export function MoveOutSheet({
 					syncing and becomes a local project too, and its design/ comes back into git when they pull.
 				</Says>
 			)}
+			<Says>
+				{team.name} keeps {project} in its trash for 30 days: an admin can restore it until then, with its comments
+				and shares.
+			</Says>
 			{comments > 0 && (
 				<Says>
-					{comments === 1 ? "Its 1 comment goes" : `Its ${comments.toLocaleString("en")} comments go`} with{" "}
-					{team.name}’s copy: {comments === 1 ? "it is" : "they are"} deleted when the project goes local.
+					{comments === 1 ? "Its 1 comment is" : `Its ${comments.toLocaleString("en")} comments are`} kept with it.
+				</Says>
+			)}
+			{shares > 0 && (
+				<Says>
+					{shares === 1 ? "Its 1 share pauses" : `Its ${shares.toLocaleString("en")} shares pause`} until it’s
+					restored.
 				</Says>
 			)}
 			{moving && <MoveProgressLine progress={progress} team={undefined} />}
@@ -1054,14 +1072,35 @@ export function useCoverMoves({
 }): { moveItems: MoveItems; surface: ReactNode } {
 	const [sheet, setSheet] = useState<CoverSheet | null>(null);
 	const moveItems: MoveItems = (project) => {
+		// a copy that ended or went local in its checkout goes back into git with one commit (#198)
+		const back: MoveItem[] =
+			project.backInGit === true
+				? [
+						{
+							label: "Put design/ back in git",
+							onClick: () =>
+								void putBackInGit(project.name).then(
+									(out) => onDone(backInGitDone(out)),
+									(error: unknown) =>
+										onDone({
+											toast: error instanceof Error ? error.message : "Could not finish. Try again.",
+										}),
+								),
+						},
+					]
+				: [];
 		const link = project.team;
 		if (link === undefined)
-			return onMoveIn === undefined ? [] : [{ label: "Move to team…", onClick: () => onMoveIn(project) }];
+			return [
+				...(onMoveIn === undefined ? [] : [{ label: "Move to team…", onClick: () => onMoveIn(project) }]),
+				...back,
+			];
 		const own = teams.find((team) => team.address === link.team);
 		const open = (kind: CoverSheet["kind"]) => () => setSheet({ kind, project, link });
 		const items: MoveItem[] = [];
 		if (mayMoveFrom(teams, link.team)) items.push({ label: "Move to team…", onClick: open("team") });
 		if (link.inRepo === false) items.push({ label: "Move into a checkout…", onClick: open("into") });
+		items.push(...back);
 		if (own?.role === "admin") items.push({ label: `Move out of ${own.name}…`, end: true, onClick: open("out") });
 		return items;
 	};

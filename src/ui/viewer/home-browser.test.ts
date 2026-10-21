@@ -224,7 +224,7 @@ describe("Home in a browser", () => {
 		await page.getByText("sam@devosurf.com").waitFor();
 		await page.getByRole("button", { name: "Signed in as vic@devosurf.com" }).click();
 		await page.getByRole("menuitem", { name: "Account" }).click();
-		await page.getByRole("heading", { name: "Account" }).waitFor();
+		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 		expect(new URL(page.url()).pathname).toBe("/account");
 		expect(await page.title()).toBe("Account · spool");
 		// the team stays in the sidebar, with none of its pages current
@@ -240,7 +240,7 @@ describe("Home in a browser", () => {
 		await page.getByRole("button", { name: "People" }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
 		await page.goBack();
-		await page.getByRole("heading", { name: "Account" }).waitFor();
+		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 	});
 
 	it("names the account on its page, everywhere at once, and says the rule when spool.page refuses a name", {
@@ -308,9 +308,12 @@ describe("Home in a browser", () => {
 		await page.getByText("sam@devosurf.com").waitFor();
 		expect(await page.locator("[data-billing-total]").textContent()).toBe("$384 a year");
 		await shoot(page, "billing.png");
+		await page.getByText("I’m buying for my business or work", { exact: true }).click();
 		await page.getByRole("button", { name: "Continue to payment" }).click();
 		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
-		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly"}');
+		expect(asked).toContain(
+			'POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly","business":true}',
+		);
 	});
 
 	it("moves between Settings' tabs at their own addresses", { timeout: 60_000 }, async () => {
@@ -342,9 +345,12 @@ describe("Home in a browser", () => {
 		await pay.getByText("sam@devosurf.com").waitFor();
 		expect(await pay.getByRole("radio", { name: "monthly · $20" }).isChecked()).toBe(true);
 		await shoot(page, "setup-list.png");
+		await pay.getByText("I’m buying for my business or work", { exact: true }).click();
 		await pay.getByRole("button", { name: "Continue to payment" }).click();
 		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
-		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"monthly"}');
+		expect(asked).toContain(
+			'POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"monthly","business":true}',
+		);
 	});
 
 	it("says the team is set up once its last step is done, and the list is gone", { timeout: 60_000 }, async () => {
@@ -378,10 +384,13 @@ describe("Home in a browser", () => {
 		const dialog = page.getByRole("dialog", { name: "Devosurf has gone local" });
 		await dialog.waitFor();
 		expect(await dialog.textContent()).toContain("Anyone left out becomes a viewer.");
+		await dialog.getByText("I’m buying for my business or work", { exact: true }).click();
 		await dialog.getByRole("button", { name: "Continue to payment" }).click();
 		// Checkout leaves in this tab, as Billing's does
 		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
-		expect(asked).toContain('POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly"}');
+		expect(asked).toContain(
+			'POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly","business":true}',
+		);
 
 		// a viewer of a lapsed team reaches its Home, and is told why nothing moves
 		const viewer = await open("/client", { teams: lapsed });

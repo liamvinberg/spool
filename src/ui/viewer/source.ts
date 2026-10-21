@@ -107,8 +107,11 @@ export type ViewerRole = "admin" | "editor" | "viewer";
 /** What an outsider's one line says: who shared, which pages, and when they last changed (seconds), if ever. */
 export interface ViewerShared {
 	by: string;
+	/** The pages it shows; for a whole-project share, every page as the project now stands. */
 	pages: string[];
 	updated: number | null;
+	/** A whole-project share (spool#182), said by the project's name. */
+	whole?: true;
 }
 
 /** Whether a role edits: holds the folders, so has a spool to hand the project over to. */

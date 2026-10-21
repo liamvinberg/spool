@@ -744,6 +744,8 @@ export interface ProjectCard extends ProjectSummary {
 	 * as git says, how this account stands, and the frames left here that go up once it is an editor.
 	 */
 	moved?: MovedAway;
+	/** A copy that ended or went local in a checkout still tracking `spool.json`: its menu offers Put design/ back in git. */
+	backInGit?: true;
 }
 
 /**

@@ -186,6 +186,11 @@ const zoomIn = async (page: Page, times: number) => {
 	for (let i = 0; i < times; i++) await page.getByRole("button", { name: "Zoom in" }).click();
 };
 
+/** The zoom the readout says, in percent: the exact step depends on where the fit landed. */
+async function zoom(page: Page): Promise<number> {
+	return Number.parseInt((await page.locator("[data-viewer-zoom]").textContent()) ?? "", 10);
+}
+
 describe("a big project on the read-only canvas", () => {
 	it("draws every cover on the picture layer with no shell, and the rest as named placeholders", {
 		timeout: 60_000,
@@ -214,14 +219,16 @@ describe("a big project on the read-only canvas", () => {
 		await expect.poll(() => seen(page).then((seen) => seen.loading), { timeout: 20_000 }).toBe(true);
 		// the two frames there: one covered, one not
 		await expect.poll(() => page.locator('iframe[data-viewer-phase="arrived"]').count(), { timeout: 20_000 }).toBe(2);
-		expect(await iframes(page)).toEqual(["f19", "f20"]);
+		// nearest the middle first: the next ones in reach may follow, two at a time
+		expect(await iframes(page)).toEqual(expect.arrayContaining(["f19", "f20"]));
+		expect((await seen(page)).booting).toBeLessThanOrEqual(2);
 		// a frame shown live has taken itself off the layer
 		await expect
-			.poll(async () => (await pictures(page))?.claimed.sort(), { timeout: 20_000 })
-			.toEqual(["f19", "f20"]);
+			.poll(async () => (await pictures(page))?.claimed ?? [], { timeout: 20_000 })
+			.toEqual(expect.arrayContaining(["f19", "f20"]));
 		// out to where a whole row reads: more frames want documents than may boot at once
 		await page.getByRole("button", { name: "Zoom out" }).click();
-		await expect.poll(() => page.locator("[data-viewer-zoom]").textContent(), { timeout: 20_000 }).toBe("46%");
+		await expect.poll(() => zoom(page), { timeout: 20_000 }).toBeLessThan(50);
 		// one notch of ⌘-scroll, about 46% to 60%: an 800px frame draws 480
 		await page.locator("[data-viewer-field]").evaluate((field) => {
 			const box = field.getBoundingClientRect();
@@ -236,7 +243,7 @@ describe("a big project on the read-only canvas", () => {
 				}),
 			);
 		});
-		await expect.poll(() => page.locator("[data-viewer-zoom]").textContent(), { timeout: 20_000 }).toBe("60%");
+		await expect.poll(() => zoom(page), { timeout: 20_000 }).toBeGreaterThanOrEqual(55);
 		await expect
 			.poll(() => page.locator('iframe[data-viewer-phase="arrived"]').count(), { timeout: 20_000 })
 			.toBeGreaterThan(2);

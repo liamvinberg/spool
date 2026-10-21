@@ -7,9 +7,11 @@ import {
 	type SharesSource,
 	type ShareView,
 	saidAgo,
+	sharedWhatEnds,
 	shareWho,
 	TOP_PAGE,
 } from "../share-view";
+import { PROJECT_LIMIT_BYTES } from "../team-sync-protocol";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
 import { Button } from "./primitives/actions";
@@ -133,6 +135,11 @@ export function SharedControl({ source, shares }: { source: SharesSource; shares
 	);
 }
 
+/** A page as a row says it: its whole path, or the top page. */
+function sharedPath(page: string): string {
+	return page === ROOT_PAGE ? TOP_PAGE : page;
+}
+
 function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean; onOpen: () => void }) {
 	return (
 		<button
@@ -146,9 +153,7 @@ function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean
 		>
 			<KindGlyph kind={share.kind} className="shrink-0 text-secondary" />
 			<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
-			<span className="min-w-0 flex-1 truncate text-secondary type-detail">
-				{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
-			</span>
+			<span className="min-w-0 flex-1 truncate text-secondary type-detail">{sharedWhatEnds(share, sharedPath)}</span>
 			{manage && (
 				<span className="h-2.5 w-2.5 shrink-0 text-secondary">
 					<ChevronIcon />
@@ -192,7 +197,7 @@ function OpenedShare({
 				<KindGlyph kind={share.kind} className="shrink-0 text-primary" />
 				<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
 				<span className="min-w-0 flex-1 truncate text-secondary type-detail">
-					{share.pages.map((page) => (page === ROOT_PAGE ? TOP_PAGE : page)).join(", ")}
+					{sharedWhatEnds(share, sharedPath)}
 				</span>
 				<span className="h-2.5 w-2.5 shrink-0 rotate-90 text-secondary">
 					<ChevronIcon />
@@ -368,6 +373,8 @@ export function refusalSaid(code: string): string {
 			return "Only editors and admins change shares.";
 		case "share_not_found":
 			return "That share was stopped meanwhile.";
+		case "too_large":
+			return `What you’re sharing is over spool.page’s ${PROJECT_LIMIT_BYTES / 1_000_000_000} GB limit for a project.`;
 		default:
 			// a team's own refusals, such as a team gone local, in Home's words
 			return teamSays(new TeamActionRefused(code), "spool.page couldn't do that just now.");

@@ -4,6 +4,8 @@ import type {
 	CloudTeam,
 	CloudTeamInvite,
 	CloudTeamProject,
+	DeletedTeam,
+	RemovedTeamProject,
 	TeamPeople,
 	TeamProjectHere,
 	TeamRole,
@@ -48,10 +50,11 @@ const SAYS: Record<string, string> = {
 	already_paying: "This team is already paid for.",
 	invalid_billing: "Choose monthly or yearly and try again.",
 	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
-	withdrawal_closed: "The 14 days to withdraw from this team’s contract are over.",
+	business_required: "Spool Cloud is for business use. Tick that you’re buying for your business or work.",
 	// with its number from People's billing where it is read: see `peopleSays`
 	trial_editor_cap: "The trial holds no more editors. Pay for the team in Settings › Billing to add more.",
 	unpaid: "This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
+	name_in_trash: "A removed project holds that name until it’s deleted from the team’s trash.",
 };
 
 /** What a refusal says to a person: in Home's words when it has some, else `otherwise`. */
@@ -107,11 +110,20 @@ export interface TeamsSource {
 	cover(address: string, project: string): Promise<Blob | undefined>;
 	/** How many comments a project holds, which go if it leaves the team; undefined while spool.page can't say. */
 	commentCount(address: string, project: string): Promise<number | undefined>;
+	/** How many shares a team project has open, for the move-out sheet to say they pause; undefined if unsaid. */
+	shareCount(address: string, project: string): Promise<number | undefined>;
+	/** The team's removed projects waiting in its trash (#197): its admins' alone; undefined while it can't be said. */
+	removed(address: string): Promise<RemovedTeamProject[] | undefined>;
+	/** A removed project back in its team, with everything it kept. */
+	restore(address: string, project: string): Promise<unknown>;
+	/** A removed project deleted for good, now rather than at its 30 days. */
+	deleteRemoved(address: string, project: string): Promise<unknown>;
 	/** What moving `project` to the team at `to`, as `name` when given, would do; undefined while it can't be said. */
 	movePreview(address: string, project: string, to: string, name?: string): Promise<MovePreview | undefined>;
 	/** The same project moves to the team at `to`, renamed when `name` is given; its old address leads on. */
 	move(address: string, project: string, to: string, name?: string): Promise<TeamMoveOutcome>;
-	create(name: string): Promise<Pick<CloudTeam, "address" | "name">>;
+	/** Starts a team, its starter having ticked that they're buying for their business or work (spool#209). */
+	create(name: string, business: true): Promise<Pick<CloudTeam, "address" | "name">>;
 	people(address: string): Promise<TeamPeople>;
 	update(address: string, change: { name?: string; address?: string }): Promise<Pick<CloudTeam, "address" | "name">>;
 	delete(address: string): Promise<unknown>;
@@ -127,11 +139,9 @@ export interface TeamsSource {
 	/** What the team pays and when. Admins only. */
 	billing(address: string): Promise<BillingSummary>;
 	/** Stripe Checkout's address for paying for the team: `editors` stay editors, every other editor becomes a viewer. */
-	checkout(address: string, editors: string[], cycle: BillingCycle): Promise<{ url: string }>;
+	checkout(address: string, editors: string[], cycle: BillingCycle, business: true): Promise<{ url: string }>;
 	/** Stripe's customer portal's address, for the card, invoices, plan and cancelling. */
 	portal(address: string): Promise<{ url: string }>;
-	/** Withdraws from the team's contract within 14 days of its first payment: refunded in full, ended at once. */
-	withdraw(address: string): Promise<unknown>;
 	/** A new team's setup list, read from its facts. Admins only. */
 	setup(address: string): Promise<TeamSetup>;
 	/** Invite people, skipped. */
@@ -140,6 +150,26 @@ export interface TeamsSource {
 	skipProjects(address: string): Promise<TeamSetup>;
 	/** Every step is done: the list goes for good. */
 	setupDone(address: string): Promise<TeamSetup>;
+	/**
+	 * The team, or one project of it, exported into a folder on this Mac (#200), answered once it is written. Only the
+	 * daemon does this; `transfer` names the run for its progress and its cancel.
+	 */
+	exportTeam(
+		address: string,
+		request: { into: string; project?: string; transfer: string },
+	): Promise<{ folder: string }>;
+	/** How far a running export has come; undefined once it isn't running, or before it says. */
+	exportProgress(transfer: string): Promise<TeamExportProgress | undefined>;
+	/** A running export stopped: it leaves nothing behind. */
+	cancelExport(transfer: string): Promise<unknown>;
+}
+
+/** How far a team export has come: the project being written, which of how many, and how many saves are in. */
+export interface TeamExportProgress {
+	project: string;
+	index: number;
+	projects: number;
+	saves: number;
 }
 
 /**
@@ -192,6 +222,7 @@ export function teamsAt(
 				invites?: unknown;
 				mayCreateTeam?: unknown;
 				newTeam?: unknown;
+				deletedTeams?: unknown;
 				origin?: unknown;
 			} | null;
 			if (response.status === 401 || body?.state === "signed-out") return { state: "signed-out" };
@@ -201,6 +232,7 @@ export function teamsAt(
 				state: "ready",
 				teams: body.teams as CloudTeam[],
 				invites: body.invites as CloudTeamInvite[],
+				...(Array.isArray(body.deletedTeams) ? { deletedTeams: body.deletedTeams as DeletedTeam[] } : {}),
 				mayCreateTeam: body.mayCreateTeam === true,
 				...(body.newTeam === "trial" || body.newTeam === "free" || body.newTeam === "paid"
 					? { newTeam: body.newTeam }
@@ -235,6 +267,18 @@ export function teamsAt(
 			);
 			return typeof body?.comments === "number" ? body.comments : undefined;
 		},
+		async shareCount(address, project) {
+			const body = await read<{ shares?: unknown }>(
+				`${team(address)}/projects/${encodeURIComponent(project)}/shares`,
+			);
+			return Array.isArray(body?.shares) ? body.shares.length : undefined;
+		},
+		async removed(address) {
+			const body = await read<{ projects?: unknown }>(`${team(address)}/removed`);
+			return Array.isArray(body?.projects) ? (body.projects as RemovedTeamProject[]) : undefined;
+		},
+		restore: (address, project) => call("POST", `${team(address)}/removed/${encodeURIComponent(project)}/restore`),
+		deleteRemoved: (address, project) => call("DELETE", `${team(address)}/removed/${encodeURIComponent(project)}`),
 		async movePreview(address, project, to, name) {
 			const query = new URLSearchParams({ to, ...(name === undefined ? {} : { name }) });
 			const body = await read<Partial<MovePreview>>(`${moving(address, project)}?${query}`);
@@ -263,7 +307,7 @@ export function teamsAt(
 				losing: moved.losing ?? [],
 			};
 		},
-		create: (name) => call("POST", "/teams", { name }),
+		create: (name, business) => call("POST", "/teams", { name, business }),
 		people: (address) => call("GET", `${team(address)}/people`),
 		update: (address, change) => call("PATCH", team(address), change),
 		delete: (address) => call("DELETE", team(address)),
@@ -289,13 +333,19 @@ export function teamsAt(
 		accept: (invite) => call("POST", `/invites/${encodeURIComponent(invite)}/accept`),
 		decline: (invite) => call("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 		billing: (address) => call("GET", `${team(address)}/billing`),
-		checkout: (address, editors, cycle) => call("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
+		checkout: (address, editors, cycle, business) =>
+			call("POST", `${team(address)}/billing/checkout`, { editors, cycle, business }),
 		portal: (address) => call("POST", `${team(address)}/billing/portal`),
-		withdraw: (address) => call("POST", `${team(address)}/billing/withdraw`),
 		setup: (address) => call("GET", `${team(address)}/setup`),
 		skipInvites: (address) => call("POST", `${team(address)}/setup/skip-invites`),
 		skipProjects: (address) => call("POST", `${team(address)}/setup/skip-projects`),
 		setupDone: (address) => call("POST", `${team(address)}/setup/done`),
+		exportTeam: (address, request) => call("POST", `${team(address)}/export`, request),
+		async exportProgress(transfer) {
+			const body = await read<{ progress?: TeamExportProgress | null }>(`/exports/${encodeURIComponent(transfer)}`);
+			return body?.progress ?? undefined;
+		},
+		cancelExport: (transfer) => call("POST", `/exports/${encodeURIComponent(transfer)}/cancel`),
 	};
 }
 

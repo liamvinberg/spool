@@ -380,6 +380,8 @@ async function offlineProject(start: string, { migrate = true } = {}): Promise<s
 		}
 		return root;
 	}
+	// a team project's local copy is migrated by the daemon once it has caught up with the team, never before (#206)
+	if (followedLink(root) !== undefined) return root;
 	const migrated = migrateFrameNames(root);
 	if (migrated !== undefined) process.stderr.write(`spool: ${describeMigration(root, migrated)}\n`);
 	return root;

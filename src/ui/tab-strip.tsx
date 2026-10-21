@@ -157,6 +157,7 @@ export function TabStrip({
 	onExport,
 	onChangeIcon,
 	onRemoveIcon,
+	onMatchTeam,
 }: {
 	tabs: readonly TabProject[];
 	/** the focused project's root; null is Home */
@@ -173,6 +174,8 @@ export function TabStrip({
 	onChangeIcon?: (project: TabProject) => void;
 	/** "Remove icon", offered while the icon is the project's own file. */
 	onRemoveIcon?: (project: TabProject) => void;
+	/** "Match the team", offered on a team project's tab. */
+	onMatchTeam?: (project: TabProject) => void;
 }) {
 	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
 	const nav = useRef<HTMLElement | null>(null);
@@ -545,6 +548,7 @@ export function TabStrip({
 					onCloseTab={() => onClose(menu.project.root)}
 					{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(menu.project) })}
 					{...(onRemoveIcon === undefined ? {} : { onRemoveIcon: () => onRemoveIcon(menu.project) })}
+					{...(onMatchTeam === undefined ? {} : { onMatchTeam: () => onMatchTeam(menu.project) })}
 				/>
 			)}
 		</MotionConfig>

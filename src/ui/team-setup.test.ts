@@ -339,6 +339,7 @@ describe("a new team's setup list", () => {
 		expect(said(pay)).toContain("This account has had its trial, so Tidemark starts paid.");
 		// the payment choice starts on the cycle the landing showed
 		expect(pay.querySelector<HTMLInputElement>('input[type="radio"][value="monthly"]')?.checked).toBe(true);
+		tickBusiness(pay);
 		await act(async () => button(pay, "Continue to payment").click());
 		expect(fake.asked).toContain("checkout tidemark monthly ");
 		expect(opened).toEqual(["https://checkout.stripe.test/tidemark"]);
@@ -484,3 +485,13 @@ describe("a new team's setup list", () => {
 		expect(setUp).toEqual(["Tidemark", "Harbour"]);
 	});
 });
+
+/** Ticks that the team is bought for business or work, which paying waits for (spool#209). */
+function tickBusiness(host: ParentNode) {
+	const label = Array.from(host.querySelectorAll("label")).find(
+		(each) => each.textContent === "I’m buying for my business or work",
+	);
+	const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	if (!input) throw new Error("No business tick");
+	if (!input.checked) act(() => input.click());
+}

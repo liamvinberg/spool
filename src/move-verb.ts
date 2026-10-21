@@ -100,7 +100,7 @@ export async function runMove(options: MoveVerbOptions, deps: MoveVerbDeps): Pro
 
 	if (options.out === true) {
 		deps.print(
-			`moves ${from.team}/${from.project} out of ${from.team}: the team no longer has it, and everyone else's copy stops syncing`,
+			`moves ${from.team}/${from.project} out of ${from.team}: everyone else's copy stops syncing, and the team keeps it in its trash for 30 days, where an admin can restore it with its comments and shares`,
 		);
 		if (here !== undefined)
 			deps.print(

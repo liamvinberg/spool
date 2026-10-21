@@ -51,11 +51,6 @@ export interface BillingSummary {
 	billingEmail: string | null;
 	periodEnd: number | null;
 	cancelAt: number | null;
-	/**
-	 * Until when an admin may withdraw from the contract (the withdrawal function, spool#208): 14 days from the first
-	 * payment. Null outside them; absent from a spool.page before it, which offers none.
-	 */
-	withdrawUntil?: number | null;
 	failingSince: number | null;
 	lapsesAt: number | null;
 }
@@ -90,8 +85,18 @@ export interface CloudTeamInvite {
 	expiresAt: number;
 }
 
+/** A deleted team this account is an admin of: it may still be exported until `purgeAfter`, unix seconds. */
+export interface DeletedTeam {
+	address: string;
+	name: string;
+	logo: string | null;
+	purgeAfter: number;
+}
+
 export interface CloudTeams {
 	teams: CloudTeam[];
+	/** The deleted teams this account is an admin of, until their purge. Absent from a spool.page before #200. */
+	deletedTeams?: DeletedTeam[];
 	invites: CloudTeamInvite[];
 	/** Until launch, a maintainer decides who may start a team. */
 	mayCreateTeam: boolean;
@@ -140,6 +145,19 @@ export interface CloudTeamProject {
 	url: string;
 	/** The repo its code lives in, as `host/path` from an editor's `origin`; null when nobody has said. Information only. */
 	repo: string | null;
+}
+
+/** A project in its team's trash (#197), as the team's admins see it: who removed it, when, and when it goes for good. */
+export interface RemovedTeamProject {
+	name: string;
+	/** Who removed it, by name; null once their account is gone. */
+	removedBy: string | null;
+	/** Unix seconds. */
+	removedAt: number;
+	/** When it is purged, unix seconds: until then an admin can restore it. */
+	purgeAt: number;
+	/** Its shares, paused while it waits. */
+	shares: number;
 }
 
 /** Who is inside one of a team's projects right now (DEV-197): each person once, named and in their team colour. */
@@ -212,7 +230,9 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 	const team = (address: string) => `teams/${encodeURIComponent(address)}`;
 	return {
 		list: () => call<CloudTeams>("GET", "teams"),
-		create: (name: string) => call<Pick<CloudTeam, "id" | "address" | "name">>("POST", "teams", { name }),
+		/** `business`: the starter ticked that they're buying for their business or work; spool.page refuses a team without. */
+		create: (name: string, business: boolean) =>
+			call<Pick<CloudTeam, "id" | "address" | "name">>("POST", "teams", { name, business }),
 		people: (address: string) => call<TeamPeople>("GET", `${team(address)}/people`),
 		update: (address: string, change: { name?: string; address?: string }) =>
 			call<Pick<CloudTeam, "id" | "address" | "name">>("PATCH", team(address), change),
@@ -240,13 +260,10 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		/** What the team pays and when. Admins only. */
 		billing: (address: string) => call<BillingSummary>("GET", `${team(address)}/billing`),
 		/** Stripe Checkout for the team: `editors` are the editors kept as seats; the rest become viewers once it completes. */
-		checkout: (address: string, editors: string[], cycle: BillingCycle) =>
-			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
+		checkout: (address: string, editors: string[], cycle: BillingCycle, business: boolean) =>
+			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle, business }),
 		/** Stripe's customer portal for the team's card, invoices and plan. */
 		portal: (address: string) => call<{ url: string }>("POST", `${team(address)}/billing/portal`),
-		/** Withdraws from the team's contract: its first payment refunded in full and the subscription ended at once. */
-		withdraw: (address: string) =>
-			call<{ withdrawnAt: number; refunded: number }>("POST", `${team(address)}/billing/withdraw`),
 		/** A new team's setup list, read from its facts. Admins only. */
 		setup: (address: string) => call<TeamSetup>("GET", `${team(address)}/setup`),
 		/** Invite people, skipped: setting the team up alone first. */
@@ -278,13 +295,24 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 				`${team(address)}/projects/${encodeURIComponent(name)}/move`,
 				{ to, ...(as === undefined ? {} : { name: as }) },
 			),
-		/** The project leaves the team for good, every copy ending; moved out, its address says so to the team. Admins only. */
+		/**
+		 * The project leaves the team for its trash, every copy ending; it can be restored for 30 days. Moved out, its
+		 * address says so to the team. Admins only.
+		 */
 		deleteProject: (address: string, name: string, options: { out?: boolean } = {}) =>
 			call<null>(
 				"DELETE",
 				`${team(address)}/projects/${encodeURIComponent(name)}${options.out === true ? "?out=1" : ""}`,
 			),
-		/** How many comments a team project holds: what its leaving the team would delete with it. */
+		/** The team's trash: its removed projects, latest first. Admins only. */
+		removed: (address: string) => call<{ projects: RemovedTeamProject[] }>("GET", `${team(address)}/removed`),
+		/** A removed project back in the team, with everything it kept. Admins only; refused while the team is unpaid. */
+		restore: (address: string, name: string) =>
+			call<CloudTeamProject>("POST", `${team(address)}/removed/${encodeURIComponent(name)}/restore`),
+		/** A removed project deleted now, rather than after its 30 days. Admins only. */
+		deleteRemoved: (address: string, name: string) =>
+			call<null>("DELETE", `${team(address)}/removed/${encodeURIComponent(name)}`),
+		/** How many comments a team project holds: what waits in the trash with it if it leaves the team. */
 		commentCount: (address: string, name: string) =>
 			call<{ comments: number }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}/comments/count`),
 		/**

@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { type Context, Hono } from "hono";
 import { validator } from "hono/validator";
 import { CloudSignedOut, originOf } from "../cloud-auth";
+import { cloudShares } from "../cloud-shares";
 import { CloudTeamRefused, cloudTeams, type SeenAsk } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { getTeamProject } from "../get-it";
@@ -262,6 +263,20 @@ export function teamProjectRoutes(options: {
 							c.req.param("team"),
 							c.req.param("project"),
 						),
+					);
+				} catch (error) {
+					return refused(c, error);
+				}
+			})
+			/** A team project's open shares, for the move-out sheet to say they pause while it waits in the trash. */
+			.get("/teams/:team/projects/:project/shares", async (c) => {
+				try {
+					return c.json(
+						await cloudShares(options.spoolDir, { ...options.cloud, origin: origin() }).list({
+							kind: "team",
+							team: c.req.param("team"),
+							project: c.req.param("project"),
+						}),
 					);
 				} catch (error) {
 					return refused(c, error);

@@ -2,9 +2,12 @@ import { createHash } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
 import {
+	ACCEPTED_PROTOCOLS,
 	bundleParts,
 	CANVAS_PATH,
+	CLOSE_FORMAT,
 	CLOSE_NOT_EDITOR,
+	CLOSE_PROTOCOL,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNPAID,
 	COMMENTS_OPEN,
@@ -18,8 +21,10 @@ import {
 	type CommentReply,
 	type CommentsMessage,
 	type CopyChange,
+	canvasFormat,
 	changeRefusal,
 	commentBodyRefusal,
+	copyFingerprint,
 	type DesignNow,
 	decodeFrame,
 	draftFor,
@@ -32,6 +37,7 @@ import {
 	isCommentStill,
 	isOpenComment,
 	joinParts,
+	LIST_PAGE,
 	type Limited,
 	type Moved,
 	memberPostRefusal,
@@ -44,6 +50,7 @@ import {
 	readCommentPost,
 	readCommentReplyPost,
 	readCommentStillAsk,
+	readDrift,
 	readMoved,
 	readPresenceState,
 	replyForReader,
@@ -101,6 +108,10 @@ interface Project {
 	version: number;
 	/** Every path a local copy asked to have resent. */
 	resent: string[];
+	/** How many times local copies asked for a page of the list (#204). */
+	lists: number;
+	/** Every drift a local copy said it repaired, and whose copy it was. */
+	drifts: { repaired: number; cause: string; by: string }[];
 	/** Whose agents said their turn ended, and how many saves the project had then. */
 	turns: { by: string; saves: number }[];
 	/** Where its code lives, as `host/path`. */
@@ -123,6 +134,8 @@ interface Project {
 	last: Map<string, Uint8Array>;
 	/** Every hash each path was applied at, a delete's null included: what the history lookup answers from. */
 	had: Map<string, Set<string | null>>;
+	/** The team's design/ format: its first hello's, raised by every canvas.json save that says a higher one (#206). */
+	format?: number;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -157,9 +170,15 @@ interface Connected {
 	bundles?: boolean;
 	/** Its hello said it reads `presences`, and the object sends them. */
 	ticks?: boolean;
+	/** Its hello said `checks`, and the object makes them: it is sent the fingerprint after its catch-up. */
+	checks?: boolean;
+	/** The design/ format its hello said it writes: closed with `CLOSE_FORMAT` once the team's is higher (#206). */
+	format?: number;
 	/** Where this connection's person last said they were: kept only while it's connected. */
 	presence?: { state: PresenceState; at: number };
 	deliver(frame: string | Uint8Array): void;
+	/** A frame still being made, delivered in its turn once it is. */
+	deliverMade(frame: Promise<string | Uint8Array>): void;
 	/** Closed in turn, after everything already on its way, with the close code the object would give. */
 	close(code?: number): void;
 	/** Gone this instant: nothing sent from now on arrives, and the daemon hears of it in turn. */
@@ -176,6 +195,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const forwards = new Map<string, Project>();
 	/** Addresses whose project was moved out of its team (`DELETE ?out=1`). */
 	const movedOut = new Set<string>();
+	/** Projects waiting in their team's trash (#197), by the address they hold: who removed each, and when. */
+	const trash = new Map<string, { at: Project; by: string; when: number }>();
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
 	let ids = 0;
@@ -188,6 +209,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let down = false;
 	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
 	let refusing: number | undefined;
+	/** Accounts whose every hello is closed with this code, as spool.page closes a Spool too old for it (#206). */
+	const tooOld = new Map<string, number>();
+	/** How many hellos were closed so: how often a paused copy asked again. */
+	let tooOldAsked = 0;
 	/** How many times a machine asked where it stands in a project, as a daemon does after a close. */
 	let asked = 0;
 	/** How many files each history lookup asked about, in order. */
@@ -206,6 +231,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let ticks = true;
 	/** The object answers what the team has seen of a Mac's files, as spool.page does since spool#193. */
 	let seenAnswers = true;
+	/** The object makes checks (#204) for a daemon that says it does, as spool.page does since; off, it is older. */
+	let takesChecks = true;
+	/** Accounts whose copies miss the next save relayed to them, as a dropped relay would. */
+	const missing = new Set<string>();
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
 	/** The minute's bucket, on a clock the test turns: its level when last taken from, and how fast it refills. */
@@ -322,8 +351,36 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 						.map((one) => ({ name: one.accountId, color: one.color })),
 				})),
 			});
+		// the team's trash, its admins' alone
+		const binned = /^\/api\/teams\/[^/]+\/removed(?:\/([^/]+)(\/restore)?)?$/u.exec(path);
+		if (binned !== null) {
+			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
+			if (binned[1] === undefined)
+				return Response.json({
+					projects: [...trash.entries()]
+						.filter(([key]) => key.startsWith(`${address}/`))
+						.map(([, { at, by, when }]) => ({
+							name: at.name,
+							removedBy: by,
+							removedAt: when,
+							purgeAt: when + 30 * 86400,
+							shares: at.shares.size,
+						})),
+				});
+			const key = `${address}/${binned[1]}`;
+			const held = trash.get(key);
+			if (held === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
+			if (binned[2] === undefined && request.method === "DELETE") {
+				trash.delete(key);
+				movedOut.delete(key);
+				return Response.json({});
+			}
+			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			restore(key);
+			return Response.json(described(held.at));
+		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -331,6 +388,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const at = named === undefined ? undefined : projects.get(`${address}/${named}`);
 		if (named !== undefined && at === undefined && movedOut.has(`${address}/${named}`))
 			return Response.json({ error: "project_moved_out" }, { status: 410 });
+		const binnedHere = named === undefined ? undefined : trash.get(`${address}/${named}`);
+		if (at === undefined && binnedHere !== undefined)
+			return Response.json(
+				{
+					error: "project_removed",
+					team: teams.get(address)?.name ?? address,
+					by: binnedHere.by,
+					at: binnedHere.when,
+				},
+				{ status: 410 },
+			);
 		if (request.method === "GET" && named === undefined)
 			return Response.json({ projects: inside(address).map(described) });
 		if (request.method === "POST" && named === undefined)
@@ -340,6 +408,9 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
 				const name = body.name.toLowerCase();
 				if (projects.has(`${address}/${name}`)) return Response.json({ error: "project_taken" }, { status: 409 });
+				const holds = trash.get(`${address}/${name}`);
+				if (holds !== undefined)
+					return Response.json({ error: "name_in_trash", frees: holds.when + 30 * 86400 }, { status: 409 });
 				const made: Project = {
 					id: `p${++ids}`,
 					team: address,
@@ -352,6 +423,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					sockets: new Set(),
 					version: 0,
 					resent: [],
+					lists: 0,
+					drifts: [],
 					turns: [],
 					repo: body.repo ?? null,
 					comments: [],
@@ -397,6 +470,20 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				return Response.json({ files, held });
 			});
 		// how many comments the project holds, and the still one kept: any member's to read
+		if (match[3] === "/shares" && request.method === "GET")
+			return Response.json({
+				shares: [...at.shares]
+					.filter(([, share]) => !share.ended)
+					.map(([id, share]) => ({
+						id,
+						kind: "link",
+						pages: share.pages,
+						people: [],
+						by: share.by,
+						at: 0,
+						opens: 0,
+					})),
+			});
 		if (match[3] === "/comments/count" && request.method === "GET")
 			return Response.json({ comments: at.comments.length });
 		if (match[3]?.endsWith("/still") === true && request.method === "GET") {
@@ -431,11 +518,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			});
 		if (request.method === "DELETE" && match[3] === undefined) {
 			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
-			remove(at, url.searchParams.get("out") === "1");
-			// its comments go with the team, as spool.page deletes them
-			at.comments = [];
-			at.stills.clear();
-			at.places.clear();
+			// to the team's trash, its comments and shares with it
+			remove(at, url.searchParams.get("out") === "1", person.accountId);
 			return Response.json({});
 		}
 		asked++;
@@ -460,13 +544,25 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		movedOut.delete(key);
 	}
 
-	/** A project deleted, its forwards with it; moved out, its address says so to the team from then on. */
-	function remove(at: Project, out: boolean): void {
+	/**
+	 * A project removed to its team's trash, by whom, its forwards going; moved out, its address says so to the team
+	 * from then on, and otherwise that it was removed.
+	 */
+	function remove(at: Project, out: boolean, by: string): void {
 		const key = `${at.team}/${at.name}`;
 		projects.delete(key);
+		trash.set(key, { at, by, when: Math.floor(Date.now() / 1000) });
 		for (const [old, to] of forwards) if (to === at) forwards.delete(old);
 		if (out) movedOut.add(key);
 		for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
+	}
+
+	/** A project restored from its team's trash: it lives at its address again, with everything it kept. */
+	function restore(key: string): void {
+		const held = trash.get(key);
+		if (held === undefined) return;
+		trash.delete(key);
+		arrive(held.at);
 	}
 
 	/** Editors and admins of the project's team who aren't in the target, the asker never among them, by name. */
@@ -494,28 +590,44 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		if (framed === null) return;
 		const { message, bytes } = framed;
 		if (message.type === "hello") {
-			if (message.protocol !== PROTOCOL_VERSION) {
-				from.close();
-				return;
+			// the code a Spool too old for spool.page is closed with, while a test says this daemon is (#206)
+			const old = tooOld.get(from.person.accountId);
+			if (old !== undefined) {
+				tooOldAsked++;
+				return void from.close(old);
 			}
+			if (typeof message.protocol !== "number" || !ACCEPTED_PROTOCOLS.includes(message.protocol))
+				return void from.close(CLOSE_PROTOCOL);
+			const format = typeof message.format === "number" ? message.format : 0;
+			at.format ??= format;
+			if (format < at.format) return void from.close(CLOSE_FORMAT);
+			from.format = format;
 			from.moving = message.moving === true;
 			from.bundles = message.bundles === true;
 			from.ticks = ticks && message.ticks === true;
+			from.checks = takesChecks && message.checks === true;
 			if (!from.moving && at.mover === from.person.accountId) at.mover = null;
 			from.deliver(
 				encodeFrame({
 					type: "welcome",
 					protocol: PROTOCOL_VERSION,
-					format: 2,
+					format: at.format,
 					head: at.version,
 					...pace(at, from),
 					...(takesBundles ? { bundles: true } : {}),
+					...(takesChecks ? { checks: true } : {}),
 				}),
 			);
 			const since = Number(message.since);
 			for (const [path, file] of [...at.files].sort((a, b) => a[1].version - b[1].version))
 				if (file.version > since) from.deliver(fileFrame(path, file));
 			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
+			if (from.checks)
+				from.deliverMade(
+					copyFingerprint([...at.files].map(([path, file]) => ({ path, hash: hash(file.bytes) }))).then(
+						(fingerprint) => encodeFrame({ type: "fingerprint", fingerprint }),
+					),
+				);
 			from.live = true;
 			greet(at, from);
 			const reads = at.reads.get(from.person.accountId) ?? new Map<string, number>();
@@ -576,6 +688,33 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				if (file !== undefined) from.deliver(fileFrame(path, file));
 			}
 			at.resent.push(...(message.paths as string[]));
+			return;
+		}
+		if (message.type === "list" && takesChecks) {
+			if (!from.live) {
+				from.close();
+				return;
+			}
+			at.lists++;
+			const after = typeof message.after === "string" ? message.after : undefined;
+			const live = [...at.files]
+				.filter(([path, file]) => file.bytes !== null && (after === undefined || path > after))
+				.sort(([a], [b]) => (a < b ? -1 : 1));
+			const page = live.slice(0, LIST_PAGE);
+			from.deliver(
+				encodeFrame({
+					type: "listed",
+					files: page.map(([path, file]) => ({ path, version: file.version, hash: hash(file.bytes) })),
+					next: live.length > LIST_PAGE ? (page.at(-1)?.[0] ?? null) : null,
+					head: at.version,
+				}),
+			);
+			return;
+		}
+		if (message.type === "drift" && takesChecks) {
+			const drift = readDrift(message);
+			if (drift !== undefined)
+				at.drifts.push({ repaired: drift.repaired, cause: drift.cause, by: from.person.accountId });
 			return;
 		}
 		if (message.type === "turn-ended") {
@@ -666,6 +805,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const by = { accountId: from.person.accountId, device: from.person.device };
 		for (const other of at.sockets) {
 			if (other === from || !other.live) continue;
+			if (missing.delete(other.person.accountId)) continue;
 			if (!lone && other.bundles === true)
 				other.deliver(
 					encodeFrame(
@@ -1105,6 +1245,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		at.had.set(path, (at.had.get(path) ?? new Set()).add(hash(content)));
 		told.answers.push({ type: "saved", ref, path, version: file.version });
 		if (merged !== null) told.after.push(fileFrame(path, file));
+		const format = path === CANVAS_PATH && content !== null ? canvasFormat(content) : undefined;
+		if (format !== undefined && format > (at.format ?? 0)) raise(at, format);
 		told.relayed.push({
 			path,
 			version: file.version,
@@ -1112,6 +1254,13 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			content: content ?? undefined,
 			...(beatsDelete && current.by !== undefined ? { restores: current.by } : {}),
 		});
+	}
+
+	/** The team's format rose (#206): every daemon on an older one is closed, as spool.page closes it, after the relay. */
+	function raise(at: Project, format: number): void {
+		at.format = format;
+		for (const socket of at.sockets)
+			if (socket.format !== undefined && socket.format < format) socket.close(CLOSE_FORMAT);
 	}
 
 	/** Where a person stands: the latest of their connections' states, as the sync object keeps it. */
@@ -1168,13 +1317,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			let open = true;
 			// every frame arrives later and in order, as it would over a network
 			let queue = Promise.resolve();
-			const later = (work: () => void) => {
+			const later = (work: () => void | Promise<void>) => {
 				queue = queue.then(
 					() =>
 						new Promise<void>((done) =>
 							setImmediate(() => {
-								work();
-								done();
+								void Promise.resolve(work()).finally(done);
 							}),
 						),
 				);
@@ -1191,6 +1339,11 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				live: false,
 				deliver: (frame) =>
 					later(() => {
+						if (open) events.message(typeof frame === "string" ? frame : arrayBuffer(frame));
+					}),
+				deliverMade: (made) =>
+					later(async () => {
+						const frame = await made;
 						if (open) events.message(typeof frame === "string" ? frame : arrayBuffer(frame));
 					}),
 				close: (code) =>
@@ -1282,6 +1435,25 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			takesBundles = false;
 		},
 		resent: (name: string) => project(name)?.resent ?? [],
+		/** How many pages of the list local copies asked for (#204). */
+		lists: (name: string) => project(name)?.lists ?? 0,
+		/** Every drift local copies said they repaired. */
+		drifts: (name: string) => project(name)?.drifts ?? [],
+		/** The object is an older spool.page, which makes no checks: no fingerprint, and `list` goes unanswered. */
+		withoutChecks() {
+			takesChecks = false;
+		},
+		/** The next save relayed to this account's copies never reaches them, as a relay dropped on the way. */
+		dropNextRelay(accountId: string) {
+			missing.add(accountId);
+		},
+		/** The team's copy changes behind everyone's back, as only a bug could: no save, and nothing relayed. */
+		corrupt(name: string, path: string, text: string | null) {
+			const at = project(name);
+			if (at === undefined) return;
+			at.version++;
+			at.files.set(path, { version: at.version, bytes: text === null ? null : encode(text) });
+		},
 		turns: (name: string) => project(name)?.turns ?? [],
 		/** Set the comment limits every project here keeps, as a maintainer raises one project's. */
 		commentLimits(limits: Partial<{ perMinute: number; open: number }>) {
@@ -1360,11 +1532,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			for (const person of people.values()) if (person.accountId === accountId) person.revoked = true;
 			for (const socket of sockets()) if (socket.person.accountId === accountId) socket.close(CLOSE_SIGNED_OUT);
 		},
-		/** An admin removes a team project: every connection to it is cut off. */
-		removeProject(name: string) {
+		/** An admin (by name) removes a team project to its trash: every connection to it is cut off. */
+		removeProject(name: string, by = "admin") {
 			const removed = project(name);
-			if (removed !== undefined) remove(removed, false);
+			if (removed !== undefined) remove(removed, false, by);
 		},
+		/** An admin restores a project from its team's trash. */
+		restoreProject(name: string) {
+			restore(name.includes("/") ? name : `${team}/${name}`);
+		},
+		/** Whether a project waits in its team's trash. */
+		inTrash: (name: string) => trash.has(name.includes("/") ? name : `${team}/${name}`),
 		/**
 		 * The team lapses, as spool.page's sweep or Stripe ends its paid time: every connection is closed as unpaid,
 		 * new ones are refused before they open, and asking where a machine stands says `unpaid`.
@@ -1396,6 +1574,38 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		lift() {
 			limited = undefined;
 		},
+		/**
+		 * A machine's Spool is too old for spool.page (#206): its every connection is closed on its hello with `code`
+		 * (`CLOSE_PROTOCOL`, or `CLOSE_FORMAT` as a teammate's newer Spool moving the format on), those open now too,
+		 * until the returned undo, which is the newer Spool.
+		 */
+		tooOld(accountId: string, code: number = CLOSE_PROTOCOL) {
+			tooOld.set(accountId, code);
+			for (const at of projects.values())
+				for (const socket of at.sockets) if (socket.person.accountId === accountId) socket.close(code);
+			return () => {
+				tooOld.delete(accountId);
+			};
+		},
+		/** How many hellos were closed as too old: how often paused copies asked again. */
+		tooOldAsked: () => tooOldAsked,
+		/**
+		 * The team project as an older Spool left it (#206): the team's format, and these files the team's versions,
+		 * as spool.page would hold them, relayed to nobody.
+		 */
+		formatWas(name: string, format: number, files: Record<string, string>) {
+			const at = project(name);
+			if (at === undefined) return;
+			at.format = format;
+			for (const [path, text] of Object.entries(files)) {
+				at.version++;
+				const file = { version: at.version, bytes: encode(text) };
+				at.files.set(path, file);
+				at.versions.set(at.version, file);
+			}
+		},
+		/** The team's design/ format now (#206). */
+		format: (name: string) => project(name)?.format,
 		/** Every sync connection is closed as it opens, with `code`, until the returned undo. */
 		refuseSync(code: number) {
 			refusing = code;
@@ -1444,6 +1654,10 @@ function fileFrame(path: string, file: TeamVersion): string | Uint8Array {
 
 function hash(bytes: Uint8Array | null): string | null {
 	return bytes === null ? null : createHash("sha256").update(bytes).digest("hex");
+}
+
+function encode(text: string): Uint8Array {
+	return new TextEncoder().encode(text);
 }
 
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {

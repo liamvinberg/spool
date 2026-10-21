@@ -9,12 +9,14 @@ import {
 	type CloudTeamInvite,
 	CloudTeamRefused,
 	cloudTeams,
+	type DeletedTeam,
 	type NewTeamStart,
 	type TeamRole,
 } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { createTeamProject } from "../init";
 import type { DaemonCloud } from "./app";
+import { teamExportRoutes } from "./team-export";
 
 /** What Home's switcher and invite line show. */
 export type CloudTeamsState =
@@ -24,6 +26,8 @@ export type CloudTeamsState =
 	| {
 			state: "ready";
 			teams: CloudTeam[];
+			/** The deleted teams this account is an admin of, until their purge: only Export all is left of each. */
+			deletedTeams?: DeletedTeam[];
 			invites: CloudTeamInvite[];
 			mayCreateTeam: boolean;
 			newTeam?: NewTeamStart;
@@ -77,10 +81,15 @@ export function cloudTeamRoutes(options: {
 			.post(
 				"/teams",
 				validator("json", (value, c) => {
-					const name = (value as { name?: unknown }).name;
-					return typeof name === "string" ? { name } : c.json({ error: "invalid_name" }, 400);
+					const { name, business } = value as { name?: unknown; business?: unknown };
+					return typeof name === "string"
+						? { name, business: business === true }
+						: c.json({ error: "invalid_name" }, 400);
 				}),
-				(c) => act(c, () => client().create(c.req.valid("json").name)),
+				(c) => {
+					const { name, business } = c.req.valid("json");
+					return act(c, () => client().create(name, business));
+				},
 			)
 			.get("/teams/:team/people", (c) => act(c, () => client().people(c.req.param("team"))))
 			// who is inside each of the team's projects now, for Home's covers
@@ -103,6 +112,13 @@ export function cloudTeamRoutes(options: {
 					return c.body(null, 404);
 				}
 			})
+			.get("/teams/:team/removed", (c) => act(c, () => client().removed(c.req.param("team"))))
+			.post("/teams/:team/removed/:project/restore", (c) =>
+				act(c, () => client().restore(c.req.param("team"), c.req.param("project"))),
+			)
+			.delete("/teams/:team/removed/:project", (c) =>
+				act(c, () => client().deleteRemoved(c.req.param("team"), c.req.param("project"))),
+			)
 			.patch(
 				"/teams/:team",
 				validator("json", (value) => {
@@ -185,27 +201,28 @@ export function cloudTeamRoutes(options: {
 			.post(
 				"/teams/:team/billing/checkout",
 				validator("json", (value, c) => {
-					const { editors, cycle } = value as { editors?: unknown; cycle?: unknown };
+					const { editors, cycle, business } = value as { editors?: unknown; cycle?: unknown; business?: unknown };
 					if (
 						!Array.isArray(editors) ||
 						!editors.every((editor) => typeof editor === "string") ||
 						(cycle !== "monthly" && cycle !== "yearly")
 					)
 						return c.json({ error: "invalid_billing" }, 400);
-					return { editors: editors as string[], cycle: cycle as BillingCycle };
+					return { editors: editors as string[], cycle: cycle as BillingCycle, business: business === true };
 				}),
 				(c) => {
-					const { editors, cycle } = c.req.valid("json");
-					return act(c, () => client().checkout(c.req.param("team"), editors, cycle));
+					const { editors, cycle, business } = c.req.valid("json");
+					return act(c, () => client().checkout(c.req.param("team"), editors, cycle, business));
 				},
 			)
 			.post("/teams/:team/billing/portal", (c) => act(c, () => client().portal(c.req.param("team"))))
-			.post("/teams/:team/billing/withdraw", (c) => act(c, () => client().withdraw(c.req.param("team"))))
 			.get("/teams/:team/setup", (c) => act(c, () => client().setup(c.req.param("team"))))
 			.post("/teams/:team/setup/skip-invites", (c) => act(c, () => client().skipInvites(c.req.param("team"))))
 			.post("/teams/:team/setup/skip-projects", (c) => act(c, () => client().skipProjects(c.req.param("team"))))
 			.post("/teams/:team/setup/done", (c) => act(c, () => client().setupDone(c.req.param("team"))))
 			.post("/invites/:invite/accept", (c) => act(c, () => client().acceptInvite(c.req.param("invite"))))
 			.post("/invites/:invite/decline", (c) => act(c, () => client().declineInvite(c.req.param("invite"))))
+			// a team written out as git repositories, into a folder this Mac's admin picked
+			.route("/", teamExportRoutes({ spoolDir: options.spoolDir, cloud: options.cloud }))
 	);
 }

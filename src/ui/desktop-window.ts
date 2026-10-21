@@ -49,7 +49,7 @@ export interface DesktopWindow {
 }
 
 export interface DirectoryRequest {
-	purpose: "location" | "add" | "open";
+	purpose: "location" | "add" | "open" | "export";
 	defaultPath: string;
 }
 

@@ -230,6 +230,14 @@ export interface MoveDone {
 	show?: string | null;
 }
 
+/** "design/ is back in git in tidemark-app: one commit, nothing pushed.", or that its commit waits for git. */
+export function backInGitDone(out: { root: string; committed: boolean }): MoveDone {
+	const where = `design/ is back in git in ${folderName(out.root)}`;
+	if (out.committed) return { toast: `${where}: one commit, nothing pushed.` };
+	const note = waitingNote(`${where}.`, [out.root]);
+	return { toast: `${where}.`, ...(note === undefined ? {} : { note }) };
+}
+
 /** A line for commits git didn't take yet, which spool makes at its next start. */
 export function waitingNote(done: string, roots: readonly string[]): string | undefined {
 	if (roots.length === 0) return undefined;

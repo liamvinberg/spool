@@ -2,10 +2,9 @@ import { type ReactNode, useCallback, useContext, useEffect, useState } from "re
 import { personName } from "../person-name";
 import type { BillingCycle, BillingState, BillingSummary, CloudTeam, TeamPeople } from "./api";
 import { cn } from "./cn";
-import { ConfirmDialog } from "./confirm-dialog";
 import { Button } from "./primitives/actions";
 import { Checkbox, Segment, SegmentedControl } from "./primitives/selection";
-import { TeamsSourceContext, teamSays } from "./teams";
+import { BUSINESS_TICK, TeamsSourceContext, teamSays } from "./teams";
 
 /**
  * Settings › Billing: what a team pays and when, for its admins only. spool.page decides every rule and Stripe holds
@@ -161,7 +160,7 @@ export function useBilling(team: CloudTeam, onOpen: (url: string) => void, pollM
 	const pay = async (editors: string[], cycle: BillingCycle): Promise<boolean> => {
 		setNotice(null);
 		try {
-			const { url } = await source.checkout(team.address, editors, cycle);
+			const { url } = await source.checkout(team.address, editors, cycle, true);
 			markCheckout(team.address, true);
 			onOpen(url);
 			return true;
@@ -178,17 +177,7 @@ export function useBilling(team: CloudTeam, onOpen: (url: string) => void, pollM
 			setNotice(teamSays(error));
 		}
 	};
-	/** The withdrawal function: refunded and ended at spool.page, then Billing reads the team again. Throws in words. */
-	const withdraw = async () => {
-		setNotice(null);
-		try {
-			await source.withdraw(team.address);
-		} catch (error) {
-			throw new Error(teamSays(error));
-		}
-		await load();
-	};
-	return { summary: read?.summary ?? null, people: read?.people ?? null, notice, pay, manage, withdraw };
+	return { summary: read?.summary ?? null, people: read?.people ?? null, notice, pay, manage };
 }
 
 export function TeamBilling({
@@ -204,7 +193,7 @@ export function TeamBilling({
 	cycle?: BillingCycle | undefined;
 	pollMs?: number;
 }) {
-	const { summary, people, notice, pay, manage, withdraw } = useBilling(team, onOpen, pollMs);
+	const { summary, people, notice, pay, manage } = useBilling(team, onOpen, pollMs);
 	if (team.role !== "admin") return null;
 	const say = notice && (
 		<p role="status" className="mb-[14px] type-control">
@@ -227,7 +216,6 @@ export function TeamBilling({
 				/>
 			)}
 			{paid && <PaidSummary summary={summary} onManage={manage} />}
-			{paid && <Withdraw team={team} until={summary.withdrawUntil ?? null} onWithdraw={withdraw} />}
 		</div>
 	);
 }
@@ -254,6 +242,8 @@ export function PayChoice({
 	const [left, setLeft] = useState<ReadonlySet<string>>(new Set());
 	const [cycle, setCycle] = useState<BillingCycle>(start);
 	const [busy, setBusy] = useState(false);
+	// Spool Cloud is sold for business use only (spool#209): paying waits for the tick
+	const [business, setBusiness] = useState(false);
 	const admins = people.members.filter((person) => person.role === "admin");
 	const editors = people.members.filter((person) => person.role === "editor");
 	const viewers = people.members.filter((person) => person.role === "viewer");
@@ -323,6 +313,7 @@ export function PayChoice({
 					</span>
 				</span>
 			</div>
+			<Checkbox className="type-label" checked={business} onCheckedChange={setBusiness} label={BUSINESS_TICK} />
 			<div className="flex items-center justify-between gap-4">
 				<p className="max-w-[360px] text-secondary type-label">
 					Stripe takes the card. Add a company name and VAT number there if you have them.
@@ -330,7 +321,7 @@ export function PayChoice({
 				<Button
 					size="lg"
 					variant="primary"
-					disabled={busy}
+					disabled={busy || !business}
 					onClick={() => {
 						setBusy(true);
 						void onPay(
@@ -396,43 +387,6 @@ function PaidSummary({ summary, onManage }: { summary: BillingSummary; onManage:
 					Manage billing
 				</Button>
 			</div>
-		</div>
-	);
-}
-
-/**
- * The withdrawal function (ångerfunktion, spool#208): for 14 days from the team's first payment an admin can withdraw
- * from the contract, labelled as plainly as the law asks, behind one confirmation that names the team and what
- * happens. spool.page says until when; nothing asks whether the payer is a consumer.
- */
-function Withdraw({
-	team,
-	until,
-	onWithdraw,
-}: {
-	team: CloudTeam;
-	until: number | null;
-	onWithdraw: () => Promise<void>;
-}) {
-	const [confirming, setConfirming] = useState(false);
-	if (until === null || until * 1000 <= Date.now()) return null;
-	return (
-		<div className="mt-[18px] flex items-center justify-between gap-4 border-line-default border-t pt-[18px]">
-			<span className="text-secondary type-label">
-				Until {day(until)} you can withdraw from the contract: the payment is refunded in full and the subscription
-				ends at once.
-			</span>
-			<Button onClick={() => setConfirming(true)}>Withdraw from contract here</Button>
-			{confirming && (
-				<ConfirmDialog
-					title={`Withdraw from ${team.name}’s contract?`}
-					description={`The payment is refunded in full and the subscription ends at once. ${team.name} goes local: everyone’s copy stops syncing and its shares stop. You get a receipt by email.`}
-					confirmLabel="Confirm withdrawal"
-					danger
-					onConfirm={onWithdraw}
-					onClose={() => setConfirming(false)}
-				/>
-			)}
 		</div>
 	);
 }
