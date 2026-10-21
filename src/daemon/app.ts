@@ -15,7 +15,7 @@ import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
-import { finishMoves } from "../move-in";
+import { finishMoves, tellMoveCommits } from "../move-in";
 import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
@@ -643,6 +643,9 @@ export function createDaemonApp({
 		for (const { root, commit } of finished)
 			if (commit.kind === "committed")
 				teamNotice(`made the move commit for ${root}: ${commit.commit.slice(0, 7)}`, root);
+		// and the team's history is told the move commits it hasn't heard (spool#187)
+		if (!moving.signal.aborted)
+			void tellMoveCommits(registeredRoots(), spoolDir, { ...cloud, origin: originOf(cloud) });
 	});
 	// task 136: so is one moving a project to another team, out of one, or into a checkout
 	void finishOwedCommits(registeredRoots(), { signal: moving.signal }).then((finished) => {
