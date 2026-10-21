@@ -135,7 +135,7 @@ async function open(
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	const written: Written[] = [];
 	const pictures: string[] = [];
-	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live?covered=1`, (route) => {
 		route.send(JSON.stringify({ type: "head", head: 1 }));
 	});
 	let presence: WebSocketRoute | undefined;
