@@ -120,7 +120,9 @@ it("counts a long wait down in the same notice, and a closed one stays closed un
 	const show = (sending: string | null) =>
 		act(() =>
 			root.render(
-				createElement(SyncNotices, { state: { ended: null, goneLocal: null, paused: null, sending, held: [] } }),
+				createElement(SyncNotices, {
+					state: { ended: null, goneLocal: null, paused: null, sending, held: [], offline: false },
+				}),
 			),
 		);
 	show("Sending 3,898 changes to devosurf, about 32 minutes");
