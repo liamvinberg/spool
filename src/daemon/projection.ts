@@ -10,6 +10,7 @@ import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas
 import { isWithin } from "./design-boundary";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, parseGeometry, parseSidecar, readSidecar, type Sidecar, writePlacement } from "./geometry";
+import type { MovedAway } from "./moved-away";
 import { besideField, DEFAULT_FOOTPRINT, DEFAULT_H, DEFAULT_W, pageObjectsOn, placePages } from "./placement";
 import type { ProjectIcon } from "./project-icon";
 import type { ProjectThumbnail } from "./project-thumbnail";
@@ -738,6 +739,11 @@ export interface ProjectCard extends ProjectSummary {
 	syncPaused?: string;
 	/** A team project's local copy gone local until its team pays: the team's name. */
 	goneLocal?: string;
+	/**
+	 * Its design/ moved into a team this account can't edit (spool#194): where it went, who moved it in which commit
+	 * as git says, how this account stands, and the frames left here that go up once it is an editor.
+	 */
+	moved?: MovedAway;
 }
 
 /**

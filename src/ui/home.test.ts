@@ -95,6 +95,68 @@ it("says on its cover that a project is no longer synced with its team, long aft
 	expect(host.querySelector(".pj-cover-button")?.textContent).toContain("no longer synced with devosurf");
 });
 
+describe("a project whose design/ moved into a team this account can't edit", () => {
+	const moved = (standing: "outside" | "viewer" | "signed-out"): ProjectCard => ({
+		...project("kaffe", "2026-09-01T00:00:00Z"),
+		moved: {
+			team: "tidemark",
+			url: "https://spool.page/tidemark/kaffe",
+			standing,
+			commit: { hash: "3f2a1c9d0e", author: "Ada Lind", date: new Date().toISOString() },
+			leftover: ["checkout-tip", "receipt-dark"],
+		},
+	});
+	const sheet = (host: HTMLElement) => document.querySelector<HTMLElement>("[data-moved-sheet]") ?? host;
+	const buttons = () =>
+		Array.from(document.querySelectorAll("[data-moved-sheet] footer button")).map((one) => one.textContent);
+
+	it("says on its cover where design/ went and who moved it, and opens the sheet instead of the canvas", () => {
+		const callbacks = actions();
+		const host = mount(createElement(Home, { projects: [moved("outside")], ...callbacks }));
+		const cover = host.querySelector(".pj-cover-button");
+		expect(cover?.textContent).toContain("design/ moved to tidemark");
+		expect(cover?.querySelector('[data-line="when"]')?.textContent).toBe("today · moved by Ada Lind");
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open kaffe"]')?.click());
+		expect(callbacks.onOpenProject).not.toHaveBeenCalled();
+		const shown = sheet(host);
+		expect(shown.dataset.movedSheet).toBe("outside");
+		expect(shown.textContent).toContain("kaffe moved to tidemark");
+		expect(shown.textContent).toContain("Ada Lind moved it out of git in 3f2a1c9");
+		expect(shown.textContent).toContain("Ask Ada Lind to invite you, and it fills in here by itself.");
+		expect(Array.from(shown.querySelectorAll("[data-leftover] li")).map((one) => one.textContent)).toEqual([
+			"frames/checkout-tip",
+			"frames/receipt-dark",
+		]);
+		expect(buttons()).toEqual(["Remove from Home", "OK"]);
+		act(() => button(shown, "OK").click());
+		expect(document.querySelector("[data-moved-sheet]")).toBeNull();
+	});
+
+	it("offers a viewer the browser and a signed-out Mac Sign in", () => {
+		for (const [standing, primary] of [
+			["viewer", "Open in browser"],
+			["signed-out", "Sign in"],
+		] as const) {
+			const host = mount(createElement(Home, { projects: [moved(standing)], ...actions() }));
+			act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open kaffe"]')?.click());
+			expect(sheet(host).dataset.movedSheet).toBe(standing);
+			expect(sheet(host).querySelector("[data-leftover]")).toBeNull();
+			expect(buttons()).toEqual(["Remove from Home", primary]);
+			act(() => button(sheet(host), "Remove from Home").click());
+		}
+	});
+
+	it("hides the project from Home with Remove from Home", () => {
+		const callbacks = actions();
+		const card = moved("outside");
+		const host = mount(createElement(Home, { projects: [card], ...callbacks }));
+		act(() => host.querySelector<HTMLButtonElement>('[aria-label="Open kaffe"]')?.click());
+		act(() => button(sheet(host), "Remove from Home").click());
+		expect(callbacks.onForgetProject).toHaveBeenCalledExactlyOnceWith(card);
+		expect(document.querySelector("[data-moved-sheet]")).toBeNull();
+	});
+});
+
 it("shows a team project once however many local copies this Mac holds, opening the latest", () => {
 	const callbacks = actions();
 	const team = { url: "https://spool.page/devosurf/checkout", team: "devosurf", project: "checkout" };
@@ -814,7 +876,7 @@ describe("Search and Recent, once this account is in a team", () => {
 		const host = mount(
 			createElement(Home, { projects: [own], ...actions(), everywhere: everywhere({ recent: false, onQuery }) }),
 		);
-		expect(host.querySelector("main h1")?.textContent).toBe("Projects");
+		expect(host.querySelector("main h1")?.textContent).toBe("Your projects");
 		expect(host.querySelectorAll('input[type="search"]')).toHaveLength(1);
 		act(() => type(host.querySelector('.pj-find input[type="search"]'), "site"));
 		expect(onQuery).toHaveBeenCalledWith("site");

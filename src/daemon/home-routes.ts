@@ -14,6 +14,7 @@ import type { createAgentTurns } from "./agent-live";
 import { DesignBoundaryError } from "./design-path";
 import type { createChangeHub } from "./events";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
+import type { MovedAway } from "./moved-away";
 import {
 	type createIconWatch,
 	findProjectIcon,
@@ -78,6 +79,8 @@ export function homeRoutes(deps: {
 	registeredRoots: () => string[];
 	trash: (paths: string[]) => Promise<void>;
 	teamSync: Pick<ReturnType<typeof createTeamSync>, "state">;
+	/** A project whose design/ moved into a team this account can't edit (spool#194), as its cover says. */
+	movedAway: (root: string) => MovedAway | undefined;
 	iconWatch: Pick<ReturnType<typeof createIconWatch>, "saw">;
 	thumbnailWatch: Pick<ReturnType<typeof createThumbnailWatch>, "saw">;
 }) {
@@ -94,6 +97,7 @@ export function homeRoutes(deps: {
 		emitAppEvent,
 		registeredRoots,
 		teamSync,
+		movedAway,
 		iconWatch,
 		thumbnailWatch,
 	} = deps;
@@ -397,6 +401,7 @@ export function homeRoutes(deps: {
 						const movedOut = ended === undefined ? undefined : movedOutOf(project.root);
 						const paused = link === undefined ? null : teamSync.state(project.root).paused;
 						const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
+						const moved = movedAway(project.root);
 						const [summary, icon, thumbnail, inRepo] = await Promise.all([
 							summarizeProject(project.root),
 							findProjectIcon(project.root),
@@ -416,6 +421,7 @@ export function homeRoutes(deps: {
 							...(thumbnail === undefined ? {} : { thumbnail }),
 							...(paused === null ? {} : { syncPaused: paused }),
 							...(goneLocal === undefined ? {} : { goneLocal }),
+							...(moved === undefined ? {} : { moved }),
 							...summary,
 						};
 					}),

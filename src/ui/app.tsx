@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { placeOf } from "../home-places";
 import { accelPressed } from "../runtime/platform-keys";
 import type { TabPresence } from "../team-sync-protocol";
 import { AccountFoot } from "./account-foot";
@@ -56,6 +57,7 @@ import {
 } from "./tab-keys";
 import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
+import { CloudCovers } from "./team-covers";
 import { type MoveDone, useMovedToast } from "./team-move";
 import {
 	FoundAway,
@@ -451,11 +453,13 @@ export function App() {
 		document.title = focusedTab === undefined ? "spool" : `${focusedTab.name} · spool`;
 	}, [focusedTab]);
 
+	/** Home's address, the place it shows, for coming back to it from a tab. */
+	const homePath = useRef("/");
 	const focusProject = useCallback((root: string | null) => {
 		// settings stands in for the tab it was opened from, so moving to a tab is leaving it
 		setSettingsOpen(false);
 		setFocused(root);
-		const path = root === null ? "/" : `/p/${encodeURIComponent(basename(root))}`;
+		const path = root === null ? homePath.current : `/p/${encodeURIComponent(basename(root))}`;
 		window.history.replaceState(null, "", path);
 	}, []);
 
@@ -488,8 +492,24 @@ export function App() {
 				? undefined
 				: projects.find((project) => project.team?.team === handed.team && project.team.project === handed.project);
 		if (copy !== undefined) openTab(copy);
-		else window.history.replaceState(null, "", "/");
+		else window.history.replaceState(null, "", homePath.current);
 	}, [handed, booted, projectsLoaded, projects, openTab]);
+
+	// back and forward: to a tab's address, that tab; to one of Home's places, Home, which goes there itself
+	useEffect(() => {
+		const moved = () => {
+			const root = pathFocus(openRef.current);
+			if (root !== null) {
+				setSettingsOpen(false);
+				setFocused(root);
+			} else if (placeOf(window.location.pathname) !== null) {
+				setSettingsOpen(false);
+				setFocused(null);
+			}
+		};
+		window.addEventListener("popstate", moved);
+		return () => window.removeEventListener("popstate", moved);
+	}, []);
 
 	/**
 	 * The tabs, arranged. Local state moves first and the PUT follows, exactly as
@@ -681,61 +701,82 @@ export function App() {
 		await refetch();
 		openTab(project);
 	});
-	const teamHome = useTeamHome(account, openExternally, handed?.team ?? null, {
-		covers: (address, here, sort) => {
-			const covers = coversOf(
-				projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
-			);
-			if (sort === "Name") covers.sort((a, b) => a.name.localeCompare(b.name));
-			return covers.length === 0 ? undefined : (
-				<ProjectGrid
-					projects={covers}
-					menu={teamMenu}
-					onMenu={setTeamMenu}
-					onOpenProject={(project) => openTab(project)}
-					onForgetProject={(project) => void forgetProject(project)}
-					onTrashProject={setTrashRequest}
-					onRenameProject={(project) => void requestRename(project)}
-					onExportProject={transfer.exportProject}
-					onChangeIcon={icons.change}
-					onRemoveIcon={icons.remove}
-					onRemoveThumbnail={icons.removeThumbnail}
-					// read once the hook below has made them, when the grid draws
-					moveItems={(project) => coverMoves.moveItems(project)}
+	const teamHome = useTeamHome(
+		account,
+		openExternally,
+		handed?.team ?? null,
+		{
+			covers: (address, here, sort) => {
+				const covers = coversOf(
+					projects.filter((project) => !forgetting.has(project.root) && project.team?.team === address),
+				);
+				if (sort === "Name") covers.sort((a, b) => a.name.localeCompare(b.name));
+				return covers.length === 0 ? undefined : (
+					<ProjectGrid
+						projects={covers}
+						menu={teamMenu}
+						onMenu={setTeamMenu}
+						onOpenProject={(project) => openTab(project)}
+						onForgetProject={(project) => void forgetProject(project)}
+						onTrashProject={setTrashRequest}
+						onRenameProject={(project) => void requestRename(project)}
+						onExportProject={transfer.exportProject}
+						onChangeIcon={icons.change}
+						onRemoveIcon={icons.remove}
+						onRemoveThumbnail={icons.removeThumbnail}
+						// read once the hook below has made them, when the grid draws
+						moveItems={(project) => coverMoves.moveItems(project)}
+						here={here}
+					/>
+				);
+			},
+			onNewProject: (team) => {
+				setPickingTeam(team.address);
+				setPicking("new");
+			},
+			// keyed on this Mac's copies of the team's projects, so one just got leaves the list
+			away: (team, here, teams) => (
+				<TeamProjectsAway
+					key={projects
+						.filter((project) => project.team?.team === team.address)
+						.map((project) => project.root)
+						.join("\n")}
+					team={team}
+					teams={teams}
 					here={here}
+					onGot={(project) => {
+						void refetch();
+						openTab(project);
+					}}
+					onMoved={(done) => moveDone(done)}
 				/>
-			);
+			),
+			own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
+			onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
+			revision: (address) => projects.filter((project) => project.team?.team === address).length,
+			copies: projects
+				.filter((project) => project.team !== undefined)
+				.map((project) => project.root)
+				.join("\n"),
+			note: moveNote === null ? undefined : <MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />,
+			// a team this Mac only watches: its projects as spool.page draws them, each opening live in the browser
+			watched: (team, listed, here) =>
+				listed.length === 0 ? undefined : (
+					<CloudCovers
+						covers={[...listed]
+							.sort((a, b) => a.name.localeCompare(b.name))
+							.map((project) => ({ team, project }))}
+						here={here}
+						menu={teamMenu}
+						onMenu={setTeamMenu}
+						link={(_, project) => project.url}
+						external
+					/>
+				),
 		},
-		onNewProject: (team) => {
-			setPickingTeam(team.address);
-			setPicking("new");
-		},
-		// keyed on this Mac's copies of the team's projects, so one just got leaves the list
-		away: (team, here, teams) => (
-			<TeamProjectsAway
-				key={projects
-					.filter((project) => project.team?.team === team.address)
-					.map((project) => project.root)
-					.join("\n")}
-				team={team}
-				teams={teams}
-				here={here}
-				onGot={(project) => {
-					void refetch();
-					openTab(project);
-				}}
-				onMoved={(done) => moveDone(done)}
-			/>
-		),
-		own: projects.filter((project) => project.team === undefined && !forgetting.has(project.root)),
-		onMoveIn: (team, project) => setMoving({ root: project.root, name: project.name, team: team.address }),
-		revision: (address) => projects.filter((project) => project.team?.team === address).length,
-		copies: projects
-			.filter((project) => project.team !== undefined)
-			.map((project) => project.root)
-			.join("\n"),
-		note: moveNote === null ? undefined : <MoveCommitLine note={moveNote} onDismiss={() => setMoveNote(null)} />,
-	});
+		booted && focused === null,
+	);
+	homePath.current = teamHome.path;
 	/** "Move to team…" on a project in no team, while this account edits in a team. */
 	const moveToTeam =
 		teamHome.editing.length === 0 ? undefined : (project: { root: string; name: string }) => setMoving(project);
@@ -841,7 +882,8 @@ export function App() {
 								onTrashProject={setTrashRequest}
 								onRenameProject={(project) => void requestRename(project)}
 								moveItems={coverMoves.moveItems}
-								switcher={teamHome.switcher}
+								places={teamHome.places}
+								place={teamHome.path}
 								notice={
 									moveNote === null ? (
 										teamHome.notice

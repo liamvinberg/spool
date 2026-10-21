@@ -47,6 +47,7 @@ import {
 	readMoved,
 	readPresenceState,
 	replyForReader,
+	SEEN_FILES,
 	samePlace,
 	sameSourceMoves,
 	takeFromBucket,
@@ -120,6 +121,8 @@ interface Project {
 	moved: (Moved | undefined)[];
 	/** Every path's last bytes, kept after it is deleted: where a deleted frame last stood. */
 	last: Map<string, Uint8Array>;
+	/** Every hash each path was applied at, a delete's null included: what the history lookup answers from. */
+	had: Map<string, Set<string | null>>;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -187,6 +190,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let refusing: number | undefined;
 	/** How many times a machine asked where it stands in a project, as a daemon does after a close. */
 	let asked = 0;
+	/** How many files each history lookup asked about, in order. */
+	const seenAsks: number[] = [];
 	/** Solo projects whose shares moved into a team project, as spool.page was asked. */
 	const soloMoves: { solo: string; team: string; project: string; by: string }[] = [];
 	/** A project by its name in the first team, or by `<team>/<name>` in any. */
@@ -199,6 +204,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let takesBundles = true;
 	/** The object sends presence a tick at a time to a connection that reads them, as spool.page does since #107. */
 	let ticks = true;
+	/** The object answers what the team has seen of a Mac's files, as spool.page does since spool#193. */
+	let seenAnswers = true;
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
 	/** The minute's bucket, on a clock the test turns: its level when last taken from, and how fast it refills. */
@@ -316,7 +323,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				})),
 			});
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -355,6 +362,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					shares: new Map(),
 					moved: [],
 					last: new Map(),
+					had: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -365,6 +373,28 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
 				at.repo = body.repo;
 				return Response.json(described(at));
+			});
+		// whether the team has, had or never had each of a Mac's files: an editor's read, counted against no limit
+		if (match[3] === "/history/seen" && !seenAnswers) return new Response("404 Not Found", { status: 404 });
+		if (match[3] === "/history/seen" && request.method === "POST")
+			return request.json().then((body: { files: { path: string; hash: string }[] }) => {
+				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
+				if (!Array.isArray(body.files) || body.files.length > SEEN_FILES)
+					return Response.json({ error: "invalid_input" }, { status: 400 });
+				seenAsks.push(body.files.length);
+				const files = body.files.map(({ path, hash: asked }) => {
+					const now = at.files.get(path);
+					const team = now === undefined ? "none" : now.bytes === null ? "deleted" : "file";
+					const seen =
+						now !== undefined && hash(now.bytes) === asked
+							? "current"
+							: at.had.get(path)?.has(asked) === true
+								? "had"
+								: "never";
+					return { path, hash: asked, seen, team };
+				});
+				const held = [...at.files.values()].filter((file) => file.bytes !== null).length;
+				return Response.json({ files, held });
 			});
 		// how many comments the project holds, and the still one kept: any member's to read
 		if (match[3] === "/comments/count" && request.method === "GET")
@@ -1072,6 +1102,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const file = { version: at.version, bytes: content, by: from.person };
 		at.files.set(path, file);
 		at.versions.set(file.version, file);
+		at.had.set(path, (at.had.get(path) ?? new Set()).add(hash(content)));
 		told.answers.push({ type: "saved", ref, path, version: file.version });
 		if (merged !== null) told.after.push(fileFrame(path, file));
 		told.relayed.push({
@@ -1288,6 +1319,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return () => away.delete(accountId);
 		},
 		soloMoves,
+		/** How many files each ask of what the team has seen named. */
+		seenAsks,
+		/** The cloud is an older spool.page, which can't say what the team has seen: the route isn't there. */
+		withoutSeen() {
+			seenAnswers = false;
+		},
 		/** The repo spool.page has recorded for a project. */
 		repo: (name: string) => project(name)?.repo,
 		/**

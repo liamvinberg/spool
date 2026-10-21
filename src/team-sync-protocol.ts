@@ -225,6 +225,28 @@ export interface Resend {
 export const RESEND_PATHS = 500;
 
 /**
+ * Whether the team has seen a file (spool#193), asked over HTTP at
+ * `POST /api/teams/<team>/projects/<project>/history/seen` with `{ files: [{ path, hash }] }` before a `design/`
+ * spool never synced first connects. `seen` is `current` for the team's version of the path now, `had` for one of
+ * its applied versions before, `never` otherwise; `team` is what the team holds there now, a delete being a version
+ * too. `held` is how many paths the team holds a file at. An editor's read, counted against no save limit.
+ */
+export interface SeenFile {
+	path: string;
+	hash: string;
+	seen: "current" | "had" | "never";
+	team: "file" | "deleted" | "none";
+}
+
+export interface SeenAnswer {
+	files: SeenFile[];
+	held: number;
+}
+
+/** The most files one history lookup names; a big design/ asks in several. */
+export const SEEN_FILES = 1_000;
+
+/**
  * Daemon → object: the agent this daemon runs on the project finished its turn. The pages its person saved to
  * settle for outsiders (unless someone else is saving to them too); an agent the daemon did not start never says
  * this, and its pages settle after a quiet spell instead.
@@ -1581,4 +1603,5 @@ export async function frameRevision(hashes: readonly string[]): Promise<string> 
 	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export { APP_PATH_SEGMENTS } from "./app-paths";
 export * from "./team-sync-comments";

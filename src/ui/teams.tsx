@@ -1,4 +1,13 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+	type HomePlace,
+	OWN_PLACE,
+	pathOf,
+	placeOf,
+	RECENT_PLACE,
+	type SettingsTab,
+	type TeamPage,
+} from "../home-places";
 import { personName } from "../person-name";
 import {
 	type BillingCycle,
@@ -17,8 +26,8 @@ import {
 } from "./api";
 import { cn } from "./cn";
 import { ConfirmDialog } from "./confirm-dialog";
-import { ProjectsHead, type Sort } from "./home-find";
-import { ChevronIcon, CogIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
+import { NARROW_NAV, ProjectsHead, type Sort } from "./home-find";
+import { ChevronIcon, CogIcon, EyeIcon, FrameIcon, PeopleIcon, PlusIcon } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
@@ -42,9 +51,7 @@ export type ReadyTeams = Extract<CloudTeamsState, { state: "ready" }>;
 
 /** Where the team pages under it read and change teams: the daemon in the Mac app, spool.page in a browser. */
 export const TeamsSourceContext = createContext<TeamsSource>(daemonTeams);
-export type TeamPage = "projects" | "people" | "settings";
-/** Settings' tabs: General is the team itself; Billing, for admins, is what it pays. */
-export type SettingsTab = "general" | "billing";
+export type { SettingsTab, TeamPage };
 
 export const ROLE_LABEL: Record<TeamRole, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
 
@@ -117,111 +124,89 @@ export function TeamMark({
 }
 
 /**
- * One team at a time: the switcher picks it. On a Mac your own projects are one more entry, and a team you only
- * watch opens in the browser, since its projects never come to this Mac. In a browser every team is a place.
+ * Home's sidebar of places: every team you're in, in spool.page's order (by name), the one you're in open to its
+ * pages beneath it. On a Mac a rule follows, then Your projects; New team… comes last. A team you only watch is a
+ * place like any other, marked with an eye. Below 720 px each place is its mark, its name on its title.
  */
-export function TeamSwitcher({
+export function HomePlaces({
 	teams,
 	current,
-	onSelect,
+	page,
+	onTeam,
+	onPage,
+	own,
 	onNewTeam,
-	onMac = true,
 }: {
-	teams: ReadyTeams;
-	current: CloudTeam | null;
-	onSelect: (address: string | null) => void;
+	teams: readonly CloudTeam[];
+	/** The team you're in, by its address; null in Your projects or Recent. */
+	current: string | null;
+	/** Its page; null while a place outside the team, such as the search or Account, stands in the page. */
+	page: TeamPage | null;
+	onTeam: (address: string) => void;
+	onPage: (page: TeamPage) => void;
+	/** Your projects, on a Mac. */
+	own?: { current: boolean; onOwn: () => void } | undefined;
 	onNewTeam: () => void;
-	/** In the Mac app, beside the Mac's own projects; false at spool.page/<team>. */
-	onMac?: boolean;
 }) {
-	const [open, setOpen] = useState(false);
-	const choose = (address: string | null) => {
-		setOpen(false);
-		onSelect(address);
-	};
 	return (
-		<div className="pj-team-switch relative mb-[18px] [@media(max-width:720px)]:hidden">
-			<button
-				type="button"
-				className="flex h-[40px] w-full items-center gap-[10px] rounded-[7px] border border-line-strong px-[10px] text-left hover:bg-surface-panel aria-expanded:bg-surface-panel"
-				aria-expanded={open}
-				aria-haspopup="menu"
-				onClick={() => setOpen(!open)}
-			>
-				{current ? <TeamMark team={current} /> : <OwnMark />}
-				<span className="min-w-0 flex-1 truncate type-control">{current ? current.name : "Your projects"}</span>
-				<span className="h-[10px] w-[10px] shrink-0 rotate-90 text-secondary [&>svg]:h-full [&>svg]:w-full">
-					<ChevronIcon />
-				</span>
-			</button>
-			{open && (
-				<>
-					<button
-						type="button"
-						className="fixed inset-0 z-20 cursor-default"
-						aria-label="Close menu"
-						onClick={() => setOpen(false)}
-					/>
-					<Menu className="absolute top-[calc(100%+6px)] left-0 z-30">
-						{teams.teams.map((team) =>
-							onMac && team.role === "viewer" ? (
-								<MenuItem
-									key={team.id}
-									href={`${teams.origin}/${team.address}`}
-									target="_blank"
-									rel="noreferrer"
-									icon={<TeamMark team={team} size={16} />}
-									label={team.name}
-									meta="viewer ↗"
-									onClick={() => setOpen(false)}
-								/>
-							) : (
-								<MenuItem
-									key={team.id}
-									icon={<TeamMark team={team} size={16} />}
-									label={team.name}
-									meta={`${team.people} ${team.people === 1 ? "person" : "people"}`}
-									aria-current={team.address === current?.address || undefined}
-									className="aria-[current]:bg-state-selected-strong"
-									onClick={() => choose(team.address)}
-								/>
-							),
-						)}
-						{onMac && (
-							<>
-								{teams.teams.length > 0 && <MenuSeparator />}
-								<MenuItem
-									icon={<FrameIcon className="size-4" />}
-									label="Your projects"
-									aria-current={!current || undefined}
-									className="aria-[current]:bg-state-selected-strong"
-									onClick={() => choose(null)}
-								/>
-							</>
-						)}
-						{(onMac || teams.teams.length > 0) && <MenuSeparator />}
-						<MenuItem
-							icon={<PlusIcon />}
-							label="New team…"
-							onClick={() => {
-								setOpen(false);
-								onNewTeam();
-							}}
-						/>
-					</Menu>
-				</>
+		<div className="pj-places flex flex-col gap-[2px]">
+			{teams.map((team) => {
+				const chosen = team.address === current;
+				return (
+					<div key={team.id} className="flex flex-col gap-[2px]" data-place={team.address}>
+						<button
+							type="button"
+							title={team.name}
+							aria-current={chosen || undefined}
+							className={cn(PLACE, "aria-[current]:text-primary")}
+							onClick={() => onTeam(team.address)}
+						>
+							<TeamMark team={team} />
+							<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>{team.name}</span>
+							{team.role === "viewer" && (
+								<span data-watch="" title="You watch this team" className={cn("shrink-0", NARROW_HIDDEN)}>
+									<EyeIcon className="size-[14px] text-secondary" />
+								</span>
+							)}
+						</button>
+						{/* the team you're in opens to its pages: rows grow from 0fr, so the places below slide down, never jump */}
+						<div
+							className={cn(
+								"pj-place-pages grid transition-[grid-template-rows,opacity] duration-base ease-out motion-reduce:transition-none",
+								chosen ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0",
+							)}
+							aria-hidden={!chosen || undefined}
+							inert={!chosen}
+						>
+							<div className="flex min-h-0 flex-col gap-[2px] overflow-hidden">
+								<div className="mb-[8px] flex flex-col gap-[2px]">
+									<TeamNav team={team} page={chosen ? page : null} onPage={onPage} indent />
+								</div>
+							</div>
+						</div>
+					</div>
+				);
+			})}
+			{(own || teams.length > 0) && <hr className="mx-3 my-2 border-line-default border-t" />}
+			{own && (
+				<NavItem
+					icon={<FrameIcon />}
+					label="Your projects"
+					title="Your projects"
+					current={own.current}
+					className={NARROW_NAV}
+					onClick={own.onOwn}
+				/>
 			)}
+			<NavItem icon={<PlusIcon />} label="New team…" title="New team…" className={NARROW_NAV} onClick={onNewTeam} />
 		</div>
 	);
 }
 
-function OwnMark() {
-	return (
-		<span className="grid h-[20px] w-[20px] shrink-0 place-items-center text-secondary">
-			<FrameIcon className="h-[16px] w-[16px]" />
-		</span>
-	);
-}
+/** A team's row in the sidebar: its mark and name, primary ink while you're in it. */
+const PLACE =
+	"focus-ring flex h-row-roomy w-full min-w-0 items-center gap-3 rounded-sm px-[10px] text-left text-secondary type-control transition-colors duration-fast ease-out hover:bg-state-hover hover:text-primary motion-reduce:transition-none [@media(max-width:720px)]:justify-center [@media(max-width:720px)]:px-0";
+const NARROW_HIDDEN = "[@media(max-width:720px)]:hidden";
 
 /** An invite is news, so it is one quiet line where you already look: above the covers. */
 export function InviteLine({
@@ -268,19 +253,39 @@ export function InviteLine({
 	);
 }
 
-/** A team's nav under the switcher: Projects, People, and Settings for admins. */
-/** A team's nav under the switcher; `page` null while a place outside the team, such as Account, is open. */
+/** What watching a team means, said once on its page: a viewer's Mac holds none of its projects. */
+function WatchLine({ team }: { team: CloudTeam }) {
+	return (
+		<p className="pj-watch-line -mt-[14px] mb-[26px] flex items-center gap-[9px] text-secondary type-control">
+			<EyeIcon className="size-[15px] shrink-0" />
+			You watch {team.name}. A project opens live in your browser, and nothing comes to this Mac.
+		</p>
+	);
+}
+
+/** A team's pages under it in the sidebar: Projects, People, and Settings for admins. `page` null while none stands. */
 export function TeamNav({
 	team,
 	page,
 	onPage,
+	indent = false,
 }: {
 	team: CloudTeam;
 	page: TeamPage | null;
 	onPage: (page: TeamPage) => void;
+	/** Set in under the team's row. */
+	indent?: boolean;
 }) {
 	const item = (to: TeamPage, icon: ReactNode, label: string, count?: number) => (
-		<NavItem icon={icon} label={label} meta={count} current={page === to} onClick={() => onPage(to)} />
+		<NavItem
+			icon={icon}
+			label={label}
+			title={label}
+			meta={count}
+			current={page === to}
+			className={cn(NARROW_NAV, indent && "pl-[30px]")}
+			onClick={() => onPage(to)}
+		/>
 	);
 	return (
 		<>
@@ -343,7 +348,7 @@ export function TeamProjects({
 	return (
 		<>
 			<ProjectsHead
-				title="Projects"
+				title={team.name}
 				count={count}
 				sort={sort}
 				search={search}
@@ -838,7 +843,7 @@ function TeamGeneral({
 			)}
 			{row(
 				"Logo",
-				"Shows in the switcher and on the team’s page.",
+				"Shows in the sidebar and on the team’s page.",
 				<>
 					<TeamMark team={team} size={40} />
 					<input
@@ -1076,12 +1081,29 @@ export function useTeamLists(teams: readonly CloudTeam[], copies: string) {
 	return { lists, refresh: () => setAsked((n) => n + 1) };
 }
 
-const HOME_TEAM = "home.team";
-const isAddress = (value: unknown): value is string => typeof value === "string";
+const HOME_PLACE = "home.place";
+/** A Mac's own places: Account is spool.page's, so a Mac never stands there. */
+const macPlace = (path: string): HomePlace | null => {
+	const place = placeOf(path);
+	return place?.page === "account" ? null : place;
+};
+const isPlace = (value: unknown): value is string => typeof value === "string" && macPlace(value) !== null;
 
 /**
- * Home's teams, wired: reads this Mac's teams once it is signed in, keeps which one Home shows, and hands
- * Home its switcher, its invite lines and, while a team is chosen, that team's nav and page.
+ * Where Home opens: the team a link at spool.page handed over, else the place the address names, else the place
+ * Home was last at on this Mac, and Recent the first time.
+ */
+function firstPlace(shown: string | null): HomePlace {
+	if (shown !== null) return { team: shown, page: "projects" };
+	const here = location.pathname === "/" ? null : macPlace(location.pathname);
+	if (here !== null) return here;
+	const kept = recall(HOME_PLACE, isPlace);
+	return (kept === null ? null : macPlace(kept)) ?? RECENT_PLACE;
+}
+
+/**
+ * Home's teams, wired: reads this Mac's teams once it is signed in, keeps which place Home shows in the address and
+ * on this Mac, and hands Home its sidebar of places, its invite lines and, while a team is chosen, that team's page.
  */
 export function useTeamHome(
 	account: CloudAccountState,
@@ -1105,29 +1127,20 @@ export function useTeamHome(
 		revision?: (address: string) => number;
 		/** A line about a move's commit, kept above the covers until dismissed. */
 		note?: ReactNode;
+		/** The covers of a team this Mac only watches, as spool.page draws them, from its list; nothing for none. */
+		watched?: (team: CloudTeam, listed: readonly TeamProjectOnMac[], here: TeamHere) => ReactNode;
 	},
+	/** Whether Home stands in the window, so the address is Home's to say; false while a project's tab is in front. */
+	front = true,
 ) {
 	const teamActions = useContext(TeamsSourceContext);
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
-	// the team Home was showing comes back on a reload, unless a link hands over another
-	const [scope, setScope] = useState<string | null>(() => shown ?? recall(HOME_TEAM, isAddress));
-	useEffect(() => {
-		if (scope !== recall(HOME_TEAM, isAddress)) keep(HOME_TEAM, scope);
-	}, [scope]);
-	const [page, setPage] = useState<TeamPage>("projects");
-	const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
-	// Home opens on Recent, unless a link handed over a team to show; going to any place puts Recent and the search away
-	const [recent, setRecent] = useState(shown === null);
+	const [place, setPlace] = useState<HomePlace>(() => firstPlace(shown));
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState<Sort>("Recent");
-	const away = recent || query.trim() !== "";
 	const listed = teams.state === "ready" ? teams.teams : NO_TEAMS;
 	const { lists, refresh: refreshLists } = useTeamLists(listed, projects?.copies ?? "");
 	const [creating, setCreating] = useState(false);
-	const { toast, onSetUp } = useSetUpToast((team) => {
-		setScope(team.address);
-		setPage("people");
-	});
 	const signedIn = account.state === "signed-in" ? account.email : null;
 	const refresh = useCallback(async () => setTeams(await teamActions.list()), [teamActions]);
 	useEffect(() => {
@@ -1142,33 +1155,75 @@ export function useTeamHome(
 		return () => window.removeEventListener("focus", back);
 	}, [signedIn, refresh]);
 	const ready = teams.state === "ready" ? teams : null;
-	const current = ready?.teams.find((team) => team.address === scope && team.role !== "viewer") ?? null;
-	const here = useTeamHere(current?.address ?? null);
-	const select = (address: string | null) => {
-		setScope(address);
-		setPage("projects");
-		setSettingsTab("general");
-		setRecent(false);
+	// the places are Home's once this account is in a team: before, Home is as it always was, at /
+	const furnished = ready !== null && ready.teams.length > 0;
+	const path = furnished ? pathOf(place) : "/";
+	const frontRef = useRef(front && furnished);
+	frontRef.current = front && furnished;
+	/** Goes to a place: a new entry in the window's history while Home is in front, so back comes back here. */
+	const go = useCallback((next: HomePlace, replace = false) => {
+		setPlace(next);
 		setQuery("");
-	};
+		const to = pathOf(next);
+		if (frontRef.current && to !== location.pathname) history[replace ? "replaceState" : "pushState"](null, "", to);
+	}, []);
+	// the address says where Home is, once it is in front and has its places
+	useEffect(() => {
+		if (front && furnished && location.pathname !== path) history.replaceState(null, "", path);
+	}, [front, furnished, path]);
+	// and this Mac keeps it, for the next launch
+	useEffect(() => {
+		if (furnished) keep(HOME_PLACE, path);
+	}, [furnished, path]);
+	// back and forward move between the places visited
+	useEffect(() => {
+		const moved = () => {
+			const at = macPlace(location.pathname);
+			if (at !== null) {
+				setPlace(at);
+				setQuery("");
+			}
+		};
+		window.addEventListener("popstate", moved);
+		return () => window.removeEventListener("popstate", moved);
+	}, []);
+	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
+	const current = place.team === null ? null : (ready?.teams.find((team) => team.address === place.team) ?? null);
+	// a team left, deleted or never this account's falls back to Recent
+	useEffect(() => {
+		if (furnished && place.team !== null && current === null) go(RECENT_PLACE, true);
+	}, [furnished, place.team, current, go]);
+	const here = useTeamHere(current?.address ?? null);
+	const show = (address: string | null) => go(address === null ? OWN_PLACE : { team: address, page: "projects" });
+	const searching = query.trim() !== "";
 	if (!ready)
 		return {
-			switcher: undefined,
+			places: undefined,
 			notice: undefined,
 			team: undefined,
 			teams: new Set<string>(),
 			editing: [] as CloudTeam[],
 			all: NO_TEAMS,
 			toast: undefined,
-			show: select,
+			show,
 			everywhere: undefined,
 			lists,
 			refreshLists,
 			origin: "",
+			path,
 		};
-	const switcher = (
+	const page = current && !searching && place.team !== null ? place.page : null;
+	const places = (
 		<>
-			<TeamSwitcher teams={ready} current={current} onSelect={select} onNewTeam={() => setCreating(true)} />
+			<HomePlaces
+				teams={ready.teams}
+				current={current?.address ?? null}
+				page={page}
+				onTeam={(address) => go({ team: address, page: "projects" })}
+				onPage={(to) => current && go({ team: current.address, page: to })}
+				own={{ current: place.page === "own" && !searching, onOwn: () => go(OWN_PLACE) }}
+				onNewTeam={() => setCreating(true)}
+			/>
 			{creating && (
 				<NewTeamDialog
 					allowed={ready.mayCreateTeam}
@@ -1177,7 +1232,7 @@ export function useTeamHome(
 					onCreate={async (name) => {
 						const created = await teamActions.create(name);
 						await refresh();
-						select(created.address);
+						go({ team: created.address, page: "projects" });
 					}}
 					onClose={() => setCreating(false)}
 				/>
@@ -1198,91 +1253,93 @@ export function useTeamHome(
 						onJoin={async () => {
 							const joined = await teamActions.accept(invite.id);
 							await refresh();
-							if (joined.role === "viewer") open(`${ready.origin}/${joined.address}`);
-							else select(joined.address);
+							go({ team: joined.address, page: "projects" });
 						}}
 					/>
 				))}
 			</div>
 		) : undefined;
 	const total = current === null ? undefined : lists.get(current.address)?.length;
-	const team = current
-		? {
-				nav: (
-					<TeamNav
-						team={current}
-						page={away ? null : page}
-						onPage={(to) => {
-							setPage(to);
-							setSettingsTab("general");
-							setRecent(false);
-							setQuery("");
-						}}
-					/>
-				),
-				main:
-					page === "people" ? (
-						<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
-					) : page === "settings" && current.role === "admin" ? (
-						<TeamSettingsPage
-							key={current.id}
-							team={current}
-							origin={ready.origin}
-							tab={settingsTab}
-							onTab={setSettingsTab}
-							onOpen={open}
-							onChanged={() => void refresh()}
-							onMoved={(address) => setScope(address)}
-							onDeleted={() => {
-								select(null);
-								void refresh();
-							}}
-						/>
-					) : (
-						<TeamProjects
-							team={current}
-							notice={
-								projects?.note ? (
+	const team =
+		current && place.team !== null
+			? {
+					main:
+						place.page === "people" ? (
+							<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
+						) : place.page === "settings" && current.role === "admin" ? (
+							<TeamSettingsPage
+								key={current.id}
+								team={current}
+								origin={ready.origin}
+								tab={place.tab ?? "general"}
+								onTab={(tab) => go({ team: current.address, page: "settings", tab }, true)}
+								onOpen={open}
+								onChanged={() => void refresh()}
+								onMoved={(address) =>
+									go({ team: address, page: "settings", ...(place.tab ? { tab: place.tab } : {}) }, true)
+								}
+								onDeleted={() => {
+									go(OWN_PLACE, true);
+									void refresh();
+								}}
+							/>
+						) : current.role === "viewer" ? (
+							<TeamProjects
+								team={current}
+								notice={
 									<>
-										{projects.note}
+										<WatchLine team={current} />
 										{notice}
 									</>
-								) : (
-									notice
-								)
-							}
-							covers={projects?.covers(current.address, here, sort)}
-							count={total === undefined ? undefined : { total }}
-							sort={{ value: sort, onChange: setSort }}
-							away={projects?.away?.(current, here, ready.teams)}
-							onNewProject={projects && (() => projects.onNewProject(current))}
-							onBilling={
-								current.role === "admin"
-									? () => {
-											setPage("settings");
-											setSettingsTab("billing");
-										}
-									: undefined
-							}
-							setup={{
-								on: "mac",
-								you: signedIn ?? undefined,
-								origin: ready.origin,
-								own: projects?.own ?? [],
-								onMove: (project) => projects?.onMoveIn?.(current, project),
-								onOpen: open,
-								onSetUp,
-								revision: projects?.revision?.(current.address) ?? 0,
-							}}
-							onOpen={open}
-						/>
-					),
-			}
-		: undefined;
-	/** The teams the switcher offers: their projects are on their own pages, not among this Mac's own. */
+								}
+								covers={projects?.watched?.(current, lists.get(current.address) ?? [], here)}
+								count={total === undefined ? undefined : { total }}
+								empty={`${current.name} has no projects yet`}
+								onOpen={open}
+							/>
+						) : (
+							<TeamProjects
+								team={current}
+								notice={
+									projects?.note ? (
+										<>
+											{projects.note}
+											{notice}
+										</>
+									) : (
+										notice
+									)
+								}
+								covers={projects?.covers(current.address, here, sort)}
+								count={total === undefined ? undefined : { total }}
+								sort={{ value: sort, onChange: setSort }}
+								away={projects?.away?.(current, here, ready.teams)}
+								onNewProject={projects && (() => projects.onNewProject(current))}
+								onBilling={
+									current.role === "admin"
+										? () => go({ team: current.address, page: "settings", tab: "billing" })
+										: undefined
+								}
+								setup={{
+									on: "mac",
+									you: signedIn ?? undefined,
+									origin: ready.origin,
+									own: projects?.own ?? [],
+									onMove: (project) => projects?.onMoveIn?.(current, project),
+									onOpen: open,
+									onSetUp,
+									revision: projects?.revision?.(current.address) ?? 0,
+								}}
+								onOpen={open}
+							/>
+						),
+				}
+			: undefined;
+	/** The teams this Mac edits in: their projects are on their own pages, not among this Mac's own. */
 	const editing = ready.teams.filter((team) => team.role !== "viewer");
 	return {
-		switcher,
+		/** The sidebar of places, once this account is in a team. */
+		places: furnished ? places : undefined,
 		notice,
 		team,
 		teams: new Set(editing.map((team) => team.address)),
@@ -1290,25 +1347,23 @@ export function useTeamHome(
 		all: ready.teams,
 		toast,
 		/** Home shows a team's page, by its address, or Your projects. */
-		show: select,
+		show,
 		/** Every team's projects as spool.page lists them, by address, and a way to read them again. */
 		lists,
 		refreshLists,
 		/** spool.page, where a team's projects open in a browser. */
 		origin: ready.origin,
+		/** Home's address: the place it shows. */
+		path,
 		/** Search and Recent across every place, once this account is in a team. */
-		everywhere:
-			ready.teams.length === 0
-				? undefined
-				: {
-						recent,
-						onRecent: () => {
-							setRecent(true);
-							setQuery("");
-						},
-						query,
-						onQuery: setQuery,
-						onOwn: () => select(null),
-					},
+		everywhere: furnished
+			? {
+					recent: place.page === "recent",
+					onRecent: () => go(RECENT_PLACE),
+					query,
+					onQuery: setQuery,
+					onOwn: () => go(OWN_PLACE),
+				}
+			: undefined,
 	};
 }

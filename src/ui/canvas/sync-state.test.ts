@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { SyncNotices } from "./sync-state";
+import { SYNC_CHANGED, SyncNotices, useSyncState } from "./sync-state";
 
 function mount(element: React.ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -133,4 +133,42 @@ it("counts a long wait down in the same notice, and a closed one stays closed un
 	show(null);
 	show("Sending 900 changes to devosurf, about 8 minutes");
 	expect(host.querySelector("[data-sync-state]")?.textContent).toContain("Sending 900 changes");
+});
+
+it("stands the moved sheet over the canvas once the pull lands, and Remove from Home forgets the project", async () => {
+	const sync = { ended: null, goneLocal: null, paused: null, sending: null, held: [], moved: null as unknown };
+	const asked: { url: string; body: string | undefined }[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = new Request(input, init).url;
+			asked.push({ url, body: typeof init?.body === "string" ? init.body : undefined });
+			return Response.json(url.endsWith("/sync") ? sync : {});
+		}),
+	);
+	function Canvas() {
+		return createElement("div", null, useSyncState("kaffe", "/Users/ben/kaffe"));
+	}
+	mount(createElement(Canvas));
+	await act(async () => {});
+	expect(document.querySelector("[data-moved-sheet]")).toBeNull();
+
+	// the pull lands: the daemon says the project moved, and the canvas reads its sync again
+	sync.moved = {
+		team: "tidemark",
+		url: "https://spool.page/tidemark/kaffe",
+		standing: "outside",
+		commit: { hash: "3f2a1c9d0e", author: "Ada Lind", date: "2026-09-01T00:00:00Z" },
+		leftover: [],
+	};
+	await act(async () => {
+		window.dispatchEvent(new CustomEvent(SYNC_CHANGED));
+	});
+	const sheet = document.querySelector<HTMLElement>("[data-moved-sheet]");
+	expect(sheet?.textContent).toContain("kaffe moved to tidemark");
+	const remove = [...(sheet?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "Remove from Home");
+	await act(async () => remove?.click());
+	expect(document.querySelector("[data-moved-sheet]")).toBeNull();
+	const forgot = asked.find((one) => one.url.endsWith("/api/projects/forget"));
+	expect(JSON.parse(forgot?.body ?? "{}")).toEqual({ root: "/Users/ben/kaffe" });
 });

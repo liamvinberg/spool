@@ -58,6 +58,7 @@ import {
 } from "./team-comments";
 import { baseOf, keepBase, mergeText, pruneBases } from "./team-merge";
 import { movesToSay } from "./team-moved";
+import { type AskSeen, classDesign, type DesignClasses } from "./team-seen";
 import { rescanAfterWatchStarts, type TreeWatch, watchTree } from "./watch-tree";
 
 /**
@@ -184,6 +185,12 @@ export interface LocalCopyOptions {
 	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
 	 */
 	moving?: ProjectLink;
+	/**
+	 * How to ask the team which of this copy's files it has seen (spool#196): a `design/` spool never synced is
+	 * classed with it before it first connects, so what is older than the team's comes level instead of going up.
+	 * With none, or against a spool.page from before it could answer, such a copy goes up as its own work.
+	 */
+	seen?: AskSeen;
 }
 
 /**
@@ -328,6 +335,11 @@ export interface SyncOnceOptions {
 	signal?: AbortSignal;
 }
 
+/** How a copy asks its team what it has seen of a never-synced design/, with this machine's session. */
+function askSeen(spoolDir: string, link: ProjectLink, request: CloudRequestOptions): AskSeen {
+	return (files) => cloudTeams(spoolDir, request).seen(link.team, link.project, files);
+}
+
 /**
  * Bring a local copy level with the team once, then disconnect: everything the team has comes down, and
  * everything new here goes up. What `spool init --team` uploads with, what a fetch fills `design/` with, and what a
@@ -342,6 +354,7 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 			...(options.openSocket === undefined ? {} : { openSocket: options.openSocket }),
 			...(options.moving === undefined ? {} : { moving: options.moving }),
 			...(options.onSaved === undefined ? {} : { onSaved: options.onSaved }),
+			...(options.moving === undefined ? { seen: onceSeen(root, spoolDir, options) } : {}),
 			notice: () => {},
 		},
 		false,
@@ -359,6 +372,15 @@ export async function syncLocalCopy(root: string, spoolDir: string, options: Syn
 		signal?.removeEventListener("abort", stop);
 		copy.close();
 	}
+}
+
+/** How a one-off sync asks the team what it has seen, once its folder names the project. */
+function onceSeen(root: string, spoolDir: string, options: SyncOnceOptions): AskSeen {
+	return (files) => {
+		const link = followedLink(root);
+		if (link === undefined) return Promise.resolve({ files: [], held: 0 });
+		return askSeen(spoolDir, link, { ...options.request, origin: options.origin })(files);
+	};
 }
 
 /** Why a one-off sync's connection closed, from the close code spool.page gave, if any. */
@@ -1112,6 +1134,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			signedOut();
 			return reconnect();
 		}
+		if (!levelled && !(await level())) {
+			if (closed) return;
+			if (!live) return fail(new SyncDropped("spool.page couldn't say what the team has of design/"));
+			return reconnect();
+		}
+		if (closed) return;
 		let opened = false;
 		const presented = token;
 		socket = openSocket(syncUrl(link), token, {
@@ -1158,6 +1186,42 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				reconnect();
 			},
 		});
+	};
+
+	/**
+	 * A design/ spool never synced, brought level with the team before it first connects (spool#196): each file the
+	 * team had at its path, a delete included, takes the record of a version older than any the team holds, so the
+	 * catch-up lands the team's over it and nothing older goes up; what the team never had goes up as before, and
+	 * what the team holds its own version of is set aside as before. False when the team couldn't be asked: the
+	 * connection waits, as it would offline. A spool.page that can't answer, or won't, leaves it as it was.
+	 */
+	let levelled = options.seen === undefined || options.moving !== undefined || Object.keys(state.files).length > 0;
+	const level = async (): Promise<boolean> => {
+		if (levelled || Object.keys(state.files).length > 0) {
+			levelled = true;
+			return true;
+		}
+		const paths = filesUnder(designDir, "").filter((path) => path !== CANVAS_PATH && stays(path) === undefined);
+		if (paths.length === 0 || options.seen === undefined) {
+			levelled = true;
+			return true;
+		}
+		let classes: DesignClasses;
+		try {
+			classes = await classDesign(designDir, paths, options.seen);
+		} catch (error) {
+			// down or unreachable, it is asked again; refused, or unable to say, the copy goes on as it always did
+			const cannotSay =
+				error instanceof CloudSignedOut ||
+				(error instanceof CloudTeamRefused && (error.status < 500 || error.code === "invalid_answer"));
+			if (!cannotSay) return false;
+			levelled = true;
+			return true;
+		}
+		levelled = true;
+		if (Object.keys(state.files).length > 0) return true;
+		for (const { path, hash, kind } of classes.files) if (kind === "older") state.files[path] = { version: 0, hash };
+		return true;
 	};
 
 	/** Whether the project ended for this machine, or its team went local; otherwise it keeps trying, as offline. */
@@ -1626,6 +1690,7 @@ export function createTeamSync(deps: {
 					...(deps.openSocket === undefined ? {} : { openSocket: deps.openSocket }),
 					notice: (message) => say(message, root),
 					standing: standing(root, at),
+					seen: askSeen(deps.spoolDir, link, at.request),
 					accountOf: accountOf(at),
 					ended: () => end(root, link),
 					goneLocal: () => void stop(root, at),
@@ -2185,6 +2250,19 @@ export function unconfirmedFiles(root: string, link: ProjectLink): string[] {
 	return travellingFiles(root).filter(
 		(path) => files[path]?.hash !== digest(readFileSync(join(designDir, ...path.split("/")))),
 	);
+}
+
+/**
+ * Whether a project's `design/` has synced with this team project here before: its record names the team's files.
+ * One that hasn't is classed against the team's history before it first connects (spool#196).
+ */
+export function syncedBefore(root: string, link: ProjectLink): boolean {
+	try {
+		const { files } = readState(join(realDesignDir(root), ".spool", "sync.json"), link.url);
+		return Object.keys(files).length > 0;
+	} catch {
+		return false;
+	}
 }
 
 /** Every file on disk in a project's `design/` that goes to its team, design-relative: what a move uploads. */

@@ -1,12 +1,15 @@
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { type Context, Hono } from "hono";
 import { validator } from "hono/validator";
 import { CloudSignedOut, originOf } from "../cloud-auth";
-import { CloudTeamRefused, cloudTeams } from "../cloud-teams";
+import { CloudTeamRefused, cloudTeams, type SeenAsk } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { getTeamProject } from "../get-it";
+import { checkoutsFor, type PlaceSurvey, rememberPick, type Survey, surveyPlace } from "../get-it-places";
 import { checkoutOf, cloneCommand } from "../git-remote";
-import { type MoveProgress, moveIntoTeam } from "../move-in";
+import { linksTo, type MoveProgress, moveIntoTeam } from "../move-in";
 import { expandHome, realDir } from "../paths";
 import { readRegistry, teamProjects } from "../registry";
 import {
@@ -20,6 +23,7 @@ import {
 	previewTeamMove,
 	type TeamMoveOptions,
 } from "../team-moves";
+import { parseProjectLink } from "../team-project";
 import type { DaemonCloud } from "./app";
 import { branchesTouchingDesign, type MoveCommit } from "./history";
 import { staysOnThisMac } from "./team-sync";
@@ -67,6 +71,8 @@ const COMMIT_ANSWER_MS = 5_000;
  */
 export function teamProjectRoutes(options: {
 	spoolDir: string;
+	/** The home folder Get it scans the code folders of for checkouts. */
+	home?: string;
 	cloud?: DaemonCloud | undefined;
 	/** The machine's projects location, where "Just on this Mac" goes. */
 	location: () => string;
@@ -103,6 +109,16 @@ export function teamProjectRoutes(options: {
 	const hooks = (onProgress?: (progress: MoveProgress) => void): MoveHooks => {
 		if (options.hooks === undefined) throw new SpoolError("this daemon doesn't move team projects");
 		return { ...options.hooks, ...(onProgress === undefined ? {} : { onProgress }) };
+	};
+	/** A team project Get it is about: its link, its repo, and how to ask the team about files. */
+	const getting = async (team: string, name: string) => {
+		const teams = cloudTeams(options.spoolDir, { ...options.cloud, origin: origin() });
+		const found = await teams.project(team, name);
+		if (found.role === "viewer") throw new SpoolError(`You're a viewer of ${team}; open ${found.url} in a browser.`);
+		const link = parseProjectLink(found.url);
+		if (link === undefined) throw new SpoolError("spool.page returned an invalid team project");
+		const ask = (files: readonly SeenAsk[]) => teams.seen(link.team, link.project, files);
+		return { link, repo: found.repo ?? null, ask };
 	};
 	/** Where a move went wrong, said for the sheet: spool.page's code, and a sentence for it. */
 	const moveRefused = (
@@ -180,6 +196,35 @@ export function teamProjectRoutes(options: {
 					return refused(c, error);
 				}
 			})
+			/**
+			 * Where Get it can put a team project (spool#193): its checkouts on this Mac best first, found by the
+			 * registry, the scan of the code folders and folders picked before, each with what is there; and the
+			 * folder "Just on this Mac" makes.
+			 */
+			.get("/teams/:team/projects/:project/places", async (c) => {
+				const team = c.req.param("team");
+				const name = c.req.param("project");
+				try {
+					const { link, repo, ask } = await getting(team, name);
+					const checkouts = await checkoutsFor(options.spoolDir, options.home ?? homedir(), { link, repo }, ask);
+					const mac = join(expandHome(options.location()), team, name);
+					return c.json({ checkouts, mac: { path: mac, survey: macSurvey(mac, link.url) } });
+				} catch (error) {
+					return refused(c, error);
+				}
+			})
+			/** What is at a folder picked with "In a checkout…", said on its line before Get it is pressed. */
+			.get("/teams/:team/projects/:project/places/survey", async (c) => {
+				const path = c.req.query("path");
+				if (path === undefined || path === "") return c.json({ error: "expected ?path=/abs/folder" }, 400);
+				try {
+					const { link, ask } = await getting(c.req.param("team"), c.req.param("project"));
+					const at = realDir(path);
+					return c.json({ path: at, usedAt: 0, ...(await surveyPlace(at, link, ask)) } satisfies PlaceSurvey);
+				} catch (error) {
+					return refused(c, error);
+				}
+			})
 			.post(
 				"/teams/:team/projects/:project/get",
 				validator("json", (value, c) => {
@@ -191,6 +236,9 @@ export function teamProjectRoutes(options: {
 				async (c) => {
 					const body = c.req.valid("json");
 					try {
+						// a folder picked is offered again at the next Get it
+						if (body.where === "checkout" && existsSync(body.path))
+							rememberPick(options.spoolDir, realDir(body.path));
 						const { root } = await getTeamProject(
 							c.req.param("team"),
 							c.req.param("project"),
@@ -198,7 +246,7 @@ export function teamProjectRoutes(options: {
 								? { kind: "mac", location: options.location() }
 								: { kind: "checkout", path: body.path },
 							options.spoolDir,
-							asked(),
+							{ ...asked(), signal: c.req.raw.signal },
 						);
 						return c.json({ root, name: basename(root) });
 					} catch (error) {
@@ -384,6 +432,18 @@ function refusal(error: unknown): { error: string; code?: string; status: 401 | 
 	if (error instanceof CloudTeamRefused) return { error: error.message, code: error.code, status: 409 };
 	if (error instanceof SpoolError) return { error: error.message, status: 409 };
 	return { error: "spool.page could not be reached. Try again.", status: 503 };
+}
+
+/** What "Just on this Mac" finds at its folder: nothing yet, or a folder Get it won't fill. */
+function macSurvey(path: string, url: string): Survey {
+	if (!existsSync(path)) return { kind: "empty" };
+	if (linksTo(path, url)) return { kind: "synced" };
+	try {
+		if (readdirSync(path).length === 0) return { kind: "empty" };
+	} catch {
+		return { kind: "other", why: "Isn't a folder" };
+	}
+	return { kind: "other", why: "Isn't empty" };
 }
 
 /** Every checkout this Mac's registered projects sit in, with the repo its `origin` names. */

@@ -1,5 +1,6 @@
 import { authorizedCloudRequest, type CloudRequestOptions } from "./cloud-auth";
 import { SpoolError } from "./errors";
+import { SEEN_FILES, type SeenAnswer } from "./team-sync-protocol";
 
 /**
  * The team API at spool.page, as this machine's device session reaches it. spool.page enforces every
@@ -279,6 +280,26 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		commentCount: (address: string, name: string) =>
 			call<{ comments: number }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}/comments/count`),
 		/**
+		 * Whether the team has, had or never had each of these files at their paths (spool#193), asked in batches of
+		 * `SEEN_FILES`: what Get it reads before a design/ spool never synced first connects. Editors only.
+		 */
+		seen: async (address: string, name: string, files: readonly SeenAsk[]): Promise<SeenAnswer> => {
+			const answered: SeenAnswer = { files: [], held: 0 };
+			for (let at = 0; at === 0 || at < files.length; at += SEEN_FILES) {
+				const part = await call<SeenAnswer>(
+					"POST",
+					`${team(address)}/projects/${encodeURIComponent(name)}/history/seen`,
+					{ files: files.slice(at, at + SEEN_FILES) },
+				);
+				// an answer that isn't one is a spool.page that can't say, as one with no such route
+				if (!Array.isArray(part.files) || typeof part.held !== "number")
+					throw new CloudTeamRefused("invalid_answer", 502);
+				answered.files.push(...part.files);
+				answered.held = part.held;
+			}
+			return answered;
+		},
+		/**
 		 * One team project, and this account's role in its team: what a local copy asks after a close or a refused
 		 * connect. `standing` is `unpaid` while the team has gone local, whatever the role.
 		 */
@@ -291,3 +312,9 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 }
 
 export type CloudTeamsClient = ReturnType<typeof cloudTeams>;
+
+/** One file a Mac holds, asked of the team's history: its design-relative path and its bytes' sha256. */
+export interface SeenAsk {
+	path: string;
+	hash: string;
+}

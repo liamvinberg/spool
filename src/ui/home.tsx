@@ -5,6 +5,7 @@ import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, type Sort, useFoun
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
+import { MovedArt, MovedSheet, movedBy } from "./moved-away";
 import { tilde } from "./paths";
 import { Button, IconButton, SplitButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
@@ -62,7 +63,8 @@ export function Home({
 	onRemoveIcon,
 	onRemoveThumbnail,
 	account,
-	switcher,
+	places,
+	place,
 	notice,
 	team,
 	everywhere,
@@ -87,12 +89,14 @@ export function Home({
 	onRemoveThumbnail?: (project: { root: string; name: string }) => void;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
-	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
-	switcher?: ReactNode;
+	/** The sidebar of places, once this account is in a team: every team, then Your projects. */
+	places?: ReactNode;
+	/** Home's address, which changes as you go between places: the page fades up as each comes in. */
+	place?: string;
 	/** One line per invite waiting for this account, above the covers. */
 	notice?: ReactNode;
-	/** While a team is chosen in the switcher: its nav and its page, in place of your own projects. */
-	team?: { nav: ReactNode; main: ReactNode } | undefined;
+	/** While a team is chosen in the sidebar: its page, in place of your own projects. */
+	team?: { main: ReactNode } | undefined;
 	/** Search and Recent across every place, once this account is in a team. */
 	everywhere?: Everywhere | undefined;
 }) {
@@ -271,12 +275,12 @@ export function Home({
 		)
 	) : team ? (
 		<main className={HOME_MAIN}>{team.main}</main>
-	) : projects.length === 0 && needle === "" ? (
+	) : projects.length === 0 && needle === "" && !everywhere ? (
 		welcome
 	) : (
 		<main className={HOME_MAIN}>
 			<ProjectsHead
-				title="Projects"
+				title={everywhere ? "Your projects" : "Projects"}
 				count={
 					needle === "" || everywhere ? { total: covers.length } : { total: covers.length, shown: visible.length }
 				}
@@ -292,10 +296,32 @@ export function Home({
 						/>
 					)
 				}
-				actions={start}
+				actions={
+					everywhere ? (
+						<>
+							<Button size="lg" icon={<FolderIcon />} onClick={onFolder}>
+								Open…
+							</Button>
+							{start}
+						</>
+					) : (
+						start
+					)
+				}
 			/>
+			{everywhere && (
+				<p className="pj-own-line -mt-[17px] mb-[26px] text-secondary type-control">
+					On this Mac only. Move one to a team from its menu.
+				</p>
+			)}
 			{notice && <div className="mb-[24px]">{notice}</div>}
-			{visible.length === 0 ? (
+			{visible.length === 0 && everywhere ? (
+				<EmptyState
+					className="min-h-[420px] justify-center p-[35px]"
+					art={<EmptyFrames />}
+					title="No projects of your own on this Mac yet"
+				/>
+			) : visible.length === 0 ? (
 				<EmptyState
 					className="min-h-[420px] justify-center p-[35px]"
 					art={<EmptyFrames />}
@@ -312,28 +338,23 @@ export function Home({
 			)}
 		</main>
 	);
+	// the page fades up as each place comes in: the search is one place however its words change
+	const shown = loading && (team === undefined || recent || searching) ? <main aria-busy="true" /> : page;
 	return (
 		<HomeShell
 			switcher={
-				everywhere ? (
-					<>
-						<FindNav
-							query={everywhere.query}
-							onQuery={everywhere.onQuery}
-							inputRef={searchRef}
-							recent={everywhere.recent}
-							onRecent={everywhere.onRecent}
-						/>
-						{switcher}
-					</>
-				) : (
-					switcher
+				everywhere && (
+					<FindNav
+						query={everywhere.query}
+						onQuery={everywhere.onQuery}
+						inputRef={searchRef}
+						recent={everywhere.recent}
+						onRecent={everywhere.onRecent}
+					/>
 				)
 			}
 			nav={
-				team ? (
-					team.nav
-				) : (
+				places ?? (
 					<NavItem
 						icon={<FrameIcon />}
 						label="Projects"
@@ -345,9 +366,14 @@ export function Home({
 			}
 			foot={<>{account ?? <span>On this Mac</span>}</>}
 		>
-			{loading && (team === undefined || recent || searching) ? <main aria-busy="true" /> : page}
+			{place === undefined ? shown : <PlaceIn key={searching ? "search" : place}>{shown}</PlaceIn>}
 		</HomeShell>
 	);
+}
+
+/** A place's page as it comes in: it fades up 6 px, and stands still under reduced motion. */
+export function PlaceIn({ children }: { children: ReactNode }) {
+	return <div className="pj-place-in grid min-w-0 animate-place-in">{children}</div>;
 }
 
 /**
@@ -640,150 +666,161 @@ function ProjectTile({
 	onRemoveThumbnail?: () => void;
 }) {
 	const cover = project.covers[0];
+	// a project whose design/ moved into a team this account can't edit opens the sheet saying where it went
+	const [movedOpen, setMovedOpen] = useState(false);
+	const moved = project.moved;
 	return (
-		<CoverTile
-			name={project.name}
-			open={{ onClick: onOpen }}
-			here={here}
-			transition={transitionName(project.root)}
-			line={<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />}
-			menuOpen={menuOpen}
-			onToggleMenu={onToggleMenu}
-			onCloseMenu={onCloseMenu}
-			art={
-				<>
-					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
-					{project.thumbnail !== undefined ? (
-						<img
-							src={thumbnailUrl(project.name, project.thumbnail.hash)}
-							alt=""
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : cover ? (
-						<Thumbnail
-							project={project.name}
-							frame={cover.frame}
-							cover={cover.cover}
-							alt={cover.frame}
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : (
-						// nothing to picture yet: its own mark, so an empty project still reads as itself
-						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
-					)}
-				</>
-			}
-			menu={({ close, refocus }) => (
-				<>
-					<MenuItem
-						label="Open"
-						onClick={() => {
-							close();
-							onOpen();
-						}}
-					/>
-					{onChangeIcon && (
-						<MenuItem
-							label="Change icon…"
-							onClick={() => {
-								refocus();
-								close();
-								onChangeIcon();
-							}}
-						/>
-					)}
-					{onRemoveIcon && (
-						<MenuItem
-							label="Remove icon"
-							onClick={() => {
-								refocus();
-								close();
-								onRemoveIcon();
-							}}
-						/>
-					)}
-					{onRemoveThumbnail && (
-						<MenuItem
-							label="Remove thumbnail"
-							onClick={() => {
-								refocus();
-								close();
-								onRemoveThumbnail();
-							}}
-						/>
-					)}
-					<MenuItem
-						label="Export project…"
-						onClick={() => {
-							refocus();
-							close();
-							onExport();
-						}}
-					/>
-					<MenuItem
-						label="Rename…"
-						onClick={() => {
-							refocus();
-							close();
-							onRename();
-						}}
-					/>
-					{moves
-						.filter((move) => !move.end)
-						.map((move) => (
-							<MenuItem
-								key={move.label}
-								label={move.label}
-								onClick={() => {
-									refocus();
-									close();
-									move.onClick();
-								}}
-							/>
-						))}
-					<MenuItem
-						label="Copy path"
-						onClick={() => {
-							close();
-							void navigator.clipboard?.writeText(project.root);
-						}}
-					/>
-					<MenuSeparator />
-					<MenuItem
-						label="Hide from Spool"
-						onClick={() => {
-							close();
-							withViewTransition(onForget);
-						}}
-					/>
-					{moves
-						.filter((move) => move.end)
-						.map((move) => (
-							<MenuItem
-								key={move.label}
-								label={move.label}
-								destructive
-								onClick={() => {
-									refocus();
-									close();
-									move.onClick();
-								}}
-							/>
-						))}
-					<MenuItem
-						label={`Move to ${systemTrashName()}…`}
-						destructive
-						onClick={() => {
-							refocus();
-							close();
-							onTrash();
-						}}
-					/>
-				</>
+		<>
+			{moved !== undefined && movedOpen && (
+				<MovedSheet name={project.name} moved={moved} onRemove={onForget} onClose={() => setMovedOpen(false)} />
 			)}
-		/>
+			<CoverTile
+				name={project.name}
+				open={{ onClick: moved === undefined ? onOpen : () => setMovedOpen(true) }}
+				here={here}
+				transition={transitionName(project.root)}
+				line={<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />}
+				menuOpen={menuOpen}
+				onToggleMenu={onToggleMenu}
+				onCloseMenu={onCloseMenu}
+				art={
+					<>
+						{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
+						{moved !== undefined ? (
+							<MovedArt moved={moved} />
+						) : project.thumbnail !== undefined ? (
+							<img
+								src={thumbnailUrl(project.name, project.thumbnail.hash)}
+								alt=""
+								draggable={false}
+								className="h-full w-full object-contain"
+							/>
+						) : cover ? (
+							<Thumbnail
+								project={project.name}
+								frame={cover.frame}
+								cover={cover.cover}
+								alt={cover.frame}
+								draggable={false}
+								className="h-full w-full object-contain"
+							/>
+						) : (
+							// nothing to picture yet: its own mark, so an empty project still reads as itself
+							<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
+						)}
+					</>
+				}
+				menu={({ close, refocus }) => (
+					<>
+						<MenuItem
+							label="Open"
+							onClick={() => {
+								close();
+								if (moved === undefined) onOpen();
+								else setMovedOpen(true);
+							}}
+						/>
+						{onChangeIcon && (
+							<MenuItem
+								label="Change icon…"
+								onClick={() => {
+									refocus();
+									close();
+									onChangeIcon();
+								}}
+							/>
+						)}
+						{onRemoveIcon && (
+							<MenuItem
+								label="Remove icon"
+								onClick={() => {
+									refocus();
+									close();
+									onRemoveIcon();
+								}}
+							/>
+						)}
+						{onRemoveThumbnail && (
+							<MenuItem
+								label="Remove thumbnail"
+								onClick={() => {
+									refocus();
+									close();
+									onRemoveThumbnail();
+								}}
+							/>
+						)}
+						<MenuItem
+							label="Export project…"
+							onClick={() => {
+								refocus();
+								close();
+								onExport();
+							}}
+						/>
+						<MenuItem
+							label="Rename…"
+							onClick={() => {
+								refocus();
+								close();
+								onRename();
+							}}
+						/>
+						{moves
+							.filter((move) => !move.end)
+							.map((move) => (
+								<MenuItem
+									key={move.label}
+									label={move.label}
+									onClick={() => {
+										refocus();
+										close();
+										move.onClick();
+									}}
+								/>
+							))}
+						<MenuItem
+							label="Copy path"
+							onClick={() => {
+								close();
+								void navigator.clipboard?.writeText(project.root);
+							}}
+						/>
+						<MenuSeparator />
+						<MenuItem
+							label="Hide from Spool"
+							onClick={() => {
+								close();
+								withViewTransition(onForget);
+							}}
+						/>
+						{moves
+							.filter((move) => move.end)
+							.map((move) => (
+								<MenuItem
+									key={move.label}
+									label={move.label}
+									destructive
+									onClick={() => {
+										refocus();
+										close();
+										move.onClick();
+									}}
+								/>
+							))}
+						<MenuItem
+							label={`Move to ${systemTrashName()}…`}
+							destructive
+							onClick={() => {
+								refocus();
+								close();
+								onTrash();
+							}}
+						/>
+					</>
+				)}
+			/>
+		</>
 	);
 }
 
@@ -804,7 +841,8 @@ export function CoverTile({
 	menu,
 }: {
 	name: string;
-	open: { onClick: () => void } | { href: string };
+	/** `external` opens it outside this window: from a Mac, in the system browser. */
+	open: { onClick: () => void } | { href: string; external?: boolean };
 	art: ReactNode;
 	here: readonly HerePerson[] | undefined;
 	line: ReactNode;
@@ -873,7 +911,12 @@ export function CoverTile({
 			style={transition === undefined ? undefined : { viewTransitionName: transition }}
 		>
 			{"href" in open ? (
-				<a className={opener} href={open.href} aria-label={`Open ${name}`}>
+				<a
+					className={opener}
+					href={open.href}
+					aria-label={`Open ${name}`}
+					{...(open.external ? { target: "_blank", rel: "noreferrer" } : {})}
+				>
 					{face}
 				</a>
 			) : (
@@ -925,7 +968,8 @@ function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: 
 		team?.name,
 		project.syncPaused !== undefined && "sync paused",
 		project.goneLocal !== undefined && "gone local",
-		relativeTime(project.openedAt),
+		relativeTime(project.moved?.commit?.date ?? project.openedAt),
+		project.moved !== undefined && movedBy(project.moved),
 		project.ended !== undefined &&
 			(project.movedOut === undefined
 				? `no longer synced with ${project.ended}`

@@ -12,9 +12,10 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_
 import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
+import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves } from "../move-in";
-import { fetchLocalCopy } from "../open";
+import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, themeInline } from "../settings/registry";
@@ -66,6 +67,7 @@ import { homeRoutes } from "./home-routes";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
+import { movedAwayRoots } from "./moved-away";
 import { watchForMoves } from "./moved-in";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { type ProjectJson, readScenario } from "./project-files";
@@ -175,8 +177,8 @@ export interface DaemonOptions {
 	/** History's idle window (#157) — driven by tests instead of by the clock. */
 	historyClock?: HistoryClock;
 	/**
-	 * The home the picker's search walks (#251) — swapped by seam tests, so a walk
-	 * reads a fixture home rather than whatever is on the machine running them.
+	 * The home the picker's search walks (#251), and Get it's scan of the code folders (spool#193) — swapped by seam
+	 * tests, so a walk reads a fixture home rather than whatever is on the machine running them.
 	 */
 	home?: string | undefined;
 	/** Where history writes the one notice a project without git earns. */
@@ -193,6 +195,8 @@ export interface DaemonOptions {
 	goneLocalAskMs?: number;
 	/** How soon such a copy asks again when spool.page couldn't be reached, doubling up to how often it asks: a minute. */
 	goneLocalRetryMs?: number;
+	/** How often a project whose design/ moved into a team this account can't edit asks again: a minute. */
+	movedAskMs?: number;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
@@ -291,6 +295,7 @@ export function createDaemonApp({
 	teamNotice = (message) => console.error(`spool: ${message}`),
 	goneLocalAskMs,
 	goneLocalRetryMs,
+	movedAskMs,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
 }: DaemonOptions) {
@@ -517,10 +522,25 @@ export function createDaemonApp({
 		iconWatch.keeping(registeredRoots());
 		thumbnailWatch.keeping(registeredRoots());
 	}
+	// spool#194: projects whose design/ moved into a team this account can't edit, asked again until it can
+	const movedAwayFrom = movedAwayRoots({
+		ask: () => {
+			movedAwayFrom.keeping(registeredRoots());
+			movedIn.keeping(registeredRoots());
+		},
+		changed: (root) => {
+			emitAppEvent({ kind: "registry" });
+			hub.publish(root, { kind: "sync", message: "moved" });
+		},
+		askMs: movedAskMs ?? 60_000,
+	});
 	const cloudAccount = createCloudAccount({
 		spoolDir,
 		...(cloudAccountServices === undefined ? {} : { services: cloudAccountServices }),
-		onChange: () => emitAppEvent({ kind: "account" }),
+		onChange: () => {
+			emitAppEvent({ kind: "account" });
+			movedAwayFrom.account();
+		},
 	});
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
 	history.keeping(registeredRoots());
@@ -568,11 +588,19 @@ export function createDaemonApp({
 	// DEV-190: a project a teammate moved into the team arrives here with the move commit's pull, and is refilled
 	const movedIn = watchForMoves({
 		refill: async (root) => {
-			await fetchLocalCopy(root, spoolDir, {
-				origin: originOf(cloud),
-				...(cloud === undefined ? {} : { request: cloud }),
-				...(cloud?.openSocket === undefined ? {} : { openSocket: cloud.openSocket }),
-			});
+			try {
+				await fetchLocalCopy(root, spoolDir, {
+					origin: originOf(cloud),
+					...(cloud === undefined ? {} : { request: cloud }),
+					...(cloud?.openSocket === undefined ? {} : { openSocket: cloud.openSocket }),
+				});
+			} catch (error) {
+				// someone outside the team pulled its move commit: Home says where design/ went, and it is asked again
+				if (error instanceof NotAnEditor && registeredRoots().includes(root))
+					return movedAwayFrom.refused(root, error.standing);
+				throw error;
+			}
+			movedAwayFrom.filled(root);
 		},
 		arrived: () => teamSync.keeping(registeredRoots()),
 		// task 136: a copy whose project moved out of its team waits for the pull that brings design/ back into git
@@ -1119,6 +1147,7 @@ export function createDaemonApp({
 				registeredRoots,
 				trash: trashImpl,
 				teamSync,
+				movedAway: (root) => movedAwayFrom.get(root),
 				iconWatch,
 				thumbnailWatch,
 			}),
@@ -1619,6 +1648,7 @@ export function createDaemonApp({
 		"/api/cloud",
 		teamProjectRoutes({
 			spoolDir,
+			home: fsIndex.home,
 			cloud,
 			location: () =>
 				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
@@ -1645,7 +1675,8 @@ export function createDaemonApp({
 	/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
 	app.get("/api/p/:project/sync", (c) =>
 		withProject(c, resolveProject, (root) => {
-			return c.json(teamSync.state(root));
+			const moved = movedAwayFrom.get(root);
+			return c.json({ ...teamSync.state(root), ...(moved === undefined ? {} : { moved }) });
 		}),
 	);
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
@@ -1745,6 +1776,10 @@ export function createDaemonApp({
 					.catch(() => {}),
 		);
 	}
+
+	// Home's places at their own addresses (`/recent`, `/<team>/people`…), beneath every route above: the app reads
+	// which place from the path. Any other path is no page of the app's.
+	app.get("*", (c) => (c.req.path === "/" || placeOf(c.req.path) === null ? c.notFound() : serveUiIndex(c)));
 
 	app.onError((error, c) => {
 		if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
@@ -2024,6 +2059,7 @@ export function createDaemonApp({
 			teamSync.close();
 			projectShares.close();
 			movedIn.close();
+			movedAwayFrom.close();
 			moving.abort();
 			liveTurns.close();
 			for (const stop of boothWatches.values()) stop();

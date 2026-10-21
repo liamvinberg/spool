@@ -57,24 +57,22 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 	await expect.poll(() => new URL(page.url()).pathname, { timeout: 30_000 }).toBe("/p/checkout");
 	expect(new URL(page.url()).search).toBe("");
 
-	// a project of the team's that isn't on this Mac yet leaves Home where it is, asking for nothing
+	// a project of the team's that isn't on this Mac yet shows its team, asking for nothing
 	await page.goto(local(handoverAddress({ team: "devosurf", project: "elsewhere" })));
-	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/`);
+	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/devosurf`);
 
-	// the team alone, from its setup list's Open in spool: taken, so Home's address loses it, with no tab opened
+	// the team alone, from its setup list's Open in spool: taken, so Home's address is the team's, with no tab opened
 	await page.goto(local(handoverAddress({ team: "devosurf" })));
-	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/`);
-	const switcher = page.locator(".pj-team-switch > button");
-	const shown = switcher.locator(".truncate");
-	await expect.poll(() => shown.textContent(), { timeout: 30_000 }).toBe("Devosurf");
+	await expect.poll(() => page.url(), { timeout: 30_000 }).toBe(`${daemon.url}/devosurf`);
+	const team = page.locator(".pj-places button[aria-current=true]");
+	await expect.poll(() => team.getAttribute("title"), { timeout: 30_000 }).toBe("Devosurf");
 
 	// Home keeps showing the team it was on through a reload, and Your projects once that is chosen
 	await page.reload();
-	await expect.poll(() => shown.textContent(), { timeout: 30_000 }).toBe("Devosurf");
-	await switcher.click();
-	await page.getByRole("menuitem", { name: "Your projects" }).click();
+	await expect.poll(() => team.getAttribute("title"), { timeout: 30_000 }).toBe("Devosurf");
+	await page.getByRole("button", { name: "Your projects" }).click();
+	await expect.poll(() => page.url()).toBe(`${daemon.url}/`);
 	await page.reload();
-	await page.locator(".pj-team-switch").waitFor();
-	await page.waitForTimeout(500);
-	expect(await shown.textContent()).toBe("Your projects");
+	await page.getByRole("heading", { name: "Your projects" }).waitFor({ timeout: 30_000 });
+	expect(await team.count()).toBe(0);
 });

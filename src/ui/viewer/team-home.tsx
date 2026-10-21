@@ -1,27 +1,24 @@
 import { type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { ACCOUNT_PLACE, type HomePlace, pathOf, placeOf } from "../../home-places";
 import { AccountFoot } from "../account-foot";
 import type { BillingCycle, CloudTeam, CloudTeamsState } from "../api";
-import { CoverTile, HOME_MAIN, HomeShell, MenuBackdrop } from "../home";
+import { HOME_MAIN, HomeShell, PlaceIn } from "../home";
 import { FindNav, FoundHead, finds, useFoundPlace } from "../home-find";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import { Button } from "../primitives/actions";
 import { EmptyFrames, EmptyState } from "../primitives/feedback";
-import { MenuItem } from "../primitives/overlays";
-import { ProjectIconView } from "../project-icon";
+import { CloudCovers } from "../team-covers";
 import { type MoveDone, MoveTeamSheet, mayMoveFrom, moveTargets, teamMoveDone, useMovedToast } from "../team-move";
 import { type SetupHost, useSetUpToast } from "../team-setup";
 import type { ListedTeamProject, TeamsSource } from "../team-source";
 import {
+	HomePlaces,
 	InviteLine,
 	NewTeamDialog,
-	type SettingsTab,
-	type TeamHere,
-	TeamNav,
 	type TeamPage,
 	TeamPeoplePage,
 	TeamProjects,
 	TeamSettingsPage,
-	TeamSwitcher,
 	TeamsSourceContext,
 	useTeamHere,
 } from "../teams";
@@ -51,33 +48,10 @@ export function cycleOf(search: string): BillingCycle | undefined {
 	return cycle === "monthly" || cycle === "yearly" ? cycle : undefined;
 }
 
-/** Where Home is, read from its address: one of a team's pages, or the account, which is no team's. */
-export type HomePlace =
-	| {
-			team: string;
-			page: TeamPage;
-			/** Settings' tab; General when absent. */
-			tab?: SettingsTab;
-	  }
-	| { team: null; page: "account" };
-
-/** spool.page/account. `account` is a reserved team address, so no team stands there. */
-export const ACCOUNT_PLACE: HomePlace = { team: null, page: "account" };
-
-export function placeOf(path: string): HomePlace | null {
-	const [team, page, tab, ...rest] = path.split("/").filter(Boolean);
-	if (team === "account" && page === undefined) return ACCOUNT_PLACE;
-	if (team === undefined || rest.length > 0) return null;
-	if (page === undefined) return { team, page: "projects" };
-	if (page === "settings" && tab === "billing") return { team, page, tab };
-	if (tab !== undefined) return null;
-	return page === "people" || page === "settings" ? { team, page } : null;
-}
-
-export function pathOf(place: HomePlace): string {
-	if (place.team === null) return "/account";
-	if (place.page === "settings" && place.tab === "billing") return `/${place.team}/settings/billing`;
-	return place.page === "projects" ? `/${place.team}` : `/${place.team}/${place.page}`;
+/** Where Home is at spool.page: a team's page or the account's, never a Mac's own places. */
+function browserPlace(path: string): HomePlace | null {
+	const place = placeOf(path);
+	return place?.page === "own" || place?.page === "recent" ? null : place;
 }
 
 /**
@@ -110,7 +84,7 @@ function Home({
 	source: TeamsSource;
 	accountSource: AccountSource;
 }) {
-	const [place, setPlace] = useState<HomePlace | null>(() => placeOf(location.pathname));
+	const [place, setPlace] = useState<HomePlace | null>(() => browserPlace(location.pathname));
 	// the team Account was opened from stays in the sidebar while it is open
 	const [lastTeam, setLastTeam] = useState<string | null>(null);
 	const [teams, setTeams] = useState<CloudTeamsState | null>(null);
@@ -150,7 +124,7 @@ function Home({
 	useEffect(() => {
 		void refresh();
 		const back = () => void refresh();
-		const moved = () => setPlace(placeOf(location.pathname));
+		const moved = () => setPlace(browserPlace(location.pathname));
 		window.addEventListener("focus", back);
 		window.addEventListener("popstate", moved);
 		return () => {
@@ -182,7 +156,7 @@ function Home({
 	}, [current, onAccount]);
 	const tab = place?.team ? place.tab : undefined;
 	const page: TeamPage | null =
-		place === null || place.page === "account"
+		place === null || place.team === null
 			? onAccount
 				? null
 				: "projects"
@@ -203,16 +177,7 @@ function Home({
 								</Button>
 							</div>
 						) : (
-							<>
-								<FindNav query={query} onQuery={setQuery} inputRef={searchRef} />
-								<TeamSwitcher
-									teams={ready}
-									current={current}
-									onMac={false}
-									onSelect={(address) => address !== null && go({ team: address, page: "projects" })}
-									onNewTeam={() => setCreating(true)}
-								/>
-							</>
+							<FindNav query={query} onQuery={setQuery} inputRef={searchRef} />
 						)}
 						{creating && (
 							<NewTeamDialog
@@ -230,11 +195,15 @@ function Home({
 				)
 			}
 			nav={
-				current && (
-					<TeamNav
-						team={current}
+				ready &&
+				ready.teams.length > 0 && (
+					<HomePlaces
+						teams={ready.teams}
+						current={current?.address ?? null}
 						page={needle === "" ? page : null}
-						onPage={(to) => go({ team: current.address, page: to })}
+						onTeam={(address) => go({ team: address, page: "projects" })}
+						onPage={(to) => current && go({ team: current.address, page: to })}
+						onNewTeam={() => setCreating(true)}
 					/>
 				)
 			}
@@ -250,81 +219,83 @@ function Home({
 				/>
 			}
 		>
-			<main className={HOME_MAIN} aria-busy={onAccount ? undefined : current === null}>
-				{onAccount ? (
-					<AccountPage
-						source={accountSource}
-						teams={ready?.teams.map((team) => team.name)}
-						onSignedOut={signIn}
-						onSignOut={signOut}
-					/>
-				) : current === null || ready === null ? null : needle !== "" ? (
-					<CloudFound teams={ready.teams} needle={needle} query={query} onClear={() => setQuery("")} />
-				) : page === "people" ? (
-					<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
-				) : page === "settings" ? (
-					<TeamSettingsPage
-						key={current.id}
-						team={current}
-						origin={ready.origin}
-						tab={tab ?? "general"}
-						onTab={(tab) => go({ team: current.address, page: "settings", tab })}
-						// Stripe's pages come back to /<team>/settings/billing, so they open in this tab
-						onOpen={(url) => location.assign(url)}
-						cycle={cycle}
-						onChanged={() => void refresh()}
-						onMoved={(address) => go({ team: address, page: "settings", tab: tab ?? "general" }, true)}
-						onDeleted={() => void refresh()}
-					/>
-				) : (
-					<Projects
-						key={current.address}
-						team={current}
-						teams={ready.teams}
-						onMoved={(done) => {
-							moved.say(done.toast);
-							if (typeof done.show === "string") go({ team: done.show, page: "projects" });
-						}}
-						setup={{
-							on: "browser",
-							you: account,
-							origin: ready.origin,
-							onOpen: (url) => location.assign(url),
-							cycle,
-							onSetUp,
-						}}
-						notice={
-							<>
-								{joined && (
-									<p className="mb-[22px] text-secondary type-control">
-										You joined {current.name} as a viewer. Its projects show here, live, as the team makes
-										them.
-									</p>
-								)}
-								{ready.invites.length > 0 && (
-									<div className="pj-invites -mt-[8px] mb-[22px] flex flex-col">
-										{ready.invites.map((invite) => (
-											<InviteLine
-												key={invite.id}
-												invite={invite}
-												onDecline={async () => {
-													await source.decline(invite.id);
-													await refresh();
-												}}
-												onJoin={async () => {
-													const joined = await source.accept(invite.id);
-													await refresh();
-													go({ team: joined.address, page: "projects" });
-												}}
-											/>
-										))}
-									</div>
-								)}
-							</>
-						}
-					/>
-				)}
-			</main>
+			<PlaceIn key={needle !== "" ? "search" : place === null ? "" : pathOf(place)}>
+				<main className={HOME_MAIN} aria-busy={onAccount ? undefined : current === null}>
+					{onAccount ? (
+						<AccountPage
+							source={accountSource}
+							teams={ready?.teams.map((team) => team.name)}
+							onSignedOut={signIn}
+							onSignOut={signOut}
+						/>
+					) : current === null || ready === null ? null : needle !== "" ? (
+						<CloudFound teams={ready.teams} needle={needle} query={query} onClear={() => setQuery("")} />
+					) : page === "people" ? (
+						<TeamPeoplePage key={current.address} team={current} onChanged={() => void refresh()} />
+					) : page === "settings" ? (
+						<TeamSettingsPage
+							key={current.id}
+							team={current}
+							origin={ready.origin}
+							tab={tab ?? "general"}
+							onTab={(tab) => go({ team: current.address, page: "settings", tab })}
+							// Stripe's pages come back to /<team>/settings/billing, so they open in this tab
+							onOpen={(url) => location.assign(url)}
+							cycle={cycle}
+							onChanged={() => void refresh()}
+							onMoved={(address) => go({ team: address, page: "settings", tab: tab ?? "general" }, true)}
+							onDeleted={() => void refresh()}
+						/>
+					) : (
+						<Projects
+							key={current.address}
+							team={current}
+							teams={ready.teams}
+							onMoved={(done) => {
+								moved.say(done.toast);
+								if (typeof done.show === "string") go({ team: done.show, page: "projects" });
+							}}
+							setup={{
+								on: "browser",
+								you: account,
+								origin: ready.origin,
+								onOpen: (url) => location.assign(url),
+								cycle,
+								onSetUp,
+							}}
+							notice={
+								<>
+									{joined && (
+										<p className="mb-[22px] text-secondary type-control">
+											You joined {current.name} as a viewer. Its projects show here, live, as the team makes
+											them.
+										</p>
+									)}
+									{ready.invites.length > 0 && (
+										<div className="pj-invites -mt-[8px] mb-[22px] flex flex-col">
+											{ready.invites.map((invite) => (
+												<InviteLine
+													key={invite.id}
+													invite={invite}
+													onDecline={async () => {
+														await source.decline(invite.id);
+														await refresh();
+													}}
+													onJoin={async () => {
+														const joined = await source.accept(invite.id);
+														await refresh();
+														go({ team: joined.address, page: "projects" });
+													}}
+												/>
+											))}
+										</div>
+									)}
+								</>
+							}
+						/>
+					)}
+				</main>
+			</PlaceIn>
 			{toast}
 			{moved.toast}
 		</HomeShell>
@@ -402,84 +373,6 @@ function Projects({
 	);
 }
 
-function CloudCovers({
-	covers,
-	here,
-	said = false,
-	menu,
-	onMenu,
-	onMove,
-}: {
-	/** Each cover's project and the team it is in. */
-	covers: readonly { team: CloudTeam; project: ListedTeamProject }[];
-	/** Who is inside each, by its name, where every cover is one team's. */
-	here?: TeamHere | undefined;
-	/** Each cover names its team, where the covers come from several. */
-	said?: boolean;
-	menu: string | null;
-	onMenu: (url: string | null) => void;
-	/** "Move to team…", for an admin with another team to move a project to. */
-	onMove?: ((project: ListedTeamProject) => void) | undefined;
-}) {
-	return (
-		<>
-			<div className="pj-covers-grid grid grid-cols-3 gap-x-[24px] gap-y-[34px] [@media(max-width:1050px)]:grid-cols-2 [@media(max-width:720px)]:grid-cols-1">
-				{covers.map(({ team, project }) => {
-					const at = `/${team.address}/${encodeURIComponent(project.name)}`;
-					return (
-						<CoverTile
-							key={project.url}
-							name={project.name}
-							open={{ href: at }}
-							here={here?.get(project.name)}
-							art={<CloudCover team={team.address} project={project.name} />}
-							line={
-								<span className="mt-[5px] block truncate text-secondary type-detail">
-									{[said && team.name, project.repo ?? "no repo linked"].filter(Boolean).join(" · ")}
-								</span>
-							}
-							menuOpen={menu === project.url}
-							onToggleMenu={() => onMenu(menu === project.url ? null : project.url)}
-							onCloseMenu={() => onMenu(null)}
-							menu={({ close }) => (
-								<>
-									<MenuItem label="Open" href={at} onClick={close} />
-									{project.repo !== null && (
-										<MenuItem
-											label="Copy clone command"
-											onClick={() => {
-												close();
-												void navigator.clipboard?.writeText(`git clone https://${project.repo}.git`);
-											}}
-										/>
-									)}
-									<MenuItem
-										label="Copy link"
-										onClick={() => {
-											close();
-											void navigator.clipboard?.writeText(new URL(at, location.origin).toString());
-										}}
-									/>
-									{onMove && (
-										<MenuItem
-											label="Move to team…"
-											onClick={() => {
-												close();
-												onMove(project);
-											}}
-										/>
-									)}
-								</>
-							)}
-						/>
-					);
-				})}
-			</div>
-			{menu !== null && <MenuBackdrop onClose={() => onMenu(null)} />}
-		</>
-	);
-}
-
 /**
  * What the search in the sidebar found: every team's projects whose name or repo it finds, by name, with a tab per
  * team to narrow them to one. Each team's list is read once the search starts.
@@ -552,23 +445,5 @@ function CloudFound({
 				onMenu={setMenu}
 			/>
 		</>
-	);
-}
-
-/**
- * A team project's cover as spool.page keeps it: the still of its top-left frame a member's Mac took, or its letter
- * while it has none.
- */
-function CloudCover({ team, project }: { team: string; project: string }) {
-	const [none, setNone] = useState(false);
-	if (none) return <ProjectIconView project={project} name={project} size="md" />;
-	return (
-		<img
-			src={`/api/teams/${encodeURIComponent(team)}/projects/${encodeURIComponent(project)}/cover`}
-			alt=""
-			draggable={false}
-			className="h-full w-full object-contain"
-			onError={() => setNone(true)}
-		/>
 	);
 }

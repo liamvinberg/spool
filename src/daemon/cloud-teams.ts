@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { type Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { validator } from "hono/validator";
-import { CloudSignedOut, originOf } from "../cloud-auth";
+import { authorizedCloudRequest, CloudSignedOut, originOf } from "../cloud-auth";
 import {
 	type BillingCycle,
 	type CloudTeam,
@@ -85,6 +85,24 @@ export function cloudTeamRoutes(options: {
 			.get("/teams/:team/people", (c) => act(c, () => client().people(c.req.param("team"))))
 			// who is inside each of the team's projects now, for Home's covers
 			.get("/teams/:team/here", (c) => act(c, () => client().here(c.req.param("team"))))
+			// a project's cover as spool.page keeps it, for a team this Mac only watches: its projects never come here
+			.get("/teams/:team/projects/:project/cover", async (c) => {
+				try {
+					const response = await authorizedCloudRequest(
+						options.spoolDir,
+						`/api/teams/${encodeURIComponent(c.req.param("team"))}/projects/${encodeURIComponent(c.req.param("project"))}/cover`,
+						{},
+						{ ...options.cloud, origin: origin() },
+					);
+					const type = response.headers.get("content-type") ?? "";
+					if (!response.ok || !type.startsWith("image/")) return c.body(null, 404);
+					c.header("content-type", type);
+					c.header("cache-control", "no-store");
+					return c.body(new Uint8Array(await response.arrayBuffer()));
+				} catch {
+					return c.body(null, 404);
+				}
+			})
 			.patch(
 				"/teams/:team",
 				validator("json", (value) => {
