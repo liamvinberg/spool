@@ -54,7 +54,12 @@ export function useTeamExport(source: TeamsSource): { start: TeamExporter; surfa
 		}
 		const chooser = desktopWindow()?.chooseDirectory;
 		// an app without the folder dialog writes it to Downloads, and says where
-		const into = chooser ? await chooser({ purpose: "location", defaultPath: "~/Downloads" }) : "~/Downloads";
+		// an app from before the export purpose refuses it, so it asks for a location instead
+		const into = chooser
+			? await chooser({ purpose: "export", defaultPath: "~/Downloads" }).catch(() =>
+					chooser({ purpose: "location", defaultPath: "~/Downloads" }),
+				)
+			: "~/Downloads";
 		if (into === null) return null;
 		busy.current = true;
 		const transfer = crypto.randomUUID();

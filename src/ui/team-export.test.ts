@@ -105,7 +105,7 @@ it("asks an admin for a folder on Export all, shows how far it has come with Can
 	const dialog = macFolder("/Users/ana/Exports");
 	const host = settings(fake, team("admin"));
 	await click(host, "Export all…");
-	expect(dialog).toEqual([{ purpose: "location", defaultPath: "~/Downloads" }]);
+	expect(dialog).toEqual([{ purpose: "export", defaultPath: "~/Downloads" }]);
 	expect(fake.asked).toContainEqual(expect.stringMatching(/^export tidemark into \/Users\/ana\/Exports as \S+$/u));
 
 	fake.exports.progress({ project: "checkout", index: 1, projects: 2, saves: 1200 });
