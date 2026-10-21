@@ -53,9 +53,9 @@ const project: ViewerProject = {
  * A frame document that reports loaded a little after it opens, so documents booting can be seen, and answers the
  * canvas's call to arrive as the frame shim does.
  */
-function frameDocument(frame: string): string {
+function frameDocument(frame: string, autofocus = false): string {
 	return `<!doctype html><html><body style="margin:0;font:16px sans-serif">
-<h1>${frame}</h1>
+<h1>${frame}</h1>${autofocus ? '<input style="margin-left:700px"><script>setTimeout(() => document.querySelector("input").focus(), 500)</script>' : ""}
 <script>
 const FRAME = ${JSON.stringify(frame)};
 setTimeout(() => parent.postMessage({ spool: "loaded", frame: FRAME }, "*"), 400);
@@ -85,7 +85,17 @@ afterAll(() => rmSync(built, { recursive: true, force: true }));
  * The canvas, with its assets from `assets` (the page's own origin, or another one as a link share's host may
  * serve them) and, with `gl` false, a browser with no WebGL2.
  */
-async function open({ assets = APP, gl = true }: { assets?: string; gl?: boolean } = {}) {
+async function open({
+	assets = APP,
+	gl = true,
+	autofocus = false,
+	comments = false,
+}: {
+	assets?: string;
+	gl?: boolean;
+	autofocus?: boolean;
+	comments?: boolean;
+} = {}) {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
 	if (!gl)
@@ -111,7 +121,14 @@ async function open({ assets = APP, gl = true }: { assets?: string; gl?: boolean
 			attributeFilter: ["data-viewer-phase"],
 		});
 	});
-	let reading = project;
+	let reading = comments
+		? { ...project, presence: "/api/presence", comments: "/api/comments", people: "/api/people", me: "vic" }
+		: project;
+	if (comments)
+		await page.routeWebSocket(`${APP.replace("https", "wss")}/api/presence?ticks=1`, (route) => {
+			route.onMessage(() => {});
+			route.send(JSON.stringify({ type: "comments", comments: [], first: true, last: true, reads: {} }));
+		});
 	let socket: WebSocketRoute | undefined;
 	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live?covered=1`, (route) => {
 		socket = route;
@@ -145,7 +162,7 @@ async function open({ assets = APP, gl = true }: { assets?: string; gl?: boolean
 		if (url.href.startsWith(FRAMES))
 			return route.fulfill({
 				contentType: "text/html",
-				body: frameDocument(decodeURIComponent(url.pathname.slice(new URL(FRAMES).pathname.length))),
+				body: frameDocument(decodeURIComponent(url.pathname.slice(new URL(FRAMES).pathname.length)), autofocus),
 			});
 		return route.abort();
 	});
@@ -269,6 +286,20 @@ describe("a big project on the read-only canvas", () => {
 		await expect
 			.poll(async () => (await pictures(page))?.drawn.find((each) => each.name === "f2")?.still)
 			.toBe("/covers/f2-new");
+	});
+
+	it("stays put when a document that comes alive takes the focus, as a sign-in form does", {
+		timeout: 60_000,
+	}, async () => {
+		// a member's canvas, whose comments panel waits closed beside the field
+		const { page } = await open({ autofocus: true, comments: true });
+		await expect.poll(() => drawn(page), { timeout: 20_000 }).not.toEqual([]);
+		await zoomIn(page, 3);
+		await expect.poll(() => iframes(page), { timeout: 20_000 }).not.toEqual([]);
+		await expect.poll(() => page.evaluate(() => document.activeElement?.tagName), { timeout: 20_000 }).toBe("IFRAME");
+		await page.getByRole("button", { name: "Zoom out" }).click();
+		await page.waitForTimeout(1500);
+		expect(await page.evaluate(() => [scrollX, scrollY])).toEqual([0, 0]);
 	});
 
 	it("draws the pictures where the canvas's assets are on another origin", { timeout: 60_000 }, async () => {

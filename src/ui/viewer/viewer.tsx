@@ -822,7 +822,9 @@ function ViewerCanvas({
 	const followed = following === null ? undefined : room?.get(following);
 
 	return (
-		<div className="flex h-dvh select-none overflow-clip bg-surface-window text-primary">
+		// paint contained: the closed comments panel past the edge gives the page nothing to scroll to, so a frame
+		// that takes the focus as it comes alive can't slide the whole canvas aside
+		<div className="flex h-dvh select-none overflow-clip bg-surface-window text-primary contain-paint">
 			<PagesRail
 				project={project}
 				page={page}
