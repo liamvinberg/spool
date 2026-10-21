@@ -218,6 +218,8 @@ export interface SyncState {
 	/** Changes waiting on the minute's bucket, said only once the wait is long: never a pause. */
 	sending: string | null;
 	held: { path: string; why: string }[];
+	/** The copy ended or went local in a checkout tracking `spool.json`: its notice offers Put design/ back in git. */
+	backInGit?: boolean;
 }
 
 export interface LocalCopy {

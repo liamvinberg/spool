@@ -19,6 +19,7 @@ import {
 	moveProjectOut,
 	moveProjectToTeam,
 	type ProjectCard,
+	putBackInGit,
 	type Survey,
 	TeamActionRefused,
 	type TeamProjectOnMac,
@@ -35,6 +36,7 @@ import { Menu, MenuItem } from "./primitives/overlays";
 import { RadioCard, RadioGroup } from "./primitives/selection";
 import { systemTrashName } from "./system-trash";
 import {
+	backInGitDone,
 	folderName,
 	type MoveDone,
 	MoveTeamSheet,
@@ -1070,14 +1072,35 @@ export function useCoverMoves({
 }): { moveItems: MoveItems; surface: ReactNode } {
 	const [sheet, setSheet] = useState<CoverSheet | null>(null);
 	const moveItems: MoveItems = (project) => {
+		// a copy that ended or went local in its checkout goes back into git with one commit (#198)
+		const back: MoveItem[] =
+			project.backInGit === true
+				? [
+						{
+							label: "Put design/ back in git",
+							onClick: () =>
+								void putBackInGit(project.name).then(
+									(out) => onDone(backInGitDone(out)),
+									(error: unknown) =>
+										onDone({
+											toast: error instanceof Error ? error.message : "Could not finish. Try again.",
+										}),
+								),
+						},
+					]
+				: [];
 		const link = project.team;
 		if (link === undefined)
-			return onMoveIn === undefined ? [] : [{ label: "Move to team…", onClick: () => onMoveIn(project) }];
+			return [
+				...(onMoveIn === undefined ? [] : [{ label: "Move to team…", onClick: () => onMoveIn(project) }]),
+				...back,
+			];
 		const own = teams.find((team) => team.address === link.team);
 		const open = (kind: CoverSheet["kind"]) => () => setSheet({ kind, project, link });
 		const items: MoveItem[] = [];
 		if (mayMoveFrom(teams, link.team)) items.push({ label: "Move to team…", onClick: open("team") });
 		if (link.inRepo === false) items.push({ label: "Move into a checkout…", onClick: open("into") });
+		items.push(...back);
 		if (own?.role === "admin") items.push({ label: `Move out of ${own.name}…`, end: true, onClick: open("out") });
 		return items;
 	};

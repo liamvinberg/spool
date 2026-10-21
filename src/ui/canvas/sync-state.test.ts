@@ -172,3 +172,36 @@ it("stands the moved sheet over the canvas once the pull lands, and Remove from 
 	const forgot = asked.find((one) => one.url.endsWith("/api/projects/forget"));
 	expect(JSON.parse(forgot?.body ?? "{}")).toEqual({ root: "/Users/ben/kaffe" });
 });
+
+it("offers Put design/ back in git on a copy that ended or went local, and says what came of it", async () => {
+	for (const over of [
+		{ ended: "devosurf", goneLocal: null },
+		{ ended: null, goneLocal: "Devosurf" },
+	]) {
+		const asked: string[] = [];
+		const host = mount(
+			createElement(SyncNotices, {
+				state: { ...over, paused: null, sending: null, held: [], backInGit: true },
+				onBackInGit: async () => {
+					asked.push("back");
+					return "design/ is back in git in checkout: one commit, nothing pushed.";
+				},
+			}),
+		);
+		const put = [...host.querySelectorAll("button")].find((node) => node.textContent === "Put design/ back in git");
+		expect(put).toBeDefined();
+		await act(async () => put?.click());
+		expect(asked).toEqual(["back"]);
+		expect(host.textContent).toContain("design/ is back in git in checkout: one commit, nothing pushed.");
+	}
+});
+
+it("offers no Put design/ back in git where the daemon doesn't", () => {
+	const host = mount(
+		createElement(SyncNotices, {
+			state: { ended: "devosurf", goneLocal: null, paused: null, sending: null, held: [] },
+			onBackInGit: async () => "",
+		}),
+	);
+	expect(host.textContent).not.toContain("Put design/ back in git");
+});
