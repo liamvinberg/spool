@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { type Dirent, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
 /*
@@ -33,7 +33,7 @@ export function historyCache(dir: string, { maxBytes }: { maxBytes: number }): H
 	const index = () => {
 		if (kept !== undefined) return kept;
 		kept = new Map();
-		let entries: ReturnType<typeof readdirSync<{ recursive: true; withFileTypes: true }>> = [];
+		let entries: Dirent[] = [];
 		try {
 			entries = readdirSync(dir, { recursive: true, withFileTypes: true });
 		} catch {
