@@ -1096,6 +1096,7 @@ describe("a limit", () => {
 			paused: why,
 			sending: null,
 			held: [],
+			offline: false,
 		});
 	});
 
@@ -1113,6 +1114,7 @@ describe("a limit", () => {
 			paused: null,
 			sending: null,
 			held: [],
+			offline: false,
 		});
 	});
 });
@@ -1129,6 +1131,7 @@ describe("the minute's bucket", () => {
 			paused: null,
 			sending: null,
 			held: [],
+			offline: false,
 		});
 		cloud.lift();
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 5_000);
@@ -1169,6 +1172,7 @@ describe("the minute's bucket", () => {
 			// two and a half minutes, and up to half as long again at random, so copies refused together spread out
 			sending: expect.stringMatching(/^Sending 2 changes to devosurf, about [34] minutes$/u),
 			held: [],
+			offline: false,
 		});
 		expect(said.ana.filter((line) => line.startsWith("Sync paused"))).toEqual([]);
 	});
@@ -1305,6 +1309,7 @@ describe("when a team project ends for a machine", () => {
 				paused: null,
 				sending: null,
 				held: [],
+				offline: false,
 			});
 			const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
 				projects: { root: string; ended?: string }[];
@@ -1476,6 +1481,7 @@ describe("when a team lapses", () => {
 			paused: null,
 			sending: null,
 			held: [],
+			offline: false,
 		});
 		const listed = (await (await ben.daemon.request("/api/projects")).json()) as {
 			projects: { root: string; goneLocal?: string; team?: { team: string } }[];
@@ -1579,6 +1585,7 @@ describe("when a team lapses", () => {
 			paused: null,
 			sending: null,
 			held: [],
+			offline: false,
 		});
 		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8")).goneLocal).toBeUndefined();
 		expect(again).toEqual([]);
@@ -1823,4 +1830,259 @@ describe("a dropped copy", () => {
 		const later = await dropAfter(5_000);
 		expect(later).toBeGreaterThanOrEqual(2_000);
 	});
+});
+
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+const sleep = (ms: number) => new Promise((wake) => setTimeout(wake, ms));
+
+async function eventually(condition: () => Promise<boolean>, ms = 8_000): Promise<void> {
+	const start = Date.now();
+	while (!(await condition())) {
+		if (Date.now() - start > ms) throw new Error("condition never held");
+		await sleep(50);
+	}
+}
+
+/** Ben's daemon stops, as a lid closing: what is done to his copy meanwhile is found when it starts again. */
+async function restartBen(setup: Awaited<ReturnType<typeof twoEditors>>, meanwhile: () => void, options = {}) {
+	await setup.ben.daemon.close();
+	meanwhile();
+	const said: string[] = [];
+	const daemon = makeApp(setup.ben.state, {
+		cloud: setup.ben.machine.cloud,
+		teamNotice: (message) => said.push(message),
+		...options,
+	});
+	return { daemon, said };
+}
+
+describe("the check on every connect (#204)", () => {
+	it("writes a teammate's save the relay dropped on the next connect, saying nothing", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "first\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.dropNextRelay("ben");
+		writeFrame(ana.root, "home", "missed\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "missed\n");
+		writeFrame(ana.root, "about", "about\n");
+		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"));
+		expect(text(ben.root, "frames/home/frame.tsx")).toBe("first\n");
+		const heard = said.ben.length;
+
+		cloud.disconnect("checkout");
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "missed\n", 10_000);
+		expect(cloud.drifts("checkout")).toEqual([{ repaired: 1, cause: "missed", by: "ben" }]);
+		expect(said.ben.slice(heard)).toEqual([]);
+		expect(await marks(ben.daemon)).toEqual([]);
+		// nothing went back up: the team's version is what it was
+		expect(cloud.saves("checkout").filter((save) => save.by === "ben")).toEqual([]);
+	});
+
+	it("puts right a file changed behind the daemon's back that its record says is the team's", async () => {
+		const setup = await twoEditors();
+		const { cloud, ana, ben } = setup;
+		writeFrame(ana.root, "home", "team\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const record = join(ben.root, "design/.spool/sync.json");
+		const restarted = await restartBen(setup, () => {
+			writeFrame(ben.root, "home", "behind its back\n");
+			const state = JSON.parse(readFileSync(record, "utf8"));
+			state.files["frames/home/frame.tsx"].hash = sha("behind its back\n");
+			writeFileSync(record, JSON.stringify(state));
+		});
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "team\n", 10_000);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("team\n");
+		expect(cloud.drifts("checkout")).toEqual([{ repaired: 1, cause: "missed", by: "ben" }]);
+		expect(await marks(restarted.daemon)).toEqual([]);
+	});
+
+	it("never overwrites a change not sent yet: it goes up under the collision rule", async () => {
+		const setup = await twoEditors();
+		const { cloud, ana, ben } = setup;
+		writeFrame(ana.root, "home", "home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const restarted = await restartBen(setup, () => {
+			// the team moves on while Ben's record keeps believing it hasn't, and Ben changes the file meanwhile
+			cloud.corrupt("checkout", "frames/home/frame.tsx", "the team's\n");
+			writeFrame(ben.root, "home", "ben's unsent\n");
+		});
+		await until(() => cloud.saves("checkout").some((save) => save.by === "ben"), 10_000);
+		await until(() => text(ben.root, "frames/home/frame.tsx") === cloud.file("checkout", "frames/home/frame.tsx"));
+		// Ben's change reached the team as a save, and lost under the collision rule with a mark, not in silence
+		expect(cloud.saves("checkout").filter((save) => save.by === "ben")).toEqual([
+			expect.objectContaining({ path: "frames/home/frame.tsx", outcome: "set_aside" }),
+		]);
+		await eventually(async () => (await marks(restarted.daemon)).length === 1);
+	});
+
+	it("costs a copy that matches one fingerprint, and no list", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.disconnect("checkout");
+		writeFrame(ana.root, "about", "about\n");
+		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 10_000);
+		await new Promise((wake) => setTimeout(wake, 300));
+		expect(cloud.lists("checkout")).toBe(0);
+		expect(cloud.drifts("checkout")).toEqual([]);
+	});
+
+	it("syncs as before with an older spool.page that makes no checks", async () => {
+		const cloud = fakeTeam();
+		cloud.withoutChecks();
+		const ana = cloud.machine("ana");
+		const anaState = join(makeTempDir(), ".spool");
+		const { root } = await initTeamProject(repo(), anaState, {
+			team: "devosurf",
+			origin: TEAM_ORIGIN,
+			request: ana.request,
+			openSocket: ana.openSocket,
+		});
+		const daemon = makeApp(anaState, { cloud: ana.cloud });
+		writeFrame(root, "home", "home\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "home\n");
+		expect(await (await daemon.request("/api/p/checkout/match-team", { method: "POST" })).json()).toMatchObject({
+			error: "offline",
+		});
+		expect(cloud.lists("checkout")).toBe(0);
+	});
+
+	it("matches a copy whose record was lost to the team, keeping each difference as a mark Put mine back restores", async () => {
+		// with no record, a file gone from disk can't be told from one never had: it comes back, unmarked
+		const setup = await twoEditors();
+		const { cloud, ana, ben } = setup;
+		writeFrame(ana.root, "home", "home\n");
+		writeFrame(ana.root, "about", "about\n");
+		await until(
+			() => same(ana.root, ben.root, "frames/home/frame.tsx") && same(ana.root, ben.root, "frames/about/frame.tsx"),
+		);
+		const restarted = await restartBen(setup, () => {
+			rmSync(join(ben.root, "design/.spool/sync.json"));
+			writeFrame(ben.root, "home", "ben's home\n");
+			writeFrame(ben.root, "mine", "mine\n");
+			rmSync(join(ben.root, "design/frames/about"), { recursive: true });
+		});
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "home\n", 10_000);
+		await until(() => text(ben.root, "frames/about/frame.tsx") === "about\n");
+		await until(() => text(ben.root, "frames/mine/frame.tsx") === undefined);
+		const held = await marks(restarted.daemon);
+		expect(held.map((mark) => [mark.path, mark.deleted]).sort()).toEqual([
+			["frames/home/frame.tsx", false],
+			["frames/mine/frame.tsx", false],
+		]);
+		// the team never heard of any of it
+		expect(cloud.saves("checkout").filter((save) => save.by === "ben")).toEqual([]);
+		expect(cloud.file("checkout", "frames/mine/frame.tsx")).toBeUndefined();
+		expect(cloud.drifts("checkout")).toEqual([{ repaired: 2, cause: "lost_record", by: "ben" }]);
+
+		for (const mark of held)
+			expect(
+				(await restarted.daemon.request(`/api/p/checkout/set-aside/${mark.id}/put-back`, { method: "POST" }))
+					.status,
+			).toBe(200);
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "ben's home\n", 10_000);
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") === "mine\n", 10_000);
+		await until(() => text(ana.root, "frames/mine/frame.tsx") === "mine\n", 10_000);
+		expect(cloud.file("checkout", "frames/about/frame.tsx")).toBe("about\n");
+	}, 30_000);
+
+	it("keeps the Get it rule for a copy this machine never synced", async () => {
+		const setup = await twoEditors();
+		const { cloud, ana, ben } = setup;
+		writeFrame(ana.root, "home", "home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		await restartBen(setup, () => {
+			rmSync(join(ben.root, "design/.spool/sync.json"));
+			rmSync(join(ben.state, "synced-copies.json"));
+			writeFrame(ben.root, "mine", "mine\n");
+		});
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") === "mine\n", 10_000);
+		expect(cloud.drifts("checkout")).toEqual([]);
+	});
+});
+
+describe("offline (#205)", () => {
+	it("is said once the copy has had no connection for a while, and goes the moment it is caught up again", async () => {
+		const { cloud, ana, ben } = await twoEditors({ offlineMs: 400 });
+		writeFrame(ana.root, "home", "home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		expect(await syncState(ben.daemon)).toMatchObject({ offline: false });
+		const back = cloud.offline("ben");
+		await new Promise((wake) => setTimeout(wake, 150));
+		// a drop shorter than the wait says nothing
+		expect(await syncState(ben.daemon)).toMatchObject({ offline: false });
+		await sleep(600);
+		expect(await syncState(ben.daemon)).toMatchObject({ offline: true });
+		// offline, Match the team needs a connection, and changes nothing
+		writeFrame(ben.root, "mine", "mine\n");
+		const refused = await ben.daemon.request("/api/p/checkout/match-team", { method: "POST" });
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toEqual({
+			error: "offline",
+			message: "Match the team needs a connection to spool.page. Nothing was changed.",
+		});
+		expect(text(ben.root, "frames/mine/frame.tsx")).toBe("mine\n");
+		expect(await marks(ben.daemon)).toEqual([]);
+
+		back();
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") === "mine\n", 10_000);
+		await sleep(200);
+		expect(await syncState(ben.daemon)).toMatchObject({ offline: false });
+	}, 20_000);
+
+	it("says nothing for a drop shorter than the wait", async () => {
+		const { cloud, ana, ben } = await twoEditors({ offlineMs: 5_000 });
+		cloud.disconnect("checkout");
+		writeFrame(ana.root, "home", "home\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 10_000);
+		expect(await syncState(ben.daemon)).toMatchObject({ offline: false });
+	});
+});
+
+describe("Match the team (#205)", () => {
+	it("makes every travelling path the team's, keeps each difference as a mark, and leaves what didn't travel", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "home\n");
+		writeFrame(ana.root, "about", "about\n");
+		await until(
+			() => same(ana.root, ben.root, "frames/home/frame.tsx") && same(ana.root, ben.root, "frames/about/frame.tsx"),
+		);
+		// Ben's saves wait on a limit, so what he changes stays on his Mac
+		cloud.limit("unavailable", 2);
+		writeFrame(ben.root, "home", "ben's home\n");
+		await until(() => cloud.refused("checkout").length > 0);
+		writeFrame(ben.root, "mine", "mine\n");
+		rmSync(join(ben.root, "design/frames/about"), { recursive: true });
+		writeDesignFile(ben.root, "shared/film.bin", "x".repeat(26_000_000));
+		writeDesignFile(ben.root, "notes.txt", "notes\n");
+		await new Promise((wake) => setTimeout(wake, 200));
+
+		const answered = await ben.daemon.request("/api/p/checkout/match-team", { method: "POST" });
+		expect(answered.status).toBe(200);
+		expect(await answered.json()).toEqual({ marked: 3 });
+		expect(text(ben.root, "frames/home/frame.tsx")).toBe("home\n");
+		expect(text(ben.root, "frames/about/frame.tsx")).toBe("about\n");
+		expect(text(ben.root, "frames/mine/frame.tsx")).toBeUndefined();
+		// what doesn't travel is untouched
+		expect(readFileSync(join(ben.root, "design/shared/film.bin")).byteLength).toBe(26_000_000);
+		expect(text(ben.root, "notes.txt")).toBe("notes\n");
+		const held = await marks(ben.daemon);
+		expect(held.map((mark) => mark.path).sort()).toEqual([
+			"frames/about/frame.tsx",
+			"frames/home/frame.tsx",
+			"frames/mine/frame.tsx",
+		]);
+		expect(held.every((mark) => mark.together === 3)).toBe(true);
+
+		cloud.lift();
+		await new Promise((wake) => setTimeout(wake, 2_500));
+		// nothing of Ben's went up: matched, his copy has nothing to send
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("home\n");
+		expect(cloud.file("checkout", "frames/mine/frame.tsx")).toBeUndefined();
+		for (const mark of held)
+			await ben.daemon.request(`/api/p/checkout/set-aside/${mark.id}/put-back`, { method: "POST" });
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "ben's home\n", 10_000);
+		await until(() => cloud.file("checkout", "frames/mine/frame.tsx") === "mine\n", 10_000);
+		await until(() => cloud.file("checkout", "frames/about/frame.tsx") === null, 10_000);
+	}, 30_000);
 });
