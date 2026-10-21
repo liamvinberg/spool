@@ -36,6 +36,7 @@ beforeAll(async () => {
 					stop: async () => null,
 					create: async (request) => {
 						window.created = request;
+						if (window.shareTooLarge === true && request.whole) return { error: "too_large" };
 						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.whole ? pages : request.pages, ...(request.whole ? { whole: true } : {}), people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page", ...(request.ends === "7d" ? { endsAt: Date.now() / 1000 + 7 * 86400 } : request.ends === "30d" ? { endsAt: Date.now() / 1000 + 30 * 86400 } : {}) };
 						made.push(share);
 						return { share };
@@ -49,7 +50,6 @@ beforeAll(async () => {
 						createElement(ShareControl, {
 							source: home ? null : source,
 							shares,
-							whole: window.shareSolo !== true,
 							context: home ? undefined : () => ({ page: "area2/part1", pages, frames, walks: [], frame: window.shareFrame ?? null }),
 							onSignIn: () => { window.signedIn = true; },
 						}),
@@ -85,7 +85,7 @@ afterAll(async () => {
 async function open(
 	state: "ready" | "signed-out" = "ready",
 	frame: string | null = null,
-	solo = false,
+	tooLarge = false,
 	now?: Date,
 ): Promise<Page> {
 	const browser = await testBrowser();
@@ -95,10 +95,10 @@ async function open(
 	await page.setContent(`<style>body { margin: 0; }</style><div id="root"></div>`);
 	for (const style of styles) await page.addStyleTag({ content: style });
 	await page.evaluate(
-		([shareState, shareFrame, shareSolo]) => {
-			Object.assign(window, { shareState, shareFrame, shareSolo });
+		([shareState, shareFrame, shareTooLarge]) => {
+			Object.assign(window, { shareState, shareFrame, shareTooLarge });
 		},
-		[state, frame, solo] as const,
+		[state, frame, tooLarge] as const,
 	);
 	await page.addScriptTag({ content: script });
 	await page.getByRole("button", { name: "Share" }).waitFor();
@@ -204,12 +204,15 @@ it("shares the whole project, pages added later included, with a link or with na
 	await expect
 		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
 		.toEqual({ kind: "people", whole: true, people: ["kim@client.com"], notify: true, start: "area4/hero" });
+});
 
-	// a solo project shares pages only, for now
-	const solo = await open("ready", null, true);
-	await solo.getByRole("button", { name: "Share" }).click();
-	await solo.getByRole("dialog", { name: "Share" }).getByText("Shares part1, the page you’re on").waitFor();
-	expect(await solo.getByText("Whole project").count()).toBe(0);
+it("says why spool.page refused a project over its fair-use size (spool#185)", { timeout: 60_000 }, async () => {
+	const page = await open("ready", null, true);
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	await popover.getByRole("menuitemcheckbox", { name: "Whole project" }).click();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await popover.getByText("What you’re sharing is over spool.page’s 1 GB limit for a project.").waitFor();
 });
 
 it("ends a share on the day chosen, and its row and its detail say so; Never says nothing (spool#183)", {

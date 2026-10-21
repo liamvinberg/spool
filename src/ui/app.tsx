@@ -837,7 +837,6 @@ export function App() {
 						<ShareControl
 							source={focusedTab === undefined ? null : tabShares}
 							shares={focusedShares}
-							whole={focusedTab !== undefined && focusedSolo === undefined}
 							context={focusedTab === undefined ? undefined : chrome?.share}
 							onSignIn={() => {
 								setAccount({ state: "signing-in" });

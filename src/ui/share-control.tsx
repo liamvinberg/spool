@@ -84,15 +84,12 @@ type What = "pages" | "whole";
 export function ShareControl({
 	source,
 	shares,
-	whole = false,
 	context,
 	onSignIn,
 }: {
 	/** The project in front, or null on Home, where there is nothing to share. */
 	source: ShareSource | null;
 	shares: ProjectShares | undefined;
-	/** Whether it may share the whole project, pages added later included: a team project's (spool#182). */
-	whole?: boolean;
 	context: (() => ShareContext) | undefined;
 	onSignIn: () => void;
 }) {
@@ -181,7 +178,6 @@ export function ShareControl({
 							key={start.key}
 							source={source}
 							shares={shares}
-							whole={whole}
 							context={start.context}
 							onSignIn={onSignIn}
 						/>
@@ -195,13 +191,11 @@ export function ShareControl({
 function ShareBody({
 	source,
 	shares,
-	whole,
 	context,
 	onSignIn,
 }: {
 	source: ShareSource;
 	shares: ProjectShares | undefined;
-	whole: boolean;
 	context: ShareContext;
 	onSignIn: () => void;
 }) {
@@ -242,8 +236,8 @@ function ShareBody({
 				<NewShare
 					source={source}
 					context={context}
-					what={whole ? what : "pages"}
-					onWhat={whole ? setWhat : undefined}
+					what={what}
+					onWhat={setWhat}
 					onMade={(made) => setView({ kind: "share", id: made.id, made })}
 				/>
 			) : (
@@ -265,7 +259,7 @@ function ShareBody({
 					))}
 				</>
 			)}
-			{shares.manage && whole && (
+			{shares.manage && (
 				<>
 					<MenuSeparator />
 					<MenuItem label="Share the whole project…" onClick={() => setWhat("whole")} />
@@ -289,8 +283,8 @@ function NewShare({
 	source: ShareSource;
 	context: ShareContext;
 	what: What;
-	/** Choose what it shows; absent where only pages can be shared. */
-	onWhat: ((what: What) => void) | undefined;
+	/** Choose what it shows. */
+	onWhat: (what: What) => void;
 	onMade: (share: ShareView) => void;
 }) {
 	const whole = what === "whole";
@@ -362,15 +356,14 @@ function NewShare({
 				</div>
 			)}
 			<MenuSeparator />
-			{onWhat !== undefined &&
-				(["pages", "whole"] as const).map((each) => (
-					<MenuItem
-						key={each}
-						checked={what === each}
-						label={each === "pages" ? "Pages" : "Whole project"}
-						onClick={() => onWhat(each)}
-					/>
-				))}
+			{(["pages", "whole"] as const).map((each) => (
+				<MenuItem
+					key={each}
+					checked={what === each}
+					label={each === "pages" ? "Pages" : "Whole project"}
+					onClick={() => onWhat(each)}
+				/>
+			))}
 			{whole ? (
 				<p className="flex h-row-roomy shrink-0 items-center pr-1 pl-3 text-secondary type-control">
 					Every page, and pages added later

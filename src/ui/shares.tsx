@@ -11,6 +11,7 @@ import {
 	shareWho,
 	TOP_PAGE,
 } from "../share-view";
+import { PROJECT_LIMIT_BYTES } from "../team-sync-protocol";
 import { cn } from "./cn";
 import { ChevronIcon } from "./icons";
 import { Button } from "./primitives/actions";
@@ -372,6 +373,8 @@ export function refusalSaid(code: string): string {
 			return "Only editors and admins change shares.";
 		case "share_not_found":
 			return "That share was stopped meanwhile.";
+		case "too_large":
+			return `What you’re sharing is over spool.page’s ${PROJECT_LIMIT_BYTES / 1_000_000_000} GB limit for a project.`;
 		default:
 			// a team's own refusals, such as a team gone local, in Home's words
 			return teamSays(new TeamActionRefused(code), "spool.page couldn't do that just now.");
