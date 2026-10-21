@@ -114,7 +114,7 @@ it("keeps the teams behind the control token", async () => {
 	expect((await daemon.app.request("http://localhost/api/cloud/teams")).status).toBe(401);
 });
 
-it("carries billing to spool.page: the summary, Checkout and the portal, each answering with its address", async () => {
+it("carries billing to spool.page: the summary, Checkout, the portal and withdrawing, each as spool.page answers", async () => {
 	const { api, asked } = harness({
 		token: TOKEN,
 		answer: (request) => {
@@ -140,10 +140,15 @@ it("carries billing to spool.page: the summary, Checkout and the portal, each an
 		status: 409,
 		body: { error: "no_subscription" },
 	});
+	expect(await api("/teams/tidemark/billing/withdraw", "POST")).toEqual({
+		status: 409,
+		body: { error: "no_subscription" },
+	});
 	expect(asked.map(({ method, path, body }) => ({ method, path, body }))).toEqual([
 		{ method: "GET", path: "/api/teams/tidemark/billing", body: "" },
 		{ method: "POST", path: "/api/teams/tidemark/billing/checkout", body: '{"editors":["sam"],"cycle":"yearly"}' },
 		{ method: "POST", path: "/api/teams/tidemark/billing/portal", body: "" },
+		{ method: "POST", path: "/api/teams/tidemark/billing/withdraw", body: "" },
 	]);
 });
 

@@ -51,6 +51,11 @@ export interface BillingSummary {
 	billingEmail: string | null;
 	periodEnd: number | null;
 	cancelAt: number | null;
+	/**
+	 * Until when an admin may withdraw from the contract (the withdrawal function, spool#208): 14 days from the first
+	 * payment. Null outside them; absent from a spool.page before it, which offers none.
+	 */
+	withdrawUntil?: number | null;
 	failingSince: number | null;
 	lapsesAt: number | null;
 }
@@ -239,6 +244,9 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
 		/** Stripe's customer portal for the team's card, invoices and plan. */
 		portal: (address: string) => call<{ url: string }>("POST", `${team(address)}/billing/portal`),
+		/** Withdraws from the team's contract: its first payment refunded in full and the subscription ended at once. */
+		withdraw: (address: string) =>
+			call<{ withdrawnAt: number; refunded: number }>("POST", `${team(address)}/billing/withdraw`),
 		/** A new team's setup list, read from its facts. Admins only. */
 		setup: (address: string) => call<TeamSetup>("GET", `${team(address)}/setup`),
 		/** Invite people, skipped: setting the team up alone first. */
