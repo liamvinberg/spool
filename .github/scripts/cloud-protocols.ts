@@ -12,8 +12,24 @@ export function declaredProtocol(source: string): number {
 	return Number(match[1]);
 }
 
+/** The one protocol every Spool Cloud deployed before it served its accepted protocols speaks. */
+export const PROTOCOL_BEFORE_ROUTE = 2;
+
+/** The cloud's answer when it doesn't serve its accepted protocols yet (it predates the route). */
+export const NO_ROUTE = Symbol("no route");
+
 /** Whether a release speaking `protocol` may publish, given what the cloud answered. */
 export function protocolVerdict(protocol: number, answer: unknown): { ok: boolean; message: string } {
+	if (answer === NO_ROUTE)
+		return protocol === PROTOCOL_BEFORE_ROUTE
+			? {
+					ok: true,
+					message: `${PROTOCOLS_URL} isn't served yet; a cloud from before it accepts protocol ${PROTOCOL_BEFORE_ROUTE}.`,
+				}
+			: {
+					ok: false,
+					message: `${PROTOCOLS_URL} isn't served yet, so the deployed Spool Cloud accepts only protocol ${PROTOCOL_BEFORE_ROUTE}, not ${protocol}. Deploy spool-cloud first, then rerun this release.`,
+				};
 	const accepted = (answer as { protocols?: unknown } | null)?.protocols;
 	if (!Array.isArray(accepted) || !accepted.every((value) => Number.isSafeInteger(value)))
 		return { ok: false, message: `${PROTOCOLS_URL} answered no list of protocols.` };
@@ -41,8 +57,10 @@ async function readAccepted(): Promise<unknown> {
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		if (attempt > 0) await setTimeout(5_000);
 		try {
-			const response = await fetch(PROTOCOLS_URL, { signal: AbortSignal.timeout(15_000) });
+			const response = await fetch(PROTOCOLS_URL, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
 			if (response.ok) return await response.json();
+			// a cloud from before the route sends /sync/protocols to sign-in, or doesn't know it
+			if ((response.status >= 300 && response.status < 400) || response.status === 404) return NO_ROUTE;
 			failure = `${PROTOCOLS_URL} returned HTTP ${response.status}.`;
 		} catch (error) {
 			failure = `${PROTOCOLS_URL} could not be read: ${error instanceof Error ? error.message : String(error)}`;

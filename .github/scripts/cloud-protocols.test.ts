@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION } from "../../src/team-sync-protocol.ts";
-import { declaredProtocol, protocolVerdict } from "./cloud-protocols.ts";
+import { declaredProtocol, NO_ROUTE, protocolVerdict } from "./cloud-protocols.ts";
 
 describe("release check of the cloud's accepted protocols", () => {
 	it("reads the PROTOCOL_VERSION the sync protocol module exports", () => {
@@ -24,5 +24,12 @@ describe("release check of the cloud's accepted protocols", () => {
 	it("refuses an answer that isn't a list of protocols", () => {
 		for (const answer of [null, {}, { protocols: 2 }, { protocols: ["2"] }, "<html>"])
 			expect(protocolVerdict(2, answer).ok).toBe(false);
+	});
+
+	it("passes protocol 2 against a cloud from before the route, and refuses any other", () => {
+		expect(protocolVerdict(2, NO_ROUTE).ok).toBe(true);
+		const verdict = protocolVerdict(3, NO_ROUTE);
+		expect(verdict.ok).toBe(false);
+		expect(verdict.message).toMatch(/accepts only protocol 2, not 3\. Deploy spool-cloud first/);
 	});
 });
