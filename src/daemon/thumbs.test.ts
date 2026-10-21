@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import {
+	carryCover,
 	coverSize,
 	imageSize,
 	readCaptureError,
@@ -13,6 +14,7 @@ import {
 	scanCovers,
 	scanPaces,
 	scanPreBoothCovers,
+	scanStills,
 	writeCaptureError,
 	writeCover,
 	writePace,
@@ -166,6 +168,42 @@ describe("the colour scheme a cover was taken in", () => {
 		const cover = writeCover(root, "home", JPEG, "light");
 		expect(readCover(root, "home")).toEqual(cover);
 		expect(scanCovers(root)).toEqual(new Map([["home", cover]]));
+	});
+});
+
+describe("the version of the frame a still is of", () => {
+	const A = "a".repeat(64);
+	const B = "b".repeat(64);
+
+	it("is written beside the still, and retires with it", async () => {
+		const root = project();
+		const home = writeCover(root, "home", JPEG, undefined, A);
+		const cart = writeCover(root, "cart", PNG);
+		expect(await scanStills(root)).toEqual(
+			new Map([
+				["home", { hash: home.hash, source: A, failed: false }],
+				["cart", { hash: cart.hash, source: undefined, failed: false }],
+			]),
+		);
+		writeCover(root, "home", OTHER_JPEG, undefined, B);
+		expect((await scanStills(root)).get("home")?.source).toBe(B);
+		// a still taken without one is of a version nobody can say
+		writeCover(root, "home", JPEG);
+		expect((await scanStills(root)).get("home")?.source).toBeUndefined();
+	});
+
+	it("is forgotten when the frame is renamed, since a version names its frame", async () => {
+		const root = project();
+		writeCover(root, "home", JPEG, undefined, A);
+		carryCover(root, "home", "start");
+		expect((await scanStills(root)).get("start")).toMatchObject({ source: undefined });
+	});
+
+	it("says when the booth failed on the frame since", async () => {
+		const root = project();
+		writeCover(root, "home", JPEG, undefined, A);
+		writeCaptureError(root, "home", "too slow");
+		expect((await scanStills(root)).get("home")).toMatchObject({ source: A, failed: true });
 	});
 });
 

@@ -681,7 +681,7 @@ export function createDaemonApp({
 		store: (root, frame, bytes, scheme, source) => {
 			// a frame deleted while it sat has no folder a picture belongs in
 			if (!frameExists(root, frame)) return;
-			const cover = writeCover(root, frame, bytes, scheme);
+			const cover = writeCover(root, frame, bytes, scheme, source);
 			hub.publish(root, { kind: "thumb", frame, cover });
 			if (source !== undefined) teamCovers.stored(root, frame, source, bytes);
 			if (source !== undefined) projectShares.covered(root, frame, source, bytes);
