@@ -648,6 +648,9 @@ export function createDaemonApp({
 			hub.subscribe(root, (event) => {
 				if (event.kind === "frame" || event.kind === "shared" || event.kind === "geometry") saved();
 			}),
+		owe: (root, frame, why) => {
+			if (selfOrigin !== undefined) booth.enqueue({ root, project: basename(root), frame, reason: why });
+		},
 		log: (line) => console.error(`spool: ${line}`),
 	});
 	projectShares.keeping(registeredRoots());
