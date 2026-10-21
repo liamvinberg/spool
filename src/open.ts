@@ -25,6 +25,19 @@ export function openProject(startDir: string, spoolDir: string): { root: string 
 	return { root };
 }
 
+/** How this account stands in a team project it can't fetch, as spool.page answered for the project alone. */
+export type Standing = "outside" | "viewer" | "signed-out";
+
+/** A team project's design/ this account can't fetch: it isn't in the team, only views it, or is signed out. */
+export class NotAnEditor extends SpoolError {
+	constructor(
+		readonly standing: Standing,
+		message: string,
+	) {
+		super(message);
+	}
+}
+
 export interface FetchOptions {
 	/** The spool.page this machine signs in to. */
 	origin: string;
@@ -68,13 +81,16 @@ export async function fetchLocalCopy(
 				`${link.url} is a team project, and ${agent} can't fetch a team project's design/ yet; work on it from a machine with spool signed in to ${link.team}`,
 			);
 		if (error instanceof CloudSignedOut)
-			throw new SpoolError(`${link.url} is a team project; run \`spool login\` to fetch its design/`);
+			throw new NotAnEditor("signed-out", `${link.url} is a team project; run \`spool login\` to fetch its design/`);
 		if (error instanceof CloudTeamRefused && error.status === 404)
-			throw new SpoolError(`${link.url} isn't a team project you're in; ask an admin of ${link.team} to invite you`);
+			throw new NotAnEditor(
+				"outside",
+				`${link.url} isn't a team project you're in; ask an admin of ${link.team} to invite you`,
+			);
 		throw error;
 	}
 	if (role === "viewer")
-		throw new SpoolError(`you're a viewer of ${link.team}; open ${link.url} in a browser to look`);
+		throw new NotAnEditor("viewer", `you're a viewer of ${link.team}; open ${link.url} in a browser to look`);
 
 	options.progress?.(`fetching design/ from ${link.url}…`);
 	const design = join(root, "design");
