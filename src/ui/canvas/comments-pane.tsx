@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Comment } from "../../team-sync-protocol";
 import { cn } from "../cn";
 import { FilterIcon, PlusIcon, ResolveIcon } from "../icons";
@@ -8,6 +8,7 @@ import { SelectTrigger } from "../primitives/inputs";
 import { Menu, MenuItem, MenuSeparator } from "../primitives/overlays";
 import { Segment, SegmentedControl, Switch } from "../primitives/selection";
 import { ScrollArea, StatusLine } from "../primitives/structure";
+import { useDismissed } from "../use-dismissed";
 import { AgentGlyph, AudienceTag, ago, nameOf, Said } from "./comments-layer";
 import {
 	counts,
@@ -265,33 +266,6 @@ function Head({
 			</span>
 		</div>
 	);
-}
-
-/** A menu open under its button closes on a press anywhere else, or on Esc. The element holding both. */
-function useDismissed(open: boolean, close: () => void): RefObject<HTMLSpanElement | null> {
-	const held = useRef<HTMLSpanElement>(null);
-	const latest = useRef(close);
-	latest.current = close;
-	useEffect(() => {
-		if (!open) return;
-		const away = (event: PointerEvent) => {
-			if (event.target instanceof Node && held.current?.contains(event.target)) return;
-			latest.current();
-		};
-		const key = (event: KeyboardEvent) => {
-			if (event.key !== "Escape") return;
-			event.preventDefault();
-			event.stopPropagation();
-			latest.current();
-		};
-		document.addEventListener("pointerdown", away, true);
-		window.addEventListener("keydown", key, true);
-		return () => {
-			document.removeEventListener("pointerdown", away, true);
-			window.removeEventListener("keydown", key, true);
-		};
-	}, [open]);
-	return held;
 }
 
 /** One comment in the list: unread dot, face, who and when, the words, then who reads it, replies and resolved. */

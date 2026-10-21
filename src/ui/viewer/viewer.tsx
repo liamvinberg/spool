@@ -40,6 +40,7 @@ import { SharedControl, useShares } from "../shares";
 import { TeamMark } from "../teams";
 import { type LinkSignedIn, signOutHere, type ViewerLinkSignIn } from "./link-sign-in";
 import { Navigator, type NavigatorToast } from "./navigator";
+import { markSeen, openShare, seenKey } from "./outsider-seen";
 import { onPhone } from "./phone";
 import { SharedLink } from "./shared-link";
 import {
@@ -122,7 +123,13 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 	const [project, setProject] = useState(first);
 	/** How many times each frame's document has been made again since this tab opened. */
 	const [revisions, setRevisions] = useState<ReadonlyMap<string, number>>(new Map());
-	const [marks, setMarks] = useState<ReadonlyMap<string, Unseen>>(new Map());
+	// an outsider's marks are what their share added since this browser last opened it (spool#184)
+	const [shareKey] = useState(() => (first.shared === undefined ? null : seenKey(config, first)));
+	const [opened] = useState(() => (shareKey === null ? null : openShare(shareKey, first)));
+	const [marks, setMarks] = useState<ReadonlyMap<string, Unseen>>(
+		() => new Map([...(opened?.frames ?? [])].map((frame) => [frame, "new"])),
+	);
+	const [pageMarks, setPageMarks] = useState<ReadonlySet<string>>(() => opened?.pages ?? new Set());
 	const [toast, setToast] = useState<(NavigatorToast & { id: number }) | null>(null);
 	const known = useRef(new Set(first.canvas.frames.map((frame) => frame.name)));
 	known.current = new Set(project.canvas.frames.map((frame) => frame.name));
@@ -190,14 +197,28 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 	}, [toast]);
 
 	const seen = useCallback(
-		(frame: string) =>
+		(frame: string) => {
+			if (shareKey !== null) markSeen(shareKey, "frame", frame);
 			setMarks((current) => {
 				if (!current.has(frame)) return current;
 				const next = new Map(current);
 				next.delete(frame);
 				return next;
-			}),
-		[],
+			});
+		},
+		[shareKey],
+	);
+	const pageSeen = useCallback(
+		(page: string) => {
+			if (shareKey !== null) markSeen(shareKey, "page", page);
+			setPageMarks((current) => {
+				if (!current.has(page)) return current;
+				const next = new Set(current);
+				next.delete(page);
+				return next;
+			});
+		},
+		[shareKey],
 	);
 
 	if (phone)
@@ -212,6 +233,8 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 			revisions={revisions}
 			marks={marks}
 			onSeen={seen}
+			pageMarks={pageMarks}
+			onPageSeen={pageSeen}
 			onNotice={(message) => setToast({ id: Date.now(), message, frame: null })}
 			toast={toast?.message ?? null}
 		/>
@@ -261,6 +284,8 @@ function ViewerCanvas({
 	revisions,
 	marks,
 	onSeen,
+	pageMarks,
+	onPageSeen,
 	onNotice,
 	toast,
 }: {
@@ -272,6 +297,10 @@ function ViewerCanvas({
 	marks: ReadonlyMap<string, Unseen>;
 	/** A frame was played: its mark has been seen. */
 	onSeen: (frame: string) => void;
+	/** The pages an outsider's share added since this browser last opened it, and not opened since. */
+	pageMarks: ReadonlySet<string>;
+	/** A page was gone to: its mark has been seen. */
+	onPageSeen: (page: string) => void;
 	onNotice: (message: string) => void;
 	toast: string | null;
 }) {
@@ -291,6 +320,9 @@ function ViewerCanvas({
 	const named = linked ?? where.page;
 	const page = known.has(named) ? named : opening;
 	const frames = useMemo(() => canvas.frames.filter((frame) => (frame.page ?? ROOT_PAGE) === page), [canvas, page]);
+	useEffect(() => {
+		if (pageMarks.has(page)) onPageSeen(page);
+	}, [page, pageMarks, onPageSeen]);
 	/** The frame the player has open: a save that renames or removes it never closes the player under anyone. */
 	const playing = useRef<string | null>(null);
 	// an outsider following a link to a screen not shared with them is told so by the screen itself
@@ -708,6 +740,7 @@ function ViewerCanvas({
 				project={project}
 				page={page}
 				marks={marks}
+				pageMarks={pageMarks}
 				onPage={(next) => next !== page && go({ page: next, frame: null })}
 				onFrame={(name) => {
 					const frame = frames.find((each) => each.name === name);
@@ -812,7 +845,7 @@ function ViewerCanvas({
 				</div>
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
-					{project.shared !== undefined && <SharedLine shared={project.shared} />}
+					{project.shared !== undefined && <SharedLine shared={project.shared} project={project.project} />}
 					{comments !== null ? (
 						<CommentsButton
 							comments={comments}
@@ -1108,10 +1141,10 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 }
 
 /**
- * The one line an outsider is shown (DEV-114): who shared these pages with them and when they last changed. Nobody
- * else is on it, and nothing says the rest of the project exists.
+ * The one line an outsider is shown (DEV-114): who shared these pages, or the whole project, with them and when they
+ * last changed. Nobody else is on it, and nothing says the rest of the project exists.
  */
-function SharedLine({ shared }: { shared: ViewerShared }) {
+function SharedLine({ shared, project }: { shared: ViewerShared; project: string }) {
 	return (
 		<span
 			data-viewer-shared=""
@@ -1120,7 +1153,7 @@ function SharedLine({ shared }: { shared: ViewerShared }) {
 			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[9px] text-primary">
 				{shared.by[0]?.toUpperCase()}
 			</span>
-			{shared.by} shared {saidList(shared.pages.map(sharedPageName))} with you
+			{shared.by} shared {shared.whole === true ? project : saidList(shared.pages.map(sharedPageName))} with you
 			{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
 		</span>
 	);
@@ -1143,6 +1176,7 @@ function PagesRail({
 	project,
 	page,
 	marks,
+	pageMarks,
 	onPage,
 	onFrame,
 	onPlay,
@@ -1151,6 +1185,7 @@ function PagesRail({
 	project: ViewerProject;
 	page: string;
 	marks: ReadonlyMap<string, Unseen>;
+	pageMarks: ReadonlySet<string>;
 	onPage: (page: string) => void;
 	onFrame: (frame: string) => void;
 	onPlay: (frame: string) => void;
@@ -1224,6 +1259,7 @@ function PagesRail({
 							label={pageName(row.page)}
 							mono
 							meta={row.open ? undefined : row.count}
+							unseen={pageMarks.has(row.page)}
 						/>
 					) : row.kind === "frame" ? (
 						<TreeRow

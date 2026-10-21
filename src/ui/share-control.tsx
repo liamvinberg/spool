@@ -2,21 +2,25 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { pageChain, pageName, pageParent, ROOT_PAGE } from "../page-path";
 import {
+	endsFrom,
 	type ProjectShares,
+	type ShareEnds,
 	type ShareKind,
 	type ShareRequest,
 	type SharesSource,
 	type ShareView,
 	saidAgo,
+	saidDay,
 	sharedPageName,
+	sharedWhatEnds,
 	shareWho,
 } from "../share-view";
 import { cn } from "./cn";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { BackIcon, ShareIcon } from "./icons";
 import { Button, IconButton } from "./primitives/actions";
-import { SearchField, TextField } from "./primitives/inputs";
-import { MenuItem, MenuSeparator, PaletteEmpty, Popover } from "./primitives/overlays";
+import { SearchField, SelectTrigger, TextField } from "./primitives/inputs";
+import { Menu, MenuItem, MenuSeparator, PaletteEmpty, Popover } from "./primitives/overlays";
 import { Checkbox } from "./primitives/selection";
 import { ListRow, ScrollArea, TreeRow } from "./primitives/structure";
 import { QrCode } from "./qr-code";
@@ -35,6 +39,7 @@ import {
 	tickOf,
 } from "./share-pages";
 import { KindGlyph, refusalSaid, SHARES_CHANGED, ShareCommentersList } from "./shares";
+import { useDismissed } from "./use-dismissed";
 
 /** Said on the window to open the Share popover on a page, as a page's right-click does: `{ page }`. */
 export const SHARE_OPEN = "spool-share-open";
@@ -67,11 +72,15 @@ const LIST_HEIGHT = "calc(var(--spacing-row) * 10)";
 
 type View = { kind: "new" } | { kind: "share"; id: string; made?: ShareView };
 
+/** What a new share shows: the pages picked, or the whole project, pages added later included (spool#182). */
+type What = "pages" | "whole";
+
 /**
  * Share, at the bar's end beside help and settings (DEV-193, task 156). It stands in every state, on Home too, so the bar
  * never moves: on Home it rests, signed out it opens to signing in, and on a project that may share it opens to
  * the page you're on, shared with anyone who has its link and ready as a QR code for a phone. More pages are
- * picked from the project's tree, and the project's shares are listed underneath, each opened in place.
+ * picked from the project's tree, or the whole project at once, and the project's shares are listed underneath,
+ * each opened in place.
  */
 export function ShareControl({
 	source,
@@ -122,6 +131,8 @@ export function ShareControl({
 		};
 		const key = (event: globalThis.KeyboardEvent) => {
 			if (event.key !== "Escape") return;
+			// a menu open inside it (Ends) closes first, by itself
+			if (popover.current?.querySelector("[data-share-ends]")) return;
 			event.preventDefault();
 			event.stopPropagation();
 			button.current?.focus();
@@ -192,6 +203,8 @@ function ShareBody({
 	onSignIn: () => void;
 }) {
 	const [view, setView] = useState<View>({ kind: "new" });
+	// it opens on Pages, the page you're on, as a page's right-click asks
+	const [what, setWhat] = useState<What>("pages");
 	if (shares === undefined) return <Said>Reading this project’s shares…</Said>;
 	if (shares.state === "signed-out")
 		return (
@@ -209,7 +222,15 @@ function ShareBody({
 		const share = shares.shares.find((each) => each.id === view.id) ?? view.made;
 		if (share !== undefined)
 			return (
-				<ShareDetail share={share} source={source} manage={shares.manage} onBack={() => setView({ kind: "new" })} />
+				<ShareDetail
+					share={share}
+					source={source}
+					manage={shares.manage}
+					onBack={() => {
+						setWhat("pages");
+						setView({ kind: "new" });
+					}}
+				/>
 			);
 	}
 	return (
@@ -218,6 +239,8 @@ function ShareBody({
 				<NewShare
 					source={source}
 					context={context}
+					what={what}
+					onWhat={setWhat}
 					onMade={(made) => setView({ kind: "share", id: made.id, made })}
 				/>
 			) : (
@@ -232,11 +255,17 @@ function ShareBody({
 							data-share-row={share.id}
 							icon={<KindGlyph kind={share.kind} />}
 							label={shareWho(share)}
-							meta={share.pages.map(sharedPageName).join(", ")}
+							meta={sharedWhatEnds(share)}
 							disabled={!shares.manage}
 							onClick={() => setView({ kind: "share", id: share.id })}
 						/>
 					))}
+				</>
+			)}
+			{shares.manage && (
+				<>
+					<MenuSeparator />
+					<MenuItem label="Share the whole project…" onClick={() => setWhat("whole")} />
 				</>
 			)}
 		</>
@@ -250,12 +279,18 @@ function Said({ children }: { children: string }) {
 function NewShare({
 	source,
 	context,
+	what,
+	onWhat,
 	onMade,
 }: {
 	source: ShareSource;
 	context: ShareContext;
+	what: What;
+	/** Choose what it shows. */
+	onWhat: (what: What) => void;
 	onMade: (share: ShareView) => void;
 }) {
+	const whole = what === "whole";
 	const rows = useMemo(() => pickRows(context.pages, context.frames), [context]);
 	const [kind, setKind] = useState<ShareKind>("link");
 	const [people, setPeople] = useState("");
@@ -267,15 +302,18 @@ function NewShare({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notify, setNotify] = useState(true);
+	const [ends, setEnds] = useState<ShareEnds>("never");
 	// a frame held when Share opened is where the link opens, played, while its page is one of those shared
 	const [starting, setStarting] = useState(true);
-	const start = context.frame !== null && chosen.has(pageParent(context.frame)) ? context.frame : null;
+	const start = context.frame !== null && (whole || chosen.has(pageParent(context.frame))) ? context.frame : null;
+	// every page there is, and every one holding a frame, as a whole-project share shows them now
+	const every = useMemo(() => new Set([...context.pages, ...context.frames.keys()]), [context]);
 	const addresses = people
 		.split(/[\s,;]+/u)
 		.map((one) => one.trim())
 		.filter((one) => one !== "");
-	const leaving = useMemo(() => leavingLinks(context.walks, chosen), [context.walks, chosen]);
-	const ready = chosen.size > 0 && (kind === "link" || addresses.length > 0) && !busy;
+	const leaving = useMemo(() => (whole ? [] : leavingLinks(context.walks, chosen)), [context.walks, chosen, whole]);
+	const ready = (whole || chosen.size > 0) && (kind === "link" || addresses.length > 0) && !busy;
 	const found = foundRows(rows, query);
 	const only = chosen.size === 1 && chosen.has(context.page);
 
@@ -284,9 +322,11 @@ function NewShare({
 		setError(null);
 		const answer = await source.create({
 			kind,
-			pages: [...chosen].sort(),
+			...(whole ? { whole: true } : { pages: [...chosen].sort() }),
 			...(kind === "people" ? { people: addresses, notify } : {}),
 			...(start !== null && starting ? { start } : {}),
+			// never is spool.page's own default, so an older spool.page is asked nothing new
+			...(ends === "never" ? {} : { ends }),
 		});
 		setBusy(false);
 		if ("error" in answer) setError(refusalSaid(answer.error));
@@ -319,7 +359,19 @@ function NewShare({
 				</div>
 			)}
 			<MenuSeparator />
-			{picking ? (
+			{(["pages", "whole"] as const).map((each) => (
+				<MenuItem
+					key={each}
+					checked={what === each}
+					label={each === "pages" ? "Pages" : "Whole project"}
+					onClick={() => onWhat(each)}
+				/>
+			))}
+			{whole ? (
+				<p className="flex h-row-roomy shrink-0 items-center pr-1 pl-3 text-secondary type-control">
+					Every page, and pages added later
+				</p>
+			) : picking ? (
 				<Picker
 					rows={rows}
 					chosen={chosen}
@@ -395,9 +447,10 @@ function NewShare({
 			<MenuSeparator />
 			<div className="flex h-row-roomy shrink-0 items-center gap-2 pr-1 pl-3">
 				<span className="min-w-0 flex-1 truncate text-secondary type-detail">
-					{picking && query.trim() !== "" ? `${found.length} found · ` : ""}
-					{saidSize(chosen, context.frames)}
+					{!whole && picking && query.trim() !== "" ? `${found.length} found · ` : ""}
+					{saidSize(whole ? every : chosen, context.frames)}
 				</span>
+				<EndsChoice ends={ends} onEnds={setEnds} />
 				<Button size="sm" variant="primary" disabled={!ready} onClick={() => void share()}>
 					{busy ? "Sharing…" : "Share"}
 				</Button>
@@ -408,6 +461,44 @@ function NewShare({
 				</p>
 			)}
 		</div>
+	);
+}
+
+const ENDS: readonly { ends: ShareEnds; label: string }[] = [
+	{ ends: "never", label: "Never" },
+	{ ends: "30d", label: "In 30 days" },
+	{ ends: "7d", label: "In 7 days" },
+];
+
+/** When a new share ends, chosen quietly in the foot beside Share: never, or in 30 or 7 days, each by its date. */
+function EndsChoice({ ends, onEnds }: { ends: ShareEnds; onEnds: (ends: ShareEnds) => void }) {
+	const [open, setOpen] = useState(false);
+	const held = useDismissed(open, () => setOpen(false));
+	// read when shown, so the dates are today's
+	const day = (each: ShareEnds) => {
+		const at = endsFrom(each);
+		return at === undefined ? undefined : saidDay(at);
+	};
+	return (
+		<span ref={held} className="relative shrink-0">
+			<SelectTrigger open={open} value={`Ends ${day(ends) ?? "never"}`} onClick={() => setOpen((was) => !was)} />
+			{open && (
+				<Menu className="absolute right-0 bottom-full z-50 mb-1 w-[200px]" data-share-ends="">
+					{ENDS.map((each) => (
+						<MenuItem
+							key={each.ends}
+							label={each.label}
+							meta={day(each.ends)}
+							checked={ends === each.ends}
+							onClick={() => {
+								onEnds(each.ends);
+								setOpen(false);
+							}}
+						/>
+					))}
+				</Menu>
+			)}
+		</span>
 	);
 }
 
@@ -595,9 +686,7 @@ function ShareDetail({
 					<KindGlyph kind={share.kind} />
 				</span>
 				<span className="min-w-0 flex-1 truncate pl-1 text-primary type-control">{shareWho(share)}</span>
-				<span className="max-w-[45%] shrink-0 truncate text-secondary type-detail">
-					{share.pages.map(sharedPageName).join(", ")}
-				</span>
+				<span className="max-w-[45%] shrink-0 truncate text-secondary type-detail">{sharedWhatEnds(share)}</span>
 			</div>
 			{share.link !== undefined && (
 				<div className="flex shrink-0 gap-3 px-2 pt-1 pb-2">

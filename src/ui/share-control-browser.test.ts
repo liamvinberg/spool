@@ -36,7 +36,8 @@ beforeAll(async () => {
 					stop: async () => null,
 					create: async (request) => {
 						window.created = request;
-						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.pages, people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page" };
+						if (window.shareTooLarge === true && request.whole) return { error: "too_large" };
+						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.whole ? pages : request.pages, ...(request.whole ? { whole: true } : {}), people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page", ...(request.ends === "7d" ? { endsAt: Date.now() / 1000 + 7 * 86400 } : request.ends === "30d" ? { endsAt: Date.now() / 1000 + 30 * 86400 } : {}) };
 						made.push(share);
 						return { share };
 					},
@@ -81,17 +82,23 @@ afterAll(async () => {
 	for (const page of pages) await page.close();
 });
 
-async function open(state: "ready" | "signed-out" = "ready", frame: string | null = null): Promise<Page> {
+async function open(
+	state: "ready" | "signed-out" = "ready",
+	frame: string | null = null,
+	tooLarge = false,
+	now?: Date,
+): Promise<Page> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1200, height: 700 }, reducedMotion: "reduce" });
 	pages.push(page);
+	if (now !== undefined) await page.clock.setFixedTime(now);
 	await page.setContent(`<style>body { margin: 0; }</style><div id="root"></div>`);
 	for (const style of styles) await page.addStyleTag({ content: style });
 	await page.evaluate(
-		([shareState, shareFrame]) => {
-			Object.assign(window, { shareState, shareFrame });
+		([shareState, shareFrame, shareTooLarge]) => {
+			Object.assign(window, { shareState, shareFrame, shareTooLarge });
 		},
-		[state, frame] as const,
+		[state, frame, tooLarge] as const,
 	);
 	await page.addScriptTag({ content: script });
 	await page.getByRole("button", { name: "Share" }).waitFor();
@@ -159,6 +166,91 @@ it("opens the link on the frame held, and emails the people it names unless told
 	await other.getByRole("button", { name: "Share" }).click();
 	await other.getByRole("dialog", { name: "Share" }).getByText("Shares part1, the page you’re on").waitFor();
 	expect(await other.getByText("Start on hero").count()).toBe(0);
+});
+
+it("shares the whole project, pages added later included, with a link or with named people (spool#182)", {
+	timeout: 60_000,
+}, async () => {
+	const page = await open("ready", "area4/hero");
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	// it opens on Pages, the page you're on, as ever; the frame held is off that page, so no start yet
+	expect(await popover.getByRole("menuitemcheckbox", { name: "Pages" }).getAttribute("aria-checked")).toBe("true");
+	await popover.getByText("Shares part1, the page you’re on").waitFor();
+	expect(await popover.getByText("Start on hero").count()).toBe(0);
+	await popover.getByRole("menuitemcheckbox", { name: "Whole project" }).click();
+	await popover.getByText("Every page, and pages added later").waitFor();
+	expect(await popover.getByText("Shares part1, the page you’re on").count()).toBe(0);
+	expect(await popover.getByRole("button", { name: "Add pages" }).count()).toBe(0);
+	await popover.getByText("102 pages · 204 frames").waitFor();
+	// any frame held is a start, whichever page it stands on
+	await popover.getByRole("checkbox", { name: "Start on hero" }).waitFor();
+	await popover.getByText("Start on hero").click();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "link", whole: true });
+	await popover.getByText("whole project").waitFor();
+
+	// back, its row says whole project; Share the whole project… opens the new share on it, for named people too
+	await popover.getByRole("button", { name: "Back" }).click();
+	await popover.getByRole("menuitem", { name: /anyone with the link.*whole project/u }).waitFor();
+	expect(await popover.getByText("Every page, and pages added later").count()).toBe(0);
+	await popover.getByRole("menuitem", { name: "Share the whole project…" }).click();
+	await popover.getByText("Every page, and pages added later").waitFor();
+	await popover.getByText("Named people").click();
+	await popover.getByLabel("Email addresses").fill("kim@client.com");
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "people", whole: true, people: ["kim@client.com"], notify: true, start: "area4/hero" });
+});
+
+it("says why spool.page refused a project over its fair-use size (spool#185)", { timeout: 60_000 }, async () => {
+	const page = await open("ready", null, true);
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	await popover.getByRole("menuitemcheckbox", { name: "Whole project" }).click();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await popover.getByText("What you’re sharing is over spool.page’s 1 GB limit for a project.").waitFor();
+});
+
+it("ends a share on the day chosen, and its row and its detail say so; Never says nothing (spool#183)", {
+	timeout: 60_000,
+}, async () => {
+	// 2 Nov, midday: in 7 days is 9 Nov, in 30 days is 2 Dec
+	const page = await open("ready", null, false, new Date(Date.UTC(2025, 10, 2, 12)));
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	// Never, unless chosen, and nothing is asked of spool.page for it
+	await popover.getByRole("button", { name: "Ends never" }).click();
+	await popover.getByRole("menuitemcheckbox", { name: /Never/u }).waitFor();
+	expect(await popover.getByRole("menuitemcheckbox", { name: /Never/u }).getAttribute("aria-checked")).toBe("true");
+	await popover.getByRole("menuitemcheckbox", { name: "In 30 days 2 Dec" }).waitFor();
+	// Esc closes the menu and leaves the popover open; the trigger opens it again
+	await page.keyboard.press("Escape");
+	await popover.locator("[data-share-ends]").waitFor({ state: "detached" });
+	await popover.getByRole("button", { name: "Ends never" }).click();
+	await popover.getByRole("menuitemcheckbox", { name: "In 7 days 9 Nov" }).click();
+	await popover.getByRole("button", { name: "Ends 9 Nov" }).waitFor();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "link", pages: ["area2/part1"], ends: "7d" });
+	await popover.locator("[data-share-opened]").getByText("ends 9 Nov").waitFor();
+
+	// back, its row says when it ends; a share that never ends says nothing of it
+	await popover.getByRole("button", { name: "Back" }).click();
+	await popover.getByRole("menuitem", { name: /anyone with the link.*part1.*ends 9 Nov/u }).waitFor();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "link", pages: ["area2/part1"] });
+	await popover.locator("[data-share-opened]").waitFor();
+	expect(await popover.getByText(/ends /u).count()).toBe(0);
+	await popover.getByRole("button", { name: "Back" }).click();
+	await expect.poll(() => popover.locator("[data-share-row]").count()).toBe(2);
+	expect(await popover.locator('[data-share-row="s2"]').getByText(/ends/u).count()).toBe(0);
 });
 
 it("picks pages from a tree that keeps one size however many there are", { timeout: 60_000 }, async () => {

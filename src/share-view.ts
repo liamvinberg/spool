@@ -12,8 +12,10 @@ export type ShareKind = "people" | "link";
 export interface ShareView {
 	id: string;
 	kind: ShareKind;
-	/** The page paths it shows. */
+	/** The page paths it shows; for a whole-project share, every page as the project now stands. */
 	pages: string[];
+	/** A whole-project share (spool#182): every page, and pages added later. */
+	whole?: true;
 	/** Whom a people share names, by address; none for a link share. */
 	people: string[];
 	/** The same people by name, in the same order, as spool.page says them everywhere; absent from an older spool.page. */
@@ -28,6 +30,8 @@ export interface ShareView {
 	link?: string;
 	/** The frame its link opens playing, when it opens on one. */
 	start?: string;
+	/** When it ends, in seconds (spool#183); absent for a share that never ends. */
+	endsAt?: number;
 }
 
 /** What a project's Shared control knows: its shares and whether this person may change them, or why not. */
@@ -95,14 +99,40 @@ export function readCommenters(value: unknown): ShareCommenter[] | null {
 }
 
 /** What a new share asks for. */
-export interface ShareRequest {
+export type ShareRequest = (
+	| { pages: string[]; whole?: undefined }
+	/** The whole project, pages added later included (spool#182): no pages to name. */
+	| { whole: true; pages?: undefined }
+) & {
 	kind: ShareKind;
-	pages: string[];
 	people?: string[];
-	/** The frame its link opens playing, on one of its pages. */
+	/** The frame its link opens playing, on one of its pages, or any frame of a whole-project share. */
 	start?: string;
 	/** Email the people it names a link that opens it. */
 	notify?: boolean;
+	/** When it ends, counted by spool.page from when it is made (spool#183); absent, it never ends. */
+	ends?: ShareEnds;
+};
+
+/** When a new share ends: never, or so many days from when it is made (spool#183). */
+export type ShareEnds = "never" | "30d" | "7d";
+
+const ENDS_DAYS: Record<ShareEnds, number | undefined> = { never: undefined, "30d": 30, "7d": 7 };
+
+/** The moment, in seconds, a share made now with this end would end; undefined for never. */
+export function endsFrom(ends: ShareEnds, now = Date.now() / 1000): number | undefined {
+	const days = ENDS_DAYS[ends];
+	return days === undefined ? undefined : now + days * 86_400;
+}
+
+/** A day as a share says when it ends: "9 Nov". */
+export function saidDay(seconds: number): string {
+	return new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/** "ends 9 Nov" for a share with an end, as its rows say it; null for one that never ends. */
+export function saidEnds(share: Pick<ShareView, "endsAt">): string | null {
+	return share.endsAt === undefined ? null : `ends ${saidDay(share.endsAt)}`;
 }
 
 /** People named on a people share or taken off it; whoever is named is emailed a link to it when `notify` is set. */
@@ -118,6 +148,23 @@ export const TOP_PAGE = "the top page";
 /** A shared page as a share's sheet and line say it: its own name, or the top page. */
 export function sharedPageName(page: string): string {
 	return page === ROOT_PAGE ? TOP_PAGE : pageName(page);
+}
+
+/** What a share shows, as its row says it: "whole project", or its pages by name. */
+export function sharedWhat(
+	share: Pick<ShareView, "pages" | "whole">,
+	name: (page: string) => string = sharedPageName,
+): string {
+	return share.whole === true ? "whole project" : share.pages.map(name).join(", ");
+}
+
+/** What a share shows and, when it ends, when: "checkout · ends 9 Nov", as its rows say it (spool#183). */
+export function sharedWhatEnds(
+	share: Pick<ShareView, "pages" | "whole" | "endsAt">,
+	name: (page: string) => string = sharedPageName,
+): string {
+	const ends = saidEnds(share);
+	return ends === null ? sharedWhat(share, name) : `${sharedWhat(share, name)} · ${ends}`;
 }
 
 /** "kim and ola", "kim, ola and sam", or "anyone with the link": whom a share is for, as its row says it. */
