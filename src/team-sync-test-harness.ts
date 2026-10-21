@@ -52,6 +52,8 @@ import {
 	readCommentStillAsk,
 	readDrift,
 	readMoved,
+	readRestore,
+	type RestoreRef,
 	readPresenceState,
 	replyForReader,
 	SEEN_FILES,
@@ -164,6 +166,8 @@ interface StretchRow {
 	setAside: number;
 	paths: string[];
 	more: number;
+	/** The restore it is, with when the version it went back to was made; null for ordinary saves. */
+	restore: (RestoreRef & { toAt: number | null }) | null;
 }
 
 /** One save in the team history, as the object's history routes answer it. */
@@ -175,6 +179,8 @@ interface LogRow {
 	device: string;
 	at: number;
 	outcome: "applied" | "set_aside";
+	/** The restore it was part of (spool#188); null for an ordinary save. */
+	restore: RestoreRef | null;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -583,6 +589,19 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		return Response.json({ ...described(at), role, ...(lapsed(address) ? { standing: "unpaid" } : {}) });
 	}
 
+	/**
+	 * What a path held at a version, as a restore names it: the bytes of the save that version is when it is a save to
+	 * the path (a set-aside one put back too), else of the last save applied to it by then; null where it didn't exist.
+	 */
+	function hashAt(at: Project, path: string, version: number): string | null {
+		const exact = at.log.find((row) => row.version === version && row.path === path);
+		if (exact !== undefined) return exact.hash;
+		return (
+			at.log.filter((row) => row.path === path && row.version < version && row.outcome === "applied").at(-1)?.hash ??
+			null
+		);
+	}
+
 	/** One of the team history's reads, as the object answers it: saves to a path, files at a version, or bytes. */
 	function historyRead(at: Project, route: string, query: URLSearchParams): Response {
 		const limit = Number(query.get("limit") ?? 100);
@@ -672,7 +691,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			}
 			const day = dayOf(newest);
 			const rows = older.filter((row) => row.at >= day).sort((a, b) => b.version - a.version);
-			page.push({ day, stretches: stretchesOf(rows) });
+			const stretches = stretchesOf(rows);
+			for (const { restore } of stretches)
+				if (restore !== null) restore.toAt = at.log.find((row) => row.version === restore.to)?.at ?? null;
+			page.push({ day, stretches });
 			cursor = day;
 		}
 		const next = Number.isNaN(cursor) || !kept.some((row) => row.at < cursor) ? null : cursor;
@@ -966,17 +988,22 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				bytes: parts[index],
 			}));
 		}
+		const restore = lone || message.restore === undefined ? undefined : readRestore(message.restore);
+		if (restore === null) {
+			from.close();
+			return;
+		}
 		at.sends.push(entries.length);
 		const said = readMoved(message.moved);
 		at.moved.push(said);
-		follow(at, take(at, from, entries, lone), said);
+		follow(at, take(at, from, entries, lone, restore), said);
 	}
 
 	/**
 	 * Saves sent alone or together, as spool.page takes them: each checked and ordered on its own, the bundle taking
 	 * one save from the bucket, answered in one message, and relayed as one to every copy that reads bundles.
 	 */
-	function take(at: Project, from: Connected, entries: Entry[], lone: boolean): CopyChange[] {
+	function take(at: Project, from: Connected, entries: Entry[], lone: boolean, restore?: RestoreRef): CopyChange[] {
 		const told: Told = { answers: [], after: [], relayed: [], changes: [] };
 		const refuse = ({ ref, path }: Entry, reason: string, retryAfter?: number) => {
 			at.refused.push({ path, reason });
@@ -990,12 +1017,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			: entries.filter((entry) => {
 					if (!travels(entry.path)) refuse(entry, "outside_layout");
 					else if ((entry.bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) refuse(entry, "too_large");
+					// a restore puts back only what the path held at the version it names: anything else claims to be one
+					else if (restore !== undefined && hash(entry.bytes ?? null) !== hashAt(at, entry.path, restore.to))
+						refuse(entry, "restore_mismatch");
 					else return true;
 					return false;
 				});
 		if (taking.length > 0) {
 			let held: { reason: string; retryAfter: number } | undefined;
-			if (limited !== undefined) held = limited;
+			// a checked restore is held only to the size caps
+			if (restore !== undefined) held = limited?.reason === "project_full" ? limited : undefined;
+			else if (limited !== undefined) held = limited;
 			else {
 				const wait = overRate();
 				const room = level();
@@ -1015,7 +1047,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				const current = at.files.get(entry.path);
 				if (current !== undefined && hash(current.bytes) === hash(entry.bytes ?? null))
 					told.answers.push({ type: "saved", ref: entry.ref, path: entry.path, version: current.version });
-				else apply(at, from, entry, current, moved, told);
+				else apply(at, from, entry, current, moved, told, restore);
 			}
 		}
 		const [only] = told.answers;
@@ -1423,6 +1455,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		current: TeamVersion | undefined,
 		moved: boolean,
 		told: Told,
+		restore?: RestoreRef,
 	): void {
 		const stale = current !== undefined && current.version !== base;
 		const merged =
@@ -1448,6 +1481,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			device: from.person.device,
 			at: clock(),
 			outcome: applies ? "applied" : "set_aside",
+			restore: restore ?? null,
 		});
 		at.saves.push({
 			path,
@@ -1901,7 +1935,8 @@ function stretchesOf(rows: readonly LogRow[]): StretchRow[] {
 	const stretches: StretchRow[] = [];
 	const open = new Map<string, { stretch: StretchRow; paths: Set<string> }>();
 	for (const row of rows) {
-		const key = `${row.account}\n${row.device}`;
+		// a restore is always a stretch of its own
+		const key = `${row.account}\n${row.device}\n${row.restore?.id ?? ""}`;
 		const run = open.get(key);
 		if (run !== undefined && run.stretch.start - row.at <= STRETCH_GAP_MS) {
 			const { stretch, paths } = run;
@@ -1927,6 +1962,7 @@ function stretchesOf(rows: readonly LogRow[]): StretchRow[] {
 			setAside: row.outcome === "set_aside" ? 1 : 0,
 			paths: [row.path],
 			more: 0,
+			restore: row.restore === null ? null : { ...row.restore, toAt: null },
 		};
 		stretches.push(stretch);
 		open.set(key, { stretch, paths: new Set([row.path]) });
@@ -1976,10 +2012,15 @@ export async function teamWriter(
 				);
 				open = true;
 			},
-			message: () => {},
+			message: (data) => {
+				const framed = decodeFrame(data);
+				if (framed?.message.type === "answers") answers.push(framed.message.answers as Record<string, unknown>[]);
+			},
 			close: () => {},
 		},
 	);
+	/** Each `answers` the object sent this connection, in order. */
+	const answers: Record<string, unknown>[][] = [];
 	await settled(() => open);
 	let refs = 0;
 	return {
@@ -1997,6 +2038,39 @@ export async function teamWriter(
 				),
 			);
 			await settled(() => history().length > count);
+		},
+		/**
+		 * Sends saves as one restore's bundle, `text` null for a delete, each built on the team's latest version of its
+		 * path unless `base` says: the object's answers to them.
+		 */
+		async restore(
+			restore: RestoreRef,
+			saves: { path: string; text: string | null; base?: number | null }[],
+		): Promise<Record<string, unknown>[]> {
+			const heard = answers.length;
+			const parts = saves.map(({ text }) => (text === null ? undefined : new TextEncoder().encode(text)));
+			const head = (path: string) =>
+				history()
+					.filter((row) => row.path === path && row.outcome === "applied")
+					.at(-1)?.version ?? null;
+			socket.send(
+				encodeFrame(
+					{
+						type: "saves",
+						saves: saves.map(({ path, text, base }, index) => ({
+							ref: `w${++refs}`,
+							path,
+							base: base === undefined ? head(path) : base,
+							deleted: text === null,
+							size: parts[index]?.byteLength ?? 0,
+						})),
+						restore,
+					},
+					joinParts(parts),
+				),
+			);
+			await settled(() => answers.length > heard);
+			return answers[heard] ?? [];
 		},
 		close: () => socket.close(),
 	};
