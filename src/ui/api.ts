@@ -2008,6 +2008,7 @@ export async function fetchSyncState(project: string): Promise<CanvasSync | unde
 			held: body.held,
 			moved: typeof body.moved === "object" && body.moved !== null ? body.moved : null,
 			...(body.backInGit === true ? { backInGit: true } : {}),
+			offline: body.offline === true,
 		};
 	} catch {
 		return undefined;
