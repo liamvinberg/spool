@@ -472,13 +472,34 @@ function GetItSays({ survey, team }: { survey: Survey; team: CloudTeam }) {
 	);
 }
 
+/**
+ * What Get it does with a design/ spool never synced, in one plain sentence (here-setaside--copy): it comes level
+ * with the team by itself, what only this checkout has goes up, and only what would overwrite a teammate's file is
+ * set aside. What is the team's already, or older than it, is said by "level": nothing of it goes up.
+ */
+export function countsSentence(counts: Record<"same" | "older" | "changed" | "only", number>, team: CloudTeam): string {
+	const level = `Get it brings that design/ level with ${team.name}.`;
+	const only =
+		counts.only === 0
+			? undefined
+			: counts.only === 1
+				? "your 1 new file goes up"
+				: `your ${counts.only} new files go up`;
+	const changed =
+		counts.changed === 0
+			? undefined
+			: `${counts.changed === 1 ? "the 1 file" : `the ${counts.changed}`} you changed where ${team.name} has its own ${counts.changed === 1 ? "is" : "are"} set aside on the canvas for you to look at`;
+	const said = [only, changed].filter((part): part is string => part !== undefined).join(", and ");
+	return said === "" ? level : `${level} ${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
+}
+
 /** The sentence under the places for what is at the place chosen. */
 export function getItSentence(survey: Survey, team: CloudTeam): string | null {
 	switch (survey.kind) {
 		case "identical":
 			return `That design/ is ${team.name}’s already, so Get it takes it as it is.`;
 		case "design":
-			return `That design/ differs from ${team.name}’s, and Get it can’t bring it level yet. Choose another place.`;
+			return survey.counts === null ? null : countsSentence(survey.counts, team);
 		case "pre-move":
 			return `Bring in the move commit, ${survey.short} on ${survey.base.replace(/^origin\//u, "")}, and Get it carries on by itself.`;
 		default:

@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import type { CloudTeam, TeamProjectOnMac } from "./api";
-import { GetItDialog, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
+import { countsSentence, GetItDialog, MoveToTeamDialog, moveCommitNote, TeamProjectsAway } from "./team-moves";
 
 function mount(element: React.ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -168,6 +168,36 @@ it("says on each place what the daemon found there, dims another project's, and 
 	expect(radios.map((radio) => radio.checked)).toEqual([true, false, false, false, false]);
 	expect(radios.map((radio) => radio.disabled)).toEqual([false, true, false, false, false]);
 	expect(host.textContent).toContain("That design/ is Devosurf’s already, so Get it takes it as it is.");
+});
+
+it("says in one sentence what Get it does with a design/ spool never synced", async () => {
+	const tide: CloudTeam = { ...TIDEMARK };
+	expect(countsSentence({ same: 3, older: 4, changed: 6, only: 2 }, tide)).toBe(
+		"Get it brings that design/ level with Tidemark. Your 2 new files go up, and the 6 you changed where Tidemark has its own are set aside on the canvas for you to look at.",
+	);
+	expect(countsSentence({ same: 3, older: 4, changed: 0, only: 1 }, tide)).toBe(
+		"Get it brings that design/ level with Tidemark. Your 1 new file goes up.",
+	);
+	expect(countsSentence({ same: 3, older: 4, changed: 0, only: 0 }, tide)).toBe(
+		"Get it brings that design/ level with Tidemark.",
+	);
+	daemon((url) =>
+		url.endsWith("/places")
+			? places([
+					{
+						path: "/Users/ben/dev/app",
+						survey: { kind: "design", counts: { same: 2, older: 1, changed: 6, only: 2 } },
+					},
+				])
+			: Response.json({}),
+	);
+	const host = mount(
+		createElement(GetItDialog, { team: DEVOSURF, project: project(), onGot: vi.fn(), onClose: vi.fn() }),
+	);
+	await settle();
+	expect(host.textContent).toContain("Your checkout, with a design/ already in it");
+	expect(host.textContent).toContain("Your 2 new files go up, and the 6 you changed where Devosurf has its own");
+	expect(button(host, "Get it").disabled).toBe(false);
 });
 
 it("waits on a branch from before the move, naming the commit and the command, and carries on by itself", async () => {

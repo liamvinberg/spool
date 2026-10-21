@@ -72,10 +72,6 @@ export async function getTeamProject(
 		}
 		const { survey } = found;
 		if (survey.kind === "other") throw new SpoolError(`${chosen}: ${survey.why}. Choose another place.`);
-		if (survey.kind === "design" && !found.linked)
-			throw new SpoolError(
-				`${found.root} already has a design/ spool never synced, and it differs from ${team}'s. Choose another place.`,
-			);
 		root = found.root;
 	} else {
 		root = join(expandHome(place.location), link.team, link.project);

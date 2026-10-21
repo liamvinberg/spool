@@ -28,7 +28,8 @@ export type Survey =
 	| { kind: "empty" }
 	| { kind: "synced" }
 	| { kind: "identical"; files: number }
-	| { kind: "design"; counts: Record<FileKind, number> }
+	/** `counts` is null when spool.page can't say what the team has seen, as one from before spool#193 can't. */
+	| { kind: "design"; counts: Record<FileKind, number> | null }
 	| ({ kind: "pre-move" } & PreMove)
 	| { kind: "other"; why: string };
 
@@ -101,7 +102,12 @@ export async function surveyPlace(
 		return at({ kind: "other", why: "Its design/ leaves the folder" });
 	}
 	if (paths.length === 0) return at({ kind: "empty" });
-	const classes = await classDesign(join(root, "design"), paths, ask);
+	let classes: Awaited<ReturnType<typeof classDesign>>;
+	try {
+		classes = await classDesign(join(root, "design"), paths, ask);
+	} catch {
+		return at({ kind: "design", counts: null });
+	}
 	// a spool.json naming this project says whose design/ it is, whatever frames it holds
 	if (!linked && isAnotherProject(classes))
 		return at({ kind: "other", why: `Already holds its own project, ${basename(root)}` }, 0);

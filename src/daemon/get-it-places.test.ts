@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { scanCheckouts } from "../checkout-scan";
+import { cloudTeams } from "../cloud-teams";
 import { initProject, initTeamProject } from "../init";
 import { readRegistry } from "../registry";
 import { fakeTeam, TEAM_ORIGIN } from "../team-sync-test-harness";
@@ -224,9 +225,6 @@ describe("Get it's places", () => {
 			kind: "design",
 			counts: { same: held.length - 3, older: 1, changed: 1, only: 2 },
 		});
-		const refused = await ben.get(here);
-		expect(refused.status).toBe(409);
-		expect(existsSync(join(here, "spool.json"))).toBe(false);
 	});
 
 	it("dims another project's design/, sharing no frames with the team's, and won't use it", {
@@ -246,6 +244,92 @@ describe("Get it's places", () => {
 		const refused = await ben.get(other);
 		expect(refused.status).toBe(409);
 		expect(existsSync(join(other, "spool.json"))).toBe(false);
+	});
+});
+
+describe("Get it in a design/ spool never synced (spool#196)", () => {
+	/**
+	 * Ben copied Ana's design/ a while ago. Since then the team edited about, deleted old, and made contact; Ben
+	 * edited home, made pricing, and made a contact of his own.
+	 */
+	async function drifted(cloud: ReturnType<typeof fakeTeam>) {
+		const ana = await anaStarts(cloud);
+		writeFrame(ana.root, "old", "export default () => <h1>Old</h1>;\n");
+		await until(() => cloud.file("app", "frames/old/frame.tsx")?.includes("Old") === true, 10_000);
+		const ben = bensMac(cloud);
+		const here = repoAt(join(makeTempDir(), "app"), "https://github.com/devosurf/app.git");
+		copyDesign(ana.root, here);
+		writeFrame(ana.root, "about", "export default () => <h1>About us</h1>;\n");
+		rmSync(join(ana.root, "design", "frames", "old"), { recursive: true });
+		writeFrame(ana.root, "contact", "export default () => <h1>Write to us</h1>;\n");
+		await until(
+			() =>
+				cloud.file("app", "frames/about/frame.tsx")?.includes("About us") === true &&
+				cloud.file("app", "frames/old/frame.tsx") === null &&
+				cloud.file("app", "frames/contact/frame.tsx") !== undefined,
+			10_000,
+		);
+		writeFrame(here, "home", "export default () => <h1>Ben's home</h1>;\n");
+		writeFrame(here, "pricing", "export default () => <h1>Pricing</h1>;\n");
+		writeFrame(here, "contact", "export default () => <h1>Call us</h1>;\n");
+		return { ana, ben, here };
+	}
+
+	it("brings it level: older takes the team's, a deleted frame stays deleted, changed is set aside, new goes up", {
+		timeout: 60_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const { ben, here } = await drifted(cloud);
+		const surveyed = (await ben.survey(here)).survey as { kind: string; counts: Record<string, number> };
+		expect(surveyed.kind).toBe("design");
+		expect(surveyed.counts).toMatchObject({ older: 2, changed: 2, only: 1 });
+
+		const got = await ben.get(here);
+		expect(got.status, await got.clone().text()).toBe(200);
+		const frame = (name: string) => join(here, "design", "frames", name, "frame.tsx");
+		await until(() => readFileSync(frame("about"), "utf8").includes("About us"), 10_000);
+		await until(() => !existsSync(frame("old")), 10_000);
+		await until(() => cloud.file("app", "frames/pricing/frame.tsx")?.includes("Pricing") === true, 10_000);
+		await until(() => readFileSync(frame("contact"), "utf8").includes("Write to us"), 10_000);
+		// home and contact differ from the team's own versions: the team's land, Ben's are set aside
+		await until(() => readFileSync(frame("home"), "utf8").includes("<h1>Home</h1>"), 10_000);
+		const bens = cloud.saves("app").filter((save) => save.by === "ben");
+		expect(bens.filter((save) => save.outcome === "applied").map((save) => save.path)).toEqual([
+			"frames/pricing/frame.tsx",
+		]);
+		expect(
+			bens
+				.filter((save) => save.outcome === "set_aside")
+				.map((save) => save.path)
+				.sort(),
+		).toEqual(["frames/contact/frame.tsx", "frames/home/frame.tsx"]);
+		expect(cloud.file("app", "frames/old/frame.tsx")).toBeNull();
+		expect(cloud.file("app", "frames/about/frame.tsx")).toContain("About us");
+	});
+
+	it("asks in batches, and with a spool.page that can't say, goes up as its own work as before", {
+		timeout: 60_000,
+	}, async () => {
+		const cloud = fakeTeam();
+		const { ben, here } = await drifted(cloud);
+		const files = Array.from({ length: 2_345 }, (_, at) => ({
+			path: `frames/f${at}/frame.tsx`,
+			hash: "0".repeat(64),
+		}));
+		const asked = await cloudTeams(ben.state, { ...cloud.machine("ben").request, origin: TEAM_ORIGIN }).seen(
+			"devosurf",
+			"app",
+			files,
+		);
+		expect(asked.files).toHaveLength(2_345);
+		expect(cloud.seenAsks.slice(-3)).toEqual([1_000, 1_000, 345]);
+		cloud.withoutSeen();
+		expect((await ben.survey(here)).survey).toEqual({ kind: "design", counts: null });
+		const got = await ben.get(here);
+		expect(got.status, await got.clone().text()).toBe(200);
+		// blind, the older about goes up over the team's, and the deleted frame comes back
+		await until(() => cloud.file("app", "frames/pricing/frame.tsx")?.includes("Pricing") === true, 10_000);
+		await until(() => cloud.file("app", "frames/old/frame.tsx")?.includes("Old") === true, 10_000);
 	});
 });
 
