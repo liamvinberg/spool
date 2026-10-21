@@ -31,6 +31,8 @@ import {
 	timeOf,
 	touchedSays,
 } from "./history-model";
+import type { FileRestore } from "./history-restore";
+import { restoredSays } from "./history-restore-model";
 import { PRESENCE_INK } from "./presence-faces";
 
 /**
@@ -110,6 +112,7 @@ export function HistoryPane({
 	visible,
 	onScope,
 	actions,
+	restore,
 }: {
 	project: string;
 	scope: HistoryScope;
@@ -117,6 +120,8 @@ export function HistoryPane({
 	visible: boolean;
 	onScope: (scope: HistoryScope) => void;
 	actions?: StretchActions | undefined;
+	/** Restore on a file's line and Put back under a set-aside save (spool#188); an editor's alone */
+	restore?: FileRestore | undefined;
 }) {
 	const { read, more, older } = useHistory(project, scope, visible);
 	const [person, setPerson] = useState<string | null>(null);
@@ -189,6 +194,7 @@ export function HistoryPane({
 													picked={picked === key}
 													onPick={() => setPicked(picked === key ? null : key)}
 													actions={actions}
+													restore={restore}
 												/>
 											</Fold>
 										);
@@ -336,6 +342,7 @@ function StretchRow({
 	picked,
 	onPick,
 	actions,
+	restore,
 }: {
 	project: string;
 	scope: HistoryScope;
@@ -348,8 +355,11 @@ function StretchRow({
 	picked: boolean;
 	onPick: () => void;
 	actions: StretchActions | undefined;
+	restore: FileRestore | undefined;
 }) {
 	const { space, quiet } = paceOf(above, stretch);
+	// a restore is a row of its own (spool#188): ↺ for its mark, what went back to when, washed in as it arrives
+	const restored = stretch.restore ?? null;
 	const through = throughOf(stretch, frame);
 	const ring = `color-mix(in srgb, ${stretch.by.color} 33%, transparent)`;
 	return (
@@ -384,25 +394,39 @@ function StretchRow({
 					{timeOf(stretch.end)}
 				</span>
 				<span className="relative flex w-6 shrink-0 justify-center pt-1">
-					<span
-						aria-hidden="true"
-						className="w-[7px] rounded-full transition-shadow duration-fast ease-out"
-						style={{
-							height: markHeight(stretch),
-							background: stretch.by.color,
-							boxShadow: `0 0 0 3px var(--color-surface-window)${picked ? `, 0 0 0 5px ${ring}` : ""}`,
-						}}
-					/>
+					{restored === null ? (
+						<span
+							aria-hidden="true"
+							className="w-[7px] rounded-full transition-shadow duration-fast ease-out"
+							style={{
+								height: markHeight(stretch),
+								background: stretch.by.color,
+								boxShadow: `0 0 0 3px var(--color-surface-window)${picked ? `, 0 0 0 5px ${ring}` : ""}`,
+							}}
+						/>
+					) : (
+						<span
+							aria-hidden="true"
+							className="flex size-[13px] items-center justify-center rounded-full border border-accent bg-surface-window text-2xs text-accent-strong leading-none"
+							data-history-restore-mark=""
+						>
+							↺
+						</span>
+					)}
 				</span>
 				<span
 					className={cn(
 						"flex min-w-0 flex-1 flex-col gap-0.5 rounded-sm px-2 py-1 transition-colors duration-fast ease-out",
 						picked ? "bg-state-selected" : "group-hover/stretch:bg-state-hover",
+						restored !== null && "animate-history-wash",
 					)}
 				>
 					<span className="flex items-baseline gap-2">
-						<span className="truncate text-primary type-control" data-history-who="">
-							{stretch.by.name}
+						<span
+							className={cn("text-primary type-control", restored === null && "truncate")}
+							data-history-who=""
+						>
+							{restored === null ? stretch.by.name : `${stretch.by.name} restored ${restoredSays(restored)}`}
 						</span>
 						<Count
 							value={stretch.saves.toLocaleString("en-US")}
@@ -411,26 +435,32 @@ function StretchRow({
 						/>
 					</span>
 					<span className="min-w-0 truncate text-secondary type-detail" data-history-touched="">
-						{ranSays(stretch)} · {touchedSays(stretch)}
+						{restored === null ? `${ranSays(stretch)} · ${touchedSays(stretch)}` : savesSays(stretch.saves)}
 					</span>
-					{stretch.setAside > 0 || through !== null ? (
+					{stretch.setAside > 0 || through !== null || restored !== null ? (
 						<span className="flex flex-wrap gap-1 pt-1">
+							{restored === null ? null : <Chip tone="accent">restore</Chip>}
 							{stretch.setAside > 0 ? <Chip>{stretch.setAside} set aside</Chip> : null}
 							{through === null ? null : <Chip>{through}</Chip>}
 						</span>
 					) : null}
 				</span>
 			</button>
-			<Detail project={project} scope={scope} stretch={stretch} open={picked} actions={actions} />
+			<Detail project={project} scope={scope} stretch={stretch} open={picked} actions={actions} restore={restore} />
 		</div>
 	);
 }
 
-/** A machine-printed mark on a row, the set-aside chip's shape. */
-function Chip({ children }: { children: ReactNode }) {
+/** A machine-printed mark on a row, the set-aside chip's shape; a restore's in the accent. */
+function Chip({ children, tone = "plain" }: { children: ReactNode; tone?: "plain" | "accent" }) {
 	return (
 		<span
-			className="shrink-0 whitespace-nowrap rounded-xs border border-line-strong bg-surface-raised px-1.5 text-primary type-detail"
+			className={cn(
+				"shrink-0 whitespace-nowrap rounded-xs border px-1.5 type-detail",
+				tone === "accent"
+					? "border-accent text-accent-strong"
+					: "border-line-strong bg-surface-raised text-primary",
+			)}
 			data-history-chip=""
 		>
 			{children}
@@ -448,12 +478,14 @@ function Detail({
 	stretch,
 	open,
 	actions,
+	restore,
 }: {
 	project: string;
 	scope: HistoryScope;
 	stretch: HistoryStretch;
 	open: boolean;
 	actions: StretchActions | undefined;
+	restore: FileRestore | undefined;
 }) {
 	const [files, setFiles] = useState<HistoryStretchFile[] | null | undefined>(undefined);
 	const scopeKey = scope.kind === "frame" ? scope.frame : "";
@@ -468,7 +500,8 @@ function Detail({
 			live = false;
 		};
 	}, [open, project, scopeKey, stretch.from, stretch.to]);
-	const lines = files ?? [];
+	// a restore's row says what went back; its files are the target's, not a stretch of work
+	const lines = stretch.restore === null || stretch.restore === undefined ? (files ?? []) : [];
 	const frame = scope.kind === "frame" ? scope.frame : null;
 	return (
 		<Fold open={open}>
@@ -478,7 +511,7 @@ function Detail({
 					<div
 						key={file.path}
 						className={cn(
-							"flex flex-col transition-[opacity,transform] duration-base ease-out",
+							"group/file flex flex-col transition-[opacity,transform] duration-base ease-out",
 							open ? "translate-y-0 opacity-100" : "-translate-y-[3px] opacity-0",
 						)}
 						// each file a little after the one above it, on the house scale, so stillness cuts it too
@@ -494,7 +527,20 @@ function Detail({
 								{frame !== null && !ownPath(file.path, frame) ? file.path : shortPath(file.path)}
 							</span>
 							{file.hash === null ? <span className="text-danger-strong">deleted</span> : null}
-							<Count value={file.saves} />
+							<Count
+								value={file.saves}
+								className={
+									restore === undefined ? undefined : "group-focus-within/file:hidden group-hover/file:hidden"
+								}
+							/>
+							{restore === undefined ? null : (
+								<span
+									className="hidden group-focus-within/file:inline-flex group-hover/file:inline-flex"
+									data-history-file-restore=""
+								>
+									{restore.line(file, stretch)}
+								</span>
+							)}
 						</div>
 						{file.setAside.map((save) => (
 							<div
@@ -503,6 +549,9 @@ function Detail({
 								data-history-set-aside=""
 							>
 								{setAsideSays(stretch, save.stood)}
+								{restore === undefined ? null : (
+									<span className="flex gap-1 pt-1.5">{restore.setAside(file, save, stretch)}</span>
+								)}
 							</div>
 						))}
 					</div>

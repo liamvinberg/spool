@@ -156,6 +156,8 @@
 	--animate-place-in: place-in var(--transition-duration-base) var(--ease-out);
 	/* the History pane's head as its scope changes (spool#187): the new name rises into place */
 	--animate-history-rise: history-rise var(--transition-duration-base) var(--ease-out) both;
+	/* a restore's row arriving at the top of the history (spool#188): washed in the accent, which fades */
+	--animate-history-wash: history-wash calc(var(--transition-duration-slower) * 3) var(--ease-out);
 	/* the finder: the scrim fades in, the panel settles from just above */
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -800,6 +802,12 @@
 		}
 	}
 
+	@keyframes history-wash {
+		from {
+			background-color: var(--color-accent-subtle);
+		}
+	}
+
 	@keyframes find-in {
 		from {
 			opacity: 0;
@@ -890,6 +898,7 @@
 	.animate-chrome-in,
 	.animate-place-in,
 	.animate-history-rise,
+	.animate-history-wash,
 	.animate-find-panel-in,
 	.animate-agent-entry,
 	.animate-agent-open,
