@@ -76,7 +76,13 @@ export function openShare(key: string, project: ViewerProject): OutsiderUnseen {
 export function markSeen(key: string, kind: "page" | "frame", name: string): void {
 	const record = read(key);
 	if (record === undefined) return;
-	if (kind === "page") record.unseenPages = record.unseenPages.filter((each) => each !== name);
-	else record.unseenFrames = record.unseenFrames.filter((each) => each !== name);
+	// one that came in while the canvas was open is held from now on, so the next load doesn't mark it again
+	if (kind === "page") {
+		record.unseenPages = record.unseenPages.filter((each) => each !== name);
+		if (!record.pages.includes(name)) record.pages.push(name);
+	} else {
+		record.unseenFrames = record.unseenFrames.filter((each) => each !== name);
+		if (!record.frames.includes(name)) record.frames.push(name);
+	}
 	write(key, record);
 }
