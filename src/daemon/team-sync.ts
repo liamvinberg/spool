@@ -118,6 +118,8 @@ interface CopyState {
 	removedBy?: string;
 	/** This record was lost and made again, and the copy isn't matched to the team yet: nothing of it goes up till then. */
 	unmatched?: true;
+	/** The life of the team's copy this copy last settled with (spool#191): a new one is a restore from a backup. */
+	epoch?: string;
 }
 
 export interface SyncSocket {
@@ -602,7 +604,16 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** spool.page makes checks (#204): its welcome said so, so this copy's hello asked for them. */
 	let checksOffered = false;
 	/** The team's copy being listed, a page at a time, and why: drift a fingerprint found, or matching the team. */
-	let checking: { cause: DriftCause | "match"; files: Map<string, ListedFile>; head: number | undefined } | undefined;
+	let checking:
+		| { cause: DriftCause | "match" | "restored"; files: Map<string, ListedFile>; head: number | undefined }
+		| undefined;
+	/** The version this connection's hello asked for what came after: 0 for a copy being fetched whole. */
+	let helloSince = 0;
+	/**
+	 * spool.page restored the team's copy from a backup since this copy last settled (spool#191): its new epoch, and
+	 * the newest version the backup held. Settled once caught up, against a list of the team's copy.
+	 */
+	let restoredTo: { epoch: string; head: number } | undefined;
 	/** Nothing is sent while the copy is being matched to the team: what differs becomes a mark instead. */
 	let holding = false;
 	/** Match the team asked for and not yet listed: each is answered with how many marks it made. */
@@ -1301,10 +1312,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	// --- checks (#204): the team's fingerprint after every catch-up, and drift repaired where it differs ---
 
 	/** Ask for the team's copy, a page at a time: what drift a fingerprint found, or a match, is settled against it. */
-	const list = (cause: DriftCause | "match") => {
+	const list = (cause: DriftCause | "match" | "restored") => {
 		if (checking !== undefined) {
-			// a match asked for while drift is being listed takes the same list
-			if (cause === "match") checking.cause = cause;
+			// a match asked for while drift is being listed takes the same list; a restore's settling, any list
+			if (cause === "match" || cause === "restored") checking.cause = cause;
 			return;
 		}
 		checking = { cause, files: new Map(), head: undefined };
@@ -1333,6 +1344,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		const { cause, files, head } = checking;
 		checking = undefined;
 		if (cause === "missed") repairMissed(files, head ?? state.head);
+		else if (cause === "restored") settleRestored(files, head ?? state.head);
 		else settleMatch(files, head ?? state.head, cause);
 	};
 
@@ -1428,6 +1440,56 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		wake();
 	};
 
+	/**
+	 * The team's copy was restored from a backup (spool#191), and this copy settles with it path by path: a path this
+	 * copy last had from the team above the backup's head, or changed here and not sent, goes up as an ordinary save
+	 * on the team's version, so nothing saved since the backup is lost; any other difference takes the team's version.
+	 * Two Macs holding the same newer file both send it, and the second is the team's already: it lands once.
+	 */
+	const settleRestored = (team: Map<string, ListedFile>, head: number) => {
+		const above = restoredTo?.head ?? head;
+		const epoch = restoredTo?.epoch;
+		restoredTo = undefined;
+		let sent = 0;
+		for (const path of new Set([...team.keys(), ...filesUnder(designDir, ""), ...Object.keys(state.files)])) {
+			if (!travels(path) || restoring.has(path) || stays(path) !== undefined) continue;
+			const record = state.files[path];
+			const theirs = team.get(path);
+			const bytes = readLocal(path);
+			const here = bytes === undefined ? null : digest(bytes);
+			const recorded = record?.hash ?? null;
+			if (here === (theirs?.hash ?? null)) {
+				if (theirs !== undefined) state.files[path] = { ...theirs };
+				else delete state.files[path];
+				continue;
+			}
+			const newer = record !== undefined && record.version > above && recorded === here;
+			if (newer || here !== recorded) {
+				// built on the team's version as the list says it, or on nothing where the team has none
+				if (theirs !== undefined) state.files[path] = { ...theirs };
+				else delete state.files[path];
+				sent++;
+			} else if (theirs !== undefined) restoring.add(path);
+			else {
+				gone(path, record);
+				delete state.files[path];
+			}
+		}
+		state.head = head;
+		if (epoch !== undefined) state.epoch = epoch;
+		holding = false;
+		persist();
+		if (sent > 0)
+			notice(
+				`spool.page restored ${link.project} from a backup: ${sent} ${sent === 1 ? "file" : "files"} saved here since went back up`,
+			);
+		// a match asked for meanwhile was answered by this list: the copy is the team's, with nothing to mark
+		for (const asked of matching.splice(0)) asked.resolve(0);
+		if (restoring.size > 0) askSoon();
+		checkEverything();
+		wake();
+	};
+
 	const handle = (data: string | ArrayBuffer) => {
 		// a frame the socket had in hand when this copy stopped is for nobody: its folder may be gone already
 		if (closed) return;
@@ -1444,6 +1506,12 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			hearPace(message.pace);
 			bundles = message.bundles === true;
 			checksOffered = message.checks === true;
+			// a new life of the team's copy: a copy fetched whole has it already, any other settles with it once caught up
+			const epoch = typeof message.epoch === "string" ? message.epoch : undefined;
+			if (epoch !== undefined && epoch !== state.epoch) {
+				if (helloSince === 0) state.epoch = epoch;
+				else restoredTo = { epoch, head: typeof message.restoredHead === "number" ? message.restoredHead : 0 };
+			}
 		} else if (message.type === "month") {
 			const { made, limit } = message;
 			if (typeof made === "number" && typeof limit === "number")
@@ -1465,6 +1533,13 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			if (lostRecord && checksOffered) {
 				holding = true;
 				list("lost_record");
+				if (restoredTo !== undefined) state.epoch = restoredTo.epoch;
+				restoredTo = undefined;
+			}
+			// the team's copy restored from a backup: nothing goes up until this copy has settled with it
+			else if (restoredTo !== undefined && checksOffered) {
+				holding = true;
+				list("restored");
 			}
 			// caught up, and only now: this Spool's format migration, whose writes go up below with what waited (#206)
 			else if (live) migrate();
@@ -1556,6 +1631,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			open: () => {
 				burst = randomUUID();
 				opened = true;
+				helloSince = state.head;
 				backoff.connected();
 				connectedWith = presented;
 				socket?.send(
@@ -1563,7 +1639,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 						type: "hello",
 						protocol: PROTOCOL_VERSION,
 						format: FORMAT_VERSION,
-						since: state.head,
+						since: helloSince,
 						bundles: true,
 						ticks: true,
 						...(live ? { checks: true } : {}),

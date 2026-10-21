@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
 import {
@@ -144,6 +144,27 @@ interface Project {
 	blobs: Map<string, Uint8Array>;
 	/** When and by whom it moved in from git, from its first move's save, and the commit the mover's daemon reported. */
 	movedIn?: { at: number; account: string; commit: string | null };
+	/** Spool restored it from a backup (spool#114): the epoch that took, and the newest version the backup held. */
+	restored?: { epoch: string; head: number };
+}
+
+/** A project as one day's backup holds it: its files and team history, and the newest version among them. */
+export interface TeamBackup {
+	files: [string, TeamVersion][];
+	log: LogRow[];
+	head: number;
+}
+
+/** The close a restore from a backup ends every connection with: the object is being replaced. */
+export const CLOSE_RESTORED = 1012;
+
+/**
+ * The newest team version a project holds, as the object says it: its counter's, until a restore from a backup turns
+ * the head back to the backup's newest, which rises again with the next save.
+ */
+function headOf(at: Project): number {
+	if (at.restored === undefined) return at.version;
+	return Math.max(at.restored.head, ...[...at.files.values()].map((file) => file.version));
 }
 
 /** The quiet that ends a stretch, as spool.page reads one. */
@@ -863,7 +884,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					type: "welcome",
 					protocol: PROTOCOL_VERSION,
 					format: at.format,
-					head: at.version,
+					head: headOf(at),
+					...(at.restored === undefined ? {} : { epoch: at.restored.epoch, restoredHead: at.restored.head }),
 					...pace(at, from),
 					...(takesBundles ? { bundles: true } : {}),
 					...(takesChecks ? { checks: true } : {}),
@@ -872,7 +894,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			const since = Number(message.since);
 			for (const [path, file] of [...at.files].sort((a, b) => a[1].version - b[1].version))
 				if (file.version > since) from.deliver(fileFrame(path, file));
-			from.deliver(encodeFrame({ type: "caught-up", head: at.version }));
+			from.deliver(encodeFrame({ type: "caught-up", head: headOf(at) }));
 			if (from.checks)
 				from.deliverMade(
 					copyFingerprint([...at.files].map(([path, file]) => ({ path, hash: hash(file.bytes) }))).then(
@@ -957,7 +979,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					type: "listed",
 					files: page.map(([path, file]) => ({ path, version: file.version, hash: hash(file.bytes) })),
 					next: live.length > LIST_PAGE ? (page.at(-1)?.[0] ?? null) : null,
-					head: at.version,
+					head: headOf(at),
 				}),
 			);
 			return;
@@ -1726,6 +1748,30 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		historyReads: (name: string) => historyAsks.get(name.includes("/") ? name : `${team}/${name}`) ?? [],
 		/** When and by whom the project moved in from git, and the commit reported for it; undefined for one started here. */
 		movedIn: (name: string) => project(name)?.movedIn,
+		/** The project as a day's backup takes it (spool#114): its files and history, kept apart from what comes after. */
+		backup(name: string): TeamBackup {
+			const at = project(name);
+			if (at === undefined) throw new Error(`no project ${name}`);
+			return {
+				files: [...at.files].map(([path, file]) => [path, { ...file }]),
+				log: at.log.map((row) => ({ ...row })),
+				head: Math.max(0, ...[...at.files.values()].map((file) => file.version)),
+			};
+		},
+		/**
+		 * Spool restores the project from a backup (spool#191): every connection closes, the files and history become
+		 * the backup's, and a new epoch with the backup's head is welcomed from now on. Versions keep rising past every
+		 * one given before, so none ever names two saves.
+		 */
+		restoreBackup(name: string, backup: TeamBackup) {
+			const at = project(name);
+			if (at === undefined) throw new Error(`no project ${name}`);
+			for (const socket of [...at.sockets]) socket.close(CLOSE_RESTORED);
+			at.files.clear();
+			for (const [path, file] of backup.files) at.files.set(path, { ...file });
+			at.log = backup.log.map((row) => ({ ...row }));
+			at.restored = { epoch: randomUUID(), head: backup.head };
+		},
 		/** The clock saves are filed at in the team history from now on. */
 		clock(now: () => number) {
 			clock = now;
