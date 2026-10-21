@@ -199,9 +199,27 @@ describe("url", () => {
 describe("skill", () => {
 	it("prints the overview with every verb and the topic index", () => {
 		const text = skillText();
-		for (const verb of ["init", "open", "remove", "selection", "flows", "shot", "logs", "url", "skill", "comments"]) {
+		for (const verb of [
+			"init",
+			"open",
+			"remove",
+			"selection",
+			"flows",
+			"shot",
+			"logs",
+			"url",
+			"skill",
+			"comments",
+			"history",
+		]) {
 			expect(text).toContain(`spool ${verb}`);
 		}
+	});
+
+	it("teaches the team history's verb as one that only reads", () => {
+		const team = skillText("team");
+		expect(team).toContain("`spool history frames/<frame>/frame.tsx` lists a file's saves");
+		expect(team).toContain("The verb only reads");
 	});
 
 	it("prints every listed topic", () => {
