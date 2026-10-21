@@ -39,6 +39,7 @@ import {
 	tickOf,
 } from "./share-pages";
 import { KindGlyph, refusalSaid, SHARES_CHANGED, ShareCommentersList } from "./shares";
+import { useDismissed } from "./use-dismissed";
 
 /** Said on the window to open the Share popover on a page, as a page's right-click does: `{ page }`. */
 export const SHARE_OPEN = "spool-share-open";
@@ -130,6 +131,8 @@ export function ShareControl({
 		};
 		const key = (event: globalThis.KeyboardEvent) => {
 			if (event.key !== "Escape") return;
+			// a menu open inside it (Ends) closes first, by itself
+			if (popover.current?.querySelector("[data-share-ends]")) return;
 			event.preventDefault();
 			event.stopPropagation();
 			button.current?.focus();
@@ -470,13 +473,14 @@ const ENDS: readonly { ends: ShareEnds; label: string }[] = [
 /** When a new share ends, chosen quietly in the foot beside Share: never, or in 30 or 7 days, each by its date. */
 function EndsChoice({ ends, onEnds }: { ends: ShareEnds; onEnds: (ends: ShareEnds) => void }) {
 	const [open, setOpen] = useState(false);
+	const held = useDismissed(open, () => setOpen(false));
 	// read when shown, so the dates are today's
 	const day = (each: ShareEnds) => {
 		const at = endsFrom(each);
 		return at === undefined ? undefined : saidDay(at);
 	};
 	return (
-		<div className="relative shrink-0">
+		<span ref={held} className="relative shrink-0">
 			<SelectTrigger open={open} value={`Ends ${day(ends) ?? "never"}`} onClick={() => setOpen((was) => !was)} />
 			{open && (
 				<Menu className="absolute right-0 bottom-full z-50 mb-1 w-[200px]" data-share-ends="">
@@ -494,7 +498,7 @@ function EndsChoice({ ends, onEnds }: { ends: ShareEnds; onEnds: (ends: ShareEnd
 					))}
 				</Menu>
 			)}
-		</div>
+		</span>
 	);
 }
 

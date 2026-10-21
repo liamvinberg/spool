@@ -227,6 +227,10 @@ it("ends a share on the day chosen, and its row and its detail say so; Never say
 	await popover.getByRole("menuitemcheckbox", { name: /Never/u }).waitFor();
 	expect(await popover.getByRole("menuitemcheckbox", { name: /Never/u }).getAttribute("aria-checked")).toBe("true");
 	await popover.getByRole("menuitemcheckbox", { name: "In 30 days 2 Dec" }).waitFor();
+	// Esc closes the menu and leaves the popover open; the trigger opens it again
+	await page.keyboard.press("Escape");
+	await popover.locator("[data-share-ends]").waitFor({ state: "detached" });
+	await popover.getByRole("button", { name: "Ends never" }).click();
 	await popover.getByRole("menuitemcheckbox", { name: "In 7 days 9 Nov" }).click();
 	await popover.getByRole("button", { name: "Ends 9 Nov" }).waitFor();
 	await popover.getByRole("button", { name: "Share", exact: true }).click();
