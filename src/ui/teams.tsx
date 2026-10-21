@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
 	type HomePlace,
 	OWN_PLACE,
@@ -37,6 +37,7 @@ import { keep, recall } from "./remembered";
 import { BILLING_STATES, money, TeamBilling } from "./team-billing";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
+import { TeamRemoved } from "./team-removed";
 import { type OwnProject, type SetupHost, TeamSetupList, useSetUpToast } from "./team-setup";
 import { TeamActionRefused, type TeamsSource, teamSays } from "./team-source";
 
@@ -314,6 +315,7 @@ export function TeamProjects({
 	count,
 	sort,
 	search,
+	onRestored,
 }: {
 	team: CloudTeam;
 	/**
@@ -341,8 +343,12 @@ export function TeamProjects({
 	sort?: { value: Sort; onChange: (sort: Sort) => void } | undefined;
 	/** The page's own search, where the sidebar has none. */
 	search?: ReactNode;
+	/** A project restored from the team's trash: the host reads its projects again. */
+	onRestored?: (() => void) | undefined;
 }) {
 	const [listing, setListing] = useState(false);
+	// a restore reads the projects not on this Mac again, as their list reads itself
+	const [restored, setRestored] = useState(0);
 	const [refusing, setRefusing] = useState(false);
 	const lapsed = team.billing?.state === "lapsed";
 	return (
@@ -376,7 +382,15 @@ export function TeamProjects({
 				(away || listing ? null : (
 					<EmptyState className="min-h-[420px] justify-center p-[35px]" art={<EmptyFrames />} title={empty} />
 				))}
-			{away}
+			<Fragment key={`away:${restored}`}>{away}</Fragment>
+			<TeamRemoved
+				key={`removed:${team.address}`}
+				team={team}
+				onRestored={() => {
+					setRestored((n) => n + 1);
+					onRestored?.();
+				}}
+			/>
 		</>
 	);
 }
@@ -1314,6 +1328,7 @@ export function useTeamHome(
 								count={total === undefined ? undefined : { total }}
 								sort={{ value: sort, onChange: setSort }}
 								away={projects?.away?.(current, here, ready.teams)}
+								onRestored={refreshLists}
 								onNewProject={projects && (() => projects.onNewProject(current))}
 								onBilling={
 									current.role === "admin"

@@ -325,6 +325,9 @@ function Projects({
 	const [projects, setProjects] = useState<ListedTeamProject[] | undefined>();
 	const [menu, setMenu] = useState<string | null>(null);
 	const [moving, setMoving] = useState<ListedTeamProject | null>(null);
+	// a project restored from the trash is read again with the rest
+	const [restored, setRestored] = useState(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a restore is why it reads again
 	useEffect(() => {
 		let current = true;
 		void source.projects(team.address).then((listed) => {
@@ -333,7 +336,7 @@ function Projects({
 		return () => {
 			current = false;
 		};
-	}, [source, team.address]);
+	}, [source, team.address, restored]);
 	if (projects === undefined) return null;
 	return (
 		<TeamProjects
@@ -342,6 +345,7 @@ function Projects({
 			setup={setup}
 			cycle={setup.cycle}
 			empty={`${team.name} has no projects yet`}
+			onRestored={() => setRestored((n) => n + 1)}
 			count={{ total: projects.length }}
 			// Stripe's Checkout comes back to /<team>/settings/billing, so it opens in this tab
 			onOpen={(url) => location.assign(url)}

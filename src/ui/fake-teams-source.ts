@@ -1,4 +1,4 @@
-import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../cloud-teams";
+import type { BillingSummary, CloudTeam, RemovedTeamProject, TeamPeople, TeamSetup } from "../cloud-teams";
 import {
 	type ListedTeamProject,
 	type LosingPerson,
@@ -35,6 +35,10 @@ export function fakeTeamsSource(start: {
 	mac?: FakeMac;
 	/** How many comments each project holds, by `<team>/<project>`; none said is none. */
 	comments?: Record<string, number>;
+	/** How many shares each project has open, by `<team>/<project>`; none said is none. */
+	shares?: Record<string, number>;
+	/** Each team's trash, by its address. */
+	removed?: Record<string, RemovedTeamProject[]>;
 }) {
 	const state = { ...start };
 	const asked: string[] = [];
@@ -74,6 +78,30 @@ export function fakeTeamsSource(start: {
 		projects: async (address) => listed(address),
 		cover: async () => undefined,
 		commentCount: async (address, project) => state.comments?.[`${address}/${project}`] ?? 0,
+		shareCount: async (address, project) => state.shares?.[`${address}/${project}`] ?? 0,
+		removed: async (address) => {
+			if (teamOf(address).role !== "admin") return undefined;
+			return state.removed?.[address] ?? [];
+		},
+		restore: async (address, project) => {
+			ask(`restore ${address}/${project}`);
+			admin(address);
+			if (teamOf(address).billing?.state === "lapsed") throw new TeamActionRefused("unpaid");
+			state.removed = {
+				...state.removed,
+				[address]: (state.removed?.[address] ?? []).filter((each) => each.name !== project),
+			};
+			const url = `${state.origin ?? "https://spool.page"}/${address}/${project}`;
+			state.projects = { ...state.projects, [address]: [...listed(address), { name: project, url, repo: null }] };
+		},
+		deleteRemoved: async (address, project) => {
+			ask(`delete removed ${address}/${project}`);
+			admin(address);
+			state.removed = {
+				...state.removed,
+				[address]: (state.removed?.[address] ?? []).filter((each) => each.name !== project),
+			};
+		},
 		movePreview: async (address, project, to, name = project) => {
 			ask(`preview ${address}/${project} ${to} ${name}`);
 			teamOf(address);

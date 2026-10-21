@@ -4,6 +4,7 @@ import type {
 	CloudTeam,
 	CloudTeamInvite,
 	CloudTeamProject,
+	RemovedTeamProject,
 	TeamPeople,
 	TeamProjectHere,
 	TeamRole,
@@ -52,6 +53,7 @@ const SAYS: Record<string, string> = {
 	// with its number from People's billing where it is read: see `peopleSays`
 	trial_editor_cap: "The trial holds no more editors. Pay for the team in Settings › Billing to add more.",
 	unpaid: "This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
+	name_in_trash: "A removed project holds that name until it’s deleted from the team’s trash.",
 };
 
 /** What a refusal says to a person: in Home's words when it has some, else `otherwise`. */
@@ -107,6 +109,14 @@ export interface TeamsSource {
 	cover(address: string, project: string): Promise<Blob | undefined>;
 	/** How many comments a project holds, which go if it leaves the team; undefined while spool.page can't say. */
 	commentCount(address: string, project: string): Promise<number | undefined>;
+	/** How many shares a team project has open, for the move-out sheet to say they pause; undefined if unsaid. */
+	shareCount(address: string, project: string): Promise<number | undefined>;
+	/** The team's removed projects waiting in its trash (#197): its admins' alone; undefined while it can't be said. */
+	removed(address: string): Promise<RemovedTeamProject[] | undefined>;
+	/** A removed project back in its team, with everything it kept. */
+	restore(address: string, project: string): Promise<unknown>;
+	/** A removed project deleted for good, now rather than at its 30 days. */
+	deleteRemoved(address: string, project: string): Promise<unknown>;
 	/** What moving `project` to the team at `to`, as `name` when given, would do; undefined while it can't be said. */
 	movePreview(address: string, project: string, to: string, name?: string): Promise<MovePreview | undefined>;
 	/** The same project moves to the team at `to`, renamed when `name` is given; its old address leads on. */
@@ -235,6 +245,18 @@ export function teamsAt(
 			);
 			return typeof body?.comments === "number" ? body.comments : undefined;
 		},
+		async shareCount(address, project) {
+			const body = await read<{ shares?: unknown }>(
+				`${team(address)}/projects/${encodeURIComponent(project)}/shares`,
+			);
+			return Array.isArray(body?.shares) ? body.shares.length : undefined;
+		},
+		async removed(address) {
+			const body = await read<{ projects?: unknown }>(`${team(address)}/removed`);
+			return Array.isArray(body?.projects) ? (body.projects as RemovedTeamProject[]) : undefined;
+		},
+		restore: (address, project) => call("POST", `${team(address)}/removed/${encodeURIComponent(project)}/restore`),
+		deleteRemoved: (address, project) => call("DELETE", `${team(address)}/removed/${encodeURIComponent(project)}`),
 		async movePreview(address, project, to, name) {
 			const query = new URLSearchParams({ to, ...(name === undefined ? {} : { name }) });
 			const body = await read<Partial<MovePreview>>(`${moving(address, project)}?${query}`);
