@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { endsFrom, readCommenters, saidDay, saidEnds, sharedWhat } from "./share-view";
+import { endsFrom, readCommenters, saidDay, saidEnds, sharedWhat, sharedWhatEnds } from "./share-view";
 
 describe("who commented through a share (spool#174)", () => {
 	it("reads each commenter spool.page names, dropping what isn't one", () => {
@@ -30,6 +30,11 @@ describe("when a share ends, as its row and the Ends choice say it (spool#183)",
 
 	it("says nothing for a share that never ends", () => {
 		expect(saidEnds({})).toBeNull();
+	});
+
+	it("follows what a share shows in its row, only when it ends", () => {
+		expect(sharedWhatEnds({ pages: ["checkout"], endsAt: ninthNov })).toBe("checkout · ends 9 Nov");
+		expect(sharedWhatEnds({ pages: ["checkout"] })).toBe("checkout");
 	});
 
 	it("names the day each Ends choice means, counted from now", () => {

@@ -158,6 +158,15 @@ export function sharedWhat(
 	return share.whole === true ? "whole project" : share.pages.map(name).join(", ");
 }
 
+/** What a share shows and, when it ends, when: "checkout · ends 9 Nov", as its rows say it (spool#183). */
+export function sharedWhatEnds(
+	share: Pick<ShareView, "pages" | "whole" | "endsAt">,
+	name: (page: string) => string = sharedPageName,
+): string {
+	const ends = saidEnds(share);
+	return ends === null ? sharedWhat(share, name) : `${sharedWhat(share, name)} · ${ends}`;
+}
+
 /** "kim and ola", "kim, ola and sam", or "anyone with the link": whom a share is for, as its row says it. */
 export function shareWho(share: Pick<ShareView, "kind" | "people">): string {
 	if (share.kind === "link") return "anyone with the link";
