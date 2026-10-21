@@ -545,7 +545,7 @@ describe("the read-only canvas", () => {
 		await expect
 			.poll(() => page.frameLocator('iframe[title="shop/cart"]').locator("h1").textContent())
 			.toBe("shop/cart");
-		await page.getByText("ana shared shop with you · updated 2 min ago").waitFor();
+		await page.getByText("Shared by ana · 2 min ago").waitFor();
 		const rail = page.getByRole("navigation", { name: "Pages" });
 		expect(await rail.getByRole("button", { name: "shop", exact: true }).count()).toBe(1);
 		for (const other of ["home", "menu"]) expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);

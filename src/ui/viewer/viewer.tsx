@@ -1085,17 +1085,20 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
  * The one line an outsider is shown (DEV-114): who shared these pages with them and when they last changed. Nobody
  * else is on it, and nothing says the rest of the project exists.
  */
+/** Who shared and when, kept short: the pages rail already names the pages, and the whole sentence is its title. */
 function SharedLine({ shared }: { shared: ViewerShared }) {
+	const ago = shared.updated === null ? "" : ` · ${saidAgo(shared.updated)}`;
 	return (
 		<span
 			data-viewer-shared=""
+			title={`${shared.by} shared ${saidList(shared.pages.map(sharedPageName))} with you${shared.updated === null ? "" : `, updated ${saidAgo(shared.updated)}`}`}
 			className="flex items-center gap-2 rounded-sm border border-line-default bg-surface-window/90 py-1.5 pr-3 pl-1.5 text-secondary backdrop-blur type-detail"
 		>
 			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[9px] text-primary">
 				{shared.by[0]?.toUpperCase()}
 			</span>
-			{shared.by} shared {saidList(shared.pages.map(sharedPageName))} with you
-			{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
+			Shared by {shared.by}
+			{ago}
 		</span>
 	);
 }
