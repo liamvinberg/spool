@@ -2,6 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import type { AppUpdate, DesktopBridge } from "../desktop-bridge";
 import { SYNC_CHANGED, SyncNotices, useSyncState } from "./sync-state";
 
 function mount(element: React.ReactNode) {
@@ -30,6 +31,8 @@ it("says a team project ended here, sync paused, and which files didn't travel, 
 					{ path: "shared/assets/film.mov", why: "it's over 25 MB" },
 					{ path: "shared/assets/raw.psd", why: "it's over 25 MB" },
 				],
+				offline: false,
+				update: null,
 			},
 		}),
 	);
@@ -59,6 +62,8 @@ it("names the one file that didn't travel", () => {
 				paused: null,
 				sending: null,
 				held: [{ path: "shared/assets/film.mov", why: "it's over 25 MB" }],
+				offline: false,
+				update: null,
 			},
 		}),
 	);
@@ -69,7 +74,9 @@ it("names the one file that didn't travel", () => {
 
 it("says nothing while a team project syncs as it should", () => {
 	const host = mount(
-		createElement(SyncNotices, { state: { ended: null, goneLocal: null, paused: null, sending: null, held: [] } }),
+		createElement(SyncNotices, {
+			state: { ended: null, goneLocal: null, paused: null, sending: null, held: [], offline: false, update: null },
+		}),
 	);
 	expect(host.querySelector("[data-sync-state]")).toBeNull();
 });
@@ -77,7 +84,15 @@ it("says nothing while a team project syncs as it should", () => {
 it("says the team went local and the copy keeps working here, until the team pays", () => {
 	const host = mount(
 		createElement(SyncNotices, {
-			state: { ended: null, goneLocal: "Devosurf", paused: null, sending: null, held: [] },
+			state: {
+				ended: null,
+				goneLocal: "Devosurf",
+				paused: null,
+				sending: null,
+				held: [],
+				offline: false,
+				update: null,
+			},
 		}),
 	);
 	expect(host.querySelector("[data-sync-state]")?.textContent).toContain(
@@ -94,6 +109,8 @@ it("says changes waiting out a long spell on the minute's limit as progress, not
 				paused: null,
 				sending: "Sending 340 changes to devosurf, about 3 minutes",
 				held: [],
+				offline: false,
+				update: null,
 			},
 		}),
 	);
@@ -115,7 +132,9 @@ it("counts a long wait down in the same notice, and a closed one stays closed un
 	const show = (sending: string | null) =>
 		act(() =>
 			root.render(
-				createElement(SyncNotices, { state: { ended: null, goneLocal: null, paused: null, sending, held: [] } }),
+				createElement(SyncNotices, {
+					state: { ended: null, goneLocal: null, paused: null, sending, held: [], offline: false, update: null },
+				}),
 			),
 		);
 	show("Sending 3,898 changes to devosurf, about 32 minutes");
@@ -136,7 +155,16 @@ it("counts a long wait down in the same notice, and a closed one stays closed un
 });
 
 it("stands the moved sheet over the canvas once the pull lands, and Remove from Home forgets the project", async () => {
-	const sync = { ended: null, goneLocal: null, paused: null, sending: null, held: [], moved: null as unknown };
+	const sync = {
+		ended: null,
+		goneLocal: null,
+		paused: null,
+		sending: null,
+		held: [],
+		offline: false,
+		update: null,
+		moved: null as unknown,
+	};
 	const asked: { url: string; body: string | undefined }[] = [];
 	vi.stubGlobal(
 		"fetch",
@@ -181,7 +209,7 @@ it("offers Put design/ back in git on a copy that ended or went local, and says 
 		const asked: string[] = [];
 		const host = mount(
 			createElement(SyncNotices, {
-				state: { ...over, paused: null, sending: null, held: [], backInGit: true },
+				state: { ...over, paused: null, sending: null, held: [], offline: false, update: null, backInGit: true },
 				onBackInGit: async () => {
 					asked.push("back");
 					return "design/ is back in git in checkout: one commit, nothing pushed.";
@@ -199,9 +227,141 @@ it("offers Put design/ back in git on a copy that ended or went local, and says 
 it("offers no Put design/ back in git where the daemon doesn't", () => {
 	const host = mount(
 		createElement(SyncNotices, {
-			state: { ended: "devosurf", goneLocal: null, paused: null, sending: null, held: [] },
+			state: {
+				ended: "devosurf",
+				goneLocal: null,
+				paused: null,
+				sending: null,
+				held: [],
+				offline: false,
+				update: null,
+			},
 			onBackInGit: async () => "",
 		}),
 	);
 	expect(host.textContent).not.toContain("Put design/ back in git");
+});
+
+const quiet = { ended: null, goneLocal: null, paused: null, sending: null, held: [], offline: false, update: null };
+
+it("says the copy is offline, with Match the team beside it, and nothing once it is back", () => {
+	const onMatchTeam = vi.fn();
+	const host = mount(createElement(SyncNotices, { state: { ...quiet, offline: true }, onMatchTeam }));
+	const notice = host.querySelector("[data-sync-state]");
+	expect(notice?.textContent).toContain("Offline. Your changes go up when you're back.");
+	act(() =>
+		[...(notice?.querySelectorAll("button") ?? [])]
+			.find((button) => button.textContent === "Match the team")
+			?.click(),
+	);
+	expect(onMatchTeam).toHaveBeenCalledOnce();
+	const back = mount(createElement(SyncNotices, { state: quiet, onMatchTeam }));
+	expect(back.querySelector("[data-sync-state]")).toBeNull();
+});
+
+it("puts Match the team on every line of a copy that follows its team, never on one that ended", () => {
+	const host = mount(
+		createElement(SyncNotices, {
+			state: {
+				...quiet,
+				ended: "devosurf",
+				paused: "this project took 120 saves in the last minute",
+				held: [
+					{ path: "a.mov", why: "it's over 25 MB" },
+					{ path: "b.mov", why: "it's over 25 MB" },
+				],
+				offline: false,
+				update: null,
+			},
+			onMatchTeam: () => {},
+		}),
+	);
+	const actions = [...host.querySelectorAll("[data-sync-state]")].map((notice) =>
+		[...notice.querySelectorAll("button")].map((button) => button.textContent).filter((label) => label !== ""),
+	);
+	expect(actions.map((labels) => labels.includes("Match the team"))).toEqual([false, true, true]);
+	expect(actions[2]).toContain("Show");
+});
+
+it("says why Match the team was refused until the line is closed", () => {
+	const onRefusedRead = vi.fn();
+	const host = mount(
+		createElement(SyncNotices, {
+			state: { ...quiet, offline: true },
+			refused: "Match the team needs a connection to spool.page. Nothing was changed.",
+			onMatchTeam: () => {},
+			onRefusedRead,
+		}),
+	);
+	const said = [...host.querySelectorAll("[data-sync-state]")];
+	expect(said.map((notice) => notice.textContent)).toEqual([
+		expect.stringContaining("Offline."),
+		expect.stringContaining("Match the team needs a connection to spool.page. Nothing was changed."),
+	]);
+	expect([...(said[1]?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).not.toContain(
+		"Match the team",
+	);
+	act(() => said[1]?.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')?.click());
+	expect(onRefusedRead).toHaveBeenCalledOnce();
+});
+
+const quietState = { ended: null, goneLocal: null, paused: null, sending: null, held: [], offline: false };
+
+it("says to update Spool with the npm command in a browser on the CLI's daemon, with no Match the team (#206)", () => {
+	const host = mount(
+		createElement(SyncNotices, {
+			state: {
+				...quietState,
+				update: { team: "Devosurf", how: "cli", command: "npm install -g spool.page@latest" },
+			},
+			onMatchTeam: () => {},
+			bridge: undefined,
+		}),
+	);
+	const notices = host.querySelectorAll("[data-sync-state]");
+	expect(notices).toHaveLength(1);
+	expect(notices[0]?.textContent).toContain("Update Spool to keep syncing with Devosurf:");
+	expect(notices[0]?.textContent).toContain("npm install -g spool.page@latest");
+	expect(notices[0]?.textContent).not.toContain("Match the team");
+	expect(notices[0]?.textContent).not.toContain("Offline");
+});
+
+it("says to update from the app in a browser on the Mac app's daemon (#206)", () => {
+	const host = mount(
+		createElement(SyncNotices, {
+			state: { ...quietState, update: { team: "Devosurf", how: "app" } },
+			bridge: undefined,
+		}),
+	);
+	expect(host.querySelector("[data-sync-state]")?.textContent).toContain(
+		"Update Spool to keep syncing with Devosurf: Check for Updates in the Spool app.",
+	);
+});
+
+it("starts the Mac app's update from the update line once it is ready, and points at the menu until then (#206)", () => {
+	let listener: ((update: AppUpdate | null) => void) | undefined;
+	const install = vi.fn();
+	const bridge: DesktopBridge = {
+		version: "1.0.0",
+		update: null,
+		onUpdate: (next) => {
+			listener = next;
+			return () => {};
+		},
+		install,
+		dismiss: () => {},
+	};
+	const host = mount(
+		createElement(SyncNotices, {
+			state: { ...quietState, update: { team: "Devosurf", how: "app" } },
+			bridge,
+		}),
+	);
+	const notice = () => host.querySelector("[data-sync-state]");
+	expect(notice()?.textContent).toContain("Update Spool to keep syncing with Devosurf.");
+	expect(notice()?.textContent).toContain("Check for Updates in the Spool menu");
+	act(() => listener?.({ kind: "ready", version: "1.1.0" }));
+	const update = [...(notice()?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Update");
+	act(() => update?.click());
+	expect(install).toHaveBeenCalledTimes(1);
 });

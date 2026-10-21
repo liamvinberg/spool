@@ -13,6 +13,12 @@ import { COMMENT_REFUSAL_STATUS } from "./team-sync-comments";
 
 export const PROTOCOL_VERSION = 2;
 
+/**
+ * The protocols spool.page takes a `hello` in (#206): the current one and the one before, so a release never stops a
+ * whole team at once. A daemon two behind is closed with `CLOSE_PROTOCOL` and pauses until it is updated.
+ */
+export const ACCEPTED_PROTOCOLS: readonly number[] = [PROTOCOL_VERSION - 1, PROTOCOL_VERSION];
+
 /** A team version: the number the object gave the save that made it. Versions only grow. */
 export type Version = number;
 
@@ -33,6 +39,8 @@ export interface Hello {
 	bundles?: true;
 	/** The daemon reads `presences`: everyone who changed comes down a tick at a time, in one message (#107). */
 	ticks?: true;
+	/** The daemon checks its copy against the team's (#204): it reads `fingerprint` and `listed`, and may say `list`. */
+	checks?: true;
 }
 
 /**
@@ -65,13 +73,18 @@ export interface Save {
 export interface Welcome {
 	type: "welcome";
 	protocol: number;
-	/** The format the team project was started in. */
+	/** The team project's format: the one it was started in, raised by every canvas.json save that says a higher one. */
 	format: number;
 	/** The newest team version. */
 	head: Version;
 	pace?: Pace;
 	/** The object takes `saves`. An older one doesn't say, and its daemons send each save alone. */
 	bundles?: true;
+	/**
+	 * The object answers `list` and sends `fingerprint` after `caught-up`, to a daemon whose hello said `checks`. An
+	 * older one doesn't say, and its daemons check nothing.
+	 */
+	checks?: true;
 }
 
 /**
@@ -224,6 +237,100 @@ export interface Resend {
 /** The most paths one `resend` may name; a local copy asks for more in several. */
 export const RESEND_PATHS = 500;
 
+/*
+ * Checks (#204): every time a daemon that says `checks` connects, after `caught-up`, the object sends the team's
+ * copy's fingerprint. A daemon whose own differs asks for the list of every path, a page at a time, asks for the
+ * paths that differ with `resend`, and says how much drift it repaired, never which paths.
+ */
+
+/** Object → a daemon whose hello said `checks`: the team's copy's fingerprint, sent right after `caught-up`. */
+export interface Fingerprint {
+	type: "fingerprint";
+	/** `copyFingerprint` of the team's copy. */
+	fingerprint: string;
+}
+
+/** Daemon → object, once caught up: send a page of the team's copy, every path after `after` in path order. */
+export interface List {
+	type: "list";
+	/** The last path of the page before; absent for the first page. */
+	after?: string;
+}
+
+/** One path of the team's copy as `listed` names it: what a catch-up would send, without the bytes. */
+export interface ListedFile {
+	path: string;
+	version: Version;
+	/** SHA-256 of its bytes, hex. */
+	hash: string;
+}
+
+/**
+ * Object → the daemon that said `list`: one page of every path the team's copy holds, deletes left out, in path
+ * order. `next` is the `after` of the next page, null on the last.
+ */
+export interface Listed {
+	type: "listed";
+	files: ListedFile[];
+	next: string | null;
+	/** The newest team version when the page was read. */
+	head: Version;
+}
+
+/** The most paths one `listed` page names. */
+export const LIST_PAGE = 1_000;
+
+/** Why a local copy drifted from the team's: its record of the team was lost, or it missed a write. */
+export type DriftCause = "lost_record" | "missed";
+
+/** Daemon → object: the check found drift and repaired it. Counts and the cause only, never a path. */
+export interface Drift {
+	type: "drift";
+	/** How many paths it put right. */
+	repaired: number;
+	cause: DriftCause;
+}
+
+/** The log line the object writes for a `drift`, which an alert watches for. */
+export const DRIFT_ALERT = "team_sync_drift";
+
+/** A well-formed `drift`, copied field by field; undefined for anything else. */
+export function readDrift(message: Record<string, unknown>): Drift | undefined {
+	const { type, repaired, cause } = message;
+	if (type !== "drift" || typeof repaired !== "number" || !Number.isSafeInteger(repaired) || repaired < 0)
+		return undefined;
+	return cause === "lost_record" || cause === "missed" ? { type, repaired, cause } : undefined;
+}
+
+/** A well-formed `listed`, copied field by field; undefined for anything else. */
+export function readListed(message: Record<string, unknown>): Listed | undefined {
+	const { type, files, next, head } = message;
+	if (type !== "listed" || !Array.isArray(files) || files.length > LIST_PAGE) return undefined;
+	if (!(next === null || typeof next === "string") || typeof head !== "number") return undefined;
+	const read: ListedFile[] = [];
+	for (const file of files) {
+		if (!isRecord(file)) return undefined;
+		const { path, version, hash } = file;
+		if (typeof path !== "string" || typeof version !== "number" || typeof hash !== "string") return undefined;
+		read.push({ path, version, hash });
+	}
+	return { type, files: read, next, head };
+}
+
+/**
+ * A copy's fingerprint: one SHA-256, hex, over every path it holds, sorted, each with its content hash (SHA-256 of
+ * its bytes, hex), deletes left out. The sync object makes it from its `files` table and a daemon from its record of
+ * the team, so the two agree exactly when the copies hold the same bytes at the same paths.
+ */
+export async function copyFingerprint(files: Iterable<{ path: string; hash: string | null }>): Promise<string> {
+	const lines = [...files]
+		.flatMap(({ path, hash }) => (hash === null ? [] : [`${path}\0${hash}`]))
+		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+	const said = new TextEncoder().encode(lines.join("\n"));
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", said));
+	return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /**
  * Whether the team has seen a file (spool#193), asked over HTTP at
  * `POST /api/teams/<team>/projects/<project>/history/seen` with `{ files: [{ path, hash }] }` before a `design/`
@@ -260,6 +367,8 @@ export type DaemonMessage =
 	| Save
 	| Saves
 	| Resend
+	| List
+	| Drift
 	| TurnEnded
 	| CommentPost
 	| CommentReplyPost
@@ -275,6 +384,8 @@ export type ObjectMessage =
 	| Refused
 	| Answers
 	| MonthCount
+	| Fingerprint
+	| Listed
 	| CommentsMessage;
 
 /** A message and the bytes riding with it, if any. */
@@ -367,10 +478,31 @@ export const CLOSE_SIGNED_OUT = 4401;
 export const CLOSE_UNPAID = 4402;
 /** The account no longer edits this team project, or it is gone. A browser watching a canvas: no longer a member. */
 export const CLOSE_NOT_EDITOR = 4403;
-/** The daemon speaks another `PROTOCOL_VERSION`. */
+/** The daemon speaks a protocol outside `ACCEPTED_PROTOCOLS`: it pauses until it is updated. */
 export const CLOSE_PROTOCOL = 4406;
+/**
+ * The daemon writes an older design/ format than the team's (#206): a teammate's newer Spool moved the team forward.
+ * Said on its `hello`, or the moment the team's format rises past it. It pauses until it is updated.
+ */
+export const CLOSE_FORMAT = 4426;
 /** The object couldn't check who may sync just now: the daemon reconnects, as after any dropped line. */
 export const CLOSE_UNAVAILABLE = 1011;
+
+/**
+ * The design/ format a canvas.json says, a whole number from 0 up, or none. The sync object keeps the team's format
+ * and raises it when a canvas.json save says a higher one (#206).
+ */
+export function canvasFormat(bytes: Uint8Array): number | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(new TextDecoder().decode(bytes));
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(parsed)) return undefined;
+	const { format } = parsed;
+	return typeof format === "number" && Number.isSafeInteger(format) && format >= 0 ? format : undefined;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -15,16 +15,21 @@ import {
 	BUNDLE_SAVES,
 	bundleParts,
 	CANVAS_PATH,
+	CLOSE_FORMAT,
 	CLOSE_NOT_EDITOR,
+	CLOSE_PROTOCOL,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNAVAILABLE,
 	CLOSE_UNPAID,
+	copyFingerprint,
+	type DriftCause,
 	decodeFrame,
 	encodeFrame,
 	FILE_LIMIT_BYTES,
 	isRecord,
 	joinParts,
 	type Limited,
+	type ListedFile,
 	type Moved,
 	PRESENCE_IDLE_MS,
 	PROJECT_LIMIT_BYTES,
@@ -33,6 +38,7 @@ import {
 	type PresenceAgent,
 	type PresenceState,
 	RESEND_PATHS,
+	readListed,
 	readPresence,
 	readPresenceHidden,
 	readPresences,
@@ -42,9 +48,11 @@ import {
 	travels,
 } from "../team-sync-protocol";
 import { FORMAT_VERSION, SOLO_GITIGNORE } from "../templates";
+import { howToUpdate, runningCli, type UpdateHow, updateLineWithHow } from "../update-how";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { guardAgainstGit } from "./git-guard";
 import { forgetMarks, recordMark, type SetAsideMark } from "./set-aside";
+import { type SyncedCopies, syncedCopies } from "./synced-copies";
 import {
 	CommentRefused,
 	CommentsOffline,
@@ -107,6 +115,8 @@ interface CopyState {
 	movedOut?: string;
 	/** The project was removed from its team (#197): who removed it, by name, kept with `ended` for whoever reads it. */
 	removedBy?: string;
+	/** This record was lost and made again, and the copy isn't matched to the team yet: nothing of it goes up till then. */
+	unmatched?: true;
 }
 
 export interface SyncSocket {
@@ -194,6 +204,24 @@ export interface LocalCopyOptions {
 	/** Where this machine keeps the comments the copy hears, so they show offline; with none, they aren't kept. */
 	commentsFile?: string;
 	/**
+	 * This machine's record of the copies it has synced (#204): a copy it synced whose own record is lost takes the
+	 * team's version and keeps its differences as set-aside marks, instead of sending them as a new copy's work.
+	 */
+	synced?: SyncedCopies;
+	/** How long without a caught-up connection before the copy says it is offline: `OFFLINE_MS`. */
+	offlineMs?: number;
+	/** How long a copy paused for an update first waits to ask again, doubling up to an hour: `UPDATE_ASK_MS`. */
+	updateAskMs?: number;
+	/** How this Spool is updated, said with the pause: read off the running CLI unless a test says. */
+	updateHow?: UpdateHow;
+	/** What the team is called, to say which team an update keeps it syncing with: its address until it answers. */
+	teamName?: () => Promise<string>;
+	/**
+	 * Bring the copy's design/ up to this Spool's format (#206), once it is caught up and before anything it holds goes
+	 * up: what it writes, its unsent changes included, goes up as ordinary saves.
+	 */
+	migrate?: () => void;
+	/**
 	 * A solo project moving into this team project (DEV-190): it has no `spool.json` until the team has every file,
 	 * and everything on disk is the person's own work, git-tracked or not, so git's index is never consulted.
 	 */
@@ -220,13 +248,33 @@ export interface SyncState {
 	held: { path: string; why: string }[];
 	/** The copy ended or went local in a checkout tracking `spool.json`: its notice offers Put design/ back in git. */
 	backInGit?: boolean;
+	/**
+	 * The copy has had no caught-up connection for `OFFLINE_MS` while it is followed and neither ended, gone local nor
+	 * paused (#205): its changes wait on this Mac. A shorter drop says nothing.
+	 */
+	offline: boolean;
+	/**
+	 * Sync is paused because this Spool is too old for the team project (#206): its protocol, or a teammate's newer
+	 * Spool moved the team's format forward. Which team, and how this Spool is updated; it lifts once it is.
+	 */
+	update: UpdateNeeded | null;
 }
+
+/** A copy paused until this Spool is updated: the team's name, and how to update it, from the Mac app or with npm. */
+export type UpdateNeeded = { team: string } & UpdateHow;
 
 export interface LocalCopy {
 	/** Resolves whenever the copy is caught up and nothing it sent is waiting on an answer. */
 	idle(): Promise<void>;
-	/** Sync paused, changes waiting on a long wait, and what didn't travel, now. */
-	state(): Pick<SyncState, "paused" | "sending" | "held">;
+	/** Sync paused, changes waiting on a long wait, what didn't travel, and whether it is offline, now. */
+	state(): Pick<SyncState, "paused" | "sending" | "held" | "offline" | "update">;
+	/**
+	 * Match the team (#205): every travelling path takes the team's version, and each local difference, an addition or
+	 * a delete too, becomes a set-aside mark that Put mine back restores. Files that didn't travel stay. Resolves with
+	 * how many marks it made once the team's versions are on disk; refused with `MatchOffline` without a caught-up
+	 * connection, changing nothing.
+	 */
+	matchTeam(): Promise<number>;
 	/** Where this machine's person is on the canvas, or null once nobody here is looking. Never stored. */
 	presence(state: PresenceState | null): void;
 	/**
@@ -303,6 +351,24 @@ export class SyncRefused extends SpoolError {}
 
 /** A one-off sync stopped because its caller is closing. */
 export class SyncStopped extends SpoolError {}
+
+/** Match the team needs a caught-up connection to spool.page, which this copy hasn't got: nothing changed. */
+export class MatchOffline extends SpoolError {
+	constructor() {
+		super("Match the team needs a connection to spool.page. Nothing was changed.");
+	}
+}
+
+/**
+ * How long a followed copy goes without a caught-up connection before it says it is offline (#205): a drop shorter
+ * than this, a network's hiccup or a Mac waking, says nothing.
+ */
+export const OFFLINE_MS = 30_000;
+
+/** How long a copy paused for an update first waits before it asks spool.page again (#206). */
+export const UPDATE_ASK_MS = 60_000;
+/** The longest it waits between asks: an update made outside the app is picked up within the hour. */
+export const UPDATE_ASK_MAX_MS = 3_600_000;
 
 /** How long a pause lasts when spool.page can't say when its limit lifts. */
 const RETRY_LIMIT_SECONDS = 60;
@@ -399,11 +465,13 @@ function onceSeen(root: string, spoolDir: string, options: SyncOnceOptions): Ask
 }
 
 /** Why a one-off sync's connection closed, from the close code spool.page gave, if any. */
-function closedOnce(code: number | undefined): SpoolError {
+function closedOnce(code: number | undefined, team?: string): SpoolError {
 	if (code === CLOSE_SIGNED_OUT) return new SyncRefused("not signed in; run `spool login`");
 	if (code === CLOSE_NOT_EDITOR) return new SyncRefused("you can't edit this team project");
 	if (code === CLOSE_UNPAID) return new SyncRefused("the team has gone local; it syncs again once the team pays");
 	if (code === CLOSE_UNAVAILABLE) return new SyncDropped("spool.page is unavailable");
+	if ((code === CLOSE_PROTOCOL || code === CLOSE_FORMAT) && team !== undefined)
+		return new SyncRefused(updateLineWithHow(team, howToUpdate(runningCli())));
 	return new SyncDropped("the connection to spool.page dropped");
 }
 
@@ -423,7 +491,19 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		);
 	const designDir = realDesignDir(options.root);
 	const stateFile = join(designDir, ".spool", "sync.json");
-	const state = readState(stateFile, link.url);
+	const recorded = readRecorded(stateFile, link.url);
+	const state: CopyState = recorded ?? { project: link.url, head: 0, files: {} };
+	/**
+	 * This machine synced this copy before, but its record of the team is gone (`sync.json` deleted, or naming another
+	 * project): once caught up it takes the team's version and keeps each local difference as a set-aside mark (#204).
+	 * A copy this machine never synced keeps the Get it rule below, and so does one whose spool.page makes no checks.
+	 */
+	let lostRecord =
+		live &&
+		(recorded?.unmatched === true ||
+			(recorded === undefined && options.synced?.before(options.root, link.url) === true));
+	// said in the record, so a restart before it is matched still knows
+	if (lostRecord) state.unmatched = true;
 	/**
 	 * A copy with no record of the team yet holds only its person's own work, as a move does: what git tracks in a
 	 * teammate's `design/` after a pull of the move commit that had to merge is frames they made, which go up.
@@ -495,6 +575,25 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let toldOther: string | undefined;
 	/** The session token the open connection was made with. */
 	let connectedWith: string | undefined;
+	/** spool.page makes checks (#204): its welcome said so, so this copy's hello asked for them. */
+	let checksOffered = false;
+	/** The team's copy being listed, a page at a time, and why: drift a fingerprint found, or matching the team. */
+	let checking: { cause: DriftCause | "match"; files: Map<string, ListedFile>; head: number | undefined } | undefined;
+	/** Nothing is sent while the copy is being matched to the team: what differs becomes a mark instead. */
+	let holding = false;
+	/** Match the team asked for and not yet listed: each is answered with how many marks it made. */
+	const matching: { resolve(marked: number): void; reject(error: Error): void }[] = [];
+	/** A match made, waiting for the team's versions it asked for to be on disk before it is answered. */
+	let matched: { marked: number; waiters: { resolve(marked: number): void }[] } | undefined;
+	/** No caught-up connection for `OFFLINE_MS`: the canvas says so (#205). */
+	let offline = false;
+	let offlineTimer: NodeJS.Timeout | undefined;
+	/**
+	 * spool.page closed the connection because this Spool is too old for the team (#206): sync is paused, its changes
+	 * wait on disk, and it asks again, less and less often, until the daemon runs a newer Spool.
+	 */
+	let outdated: UpdateNeeded | undefined;
+	let updateWait = options.updateAskMs ?? UPDATE_ASK_MS;
 
 	// a local copy whose folder went (a worktree removed) is neither read from nor written to: what it lacks is no
 	// delete, and nothing comes down into it. Its spool.json going is not that: an old branch checked out has none
@@ -515,6 +614,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	};
 	const isIdle = () =>
 		caughtUp &&
+		!holding &&
+		checking === undefined &&
 		inflight.size === 0 &&
 		outgoing.length === 0 &&
 		yielding.size === 0 &&
@@ -523,6 +624,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		deferred.size === 0 &&
 		waiting.size === 0;
 	const wake = () => {
+		if (matched !== undefined && restoring.size === 0) {
+			const { marked, waiters: asked } = matched;
+			matched = undefined;
+			for (const waiter of asked) waiter.resolve(marked);
+		}
 		if (!isIdle()) return;
 		for (const waiter of waiters.splice(0)) waiter.resolve();
 	};
@@ -790,6 +896,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	/** Send one path if it differs from the team's version this copy last had, unless git made it differ. */
 	const check = (path: string) => {
+		if (holding) return;
 		if (!travels(path) || restoring.has(path) || !present() || isPaused()) return;
 		if (!ownWork && guard.busy() && !gitStale) {
 			deferred.add(path);
@@ -1076,6 +1183,136 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		for (const [index, { file }] of entries.entries()) receive(file, parts[index]);
 	};
 
+	// --- checks (#204): the team's fingerprint after every catch-up, and drift repaired where it differs ---
+
+	/** Ask for the team's copy, a page at a time: what drift a fingerprint found, or a match, is settled against it. */
+	const list = (cause: DriftCause | "match") => {
+		if (checking !== undefined) {
+			// a match asked for while drift is being listed takes the same list
+			if (cause === "match") checking.cause = cause;
+			return;
+		}
+		checking = { cause, files: new Map(), head: undefined };
+		socket?.send(encodeFrame({ type: "list" }));
+	};
+
+	/** The team's fingerprint, said after `caught-up`: one that differs from this copy's record is listed. */
+	const compare = (theirs: unknown) => {
+		if (typeof theirs !== "string" || checking !== undefined || holding) return;
+		const at = socket;
+		void copyFingerprint(Object.entries(state.files).map(([path, { hash }]) => ({ path, hash }))).then((mine) => {
+			if (!closed && socket === at && caughtUp && mine !== theirs) list("missed");
+		});
+	};
+
+	/** One page of the team's copy; the last settles what was listed for. */
+	const heardList = (message: Record<string, unknown>) => {
+		const page = readListed(message);
+		if (page === undefined || checking === undefined) return;
+		checking.head ??= page.head;
+		for (const file of page.files) if (travels(file.path)) checking.files.set(file.path, file);
+		if (page.next !== null) {
+			socket?.send(encodeFrame({ type: "list", after: page.next }));
+			return;
+		}
+		const { cause, files, head } = checking;
+		checking = undefined;
+		if (cause === "missed") repairMissed(files, head ?? state.head);
+		else settleMatch(files, head ?? state.head, cause);
+	};
+
+	/**
+	 * The team's version of a path as the list says it, unless this copy heard a newer one since the list was read: a
+	 * teammate's save relayed meanwhile is the team's version now. Undefined for a path the team doesn't hold.
+	 */
+	const teamsNow = (path: string, listed: ListedFile | undefined, since: number) => {
+		const known = state.files[path];
+		if (known !== undefined && known.version > (listed?.version ?? since))
+			return known.hash === null ? undefined : { version: known.version, hash: known.hash };
+		return listed;
+	};
+
+	/**
+	 * Drift a fingerprint found, put right path by path and only where it differs: each path whose record isn't the
+	 * team's takes the team's version, unless it changed here and hasn't gone up, which goes up under the collision
+	 * rule as any change does. Said to the team as counts, never as paths.
+	 */
+	const repairMissed = (team: Map<string, ListedFile>, since: number) => {
+		let repaired = 0;
+		const known = Object.entries(state.files).flatMap(([path, { hash }]) => (hash === null ? [] : [path]));
+		for (const path of new Set([...team.keys(), ...known])) {
+			if (!travels(path) || going.has(path) || restoring.has(path) || yielding.has(path) || waiting.has(path))
+				continue;
+			const record = state.files[path];
+			const theirs = teamsNow(path, team.get(path), since);
+			if ((record?.hash ?? null) === (theirs?.hash ?? null)) continue;
+			const bytes = readLocal(path);
+			const here = bytes === undefined ? null : digest(bytes);
+			// changed here and not sent yet: never overwritten, it goes up built on the version it was
+			if (here !== (record?.hash ?? null) || stays(path) !== undefined) continue;
+			repaired++;
+			if (theirs !== undefined && here === theirs.hash) state.files[path] = { ...theirs };
+			else if (theirs !== undefined) restoring.add(path);
+			else gone(path, record);
+		}
+		persistSoon();
+		if (restoring.size > 0) askSoon();
+		if (repaired > 0) socket?.send(encodeFrame({ type: "drift", repaired, cause: "missed" }));
+		wake();
+	};
+
+	/** A path the team doesn't hold: it goes from disk, and the record says the team has it deleted. */
+	const gone = (path: string, record: { version: number; hash: string | null } | undefined) => {
+		if (record !== undefined) state.files[path] = { version: record.version, hash: null };
+		const target = join(designDir, ...path.split("/"));
+		if (statOf(path) === undefined) return;
+		rmSync(target, { force: true });
+		pruneEmpty(designDir, dirname(target));
+	};
+
+	/**
+	 * The copy made the team's (#205), the repair a lost record takes too: every travelling path takes the team's
+	 * version, each local difference, an addition or a delete too, becomes one set-aside mark, all in one batch, and
+	 * what doesn't travel is left alone. Then sync goes on as after any catch-up.
+	 */
+	const settleMatch = (team: Map<string, ListedFile>, since: number, cause: "lost_record" | "match") => {
+		const batch = randomUUID();
+		let marked = 0;
+		for (const path of new Set([...team.keys(), ...filesUnder(designDir, ""), ...Object.keys(state.files)])) {
+			if (!travels(path) || restoring.has(path) || stays(path) !== undefined) continue;
+			const record = state.files[path];
+			const theirs = teamsNow(path, team.get(path), since);
+			const bytes = readLocal(path);
+			const here = bytes === undefined ? null : digest(bytes);
+			if (here === (theirs?.hash ?? null)) {
+				if (theirs !== undefined) state.files[path] = { ...theirs };
+				continue;
+			}
+			recordMark(designDir, { path, kind: "set-aside", version: theirs?.version ?? 0, by: null, batch }, bytes);
+			marked++;
+			if (theirs === undefined) gone(path, record);
+			// the team's version comes back over what is here, whatever the record says
+			else restoring.add(path);
+		}
+		if (cause === "lost_record") {
+			lostRecord = false;
+			delete state.unmatched;
+			socket?.send(encodeFrame({ type: "drift", repaired: marked, cause }));
+		}
+		ownWork = false;
+		holding = false;
+		persist();
+		if (marked > 0) options.onMarks?.();
+		const asked = matching.splice(0);
+		if (asked.length > 0) {
+			matched ??= { marked, waiters: [] };
+			matched.waiters.push(...asked);
+		}
+		if (restoring.size > 0) askSoon();
+		checkEverything();
+		wake();
+	};
+
 	const handle = (data: string | ArrayBuffer) => {
 		// a frame the socket had in hand when this copy stopped is for nobody: its folder may be gone already
 		if (closed) return;
@@ -1091,6 +1328,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			pace = undefined;
 			hearPace(message.pace);
 			bundles = message.bundles === true;
+			checksOffered = message.checks === true;
 		} else if (message.type === "month") {
 			const { made, limit } = message;
 			if (typeof made === "number" && typeof limit === "number")
@@ -1103,8 +1341,18 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			caughtUp = true;
 			toldSignedOut = false;
 			toldOther = undefined;
+			online();
+			updated();
+			if (live) options.synced?.now(options.root, link.url);
 			recordAccount();
 			prune();
+			// a record lost: nothing goes up until the copy is matched to the team, its differences kept as marks
+			if (lostRecord && checksOffered) {
+				holding = true;
+				list("lost_record");
+			}
+			// caught up, and only now: this Spool's format migration, whose writes go up below with what waited (#206)
+			else if (live) migrate();
 			checkEverything();
 			ownWork = false;
 			// what git did while nobody watched has been put back; from here the guard sees git as it goes
@@ -1120,7 +1368,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			options.onComments?.();
 			// what git wrote over before the connection dropped is still waiting on the team's version
 			if (restoring.size > 0) askSoon();
-		} else if (message.type === "restored") {
+		} else if (message.type === "fingerprint") compare(message.fingerprint);
+		else if (message.type === "listed") heardList(message);
+		else if (message.type === "restored") {
 			const { path, version } = message;
 			if (typeof path === "string" && travels(path) && typeof version === "number")
 				mark({ path, kind: "restored", version, by: byOf(message.by), batch: burst ?? randomUUID() }, undefined);
@@ -1132,6 +1382,36 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			for (const answer of message.answers as unknown[]) if (isRecord(answer)) answered(answer);
 		}
 		wake();
+	};
+
+	// --- offline (#205): no caught-up connection for OFFLINE_MS is said; a shorter drop says nothing ---
+
+	const goingOffline = () => {
+		if (!live || closed || offline || offlineTimer !== undefined || outdated !== undefined) return;
+		offlineTimer = setTimeout(() => {
+			offlineTimer = undefined;
+			if (closed || caughtUp) return;
+			offline = true;
+			options.onPaused?.();
+		}, options.offlineMs ?? OFFLINE_MS);
+		offlineTimer.unref?.();
+	};
+
+	/** Bring design/ up to this Spool's format, its unsent changes too, before they are looked at to go up. */
+	const migrate = () => {
+		try {
+			options.migrate?.();
+		} catch (error) {
+			notice(`could not bring ${link.project} up to this Spool's format: ${(error as Error).message}`);
+		}
+	};
+
+	const online = () => {
+		if (offlineTimer !== undefined) clearTimeout(offlineTimer);
+		offlineTimer = undefined;
+		if (!offline) return;
+		offline = false;
+		options.onPaused?.();
 	};
 
 	const connect = async () => {
@@ -1171,6 +1451,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 						since: state.head,
 						bundles: true,
 						ticks: true,
+						...(live ? { checks: true } : {}),
 						...(options.moving === undefined ? {} : { moving: true }),
 					}),
 				);
@@ -1189,12 +1470,19 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				going.clear();
 				outgoing = [];
 				bundles = false;
+				checksOffered = false;
+				// a list cut off settles nothing: a match asked for is refused, and a lost record is matched next time
+				checking = undefined;
+				holding = false;
+				for (const waiter of matching.splice(0)) waiter.reject(new MatchOffline());
 				dirty.clear();
 				yielding.clear();
 				presence.lost();
 				comments.lost();
 				if (closed) return;
-				if (!live) return fail(closedOnce(code));
+				if (!live) return fail(closedOnce(code, link.team));
+				if (code === CLOSE_PROTOCOL || code === CLOSE_FORMAT) needsUpdate();
+				goingOffline();
 				if (code === CLOSE_SIGNED_OUT) signedOut();
 				// cut off, or refused before it opened: spool.page says whether this machine still edits the project
 				if (code === CLOSE_NOT_EDITOR || code === CLOSE_UNPAID || !opened) return void askStanding();
@@ -1262,9 +1550,46 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		// signed_out and not_editor: the connection closes next, and the close is what is answered
 	};
 
+	/**
+	 * This Spool is too old for the team (#206): sync pauses as on a limit, never as offline, and is said once until it
+	 * lifts. The next ask waits `updateWait`, doubling each time up to an hour.
+	 */
+	const needsUpdate = () => {
+		if (outdated !== undefined) return;
+		const asked: UpdateNeeded = { team: link.team, ...(options.updateHow ?? howToUpdate(runningCli())) };
+		outdated = asked;
+		if (offlineTimer !== undefined) clearTimeout(offlineTimer);
+		offlineTimer = undefined;
+		offline = false;
+		options.onPaused?.();
+		// said once the team's name is known: by its address when spool.page can't say
+		const say = (name: string) => {
+			if (closed || outdated !== asked) return;
+			outdated = { ...asked, team: name };
+			notice(`Sync paused: ${updateLineWithHow(name, asked)}. Changes stay on this Mac until it is updated.`);
+			if (name !== asked.team) options.onPaused?.();
+		};
+		(options.teamName?.() ?? Promise.resolve(link.team)).then(say, () => say(link.team));
+	};
+
+	/** A connection caught up again: a pause for an update has lifted, so this Spool is new enough after all. */
+	const updated = () => {
+		updateWait = options.updateAskMs ?? UPDATE_ASK_MS;
+		if (outdated === undefined) return;
+		outdated = undefined;
+		notice("Sync resumed.");
+		options.onPaused?.();
+	};
+
 	const reconnect = () => {
 		if (closed || retry !== undefined) return;
-		retry = setTimeout(() => void connect(), backoff.next());
+		let wait: number;
+		if (outdated === undefined) wait = backoff.next();
+		else {
+			wait = updateWait;
+			updateWait = Math.min(updateWait * 2, UPDATE_ASK_MAX_MS);
+		}
+		retry = setTimeout(() => void connect(), wait);
 		retry.unref?.();
 	};
 
@@ -1289,6 +1614,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	};
 
 	if (live) follow();
+	goingOffline();
 	void connect();
 
 	return {
@@ -1307,7 +1633,18 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			paused: isPaused() && paused !== undefined ? paused.why : null,
 			sending,
 			held: [...held].map(([path, why]) => ({ path, why })).sort((a, b) => (a.path < b.path ? -1 : 1)),
+			// a pause says what to do; offline would only say less
+			offline: offline && !isPaused() && outdated === undefined,
+			update: outdated ?? null,
 		}),
+		matchTeam: () => {
+			if (!caughtUp || socket === undefined || !checksOffered) return Promise.reject(new MatchOffline());
+			return new Promise<number>((resolve, reject) => {
+				matching.push({ resolve, reject });
+				holding = true;
+				list("match");
+			});
+		},
 		comments: () => comments.list(),
 		online: () => caughtUp && socket !== undefined,
 		comment: (comment, still) => comments.post(caughtUp ? socket : undefined, comment, still),
@@ -1342,6 +1679,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			guard.close();
 			if (resume !== undefined) clearTimeout(resume);
 			if (flushing !== undefined) clearTimeout(flushing);
+			if (offlineTimer !== undefined) clearTimeout(offlineTimer);
+			for (const waiter of matching.splice(0)) waiter.reject(new MatchOffline());
 			watch?.close();
 			socket?.close();
 			socket = undefined;
@@ -1517,8 +1856,21 @@ export function createTeamSync(deps: {
 	goneLocalAskMs?: number;
 	/** How soon it asks again when spool.page couldn't be reached, doubling up to `goneLocalAskMs`: a minute. */
 	goneLocalRetryMs?: number;
+	/** How long a copy goes without a caught-up connection before it says it is offline: `OFFLINE_MS`, unless a test can't wait. */
+	offlineMs?: number;
+	/** How long a copy paused for an update first waits to ask again: `UPDATE_ASK_MS`, unless a test can't wait. */
+	updateAskMs?: number;
+	/** How this Spool is updated, unless a test says: read off the running CLI. */
+	updateHow?: UpdateHow;
+	/**
+	 * Bring a team project's design/ up to this Spool's format (#206): asked of each local copy once it has caught up,
+	 * never before, so the team's files are migrated rather than an old local read of them.
+	 */
+	migrate?: (root: string) => void;
 }) {
 	const copies = new Map<string, LocalCopy>();
+	/** Which copies this machine has synced, so one whose record is lost is matched rather than sent (#204). */
+	const synced = syncedCopies(deps.spoolDir);
 	/** Copies gone local, by root, with the link each keeps. */
 	const stopped = new Map<string, ProjectLink>();
 	/** Stopped roots whose standing is being asked now. */
@@ -1754,6 +2106,12 @@ export function createTeamSync(deps: {
 					onRoster: () => deps.onRoster?.(root, copies.get(root)?.roster() ?? []),
 					...(deps.onComments === undefined ? {} : { onComments: () => deps.onComments?.(root) }),
 					commentsFile: keptCommentsFile(deps.spoolDir, link),
+					synced,
+					...(deps.offlineMs === undefined ? {} : { offlineMs: deps.offlineMs }),
+					...(deps.updateAskMs === undefined ? {} : { updateAskMs: deps.updateAskMs }),
+					...(deps.updateHow === undefined ? {} : { updateHow: deps.updateHow }),
+					...(deps.migrate === undefined ? {} : { migrate: () => deps.migrate?.(root) }),
+					teamName: () => teamName(at),
 				}),
 			);
 			const said = canvases.get(root);
@@ -1902,11 +2260,27 @@ export function createTeamSync(deps: {
 			copies.get(root)?.presence(state);
 		},
 		/** What a root's canvas says of its sync now: nothing to say for a solo project. */
-		state: (root: string): SyncState => ({
-			ended: endedWith(root) ?? null,
-			goneLocal: goneLocalWith(root) ?? null,
-			...(copies.get(root)?.state() ?? { paused: null, sending: null, held: [] }),
-		}),
+		state: (root: string): SyncState => {
+			const ended = endedWith(root) ?? null;
+			const goneLocal = goneLocalWith(root) ?? null;
+			const copy = copies.get(root)?.state() ?? {
+				paused: null,
+				sending: null,
+				held: [],
+				offline: false,
+				update: null,
+			};
+			// ended or gone local says why nothing travels; offline would only say less
+			return { ended, goneLocal, ...copy, offline: copy.offline && ended === null && goneLocal === null };
+		},
+		/**
+		 * Match the team on a root's local copy (#205): refused with `MatchOffline` when it isn't followed or has no
+		 * caught-up connection, changing nothing; otherwise how many set-aside marks it made.
+		 */
+		matchTeam(root: string): Promise<number> {
+			const copy = copies.get(root);
+			return copy === undefined ? Promise.reject(new MatchOffline()) : copy.matchTeam();
+		},
 		/**
 		 * What an agent's next command on a root says of its sync (DEV-261): each file that didn't travel and why, and
 		 * a pause, each said once until it travels or lifts. A file too big or outside the layout is found on disk now,
@@ -1915,11 +2289,12 @@ export function createTeamSync(deps: {
 		untold(root: string): string[] {
 			const copy = copies.get(root);
 			if (copy === undefined) return [];
-			const { paused, held: stuck } = copy.state();
+			const { paused, held: stuck, update } = copy.state();
 			const lines = [...stuck, ...staysOnThisMac(root)]
 				.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 				.map(({ path, why }) => `${path} didn't travel: ${why}`);
 			if (paused !== null) lines.push(`sync paused: ${paused}`);
+			if (update !== null) lines.push(`sync paused: ${updateLineWithHow(update.team, update)}`);
 			const now = new Set(lines);
 			const before = toldAgent.get(root) ?? new Set();
 			toldAgent.set(root, now);
@@ -2251,13 +2626,19 @@ function byOf(value: unknown): SetAsideMark["by"] {
 }
 
 function readState(file: string, project: string): CopyState {
+	// a copy with no record yet starts from nothing: the catch-up brings the whole team copy
+	return readRecorded(file, project) ?? { project, head: 0, files: {} };
+}
+
+/** A copy's record of the team, if it has one for this project. */
+function readRecorded(file: string, project: string): CopyState | undefined {
 	try {
 		const state = JSON.parse(readFileSync(file, "utf8")) as CopyState;
 		if (state.project === project && typeof state.head === "number" && typeof state.files === "object") return state;
 	} catch {
-		// a copy with no record yet starts from nothing: the catch-up brings the whole team copy
+		// none, or none that can be read
 	}
-	return { project, head: 0, files: {} };
+	return undefined;
 }
 
 /**

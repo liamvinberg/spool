@@ -18,6 +18,7 @@ export function ProjectTabMenu({
 	onCloseTab,
 	onChangeIcon,
 	onRemoveIcon,
+	onMatchTeam,
 }: {
 	project: TabProject;
 	x: number;
@@ -29,6 +30,8 @@ export function ProjectTabMenu({
 	onChangeIcon?: () => void;
 	/** Offered only while the icon is the project's own file: a favicon or a letter has nothing to remove. */
 	onRemoveIcon?: () => void;
+	/** Offered on a team project's tab only: makes its local copy the team's, keeping each difference as a mark. */
+	onMatchTeam?: () => void;
 }) {
 	const team = useMarkTeam(project.teamAddress);
 	const ref = useRef<HTMLDivElement>(null);
@@ -101,6 +104,9 @@ export function ProjectTabMenu({
 				<MenuItem label="Remove icon" onClick={() => act(onRemoveIcon)} />
 			)}
 			<MenuItem label="Export project…" onClick={() => act(onExport)} />
+			{onMatchTeam && project.teamAddress !== undefined && (
+				<MenuItem label="Match the team" onClick={() => act(onMatchTeam)} />
+			)}
 			<MenuSeparator />
 			<MenuItem label="Close tab" onClick={() => act(onCloseTab)} />
 		</Menu>,

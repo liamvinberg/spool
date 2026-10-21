@@ -365,3 +365,31 @@ it("swells a tab's dots into everyone's name pills while the pointer is on them"
 	});
 	await vi.waitFor(() => expect(pills()).toEqual([]));
 });
+
+it("offers Match the team in a team project's tab menu only", async () => {
+	const onMatchTeam = vi.fn();
+	const team = { root: "/w/team", name: "team", teamAddress: "devosurf" };
+	const { host } = await render({ tabs: [...tabs, team], onMatchTeam });
+	const items = async (at: number) => {
+		await act(async () =>
+			host
+				.querySelectorAll<HTMLButtonElement>(".project-tab-label")
+				[at]?.dispatchEvent(
+					new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 150, clientY: 20 }),
+				),
+		);
+		const labels = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
+		return labels;
+	};
+	expect(await items(1)).not.toContain("Match the team");
+	await act(async () =>
+		document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+	);
+	expect(await items(3)).toEqual(["Export project…", "Match the team", "Close tab"]);
+	await act(async () =>
+		[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+			.find((item) => item.textContent === "Match the team")
+			?.click(),
+	);
+	expect(onMatchTeam).toHaveBeenCalledWith(team);
+});
