@@ -2,22 +2,25 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { pageChain, pageName, pageParent, ROOT_PAGE } from "../page-path";
 import {
+	endsFrom,
 	type ProjectShares,
+	type ShareEnds,
 	type ShareKind,
 	type ShareRequest,
 	type SharesSource,
 	type ShareView,
 	saidAgo,
+	saidDay,
 	sharedPageName,
-	sharedWhat,
+	sharedWhatEnds,
 	shareWho,
 } from "../share-view";
 import { cn } from "./cn";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
 import { BackIcon, ShareIcon } from "./icons";
 import { Button, IconButton } from "./primitives/actions";
-import { SearchField, TextField } from "./primitives/inputs";
-import { MenuItem, MenuSeparator, PaletteEmpty, Popover } from "./primitives/overlays";
+import { SearchField, SelectTrigger, TextField } from "./primitives/inputs";
+import { Menu, MenuItem, MenuSeparator, PaletteEmpty, Popover } from "./primitives/overlays";
 import { Checkbox } from "./primitives/selection";
 import { ListRow, ScrollArea, TreeRow } from "./primitives/structure";
 import { QrCode } from "./qr-code";
@@ -255,7 +258,7 @@ function ShareBody({
 							data-share-row={share.id}
 							icon={<KindGlyph kind={share.kind} />}
 							label={shareWho(share)}
-							meta={sharedWhat(share)}
+							meta={sharedWhatEnds(share)}
 							disabled={!shares.manage}
 							onClick={() => setView({ kind: "share", id: share.id })}
 						/>
@@ -302,6 +305,7 @@ function NewShare({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [notify, setNotify] = useState(true);
+	const [ends, setEnds] = useState<ShareEnds>("never");
 	// a frame held when Share opened is where the link opens, played, while its page is one of those shared
 	const [starting, setStarting] = useState(true);
 	const start = context.frame !== null && (whole || chosen.has(pageParent(context.frame))) ? context.frame : null;
@@ -324,6 +328,8 @@ function NewShare({
 			...(whole ? { whole: true } : { pages: [...chosen].sort() }),
 			...(kind === "people" ? { people: addresses, notify } : {}),
 			...(start !== null && starting ? { start } : {}),
+			// never is spool.page's own default, so an older spool.page is asked nothing new
+			...(ends === "never" ? {} : { ends }),
 		});
 		setBusy(false);
 		if ("error" in answer) setError(refusalSaid(answer.error));
@@ -448,6 +454,7 @@ function NewShare({
 					{!whole && picking && query.trim() !== "" ? `${found.length} found · ` : ""}
 					{saidSize(whole ? every : chosen, context.frames)}
 				</span>
+				<EndsChoice ends={ends} onEnds={setEnds} />
 				<Button size="sm" variant="primary" disabled={!ready} onClick={() => void share()}>
 					{busy ? "Sharing…" : "Share"}
 				</Button>
@@ -456,6 +463,43 @@ function NewShare({
 				<p role="alert" className="px-3 pb-1.5 text-danger-strong type-label">
 					{error}
 				</p>
+			)}
+		</div>
+	);
+}
+
+const ENDS: readonly { ends: ShareEnds; label: string }[] = [
+	{ ends: "never", label: "Never" },
+	{ ends: "30d", label: "In 30 days" },
+	{ ends: "7d", label: "In 7 days" },
+];
+
+/** When a new share ends, chosen quietly in the foot beside Share: never, or in 30 or 7 days, each by its date. */
+function EndsChoice({ ends, onEnds }: { ends: ShareEnds; onEnds: (ends: ShareEnds) => void }) {
+	const [open, setOpen] = useState(false);
+	// read when shown, so the dates are today's
+	const day = (each: ShareEnds) => {
+		const at = endsFrom(each);
+		return at === undefined ? undefined : saidDay(at);
+	};
+	return (
+		<div className="relative shrink-0">
+			<SelectTrigger open={open} value={`Ends ${day(ends) ?? "never"}`} onClick={() => setOpen((was) => !was)} />
+			{open && (
+				<Menu className="absolute right-0 bottom-full z-50 mb-1 w-[200px]" data-share-ends="">
+					{ENDS.map((each) => (
+						<MenuItem
+							key={each.ends}
+							label={each.label}
+							meta={day(each.ends)}
+							checked={ends === each.ends}
+							onClick={() => {
+								onEnds(each.ends);
+								setOpen(false);
+							}}
+						/>
+					))}
+				</Menu>
 			)}
 		</div>
 	);
@@ -645,7 +689,7 @@ function ShareDetail({
 					<KindGlyph kind={share.kind} />
 				</span>
 				<span className="min-w-0 flex-1 truncate pl-1 text-primary type-control">{shareWho(share)}</span>
-				<span className="max-w-[45%] shrink-0 truncate text-secondary type-detail">{sharedWhat(share)}</span>
+				<span className="max-w-[45%] shrink-0 truncate text-secondary type-detail">{sharedWhatEnds(share)}</span>
 			</div>
 			{share.link !== undefined && (
 				<div className="flex shrink-0 gap-3 px-2 pt-1 pb-2">

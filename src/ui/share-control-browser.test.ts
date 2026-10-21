@@ -36,7 +36,7 @@ beforeAll(async () => {
 					stop: async () => null,
 					create: async (request) => {
 						window.created = request;
-						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.whole ? pages : request.pages, ...(request.whole ? { whole: true } : {}), people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page" };
+						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.whole ? pages : request.pages, ...(request.whole ? { whole: true } : {}), people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page", ...(request.ends === "7d" ? { endsAt: Date.now() / 1000 + 7 * 86400 } : request.ends === "30d" ? { endsAt: Date.now() / 1000 + 30 * 86400 } : {}) };
 						made.push(share);
 						return { share };
 					},
@@ -82,10 +82,16 @@ afterAll(async () => {
 	for (const page of pages) await page.close();
 });
 
-async function open(state: "ready" | "signed-out" = "ready", frame: string | null = null, solo = false): Promise<Page> {
+async function open(
+	state: "ready" | "signed-out" = "ready",
+	frame: string | null = null,
+	solo = false,
+	now?: Date,
+): Promise<Page> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1200, height: 700 }, reducedMotion: "reduce" });
 	pages.push(page);
+	if (now !== undefined) await page.clock.setFixedTime(now);
 	await page.setContent(`<style>body { margin: 0; }</style><div id="root"></div>`);
 	for (const style of styles) await page.addStyleTag({ content: style });
 	await page.evaluate(
@@ -204,6 +210,40 @@ it("shares the whole project, pages added later included, with a link or with na
 	await solo.getByRole("button", { name: "Share" }).click();
 	await solo.getByRole("dialog", { name: "Share" }).getByText("Shares part1, the page you’re on").waitFor();
 	expect(await solo.getByText("Whole project").count()).toBe(0);
+});
+
+it("ends a share on the day chosen, and its row and its detail say so; Never says nothing (spool#183)", {
+	timeout: 60_000,
+}, async () => {
+	// 2 Nov, midday: in 7 days is 9 Nov, in 30 days is 2 Dec
+	const page = await open("ready", null, false, new Date(Date.UTC(2025, 10, 2, 12)));
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	// Never, unless chosen, and nothing is asked of spool.page for it
+	await popover.getByRole("button", { name: "Ends never" }).click();
+	await popover.getByRole("menuitemcheckbox", { name: /Never/u }).waitFor();
+	expect(await popover.getByRole("menuitemcheckbox", { name: /Never/u }).getAttribute("aria-checked")).toBe("true");
+	await popover.getByRole("menuitemcheckbox", { name: "In 30 days 2 Dec" }).waitFor();
+	await popover.getByRole("menuitemcheckbox", { name: "In 7 days 9 Nov" }).click();
+	await popover.getByRole("button", { name: "Ends 9 Nov" }).waitFor();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "link", pages: ["area2/part1"], ends: "7d" });
+	await popover.locator("[data-share-opened]").getByText("ends 9 Nov").waitFor();
+
+	// back, its row says when it ends; a share that never ends says nothing of it
+	await popover.getByRole("button", { name: "Back" }).click();
+	await popover.getByRole("menuitem", { name: /anyone with the link.*part1.*ends 9 Nov/u }).waitFor();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "link", pages: ["area2/part1"] });
+	await popover.locator("[data-share-opened]").waitFor();
+	expect(await popover.getByText(/ends /u).count()).toBe(0);
+	await popover.getByRole("button", { name: "Back" }).click();
+	await expect.poll(() => popover.locator("[data-share-row]").count()).toBe(2);
+	expect(await popover.locator('[data-share-row="s2"]').getByText(/ends/u).count()).toBe(0);
 });
 
 it("picks pages from a tree that keeps one size however many there are", { timeout: 60_000 }, async () => {
