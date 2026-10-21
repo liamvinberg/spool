@@ -105,6 +105,7 @@ import { createProjectShares } from "./shares";
 import { beatWhileOpen } from "./sse-beat";
 import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
+import { teamHistoryRoutes } from "./team-history";
 import { teamProjectRoutes } from "./team-projects";
 import {
 	createTeamSync,
@@ -1785,6 +1786,15 @@ export function createDaemonApp({
 					? undefined
 					: commentStill(spoolDir, link, comment, { ...cloud, origin: originOf(cloud) });
 			},
+		}),
+	);
+	app.route(
+		"/api/p",
+		teamHistoryRoutes({
+			spoolDir,
+			request: () => ({ ...cloud, origin: originOf(cloud) }),
+			resolve: resolveProject,
+			link: followedLink,
 		}),
 	);
 	app.route(

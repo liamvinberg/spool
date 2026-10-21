@@ -136,6 +136,21 @@ interface Project {
 	had: Map<string, Set<string | null>>;
 	/** The team's design/ format: its first hello's, raised by every canvas.json save that says a higher one (#206). */
 	format?: number;
+	/** The team history (spool#114): every save taken, applied or set aside, in order, as the object keeps them. */
+	log: LogRow[];
+	/** The bytes behind every hash a save carried, set-aside ones too. */
+	blobs: Map<string, Uint8Array>;
+}
+
+/** One save in the team history, as the object's history routes answer it. */
+interface LogRow {
+	version: number;
+	path: string;
+	hash: string | null;
+	account: string;
+	device: string;
+	at: number;
+	outcome: "applied" | "set_aside";
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -201,6 +216,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const moves: { from: string; to: string; by: string }[] = [];
 	let ids = 0;
 	let commentIds = 0;
+	/** The clock every save is filed at in the team history: the test's to turn. */
+	let clock = () => Date.now();
 	/** The comment limits every project here keeps: core's, unless a test raised or lowered them as a maintainer. */
 	let commentLimits = { perMinute: COMMENTS_PER_MINUTE, open: COMMENTS_OPEN };
 	/** Machines that can't reach the team right now, by account. */
@@ -380,7 +397,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json(described(held.at));
 		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still|\/history\/saves|\/history\/files|\/history\/blobs\/[^/]+)?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -436,6 +453,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 					moved: [],
 					last: new Map(),
 					had: new Map(),
+					log: [],
+					blobs: new Map(),
 				};
 				arrive(made);
 				return Response.json(described(made), { status: 201 });
@@ -469,6 +488,11 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				const held = [...at.files.values()].filter((file) => file.bytes !== null).length;
 				return Response.json({ files, held });
 			});
+		// the team history (spool#114): any member's to read, a page at a time
+		if (match[3]?.startsWith("/history/") === true && request.method === "GET") {
+			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			return historyRead(at, match[3], url.searchParams);
+		}
 		// how many comments the project holds, and the still one kept: any member's to read
 		if (match[3] === "/shares" && request.method === "GET")
 			return Response.json({
@@ -524,6 +548,51 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		}
 		asked++;
 		return Response.json({ ...described(at), role, ...(lapsed(address) ? { standing: "unpaid" } : {}) });
+	}
+
+	/** One of the team history's reads, as the object answers it: saves to a path, files at a version, or bytes. */
+	function historyRead(at: Project, route: string, query: URLSearchParams): Response {
+		const limit = Number(query.get("limit") ?? 100);
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		if (route.startsWith("/history/blobs/")) {
+			const bytes = at.blobs.get(route.slice("/history/blobs/".length));
+			if (bytes === undefined) return Response.json({ error: "blob_not_found" }, { status: 404 });
+			return new Response(arrayBuffer(bytes));
+		}
+		if (route === "/history/saves") {
+			const path = query.get("path");
+			if (!path) return Response.json({ error: "invalid_input" }, { status: 400 });
+			const before = Number(query.get("before") ?? Number.MAX_SAFE_INTEGER);
+			const until = Number(query.get("until") ?? Number.MAX_SAFE_INTEGER);
+			const rows = at.log
+				.filter((row) => row.path === path && row.version < before && row.at <= until)
+				.reverse()
+				.slice(0, limit + 1);
+			const saves = rows.slice(0, limit).map(({ account, device, ...row }) => ({
+				...row,
+				by: { accountId: account, name: account, device },
+			}));
+			return Response.json({ saves, next: rows.length > limit ? (saves.at(-1)?.version ?? null) : null });
+		}
+		const version = Number(query.get("at"));
+		const paths = query.getAll("path");
+		const prefixes = query.getAll("prefix");
+		if (!Number.isSafeInteger(version) || paths.length + prefixes.length === 0)
+			return Response.json({ error: "invalid_input" }, { status: 400 });
+		const after = query.get("after") ?? "";
+		const last = new Map<string, LogRow>();
+		for (const row of at.log)
+			if (
+				row.outcome === "applied" &&
+				row.version <= version &&
+				row.path > after &&
+				(paths.includes(row.path) || prefixes.some((prefix) => row.path.startsWith(prefix)))
+			)
+				last.set(row.path, row);
+		const rows = [...last.values()].sort((a, b) => (a.path < b.path ? -1 : 1)).slice(0, limit + 1);
+		const files = rows.slice(0, limit).map(({ path, version, hash }) => ({ path, version, hash }));
+		return Response.json({ files, next: rows.length > limit ? (files.at(-1)?.path ?? null) : null });
 	}
 
 	/** Today's described project, at its team and name now. */
@@ -1215,6 +1284,18 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const beatsDelete = stale && current.bytes === null && bytes !== undefined;
 		const applies = !stale || merged !== null || beatsDelete;
 		at.version += 1;
+		const kept = merged ?? bytes ?? null;
+		const keptHash = hash(applies ? kept : (bytes ?? null));
+		if (keptHash !== null) at.blobs.set(keptHash, (applies ? kept : bytes) as Uint8Array);
+		at.log.push({
+			version: at.version,
+			path,
+			hash: keptHash,
+			account: from.person.accountId,
+			device: from.person.device,
+			at: clock(),
+			outcome: applies ? "applied" : "set_aside",
+		});
 		at.saves.push({
 			path,
 			base,
@@ -1426,6 +1507,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		bytes: (name: string, path: string) => project(name)?.files.get(path)?.bytes,
 		paths: (name: string) => [...(project(name)?.files.keys() ?? [])].sort(),
 		saves: (name: string) => project(name)?.saves ?? [],
+		/** Every save in the team history, in order: version, path, hash, who, which machine, when and outcome. */
+		history: (name: string) => project(name)?.log ?? [],
+		/** The clock saves are filed at in the team history from now on. */
+		clock(now: () => number) {
+			clock = now;
+		},
 		/** Every save the project refused, and why. */
 		refused: (name: string) => project(name)?.refused ?? [],
 		/** How many saves each message that carried saves held, in order. */
