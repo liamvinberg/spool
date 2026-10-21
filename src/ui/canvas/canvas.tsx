@@ -658,7 +658,7 @@ function CanvasField({
 		one.threads.some((thread) => thread.id !== one.open && thread.life !== "read"),
 	);
 	const permissions = useAgentPermissions(project, deckOpen, turnPhase, agentDefaults.mode);
-	const syncState = useSyncState(project);
+	const syncState = useSyncState(project, root);
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types

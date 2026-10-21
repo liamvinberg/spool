@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { fetchSyncState, type SyncState } from "../api";
+import { type CanvasSync, fetchSyncState, postForgetProject, type SyncState } from "../api";
+import { MovedSheet } from "../moved-away";
 import { TextAction, Toast } from "../primitives/feedback";
 import { Popover } from "../primitives/overlays";
 
@@ -9,10 +10,13 @@ export const SYNC_CHANGED = "spool-sync-change";
 /**
  * A team project's sync, said on its canvas for as long as it lasts and whenever the canvas opens: that the project
  * ended here, that it has gone local until its team pays, that sync is paused on a limit, that changes are waiting
- * out a long spell on the minute's limit, and which files didn't travel. A solo project's canvas says nothing.
+ * out a long spell on the minute's limit, and which files didn't travel. A solo project's canvas says nothing. One
+ * whose design/ moved into a team this account can't edit stands the moved sheet over the canvas (spool#194).
  */
-export function useSyncState(project: string): ReactNode {
-	const [state, setState] = useState<SyncState | undefined>(undefined);
+export function useSyncState(project: string, root?: string): ReactNode {
+	const [state, setState] = useState<CanvasSync | undefined>(undefined);
+	// the moved sheet, once put away, stays away until it has something else to say
+	const [putAway, setPutAway] = useState<string | null>(null);
 	const revision = useRef(0);
 	const refresh = useCallback(() => {
 		const asked = ++revision.current;
@@ -30,7 +34,24 @@ export function useSyncState(project: string): ReactNode {
 			window.removeEventListener("focus", refresh);
 		};
 	}, [refresh]);
-	return state === undefined ? null : <SyncNotices state={state} />;
+	if (state === undefined) return null;
+	const moved = state.moved;
+	const movedKey = moved === null ? null : `${moved.standing}\n${moved.commit?.hash ?? ""}`;
+	return (
+		<>
+			{moved !== null && movedKey !== putAway && (
+				<MovedSheet
+					name={project}
+					moved={moved}
+					onRemove={() => {
+						if (root !== undefined) void postForgetProject(root);
+					}}
+					onClose={() => setPutAway(movedKey)}
+				/>
+			)}
+			<SyncNotices state={state} />
+		</>
+	);
 }
 
 /**

@@ -32,6 +32,7 @@ import type { RungRead } from "../daemon/hand-lane";
 import type { EditedNode, Place as MovePlace, PatchRefusal, StampShift } from "../daemon/hand-write";
 import type { BranchesTouchingDesign } from "../daemon/history";
 import type { LocatedRange } from "../daemon/locate";
+import type { MovedAway } from "../daemon/moved-away";
 import type { ProjectIcon } from "../daemon/project-icon";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { ProjectThumbnail } from "../daemon/project-thumbnail";
@@ -1972,11 +1973,14 @@ export async function fetchMoveBranches(path: string, signal?: AbortSignal): Pro
 	}
 }
 
+/** A canvas's sync, and where its design/ went when it moved into a team this account can't edit (spool#194). */
+export type CanvasSync = SyncState & { moved: MovedAway | null };
+
 /** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
-export async function fetchSyncState(project: string): Promise<SyncState | undefined> {
+export async function fetchSyncState(project: string): Promise<CanvasSync | undefined> {
 	try {
 		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/sync`);
-		const body = (response.ok ? await response.json() : null) as Partial<SyncState> | null;
+		const body = (response.ok ? await response.json() : null) as Partial<CanvasSync> | null;
 		if (!Array.isArray(body?.held)) return undefined;
 		return {
 			ended: typeof body.ended === "string" ? body.ended : null,
@@ -1984,6 +1988,7 @@ export async function fetchSyncState(project: string): Promise<SyncState | undef
 			paused: typeof body.paused === "string" ? body.paused : null,
 			sending: typeof body.sending === "string" ? body.sending : null,
 			held: body.held,
+			moved: typeof body.moved === "object" && body.moved !== null ? body.moved : null,
 		};
 	} catch {
 		return undefined;
