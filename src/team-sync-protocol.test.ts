@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	readRestore,
 	COMMENT_BODY_LIMIT,
 	type Comment,
 	type CommentPost,
@@ -17,6 +16,7 @@ import {
 	readCommentsMessage,
 	readPresence,
 	readPresenceState,
+	readRestore,
 } from "./team-sync-protocol";
 
 /**
@@ -321,7 +321,11 @@ describe("a restore on a bundle (spool#188)", () => {
 	it("reads what a restore names, and nothing that isn't one", () => {
 		const restore = { id: "r1", kind: "frame", target: "shop/cart", to: 12 };
 		expect(readRestore(restore)).toEqual(restore);
-		expect(readRestore({ ...restore, kind: "project", target: "" })).toEqual({ ...restore, kind: "project", target: "" });
+		expect(readRestore({ ...restore, kind: "project", target: "" })).toEqual({
+			...restore,
+			kind: "project",
+			target: "",
+		});
 		expect(readRestore({ ...restore, id: "x".repeat(65) })).toBeNull();
 		expect(readRestore({ ...restore, id: "" })).toBeNull();
 		expect(readRestore({ ...restore, kind: "everything" })).toBeNull();

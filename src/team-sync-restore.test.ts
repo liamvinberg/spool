@@ -128,8 +128,8 @@ describe("the fake team takes a restore", { timeout: 30_000 }, () => {
 		const restore = { id: "r5", kind: "file" as const, target: CART, to: then };
 		expect(await ana.restore(restore, [{ path: CART, text: "first\n" }])).toMatchObject([{ type: "saved" }]);
 		cloud.limit("project_full", 60);
-		expect(
-			await ana.restore({ ...restore, id: "r6", to: second }, [{ path: CART, text: "second\n" }]),
-		).toMatchObject([{ type: "refused", reason: "project_full" }]);
+		expect(await ana.restore({ ...restore, id: "r6", to: second }, [{ path: CART, text: "second\n" }])).toMatchObject(
+			[{ type: "refused", reason: "project_full" }],
+		);
 	});
 });
