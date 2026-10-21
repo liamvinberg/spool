@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { type CanvasSync, fetchSyncState, matchTeam, postForgetProject, putBackInGit, type SyncState } from "../api";
+import { type AppUpdate, type DesktopBridge, desktopBridge } from "../desktop-bridge";
 import { MovedSheet } from "../moved-away";
 import { TextAction, Toast } from "../primitives/feedback";
 import { Popover } from "../primitives/overlays";
@@ -25,7 +26,7 @@ export async function matchTheTeam(project: string): Promise<void> {
 
 /**
  * A team project's sync, said on its canvas for as long as it lasts and whenever the canvas opens: that the project
- * ended here, that it has gone local until its team pays, that sync is paused on a limit, that changes are waiting
+ * ended here, that it has gone local until its team pays, that sync is paused on a limit or until Spool is updated, that changes are waiting
  * out a long spell on the minute's limit, that it has been offline a while, and which files didn't travel, each with
  * Match the team beside it. A solo project's canvas says nothing. One whose design/ moved into a team this account
  * can't edit stands the moved sheet over the canvas (spool#194).
@@ -92,7 +93,10 @@ export function useSyncState(project: string, root?: string): ReactNode {
  * long wait is keyed as one line however its count changes, so it counts down in place, and once closed it stays
  * closed until that wait ends.
  */
-function linesOf({ ended, goneLocal, paused, sending, held, backInGit, offline }: SyncState): Line[] {
+function linesOf(
+	{ ended, goneLocal, paused, sending, held, backInGit, offline, update }: SyncState,
+	inApp: boolean,
+): Line[] {
 	const lines: Line[] = [];
 	const say = (text: string, matches = true, back = false) =>
 		lines.push({ key: text, text, matches, ...(back ? { back } : {}) });
@@ -105,6 +109,14 @@ function linesOf({ ended, goneLocal, paused, sending, held, backInGit, offline }
 			backInGit && ended === null,
 		);
 	if (paused !== null) say(`Sync paused: ${paused}. Changes stay on this Mac until it lifts.`);
+	// an older Spool (#206): the Mac app's update in the app, the npm command in a browser on the CLI's daemon
+	if (update !== null) {
+		const line = `Update Spool to keep syncing with ${update.team}`;
+		if (inApp) lines.push({ key: UPDATE, text: `${line}.`, matches: false, update: true });
+		else if (update.how === "cli")
+			lines.push({ key: UPDATE, text: `${line}:`, matches: false, command: update.command });
+		else lines.push({ key: UPDATE, text: `${line}: Check for Updates in the Spool app.`, matches: false });
+	}
 	if (offline) say(OFFLINE);
 	if (sending !== null) lines.push({ key: SENDING, text: `${sending}.`, matches: true });
 	const [only] = held;
@@ -114,9 +126,20 @@ function linesOf({ ended, goneLocal, paused, sending, held, backInGit, offline }
 }
 
 /** A notice's line: `matches` stands Match the team beside it, `back` offers Put design/ back in git on it. */
-type Line = { key: string; text: string; matches: boolean; back?: boolean };
+interface Line {
+	key: string;
+	text: string;
+	/** Match the team stands beside it. */
+	matches: boolean;
+	back?: boolean;
+	/** The command that does what it says, in mono beside it. */
+	command?: string;
+	/** The Mac app's update stands beside it. */
+	update?: true;
+}
 
 const SENDING = "sending";
+const UPDATE = "update";
 const REFUSED = "refused";
 export const OFFLINE = "Offline. Your changes go up when you're back.";
 
@@ -129,8 +152,11 @@ export function SyncNotices({
 	onMatchTeam,
 	onRefusedRead,
 	onBackInGit,
+	bridge = desktopBridge(),
 }: {
 	state: SyncState;
+	/** The Mac app's bridge, when the canvas is in its window: its update is the update line's action. */
+	bridge?: DesktopBridge | undefined;
 	/** Why Match the team was last refused, said until it is closed. */
 	refused?: string | undefined;
 	onMatchTeam?: (() => void) | undefined;
@@ -153,16 +179,19 @@ export function SyncNotices({
 			setPutting(false);
 		}
 	};
+	const [appUpdate, setAppUpdate] = useState<AppUpdate | null>(bridge?.update ?? null);
+	useEffect(() => bridge?.onUpdate(setAppUpdate), [bridge]);
 	// a wait closed while it lasted is said again when the next one begins
 	if (state.sending === null && closed.has(SENDING))
 		setClosed((was) => new Set([...was].filter((key) => key !== SENDING)));
+	const inApp = bridge !== undefined;
 	const lines: Line[] = [
-		...linesOf(state),
+		...linesOf(state, inApp),
 		...(refused === undefined ? [] : [{ key: REFUSED, text: refused, matches: false }]),
 		...(backSaid === null ? [] : [{ key: BACK, text: backSaid, matches: false }]),
 	].filter((line) => !closed.has(line.key));
 	if (lines.length === 0) return null;
-	const many = state.held.length > 1 ? linesOf(state).at(-1)?.key : undefined;
+	const many = state.held.length > 1 ? linesOf(state, inApp).at(-1)?.key : undefined;
 	return (
 		<>
 			{open && many !== undefined && lines.some((line) => line.key === many) && (
@@ -176,7 +205,7 @@ export function SyncNotices({
 					</ul>
 				</Popover>
 			)}
-			{lines.map(({ key, text, matches, back }) => {
+			{lines.map(({ key, text, matches, back, command, update }) => {
 				const show = key === many && (
 					<TextAction aria-expanded={open} onClick={() => setOpen((was) => !was)}>
 						{open ? "Hide" : "Show"}
@@ -190,18 +219,28 @@ export function SyncNotices({
 				const match = matches && onMatchTeam !== undefined && (
 					<TextAction onClick={onMatchTeam}>Match the team</TextAction>
 				);
+				// the app downloads its update by itself: the action stands once it is ready to restart into
+				const install =
+					update === true &&
+					(appUpdate?.kind === "ready" ? (
+						<TextAction onClick={() => bridge?.install()}>Update</TextAction>
+					) : (
+						<span className="shrink-0 text-secondary type-detail">Check for Updates in the Spool menu</span>
+					));
 				return (
 					<Toast
 						key={key}
 						data-sync-state=""
 						className="max-w-sheet"
 						message={text}
+						{...(command === undefined ? {} : { detail: <span className="select-all">{command}</span> })}
 						action={
-							show || putBackAction || match ? (
+							show || putBackAction || match || install ? (
 								<>
 									{show}
 									{putBackAction}
 									{match}
+									{install}
 								</>
 							) : undefined
 						}
