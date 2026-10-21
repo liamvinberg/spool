@@ -75,6 +75,8 @@ const SHARES = [
 		at: Math.floor(Date.now() / 1000) - 3 * 86400,
 		opens: 14,
 		link: "https://cloud.test/shared/people-share",
+		// it ends on 9 Nov 2030, at midday so every timezone near Stockholm says the same day (spool#183)
+		endsAt: Date.UTC(2030, 10, 9, 12) / 1000,
 	},
 	{
 		id: "link-share",
@@ -624,6 +626,8 @@ describe("the read-only canvas", () => {
 		const read = viewer.page.getByRole("dialog", { name: "Shared" });
 		await read.getByText("kim and ola.n").waitFor();
 		await read.getByText("anyone with the link").waitFor();
+		// a share with an end says when; one that never ends says nothing of it
+		await read.getByRole("button", { name: "kim and ola.n shop · ends 9 Nov" }).waitFor();
 		await read.getByRole("button", { name: "anyone with the link whole project" }).waitFor();
 		for (const button of await read.getByRole("button").all()) expect(await button.isDisabled()).toBe(true);
 		expect(await read.getByText(/Copy link|Stop sharing/u).count()).toBe(0);
@@ -634,6 +638,7 @@ describe("the read-only canvas", () => {
 		const shared = page.getByRole("dialog", { name: "Shared" });
 		await shared.getByRole("button", { name: /kim and ola\.n/u }).click();
 		await shared.getByText("ola.n@client.com").waitFor();
+		await shared.locator('[data-share-opened="people-share"]').getByText("shop · ends 9 Nov").waitFor();
 		await shared.getByText("Ana Berg · 3 days ago · 14 opens").waitFor();
 		await shared.getByRole("button", { name: "Copy link" }).waitFor();
 		await shared.getByRole("button", { name: "Remove ola.n@client.com" }).click();

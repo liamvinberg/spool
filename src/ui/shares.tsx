@@ -7,7 +7,7 @@ import {
 	type SharesSource,
 	type ShareView,
 	saidAgo,
-	sharedWhat,
+	sharedWhatEnds,
 	shareWho,
 	TOP_PAGE,
 } from "../share-view";
@@ -152,7 +152,7 @@ function ShareRow({ share, manage, onOpen }: { share: ShareView; manage: boolean
 		>
 			<KindGlyph kind={share.kind} className="shrink-0 text-secondary" />
 			<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
-			<span className="min-w-0 flex-1 truncate text-secondary type-detail">{sharedWhat(share, sharedPath)}</span>
+			<span className="min-w-0 flex-1 truncate text-secondary type-detail">{sharedWhatEnds(share, sharedPath)}</span>
 			{manage && (
 				<span className="h-2.5 w-2.5 shrink-0 text-secondary">
 					<ChevronIcon />
@@ -195,7 +195,9 @@ function OpenedShare({
 			>
 				<KindGlyph kind={share.kind} className="shrink-0 text-primary" />
 				<span className="shrink-0 text-primary type-label">{shareWho(share)}</span>
-				<span className="min-w-0 flex-1 truncate text-secondary type-detail">{sharedWhat(share, sharedPath)}</span>
+				<span className="min-w-0 flex-1 truncate text-secondary type-detail">
+					{sharedWhatEnds(share, sharedPath)}
+				</span>
 				<span className="h-2.5 w-2.5 shrink-0 rotate-90 text-secondary">
 					<ChevronIcon />
 				</span>
