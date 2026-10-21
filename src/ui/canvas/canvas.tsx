@@ -170,6 +170,7 @@ import {
 } from "./history";
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
+import { useRestoring } from "./history-restore";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { FrameLife, type LifecycleStore, useDocumentsBooting, useFrameLifecycle, useFrameReady } from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
@@ -673,6 +674,10 @@ function CanvasField({
 	);
 	const permissions = useAgentPermissions(project, deckOpen, turnPhase, agentDefaults.mode);
 	const syncState = useSyncState(project, root);
+	// restoring from the team history (spool#188): the question, the toast with its Undo, and ⌘Z while it stands
+	const restoring = useRestoring(project);
+	const restoringRef = useRef(restoring);
+	restoringRef.current = restoring;
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
@@ -4629,6 +4634,7 @@ function CanvasField({
 			"canvas.undo": (event) => {
 				event?.preventDefault();
 				if (store.get().pendingTrash !== null) undoTrash();
+				else if (restoringRef.current.undoLast()) return;
 				else if (gestureStill()) walk("undo");
 			},
 			"canvas.redo": (event) => {
@@ -5170,7 +5176,14 @@ function CanvasField({
 		hotkey: "panes.history",
 		toggles: true,
 		render: ({ visible }) => (
-			<HistoryPane project={project} scope={historyScope} visible={visible} onScope={setHistoryScope} />
+			<HistoryPane
+				project={project}
+				scope={historyScope}
+				visible={visible}
+				onScope={setHistoryScope}
+				actions={restoring.actions}
+				restore={restoring.file}
+			/>
 		),
 	};
 	const panes: readonly PaneDef[] = [
@@ -5723,6 +5736,7 @@ function CanvasField({
 								onUndo={undoTrash}
 							/>
 						)}
+						{restoring.toast}
 						{notice !== null ? <NoticeToast notice={notice} /> : null}
 					</NoticeStack>
 					{/* The agent rail stays available beside an empty canvas. The path also
@@ -5774,6 +5788,7 @@ function CanvasField({
 					) : null}
 				</div>
 			</PaneWindow>
+			{restoring.question}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}
