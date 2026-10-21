@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.45.1
+
+### Patch Changes
+
+- e0517c6: The canvas in a browser pans with the middle mouse button held, as on the Mac, from over a frame too. It used to do nothing.
+
 ## 0.45.0
 
 ### Minor Changes
