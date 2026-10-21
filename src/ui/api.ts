@@ -2008,11 +2008,29 @@ export async function fetchSyncState(project: string): Promise<CanvasSync | unde
 			held: body.held,
 			moved: typeof body.moved === "object" && body.moved !== null ? body.moved : null,
 			...(body.backInGit === true ? { backInGit: true } : {}),
+			offline: body.offline === true,
 		};
 	} catch {
 		return undefined;
 	}
 }
+
+/**
+ * Match the team on a team project's local copy (#205): how many set-aside marks it made, or why it was refused,
+ * as the daemon says it, having changed nothing.
+ */
+export async function matchTeam(project: string): Promise<{ marked: number } | { refused: string }> {
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/match-team`, { method: "POST" });
+		const body = (await response.json().catch(() => null)) as { marked?: unknown; message?: unknown } | null;
+		if (response.ok && typeof body?.marked === "number") return { marked: body.marked };
+		return { refused: typeof body?.message === "string" ? body.message : MATCH_REFUSED };
+	} catch {
+		return { refused: MATCH_REFUSED };
+	}
+}
+
+const MATCH_REFUSED = "Match the team needs a connection to spool.page. Nothing was changed.";
 
 /** Project transfer uses the same control token as every project lifecycle write. */
 export async function exportProject(root: string, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {

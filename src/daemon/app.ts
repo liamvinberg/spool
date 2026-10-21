@@ -105,7 +105,14 @@ import { beatWhileOpen } from "./sse-beat";
 import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
 import { teamProjectRoutes } from "./team-projects";
-import { createTeamSync, followedLink, movedOutOf, type OpenSyncSocket, settleMovedOut } from "./team-sync";
+import {
+	createTeamSync,
+	followedLink,
+	MatchOffline,
+	movedOutOf,
+	type OpenSyncSocket,
+	settleMovedOut,
+} from "./team-sync";
 import {
 	coverSize,
 	isCoverHash,
@@ -198,6 +205,8 @@ export interface DaemonOptions {
 	goneLocalRetryMs?: number;
 	/** How often a project whose design/ moved into a team this account can't edit asks again: a minute. */
 	movedAskMs?: number;
+	/** How long a team project's copy goes without a connection before its canvas says it is offline: 30 s (#205). */
+	offlineMs?: number;
 	/** The photo booth's browser, starting scheme and waits, as a test sets them. */
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
@@ -297,6 +306,7 @@ export function createDaemonApp({
 	goneLocalAskMs,
 	goneLocalRetryMs,
 	movedAskMs,
+	offlineMs,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
 }: DaemonOptions) {
@@ -577,6 +587,7 @@ export function createDaemonApp({
 		onComments: (root) => hub.publish(root, { kind: "comments" }),
 		...(goneLocalAskMs === undefined ? {} : { goneLocalAskMs }),
 		...(goneLocalRetryMs === undefined ? {} : { goneLocalRetryMs }),
+		...(offlineMs === undefined ? {} : { offlineMs }),
 	});
 	/** What a copy's tab and cover show of its sync: a pause on a limit, or the copy gone local. */
 	const syncMarks = (root: string) => {
@@ -1696,6 +1707,22 @@ export function createDaemonApp({
 				return c.json(back);
 			} catch (error) {
 				if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
+				throw error;
+			}
+		}),
+	);
+	/**
+	 * Match the team (#205), from the canvas only: the local copy takes the team's version of every travelling path,
+	 * and each local difference becomes a set-aside mark. It needs a caught-up connection; without one it changes
+	 * nothing and says so.
+	 */
+	app.post("/api/p/:project/match-team", (c) =>
+		withProject(c, resolveProject, async (root) => {
+			if (followedLink(root) === undefined) return c.json({ error: "not_team_project" }, 404);
+			try {
+				return c.json({ marked: await teamSync.matchTeam(root) });
+			} catch (error) {
+				if (error instanceof MatchOffline) return c.json({ error: "offline", message: error.message }, 409);
 				throw error;
 			}
 		}),
