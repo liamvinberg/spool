@@ -1280,7 +1280,7 @@ describe("when a team project ends for a machine", () => {
 	for (const [change, act] of [
 		["is made a viewer", (cloud: ReturnType<typeof fakeTeam>) => cloud.role("ben", "viewer")],
 		["is removed from the team", (cloud: ReturnType<typeof fakeTeam>) => cloud.role("ben", null)],
-		["finds the project removed", (cloud: ReturnType<typeof fakeTeam>) => cloud.removeProject("checkout")],
+		["finds the project removed", (cloud: ReturnType<typeof fakeTeam>) => cloud.removeProject("checkout", "ana")],
 	] as const)
 		it(`stops syncing and leaves an ordinary local project when its editor ${change}`, async () => {
 			const { cloud, said, ana, ben } = await twoEditors();
@@ -1290,7 +1290,11 @@ describe("when a team project ends for a machine", () => {
 
 			act(cloud);
 			await until(() =>
-				said.ben.includes("No longer synced with devosurf. This is now a project on this Mac only."),
+				said.ben.some(
+					(message) =>
+						message.endsWith("It's now a project on this Mac only.") ||
+						message.endsWith("This is now a project on this Mac only."),
+				),
 			);
 			expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
 			expect(readFileSync(join(ben.root, "spool.json"), "utf8")).toBe(link);
@@ -1342,6 +1346,37 @@ describe("when a team project ends for a machine", () => {
 
 		ben.machine.signIn("ben");
 		await until(() => same(ana.root, ben.root, "frames/about/frame.tsx"), 20_000);
+	});
+
+	it("says who removed the project from which team, and keeps who in the copy's record", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.removeProject("checkout", "Ana");
+		const removed = "Ana removed checkout from Devosurf. It's now a project on this Mac only.";
+		await until(() => said.ben.includes(removed));
+		expect(said.ben.filter((message) => message.startsWith("No longer synced"))).toEqual([]);
+		expect(readFileSync(join(ben.root, "design/.gitignore"), "utf8")).toBe(".spool/\n");
+		expect(JSON.parse(readFileSync(join(ben.root, "design/.spool/sync.json"), "utf8"))).toMatchObject({
+			ended: true,
+			removedBy: "Ana",
+		});
+		expect(await syncState(ben.daemon)).toMatchObject({ ended: "devosurf" });
+	});
+
+	it("is told the project was removed, not that it is out of it, on reconnect after being offline", async () => {
+		const { cloud, said, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "export default () => null;\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const back = cloud.offline("ben");
+		cloud.removeProject("checkout", "Ana");
+		await new Promise((wake) => setTimeout(wake, 300));
+		back();
+		await until(
+			() => said.ben.includes("Ana removed checkout from Devosurf. It's now a project on this Mac only."),
+			10_000,
+		);
+		expect(said.ben.filter((message) => message.startsWith("No longer synced"))).toEqual([]);
 	});
 
 	it("is found on reconnect when the change was made while the copy was offline", async () => {

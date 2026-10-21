@@ -4,7 +4,8 @@ import { DEFAULT_HOST, DEFAULT_PORT } from "../daemon/loopback";
  * A team project handed from spool.page to spool on this Mac. The link `spool.page/<team>/<project>` knocks on
  * the daemon the way local.spool.page does, on the address the door looks at and nowhere else, and when spool
  * answers it sends the browser to Home with the project named: Home opens this Mac's local copy of it, or shows
- * the team when there is none here yet. A team alone, from its setup list's Open in spool, shows the team.
+ * the team when there is none here yet. A team alone, from its setup list's Open in spool, shows the team. An
+ * Export at spool.page hands over the team, or one project of it, to be exported: Home asks for the folder.
  */
 
 /** Where the knock goes: the daemon's own address on its usual port. */
@@ -12,25 +13,43 @@ export const LOCAL_SPOOL = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 
 /** The search parameter that names the team project, `<team>/<project>`, or the team alone. */
 const PARAM = "open";
+/** The search parameter that says the team or project is handed over to be exported. */
+const EXPORT = "export";
 const SEGMENT = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/u;
 
 export interface HandedOver {
 	team: string;
 	/** Null when the team alone was handed over. */
 	project: string | null;
+	/** Handed over to be exported, from Export at spool.page (#200). */
+	export?: true;
 }
 
 /** Where spool on this Mac opens a team project, or the team itself with no project named. */
-export function handoverAddress({ team, project = null }: { team: string; project?: string | null }): string {
-	return `${LOCAL_SPOOL}/?${new URLSearchParams({ [PARAM]: project === null ? team : `${team}/${project}` })}`;
+export function handoverAddress({
+	team,
+	project = null,
+	export: exporting = false,
+}: {
+	team: string;
+	project?: string | null;
+	/** To be exported, rather than opened. */
+	export?: boolean;
+}): string {
+	return `${LOCAL_SPOOL}/?${new URLSearchParams({
+		[PARAM]: project === null ? team : `${team}/${project}`,
+		...(exporting ? { [EXPORT]: "1" } : {}),
+	})}`;
 }
 
 /** The team project or team a page was handed, or nothing when it wasn't handed one. */
 export function handedOver(search: string): HandedOver | null {
-	const [team, project, ...rest] = (new URLSearchParams(search).get(PARAM) ?? "").split("/");
+	const params = new URLSearchParams(search);
+	const [team, project, ...rest] = (params.get(PARAM) ?? "").split("/");
 	if (team === undefined || !SEGMENT.test(team) || rest.length > 0) return null;
-	if (project === undefined) return { team, project: null };
-	return SEGMENT.test(project) ? { team, project } : null;
+	const exporting = params.get(EXPORT) === "1" ? { export: true as const } : {};
+	if (project === undefined) return { team, project: null, ...exporting };
+	return SEGMENT.test(project) ? { team, project, ...exporting } : null;
 }
 
 /**

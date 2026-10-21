@@ -1,4 +1,5 @@
-import { expect, it, onTestFinished } from "vitest";
+import { readdirSync } from "node:fs";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { makeTempDir } from "../test-helpers";
 import { createDaemonApp } from "./app";
 
@@ -223,4 +224,67 @@ it("brings a team project's cover from spool.page, for a team this Mac only watc
 	expect(new Uint8Array(await found.arrayBuffer())).toEqual(png);
 	expect(asked.at(-1)?.authorization).toBe(`Bearer ${TOKEN}`);
 	expect((await cover("ops")).status).toBe(404);
+});
+
+describe("a team export from this Mac", () => {
+	/** spool.page's export reads for a team with no projects, each answered once `gate` lets it. */
+	const exportReads =
+		(gate: () => Promise<void> = async () => {}) =>
+		async (request: Request) => {
+			await gate();
+			return new URL(request.url).pathname === "/api/teams/tidemark/export"
+				? Response.json({
+						team: { address: "tidemark", name: "Tidemark", purgeAfter: null },
+						members: [],
+						projects: [],
+						shares: [],
+					})
+				: Response.json({ error: "not_found" }, { status: 404 });
+		};
+
+	it("writes the export into the folder asked for and says where", async () => {
+		const into = makeTempDir();
+		const { api } = harness({ token: TOKEN, answer: exportReads() });
+		const answered = await api("/teams/tidemark/export", "POST", { into, transfer: "x1" });
+		expect(answered.status).toBe(200);
+		expect(answered.body.folder).toMatch(/\/tidemark export \d{4}-\d{2}-\d{2}$/u);
+		expect(readdirSync(answered.body.folder)).toEqual(["team.json"]);
+		expect(await api("/exports/x1")).toEqual({ status: 404, body: { error: "no_export" } });
+	});
+
+	it("brings back spool.page's refusal, and refuses a folder that isn't one", async () => {
+		const refused = harness({
+			token: TOKEN,
+			answer: () => Response.json({ error: "admin_required" }, { status: 403 }),
+		});
+		expect(await refused.api("/teams/tidemark/export", "POST", { into: makeTempDir(), transfer: "x2" })).toEqual({
+			status: 403,
+			body: { error: "admin_required" },
+		});
+		expect(
+			(await refused.api("/teams/tidemark/export", "POST", { into: "relative/folder", transfer: "x3" })).status,
+		).toBe(400);
+		expect(
+			(await refused.api("/teams/tidemark/export", "POST", { into: "/no/such/folder", transfer: "x4" })).status,
+		).toBe(400);
+	});
+
+	it("shows its progress while it runs, and stops when cancelled", async () => {
+		const into = makeTempDir();
+		let release = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { api } = harness({ token: TOKEN, answer: exportReads(() => held) });
+		const running = api("/teams/tidemark/export", "POST", { into, transfer: "x5" });
+		await vi.waitFor(async () => expect((await api("/exports/x5")).status).toBe(200));
+		expect((await api("/exports/x5")).body).toEqual({ team: "tidemark", progress: null });
+		expect(await api("/exports/x5/cancel", "POST")).toEqual({ status: 200, body: { cancelled: true } });
+		release();
+		expect(await running).toEqual({
+			status: 409,
+			body: { error: "Export cancelled.", code: "export_cancelled", cancelled: true },
+		});
+		expect(readdirSync(into)).toEqual([]);
+	});
 });

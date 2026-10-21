@@ -6,6 +6,7 @@ import type {
 	BillingSummary,
 	CloudTeam,
 	CloudTeamInvite,
+	DeletedTeam,
 	NewTeamStart,
 	PeopleBilling,
 	TeamPeople,
@@ -77,6 +78,7 @@ export type {
 	CloudTeamInvite,
 	CloudTeamsState,
 	Cover,
+	DeletedTeam,
 	EdgeSite,
 	FlowEdge,
 	Flows,
@@ -1916,6 +1918,22 @@ export function moveProjectOut(address: string, project: string, path?: string):
 	);
 }
 
+/**
+ * Put design/ back in git (#198): the copy of a project that ended or went local here, by its name on this Mac, takes
+ * one commit adding design/ and taking spool.json out. Refused with the daemon's sentence.
+ */
+export async function putBackInGit(project: string): Promise<MoveIntoOutcome> {
+	let response: Response;
+	try {
+		response = await controlFetch(`/api/p/${encodeURIComponent(project)}/back-in-git`, { method: "POST" });
+	} catch {
+		throw new Error("spool could not be reached. Try again.");
+	}
+	const parsed = (await response.json().catch(() => null)) as (MoveIntoOutcome & { error?: unknown }) | null;
+	if (response.ok && parsed !== null) return parsed;
+	throw new Error(typeof parsed?.error === "string" ? parsed.error : "Could not finish. Try again.");
+}
+
 /** "Move into a checkout…": the copy at `path`, in no repo, moves into `checkout` with spool.json at its root. */
 export function moveProjectInto(
 	address: string,
@@ -1989,6 +2007,7 @@ export async function fetchSyncState(project: string): Promise<CanvasSync | unde
 			sending: typeof body.sending === "string" ? body.sending : null,
 			held: body.held,
 			moved: typeof body.moved === "object" && body.moved !== null ? body.moved : null,
+			...(body.backInGit === true ? { backInGit: true } : {}),
 		};
 	} catch {
 		return undefined;

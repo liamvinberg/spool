@@ -14,6 +14,13 @@ test("native folder actions use the selected directory and allow making folders 
 	equal(directoryDialogOptions({ purpose: "add", defaultPath: "/tmp/my codebase" }).defaultPath, "/tmp/my codebase");
 });
 
+test("an export asks for the folder it is written into", () => {
+	const options = directoryDialogOptions({ purpose: "export", defaultPath: "~/Downloads" });
+	equal(options.buttonLabel, "Export here");
+	equal(options.message, "Choose the folder the export is written into.");
+	deepEqual(options.properties, ["openDirectory", "createDirectory"]);
+});
+
 test("rejects malformed requests from the renderer", () => {
 	for (const request of [
 		null,

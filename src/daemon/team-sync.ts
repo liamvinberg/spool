@@ -105,6 +105,8 @@ interface CopyState {
 	 * the checkout, while `design/.gitignore` stays the team's so a pull overwrites what it ignores.
 	 */
 	movedOut?: string;
+	/** The project was removed from its team (#197): who removed it, by name, kept with `ended` for whoever reads it. */
+	removedBy?: string;
 }
 
 export interface SyncSocket {
@@ -135,7 +137,16 @@ export type Standing =
 	/** The project moved to another team, or was renamed with a move: it lives at this address now. */
 	| { movedTo: ProjectLink }
 	/** The project was moved out of its team: every copy ends. */
-	| "moved_out";
+	| "moved_out"
+	/** The project was removed to its team's trash (#197), by whom (null once their account is gone): every copy ends. */
+	| { removed: Removal };
+
+/** Who removed a project from which team, as spool.page says it. */
+export interface Removal {
+	/** The team's name. */
+	team: string;
+	by: string | null;
+}
 
 /** The connection itself, swapped by tests for an in-process team. */
 export type OpenSyncSocket = (url: string, token: string, events: SyncSocketEvents) => SyncSocket;
@@ -174,6 +185,8 @@ export interface LocalCopyOptions {
 	moved?: (to: ProjectLink) => boolean;
 	/** The project was moved out of its team. The copy has stopped; ending it is its owner's. */
 	movedOut?: () => void;
+	/** The project was removed from its team, by someone. The copy has stopped; ending it is its owner's. */
+	removed?: (removal: Removal) => void;
 	/** The copy caught up with the team. */
 	caughtUp?: () => void;
 	/** The comments this copy knows changed: the team said so, or sent them all again. */
@@ -205,6 +218,8 @@ export interface SyncState {
 	/** Changes waiting on the minute's bucket, said only once the wait is long: never a pause. */
 	sending: string | null;
 	held: { path: string; why: string }[];
+	/** The copy ended or went local in a checkout tracking `spool.json`: its notice offers Put design/ back in git. */
+	backInGit?: boolean;
 }
 
 export interface LocalCopy {
@@ -1231,6 +1246,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (standing === "not_editor" && options.ended !== undefined) return options.ended();
 		if (standing === "unpaid" && options.goneLocal !== undefined) return options.goneLocal();
 		if (standing === "moved_out" && options.movedOut !== undefined) return options.movedOut();
+		if (typeof standing === "object" && "removed" in standing && options.removed !== undefined)
+			return options.removed(standing.removed);
 		if (typeof standing === "object" && "movedTo" in standing && options.moved?.(standing.movedTo) === true) return;
 		if (standing === "signed_out") signedOut();
 		if (typeof standing === "object" && "signedInAs" in standing) otherAccount(standing.signedInAs);
@@ -1550,6 +1567,10 @@ export function createTeamSync(deps: {
 				if (error instanceof CloudSignedOut) return "signed_out";
 				if (error instanceof CloudTeamRefused && error.status === 410) {
 					if (error.code === "project_moved_out") return "moved_out";
+					if (error.code === "project_removed" && typeof error.body.team === "string")
+						return {
+							removed: { team: error.body.team, by: typeof error.body.by === "string" ? error.body.by : null },
+						};
 					const movedTo = error.code === "project_moved" ? parseProjectLink(error.body.url) : undefined;
 					if (movedTo !== undefined && movedTo.origin === link.origin) return { movedTo };
 				}
@@ -1600,6 +1621,29 @@ export function createTeamSync(deps: {
 		} catch (error) {
 			say(error instanceof Error ? error.message : String(error), root);
 		}
+	};
+
+	/**
+	 * The project was removed to its team's trash: the copy ends, as for any ending, and says who removed it from which
+	 * team, its record keeping who. A moved-out project says it moved out instead, and is never this.
+	 */
+	const endRemoved = (root: string, link: ProjectLink, removal: Removal) => {
+		drop(root);
+		stopped.delete(root);
+		hops.delete(root);
+		try {
+			endLocalCopy(root, link, removal.by ?? undefined);
+			const project = (localCopyOf(root) ?? link).project;
+			say(
+				removal.by === null
+					? `${project} was removed from ${removal.team}. It's now a project on this Mac only.`
+					: `${removal.by} removed ${project} from ${removal.team}. It's now a project on this Mac only.`,
+				root,
+			);
+		} catch (error) {
+			say(error instanceof Error ? error.message : String(error), root);
+		}
+		deps.onEnded?.(root);
 	};
 
 	/**
@@ -1696,6 +1740,7 @@ export function createTeamSync(deps: {
 					goneLocal: () => void stop(root, at),
 					moved: (to) => forward(root, link, to),
 					movedOut: () => void endMovedOut(root, at),
+					removed: (removal) => endRemoved(root, link, removal),
 					caughtUp: () => hops.delete(root),
 					...(deps.onMarks === undefined ? {} : { onMarks: () => deps.onMarks?.(root) }),
 					...(deps.onSyncChanged === undefined ? {} : { onPaused: () => deps.onSyncChanged?.(root) }),
@@ -1744,6 +1789,7 @@ export function createTeamSync(deps: {
 			if (now === "unknown") return retry(root);
 			settle(root);
 			if (now === "moved_out") return void (await endMovedOut(root, linked(link)));
+			if (typeof now === "object" && "removed" in now) return endRemoved(root, link, now.removed);
 			if (typeof now === "object" && "movedTo" in now) {
 				stopped.delete(root);
 				if (!forward(root, link, now.movedTo)) stopped.set(root, link);
@@ -1827,6 +1873,20 @@ export function createTeamSync(deps: {
 			const link = followedLink(root);
 			if (link !== undefined && !stopped.has(root) && existsSync(join(root, "design", "canvas.json")))
 				follow(root, link);
+		},
+		/**
+		 * A copy this Mac puts back in git (#198): one gone local ends now, so it never follows the team again once
+		 * it pays; one that ended already stays so.
+		 */
+		endHere(root: string): void {
+			const link = stopped.get(root) ?? followedLink(root);
+			stopped.delete(root);
+			settle(root);
+			drop(root);
+			hops.delete(root);
+			if (link === undefined) return;
+			endLocalCopy(root, link);
+			deps.onEnded?.(root);
 		},
 		/** A copy whose project this Mac moved out of its team: it ends here, as every other copy does. */
 		movedOut(root: string, link: ProjectLink): Promise<void> {
@@ -1947,15 +2007,16 @@ function notWritable(root: string): Error {
 /**
  * A team project ended for this machine: its local copy becomes an ordinary project here. The solo
  * `design/.gitignore` comes back, so the folder can be committed again; `spool.json` and git are left alone; and
- * the copy's record says it ended, so the daemon never follows it again. No file is touched.
+ * the copy's record says it ended (and, for a removed project, who removed it), so the daemon never follows it again.
+ * No file is touched.
  */
-export function endLocalCopy(root: string, link: ProjectLink): void {
+export function endLocalCopy(root: string, link: ProjectLink, removedBy?: string): void {
 	const designDir = realDesignDir(root);
 	writeAtomic(join(designDir, ".gitignore"), SOLO_GITIGNORE);
 	const stateFile = join(designDir, ".spool", "sync.json");
 	// the link the copy was followed by: a branch checked out now may have no spool.json
-	const { goneLocal: _, ...kept } = readState(stateFile, link.url);
-	const state: CopyState = { ...kept, ended: true };
+	const { goneLocal: _, removedBy: __, ...kept } = readState(stateFile, link.url);
+	const state: CopyState = { ...kept, ended: true, ...(removedBy === undefined ? {} : { removedBy }) };
 	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 }
 
@@ -1966,7 +2027,7 @@ export function endLocalCopy(root: string, link: ProjectLink): void {
 export function resumeLocalCopy(root: string): void {
 	const designDir = realDesignDir(root);
 	const stateFile = join(designDir, ".spool", "sync.json");
-	const { ended: _, ...state } = JSON.parse(readFileSync(stateFile, "utf8")) as CopyState;
+	const { ended: _, removedBy: __, ...state } = JSON.parse(readFileSync(stateFile, "utf8")) as CopyState;
 	writeAtomic(stateFile, `${JSON.stringify(state)}\n`);
 	writeAtomic(join(designDir, ".gitignore"), TEAM_GITIGNORE);
 }
@@ -1990,6 +2051,12 @@ export function goneLocalWith(root: string): string | undefined {
 /** Whether a local copy's team project ended for this machine. */
 export function hasEnded(root: string): boolean {
 	return copyRecord(root)?.ended === true;
+}
+
+/** The team project a copy that ended here followed, by its record: the one its Get it may take it back into. */
+export function endedFrom(root: string): string | undefined {
+	const record = copyRecord(root);
+	return record?.ended === true ? record.project : undefined;
 }
 
 /** The team a copy that ended here was synced with: what its canvas and its cover go on saying. */

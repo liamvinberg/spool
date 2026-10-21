@@ -543,3 +543,54 @@ it("says a copy whose project moved out is to pull its repo, and an ended one th
 	const lines = Array.from(host.querySelectorAll('[data-line="when"]')).map((line) => line.textContent);
 	expect(lines).toEqual(["today · out of Tidemark · pull its repo", "today · no longer synced with Tidemark"]);
 });
+
+/** A copy that ended here, in a checkout still tracking spool.json, as the daemon lists it (#198). */
+const ENDED = { ...card("tidemark-app", "/Users/ada/code/tidemark-app"), ended: "tidemark", backInGit: true as const };
+/** A copy gone local with its team, likewise. */
+const LOCAL = { ...SITE, goneLocal: "Tidemark", backInGit: true as const };
+
+it("offers Put design/ back in git on a copy that ended or went local, and on no other", async () => {
+	daemon();
+	const { host } = home(fakeTeamsSource({ teams: MIRA }), MIRA, [ENDED, LOCAL, PITCH, KAFFE]);
+	for (const name of ["tidemark-app", "tidemark-site"]) {
+		await openMenu(host, name);
+		expect(items(host)).toContain("Put design/ back in git");
+	}
+	for (const name of ["pitch", "kaffe"]) {
+		await openMenu(host, name);
+		expect(items(host)).not.toContain("Put design/ back in git");
+	}
+});
+
+it("puts design/ back in git from the cover, and says the commit or that it waits for git", async () => {
+	let waiting = false;
+	const asked = daemon((method, url) =>
+		method === "POST" && url.endsWith("/back-in-git")
+			? Response.json({ root: ENDED.root, committed: !waiting, commitWaiting: waiting })
+			: undefined,
+	);
+	const { host, done } = home(fakeTeamsSource({ teams: MIRA }), MIRA, [ENDED, KAFFE]);
+	await openMenu(host, "tidemark-app");
+	await choose(host, "Put design/ back in git");
+	expect(asked).toContain("POST /api/p/tidemark-app/back-in-git");
+	expect(done.at(-1)).toEqual({ toast: "design/ is back in git in tidemark-app: one commit, nothing pushed." });
+
+	waiting = true;
+	await openMenu(host, "tidemark-app");
+	await choose(host, "Put design/ back in git");
+	expect(done.at(-1)?.note).toBe(
+		"design/ is back in git in tidemark-app. Its commit in ~/code/tidemark-app waits for git, and spool makes it the next time it starts.",
+	);
+});
+
+it("says why the daemon refused to put design/ back in git", async () => {
+	daemon((method, url) =>
+		method === "POST" && url.endsWith("/back-in-git")
+			? Response.json({ error: "HEAD is detached in /Users/ada/code/tidemark-app." }, { status: 409 })
+			: undefined,
+	);
+	const { host, done } = home(fakeTeamsSource({ teams: MIRA }), MIRA, [ENDED]);
+	await openMenu(host, "tidemark-app");
+	await choose(host, "Put design/ back in git");
+	expect(done.at(-1)).toEqual({ toast: "HEAD is detached in /Users/ada/code/tidemark-app." });
+});

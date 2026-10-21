@@ -3,12 +3,12 @@ import { dirname, join } from "node:path";
 import { addAgentsLine } from "./agents-line";
 import { CloudSignedOut } from "./cloud-auth";
 import { type CloudTeamProject, CloudTeamRefused, cloudTeams, type SeenAsk } from "./cloud-teams";
-import { hasEnded, resumeLocalCopy } from "./daemon/team-sync";
+import { endedFrom, hasEnded, resumeLocalCopy } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { hasCommit, surveyPlace } from "./get-it-places";
 import { checkoutOf } from "./git-remote";
 import type { TeamInitOptions } from "./init";
-import { linksTo } from "./move-in";
+import { linksTo, redoMoveIn } from "./move-in";
 import { fetchLocalCopy } from "./open";
 import { expandHome, realDir } from "./paths";
 import { registerProject } from "./registry";
@@ -82,10 +82,12 @@ export async function getTeamProject(
 		root = realDir(root);
 	}
 	const wrote = !linksTo(root, link.url);
+	// this project's own copy, ended when it left its team and its spool.json since taken out (#197): it comes back
+	const back = wrote && endedFrom(root) === link.url;
 	if (wrote) {
 		if (isTeamProject(root)) throw new SpoolError(`${root} already has a ${PROJECT_LINK} for another team project.`);
 		refuseForeignLink(root);
-		if (place.kind === "mac" && existsSync(join(root, "design")))
+		if (place.kind === "mac" && existsSync(join(root, "design")) && !back)
 			throw new SpoolError(`${root} already has a design/ folder. Choose another place.`);
 		if (place.kind === "mac" && made === undefined && readdirSync(root).length > 0)
 			throw new SpoolError(`${root} isn't empty. Choose another place.`);
@@ -104,12 +106,15 @@ export async function getTeamProject(
 		throw error;
 	}
 	// a spool.json written into a checkout brings the AGENTS.md line with it, for the commit that takes it in
+	let agents: string | undefined;
 	if (wrote && place.kind === "checkout") {
 		const top = (await checkoutOf(root))?.top;
-		if (top !== undefined) await addAgentsLine(top);
+		if (top !== undefined) agents = await addAgentsLine(top);
 	}
-	// a copy that ended here, its person an editor again, is followed again
+	// a copy that ended here, its person an editor again or its project restored, is followed again
 	if (hasEnded(root)) resumeLocalCopy(root);
+	// one whose design/ went back into git takes it out again in the move-in's commit, owed until git takes it
+	if (back) void redoMoveIn(root, link, agents).catch(() => undefined);
 	registerProject(spoolDir, root);
 	// a project with no repo yet takes the one it was just got into: information for the team, never a permission
 	if (found.repo === null && place.kind === "checkout") {

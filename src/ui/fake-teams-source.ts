@@ -1,9 +1,10 @@
-import type { BillingSummary, CloudTeam, TeamPeople, TeamSetup } from "../cloud-teams";
+import type { BillingSummary, CloudTeam, RemovedTeamProject, TeamPeople, TeamSetup } from "../cloud-teams";
 import {
 	type ListedTeamProject,
 	type LosingPerson,
 	type MovePreview,
 	TeamActionRefused,
+	type TeamExportProgress,
 	type TeamMoveOutcome,
 	type TeamsSource,
 } from "./team-source";
@@ -35,6 +36,10 @@ export function fakeTeamsSource(start: {
 	mac?: FakeMac;
 	/** How many comments each project holds, by `<team>/<project>`; none said is none. */
 	comments?: Record<string, number>;
+	/** How many shares each project has open, by `<team>/<project>`; none said is none. */
+	shares?: Record<string, number>;
+	/** Each team's trash, by its address. */
+	removed?: Record<string, RemovedTeamProject[]>;
 }) {
 	const state = { ...start };
 	const asked: string[] = [];
@@ -62,6 +67,28 @@ export function fakeTeamsSource(start: {
 		if (listed(to).some((project) => project.name === name)) return "name_taken";
 		return null;
 	};
+	/** The export running, held until the test finishes, fails or cancels it. */
+	let exporting:
+		| {
+				transfer: string;
+				progress?: TeamExportProgress;
+				done: (folder: string) => void;
+				failed: (error: Error) => void;
+		  }
+		| undefined;
+	const exports = {
+		progress(progress: TeamExportProgress) {
+			if (exporting) exporting.progress = progress;
+		},
+		finish(folder: string) {
+			exporting?.done(folder);
+			exporting = undefined;
+		},
+		fail(said: string) {
+			exporting?.failed(new TeamActionRefused("export_failed", said));
+			exporting = undefined;
+		},
+	};
 	const source: TeamsSource = {
 		list: async () => ({
 			state: "ready",
@@ -74,6 +101,30 @@ export function fakeTeamsSource(start: {
 		projects: async (address) => listed(address),
 		cover: async () => undefined,
 		commentCount: async (address, project) => state.comments?.[`${address}/${project}`] ?? 0,
+		shareCount: async (address, project) => state.shares?.[`${address}/${project}`] ?? 0,
+		removed: async (address) => {
+			if (teamOf(address).role !== "admin") return undefined;
+			return state.removed?.[address] ?? [];
+		},
+		restore: async (address, project) => {
+			ask(`restore ${address}/${project}`);
+			admin(address);
+			if (teamOf(address).billing?.state === "lapsed") throw new TeamActionRefused("unpaid");
+			state.removed = {
+				...state.removed,
+				[address]: (state.removed?.[address] ?? []).filter((each) => each.name !== project),
+			};
+			const url = `${state.origin ?? "https://spool.page"}/${address}/${project}`;
+			state.projects = { ...state.projects, [address]: [...listed(address), { name: project, url, repo: null }] };
+		},
+		deleteRemoved: async (address, project) => {
+			ask(`delete removed ${address}/${project}`);
+			admin(address);
+			state.removed = {
+				...state.removed,
+				[address]: (state.removed?.[address] ?? []).filter((each) => each.name !== project),
+			};
+		},
 		movePreview: async (address, project, to, name = project) => {
 			ask(`preview ${address}/${project} ${to} ${name}`);
 			teamOf(address);
@@ -217,10 +268,28 @@ export function fakeTeamsSource(start: {
 			state.setup = { ...state.setup, done: true };
 			return state.setup;
 		},
+		exportTeam: async (address, request) => {
+			ask(
+				`export ${address}${request.project === undefined ? "" : `/${request.project}`} into ${request.into} as ${request.transfer}`,
+			);
+			admin(address);
+			return new Promise<{ folder: string }>((resolve, reject) => {
+				exporting = { transfer: request.transfer, done: (folder) => resolve({ folder }), failed: reject };
+			});
+		},
+		exportProgress: async (transfer) => (exporting?.transfer === transfer ? exporting.progress : undefined),
+		cancelExport: async (transfer) => {
+			ask(`cancel export ${transfer}`);
+			if (exporting?.transfer !== transfer) return;
+			exporting.failed(new TeamActionRefused("export_cancelled", "Export cancelled."));
+			exporting = undefined;
+		},
 	};
 	return {
 		source,
 		asked,
+		/** The export running: how far it says it has come, and its end. */
+		exports,
 		/** What spool.page says next, as a webhook or a sweep would have changed it. */
 		set(change: Partial<typeof state>) {
 			Object.assign(state, change);

@@ -176,6 +176,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const forwards = new Map<string, Project>();
 	/** Addresses whose project was moved out of its team (`DELETE ?out=1`). */
 	const movedOut = new Set<string>();
+	/** Projects waiting in their team's trash (#197), by the address they hold: who removed each, and when. */
+	const trash = new Map<string, { at: Project; by: string; when: number }>();
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
 	let ids = 0;
@@ -322,8 +324,36 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 						.map((one) => ({ name: one.accountId, color: one.color })),
 				})),
 			});
+		// the team's trash, its admins' alone
+		const binned = /^\/api\/teams\/[^/]+\/removed(?:\/([^/]+)(\/restore)?)?$/u.exec(path);
+		if (binned !== null) {
+			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
+			if (binned[1] === undefined)
+				return Response.json({
+					projects: [...trash.entries()]
+						.filter(([key]) => key.startsWith(`${address}/`))
+						.map(([, { at, by, when }]) => ({
+							name: at.name,
+							removedBy: by,
+							removedAt: when,
+							purgeAt: when + 30 * 86400,
+							shares: at.shares.size,
+						})),
+				});
+			const key = `${address}/${binned[1]}`;
+			const held = trash.get(key);
+			if (held === undefined) return Response.json({ error: "project_not_found" }, { status: 404 });
+			if (binned[2] === undefined && request.method === "DELETE") {
+				trash.delete(key);
+				movedOut.delete(key);
+				return Response.json({});
+			}
+			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			restore(key);
+			return Response.json(described(held.at));
+		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -331,6 +361,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		const at = named === undefined ? undefined : projects.get(`${address}/${named}`);
 		if (named !== undefined && at === undefined && movedOut.has(`${address}/${named}`))
 			return Response.json({ error: "project_moved_out" }, { status: 410 });
+		const binnedHere = named === undefined ? undefined : trash.get(`${address}/${named}`);
+		if (at === undefined && binnedHere !== undefined)
+			return Response.json(
+				{
+					error: "project_removed",
+					team: teams.get(address)?.name ?? address,
+					by: binnedHere.by,
+					at: binnedHere.when,
+				},
+				{ status: 410 },
+			);
 		if (request.method === "GET" && named === undefined)
 			return Response.json({ projects: inside(address).map(described) });
 		if (request.method === "POST" && named === undefined)
@@ -340,6 +381,9 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
 				const name = body.name.toLowerCase();
 				if (projects.has(`${address}/${name}`)) return Response.json({ error: "project_taken" }, { status: 409 });
+				const holds = trash.get(`${address}/${name}`);
+				if (holds !== undefined)
+					return Response.json({ error: "name_in_trash", frees: holds.when + 30 * 86400 }, { status: 409 });
 				const made: Project = {
 					id: `p${++ids}`,
 					team: address,
@@ -397,6 +441,20 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				return Response.json({ files, held });
 			});
 		// how many comments the project holds, and the still one kept: any member's to read
+		if (match[3] === "/shares" && request.method === "GET")
+			return Response.json({
+				shares: [...at.shares]
+					.filter(([, share]) => !share.ended)
+					.map(([id, share]) => ({
+						id,
+						kind: "link",
+						pages: share.pages,
+						people: [],
+						by: share.by,
+						at: 0,
+						opens: 0,
+					})),
+			});
 		if (match[3] === "/comments/count" && request.method === "GET")
 			return Response.json({ comments: at.comments.length });
 		if (match[3]?.endsWith("/still") === true && request.method === "GET") {
@@ -431,11 +489,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			});
 		if (request.method === "DELETE" && match[3] === undefined) {
 			if (role !== "admin") return Response.json({ error: "admin_required" }, { status: 403 });
-			remove(at, url.searchParams.get("out") === "1");
-			// its comments go with the team, as spool.page deletes them
-			at.comments = [];
-			at.stills.clear();
-			at.places.clear();
+			// to the team's trash, its comments and shares with it
+			remove(at, url.searchParams.get("out") === "1", person.accountId);
 			return Response.json({});
 		}
 		asked++;
@@ -460,13 +515,25 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		movedOut.delete(key);
 	}
 
-	/** A project deleted, its forwards with it; moved out, its address says so to the team from then on. */
-	function remove(at: Project, out: boolean): void {
+	/**
+	 * A project removed to its team's trash, by whom, its forwards going; moved out, its address says so to the team
+	 * from then on, and otherwise that it was removed.
+	 */
+	function remove(at: Project, out: boolean, by: string): void {
 		const key = `${at.team}/${at.name}`;
 		projects.delete(key);
+		trash.set(key, { at, by, when: Math.floor(Date.now() / 1000) });
 		for (const [old, to] of forwards) if (to === at) forwards.delete(old);
 		if (out) movedOut.add(key);
 		for (const socket of at.sockets) socket.close(CLOSE_NOT_EDITOR);
+	}
+
+	/** A project restored from its team's trash: it lives at its address again, with everything it kept. */
+	function restore(key: string): void {
+		const held = trash.get(key);
+		if (held === undefined) return;
+		trash.delete(key);
+		arrive(held.at);
 	}
 
 	/** Editors and admins of the project's team who aren't in the target, the asker never among them, by name. */
@@ -1360,11 +1427,17 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			for (const person of people.values()) if (person.accountId === accountId) person.revoked = true;
 			for (const socket of sockets()) if (socket.person.accountId === accountId) socket.close(CLOSE_SIGNED_OUT);
 		},
-		/** An admin removes a team project: every connection to it is cut off. */
-		removeProject(name: string) {
+		/** An admin (by name) removes a team project to its trash: every connection to it is cut off. */
+		removeProject(name: string, by = "admin") {
 			const removed = project(name);
-			if (removed !== undefined) remove(removed, false);
+			if (removed !== undefined) remove(removed, false, by);
 		},
+		/** An admin restores a project from its team's trash. */
+		restoreProject(name: string) {
+			restore(name.includes("/") ? name : `${team}/${name}`);
+		},
+		/** Whether a project waits in its team's trash. */
+		inTrash: (name: string) => trash.has(name.includes("/") ? name : `${team}/${name}`),
 		/**
 		 * The team lapses, as spool.page's sweep or Stripe ends its paid time: every connection is closed as unpaid,
 		 * new ones are refused before they open, and asking where a machine stands says `unpaid`.

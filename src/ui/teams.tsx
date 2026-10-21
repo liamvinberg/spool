@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Fragment, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
 	type HomePlace,
 	OWN_PLACE,
@@ -15,6 +15,7 @@ import {
 	type CloudTeam,
 	type CloudTeamInvite,
 	type CloudTeamsState,
+	type DeletedTeam,
 	daemonTeams,
 	fetchTeamProjects,
 	type HerePerson,
@@ -34,9 +35,11 @@ import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { keep, recall } from "./remembered";
-import { BILLING_STATES, money, TeamBilling } from "./team-billing";
+import { BILLING_STATES, day, money, TeamBilling } from "./team-billing";
+import { type TeamExporter, useTeamExport } from "./team-export";
 import { TeamFailing } from "./team-failing";
 import { TeamLapsed } from "./team-lapsed";
+import { TeamRemoved } from "./team-removed";
 import { type OwnProject, type SetupHost, TeamSetupList, useSetUpToast } from "./team-setup";
 import { TeamActionRefused, type TeamsSource, teamSays } from "./team-source";
 
@@ -130,6 +133,7 @@ export function TeamMark({
  */
 export function HomePlaces({
 	teams,
+	deleted = [],
 	current,
 	page,
 	onTeam,
@@ -138,6 +142,8 @@ export function HomePlaces({
 	onNewTeam,
 }: {
 	teams: readonly CloudTeam[];
+	/** Deleted teams this account is an admin of, each kept until its purge to export from. */
+	deleted?: readonly DeletedTeam[] | undefined;
 	/** The team you're in, by its address; null in Your projects or Recent. */
 	current: string | null;
 	/** Its page; null while a place outside the team, such as the search or Account, stands in the page. */
@@ -187,7 +193,26 @@ export function HomePlaces({
 					</div>
 				);
 			})}
-			{(own || teams.length > 0) && <hr className="mx-3 my-2 border-line-default border-t" />}
+			{deleted.map((team) => (
+				<button
+					key={team.address}
+					type="button"
+					title={`${team.name} · Deleted · gone on ${day(team.purgeAfter)}`}
+					data-place={team.address}
+					aria-current={team.address === current || undefined}
+					className={cn(PLACE, "aria-[current]:text-primary")}
+					onClick={() => onTeam(team.address)}
+				>
+					<TeamMark team={team} paused />
+					<span className={cn("min-w-0 flex-1 truncate", NARROW_HIDDEN)}>
+						{team.name}
+						<span className="block truncate text-tertiary type-detail">
+							Deleted · gone on {day(team.purgeAfter)}
+						</span>
+					</span>
+				</button>
+			))}
+			{(own || teams.length > 0 || deleted.length > 0) && <hr className="mx-3 my-2 border-line-default border-t" />}
 			{own && (
 				<NavItem
 					icon={<FrameIcon />}
@@ -314,6 +339,7 @@ export function TeamProjects({
 	count,
 	sort,
 	search,
+	onRestored,
 }: {
 	team: CloudTeam;
 	/**
@@ -341,8 +367,12 @@ export function TeamProjects({
 	sort?: { value: Sort; onChange: (sort: Sort) => void } | undefined;
 	/** The page's own search, where the sidebar has none. */
 	search?: ReactNode;
+	/** A project restored from the team's trash: the host reads its projects again. */
+	onRestored?: (() => void) | undefined;
 }) {
 	const [listing, setListing] = useState(false);
+	// a restore reads the projects not on this Mac again, as their list reads itself
+	const [restored, setRestored] = useState(0);
 	const [refusing, setRefusing] = useState(false);
 	const lapsed = team.billing?.state === "lapsed";
 	return (
@@ -376,7 +406,15 @@ export function TeamProjects({
 				(away || listing ? null : (
 					<EmptyState className="min-h-[420px] justify-center p-[35px]" art={<EmptyFrames />} title={empty} />
 				))}
-			{away}
+			<Fragment key={`away:${restored}`}>{away}</Fragment>
+			<TeamRemoved
+				key={`removed:${team.address}`}
+				team={team}
+				onRestored={() => {
+					setRestored((n) => n + 1);
+					onRestored?.();
+				}}
+			/>
 		</>
 	);
 }
@@ -751,6 +789,7 @@ export function TeamSettingsPage({
 	onChanged,
 	onMoved,
 	onDeleted,
+	onExport,
 }: {
 	team: CloudTeam;
 	origin: string;
@@ -763,6 +802,8 @@ export function TeamSettingsPage({
 	onChanged: () => void;
 	onMoved: (address: string) => void;
 	onDeleted: () => void;
+	/** Export all, for an admin: the Mac's own export, or spool.page's hand-off to it. None where it can't be done. */
+	onExport?: TeamExporter | undefined;
 }) {
 	const admin = team.role === "admin";
 	const shown = admin ? tab : "general";
@@ -784,7 +825,14 @@ export function TeamSettingsPage({
 			{shown === "billing" ? (
 				<TeamBilling team={team} onOpen={onOpen} cycle={cycle} />
 			) : (
-				<TeamGeneral team={team} origin={origin} onChanged={onChanged} onMoved={onMoved} onDeleted={onDeleted} />
+				<TeamGeneral
+					team={team}
+					origin={origin}
+					onChanged={onChanged}
+					onMoved={onMoved}
+					onDeleted={onDeleted}
+					onExport={admin ? onExport : undefined}
+				/>
 			)}
 		</div>
 	);
@@ -796,12 +844,14 @@ function TeamGeneral({
 	onChanged,
 	onMoved,
 	onDeleted,
+	onExport,
 }: {
 	team: CloudTeam;
 	origin: string;
 	onChanged: () => void;
 	onMoved: (address: string) => void;
 	onDeleted: () => void;
+	onExport?: TeamExporter | undefined;
 }) {
 	const [name, setName] = useState(team.name);
 	const [address, setAddress] = useState(team.address);
@@ -915,6 +965,13 @@ function TeamGeneral({
 					</Button>
 				</form>,
 			)}
+			{onExport && (
+				<ExportAllRow
+					says="Every project as a git repository with its history, and a file of the team’s people and shares."
+					onExport={() => onExport(team.address)}
+					row={row}
+				/>
+			)}
 			{row(
 				"Delete team",
 				"Everyone loses access at once. Gone for good after 30 days.",
@@ -929,7 +986,7 @@ function TeamGeneral({
 						team.billing && BILLING_STATES[team.billing.state].paid
 							? " Its subscription is cancelled at once."
 							: ""
-					}`}
+					} Admins can export it until ${day(Date.now() / 1000 + PURGE_DAYS * 86_400)}.`}
 					confirmLabel={`Delete ${team.name}`}
 					danger
 					onConfirm={async () => {
@@ -943,6 +1000,72 @@ function TeamGeneral({
 					onClose={() => setDeleting(false)}
 				/>
 			)}
+		</div>
+	);
+}
+
+/** How long a deleted team waits before it is purged, and its admins can export it until then. */
+const PURGE_DAYS = 30;
+
+/** Export all as a Settings row: the button, and the note a hand-off leaves beside it when there is one. */
+function ExportAllRow({
+	says,
+	onExport,
+	row,
+}: {
+	says: string;
+	onExport: () => Promise<ReactNode | null>;
+	row: (label: string, says: string | null, control: ReactNode) => ReactNode;
+}) {
+	const [note, setNote] = useState<ReactNode>(null);
+	return (
+		<>
+			{row(
+				"Export",
+				says,
+				<Button
+					onClick={async () => {
+						setNote(null);
+						setNote(await onExport());
+					}}
+				>
+					Export all…
+				</Button>,
+			)}
+			{note && <p className="-mt-[8px] mb-[14px] text-secondary type-label">{note}</p>}
+		</>
+	);
+}
+
+/**
+ * A deleted team, as its admins see it until its purge: what happened, the day it goes for good, and Export all,
+ * which is all that is left to do with it.
+ */
+export function DeletedTeamPage({ team, onExport }: { team: DeletedTeam; onExport: TeamExporter }) {
+	const [note, setNote] = useState<ReactNode>(null);
+	return (
+		<div className="pj-team-deleted max-w-[720px]">
+			<header className="pj-heading mb-[28px] flex h-[35px] items-center gap-[10px]">
+				<TeamMark team={team} paused />
+				<h1 className="type-page font-medium">{team.name}</h1>
+			</header>
+			<p className="type-control">
+				{team.name} was deleted. It’s gone for good on {day(team.purgeAfter)}.
+			</p>
+			<p className="mt-[6px] mb-[20px] max-w-[480px] text-secondary type-label">
+				Until then, export it: every project as a git repository with its history, and a file of the team’s people
+				and shares.
+			</p>
+			<Button
+				variant="primary"
+				onClick={async () => {
+					setNote(null);
+					setNote(await onExport(team.address));
+				}}
+			>
+				Export all…
+			</Button>
+			{note && <p className="mt-[12px] text-secondary type-label">{note}</p>}
 		</div>
 	);
 }
@@ -1132,8 +1255,11 @@ export function useTeamHome(
 	},
 	/** Whether Home stands in the window, so the address is Home's to say; false while a project's tab is in front. */
 	front = true,
+	/** A team, or one project of it, handed over from spool.page's Export: exported once the teams are read. */
+	exportAsked: { team: string; project: string | null } | null = null,
 ) {
 	const teamActions = useContext(TeamsSourceContext);
+	const exporting = useTeamExport(teamActions);
 	const [teams, setTeams] = useState<CloudTeamsState>({ state: "unreachable" });
 	const [place, setPlace] = useState<HomePlace>(() => firstPlace(shown));
 	const [query, setQuery] = useState("");
@@ -1156,7 +1282,7 @@ export function useTeamHome(
 	}, [signedIn, refresh]);
 	const ready = teams.state === "ready" ? teams : null;
 	// the places are Home's once this account is in a team: before, Home is as it always was, at /
-	const furnished = ready !== null && ready.teams.length > 0;
+	const furnished = ready !== null && (ready.teams.length > 0 || (ready.deletedTeams ?? []).length > 0);
 	const path = furnished ? pathOf(place) : "/";
 	const frontRef = useRef(front && furnished);
 	frontRef.current = front && furnished;
@@ -1189,10 +1315,28 @@ export function useTeamHome(
 	}, []);
 	const { toast, onSetUp } = useSetUpToast((team) => go({ team: team.address, page: "people" }));
 	const current = place.team === null ? null : (ready?.teams.find((team) => team.address === place.team) ?? null);
-	// a team left, deleted or never this account's falls back to Recent
+	// a deleted team its admin is looking at, until its purge: its page is Export all alone
+	const deleted =
+		current === null && place.team !== null
+			? (ready?.deletedTeams?.find((team) => team.address === place.team) ?? null)
+			: null;
+	// a team left, purged or never this account's falls back to Recent
 	useEffect(() => {
-		if (furnished && place.team !== null && current === null) go(RECENT_PLACE, true);
-	}, [furnished, place.team, current, go]);
+		if (furnished && place.team !== null && current === null && deleted === null) go(RECENT_PLACE, true);
+	}, [furnished, place.team, current, deleted, go]);
+	// spool.page's Export, handed over: the team is shown and its export asks for the folder, once
+	const asked = useRef(exportAsked);
+	useEffect(() => {
+		const wanted = asked.current;
+		if (wanted === null || ready === null) return;
+		asked.current = null;
+		const admin =
+			ready.teams.some((team) => team.address === wanted.team && team.role === "admin") ||
+			(ready.deletedTeams ?? []).some((team) => team.address === wanted.team);
+		if (!admin) return;
+		go({ team: wanted.team, page: "projects" });
+		void exporting.start(wanted.team, wanted.project ?? undefined);
+	}, [ready, exporting.start, go]);
 	const here = useTeamHere(current?.address ?? null);
 	const show = (address: string | null) => go(address === null ? OWN_PLACE : { team: address, page: "projects" });
 	const searching = query.trim() !== "";
@@ -1211,13 +1355,16 @@ export function useTeamHome(
 			refreshLists,
 			origin: "",
 			path,
+			exportTeam: exporting.start,
+			exportSurface: exporting.surface,
 		};
 	const page = current && !searching && place.team !== null ? place.page : null;
 	const places = (
 		<>
 			<HomePlaces
 				teams={ready.teams}
-				current={current?.address ?? null}
+				deleted={ready.deletedTeams}
+				current={current?.address ?? deleted?.address ?? null}
 				page={page}
 				onTeam={(address) => go({ team: address, page: "projects" })}
 				onPage={(to) => current && go({ team: current.address, page: to })}
@@ -1282,6 +1429,7 @@ export function useTeamHome(
 									go(OWN_PLACE, true);
 									void refresh();
 								}}
+								onExport={exporting.start}
 							/>
 						) : current.role === "viewer" ? (
 							<TeamProjects
@@ -1314,6 +1462,7 @@ export function useTeamHome(
 								count={total === undefined ? undefined : { total }}
 								sort={{ value: sort, onChange: setSort }}
 								away={projects?.away?.(current, here, ready.teams)}
+								onRestored={refreshLists}
 								onNewProject={projects && (() => projects.onNewProject(current))}
 								onBilling={
 									current.role === "admin"
@@ -1334,7 +1483,9 @@ export function useTeamHome(
 							/>
 						),
 				}
-			: undefined;
+			: deleted
+				? { main: <DeletedTeamPage key={deleted.address} team={deleted} onExport={exporting.start} /> }
+				: undefined;
 	/** The teams this Mac edits in: their projects are on their own pages, not among this Mac's own. */
 	const editing = ready.teams.filter((team) => team.role !== "viewer");
 	return {
@@ -1355,6 +1506,10 @@ export function useTeamHome(
 		origin: ready.origin,
 		/** Home's address: the place it shows. */
 		path,
+		/** A team, or one project of it, exported into a folder this Mac's admin picks. */
+		exportTeam: exporting.start,
+		/** The export's progress and what it ended in, shown wherever the window is. */
+		exportSurface: exporting.surface,
 		/** Search and Recent across every place, once this account is in a team. */
 		everywhere: furnished
 			? {

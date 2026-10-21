@@ -32,7 +32,7 @@ import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
 import { keep, letGo } from "./gone-projects";
 import { handedOver } from "./handover";
-import { coversOf, Home, ProjectGrid } from "./home";
+import { coversOf, Home, type MoveItems, ProjectGrid } from "./home";
 import { attachHotkeyLayer, closeTopmost, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import type { HotkeyId, HotkeyIdFor } from "./hotkeys";
@@ -58,6 +58,7 @@ import {
 import { useTabPresence } from "./tab-presence";
 import { focusAfterClose, type TabProject, TabStrip } from "./tab-strip";
 import { CloudCovers } from "./team-covers";
+import { teamExportItems } from "./team-export";
 import { type MoveDone, useMovedToast } from "./team-move";
 import {
 	FoundAway,
@@ -103,6 +104,8 @@ export function App() {
 	const [booted, setBooted] = useState(false);
 	/** A team project a link at spool.page handed this page, until it has been opened. */
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
+	/** A team, or one project of it, that spool.page's Export handed this page, to export once the teams are read. */
+	const [exportAsked] = useState(() => (handed?.export ? { team: handed.team, project: handed.project } : null));
 	const [picking, setPicking] = useState<"new" | "folder" | false>(false);
 	const location = useSetting("projects.location");
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
@@ -488,7 +491,7 @@ export function App() {
 		if (handed === null || !booted || !projectsLoaded) return;
 		setHanded(null);
 		const copy =
-			handed.project === null
+			handed.project === null || handed.export
 				? undefined
 				: projects.find((project) => project.team?.team === handed.team && project.team.project === handed.project);
 		if (copy !== undefined) openTab(copy);
@@ -725,7 +728,7 @@ export function App() {
 						onRemoveIcon={icons.remove}
 						onRemoveThumbnail={icons.removeThumbnail}
 						// read once the hook below has made them, when the grid draws
-						moveItems={(project) => coverMoves.moveItems(project)}
+						moveItems={(project) => coverItems(project)}
 						here={here}
 					/>
 				);
@@ -775,6 +778,7 @@ export function App() {
 				),
 		},
 		booted && focused === null,
+		exportAsked,
 	);
 	homePath.current = teamHome.path;
 	/** "Move to team…" on a project in no team, while this account edits in a team. */
@@ -790,6 +794,9 @@ export function App() {
 		void refetch();
 	};
 	const coverMoves = useCoverMoves({ teams: teamHome.all, onMoveIn: moveToTeam, onDone: moveDone });
+	/** Each cover's moves, and Export… on a team project whose team this account is an admin of. */
+	const exportItems = teamExportItems(teamHome.all, (address, project) => void teamHome.exportTeam(address, project));
+	const coverItems: MoveItems = (project) => [...coverMoves.moveItems(project), ...exportItems(project)];
 	/** The teams this Mac knows, for the marks a team project's tab and cover wear. */
 	const markTeams = useMemo(() => new Map(teamHome.all.map((team) => [team.address, team])), [teamHome.all]);
 	const focusedSolo =
@@ -881,7 +888,7 @@ export function App() {
 								onForgetProject={(project) => void forgetProject(project)}
 								onTrashProject={setTrashRequest}
 								onRenameProject={(project) => void requestRename(project)}
-								moveItems={coverMoves.moveItems}
+								moveItems={coverItems}
 								places={teamHome.places}
 								place={teamHome.path}
 								notice={
@@ -962,6 +969,7 @@ export function App() {
 				{transfer.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}
+				{teamHome.exportSurface}
 				{focusedTab === undefined && movedToast.toast}
 				{toast !== null && (
 					<UpdateToastPill

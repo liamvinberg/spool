@@ -1,10 +1,12 @@
+import { execFile } from "node:child_process";
 import { cpSync, existsSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { promisify } from "node:util";
 import { addAgentsLine } from "./agents-line";
 import { writeAtomic } from "./atomic-write";
 import { cloudTeams, type MoveLoser } from "./cloud-teams";
 import { commitPaths, type MoveCommit, onBranch, type PathsCommit, tracked } from "./daemon/history";
-import { readdressCopy, travellingFiles } from "./daemon/team-sync";
+import { goneLocalWith, hasEnded, movedOutOf, readdressCopy, travellingFiles } from "./daemon/team-sync";
 import { SpoolError } from "./errors";
 import { checkoutOf } from "./git-remote";
 import type { TeamInitOptions } from "./init";
@@ -51,6 +53,8 @@ export interface MoveHooks {
 	relocate(from: string, to: string, folder: boolean): void;
 	/** Another copy here of a project moved out of its team: it ends, as everyone else's does. */
 	endMovedOut(root: string, link: ProjectLink): Promise<void>;
+	/** A copy put back in git: it ends here, a gone-local one never following the team again. */
+	endHere(root: string): void;
 	/** Folders to the OS Trash. */
 	trash(paths: string[]): Promise<void>;
 	/** How a move out's catch-up is getting on. */
@@ -331,6 +335,54 @@ export async function moveIntoCheckout(
 	} finally {
 		release();
 	}
+}
+
+/** The commit that puts a teammate's `design/` back in git (#198). */
+export const BACK_IN_GIT_MESSAGE = "design: moved out of Spool Cloud";
+
+/**
+ * Whether a copy offers Put design/ back in git: it ended or went local, in a checkout whose branch still tracks
+ * `spool.json`. A copy marked moved out waits for the mover's commit by pull instead, and one in no repo has no git.
+ */
+export async function backInGitOffered(root: string): Promise<boolean> {
+	const over = (hasEnded(root) && movedOutOf(root) === undefined) || goneLocalWith(root) !== undefined;
+	return over && (await linkTracked(root).catch(() => false));
+}
+
+/**
+ * Put design/ back in git: the copy ends here (a gone-local one first, so it never follows the team again), and one
+ * commit on the current branch adds `design/` as it is on disk under the solo `.gitignore` and takes `spool.json` out.
+ * Owed until git takes it, as a move's commit is. The copy's record stays, ended, for a Get it after a restore.
+ */
+export async function putBackInGit(
+	root: string,
+	end: (root: string) => void,
+	options: Pick<TeamMoveOptions, "wait" | "signal"> = {},
+): Promise<{ root: string; committed: boolean; commitWaiting: boolean }> {
+	if (!(await backInGitOffered(root)))
+		throw new SpoolError(
+			`${root} isn't a copy that ended or went local in a checkout tracking ${PROJECT_LINK}, so there's nothing to put back.`,
+		);
+	if (!(await onBranch(root)))
+		throw new SpoolError(
+			`HEAD is detached in ${root}. Check out a branch first: putting design/ back is one commit on it.`,
+		);
+	end(root);
+	writeAtomic(join(root, "design", ".gitignore"), SOLO_GITIGNORE);
+	rmSync(join(root, PROJECT_LINK), { force: true });
+	const add = await designOnDisk(root);
+	const commit = await answered(owe(root, { message: BACK_IN_GIT_MESSAGE, remove: [PROJECT_LINK], add }, options));
+	return { root, committed: commit === "committed", commitWaiting: commit !== "committed" };
+}
+
+/** Every file in `design/` git would take as it stands, its `.gitignore` heeded: root-relative. */
+async function designOnDisk(root: string): Promise<string[]> {
+	const { stdout } = await promisify(execFile)(
+		"git",
+		["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "design"],
+		{ cwd: root, env: { ...process.env, GIT_DIR: undefined, GIT_WORK_TREE: undefined }, maxBuffer: 64 * 1024 * 1024 },
+	);
+	return [...new Set(stdout.split("\0").filter((path) => path !== ""))];
 }
 
 /** Every commit among these roots that a move still owes, tried again: what a daemon does at start. */
