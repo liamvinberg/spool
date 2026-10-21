@@ -2046,6 +2046,120 @@ describe("offline (#205)", () => {
 	});
 });
 
+describe("a restore from a backup (spool#191)", () => {
+	it("brings back every save made since the backup from the Macs that hold it, once, with no marks", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "one\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const backup = cloud.backup("checkout");
+		writeFrame(ana.root, "home", "two\n");
+		writeFrame(ben.root, "about", "ben's\n");
+		await until(() => cloud.file("checkout", "frames/about/frame.tsx") === "ben's\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		await until(() => existsSync(join(ana.root, "design/frames/about/frame.tsx")));
+		const before = cloud.saves("checkout").length;
+
+		cloud.restoreBackup("checkout", backup);
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "two\n", 10_000);
+		await until(() => cloud.file("checkout", "frames/about/frame.tsx") === "ben's\n", 10_000);
+		await sleep(300);
+		const since = cloud.saves("checkout").slice(before);
+		// both Macs hold the newer home: it lands once, and the second holder's is no collision
+		expect(since.filter((save) => save.outcome === "set_aside")).toEqual([]);
+		expect(
+			cloud
+				.history("checkout")
+				.filter((row) => row.path === "frames/home/frame.tsx")
+				.map((row) => row.outcome),
+		).toEqual(["applied", "applied"]);
+		expect(text(ana.root, "frames/home/frame.tsx")).toBe("two\n");
+		expect(text(ben.root, "frames/about/frame.tsx")).toBe("ben's\n");
+		expect(await marks(ana.daemon)).toEqual([]);
+		expect(await marks(ben.daemon)).toEqual([]);
+
+		// the epoch is kept: a save after builds on the restored copy, and no list is asked for again
+		const lists = cloud.lists("checkout");
+		writeFrame(ben.root, "home", "three\n");
+		await until(
+			() =>
+				same(ana.root, ben.root, "frames/home/frame.tsx") && text(ana.root, "frames/home/frame.tsx") === "three\n",
+		);
+		cloud.disconnect("checkout");
+		await sleep(500);
+		expect(cloud.lists("checkout")).toBe(lists);
+	});
+
+	it("gives a copy offline since before the backup the restored version, and it sends nothing old", async () => {
+		const setup = await twoEditors();
+		const { cloud, ana, ben } = setup;
+		writeFrame(ana.root, "home", "one\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		await ben.daemon.close();
+		writeFrame(ana.root, "home", "two\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "two\n");
+		const backup = cloud.backup("checkout");
+		writeFrame(ana.root, "home", "three\n");
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "three\n");
+		await ana.daemon.close();
+		cloud.restoreBackup("checkout", backup);
+
+		const restarted = await restartBen(setup, () => {});
+		await until(() => text(ben.root, "frames/home/frame.tsx") === "two\n", 10_000);
+		await sleep(500);
+		expect(cloud.file("checkout", "frames/home/frame.tsx")).toBe("two\n");
+		expect(cloud.saves("checkout").filter((save) => save.by === "ben")).toEqual([]);
+		expect(await marks(restarted.daemon)).toEqual([]);
+	});
+
+	it("leaves a copy fetched after the restore as it is: it holds the restored copy already", async () => {
+		const { cloud, ana, ben } = await twoEditors();
+		writeFrame(ana.root, "home", "one\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		cloud.restoreBackup("checkout", cloud.backup("checkout"));
+		await until(() => text(ana.root, "frames/home/frame.tsx") === "one\n");
+		const lists = cloud.lists("checkout");
+		const cy = cloud.machine("cy");
+		const cyState = join(makeTempDir(), ".spool");
+		const cyRoot = realpathSync(repo());
+		copyFileSync(join(ana.root, "spool.json"), join(cyRoot, "spool.json"));
+		await fetchLocalCopy(cyRoot, cyState, { origin: TEAM_ORIGIN, request: cy.request, openSocket: cy.openSocket });
+		openProject(cyRoot, cyState);
+		const daemon = makeApp(cyState, { cloud: cy.cloud, teamNotice: () => {} });
+		// the fetch kept the epoch it was welcomed with, so the daemon meets nothing new
+		expect(JSON.parse(readFileSync(join(cyRoot, "design/.spool/sync.json"), "utf8")).epoch).toEqual(
+			expect.any(String),
+		);
+		await until(() => text(cyRoot, "frames/home/frame.tsx") === "one\n");
+		await sleep(500);
+		const asked = cloud.lists("checkout") - lists;
+		// ana and ben each settle once with the new epoch; cy, fetched whole, never
+		expect(asked).toBeLessThanOrEqual(2);
+		expect(cloud.saves("checkout").filter((save) => save.by === "cy")).toEqual([]);
+		await daemon.close();
+	});
+
+	it("sends a change made here while away on the restored version, applied", async () => {
+		const setup = await twoEditors();
+		const { cloud, ana, ben } = setup;
+		writeFrame(ana.root, "home", "one\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		const backup = cloud.backup("checkout");
+		// Ben's record moves past the backup, so his change is built on a version the restored team never had
+		writeFrame(ana.root, "home", "two\n");
+		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
+		await ana.daemon.close();
+		cloud.restoreBackup("checkout", backup);
+		const restarted = await restartBen(setup, () => {
+			writeFrame(ben.root, "home", "ben's while away\n");
+		});
+		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "ben's while away\n", 10_000);
+		expect(cloud.saves("checkout").filter((save) => save.by === "ben")).toEqual([
+			expect.objectContaining({ path: "frames/home/frame.tsx", outcome: "applied" }),
+		]);
+		expect(await marks(restarted.daemon)).toEqual([]);
+	});
+});
+
 describe("Match the team (#205)", () => {
 	it("makes every travelling path the team's, keeps each difference as a mark, and leaves what didn't travel", async () => {
 		const { cloud, ana, ben } = await twoEditors();
