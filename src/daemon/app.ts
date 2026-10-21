@@ -19,7 +19,7 @@ import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, themeInline } from "../settings/registry";
-import { finishOwedCommits } from "../team-moves";
+import { backInGitOffered, finishOwedCommits } from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
@@ -1666,6 +1666,7 @@ export function createDaemonApp({
 					emitAppEvent({ kind: "project-renamed", from, root: result.root, name: result.name });
 				},
 				endMovedOut: (root, link) => teamSync.movedOut(root, link),
+				endHere: (root) => teamSync.endHere(root),
 				trash: trashImpl,
 			},
 			changed: () => emitAppEvent({ kind: "registry" }),
@@ -1674,9 +1675,15 @@ export function createDaemonApp({
 	app.route("/api/p", projectShares.routes);
 	/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
 	app.get("/api/p/:project/sync", (c) =>
-		withProject(c, resolveProject, (root) => {
+		withProject(c, resolveProject, async (root) => {
 			const moved = movedAwayFrom.get(root);
-			return c.json({ ...teamSync.state(root), ...(moved === undefined ? {} : { moved }) });
+			// Put design/ back in git is offered on the notice of a copy that ended or went local in a checkout
+			const backInGit = await backInGitOffered(root);
+			return c.json({
+				...teamSync.state(root),
+				...(moved === undefined ? {} : { moved }),
+				...(backInGit ? { backInGit } : {}),
+			});
 		}),
 	);
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */

@@ -10,6 +10,7 @@ import { createProject, initProject, startProject } from "../init";
 import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
+import { backInGitOffered } from "../team-moves";
 import type { createAgentTurns } from "./agent-live";
 import { DesignBoundaryError } from "./design-path";
 import type { createChangeHub } from "./events";
@@ -402,11 +403,12 @@ export function homeRoutes(deps: {
 						const paused = link === undefined ? null : teamSync.state(project.root).paused;
 						const goneLocal = link === undefined ? undefined : goneLocalWith(project.root);
 						const moved = movedAway(project.root);
-						const [summary, icon, thumbnail, inRepo] = await Promise.all([
+						const [summary, icon, thumbnail, inRepo, backInGit] = await Promise.all([
 							summarizeProject(project.root),
 							findProjectIcon(project.root),
 							findProjectThumbnail(project.root),
 							link === undefined ? false : checkoutOf(project.root).then((found) => found !== undefined),
+							backInGitOffered(project.root),
 						]);
 						return {
 							name: basename(project.root),
@@ -422,6 +424,7 @@ export function homeRoutes(deps: {
 							...(paused === null ? {} : { syncPaused: paused }),
 							...(goneLocal === undefined ? {} : { goneLocal }),
 							...(moved === undefined ? {} : { moved }),
+							...(backInGit ? { backInGit: true as const } : {}),
 							...summary,
 						};
 					}),

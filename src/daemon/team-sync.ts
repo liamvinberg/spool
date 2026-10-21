@@ -1872,6 +1872,20 @@ export function createTeamSync(deps: {
 			if (link !== undefined && !stopped.has(root) && existsSync(join(root, "design", "canvas.json")))
 				follow(root, link);
 		},
+		/**
+		 * A copy this Mac puts back in git (#198): one gone local ends now, so it never follows the team again once
+		 * it pays; one that ended already stays so.
+		 */
+		endHere(root: string): void {
+			const link = stopped.get(root) ?? followedLink(root);
+			stopped.delete(root);
+			settle(root);
+			drop(root);
+			hops.delete(root);
+			if (link === undefined) return;
+			endLocalCopy(root, link);
+			deps.onEnded?.(root);
+		},
 		/** A copy whose project this Mac moved out of its team: it ends here, as every other copy does. */
 		movedOut(root: string, link: ProjectLink): Promise<void> {
 			return endMovedOut(root, linked(link));

@@ -22,6 +22,7 @@ import {
 	moveSentence,
 	moveToTeam,
 	previewTeamMove,
+	putBackInGit,
 	type TeamMoveOptions,
 } from "../team-moves";
 import { parseProjectLink } from "../team-project";
@@ -322,6 +323,25 @@ export function teamProjectRoutes(options: {
 						return c.json(moved);
 					} catch (error) {
 						return moveRefused(c, error, { ...from, ...body });
+					}
+				},
+			)
+			/** Put design/ back in git (#198): a copy that ended or went local here, in its checkout, with one commit. */
+			.post(
+				"/back-in-git",
+				validator("json", (value, c) => {
+					const path = (value as { path?: unknown } | null)?.path;
+					if (typeof path !== "string" || path === "")
+						return c.json({ error: 'expected { "path": "/abs/project" }' }, 400);
+					return { path };
+				}),
+				async (c) => {
+					try {
+						const back = await putBackInGit(realDir(c.req.valid("json").path), hooks().endHere, moving());
+						options.changed?.();
+						return c.json(back);
+					} catch (error) {
+						return refused(c, error);
 					}
 				},
 			)
