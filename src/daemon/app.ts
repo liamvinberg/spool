@@ -107,6 +107,7 @@ import { mapBootStacks } from "./stack-map";
 import { createTeamCovers } from "./team-covers";
 import { teamHistoryRoutes } from "./team-history";
 import { teamProjectRoutes } from "./team-projects";
+import { teamRestoreRoutes } from "./team-restore";
 import {
 	createTeamSync,
 	followedLink,
@@ -1791,6 +1792,27 @@ export function createDaemonApp({
 			},
 		}),
 	);
+	// a frame's history reaches what it imports: its source graph, outside its own folder (spool#187)
+	const importsOf = async (root: string, frame: string) => {
+		const graph = (await flowGraph.sources(root).catch(() => undefined))?.get(frame);
+		if (graph === undefined) return undefined;
+		const designDir = realDesignDir(root);
+		const own = join(designDir, "frames", ...frame.split("/")) + sep;
+		return graph.files.filter((file) => !file.startsWith(own)).map((file) => designRelativePath(designDir, file));
+	};
+	// restoring from the team history (spool#188), ahead of the history's reads, which take every other route under it
+	app.route(
+		"/api/p",
+		teamRestoreRoutes({
+			spoolDir,
+			request: () => ({ ...cloud, origin: originOf(cloud) }),
+			resolve: resolveProject,
+			link: followedLink,
+			copy: (root) => teamSync.copy(root),
+			importsOf,
+			framesUsing: (root, path) => framesUsingIn(root).framesUsing(path),
+		}),
+	);
 	app.route(
 		"/api/p",
 		teamHistoryRoutes({
@@ -1798,16 +1820,7 @@ export function createDaemonApp({
 			request: () => ({ ...cloud, origin: originOf(cloud) }),
 			resolve: resolveProject,
 			link: followedLink,
-			// a frame's history reaches what it imports: its source graph, outside its own folder (spool#187)
-			importsOf: async (root, frame) => {
-				const graph = (await flowGraph.sources(root).catch(() => undefined))?.get(frame);
-				if (graph === undefined) return undefined;
-				const designDir = realDesignDir(root);
-				const own = join(designDir, "frames", ...frame.split("/")) + sep;
-				return graph.files
-					.filter((file) => !file.startsWith(own))
-					.map((file) => designRelativePath(designDir, file));
-			},
+			importsOf,
 		}),
 	);
 	app.route(
