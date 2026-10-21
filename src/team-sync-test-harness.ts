@@ -353,7 +353,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return Response.json(described(held.at));
 		}
 		const match =
-			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
+			/^\/api\/teams\/([^/]+)\/projects(?:\/([^/]+))?(\/repo|\/move|\/shares|\/history\/seen|\/comments\/count|\/comments\/[^/]+\/still)?$/u.exec(
 				path,
 			);
 		if (match === null) return Response.json({ error: "team_not_found" }, { status: 404 });
@@ -441,6 +441,20 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				return Response.json({ files, held });
 			});
 		// how many comments the project holds, and the still one kept: any member's to read
+		if (match[3] === "/shares" && request.method === "GET")
+			return Response.json({
+				shares: [...at.shares]
+					.filter(([, share]) => !share.ended)
+					.map(([id, share]) => ({
+						id,
+						kind: "link",
+						pages: share.pages,
+						people: [],
+						by: share.by,
+						at: 0,
+						opens: 0,
+					})),
+			});
 		if (match[3] === "/comments/count" && request.method === "GET")
 			return Response.json({ comments: at.comments.length });
 		if (match[3]?.endsWith("/still") === true && request.method === "GET") {

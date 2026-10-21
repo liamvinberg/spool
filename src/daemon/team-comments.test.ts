@@ -470,6 +470,13 @@ describe("a comment over its frame's life (spool#160)", () => {
 
 		const count = await benDaemon.request("/api/cloud/teams/devosurf/projects/checkout/comments/count");
 		expect(await count.json()).toEqual({ comments: 1 });
+		// and its open shares, for the move-out sheet to say they pause (#197)
+		cloud.share("checkout", "open1", { pages: ["home"], by: "ana" });
+		cloud.share("checkout", "gone1", { pages: ["home"], by: "ana", ended: true });
+		const shares = await benDaemon.request("/api/cloud/teams/devosurf/projects/checkout/shares");
+		expect(((await shares.json()) as { shares: { id: string }[] }).shares.map((share) => share.id)).toEqual([
+			"open1",
+		]);
 	});
 
 	it("is read-only while the team has gone local, the comments already there still showing", async () => {
