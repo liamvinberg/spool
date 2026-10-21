@@ -589,6 +589,16 @@ function ViewerCanvas({
 			null;
 		setPointed((was) => (was === name ? was : name));
 	};
+	// Chrome starts its autoscroll from the middle button's mousedown, past the pointerdown that pans
+	useEffect(() => {
+		const field = viewport.current;
+		if (field === null) return;
+		const keep = (event: MouseEvent) => {
+			if (event.button === 1) event.preventDefault();
+		};
+		field.addEventListener("mousedown", keep);
+		return () => field.removeEventListener("mousedown", keep);
+	}, []);
 	const onPointerDown = (event: React.PointerEvent) => {
 		if (event.button !== 0 && event.button !== 1) return;
 		camera.stop();
@@ -734,8 +744,6 @@ function ViewerCanvas({
 					className="absolute inset-0 touch-none"
 					style={{ cursor: placing ? COMMENT_CURSOR : "default" }}
 					onPointerDown={onPointerDown}
-					// Chrome starts its autoscroll from the middle button's mousedown, past the pointerdown
-					onMouseDown={(event) => event.button === 1 && event.preventDefault()}
 					onPointerMove={onPointerMove}
 					onPointerLeave={() => {
 						hoverOff();
