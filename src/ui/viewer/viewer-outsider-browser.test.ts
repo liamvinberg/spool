@@ -242,6 +242,14 @@ it("signed out on a link share: frames, no pins and no count, and everything ask
 	}
 });
 
+it("says at its foot who shared the whole project with them, by the project's name (spool#182)", {
+	timeout: 60_000,
+}, async () => {
+	const opened = await open({ shared: { by: "bo", pages: ["", "menu"], updated: null, whole: true } });
+	await opened.go();
+	await opened.page.locator("[data-viewer-shared]").getByText("bo shared checkout with you").waitFor();
+});
+
 it("signs in on the link's host by an email code and the name step, then the pins ripple in and the tool carries on", {
 	timeout: 60_000,
 }, async () => {

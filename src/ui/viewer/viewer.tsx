@@ -812,7 +812,7 @@ function ViewerCanvas({
 				</div>
 				{followed !== undefined && <FollowMark mate={followed} />}
 				<div className="absolute top-3 right-3 flex items-center gap-3">
-					{project.shared !== undefined && <SharedLine shared={project.shared} />}
+					{project.shared !== undefined && <SharedLine shared={project.shared} project={project.project} />}
 					{comments !== null ? (
 						<CommentsButton
 							comments={comments}
@@ -1108,10 +1108,10 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
 }
 
 /**
- * The one line an outsider is shown (DEV-114): who shared these pages with them and when they last changed. Nobody
- * else is on it, and nothing says the rest of the project exists.
+ * The one line an outsider is shown (DEV-114): who shared these pages, or the whole project, with them and when they
+ * last changed. Nobody else is on it, and nothing says the rest of the project exists.
  */
-function SharedLine({ shared }: { shared: ViewerShared }) {
+function SharedLine({ shared, project }: { shared: ViewerShared; project: string }) {
 	return (
 		<span
 			data-viewer-shared=""
@@ -1120,7 +1120,7 @@ function SharedLine({ shared }: { shared: ViewerShared }) {
 			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[9px] text-primary">
 				{shared.by[0]?.toUpperCase()}
 			</span>
-			{shared.by} shared {saidList(shared.pages.map(sharedPageName))} with you
+			{shared.by} shared {shared.whole === true ? project : saidList(shared.pages.map(sharedPageName))} with you
 			{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
 		</span>
 	);
