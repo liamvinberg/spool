@@ -169,6 +169,7 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 			const projectData = /^\/api\/p\/([^/]+)\/scenarios\//.exec(path);
 			const render =
 				/^\/p\/[^/]+\/frames\/[^/]+$/.test(path) ||
+				/^\/p\/[^/]+\/history\/\d+\/frames\/[^/]+$/.test(path) ||
 				path.startsWith("/play/") ||
 				path.startsWith("/vendor/") ||
 				projectData !== null;

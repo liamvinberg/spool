@@ -244,6 +244,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	const trash = new Map<string, { at: Project; by: string; when: number }>();
 	/** Every move spool.page took, in order. */
 	const moves: { from: string; to: string; by: string }[] = [];
+	/** Every read of a project's team history, by `<team>/<name>`: its route and query, in order. */
+	const historyAsks = new Map<string, string[]>();
 	let ids = 0;
 	let commentIds = 0;
 	/** The clock every save is filed at in the team history: the test's to turn. */
@@ -532,6 +534,9 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		// the team history (spool#114): any member's to read, a page at a time
 		if (match[3]?.startsWith("/history/") === true && request.method === "GET") {
 			if (lapsed(address)) return Response.json({ error: "unpaid" }, { status: 402 });
+			const asks = historyAsks.get(`${at.team}/${at.name}`) ?? [];
+			asks.push(`${match[3]}${url.search}`);
+			historyAsks.set(`${at.team}/${at.name}`, asks);
 			return historyRead(at, match[3], url.searchParams);
 		}
 		// how many comments the project holds, and the still one kept: any member's to read
@@ -1717,6 +1722,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		saves: (name: string) => project(name)?.saves ?? [],
 		/** Every save in the team history, in order: version, path, hash, who, which machine, when and outcome. */
 		history: (name: string) => project(name)?.log ?? [],
+		/** Every read of the project's team history, its route and query (`/history/files?at=3…`), in order. */
+		historyReads: (name: string) => historyAsks.get(name.includes("/") ? name : `${team}/${name}`) ?? [],
 		/** When and by whom the project moved in from git, and the commit reported for it; undefined for one started here. */
 		movedIn: (name: string) => project(name)?.movedIn,
 		/** The clock saves are filed at in the team history from now on. */

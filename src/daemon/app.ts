@@ -65,6 +65,7 @@ import { refreshIndex } from "./fs-list";
 import { createGoReader } from "./go-reader";
 import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
+import { historyCache } from "./history-cache";
 import { homeRoutes } from "./home-routes";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
@@ -104,6 +105,7 @@ import { createSettingsStore } from "./settings";
 import { createProjectShares } from "./shares";
 import { beatWhileOpen } from "./sse-beat";
 import { mapBootStacks } from "./stack-map";
+import { teamCompareRoutes } from "./team-compare";
 import { createTeamCovers } from "./team-covers";
 import { teamHistoryRoutes } from "./team-history";
 import { teamProjectRoutes } from "./team-projects";
@@ -218,6 +220,8 @@ export interface DaemonOptions {
 	booth?: BoothSeams | undefined;
 	/** The foundry boundary behind shared/fonts.css: the network, unless a seam test keeps it off. */
 	webfonts?: Webfonts;
+	/** How much of the team history this Mac keeps read for Compare with now (spool#189): 128 MB unless a test says. */
+	historyCacheBytes?: number;
 }
 
 /** spool.page as the daemon reaches it: where it is, the session vault, the fetch, and the sync socket. */
@@ -318,6 +322,7 @@ export function createDaemonApp({
 	updateHow,
 	booth: boothSeams,
 	webfonts: providedWebfonts,
+	historyCacheBytes,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -1001,12 +1006,17 @@ export function createDaemonApp({
 		return /^\/api\/p\/[^/]+\/scenarios\/[^/]+$/.test(path);
 	}
 
+	/** A frame's document: today's, or as it stood at a team version (spool#189). */
+	function isFrameDocumentPath(path: string): boolean {
+		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || /^\/p\/[^/]+\/history\/\d+\/frames\/[^/]+$/.test(path);
+	}
+
 	function isExecutableRenderPath(path: string): boolean {
-		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || /^\/play\/[^/]+$/.test(path);
+		return isFrameDocumentPath(path) || /^\/play\/[^/]+$/.test(path);
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
-		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
+		return isFrameDocumentPath(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
 	}
 
 	function normalizedOrigin(value: string): string | undefined {
@@ -1800,6 +1810,19 @@ export function createDaemonApp({
 		const own = join(designDir, "frames", ...frame.split("/")) + sep;
 		return graph.files.filter((file) => !file.startsWith(own)).map((file) => designRelativePath(designDir, file));
 	};
+	// a frame as it stood at a team version, beside today's (spool#189): ahead of the history's reads too
+	const comparing = teamCompareRoutes({
+		spoolDir,
+		version,
+		request: () => ({ ...cloud, origin: originOf(cloud) }),
+		resolve: resolveProject,
+		link: followedLink,
+		cache: historyCache(join(spoolDir, "history-cache"), { maxBytes: historyCacheBytes ?? 128 * 1024 * 1024 }),
+		authority: frameAuthority,
+		webfonts,
+	});
+	app.route("/api/p", comparing.api);
+	app.route("/p", comparing.served);
 	// restoring from the team history (spool#188), ahead of the history's reads, which take every other route under it
 	app.route(
 		"/api/p",
