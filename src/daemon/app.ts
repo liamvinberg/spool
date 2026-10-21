@@ -1675,7 +1675,8 @@ export function createDaemonApp({
 	/** What a project's canvas says of its sync for as long as it lasts: an ending, a pause, what didn't travel. */
 	app.get("/api/p/:project/sync", (c) =>
 		withProject(c, resolveProject, (root) => {
-			return c.json({ ...teamSync.state(root), moved: movedAwayFrom.get(root) ?? null });
+			const moved = movedAwayFrom.get(root);
+			return c.json({ ...teamSync.state(root), ...(moved === undefined ? {} : { moved }) });
 		}),
 	);
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */
