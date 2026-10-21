@@ -36,7 +36,7 @@ beforeAll(async () => {
 					stop: async () => null,
 					create: async (request) => {
 						window.created = request;
-						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.pages, people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page" };
+						const share = { id: "s" + (made.length + 1), kind: request.kind, pages: request.whole ? pages : request.pages, ...(request.whole ? { whole: true } : {}), people: request.people ?? [], by: "liam@x.se", at: Date.now() / 1000, opens: 0, link: "https://k7qm2xpa.onspool.page" };
 						made.push(share);
 						return { share };
 					},
@@ -49,6 +49,7 @@ beforeAll(async () => {
 						createElement(ShareControl, {
 							source: home ? null : source,
 							shares,
+							whole: window.shareSolo !== true,
 							context: home ? undefined : () => ({ page: "area2/part1", pages, frames, walks: [], frame: window.shareFrame ?? null }),
 							onSignIn: () => { window.signedIn = true; },
 						}),
@@ -81,17 +82,17 @@ afterAll(async () => {
 	for (const page of pages) await page.close();
 });
 
-async function open(state: "ready" | "signed-out" = "ready", frame: string | null = null): Promise<Page> {
+async function open(state: "ready" | "signed-out" = "ready", frame: string | null = null, solo = false): Promise<Page> {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ viewport: { width: 1200, height: 700 }, reducedMotion: "reduce" });
 	pages.push(page);
 	await page.setContent(`<style>body { margin: 0; }</style><div id="root"></div>`);
 	for (const style of styles) await page.addStyleTag({ content: style });
 	await page.evaluate(
-		([shareState, shareFrame]) => {
-			Object.assign(window, { shareState, shareFrame });
+		([shareState, shareFrame, shareSolo]) => {
+			Object.assign(window, { shareState, shareFrame, shareSolo });
 		},
-		[state, frame] as const,
+		[state, frame, solo] as const,
 	);
 	await page.addScriptTag({ content: script });
 	await page.getByRole("button", { name: "Share" }).waitFor();
@@ -159,6 +160,50 @@ it("opens the link on the frame held, and emails the people it names unless told
 	await other.getByRole("button", { name: "Share" }).click();
 	await other.getByRole("dialog", { name: "Share" }).getByText("Shares part1, the page you’re on").waitFor();
 	expect(await other.getByText("Start on hero").count()).toBe(0);
+});
+
+it("shares the whole project, pages added later included, with a link or with named people (spool#182)", {
+	timeout: 60_000,
+}, async () => {
+	const page = await open("ready", "area4/hero");
+	await page.getByRole("button", { name: "Share" }).click();
+	const popover = page.getByRole("dialog", { name: "Share" });
+	// it opens on Pages, the page you're on, as ever; the frame held is off that page, so no start yet
+	expect(await popover.getByRole("menuitemcheckbox", { name: "Pages" }).getAttribute("aria-checked")).toBe("true");
+	await popover.getByText("Shares part1, the page you’re on").waitFor();
+	expect(await popover.getByText("Start on hero").count()).toBe(0);
+	await popover.getByRole("menuitemcheckbox", { name: "Whole project" }).click();
+	await popover.getByText("Every page, and pages added later").waitFor();
+	expect(await popover.getByText("Shares part1, the page you’re on").count()).toBe(0);
+	expect(await popover.getByRole("button", { name: "Add pages" }).count()).toBe(0);
+	await popover.getByText("102 pages · 204 frames").waitFor();
+	// any frame held is a start, whichever page it stands on
+	await popover.getByRole("checkbox", { name: "Start on hero" }).waitFor();
+	await popover.getByText("Start on hero").click();
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "link", whole: true });
+	await popover.getByText("whole project").waitFor();
+
+	// back, its row says whole project; Share the whole project… opens the new share on it, for named people too
+	await popover.getByRole("button", { name: "Back" }).click();
+	await popover.getByRole("menuitem", { name: /anyone with the link.*whole project/u }).waitFor();
+	expect(await popover.getByText("Every page, and pages added later").count()).toBe(0);
+	await popover.getByRole("menuitem", { name: "Share the whole project…" }).click();
+	await popover.getByText("Every page, and pages added later").waitFor();
+	await popover.getByText("Named people").click();
+	await popover.getByLabel("Email addresses").fill("kim@client.com");
+	await popover.getByRole("button", { name: "Share", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { created: unknown }).created))
+		.toEqual({ kind: "people", whole: true, people: ["kim@client.com"], notify: true, start: "area4/hero" });
+
+	// a solo project shares pages only, for now
+	const solo = await open("ready", null, true);
+	await solo.getByRole("button", { name: "Share" }).click();
+	await solo.getByRole("dialog", { name: "Share" }).getByText("Shares part1, the page you’re on").waitFor();
+	expect(await solo.getByText("Whole project").count()).toBe(0);
 });
 
 it("picks pages from a tree that keeps one size however many there are", { timeout: 60_000 }, async () => {
