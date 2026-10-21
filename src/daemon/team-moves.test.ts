@@ -216,6 +216,76 @@ describe("Get it", () => {
 	});
 });
 
+describe("Get it after a restore", () => {
+	/** Ben's copy in his clone, ended by Ana removing the project to the team's trash. */
+	async function removedFromBen() {
+		const cloud = fakeTeam();
+		const ana = await anaStarts(cloud);
+		const ben = daemonFor(cloud.machine("ben"));
+		const clone = bensClone(ana.root, ben.state);
+		const got = await ben.post("/teams/devosurf/projects/app/get", { where: "checkout", path: clone });
+		expect(got.status, await got.clone().text()).toBe(200);
+		await until(() => text(clone, "frames/home/frame.tsx")?.includes("Home") === true, 10_000);
+		cloud.removeProject("app", "ana");
+		await until(() => text(clone, ".gitignore") === ".spool/\n", 10_000);
+		return { cloud, ana, ben, clone };
+	}
+
+	/** The project restored from the trash, and Ana's own copy, ended with Ben's, got again. */
+	async function restored(cloud: ReturnType<typeof fakeTeam>, ana: Awaited<ReturnType<typeof anaStarts>>) {
+		cloud.restoreProject("app");
+		const got = await ana.daemon.controlRequest("/api/cloud/teams/devosurf/projects/app/get", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ where: "checkout", path: ana.root }),
+		});
+		expect(got.status, await got.clone().text()).toBe(200);
+	}
+
+	it("resumes the copy that ended when the project was removed", { timeout: 30_000 }, async () => {
+		const { cloud, ana, ben, clone } = await removedFromBen();
+		await restored(cloud, ana);
+		const got = await ben.post("/teams/devosurf/projects/app/get", { where: "checkout", path: clone });
+		expect(got.status, await got.clone().text()).toBe(200);
+		expect(await got.json()).toEqual({ root: clone, name: "app" });
+		expect(text(clone, ".gitignore")).toBe("*\n");
+		expect(status(clone)).toEqual([]);
+		await works(cloud, ana.root, clone, ben.daemon);
+	});
+
+	it("makes the move-in commit again where design/ went back into git, with no hook and no push", {
+		timeout: 30_000,
+	}, async () => {
+		const { cloud, ana, ben, clone } = await removedFromBen();
+		// Ben put design/ back in git meanwhile: one commit adds it and takes spool.json out
+		git(clone, "rm", "--quiet", "spool.json");
+		git(clone, "add", "design");
+		git(clone, "commit", "--quiet", "-m", "design: moved out of Spool Cloud");
+		const before = git(clone, "rev-parse", "HEAD");
+		const ran = join(makeTempDir(), "hooks-ran");
+		for (const hook of ["pre-commit", "commit-msg", "post-commit"]) {
+			const file = join(clone, ".git", "hooks", hook);
+			writeFileSync(file, `#!/bin/sh\necho ${hook} >> "${ran}"\n`);
+			chmodSync(file, 0o755);
+		}
+		await restored(cloud, ana);
+
+		const got = await ben.post("/teams/devosurf/projects/app/get", { where: "checkout", path: clone });
+		expect(got.status, await got.clone().text()).toBe(200);
+		expect(await got.json()).toEqual({ root: clone, name: "app" });
+		// the commit lands, and then the index follows it
+		await until(() => git(clone, "ls-files", "design") === "", 10_000);
+		expect(git(clone, "rev-list", "--count", `${before}..HEAD`)).toBe("1");
+		expect(git(clone, "log", "-1", "--format=%s")).toBe(MOVE_MESSAGE);
+		expect(git(clone, "show", "--name-status", "--format=", "HEAD")).toContain("A\tspool.json");
+		expect(git(clone, "ls-files", "spool.json")).toBe("spool.json");
+		expect(text(clone, ".gitignore")).toBe("*\n");
+		expect(status(clone)).toEqual([]);
+		expect(existsSync(ran)).toBe(false);
+		await works(cloud, ana.root, clone, ben.daemon);
+	});
+});
+
 /** Ana's existing project: design/ in git with history, a pushed remote, and hooks that would say if they ran. */
 function existingProject() {
 	const remote = join(makeTempDir(), "remote.git");

@@ -2037,6 +2037,12 @@ export function hasEnded(root: string): boolean {
 	return copyRecord(root)?.ended === true;
 }
 
+/** The team project a copy that ended here followed, by its record: the one its Get it may take it back into. */
+export function endedFrom(root: string): string | undefined {
+	const record = copyRecord(root);
+	return record?.ended === true ? record.project : undefined;
+}
+
 /** The team a copy that ended here was synced with: what its canvas and its cover go on saying. */
 export function endedWith(root: string): string | undefined {
 	const record = copyRecord(root);
