@@ -39,6 +39,7 @@ import {
 	type PresenceState,
 	RESEND_PATHS,
 	readListed,
+	type RestoreRef,
 	readPresence,
 	readPresenceHidden,
 	readPresences,
@@ -307,8 +308,31 @@ export interface LocalCopy {
 	still(comment: string): Promise<Uint8Array | undefined>;
 	/** Spool renamed or moved frames or pages here: said with the saves that delete their old files. */
 	moved(moved: Moved): void;
+	/** The team's version of each path, as this copy last heard it: its version and hash, null for a delete. */
+	known(): Readonly<Record<string, { version: number; hash: string | null }>>;
+	/**
+	 * Put paths back as a restore (spool#188): each written here as given (undefined deletes it), and those the team
+	 * holds otherwise sent as the restore's saves, on the versions this copy has. Resolves with the team's answers.
+	 */
+	restore(restore: RestoreRef, files: readonly RestoreFile[]): Promise<RestoreAnswers>;
 	close(): void;
 }
+
+/** One path a restore puts back: its bytes then, undefined where it didn't exist. */
+export interface RestoreFile {
+	path: string;
+	bytes: Uint8Array | undefined;
+}
+
+/** What the team did with a restore's saves: applied (each with its new version), set aside, or refused. */
+export interface RestoreAnswers {
+	applied: { path: string; version: number }[];
+	setAside: string[];
+	refused: { path: string; reason: string }[];
+}
+
+/** A restore can't be sent now: the copy isn't caught up with its team, or the team can't take one. */
+export class RestoreOffline extends SpoolError {}
 
 /** Why a file git put in design/ that the team doesn't have stays on this machine. */
 const GIT_ONLY = "git put it here and your team doesn't have it; edit it to send it";
@@ -894,6 +918,94 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		wake();
 	};
 
+	// --- restore (spool#188): what a restore puts back is written here and sent as one restore's saves ---
+
+	/** Each restore save out, by its ref: told its answer, or that the connection went first. */
+	const restoreWaits = new Map<string, { answer(message: Record<string, unknown>): void; lost(): void }>();
+
+	const restoreFiles = (restore: RestoreRef, files: readonly RestoreFile[]): Promise<RestoreAnswers> => {
+		const open = socket;
+		if (closed || open === undefined || !caughtUp)
+			return Promise.reject(new RestoreOffline(`${link.url} isn't connected to its team just now`));
+		if (!bundles) return Promise.reject(new RestoreOffline("spool.page can't take a restore yet"));
+		const sending: { path: string; bytes: Buffer | undefined; hash: string | null }[] = [];
+		for (const { path, bytes } of files) {
+			if (!travels(path) || (bytes?.byteLength ?? 0) > FILE_LIMIT_BYTES) continue;
+			const named = join(designDir, ...path.split("/"));
+			let target: string;
+			try {
+				target = resolveDesignPath(designDir, named, path);
+				if (target !== named) continue;
+			} catch {
+				continue;
+			}
+			const buffer = bytes === undefined ? undefined : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+			const hash = buffer === undefined ? null : digest(buffer);
+			// marked going first, so the watcher reads the write below as this restore's and sends nothing of its own
+			if (hash !== (state.files[path]?.hash ?? null)) {
+				going.add(path);
+				sending.push({ path, bytes: buffer, hash });
+			}
+			const local = readLocal(path);
+			if ((local === undefined ? null : digest(local)) === hash) continue;
+			if (buffer === undefined) {
+				rmSync(target, { force: true });
+				pruneEmpty(designDir, dirname(target));
+			} else writeAtomic(target, buffer);
+		}
+		const answers: RestoreAnswers = { applied: [], setAside: [], refused: [] };
+		if (sending.length === 0) return Promise.resolve(answers);
+		return new Promise((resolve, reject) => {
+			let left = sending.length;
+			const wait = {
+				answer: (message: Record<string, unknown>) => {
+					const path = String(message.path);
+					if (message.type === "saved") answers.applied.push({ path, version: Number(message.version) });
+					else if (message.type === "set-aside") answers.setAside.push(path);
+					else answers.refused.push({ path, reason: String(message.reason) });
+					if (--left === 0) resolve(answers);
+				},
+				lost: () =>
+					reject(new RestoreOffline("the connection to the team dropped before it answered; try again once back")),
+			};
+			// a bundle's worth at a time, each carrying the restore: together they are one restore in the history
+			const chunks: (typeof sending)[] = [];
+			let size = 0;
+			for (const save of sending) {
+				const bytes = save.bytes?.byteLength ?? 0;
+				const last = chunks.at(-1);
+				if (last !== undefined && last.length < BUNDLE_SAVES && size + bytes <= BUNDLE_BYTES) {
+					last.push(save);
+					size += bytes;
+				} else {
+					chunks.push([save]);
+					size = bytes;
+				}
+			}
+			for (const chunk of chunks) {
+				const sent = ++sends;
+				const batch = randomUUID();
+				const framed = chunk.map(({ path, bytes, hash }) => {
+					const ref = String(++refs);
+					inflight.set(ref, { path, hash, bytes, batch, sent });
+					restoreWaits.set(ref, wait);
+					return { ref, path, base: state.files[path]?.version ?? null, deleted: bytes === undefined, bytes };
+				});
+				sendsOut.set(sent, framed.length);
+				open.send(
+					encodeFrame(
+						{
+							type: "saves",
+							saves: framed.map(({ bytes, ...save }) => ({ ...save, size: bytes?.byteLength ?? 0 })),
+							restore,
+						},
+						joinParts(framed.map(({ bytes }) => bytes)),
+					),
+				);
+			}
+		});
+	};
+
 	/** Send one path if it differs from the team's version this copy last had, unless git made it differ. */
 	const check = (path: string) => {
 		if (holding) return;
@@ -1167,6 +1279,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			waitForRoom(sent.path, message.retryAfter);
 		else if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
 		if (dirty.delete(sent.path)) check(sent.path);
+		const restored = restoreWaits.get(message.ref);
+		restoreWaits.delete(message.ref);
+		restored?.answer(message);
 	};
 
 	/** A teammate's bundle: each file in it, in order, as if it had come alone. */
@@ -1466,6 +1581,9 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 				burst = undefined;
 				// what was in flight is settled by the next catch-up: applied saves come back as the team's version
 				inflight.clear();
+				// a restore's saves still out go up as ordinary saves once caught up again, from what is on disk
+				for (const wait of new Set(restoreWaits.values())) wait.lost();
+				restoreWaits.clear();
 				sendsOut.clear();
 				going.clear();
 				outgoing = [];
@@ -1544,7 +1662,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 
 	/** A save spool.page wouldn't take: the file stays here, and a limit pauses sync until it lifts. */
 	const refused = (path: string, reason: unknown, retryAfter: unknown) => {
-		if (reason === "too_large") hold(path, TOO_BIG);
+		// a restore's save the team says isn't what the path held then: the team's version comes back over it
+		if (reason === "restore_mismatch") {
+			restoring.add(path);
+			askSoon();
+		} else if (reason === "too_large") hold(path, TOO_BIG);
 		else if (reason === "outside_layout" || reason === "invalid_save") hold(path, OUTSIDE_LAYOUT);
 		else if (typeof reason === "string" && Object.hasOwn(LIMITS, reason)) pause(reason as Limited, retryAfter);
 		// signed_out and not_editor: the connection closes next, and the close is what is answered
@@ -1652,6 +1774,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		change: (change) => comments.change(caughtUp ? socket : undefined, change),
 		still: (comment) => comments.still(caughtUp ? socket : undefined, comment),
 		moved: (moved) => moves.said(moved),
+		known: () => state.files,
+		restore: restoreFiles,
 		turnEnded: () => {
 			const said = setTimeout(() => {
 				const waited = isIdle()
