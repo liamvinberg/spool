@@ -41,6 +41,7 @@ function fakeCloud() {
 	const covers = new Map<string, string>();
 	const projects: { id: string; name: string }[] = [];
 	const shares: ShareView[] = [];
+	const asked: unknown[] = [];
 	const fetch: typeof globalThis.fetch = async (input, init) => {
 		const request = new Request(input, init);
 		if (!signedIn || request.headers.get("authorization") !== `Bearer ${token}`)
@@ -60,7 +61,13 @@ function fakeCloud() {
 		const rest = solo[2] ?? "";
 		if (rest === "shares" && request.method === "GET") return Response.json({ shares });
 		if (rest === "shares" && request.method === "POST") {
-			const body = (await request.json()) as { kind: "people" | "link"; pages: string[]; people?: string[] };
+			const body = (await request.json()) as {
+				kind: "people" | "link";
+				pages: string[];
+				people?: string[];
+				ends?: string;
+			};
+			asked.push(body);
 			const share: ShareView = {
 				id: `share-${shares.length + 1}`,
 				kind: body.kind,
@@ -70,6 +77,7 @@ function fakeCloud() {
 				at: 1,
 				opens: 0,
 				link: `https://s${String(shares.length + 1).repeat(32)}.onspool.test/`,
+				...(body.ends === "7d" ? { endsAt: 1 + 7 * 86_400 } : {}),
 			};
 			shares.push(share);
 			return Response.json(share, { status: 201 });
@@ -118,6 +126,8 @@ function fakeCloud() {
 		sources,
 		covers,
 		shares,
+		/** What each new share asked spool.page for. */
+		asked,
 		/** The files the cloud's copy is now, by path, as text. */
 		copy: () =>
 			Object.fromEntries(
@@ -171,6 +181,30 @@ const frame = (text: string, imports = "") =>
 const PRICED = `import { Price } from "../../../shared/ui/price";\n`;
 
 describe("a solo project's share", () => {
+	it("asks spool.page for when it ends and says when it does, as spool.page answers (spool#183)", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writePageFrame(root, "menu", "list", frame("Tonight's menu"));
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+		});
+		const made = await shares.routes.request(`/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind: "link", pages: ["menu"], ends: "7d" }),
+		});
+		expect(cloud.asked).toEqual([{ kind: "link", pages: ["menu"], ends: "7d" }]);
+		expect(await made.json()).toMatchObject({ endsAt: 604_801 });
+		const listed = await shares.routes.request(`/${name}/shares`);
+		expect(await listed.json()).toMatchObject({ shares: [{ endsAt: 604_801 }] });
+		shares.close();
+	});
+
 	it("uploads only what its shared pages are made of, and the bytes spool.page lacks", async () => {
 		const cloud = fakeCloud();
 		const spoolDir = makeTempDir();
@@ -341,6 +375,54 @@ describe("a team project's share", () => {
 		expect(made.status).toBe(200);
 		expect(asked).toEqual([{ kind: "link", whole: true, start: "menu/list" }]);
 		expect(await made.json()).toMatchObject({ id: "share-1", whole: true, pages: ["", "menu"] });
+		shares.close();
+	});
+
+	it("asks spool.page for when it ends and says when it does, as spool.page answers (spool#183)", async () => {
+		const token = "sam-token".padEnd(43, "x");
+		const asked: unknown[] = [];
+		const share: ShareView = {
+			id: "share-1",
+			kind: "link",
+			pages: ["menu"],
+			people: [],
+			by: "sam@example.test",
+			at: 1,
+			opens: 0,
+			link: "https://s1.onspool.test/",
+			endsAt: 1 + 7 * 86_400,
+		};
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const request = new Request(input, init);
+			const path = new URL(request.url).pathname;
+			if (path === "/auth/account/session")
+				return Response.json({ accountId: "sam", email: "sam@example.test", sessionId: "s", expiresAt: 4e9 });
+			if (path === "/api/teams/kaffe/projects/checkout/shares" && request.method === "POST") {
+				asked.push(await request.json());
+				return Response.json(share, { status: 201 });
+			}
+			if (path === "/api/teams/kaffe/projects/checkout/shares") return Response.json({ shares: [share] });
+			return Response.json({ error: "not_found" }, { status: 404 });
+		};
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writeFileSync(join(root, "spool.json"), JSON.stringify({ project: `${ORIGIN}/kaffe/checkout` }));
+		const shares = createProjectShares({
+			spoolDir,
+			request: { origin: ORIGIN, vault: { read: async () => token }, fetch },
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+		});
+		const made = await shares.routes.request(`/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind: "link", pages: ["menu"], ends: "7d" }),
+		});
+		expect(asked).toEqual([{ kind: "link", pages: ["menu"], ends: "7d" }]);
+		expect(await made.json()).toMatchObject({ endsAt: 604_801 });
+		const listed = await shares.routes.request(`/${name}/shares`);
+		expect(await listed.json()).toMatchObject({ state: "ready", shares: [{ id: "share-1", endsAt: 604_801 }] });
 		shares.close();
 	});
 });
