@@ -227,6 +227,7 @@ function Home({
 							teams={ready?.teams.map((team) => team.name)}
 							onSignedOut={signIn}
 							onSignOut={signOut}
+							onDelete={() => location.assign("/account/delete")}
 						/>
 					) : current === null || ready === null ? null : needle !== "" ? (
 						<CloudFound teams={ready.teams} needle={needle} query={query} onClear={() => setQuery("")} />

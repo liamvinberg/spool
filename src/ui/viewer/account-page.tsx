@@ -8,13 +8,15 @@ import type { AccountSource, AccountSummary, CommentEmails } from "./account-sou
 
 /**
  * spool.page/account, in Home's sidebar like a team's pages: who is signed in and their name, whether they get
- * comment emails, the Macs signed in as them, their passkeys and the way out of this browser. Passkeys are made here, since a passkey belongs to spool.page.
+ * comment emails, the Macs signed in as them, their passkeys, the way out of this browser, and at its foot the way to
+ * delete the account. Passkeys are made here, since a passkey belongs to spool.page.
  */
 export function AccountPage({
 	source,
 	teams,
 	onSignedOut,
 	onSignOut,
+	onDelete,
 }: {
 	source: AccountSource;
 	/** the teams this account is in, by name; undefined until Home has read them */
@@ -22,6 +24,8 @@ export function AccountPage({
 	/** this browser's session ended somewhere else */
 	onSignedOut: () => void;
 	onSignOut: () => void;
+	/** Delete account: spool.page's own page names what goes and asks for the email typed, then deletes it */
+	onDelete: () => void;
 }) {
 	const [summary, setSummary] = useState<AccountSummary | undefined>();
 	const [notice, setNotice] = useState<string | null>(null);
@@ -205,6 +209,18 @@ export function AccountPage({
 							control={
 								<Button size="sm" onClick={onSignOut}>
 									Sign out
+								</Button>
+							}
+						/>
+					</Group>
+
+					<Group title="Delete account">
+						<Row
+							title="Delete your account"
+							says="Your teams keep your work. Your Macs stop syncing, and their folders stay on them as ordinary local projects."
+							control={
+								<Button size="sm" onClick={onDelete}>
+									Delete account…
 								</Button>
 							}
 						/>
