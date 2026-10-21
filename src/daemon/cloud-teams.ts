@@ -15,6 +15,7 @@ import {
 import { SpoolError } from "../errors";
 import { createTeamProject } from "../init";
 import type { DaemonCloud } from "./app";
+import { teamExportRoutes } from "./team-export";
 
 /** What Home's switcher and invite line show. */
 export type CloudTeamsState =
@@ -214,5 +215,7 @@ export function cloudTeamRoutes(options: {
 			.post("/teams/:team/setup/done", (c) => act(c, () => client().setupDone(c.req.param("team"))))
 			.post("/invites/:invite/accept", (c) => act(c, () => client().acceptInvite(c.req.param("invite"))))
 			.post("/invites/:invite/decline", (c) => act(c, () => client().declineInvite(c.req.param("invite"))))
+			// a team written out as git repositories, into a folder this Mac's admin picked
+			.route("/", teamExportRoutes({ spoolDir: options.spoolDir, cloud: options.cloud }))
 	);
 }

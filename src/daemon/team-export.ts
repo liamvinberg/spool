@@ -1,10 +1,14 @@
 import { type ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import { authorizedCloudRequest, type CloudRequestOptions } from "../cloud-auth";
+import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { validator } from "hono/validator";
+import { authorizedCloudRequest, type CloudRequestOptions, CloudSignedOut } from "../cloud-auth";
 import { CloudTeamRefused } from "../cloud-teams";
 import { SpoolError } from "../errors";
 
@@ -447,5 +451,88 @@ async function run(git: string, args: string[], cwd: string): Promise<void> {
 		await promisify(execFile)(git, args, { cwd });
 	} catch (error) {
 		throw new TeamExportError(`git ${args[0]} failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+/** A running export, by the id the app gave it: how far it has come, and its cancel. */
+interface RunningExport {
+	team: string;
+	progress: TeamExportProgress | null;
+	controller: AbortController;
+}
+
+/**
+ * The daemon's side of a team export: Home asks it to export into a folder, reads its progress while it runs, and
+ * may cancel it. spool.page's refusal comes back as its own reason; this Mac's (no git, say) as words to show.
+ */
+export function teamExportRoutes(options: { spoolDir: string; cloud?: CloudRequestOptions | undefined }) {
+	const running = new Map<string, RunningExport>();
+	return new Hono()
+		.post(
+			"/teams/:team/export",
+			validator("json", (value, c) => {
+				const { into, project, transfer } = (value ?? {}) as {
+					into?: unknown;
+					project?: unknown;
+					transfer?: unknown;
+				};
+				if (typeof transfer !== "string" || !/^[a-zA-Z0-9-]{1,100}$/u.test(transfer))
+					return c.json({ error: "An export id is required." }, 400);
+				if (project !== undefined && typeof project !== "string") return c.json({ error: "invalid_project" }, 400);
+				const folder = typeof into === "string" ? expandHome(into) : "";
+				if (!isAbsolute(folder) || !isDirectory(folder))
+					return c.json({ error: "Choose a folder to export into." }, 400);
+				return { into: folder, project, transfer };
+			}),
+			async (c) => {
+				const { into, project, transfer } = c.req.valid("json");
+				if (running.has(transfer)) return c.json({ error: "This export is already running." }, 409);
+				const job: RunningExport = { team: c.req.param("team"), progress: null, controller: new AbortController() };
+				running.set(transfer, job);
+				try {
+					return c.json(
+						await exportTeam({
+							spoolDir: options.spoolDir,
+							cloud: options.cloud,
+							team: job.team,
+							project,
+							into,
+							signal: job.controller.signal,
+							onProgress: (progress) => {
+								job.progress = progress;
+							},
+						}),
+					);
+				} catch (error) {
+					if (job.controller.signal.aborted) return c.json({ error: "Export cancelled.", cancelled: true }, 409);
+					if (error instanceof CloudTeamRefused)
+						return c.json({ error: error.code }, error.status as ContentfulStatusCode);
+					if (error instanceof CloudSignedOut) return c.json({ error: "signed_out" }, 401);
+					if (error instanceof SpoolError) return c.json({ error: error.message }, 400);
+					return c.json({ error: "unreachable" }, 503);
+				} finally {
+					running.delete(transfer);
+				}
+			},
+		)
+		.get("/exports/:transfer", (c) => {
+			const job = running.get(c.req.param("transfer"));
+			return job ? c.json({ team: job.team, progress: job.progress }) : c.json({ error: "no_export" }, 404);
+		})
+		.post("/exports/:transfer/cancel", (c) => {
+			running.get(c.req.param("transfer"))?.controller.abort();
+			return c.json({ cancelled: true });
+		});
+}
+
+function expandHome(path: string): string {
+	return path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+}
+
+function isDirectory(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
 	}
 }
