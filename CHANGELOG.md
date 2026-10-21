@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.46.1
+
+### Patch Changes
+
+- d615ffe: When spool.page restores a team project from a backup, each Mac's copy settles with it on reconnect: work saved since the backup goes back up, and everything else takes the restored version.
+- d1a99b9: The canvas on spool.page no longer slides aside, hiding the pages list, when a frame with a form comes alive and takes the focus.
+
 ## 0.46.0
 
 ### Minor Changes
