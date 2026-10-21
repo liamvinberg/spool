@@ -142,6 +142,19 @@ export interface CloudTeamProject {
 	repo: string | null;
 }
 
+/** A project in its team's trash (#197), as the team's admins see it: who removed it, when, and when it goes for good. */
+export interface RemovedTeamProject {
+	name: string;
+	/** Who removed it, by name; null once their account is gone. */
+	removedBy: string | null;
+	/** Unix seconds. */
+	removedAt: number;
+	/** When it is purged, unix seconds: until then an admin can restore it. */
+	purgeAt: number;
+	/** Its shares, paused while it waits. */
+	shares: number;
+}
+
 /** Who is inside one of a team's projects right now (DEV-197): each person once, named and in their team colour. */
 export interface TeamProjectHere {
 	name: string;
@@ -278,13 +291,24 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 				`${team(address)}/projects/${encodeURIComponent(name)}/move`,
 				{ to, ...(as === undefined ? {} : { name: as }) },
 			),
-		/** The project leaves the team for good, every copy ending; moved out, its address says so to the team. Admins only. */
+		/**
+		 * The project leaves the team for its trash, every copy ending; it can be restored for 30 days. Moved out, its
+		 * address says so to the team. Admins only.
+		 */
 		deleteProject: (address: string, name: string, options: { out?: boolean } = {}) =>
 			call<null>(
 				"DELETE",
 				`${team(address)}/projects/${encodeURIComponent(name)}${options.out === true ? "?out=1" : ""}`,
 			),
-		/** How many comments a team project holds: what its leaving the team would delete with it. */
+		/** The team's trash: its removed projects, latest first. Admins only. */
+		removed: (address: string) => call<{ projects: RemovedTeamProject[] }>("GET", `${team(address)}/removed`),
+		/** A removed project back in the team, with everything it kept. Admins only; refused while the team is unpaid. */
+		restore: (address: string, name: string) =>
+			call<CloudTeamProject>("POST", `${team(address)}/removed/${encodeURIComponent(name)}/restore`),
+		/** A removed project deleted now, rather than after its 30 days. Admins only. */
+		deleteRemoved: (address: string, name: string) =>
+			call<null>("DELETE", `${team(address)}/removed/${encodeURIComponent(name)}`),
+		/** How many comments a team project holds: what waits in the trash with it if it leaves the team. */
 		commentCount: (address: string, name: string) =>
 			call<{ comments: number }>("GET", `${team(address)}/projects/${encodeURIComponent(name)}/comments/count`),
 		/**

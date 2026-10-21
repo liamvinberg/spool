@@ -103,6 +103,13 @@ export function cloudTeamRoutes(options: {
 					return c.body(null, 404);
 				}
 			})
+			.get("/teams/:team/removed", (c) => act(c, () => client().removed(c.req.param("team"))))
+			.post("/teams/:team/removed/:project/restore", (c) =>
+				act(c, () => client().restore(c.req.param("team"), c.req.param("project"))),
+			)
+			.delete("/teams/:team/removed/:project", (c) =>
+				act(c, () => client().deleteRemoved(c.req.param("team"), c.req.param("project"))),
+			)
 			.patch(
 				"/teams/:team",
 				validator("json", (value) => {
