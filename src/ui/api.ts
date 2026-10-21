@@ -2530,3 +2530,34 @@ export async function restoreFromHistory(project: string, ask: RestoreAsk): Prom
 		throw new Error(typeof body?.message === "string" ? body.message : "The restore couldn't be made. Try again.");
 	return body;
 }
+
+/* ── comparing with now (spool#189) ──────────────────────────────────── */
+
+/** A moment Compare goes back to: a team version, and a set-aside save's own file in place when it is one. */
+export interface CompareMoment {
+	at: number;
+	saved?: { path: string; hash: string | null } | undefined;
+}
+
+/** A frame at a moment: served at its own address, placed where its sidecar stood it; absent when it didn't exist. */
+export type CompareRead =
+	| { state: "ready"; url: string; place: { x: number; y: number; w: number; h: number } | null }
+	| { state: "absent" }
+	| { state: "failed"; message: string };
+
+/** How a frame stood at a moment, asked of this Mac's daemon, which reads and keeps the bytes from the team history. */
+export async function fetchCompare(project: string, frame: string, moment: CompareMoment): Promise<CompareRead> {
+	const query = new URLSearchParams({ frame, at: String(moment.at) });
+	if (moment.saved !== undefined) {
+		query.set("path", moment.saved.path);
+		query.set("hash", moment.saved.hash ?? "");
+	}
+	try {
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/history/compare?${query}`);
+		if (!response.ok) return { state: "failed", message: await historyFailure(response) };
+		const body = (await response.json()) as CompareRead;
+		return body.state === "ready" ? { ...body, url: new URL(body.url, renderOrigin).href } : body;
+	} catch {
+		return { state: "failed", message: "spool could not be reached." };
+	}
+}
