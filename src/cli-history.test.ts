@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { spoolAsync } from "./cli-test-helpers";
@@ -93,6 +94,18 @@ async function mac(machine: Machine) {
 	};
 }
 
+/** A port nothing listens on now. */
+function freePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const { port } = server.address() as AddressInfo;
+			server.close(() => resolve(port));
+		});
+	});
+}
+
 async function until(holds: () => boolean | Promise<boolean>, ms = 8000): Promise<void> {
 	const start = Date.now();
 	while (!(await holds())) {
@@ -165,20 +178,22 @@ describe("spool history", { timeout: 90_000 }, () => {
 
 		const listed = await anas.spool(RECEIPT);
 		expect(listed.status).toBe(0);
-		expect(listed.stdout.split("\n").slice(1, 3)).toEqual([
-			"2026-10-21 09:07:00  ben on ben's Mac  set aside",
-			"2026-10-21 09:05:00  ana on ana's Mac",
-		]);
+		// a loaded machine's watcher may see Ben's write only once he is back, and save again on the team's version
+		const lines = listed.stdout.split("\n");
+		expect(lines).toContain("2026-10-21 09:07:00  ben on ben's Mac  set aside");
+		expect(lines).toContain("2026-10-21 09:05:00  ana on ana's Mac");
 	});
 
 	it("says a project that isn't a team's has its history in git", async () => {
 		const root = repo();
 		const state = join(makeTempDir(), ".spool");
 		const home = makeTempDir();
-		await spoolAsync(["init"], home, root, { SPOOL_DIR: state });
-		const read = await spoolAsync(["history", RECEIPT], home, root, { SPOOL_DIR: state });
+		// a lane of its own: the default port may be another daemon's
+		const env = { SPOOL_DIR: state, SPOOL_PORT: String(await freePort()) };
+		await spoolAsync(["init"], home, root, env);
+		const read = await spoolAsync(["history", RECEIPT], home, root, env);
 		expect(read.status).not.toBe(0);
 		expect(read.stderr).toContain("this project isn't a team project: its history is git's");
-		await spoolAsync(["stop"], home, root, { SPOOL_DIR: state });
+		await spoolAsync(["stop"], home, root, env);
 	});
 });
