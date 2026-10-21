@@ -191,7 +191,7 @@ function Home({
 								allowed={ready.mayCreateTeam}
 								starts={ready.newTeam}
 								onCreate={async (name) => {
-									const created = await source.create(name);
+									const created = await source.create(name, true);
 									await refresh();
 									go({ team: created.address, page: "projects" });
 								}}

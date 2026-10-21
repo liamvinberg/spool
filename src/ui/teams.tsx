@@ -34,6 +34,7 @@ import { EmptyFrames, EmptyState } from "./primitives/feedback";
 import { Field, TextField } from "./primitives/inputs";
 import { NavItem, Tab, Tabs } from "./primitives/navigation";
 import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
+import { Checkbox } from "./primitives/selection";
 import { keep, recall } from "./remembered";
 import { BILLING_STATES, day, money, TeamBilling } from "./team-billing";
 import { type TeamExporter, useTeamExport } from "./team-export";
@@ -1080,6 +1081,9 @@ const NEW_TEAM_STARTS: Record<NewTeamStart, string> = {
 const LEGAL_LINK = "underline underline-offset-[3px] [&:hover]:text-primary";
 
 /** "New team…": a name, and spool.page decides whether this account may start one yet. */
+/** The tick every way to start or pay for a team asks for: Spool Cloud is sold for business use only (spool#209). */
+export const BUSINESS_TICK = "I’m buying for my business or work";
+
 export function NewTeamDialog({
 	allowed,
 	starts,
@@ -1096,6 +1100,7 @@ export function NewTeamDialog({
 	onClose: () => void;
 }) {
 	const [name, setName] = useState("");
+	const [business, setBusiness] = useState(false);
 	if (!allowed)
 		return (
 			<ConfirmDialog
@@ -1111,7 +1116,7 @@ export function NewTeamDialog({
 			title="New team"
 			{...(starts ? { description: NEW_TEAM_STARTS[starts] } : {})}
 			confirmLabel="Create team"
-			disabled={name.trim() === ""}
+			disabled={name.trim() === "" || !business}
 			onConfirm={async () => {
 				try {
 					await onCreate(name.trim());
@@ -1124,6 +1129,13 @@ export function NewTeamDialog({
 			<Field label="Name">
 				{(id) => <TextField size="lg" value={name} onValueChange={setName} inputProps={{ id, maxLength: 64 }} />}
 			</Field>
+			{/* Spool Cloud is sold for business use only (spool#209): no team starts without the tick */}
+			<Checkbox
+				className="mt-[12px] type-label"
+				checked={business}
+				onCheckedChange={setBusiness}
+				label={BUSINESS_TICK}
+			/>
 			{origin ? (
 				<p className="mt-[12px] text-secondary type-detail">
 					Starting a team agrees to the{" "}
@@ -1377,7 +1389,7 @@ export function useTeamHome(
 					starts={ready.newTeam}
 					origin={ready.origin}
 					onCreate={async (name) => {
-						const created = await teamActions.create(name);
+						const created = await teamActions.create(name, true);
 						await refresh();
 						go({ team: created.address, page: "projects" });
 					}}

@@ -158,8 +158,9 @@ export function fakeTeamsSource(start: {
 			};
 			return moved;
 		},
-		create: async (name) => {
+		create: async (name, business) => {
 			ask(`create ${name}`);
+			if (business !== true) throw new TeamActionRefused("business_required");
 			return { address: name.toLowerCase(), name };
 		},
 		people: async (address) => {
@@ -210,9 +211,10 @@ export function fakeTeamsSource(start: {
 			if (!state.billing) throw new TeamActionRefused("not_found");
 			return state.billing;
 		},
-		checkout: async (address, editors, cycle) => {
+		checkout: async (address, editors, cycle, business) => {
 			ask(`checkout ${address} ${cycle} ${editors.join(",")}`);
 			admin(address);
+			if (business !== true) throw new TeamActionRefused("business_required");
 			if (state.billing?.state === "free") throw new TeamActionRefused("billing_free");
 			return { url: `https://checkout.stripe.test/${address}` };
 		},

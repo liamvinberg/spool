@@ -109,6 +109,16 @@ function rows(host: ParentNode): string[] {
 	return Array.from(host.querySelectorAll(".pj-team-billing li")).map((row) => row.textContent ?? "");
 }
 
+/** The tick that the team is bought for business or work, which paying waits for. */
+function business(host: ParentNode): HTMLInputElement {
+	const label = Array.from(host.querySelectorAll("label")).find(
+		(each) => each.textContent === "I’m buying for my business or work",
+	);
+	const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	if (!input) throw new Error("No business tick");
+	return input;
+}
+
 function box(host: ParentNode, email: string): HTMLInputElement {
 	const row = Array.from(host.querySelectorAll(".pj-team-billing li")).find((each) =>
 		each.textContent?.includes(email),
@@ -153,6 +163,9 @@ it("on a trial says when it ends and offers the payment choice: every member, th
 	expect(host.querySelector("[data-billing-total]")?.textContent).toBe("$40 a month");
 	expect(host.textContent).toContain("2 seats × $20 a month");
 
+	// paying waits for the business tick (spool#209)
+	expect(button(host, "Continue to payment").disabled).toBe(true);
+	act(() => business(host).click());
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(fake.asked).toContain("checkout tidemark monthly mira");
@@ -314,6 +327,7 @@ it("says what spool.page refused when Checkout can't start", async () => {
 	};
 	const { host, opened } = settings(fake);
 	await settle();
+	tickBusiness(host);
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(host.querySelector('[role="status"]')?.textContent).toBe("This team is already paid for.");
@@ -383,6 +397,7 @@ it("after Checkout, reads again on coming back and keeps reading until Stripe sa
 		createElement(TeamBilling, { team: team(), onOpen: (url) => opened.push(url), pollMs: 20 }),
 	);
 	await settle();
+	tickBusiness(host);
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(opened).toHaveLength(1);
@@ -414,3 +429,13 @@ it("reads billing again when the window comes back, without a Checkout of its ow
 	await settle();
 	expect(host.textContent).toContain("3 seats, billed yearly");
 });
+
+/** Ticks that the team is bought for business or work, which paying waits for (spool#209). */
+function tickBusiness(host: ParentNode) {
+	const label = Array.from(host.querySelectorAll("label")).find(
+		(each) => each.textContent === "I’m buying for my business or work",
+	);
+	const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	if (!input) throw new Error("No business tick");
+	if (!input.checked) act(() => input.click());
+}

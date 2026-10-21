@@ -230,7 +230,9 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 	const team = (address: string) => `teams/${encodeURIComponent(address)}`;
 	return {
 		list: () => call<CloudTeams>("GET", "teams"),
-		create: (name: string) => call<Pick<CloudTeam, "id" | "address" | "name">>("POST", "teams", { name }),
+		/** `business`: the starter ticked that they're buying for their business or work; spool.page refuses a team without. */
+		create: (name: string, business: boolean) =>
+			call<Pick<CloudTeam, "id" | "address" | "name">>("POST", "teams", { name, business }),
 		people: (address: string) => call<TeamPeople>("GET", `${team(address)}/people`),
 		update: (address: string, change: { name?: string; address?: string }) =>
 			call<Pick<CloudTeam, "id" | "address" | "name">>("PATCH", team(address), change),
@@ -258,8 +260,8 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 		/** What the team pays and when. Admins only. */
 		billing: (address: string) => call<BillingSummary>("GET", `${team(address)}/billing`),
 		/** Stripe Checkout for the team: `editors` are the editors kept as seats; the rest become viewers once it completes. */
-		checkout: (address: string, editors: string[], cycle: BillingCycle) =>
-			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
+		checkout: (address: string, editors: string[], cycle: BillingCycle, business: boolean) =>
+			call<{ url: string }>("POST", `${team(address)}/billing/checkout`, { editors, cycle, business }),
 		/** Stripe's customer portal for the team's card, invoices and plan. */
 		portal: (address: string) => call<{ url: string }>("POST", `${team(address)}/billing/portal`),
 		/** A new team's setup list, read from its facts. Admins only. */

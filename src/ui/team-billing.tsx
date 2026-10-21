@@ -4,7 +4,7 @@ import type { BillingCycle, BillingState, BillingSummary, CloudTeam, TeamPeople 
 import { cn } from "./cn";
 import { Button } from "./primitives/actions";
 import { Checkbox, Segment, SegmentedControl } from "./primitives/selection";
-import { TeamsSourceContext, teamSays } from "./teams";
+import { BUSINESS_TICK, TeamsSourceContext, teamSays } from "./teams";
 
 /**
  * Settings › Billing: what a team pays and when, for its admins only. spool.page decides every rule and Stripe holds
@@ -160,7 +160,7 @@ export function useBilling(team: CloudTeam, onOpen: (url: string) => void, pollM
 	const pay = async (editors: string[], cycle: BillingCycle): Promise<boolean> => {
 		setNotice(null);
 		try {
-			const { url } = await source.checkout(team.address, editors, cycle);
+			const { url } = await source.checkout(team.address, editors, cycle, true);
 			markCheckout(team.address, true);
 			onOpen(url);
 			return true;
@@ -242,6 +242,8 @@ export function PayChoice({
 	const [left, setLeft] = useState<ReadonlySet<string>>(new Set());
 	const [cycle, setCycle] = useState<BillingCycle>(start);
 	const [busy, setBusy] = useState(false);
+	// Spool Cloud is sold for business use only (spool#209): paying waits for the tick
+	const [business, setBusiness] = useState(false);
 	const admins = people.members.filter((person) => person.role === "admin");
 	const editors = people.members.filter((person) => person.role === "editor");
 	const viewers = people.members.filter((person) => person.role === "viewer");
@@ -311,6 +313,7 @@ export function PayChoice({
 					</span>
 				</span>
 			</div>
+			<Checkbox className="type-label" checked={business} onCheckedChange={setBusiness} label={BUSINESS_TICK} />
 			<div className="flex items-center justify-between gap-4">
 				<p className="max-w-[360px] text-secondary type-label">
 					Stripe takes the card. Add a company name and VAT number there if you have them.
@@ -318,7 +321,7 @@ export function PayChoice({
 				<Button
 					size="lg"
 					variant="primary"
-					disabled={busy}
+					disabled={busy || !business}
 					onClick={() => {
 						setBusy(true);
 						void onPay(

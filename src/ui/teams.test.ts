@@ -151,6 +151,27 @@ it("says before a team is made whether it starts the trial, is paid for from the
 	expect(says("free")).toContain("Teams you start are free.");
 });
 
+it("creates a team only once its starter ticks that they're buying for their business or work (spool#209)", async () => {
+	const onCreate = vi.fn(async () => {});
+	mount(createElement(NewTeamDialog, { allowed: true, starts: "trial", onCreate, onClose: vi.fn() }));
+	const name = document.body.querySelector<HTMLInputElement>('input[type="text"], input:not([type])');
+	act(() => {
+		Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(name, "Tidemark");
+		name?.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	const create = button(document.body, "Create team");
+	expect(create.disabled).toBe(true);
+	const tick = Array.from(document.body.querySelectorAll("label")).find(
+		(label) => label.textContent === "I’m buying for my business or work",
+	);
+	const box = tick?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	expect(box?.checked).toBe(false);
+	act(() => box?.click());
+	expect(create.disabled).toBe(false);
+	await act(async () => create.click());
+	expect(onCreate).toHaveBeenCalledWith("Tidemark");
+});
+
 it("says that starting a team agrees to the Terms and the DPA, linking both on spool.page", () => {
 	mount(
 		createElement(NewTeamDialog, {

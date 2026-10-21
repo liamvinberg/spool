@@ -117,6 +117,7 @@ it("asks an admin, once the trial ended unpaid, who stays an editor and to pay, 
 		const sam = Array.from(shown?.querySelectorAll("li") ?? []).find((row) => row.textContent?.includes("sam@"));
 		sam?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click();
 	});
+	tickBusiness(host);
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(fake.asked).toContain("checkout tidemark yearly mira");
@@ -193,6 +194,7 @@ it("says what spool.page refused, and stays open", async () => {
 	};
 	const { host, opened } = home(fake, team("admin"));
 	await settle();
+	tickBusiness(host);
 	await act(async () => button(host, "Continue to payment").click());
 	await settle();
 	expect(dialog(host)?.querySelector('[role="alert"]')?.textContent).toBe("This team is already paid for.");
@@ -344,3 +346,13 @@ it("starts a new project in a team with time as ever", async () => {
 	expect(editor.started).toEqual(["tidemark"]);
 	expect(editor.refusal()).toBeUndefined();
 });
+
+/** Ticks that the team is bought for business or work, which paying waits for (spool#209). */
+function tickBusiness(host: ParentNode) {
+	const label = Array.from(host.querySelectorAll("label")).find(
+		(each) => each.textContent === "I’m buying for my business or work",
+	);
+	const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+	if (!input) throw new Error("No business tick");
+	if (!input.checked) act(() => input.click());
+}

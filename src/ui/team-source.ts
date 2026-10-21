@@ -50,6 +50,7 @@ const SAYS: Record<string, string> = {
 	already_paying: "This team is already paid for.",
 	invalid_billing: "Choose monthly or yearly and try again.",
 	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
+	business_required: "Spool Cloud is for business use. Tick that you’re buying for your business or work.",
 	// with its number from People's billing where it is read: see `peopleSays`
 	trial_editor_cap: "The trial holds no more editors. Pay for the team in Settings › Billing to add more.",
 	unpaid: "This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
@@ -121,7 +122,8 @@ export interface TeamsSource {
 	movePreview(address: string, project: string, to: string, name?: string): Promise<MovePreview | undefined>;
 	/** The same project moves to the team at `to`, renamed when `name` is given; its old address leads on. */
 	move(address: string, project: string, to: string, name?: string): Promise<TeamMoveOutcome>;
-	create(name: string): Promise<Pick<CloudTeam, "address" | "name">>;
+	/** Starts a team, its starter having ticked that they're buying for their business or work (spool#209). */
+	create(name: string, business: true): Promise<Pick<CloudTeam, "address" | "name">>;
 	people(address: string): Promise<TeamPeople>;
 	update(address: string, change: { name?: string; address?: string }): Promise<Pick<CloudTeam, "address" | "name">>;
 	delete(address: string): Promise<unknown>;
@@ -137,7 +139,7 @@ export interface TeamsSource {
 	/** What the team pays and when. Admins only. */
 	billing(address: string): Promise<BillingSummary>;
 	/** Stripe Checkout's address for paying for the team: `editors` stay editors, every other editor becomes a viewer. */
-	checkout(address: string, editors: string[], cycle: BillingCycle): Promise<{ url: string }>;
+	checkout(address: string, editors: string[], cycle: BillingCycle, business: true): Promise<{ url: string }>;
 	/** Stripe's customer portal's address, for the card, invoices, plan and cancelling. */
 	portal(address: string): Promise<{ url: string }>;
 	/** A new team's setup list, read from its facts. Admins only. */
@@ -305,7 +307,7 @@ export function teamsAt(
 				losing: moved.losing ?? [],
 			};
 		},
-		create: (name) => call("POST", "/teams", { name }),
+		create: (name, business) => call("POST", "/teams", { name, business }),
 		people: (address) => call("GET", `${team(address)}/people`),
 		update: (address, change) => call("PATCH", team(address), change),
 		delete: (address) => call("DELETE", team(address)),
@@ -331,7 +333,8 @@ export function teamsAt(
 		accept: (invite) => call("POST", `/invites/${encodeURIComponent(invite)}/accept`),
 		decline: (invite) => call("POST", `/invites/${encodeURIComponent(invite)}/decline`),
 		billing: (address) => call("GET", `${team(address)}/billing`),
-		checkout: (address, editors, cycle) => call("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
+		checkout: (address, editors, cycle, business) =>
+			call("POST", `${team(address)}/billing/checkout`, { editors, cycle, business }),
 		portal: (address) => call("POST", `${team(address)}/billing/portal`),
 		setup: (address) => call("GET", `${team(address)}/setup`),
 		skipInvites: (address) => call("POST", `${team(address)}/setup/skip-invites`),

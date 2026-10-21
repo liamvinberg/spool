@@ -94,7 +94,7 @@ it("carries each team action to spool.page and brings back its refusal as spool.
 	await api("/teams/tidemark", "PATCH", { name: "Tide", address: "tide" });
 	await api("/teams/tidemark/logo", "PUT", { data: Buffer.from([0x89, 0x50]).toString("base64") });
 	await api("/invites/i1/accept", "POST");
-	await api("/teams", "POST", { name: "Devosurf" });
+	await api("/teams", "POST", { name: "Devosurf", business: true });
 	expect(asked.map(({ method, path, body }) => ({ method, path, body }))).toEqual([
 		{ method: "DELETE", path: "/api/teams/tidemark/members/me", body: "" },
 		{ method: "PATCH", path: "/api/teams/tidemark/members/sam", body: '{"role":"viewer"}' },
@@ -106,7 +106,7 @@ it("carries each team action to spool.page and brings back its refusal as spool.
 		{ method: "PATCH", path: "/api/teams/tidemark", body: '{"name":"Tide","address":"tide"}' },
 		{ method: "PUT", path: "/api/teams/tidemark/logo", body: "\u0089P" },
 		{ method: "POST", path: "/api/invites/i1/accept", body: "" },
-		{ method: "POST", path: "/api/teams", body: '{"name":"Devosurf"}' },
+		{ method: "POST", path: "/api/teams", body: '{"name":"Devosurf","business":true}' },
 	]);
 });
 
@@ -129,7 +129,9 @@ it("carries billing to spool.page: the summary, Checkout and the portal, each an
 		status: 200,
 		body: { state: "trial", trialEndsAt: 1_761_393_600 },
 	});
-	expect(await api("/teams/tidemark/billing/checkout", "POST", { editors: ["sam"], cycle: "yearly" })).toEqual({
+	expect(
+		await api("/teams/tidemark/billing/checkout", "POST", { editors: ["sam"], cycle: "yearly", business: true }),
+	).toEqual({
 		status: 200,
 		body: { url: "https://checkout.stripe.test/c/1" },
 	});
@@ -143,7 +145,11 @@ it("carries billing to spool.page: the summary, Checkout and the portal, each an
 	});
 	expect(asked.map(({ method, path, body }) => ({ method, path, body }))).toEqual([
 		{ method: "GET", path: "/api/teams/tidemark/billing", body: "" },
-		{ method: "POST", path: "/api/teams/tidemark/billing/checkout", body: '{"editors":["sam"],"cycle":"yearly"}' },
+		{
+			method: "POST",
+			path: "/api/teams/tidemark/billing/checkout",
+			body: '{"editors":["sam"],"cycle":"yearly","business":true}',
+		},
 		{ method: "POST", path: "/api/teams/tidemark/billing/portal", body: "" },
 	]);
 });
