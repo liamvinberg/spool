@@ -1134,7 +1134,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			signedOut();
 			return reconnect();
 		}
-		if (!(await level())) {
+		if (!levelled && !(await level())) {
 			if (closed) return;
 			if (!live) return fail(new SyncDropped("spool.page couldn't say what the team has of design/"));
 			return reconnect();
@@ -1195,7 +1195,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	 * what the team holds its own version of is set aside as before. False when the team couldn't be asked: the
 	 * connection waits, as it would offline. A spool.page that can't answer, or won't, leaves it as it was.
 	 */
-	let levelled = options.seen === undefined || options.moving !== undefined;
+	let levelled = options.seen === undefined || options.moving !== undefined || Object.keys(state.files).length > 0;
 	const level = async (): Promise<boolean> => {
 		if (levelled || Object.keys(state.files).length > 0) {
 			levelled = true;
