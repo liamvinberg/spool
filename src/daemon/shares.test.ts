@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CloudRequestOptions } from "../cloud-auth";
@@ -294,6 +294,54 @@ describe("a solo project's share", () => {
 		});
 		expect(refused.status).toBe(401);
 		expect(existsSync(join(root, "design/.spool/share.json"))).toBe(false);
+	});
+});
+
+describe("a team project's share", () => {
+	it("asks spool.page for the whole project as it was asked, naming no pages (spool#182)", async () => {
+		const token = "sam-token".padEnd(43, "x");
+		const asked: unknown[] = [];
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const request = new Request(input, init);
+			const path = new URL(request.url).pathname;
+			if (path === "/auth/account/session")
+				return Response.json({ accountId: "sam", email: "sam@example.test", sessionId: "s", expiresAt: 4e9 });
+			if (path === "/api/teams/kaffe/projects/checkout/shares" && request.method === "POST") {
+				asked.push(await request.json());
+				const share: ShareView = {
+					id: "share-1",
+					kind: "link",
+					pages: ["", "menu"],
+					whole: true,
+					people: [],
+					by: "sam@example.test",
+					at: 1,
+					opens: 0,
+					link: "https://s1.onspool.test/",
+				};
+				return Response.json(share, { status: 201 });
+			}
+			return Response.json({ error: "not_found" }, { status: 404 });
+		};
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writeFileSync(join(root, "spool.json"), JSON.stringify({ project: `${ORIGIN}/kaffe/checkout` }));
+		const shares = createProjectShares({
+			spoolDir,
+			request: { origin: ORIGIN, vault: { read: async () => token }, fetch },
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+		});
+		const made = await shares.routes.request(`/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind: "link", whole: true, start: "menu/list" }),
+		});
+		expect(made.status).toBe(200);
+		expect(asked).toEqual([{ kind: "link", whole: true, start: "menu/list" }]);
+		expect(await made.json()).toMatchObject({ id: "share-1", whole: true, pages: ["", "menu"] });
+		shares.close();
 	});
 });
 
