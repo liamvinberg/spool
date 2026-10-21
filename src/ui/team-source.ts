@@ -48,6 +48,7 @@ const SAYS: Record<string, string> = {
 	already_paying: "This team is already paid for.",
 	invalid_billing: "Choose monthly or yearly and try again.",
 	no_subscription: "This team hasn’t paid yet, so there’s no billing to manage.",
+	withdrawal_closed: "The 14 days to withdraw from this team’s contract are over.",
 	// with its number from People's billing where it is read: see `peopleSays`
 	trial_editor_cap: "The trial holds no more editors. Pay for the team in Settings › Billing to add more.",
 	unpaid: "This team has gone local. An admin can pay for it in Settings › Billing to sync again.",
@@ -129,6 +130,8 @@ export interface TeamsSource {
 	checkout(address: string, editors: string[], cycle: BillingCycle): Promise<{ url: string }>;
 	/** Stripe's customer portal's address, for the card, invoices, plan and cancelling. */
 	portal(address: string): Promise<{ url: string }>;
+	/** Withdraws from the team's contract within 14 days of its first payment: refunded in full, ended at once. */
+	withdraw(address: string): Promise<unknown>;
 	/** A new team's setup list, read from its facts. Admins only. */
 	setup(address: string): Promise<TeamSetup>;
 	/** Invite people, skipped. */
@@ -288,6 +291,7 @@ export function teamsAt(
 		billing: (address) => call("GET", `${team(address)}/billing`),
 		checkout: (address, editors, cycle) => call("POST", `${team(address)}/billing/checkout`, { editors, cycle }),
 		portal: (address) => call("POST", `${team(address)}/billing/portal`),
+		withdraw: (address) => call("POST", `${team(address)}/billing/withdraw`),
 		setup: (address) => call("GET", `${team(address)}/setup`),
 		skipInvites: (address) => call("POST", `${team(address)}/setup/skip-invites`),
 		skipProjects: (address) => call("POST", `${team(address)}/setup/skip-projects`),

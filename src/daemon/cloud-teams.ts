@@ -200,6 +200,7 @@ export function cloudTeamRoutes(options: {
 				},
 			)
 			.post("/teams/:team/billing/portal", (c) => act(c, () => client().portal(c.req.param("team"))))
+			.post("/teams/:team/billing/withdraw", (c) => act(c, () => client().withdraw(c.req.param("team"))))
 			.get("/teams/:team/setup", (c) => act(c, () => client().setup(c.req.param("team"))))
 			.post("/teams/:team/setup/skip-invites", (c) => act(c, () => client().skipInvites(c.req.param("team"))))
 			.post("/teams/:team/setup/skip-projects", (c) => act(c, () => client().skipProjects(c.req.param("team"))))
