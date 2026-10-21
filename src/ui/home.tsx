@@ -62,7 +62,8 @@ export function Home({
 	onRemoveIcon,
 	onRemoveThumbnail,
 	account,
-	switcher,
+	places,
+	place,
 	notice,
 	team,
 	everywhere,
@@ -87,12 +88,14 @@ export function Home({
 	onRemoveThumbnail?: (project: { root: string; name: string }) => void;
 	/** This Mac's account, at the foot of the sidebar. */
 	account?: ReactNode;
-	/** The team switcher, at the top of the sidebar once this Mac is signed in. */
-	switcher?: ReactNode;
+	/** The sidebar of places, once this account is in a team: every team, then Your projects. */
+	places?: ReactNode;
+	/** Home's address, which changes as you go between places: the page fades up as each comes in. */
+	place?: string;
 	/** One line per invite waiting for this account, above the covers. */
 	notice?: ReactNode;
-	/** While a team is chosen in the switcher: its nav and its page, in place of your own projects. */
-	team?: { nav: ReactNode; main: ReactNode } | undefined;
+	/** While a team is chosen in the sidebar: its page, in place of your own projects. */
+	team?: { main: ReactNode } | undefined;
 	/** Search and Recent across every place, once this account is in a team. */
 	everywhere?: Everywhere | undefined;
 }) {
@@ -271,12 +274,12 @@ export function Home({
 		)
 	) : team ? (
 		<main className={HOME_MAIN}>{team.main}</main>
-	) : projects.length === 0 && needle === "" ? (
+	) : projects.length === 0 && needle === "" && !everywhere ? (
 		welcome
 	) : (
 		<main className={HOME_MAIN}>
 			<ProjectsHead
-				title="Projects"
+				title={everywhere ? "Your projects" : "Projects"}
 				count={
 					needle === "" || everywhere ? { total: covers.length } : { total: covers.length, shown: visible.length }
 				}
@@ -292,10 +295,32 @@ export function Home({
 						/>
 					)
 				}
-				actions={start}
+				actions={
+					everywhere ? (
+						<>
+							<Button size="lg" icon={<FolderIcon />} onClick={onFolder}>
+								Open…
+							</Button>
+							{start}
+						</>
+					) : (
+						start
+					)
+				}
 			/>
+			{everywhere && (
+				<p className="pj-own-line -mt-[17px] mb-[26px] text-secondary type-control">
+					On this Mac only. Move one to a team from its menu.
+				</p>
+			)}
 			{notice && <div className="mb-[24px]">{notice}</div>}
-			{visible.length === 0 ? (
+			{visible.length === 0 && everywhere ? (
+				<EmptyState
+					className="min-h-[420px] justify-center p-[35px]"
+					art={<EmptyFrames />}
+					title="No projects of your own on this Mac yet"
+				/>
+			) : visible.length === 0 ? (
 				<EmptyState
 					className="min-h-[420px] justify-center p-[35px]"
 					art={<EmptyFrames />}
@@ -312,28 +337,23 @@ export function Home({
 			)}
 		</main>
 	);
+	// the page fades up as each place comes in: the search is one place however its words change
+	const shown = loading && (team === undefined || recent || searching) ? <main aria-busy="true" /> : page;
 	return (
 		<HomeShell
 			switcher={
-				everywhere ? (
-					<>
-						<FindNav
-							query={everywhere.query}
-							onQuery={everywhere.onQuery}
-							inputRef={searchRef}
-							recent={everywhere.recent}
-							onRecent={everywhere.onRecent}
-						/>
-						{switcher}
-					</>
-				) : (
-					switcher
+				everywhere && (
+					<FindNav
+						query={everywhere.query}
+						onQuery={everywhere.onQuery}
+						inputRef={searchRef}
+						recent={everywhere.recent}
+						onRecent={everywhere.onRecent}
+					/>
 				)
 			}
 			nav={
-				team ? (
-					team.nav
-				) : (
+				places ?? (
 					<NavItem
 						icon={<FrameIcon />}
 						label="Projects"
@@ -345,9 +365,14 @@ export function Home({
 			}
 			foot={<>{account ?? <span>On this Mac</span>}</>}
 		>
-			{loading && (team === undefined || recent || searching) ? <main aria-busy="true" /> : page}
+			{place === undefined ? shown : <PlaceIn key={searching ? "search" : place}>{shown}</PlaceIn>}
 		</HomeShell>
 	);
+}
+
+/** A place's page as it comes in: it fades up 6 px, and stands still under reduced motion. */
+export function PlaceIn({ children }: { children: ReactNode }) {
+	return <div className="pj-place-in grid min-w-0 animate-place-in">{children}</div>;
 }
 
 /**

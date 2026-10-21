@@ -7,17 +7,17 @@ import { testBrowser } from "../test-browser";
 import { builtUi } from "../test-helpers";
 
 /**
- * Home with its switcher and invite line in a real Chromium, laid out by the app's own stylesheet.
+ * Home with its sidebar of places and invite line in a real Chromium, laid out by the app's own stylesheet.
  * The cloud is the page's own state: the components are Home's, the teams are a fixture.
  */
-async function home(): Promise<Page> {
+async function home(motion: "reduce" | "no-preference" = "reduce"): Promise<Page> {
 	const bundle = await build({
 		stdin: {
 			contents: `
 				import { createElement, useState } from "react";
 				import { createRoot } from "react-dom/client";
 				import { Home } from "./src/ui/home";
-				import { InviteLine, TeamNav, TeamProjects, TeamSwitcher } from "./src/ui/teams";
+				import { HomePlaces, InviteLine, TeamProjects } from "./src/ui/teams";
 				const teams = {
 					state: "ready",
 					origin: "https://spool.page",
@@ -33,6 +33,7 @@ async function home(): Promise<Page> {
 				const said = (what) => { document.body.dataset.said = (document.body.dataset.said ?? "") + what + ";"; };
 				function App() {
 					const [scope, setScope] = useState(null);
+					const [page, setPage] = useState("projects");
 					const [invites, setInvites] = useState([invite]);
 					const current = teams.teams.find((team) => team.address === scope) ?? null;
 					const notice = invites.length ? createElement("div", { className: "pj-invites" }, invites.map((one) =>
@@ -46,12 +47,19 @@ async function home(): Promise<Page> {
 						projects: [{ root: "/w/kaffe", name: "kaffe", openedAt: new Date().toISOString(), frameCount: 3, covers: [] }],
 						onOpenProject() {}, onForgetProject() {}, onTrashProject() {}, onRenameProject() {},
 						onStart() {}, onFolder() {},
-						switcher: createElement(TeamSwitcher, { teams, current, onSelect: setScope, onNewTeam: () => said("new") }),
+						places: createElement(HomePlaces, {
+							teams: teams.teams,
+							current: scope,
+							page,
+							onTeam: (address) => { setScope(address); setPage("projects"); },
+							onPage: setPage,
+							own: { current: scope === null, onOwn: () => setScope(null) },
+							watchAt: teams.origin,
+							onNewTeam: () => said("new"),
+						}),
+						place: scope ?? "/",
 						notice,
-						team: current ? {
-							nav: createElement(TeamNav, { team: current, page: "projects", onPage() {} }),
-							main: createElement(TeamProjects, { team: current, notice }),
-						} : undefined,
+						team: current ? { main: createElement(TeamProjects, { team: current, notice }) } : undefined,
 					});
 				}
 				createRoot(document.getElementById("root")).render(createElement(App));
@@ -67,7 +75,7 @@ async function home(): Promise<Page> {
 		define: { "process.env.NODE_ENV": '"production"' },
 	});
 	const browser = await testBrowser();
-	const page = await browser.newPage({ reducedMotion: "reduce", viewport: { width: 1280, height: 800 } });
+	const page = await browser.newPage({ reducedMotion: motion, viewport: { width: 1280, height: 800 } });
 	await page.setContent(`<div id="root" style="height: 800px"></div>`);
 	const assets = join(await builtUi(), "assets");
 	for (const file of readdirSync(assets).filter((name) => name.endsWith(".css")))
@@ -77,45 +85,73 @@ async function home(): Promise<Page> {
 	return page;
 }
 
-it("switches Home between your projects and a team, and sends a team you only watch to the browser", async () => {
+/** A sidebar place's row, as a person reads it: not the pages folded away under a team they're not in. */
+const places = (page: Page) =>
+	page
+		.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
+		.evaluateAll((rows) => rows.map((row) => row.getAttribute("title")));
+
+it("lists every place in the sidebar, opens the team you're in to its pages, and sends a watched team to the browser", async () => {
 	const page = await home();
-	await page.getByRole("button", { name: "Your projects" }).click();
-	const menu = page.getByRole("menu");
-	// each team's letter mark leads its row
-	expect(await menu.getByRole("menuitem").allTextContents()).toEqual([
-		"HHarbour Bankviewer ↗",
-		"NNorthlight2 people",
-		"TTidemark5 people",
-		"Your projects",
-		"New team…",
-	]);
-	const watched = menu.getByRole("menuitem", { name: /Harbour Bank/u });
+	expect(await places(page)).toEqual(["Harbour Bank", "Northlight", "Tidemark", "Your projects", "New team…"]);
+	expect(await page.locator("[aria-haspopup=menu]", { hasText: "Your projects" }).count()).toBe(0);
+	const watched = page.locator(".pj-places a", { hasText: "Harbour Bank" });
 	expect(await watched.getAttribute("href")).toBe("https://spool.page/harbour-bank");
 	expect(await watched.getAttribute("target")).toBe("_blank");
 
-	await menu.getByRole("menuitem", { name: /Tidemark/u }).click();
-	await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
-	expect(await page.getByRole("navigation", { name: "Home sections" }).getByRole("button").allTextContents()).toEqual([
+	await page.getByRole("button", { name: "Tidemark" }).click();
+	await page.getByRole("heading", { name: "Tidemark", exact: true }).waitFor();
+	expect(await places(page)).toEqual([
+		"Harbour Bank",
+		"Northlight",
+		"Tidemark",
 		"Projects",
-		"People5",
+		"People",
 		"Settings",
+		"Your projects",
+		"New team…",
 	]);
+	// the pages sit under the team's row, set in from it
+	const team = await page.getByRole("button", { name: "Tidemark" }).boundingBox();
+	const people = await page.getByRole("button", { name: "People" }).boundingBox();
+	if (!team || !people) throw new Error("missing layout");
+	expect(people.y).toBeGreaterThan(team.y);
 	expect(await page.getByText("Tidemark has no projects on this Mac yet").isVisible()).toBe(true);
 	expect(await page.getByRole("button", { name: "Open kaffe" }).count()).toBe(0);
 
-	await page.getByRole("button", { name: "Tidemark" }).click();
-	await page.getByRole("menuitem", { name: /Northlight/u }).click();
-	expect(await page.getByRole("navigation", { name: "Home sections" }).getByRole("button").allTextContents()).toEqual([
-		"Projects",
-		"People2",
-	]);
-
 	await page.getByRole("button", { name: "Northlight" }).click();
-	await page.getByRole("menuitem", { name: "New team…" }).click();
+	await expect
+		.poll(() => places(page))
+		.toEqual(["Harbour Bank", "Northlight", "Projects", "People", "Tidemark", "Your projects", "New team…"]);
+	await page.getByRole("button", { name: "New team…" }).click();
 	expect(await page.locator("body").getAttribute("data-said")).toBe("new;");
-	await page.getByRole("button", { name: "Northlight" }).click();
-	await page.getByRole("menuitem", { name: "Your projects" }).click();
+	await page.getByRole("button", { name: "Your projects" }).click();
 	await page.getByRole("button", { name: "Open kaffe" }).waitFor();
+});
+
+it("slides the team's pages open and fades the page up, on the house ease-out", async () => {
+	const page = await home("no-preference");
+	await page.getByRole("button", { name: "Tidemark" }).click();
+	const pages = page.locator("[data-place=tidemark] .pj-place-pages");
+	expect(await pages.evaluate((node) => getComputedStyle(node).transitionProperty)).toContain("grid-template-rows");
+	expect(await pages.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0\.18s/u);
+	expect(await pages.evaluate((node) => getComputedStyle(node).transitionTimingFunction)).toContain(
+		"cubic-bezier(0.22, 0.61, 0.36, 1)",
+	);
+	const fade = page.locator(".pj-place-in");
+	expect(await fade.evaluate((node) => getComputedStyle(node).animationName)).toBe("place-in");
+	const row = page.getByRole("button", { name: "Northlight" });
+	expect(await row.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0\.14s/u);
+});
+
+it("moves nothing under reduced motion", async () => {
+	const page = await home("reduce");
+	await page.getByRole("button", { name: "Tidemark" }).click();
+	const pages = page.locator("[data-place=tidemark] .pj-place-pages");
+	expect(await pages.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0s/u);
+	expect(await page.locator(".pj-place-in").evaluate((node) => getComputedStyle(node).animationName)).toBe("none");
+	const row = page.getByRole("button", { name: "Northlight" });
+	expect(await row.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0s/u);
 });
 
 it("shows an invite as one line above Home's covers, with Decline and Join", async () => {

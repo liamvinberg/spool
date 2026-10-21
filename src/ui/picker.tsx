@@ -35,7 +35,7 @@ export function ProjectPicker({
 }: {
 	initial?: "start" | "folder" | "location";
 	location?: string | undefined;
-	/** The team a new project starts in, as Home's switcher has it; none is this Mac only. */
+	/** The team a new project starts in, as Home's sidebar has it; none is this Mac only. */
 	team?: string | undefined;
 	onOpened: (project: { root: string; name: string }) => void;
 	onClose: () => void;

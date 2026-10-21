@@ -174,10 +174,14 @@ describe("Home in a browser", () => {
 		await checkout.waitFor();
 		expect(await checkout.getAttribute("href")).toBe("/devosurf/checkout");
 		await page.getByRole("link", { name: "Open onboarding" }).waitFor();
-		expect(await page.locator("aside").textContent()).toContain("Devosurf");
-		expect(await page.getByRole("navigation", { name: "Home sections" }).textContent()).toMatch(
-			/Projects.*People.*Settings/u,
-		);
+		expect(await page.getByRole("heading", { name: "Devosurf" }).count()).toBe(1);
+		// every team is a place, the one you're in open to its pages; Your projects and Recent are a Mac's
+		expect(
+			await page
+				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
+				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
+		).toEqual(["Devosurf", "Projects", "People", "Settings", "Client Co", "New team…"]);
+		expect(await page.getByText("Recent", { exact: true }).count()).toBe(0);
 		expect(await page.locator("[data-here]").getAttribute("data-here")).toBe("sam");
 		expect(await page.locator("main").textContent()).toContain("github.com/devosurf/checkout");
 		// the tab strip is the Mac window's: a browser has its own
@@ -195,11 +199,14 @@ describe("Home in a browser", () => {
 		await page.getByRole("link", { name: "Open checkout" }).waitFor();
 		expect(new URL(page.url()).pathname).toBe("/devosurf");
 		// a viewer's team is a place in a browser, not a link away
-		await page.getByRole("button", { name: /Devosurf/u }).click();
-		await page.getByRole("menuitem", { name: /Client Co/u }).click();
+		await page.getByRole("button", { name: "Client Co" }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/client");
 		await page.getByText("Client Co has no projects yet").waitFor();
-		expect(await page.getByRole("navigation", { name: "Home sections" }).textContent()).not.toContain("Settings");
+		expect(
+			await page
+				.locator(".pj-places :is(button, a):not([aria-hidden=true] *)")
+				.evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))),
+		).toEqual(["Devosurf", "Client Co", "Projects", "People", "New team…"]);
 		expect(asked).toContain("GET /api/teams/devosurf/people");
 	});
 

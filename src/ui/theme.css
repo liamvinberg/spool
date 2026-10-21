@@ -152,6 +152,8 @@
 	/* the canvas's own chrome arriving where it is already looked at, as the live
 	 * chip on a frame's name: on the everyday scale, so stillness cuts it */
 	--animate-chrome-in: chrome-in var(--transition-duration-fast) var(--ease-out);
+	/* Home's page as you go to another place: it fades up 6px, on the everyday scale */
+	--animate-place-in: place-in var(--transition-duration-base) var(--ease-out);
 	/* the finder: the scrim fades in, the panel settles from just above */
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -776,6 +778,13 @@
 		}
 	}
 
+	@keyframes place-in {
+		from {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+	}
+
 	@keyframes chrome-in {
 		from {
 			opacity: 0;
@@ -870,6 +879,7 @@
 	.animate-toast-in,
 	.animate-find-in,
 	.animate-chrome-in,
+	.animate-place-in,
 	.animate-find-panel-in,
 	.animate-agent-entry,
 	.animate-agent-open,

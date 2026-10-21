@@ -814,7 +814,7 @@ describe("Search and Recent, once this account is in a team", () => {
 		const host = mount(
 			createElement(Home, { projects: [own], ...actions(), everywhere: everywhere({ recent: false, onQuery }) }),
 		);
-		expect(host.querySelector("main h1")?.textContent).toBe("Projects");
+		expect(host.querySelector("main h1")?.textContent).toBe("Your projects");
 		expect(host.querySelectorAll('input[type="search"]')).toHaveLength(1);
 		act(() => type(host.querySelector('.pj-find input[type="search"]'), "site"));
 		expect(onQuery).toHaveBeenCalledWith("site");
