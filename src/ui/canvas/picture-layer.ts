@@ -221,7 +221,15 @@ export class PictureLayer {
 	private settle = false;
 	private disposed = false;
 
-	constructor(private readonly canvas: HTMLCanvasElement) {
+	/**
+	 * `drawing` hears whether the layer can draw at all: false with no WebGL2,
+	 * and while a lost context is away, so a page that must always show its
+	 * pictures can show them some other way meanwhile.
+	 */
+	constructor(
+		private readonly canvas: HTMLCanvasElement,
+		private readonly drawing: (drawing: boolean) => void = () => {},
+	) {
 		canvas.addEventListener("webglcontextlost", this.onLost);
 		canvas.addEventListener("webglcontextrestored", this.onRestored);
 		this.loads = new StillLoads({
@@ -235,11 +243,15 @@ export class PictureLayer {
 		});
 		this.gl = contextOf(canvas);
 		// no WebGL at all, nothing to load for: a canvas without it draws no pictures
-		if (this.gl === null) return;
+		if (this.gl === null) {
+			drawing(false);
+			return;
+		}
 		this.loads.start();
 		// a context already lost is one that comes back (`onRestored`)
 		if (this.gl.isContextLost()) this.lost = true;
 		else this.open(this.gl);
+		drawing(!this.lost);
 	}
 
 	/** The frames on this page, in drawing order: a later frame draws over an earlier one. */
@@ -908,6 +920,7 @@ export class PictureLayer {
 		this.lost = true;
 		this.loads.reset();
 		this.close();
+		if (!this.disposed) this.drawing(false);
 	};
 
 	/** Back: every program and texture is made again, and every still loads again from the HTTP cache. */
@@ -920,6 +933,7 @@ export class PictureLayer {
 		this.squares.clear();
 		this.halvings.clear();
 		this.setFrames(this.frames);
+		this.drawing(true);
 	};
 }
 
