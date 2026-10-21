@@ -2058,6 +2058,7 @@ describe("a restore from a backup (spool#191)", () => {
 		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"));
 		await until(() => existsSync(join(ana.root, "design/frames/about/frame.tsx")));
 		const before = cloud.saves("checkout").length;
+		const listed = cloud.lists("checkout");
 
 		cloud.restoreBackup("checkout", backup);
 		await until(() => cloud.file("checkout", "frames/home/frame.tsx") === "two\n", 10_000);
@@ -2077,7 +2078,8 @@ describe("a restore from a backup (spool#191)", () => {
 		expect(await marks(ana.daemon)).toEqual([]);
 		expect(await marks(ben.daemon)).toEqual([]);
 
-		// the epoch is kept: a save after builds on the restored copy, and no list is asked for again
+		// each Mac settles once; then the epoch is kept: a save after builds on the restored copy, and no list is asked again
+		await until(() => cloud.lists("checkout") >= listed + 2);
 		const lists = cloud.lists("checkout");
 		writeFrame(ben.root, "home", "three\n");
 		await until(
