@@ -9,6 +9,7 @@ import {
 	type CloudTeamInvite,
 	CloudTeamRefused,
 	cloudTeams,
+	type DeletedTeam,
 	type NewTeamStart,
 	type TeamRole,
 } from "../cloud-teams";
@@ -25,6 +26,8 @@ export type CloudTeamsState =
 	| {
 			state: "ready";
 			teams: CloudTeam[];
+			/** The deleted teams this account is an admin of, until their purge: only Export all is left of each. */
+			deletedTeams?: DeletedTeam[];
 			invites: CloudTeamInvite[];
 			mayCreateTeam: boolean;
 			newTeam?: NewTeamStart;

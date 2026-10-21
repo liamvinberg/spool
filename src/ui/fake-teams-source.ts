@@ -4,6 +4,7 @@ import {
 	type LosingPerson,
 	type MovePreview,
 	TeamActionRefused,
+	type TeamExportProgress,
 	type TeamMoveOutcome,
 	type TeamsSource,
 } from "./team-source";
@@ -65,6 +66,28 @@ export function fakeTeamsSource(start: {
 		if (target.billing?.state === "lapsed") return "unpaid";
 		if (listed(to).some((project) => project.name === name)) return "name_taken";
 		return null;
+	};
+	/** The export running, held until the test finishes, fails or cancels it. */
+	let exporting:
+		| {
+				transfer: string;
+				progress?: TeamExportProgress;
+				done: (folder: string) => void;
+				failed: (error: Error) => void;
+		  }
+		| undefined;
+	const exports = {
+		progress(progress: TeamExportProgress) {
+			if (exporting) exporting.progress = progress;
+		},
+		finish(folder: string) {
+			exporting?.done(folder);
+			exporting = undefined;
+		},
+		fail(said: string) {
+			exporting?.failed(new TeamActionRefused("export_failed", said));
+			exporting = undefined;
+		},
 	};
 	const source: TeamsSource = {
 		list: async () => ({
@@ -245,10 +268,28 @@ export function fakeTeamsSource(start: {
 			state.setup = { ...state.setup, done: true };
 			return state.setup;
 		},
+		exportTeam: async (address, request) => {
+			ask(
+				`export ${address}${request.project === undefined ? "" : `/${request.project}`} into ${request.into} as ${request.transfer}`,
+			);
+			admin(address);
+			return new Promise<{ folder: string }>((resolve, reject) => {
+				exporting = { transfer: request.transfer, done: (folder) => resolve({ folder }), failed: reject };
+			});
+		},
+		exportProgress: async (transfer) => (exporting?.transfer === transfer ? exporting.progress : undefined),
+		cancelExport: async (transfer) => {
+			ask(`cancel export ${transfer}`);
+			if (exporting?.transfer !== transfer) return;
+			exporting.failed(new TeamActionRefused("export_cancelled", "Export cancelled."));
+			exporting = undefined;
+		},
 	};
 	return {
 		source,
 		asked,
+		/** The export running: how far it says it has come, and its end. */
+		exports,
 		/** What spool.page says next, as a webhook or a sweep would have changed it. */
 		set(change: Partial<typeof state>) {
 			Object.assign(state, change);

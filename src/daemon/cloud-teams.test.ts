@@ -281,7 +281,10 @@ describe("a team export from this Mac", () => {
 		expect((await api("/exports/x5")).body).toEqual({ team: "tidemark", progress: null });
 		expect(await api("/exports/x5/cancel", "POST")).toEqual({ status: 200, body: { cancelled: true } });
 		release();
-		expect(await running).toEqual({ status: 409, body: { error: "Export cancelled.", cancelled: true } });
+		expect(await running).toEqual({
+			status: 409,
+			body: { error: "Export cancelled.", code: "export_cancelled", cancelled: true },
+		});
 		expect(readdirSync(into)).toEqual([]);
 	});
 });

@@ -477,16 +477,18 @@ export function teamExportRoutes(options: { spoolDir: string; cloud?: CloudReque
 					transfer?: unknown;
 				};
 				if (typeof transfer !== "string" || !/^[a-zA-Z0-9-]{1,100}$/u.test(transfer))
-					return c.json({ error: "An export id is required." }, 400);
-				if (project !== undefined && typeof project !== "string") return c.json({ error: "invalid_project" }, 400);
+					return c.json({ error: "An export id is required.", code: "invalid_export" }, 400);
+				if (project !== undefined && typeof project !== "string")
+					return c.json({ error: "Name a project to export.", code: "invalid_export" }, 400);
 				const folder = typeof into === "string" ? expandHome(into) : "";
 				if (!isAbsolute(folder) || !isDirectory(folder))
-					return c.json({ error: "Choose a folder to export into." }, 400);
+					return c.json({ error: "Choose a folder to export into.", code: "invalid_folder" }, 400);
 				return { into: folder, project, transfer };
 			}),
 			async (c) => {
 				const { into, project, transfer } = c.req.valid("json");
-				if (running.has(transfer)) return c.json({ error: "This export is already running." }, 409);
+				if (running.has(transfer))
+					return c.json({ error: "This export is already running.", code: "export_running" }, 409);
 				const job: RunningExport = { team: c.req.param("team"), progress: null, controller: new AbortController() };
 				running.set(transfer, job);
 				try {
@@ -504,11 +506,12 @@ export function teamExportRoutes(options: { spoolDir: string; cloud?: CloudReque
 						}),
 					);
 				} catch (error) {
-					if (job.controller.signal.aborted) return c.json({ error: "Export cancelled.", cancelled: true }, 409);
+					if (job.controller.signal.aborted)
+						return c.json({ error: "Export cancelled.", code: "export_cancelled", cancelled: true }, 409);
 					if (error instanceof CloudTeamRefused)
 						return c.json({ error: error.code }, error.status as ContentfulStatusCode);
 					if (error instanceof CloudSignedOut) return c.json({ error: "signed_out" }, 401);
-					if (error instanceof SpoolError) return c.json({ error: error.message }, 400);
+					if (error instanceof SpoolError) return c.json({ error: error.message, code: "export_failed" }, 400);
 					return c.json({ error: "unreachable" }, 503);
 				} finally {
 					running.delete(transfer);

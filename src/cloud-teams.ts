@@ -90,8 +90,18 @@ export interface CloudTeamInvite {
 	expiresAt: number;
 }
 
+/** A deleted team this account is an admin of: it may still be exported until `purgeAfter`, unix seconds. */
+export interface DeletedTeam {
+	address: string;
+	name: string;
+	logo: string | null;
+	purgeAfter: number;
+}
+
 export interface CloudTeams {
 	teams: CloudTeam[];
+	/** The deleted teams this account is an admin of, until their purge. Absent from a spool.page before #200. */
+	deletedTeams?: DeletedTeam[];
 	invites: CloudTeamInvite[];
 	/** Until launch, a maintainer decides who may start a team. */
 	mayCreateTeam: boolean;

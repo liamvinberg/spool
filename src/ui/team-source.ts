@@ -4,6 +4,7 @@ import type {
 	CloudTeam,
 	CloudTeamInvite,
 	CloudTeamProject,
+	DeletedTeam,
 	RemovedTeamProject,
 	TeamPeople,
 	TeamProjectHere,
@@ -150,6 +151,26 @@ export interface TeamsSource {
 	skipProjects(address: string): Promise<TeamSetup>;
 	/** Every step is done: the list goes for good. */
 	setupDone(address: string): Promise<TeamSetup>;
+	/**
+	 * The team, or one project of it, exported into a folder on this Mac (#200), answered once it is written. Only the
+	 * daemon does this; `transfer` names the run for its progress and its cancel.
+	 */
+	exportTeam(
+		address: string,
+		request: { into: string; project?: string; transfer: string },
+	): Promise<{ folder: string }>;
+	/** How far a running export has come; undefined once it isn't running, or before it says. */
+	exportProgress(transfer: string): Promise<TeamExportProgress | undefined>;
+	/** A running export stopped: it leaves nothing behind. */
+	cancelExport(transfer: string): Promise<unknown>;
+}
+
+/** How far a team export has come: the project being written, which of how many, and how many saves are in. */
+export interface TeamExportProgress {
+	project: string;
+	index: number;
+	projects: number;
+	saves: number;
 }
 
 /**
@@ -202,6 +223,7 @@ export function teamsAt(
 				invites?: unknown;
 				mayCreateTeam?: unknown;
 				newTeam?: unknown;
+				deletedTeams?: unknown;
 				origin?: unknown;
 			} | null;
 			if (response.status === 401 || body?.state === "signed-out") return { state: "signed-out" };
@@ -211,6 +233,7 @@ export function teamsAt(
 				state: "ready",
 				teams: body.teams as CloudTeam[],
 				invites: body.invites as CloudTeamInvite[],
+				...(Array.isArray(body.deletedTeams) ? { deletedTeams: body.deletedTeams as DeletedTeam[] } : {}),
 				mayCreateTeam: body.mayCreateTeam === true,
 				...(body.newTeam === "trial" || body.newTeam === "free" || body.newTeam === "paid"
 					? { newTeam: body.newTeam }
@@ -318,6 +341,12 @@ export function teamsAt(
 		skipInvites: (address) => call("POST", `${team(address)}/setup/skip-invites`),
 		skipProjects: (address) => call("POST", `${team(address)}/setup/skip-projects`),
 		setupDone: (address) => call("POST", `${team(address)}/setup/done`),
+		exportTeam: (address, request) => call("POST", `${team(address)}/export`, request),
+		async exportProgress(transfer) {
+			const body = await read<{ progress?: TeamExportProgress | null }>(`/exports/${encodeURIComponent(transfer)}`);
+			return body?.progress ?? undefined;
+		},
+		cancelExport: (transfer) => call("POST", `/exports/${encodeURIComponent(transfer)}/cancel`),
 	};
 }
 
