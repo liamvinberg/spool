@@ -44,6 +44,8 @@ export function carryCover(root: string, from: string, to: string): void {
 	// the new name was nobody's frame, so anything parked under it is orphaned cache
 	rmSync(target, { recursive: true, force: true });
 	renameSync(held, target);
+	// the version a still is of names its frame, so under the new name it is of no version anyone knows
+	rmSync(join(target, SOURCE_NAME), { force: true });
 }
 
 function listing(dir: string): Dirent[] {
@@ -157,7 +159,7 @@ function coverFormat(bytes: Buffer): { ext: CoverExt; type: string } | undefined
  * fact a canvas switching to the other can not read off the picture: which of
  * the covers it holds are now of a frame nobody is looking at.
  */
-export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: ColorScheme): Cover {
+export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: ColorScheme, source?: string): Cover {
 	const dir = coverDir(root, frame);
 	const format = coverFormat(bytes);
 	if (format === undefined) throw new Error("a cover must be one PNG or JPEG image");
@@ -175,11 +177,55 @@ export function writeCover(root: string, frame: string, bytes: Buffer, scheme?: 
 		rmSync(join(coverStoreDir(root), `${frame}.${legacyFormat.ext}`), { force: true });
 	}
 	if (scheme !== undefined) writeAtomic(join(dir, SCHEME_NAME), `${scheme}\n`);
+	if (source !== undefined) writeAtomic(join(dir, SOURCE_NAME), `${source}\n`);
 	writeAtomic(join(dir, BOOTH_NAME), "");
 	return { hash };
 }
 
 const SCHEME_NAME = "scheme";
+/**
+ * Beside a still the booth took, the version of the frame it is of
+ * (`CompiledFrameDocument.source`): what a team project's cover is filed under
+ * in the cloud, so a still can be sent later, by whichever start finds the
+ * cloud without it. A still without one is of a version nobody can say.
+ */
+const SOURCE_NAME = "source";
+const SOURCE_HASH = /^[0-9a-f]{64}$/;
+
+/** A frame's stored still, as a later send reads it: its address, the version it is of, and whether the booth failed on it since. */
+export interface StoredStill {
+	hash: string;
+	source: string | undefined;
+	failed: boolean;
+}
+
+/** Every frame's stored still, read without holding the event loop. */
+export async function scanStills(root: string): Promise<Map<string, StoredStill>> {
+	const store = coverStoreDir(root);
+	const folders = (await listed(store)).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+	const scanned = await Promise.all(
+		folders.map(async (folder) => {
+			const frame = segmentFrame(folder);
+			if (frame === undefined) return undefined;
+			const names = (await listed(join(store, folder))).filter((entry) => entry.isFile()).map((entry) => entry.name);
+			const cover = coverAmong(names);
+			if (cover === undefined) return undefined;
+			const recorded = names.includes(SOURCE_NAME)
+				? await readFile(join(store, folder, SOURCE_NAME), "utf8").then(
+						(text) => text.trim(),
+						() => "",
+					)
+				: "";
+			const still: StoredStill = {
+				hash: cover.hash,
+				source: SOURCE_HASH.test(recorded) ? recorded : undefined,
+				failed: names.includes(CAPTURE_ERROR_NAME),
+			};
+			return [frame, still] as const;
+		}),
+	);
+	return new Map(scanned.filter((entry) => entry !== undefined));
+}
 /**
  * Beside every cover the booth made (ADR 0010). A cover without it was taken
  * by a canvas photographing its own frames, before the booth, and those

@@ -127,10 +127,10 @@ describe("design/ moved away", () => {
 		// the frame never committed stays, unsent
 		expect(readFileSync(join(clone.root, "design/frames/sketch/frame.tsx"), "utf8")).toContain("sketch");
 		expect(cloud.file("kaffe", "frames/sketch/frame.tsx")).toBeUndefined();
-		// spool.page was asked only about this account and the project, never who is in the team
+		// spool.page was asked only about this account and the project (its covers too), never who is in the team
 		expect(asked.length).toBeGreaterThan(0);
 		for (const url of asked)
-			expect(new URL(url).pathname).toMatch(/^\/api\/(me|teams|teams\/devosurf\/projects\/kaffe)$/u);
+			expect(new URL(url).pathname).toMatch(/^\/api\/(me|teams|teams\/devosurf\/projects\/kaffe(\/covers)?)$/u);
 	});
 
 	it("fills the copy in by itself once the account is made an editor, sending the frames never committed", {

@@ -247,7 +247,9 @@ it("says at its foot who shared the whole project with them, by the project's na
 }, async () => {
 	const opened = await open({ shared: { by: "bo", pages: ["", "menu"], updated: null, whole: true } });
 	await opened.go();
-	await opened.page.locator("[data-viewer-shared]").getByText("bo shared checkout with you").waitFor();
+	const line = opened.page.locator("[data-viewer-shared]");
+	await line.getByText("Shared by bo").waitFor();
+	expect(await line.getAttribute("title")).toBe("bo shared checkout with you");
 });
 
 it("signs in on the link's host by an email code and the name step, then the pins ripple in and the tool carries on", {

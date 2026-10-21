@@ -565,6 +565,8 @@ export function createDaemonApp({
 		onChange: () => {
 			emitAppEvent({ kind: "account" });
 			movedAwayFrom.account();
+			// a team project that couldn't be brought level while signed out is asked again
+			if (selfOrigin !== undefined) teamCovers.keeping(registeredRoots());
 		},
 	});
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
@@ -663,6 +665,10 @@ export function createDaemonApp({
 	const teamCovers = createTeamCovers({
 		spoolDir,
 		request: () => ({ ...cloud, origin: originOf(cloud) }),
+		// a frame spool.page has no cover of, and no still here can be sent of, sits for one
+		owe: (root, frame, why) => {
+			if (selfOrigin !== undefined) booth.enqueue({ root, project: basename(root), frame, reason: why });
+		},
 		log: (line) => console.error(`spool: ${line}`),
 	});
 	// a project's shared pages: a team's through spool.page, and a solo project's uploaded by this daemon
@@ -675,6 +681,9 @@ export function createDaemonApp({
 			hub.subscribe(root, (event) => {
 				if (event.kind === "frame" || event.kind === "shared" || event.kind === "geometry") saved();
 			}),
+		owe: (root, frame, why) => {
+			if (selfOrigin !== undefined) booth.enqueue({ root, project: basename(root), frame, reason: why });
+		},
 		log: (line) => console.error(`spool: ${line}`),
 	});
 	projectShares.keeping(registeredRoots());
@@ -714,7 +723,7 @@ export function createDaemonApp({
 		store: (root, frame, bytes, scheme, source) => {
 			// a frame deleted while it sat has no folder a picture belongs in
 			if (!frameExists(root, frame)) return;
-			const cover = writeCover(root, frame, bytes, scheme);
+			const cover = writeCover(root, frame, bytes, scheme, source);
 			hub.publish(root, { kind: "thumb", frame, cover });
 			if (source !== undefined) teamCovers.stored(root, frame, source, bytes);
 			if (source !== undefined) projectShares.covered(root, frame, source, bytes);
@@ -795,6 +804,8 @@ export function createDaemonApp({
 		// starts in, or than the one the canvas went to while it was not watched,
 		// or taken by a canvas before the booth
 		void booth.schemeKnown().then(() => restale(arrived));
+		// a team project newly watched, or newly a team's, is brought level with the covers spool.page keeps
+		teamCovers.keeping(roots);
 	}
 
 	/**

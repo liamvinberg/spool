@@ -4,7 +4,9 @@ import { containSize, halvingKey, halvingSteps, type PixelSize, Priority, SQUARE
  * The picture layer's loader, in a worker of its own (#81): fetch a still,
  * decode it, shrink it to the textures the layer asked for, and hand the
  * bitmaps over. The layer runs a few of these side by side
- * (`picture-loads.ts`), each still always going to the same one.
+ * (`picture-loads.ts`), each still always going to the same one. Where the
+ * page may make no worker of the script beside it (a link share's host,
+ * whose script comes from spool.page), the same loader runs on the page.
  *
  * Off the page's thread because the page's thread is busy exactly when the
  * most stills are wanted: opening a page mounts a label per frame, most of a
@@ -109,111 +111,124 @@ const LOADS = 12;
  * decoded 45 squares off screen before the last one on it.
  */
 const BACKGROUND = 1;
-let open = true;
 
 type Load = Extract<LoaderAsk, { kind: "load" }>;
 
-const queue = new Map<string, Load>();
-let fetching = 0;
-let decoding = 0;
-let background = 0;
-let urgent = 0;
-
-const post = (reply: LoaderReply, transfer: Transferable[] = []) => self.postMessage(reply, { transfer });
-
-// Asks come in batches, everything one draw asked: applied together, so the
-// queue knows which squares are on screen before it starts any.
-self.onmessage = (event: MessageEvent<LoaderAsk[]>) => {
-	for (const ask of event.data) {
-		if (ask.kind === "load") queue.set(ask.key, ask);
-		else if (ask.kind === "priority") {
-			const queued = queue.get(ask.key);
-			if (queued !== undefined) {
-				queued.priority = ask.priority;
-				if (ask.drawing !== undefined) queued.drawing = ask.drawing;
-			}
-		} else if (ask.kind === "cancel") {
-			const queued = queue.get(ask.key);
-			if (queued !== undefined) {
-				queue.delete(ask.key);
-				post({ key: ask.key, generation: queued.generation, ask: queued.ask, dropped: true });
-			}
-		} else if (ask.kind === "background") open = ask.open;
-		else queue.clear();
-	}
-	pump();
-};
-
-function pump(): void {
-	while (fetching < FETCHES && fetching + decoding < LOADS && queue.size > 0) {
-		let best: Load | null = null;
-		for (const load of queue.values()) if (best === null || load.priority < best.priority) best = load;
-		if (best === null) return;
-		const later = best.priority >= Priority.page;
-		if (later && (!open || urgent > 0 || background >= BACKGROUND)) return;
-		// everything else asked of the same still rides along on its decode
-		const group: Load[] = [];
-		for (const load of queue.values()) if (load.still === best.still) group.push(load);
-		for (const load of group) queue.delete(load.key);
-		void run(group, later);
-	}
+/**
+ * Where a loader hears its asks and answers them: a worker's own scope
+ * (`picture-loader-worker.ts`), or the page's side of an in-page loader where
+ * no worker can be made (`picture-loads.ts`).
+ */
+export interface LoaderPort {
+	postMessage(reply: LoaderReply, options: { transfer: Transferable[] }): void;
+	onmessage: ((event: MessageEvent<LoaderAsk[]>) => void) | null;
 }
 
-async function run(group: Load[], later: boolean): Promise<void> {
-	if (later) background += 1;
-	else urgent += 1;
-	try {
-		await fetchAndDecode(group);
-	} finally {
-		if (later) background -= 1;
-		else urgent -= 1;
-		pump();
-	}
-}
+/** Serve one loader's asks on `port`, for as long as it lives. */
+export function serveLoader(port: LoaderPort): void {
+	const queue = new Map<string, Load>();
+	let fetching = 0;
+	let decoding = 0;
+	let background = 0;
+	let urgent = 0;
+	let open = true;
 
-const fail = (group: readonly Load[]) => {
-	for (const load of group) post({ key: load.key, generation: load.generation, ask: load.ask, failed: true });
-};
+	const post = (reply: LoaderReply, transfer: Transferable[] = []) => port.postMessage(reply, { transfer });
 
-async function fetchAndDecode(group: Load[]): Promise<void> {
-	const first = group[0];
-	if (first === undefined) return;
-	fetching += 1;
-	let blob: Blob;
-	try {
-		const wanted = group.some((load) => load.priority < Priority.page);
-		const response = await fetch(first.href, { priority: wanted ? "high" : "low" });
-		if (!response.ok) throw new Error(`still ${response.status}`);
-		blob = await response.blob();
-	} catch {
-		fail(group);
-		return;
-	} finally {
-		fetching -= 1;
-		pump();
-	}
-	const fetchedAt = performance.timeOrigin + performance.now();
-	decoding += 1;
-	try {
-		const made = await shrink(blob, group);
-		for (const { output, bitmap, natural } of made) {
-			post(
-				{
-					key: output.key,
-					generation: first.generation,
-					bitmap,
-					natural,
-					fetchedAt,
-					...(output.ask === undefined ? { size: output.size } : { ask: output.ask }),
-				},
-				[bitmap],
-			);
+	// Asks come in batches, everything one draw asked: applied together, so the
+	// queue knows which squares are on screen before it starts any.
+	port.onmessage = (event: MessageEvent<LoaderAsk[]>) => {
+		for (const ask of event.data) {
+			if (ask.kind === "load") queue.set(ask.key, ask);
+			else if (ask.kind === "priority") {
+				const queued = queue.get(ask.key);
+				if (queued !== undefined) {
+					queued.priority = ask.priority;
+					if (ask.drawing !== undefined) queued.drawing = ask.drawing;
+				}
+			} else if (ask.kind === "cancel") {
+				const queued = queue.get(ask.key);
+				if (queued !== undefined) {
+					queue.delete(ask.key);
+					post({ key: ask.key, generation: queued.generation, ask: queued.ask, dropped: true });
+				}
+			} else if (ask.kind === "background") open = ask.open;
+			else queue.clear();
 		}
-	} catch {
-		fail(group);
-	} finally {
-		decoding -= 1;
 		pump();
+	};
+
+	function pump(): void {
+		while (fetching < FETCHES && fetching + decoding < LOADS && queue.size > 0) {
+			let best: Load | null = null;
+			for (const load of queue.values()) if (best === null || load.priority < best.priority) best = load;
+			if (best === null) return;
+			const later = best.priority >= Priority.page;
+			if (later && (!open || urgent > 0 || background >= BACKGROUND)) return;
+			// everything else asked of the same still rides along on its decode
+			const group: Load[] = [];
+			for (const load of queue.values()) if (load.still === best.still) group.push(load);
+			for (const load of group) queue.delete(load.key);
+			void run(group, later);
+		}
+	}
+
+	async function run(group: Load[], later: boolean): Promise<void> {
+		if (later) background += 1;
+		else urgent += 1;
+		try {
+			await fetchAndDecode(group);
+		} finally {
+			if (later) background -= 1;
+			else urgent -= 1;
+			pump();
+		}
+	}
+
+	const fail = (group: readonly Load[]) => {
+		for (const load of group) post({ key: load.key, generation: load.generation, ask: load.ask, failed: true });
+	};
+
+	async function fetchAndDecode(group: Load[]): Promise<void> {
+		const first = group[0];
+		if (first === undefined) return;
+		fetching += 1;
+		let blob: Blob;
+		try {
+			const wanted = group.some((load) => load.priority < Priority.page);
+			const response = await fetch(first.href, { priority: wanted ? "high" : "low" });
+			if (!response.ok) throw new Error(`still ${response.status}`);
+			blob = await response.blob();
+		} catch {
+			fail(group);
+			return;
+		} finally {
+			fetching -= 1;
+			pump();
+		}
+		const fetchedAt = performance.timeOrigin + performance.now();
+		decoding += 1;
+		try {
+			const made = await shrink(blob, group);
+			for (const { output, bitmap, natural } of made) {
+				post(
+					{
+						key: output.key,
+						generation: first.generation,
+						bitmap,
+						natural,
+						fetchedAt,
+						...(output.ask === undefined ? { size: output.size } : { ask: output.ask }),
+					},
+					[bitmap],
+				);
+			}
+		} catch {
+			fail(group);
+		} finally {
+			decoding -= 1;
+			pump();
+		}
 	}
 }
 

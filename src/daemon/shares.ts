@@ -16,7 +16,9 @@ import { compileFrameDocument } from "./design-compile";
 import { realDesignDir } from "./design-path";
 import { projectDesign } from "./design-projection";
 import { diskDesignFiles } from "./disk-files";
+import type { CoverOwed } from "./team-covers";
 import { hasEnded } from "./team-sync";
+import { readCoverImage, type StoredStill, scanStills } from "./thumbs";
 
 /**
  * A project moving into a team (DEV-190) takes its shares with it: a solo project's shares become the team project's,
@@ -59,6 +61,8 @@ export interface ProjectSharesOptions {
 	resolve: (c: Context, name: string) => { root: string } | { response: Response };
 	/** Follow a project's saves; returns how to stop. */
 	watch: (root: string, saved: () => void) => () => void;
+	/** A shared frame with no still of the version it is now: the booth owes it, and its still goes up as it lands. */
+	owe?: (root: string, frame: string, why: CoverOwed) => void;
 	log?: (line: string) => void;
 }
 
@@ -78,15 +82,13 @@ export function createProjectShares(options: ProjectSharesOptions) {
 	let queue: Promise<unknown> = Promise.resolve();
 	const quiet = new Map<string, ReturnType<typeof setTimeout>>();
 	const watching = new Map<string, () => void>();
-	/** The newest cover the booth took of each frame since the daemon started, with the version it is of. */
-	const shots = new Map<string, { source: string; bytes: Uint8Array }>();
 	/** The frames each solo project's last upload showed: the only ones whose covers leave this Mac. */
 	const shown = new Map<string, ReadonlySet<string>>();
 
 	const sendCover = async (id: string, frame: string, cover: { source: string; bytes: Uint8Array }) => {
 		const cloud = client();
 		const at = { kind: "solo", id } as const;
-		if (!(await cloud.hasCover(at, cover.source))) await cloud.putCover(at, cover.source, frame, cover.bytes);
+		if (!(await cloud.knowsCover(at, cover.source))) await cloud.putCover(at, cover.source, frame, cover.bytes);
 	};
 
 	const stateFile = (root: string) => join(root, "design", SHARE_STATE);
@@ -153,10 +155,18 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			await cloud.putSource(id, hashes);
 		}
 		shown.set(root, new Set(frames));
-		// a frame's cover goes up under the version it is of, so outsiders see it while that version is theirs
+		// a frame's cover goes up under the version it is of, so outsiders see it while that version is theirs: the
+		// still the booth stored of it, whenever it was taken, or a sitting owed for one
+		const stills = await scanStills(root).catch(() => new Map<string, StoredStill>());
 		for (const frame of frames) {
-			const cover = shots.get(`${root}\0${frame}`);
-			if (cover !== undefined && cover.source === sources.get(frame)) await sendCover(id, frame, cover);
+			const source = sources.get(frame);
+			if (source === undefined) continue;
+			const still = stills.get(frame);
+			const image = still?.source === source ? readCoverImage(root, frame, still.hash) : undefined;
+			if (image !== undefined) await sendCover(id, frame, { source, bytes: image.bytes });
+			// a frame the booth failed on would only fail again: an edit asks for it
+			else if (still === undefined) options.owe?.(root, frame, "missing");
+			else if (!still.failed) options.owe?.(root, frame, "stale");
 		}
 		if (asking !== undefined) return;
 		// a whole-project share follows the project even while it has no page: one added later goes up
@@ -315,11 +325,10 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			for (const root of [...watching.keys()]) if (!kept.has(root)) stopWatching(root);
 		},
 		/**
-		 * The booth took a frame's cover: kept for the next upload, and sent now when the project is a shared solo
-		 * project (a team project's go up through `team-covers.ts`).
+		 * The booth took a frame's cover: sent now when the project is a shared solo project and the frame is on a page
+		 * it shares, else by the next upload that shows it (a team project's go up through `team-covers.ts`).
 		 */
 		covered: (root: string, frame: string, source: string, bytes: Uint8Array) => {
-			shots.set(`${root}\0${frame}`, { source, bytes });
 			const place = placeOf(root);
 			if (typeof place === "string" || place.kind !== "solo" || !shown.get(root)?.has(frame)) return;
 			void enqueue(() => sendCover(place.id, frame, { source, bytes })).catch(() => {

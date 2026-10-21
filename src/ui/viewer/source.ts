@@ -123,11 +123,13 @@ export function edits(role: ViewerRole | undefined): boolean {
  * What the project's live address says. `head` is the newest save the cloud holds, told on every connect, so a
  * canvas that was away knows whether it missed any. `saved` is one save as it lands: who made it, the frames
  * whose own files it changed (marked, and named in the toast), and every frame that renders what it changed,
- * whose documents are made again.
+ * whose documents are made again. `covered` says new covers landed for these frames, so the project is read
+ * again for their addresses; spool.page says it only to a canvas that asked (`listen`).
  */
 export type ViewerLive =
 	| { type: "head"; head: number }
-	| { type: "saved"; head: number; by: string; changed: string[]; touched: string[] };
+	| { type: "saved"; head: number; by: string; changed: string[]; touched: string[] }
+	| { type: "covered"; frames: string[] };
 
 /** How often a socket of the canvas's asks whether it is still there; spool.page answers `pong` without waking. */
 const PING_MS = 15_000;
@@ -235,10 +237,14 @@ function keepOpen(
 
 /**
  * Listen to the project's saves for as long as the canvas is open. The canvas sends nothing over it but the
- * keepalive: it only hears.
+ * keepalive: it only hears. It asks to be told when covers land too (`covered=1`): a canvas from before that
+ * message may not ignore one, so spool.page says it only to a canvas that asks, and an older spool.page ignores
+ * the ask.
  */
 export function listen(address: string, heard: (message: ViewerLive) => void): () => void {
-	return keepOpen(address, {
+	const covered = new URL(address, window.location.href);
+	covered.searchParams.set("covered", "1");
+	return keepOpen(covered.href, {
 		heard: (data) => {
 			const message = readLive(data);
 			if (message !== undefined) heard(message);
@@ -325,12 +331,15 @@ function readJson(data: unknown): Record<string, unknown> | undefined {
 	}
 }
 
-function readLive(data: unknown): ViewerLive | undefined {
+export function readLive(data: unknown): ViewerLive | undefined {
 	const message = readJson(data);
-	if (message === undefined || typeof message.head !== "number") return undefined;
-	if (message.type === "head") return { type: "head", head: message.head };
+	if (message === undefined) return undefined;
 	const names = (list: unknown) =>
 		Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : [];
+	if (message.type === "covered")
+		return Array.isArray(message.frames) ? { type: "covered", frames: names(message.frames) } : undefined;
+	if (typeof message.head !== "number") return undefined;
+	if (message.type === "head") return { type: "head", head: message.head };
 	if (message.type === "saved" && typeof message.by === "string")
 		return {
 			type: "saved",

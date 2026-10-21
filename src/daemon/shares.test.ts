@@ -21,6 +21,8 @@ import type { AgentEngine } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import { realDesignDir } from "./design-path";
 import { createProjectShares, SOLO_QUIET_MS, sharedFiles } from "./shares";
+import type { CoverOwed } from "./team-covers";
+import { writeCaptureError, writeCover } from "./thumbs";
 
 /**
  * Sharing pages from the Mac: a team project's shares are spool.page's, changed through this Mac's session; a solo
@@ -629,6 +631,51 @@ describe("a solo project's covers", () => {
 		shares.covered(root, "menu/list", "b".repeat(64), png);
 		await shares.settled();
 		expect([...cloud.covers]).toEqual([[sources.get("checkout/pay"), "checkout/pay"]]);
+		shares.close();
+	});
+	it("go up from the stills stored before, and the booth owes the frames with none of the version they are", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		for (const [leaf, words] of [
+			["pay", "Pay 640 kr"],
+			["done", "Thank you"],
+			["receipt", "Receipt"],
+			["slow", "Slow"],
+			["never", "Never shot"],
+		])
+			writePageFrame(root, "checkout", leaf ?? "", frame(words ?? ""));
+		const { sources } = await sharedFiles(root, realDesignDir(root), ["checkout"], "0.0.0-test");
+		const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
+		// taken by an earlier run of the daemon: of the version each is now, of an older one, and of none it said
+		writeCover(root, "checkout/pay", png, undefined, sources.get("checkout/pay"));
+		writeCover(root, "checkout/done", png, undefined, "e".repeat(64));
+		writeCover(root, "checkout/receipt", png);
+		writeCover(root, "checkout/slow", png);
+		writeCaptureError(root, "checkout/slow", "too slow");
+		const owed: [string, CoverOwed][] = [];
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+			owe: (_root, frame, why) => owed.push([frame, why]),
+		});
+		const made = await shares.routes.request(`/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ kind: "link", pages: ["checkout"] }),
+		});
+		expect(made.status).toBe(200);
+		await shares.settled();
+
+		expect([...cloud.covers]).toEqual([[sources.get("checkout/pay"), "checkout/pay"]]);
+		expect(owed.sort()).toEqual([
+			["checkout/done", "stale"],
+			["checkout/never", "missing"],
+			["checkout/receipt", "stale"],
+		]);
 		shares.close();
 	});
 });

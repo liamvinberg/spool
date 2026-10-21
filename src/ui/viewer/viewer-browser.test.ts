@@ -5,6 +5,7 @@ import type { Page, WebSocketRoute } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PresenceState } from "../../team-sync-protocol";
 import { testBrowser } from "../../test-browser";
+import type { PictureReport } from "../canvas/picture-layer";
 import { buildEntry } from "./build-entry";
 import type { ViewerProject } from "./source";
 
@@ -152,7 +153,8 @@ async function open(
 	let reading = as;
 	let version = "";
 	let socket: WebSocketRoute | undefined;
-	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live`, (route) => {
+	// asking to hear when covers land too
+	await page.routeWebSocket(`${APP.replace("https", "wss")}/api/live?covered=1`, (route) => {
 		socket = route;
 		route.send(JSON.stringify({ type: "head", head: 1 }));
 	});
@@ -234,6 +236,18 @@ async function open(
 		},
 	};
 }
+
+/** What the picture layer drew last, as it reports it. */
+const pictures = (page: Page) =>
+	page.evaluate(() => {
+		const canvas = document.querySelector("[data-picture-layer]") as
+			| (HTMLCanvasElement & { spoolPictures?: () => PictureReport })
+			| null;
+		return canvas?.spoolPictures?.() ?? null;
+	});
+/** The frames the picture layer drew with their pictures in. */
+const drawnPictures = async (page: Page) =>
+	((await pictures(page))?.drawn ?? []).filter((each) => each.texture !== null).map((each) => each.name);
 
 const cameraOf = (page: Page) =>
 	page.locator("[data-canvas-camera]").evaluate((el) => (el as HTMLElement).style.transform);
@@ -456,13 +470,15 @@ describe("the read-only canvas", () => {
 	}, async () => {
 		const { page } = await open(PATH, { as: editor });
 		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
-		// out until home draws under 400px wide: its cover stands, and menu, which has none, stays live
+		// out until both draw under 400px: home's cover stands, drawn by the picture layer with no shell, and menu,
+		// which has none, is its placeholder rather than a document
 		await page.getByRole("button", { name: "Zoom out" }).click();
 		await page.getByRole("button", { name: "Zoom out" }).click();
 		await page.getByRole("button", { name: "Zoom out" }).click();
-		await expect.poll(() => page.locator('iframe[title="home"]').count()).toBe(0);
-		expect(await page.locator('[data-viewer-frame="home"] [data-viewer-cover]').isVisible()).toBe(true);
-		expect(await page.locator('iframe[title="menu"]').count()).toBe(1);
+		await expect.poll(() => page.locator("iframe").count()).toBe(0);
+		await expect.poll(() => drawnPictures(page)).toEqual(["home"]);
+		expect(await page.locator('[data-viewer-frame="home"]').count()).toBe(0);
+		expect(await page.locator('[data-viewer-frame="menu"] [data-viewer-placeholder]').isVisible()).toBe(true);
 		await page.getByRole("button", { name: "Zoom in" }).click();
 		await page.getByRole("button", { name: "Zoom in" }).click();
 		await page.getByRole("button", { name: "Zoom in" }).click();
@@ -501,9 +517,12 @@ describe("the read-only canvas", () => {
 		expect(await viewer.page.getByRole("button", { name: "Open in spool" }).count()).toBe(0);
 
 		const { page, requests } = await open(PATH, { as: editor });
+		await page.getByRole("button", { name: "Zoom out" }).click();
+		await page.getByRole("button", { name: "Zoom out" }).click();
 		await expect
-			.poll(() => page.locator('[data-viewer-frame="home"] [data-viewer-cover]').getAttribute("src"))
-			.toBe("/covers/home");
+			.poll(async () => (await pictures(page))?.stills.find((still) => still.name === "home")?.drawn)
+			.not.toBeNull();
+		expect((await pictures(page))?.stills.map((still) => still.still)).toEqual(["/covers/home"]);
 		expect(await page.getByText("view only").count()).toBe(0);
 		// spool is shut on this Mac: there is nothing to hand over to, so nothing offers it
 		await page.waitForTimeout(300);
@@ -530,7 +549,7 @@ describe("the read-only canvas", () => {
 		await expect
 			.poll(() => page.frameLocator('iframe[title="shop/cart"]').locator("h1").textContent())
 			.toBe("shop/cart");
-		await page.getByText("ana shared shop with you · updated 2 min ago").waitFor();
+		await page.getByText("Shared by ana · 2 min ago").waitFor();
 		const rail = page.getByRole("navigation", { name: "Pages" });
 		expect(await rail.getByRole("button", { name: "shop", exact: true }).count()).toBe(1);
 		for (const other of ["home", "menu"]) expect(await page.getByText(other, { exact: true }).count(), other).toBe(0);

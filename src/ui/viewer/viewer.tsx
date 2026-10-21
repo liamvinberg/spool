@@ -23,9 +23,10 @@ import { type CameraStore, createCameraStore, useCameraFollow } from "../canvas/
 import { COMMENT_CURSOR } from "../canvas/comment-cursor";
 import { CommentsLayer, clickAway, commentWorld } from "../canvas/comments-layer";
 import { FrameLabel, LabelField } from "../canvas/frame-label";
-import { ShellClip } from "../canvas/frame-shell";
 import { flatPages, mergeOrder, mergePageTree } from "../canvas/order";
 import { type ElementPreview, PreviewIn } from "../canvas/overlays";
+import { PictureClaims } from "../canvas/picture-canvas";
+import type { PictureFrame } from "../canvas/picture-layer";
 import { createPresenceRoom } from "../canvas/presence";
 import { FollowMark, PresenceFaces } from "../canvas/presence-faces";
 import { PresenceLayer } from "../canvas/presence-layer";
@@ -67,6 +68,9 @@ import {
 	ViewerCommentsList,
 	ViewerTools,
 } from "./viewer-comments";
+import { FieldDocuments } from "./viewer-documents";
+import { FieldFrame, FieldPictures } from "./viewer-field";
+import { chooseLive, NEAR_MARGIN } from "./viewer-live";
 import { ViewerPlayer } from "./viewer-player";
 import { useViewerPresence, type ViewerPresence } from "./viewer-presence";
 import { CommentsTip, markTipSeen, SignInDialog, tipSeen } from "./viewer-sign-in";
@@ -106,6 +110,8 @@ export function Viewer({ config }: { config: ViewerConfig }) {
 
 /** How long a burst of saves is let land before the canvas reads the project again. */
 const REREAD_MS = 150;
+/** How long a burst of covers is let land before the canvas reads the project again for their addresses. */
+const COVERED_MS = 500;
 /** How long the toast that names a teammate's save stays. */
 const TOAST_MS = 3500;
 /**
@@ -117,12 +123,20 @@ const RENEW_MS = 60 * 60 * 1000;
 /**
  * The read-only canvas kept live: a teammate's save shows up in place. The frames it touched are made again
  * where they stand, those whose own files it changed wear the changed mark until they are played, and a short
- * toast says who saved what. The canvas reads the project again for anything else the save moved.
+ * toast says who saved what. The canvas reads the project again for anything else the save moved, and again
+ * when spool.page says new covers landed.
+ *
+ * A frame a save touched while it had a cover is stale: its picture is of the frame before the save. It stays
+ * stale until a newer cover arrives, and meanwhile may stand as its document wherever it is on screen.
  */
 function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: ViewerProject; phone: boolean }) {
 	const [project, setProject] = useState(first);
 	/** How many times each frame's document has been made again since this tab opened. */
 	const [revisions, setRevisions] = useState<ReadonlyMap<string, number>>(new Map());
+	/** How many times the canvas came back from being away to find saves it missed: every live document is made again. */
+	const [epoch, setEpoch] = useState(0);
+	/** Frames a save touched after their cover was taken, with that cover's address. */
+	const [stale, setStale] = useState<ReadonlyMap<string, string>>(new Map());
 	// an outsider's marks are what their share added since this browser last opened it (spool#184)
 	const [shareKey] = useState(() => (first.shared === undefined ? null : seenKey(config, first)));
 	const [opened] = useState(() => (shareKey === null ? null : openShare(shareKey, first)));
@@ -133,20 +147,32 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 	const [toast, setToast] = useState<(NavigatorToast & { id: number }) | null>(null);
 	const known = useRef(new Set(first.canvas.frames.map((frame) => frame.name)));
 	known.current = new Set(project.canvas.frames.map((frame) => frame.name));
+	const covers = useRef(first.covers);
+	covers.current = project.covers;
 	const presence = useViewerPresence(first.presence);
+
+	// a cover newer than the one a save left stale ends it
+	useEffect(
+		() =>
+			setStale((current) => {
+				const next = new Map([...current].filter(([frame, cover]) => project.covers?.[frame] === cover));
+				return next.size === current.size ? current : next;
+			}),
+		[project.covers],
+	);
 
 	useEffect(() => {
 		let head: number | undefined;
 		let reread: ReturnType<typeof setTimeout> | undefined;
 		let stopped = false;
-		const read = () => {
+		const read = (wait = REREAD_MS) => {
 			clearTimeout(reread);
 			reread = setTimeout(() => {
 				readProject(config).then(
 					(next) => !stopped && next !== undefined && setProject(next),
 					() => {},
 				);
-			}, REREAD_MS);
+			}, wait);
 		};
 		const remake = (frames: Iterable<string>) =>
 			setRevisions((current) => {
@@ -156,11 +182,12 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 			});
 		const renew = setInterval(read, RENEW_MS);
 		const heard = (message: ViewerLive) => {
+			if (message.type === "covered") return read(COVERED_MS);
 			if (message.type === "head") {
-				// back after being away: whatever was saved meanwhile, every frame is made again from the newest
+				// back after being away: whatever was saved meanwhile, every document on screen is made again
 				if (head !== undefined && message.head !== head) {
 					read();
-					remake(known.current);
+					setEpoch((was) => was + 1);
 				}
 				head = message.head;
 				return;
@@ -168,6 +195,14 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 			head = message.head;
 			read();
 			remake(message.touched);
+			setStale((current) => {
+				const next = new Map(current);
+				for (const frame of message.touched) {
+					const cover = covers.current?.[frame];
+					if (cover !== undefined && !next.has(frame)) next.set(frame, cover);
+				}
+				return next;
+			});
 			if (message.changed.length === 0) return;
 			setMarks((current) => {
 				const next = new Map(current);
@@ -231,6 +266,8 @@ function LiveCanvas({ config, first, phone }: { config: ViewerConfig; first: Vie
 			project={project}
 			presence={presence}
 			revisions={revisions}
+			epoch={epoch}
+			stale={stale}
 			marks={marks}
 			onSeen={seen}
 			pageMarks={pageMarks}
@@ -256,15 +293,6 @@ function Quiet({ children }: { children: ReactNode }) {
 	);
 }
 
-/** How far past the viewport frames keep their documents, as a fraction of it on every side. */
-const NEAR_MARGIN = 0.25;
-/** How many documents one page keeps live at once; the rest wait as their names. */
-const LIVE_LIMIT = 24;
-/**
- * How wide a frame with a cover draws before its document is made, as on the Mac: smaller, its cover is what anyone
- * can read of it, and a page fitted whole loads nothing but pictures.
- */
-const READABLE_PX = 400;
 /** What the chrome takes off the top (the buttons by the faces) and the foot (the tools) of a fitted page. */
 const FIT_TOP = 40;
 const FIT_FOOT = 48;
@@ -282,6 +310,8 @@ function ViewerCanvas({
 	project,
 	presence,
 	revisions,
+	epoch,
+	stale,
 	marks,
 	onSeen,
 	pageMarks,
@@ -294,6 +324,10 @@ function ViewerCanvas({
 	/** Who else is on the canvas, for a member; null for an outsider, who sees nobody. */
 	presence: ViewerPresence | null;
 	revisions: ReadonlyMap<string, number>;
+	/** How many times every live document has been made again, for saves missed while away. */
+	epoch: number;
+	/** Frames a save touched after their cover was taken. */
+	stale: ReadonlyMap<string, string>;
 	marks: ReadonlyMap<string, Unseen>;
 	/** A frame was played: its mark has been seen. */
 	onSeen: (frame: string) => void;
@@ -348,14 +382,36 @@ function ViewerCanvas({
 		const left = cameras.current.get(page);
 		camera.set(left ?? (frames.length === 0 ? EMPTY_CAMERA : fitBetweenChrome(boundsOf(frames), size.w, size.h)));
 	}, [camera, page, frames, size.w, size.h]);
+	/** The live frames' documents (`viewer-documents.ts`), each made from the address and making it is on now. */
+	const source = useRef({ frames: project.frames, revisions, epoch });
+	source.current = { frames: project.frames, revisions, epoch };
+	const [documents] = useState(
+		() =>
+			new FieldDocuments((name) => ({
+				src: `${source.current.frames}${encodeURIComponent(name)}`,
+				revision: `${source.current.epoch}.${source.current.revisions.get(name) ?? 0}`,
+			})),
+	);
+	useEffect(() => {
+		const stop = documents.listen();
+		return () => {
+			stop();
+			documents.stop();
+		};
+	}, [documents]);
+	// a frame made again boots its new document behind the one on screen
+	useEffect(() => {
+		if (revisions.size > 0 || epoch > 0) documents.refresh();
+	}, [documents, revisions, epoch]);
 	useEffect(
 		() =>
 			camera.subscribe((at, moving) => {
+				documents.setMoving(at !== null && moving);
 				if (at === null) return;
 				cameras.current.set(page, at);
 				if (!moving) setRest(at);
 			}),
-		[camera, page],
+		[camera, page, documents],
 	);
 
 	const near: NearScreen = useCallback(
@@ -487,25 +543,41 @@ function ViewerCanvas({
 	}, [aim, comments, config, page, played, known, frames, go, camera, size.w, size.h, onNotice]);
 	const placing = comments?.tool === "comment";
 	/**
-	 * The documents standing: what the camera came to rest near, nearest the middle first. A frame drawn too small to
-	 * read shows its cover instead, unless it has none, a teammate's save made it again since the cover was taken, or
-	 * the Comment tool is out, which reads the document under a pin.
+	 * Whether the picture layer is drawing: not with no WebGL2, nor while a lost context is away, when every frame
+	 * with a cover shows it as an image instead.
 	 */
+	const [drawing, setDrawing] = useState(true);
 	const covers = project.covers;
-	const live = useMemo(() => {
-		if (rest === null || size.w === 0) return new Set<string>();
-		const middle = { x: (size.w / 2 - rest.x) / rest.k, y: (size.h / 2 - rest.y) / rest.k };
-		const distance = (box: Box) => Math.hypot(box.x + box.w / 2 - middle.x, box.y + box.h / 2 - middle.y);
-		const readable = (frame: DesignFrame) =>
-			placing || frame.w * rest.k >= READABLE_PX || covers?.[frame.name] === undefined || revisions.has(frame.name);
-		return new Set(
-			frames
-				.filter((frame) => near(rest, frame) && readable(frame))
-				.sort((a, b) => distance(a) - distance(b))
-				.slice(0, LIVE_LIMIT)
-				.map((frame) => frame.name),
+	const pictureFrames = useMemo(
+		() => frames.map(({ name, x, y, w, h }): PictureFrame => ({ name, x, y, w, h, still: covers?.[name] })),
+		[frames, covers],
+	);
+	const [claims] = useState(() => new PictureClaims());
+	/** Under the Comment tool, the frame under the pointer: its document is what a pin there reads. */
+	const [focus, setFocus] = useState<string | null>(null);
+	useEffect(() => {
+		if (!placing) setFocus(null);
+	}, [placing]);
+	/**
+	 * The documents standing (`viewer-live.ts`): what the camera came to rest near and draws large enough to read,
+	 * a frame whose cover a save left behind, and the frame a pin is about to read, nearest the middle first.
+	 */
+	const staleFrames = useMemo(() => new Set(stale.keys()), [stale]);
+	useEffect(() => {
+		if (rest === null || size.w === 0) return;
+		documents.setLive(
+			chooseLive({
+				frames,
+				camera: rest,
+				viewport: size,
+				stale: staleFrames,
+				focus,
+				placing,
+				was: documents.live,
+				failed: documents.failed,
+			}),
 		);
-	}, [frames, near, rest, size.w, size.h, placing, covers, revisions]);
+	}, [documents, frames, rest, size, staleFrames, focus, placing]);
 	/**
 	 * What is under a point on screen: the world point, and the frame drawn on top there, where frames overlap, with
 	 * the point in its own pixels and its live document, when it has one.
@@ -552,6 +624,9 @@ function ViewerCanvas({
 		const point = ask.next;
 		ask.next = null;
 		const found = under(point.x, point.y)?.frame;
+		// the frame under the pointer is the one a pin would read: its document is made, if it isn't yet
+		const name = found?.name ?? null;
+		setFocus((was) => (was === name ? was : name));
 		if (found === undefined || found === null || found.document === null) return setHover(null);
 		ask.busy = true;
 		void askPick(found.document, found.at).then((hit) => {
@@ -613,12 +688,24 @@ function ViewerCanvas({
 	const drag = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
 	/** The frame under the pointer, or its name: its name lights and offers play, as on the Mac. */
 	const [pointed, setPointed] = useState<string | null>(null);
-	const point = (target: EventTarget | null) => {
-		const at = target instanceof Element ? target : null;
+	/**
+	 * The frame a press or the pointer at this point is on: found by where it is in the world, since a frame
+	 * standing as its picture has nothing on the page to be pressed. Only the field's own: a label, a pin or a card
+	 * standing over a frame is not the frame.
+	 */
+	const frameAt = (target: EventTarget | null, clientX: number, clientY: number): string | null => {
+		if (!(target instanceof Element)) return null;
+		const field = target === viewport.current || target.hasAttribute("data-viewer-page");
+		if (!field && target.closest("[data-viewer-frame]") === null) return null;
+		return under(clientX, clientY)?.frame?.name ?? null;
+	};
+	const point = (event: { target: EventTarget | null; clientX: number; clientY: number } | null) => {
+		const at = event?.target instanceof Element ? event.target : null;
 		const name =
-			at?.closest<HTMLElement>("[data-viewer-frame]")?.dataset.viewerFrame ??
-			at?.closest<HTMLElement>("[data-frame-label]")?.dataset.frameLabel ??
-			null;
+			event === null
+				? null
+				: (at?.closest<HTMLElement>("[data-frame-label]")?.dataset.frameLabel ??
+					frameAt(event.target, event.clientX, event.clientY));
 		setPointed((was) => (was === name ? was : name));
 	};
 	// Chrome starts its autoscroll from the middle button's mousedown, past the pointerdown that pans
@@ -649,7 +736,7 @@ function ViewerCanvas({
 		const held = drag.current;
 		const at = camera.get();
 		if (placing && (held === null || !held.moved)) hoverAt(event.clientX, event.clientY);
-		if (held === null || !held.moved) point(placing ? null : event.target);
+		if (held === null || !held.moved) point(placing ? null : event);
 		if (held === null || held.id !== event.pointerId || at === null) return;
 		const dx = event.clientX - held.x;
 		const dy = event.clientY - held.y;
@@ -674,8 +761,8 @@ function ViewerCanvas({
 			if (clickAway(comments.store)) return;
 		}
 		// a click, not a drag: on a frame it plays the frame
-		const frame = (event.target as Element).closest<HTMLElement>("[data-viewer-frame]")?.dataset.viewerFrame;
-		if (frame !== undefined) play(frame);
+		const frame = frameAt(event.target, event.clientX, event.clientY);
+		if (frame !== null) play(frame);
 	};
 
 	/** Where a played frame grows from: its own spot on the canvas, on screen. */
@@ -775,7 +862,7 @@ function ViewerCanvas({
 					ref={viewport}
 					data-viewer-field=""
 					className="absolute inset-0 touch-none"
-					style={{ cursor: placing ? COMMENT_CURSOR : "default" }}
+					style={{ cursor: placing ? COMMENT_CURSOR : pointed !== null ? "pointer" : "default" }}
 					onPointerDown={onPointerDown}
 					onPointerMove={onPointerMove}
 					onPointerLeave={() => {
@@ -787,8 +874,16 @@ function ViewerCanvas({
 						drag.current = null;
 					}}
 				>
+					{/* every frame standing as its picture, on the GPU, under every shell and label */}
+					<FieldPictures
+						camera={camera}
+						frames={pictureFrames}
+						claims={claims}
+						documents={documents}
+						onDrawing={setDrawing}
+					/>
 					{/* a page swap lays the new page in rather than cutting to it */}
-					<div key={page} className="absolute inset-0 animate-[viewer-page-in_160ms_ease-out]">
+					<div key={page} data-viewer-page="" className="absolute inset-0 animate-[viewer-page-in_160ms_ease-out]">
 						<CameraField camera={camera}>
 							{frames.map((frame) => (
 								<FieldFrame
@@ -796,11 +891,10 @@ function ViewerCanvas({
 									frame={frame}
 									camera={camera}
 									near={near}
-									src={live.has(frame.name) ? `${project.frames}${encodeURIComponent(frame.name)}` : null}
-									revision={revisions.get(frame.name) ?? 0}
-									cover={project.covers?.[frame.name]}
-									placing={placing}
-									onPlay={() => play(frame.name)}
+									pictured={drawing && covers?.[frame.name] !== undefined}
+									cover={covers?.[frame.name]}
+									documents={documents}
+									claims={claims}
 								/>
 							))}
 						</CameraField>
@@ -976,126 +1070,6 @@ function CameraField({ camera, children }: { camera: CameraStore; children: Reac
 }
 
 /**
- * One frame on the field: its document, live, at its authored size, with a
- * pane over it that takes the pointer. The frame is for looking at here; a
- * click on it plays it, which is where it is used. Until its document has
- * drawn, its cover stands in, when a member's daemon has sent one.
- *
- * A teammate's save makes the document again in place: the new one loads
- * behind the one on screen and takes its place once it has, so the frame
- * never blinks to nothing between them.
- */
-function FieldFrame({
-	frame,
-	camera,
-	near,
-	src,
-	revision,
-	cover,
-	placing,
-	onPlay,
-}: {
-	frame: DesignFrame;
-	camera: CameraStore;
-	near: NearScreen;
-	src: string | null;
-	/** the Comment tool is on: a press places a pin rather than playing the frame */
-	placing: boolean;
-	/** How many times the frame has been made again since the canvas opened. */
-	revision: number;
-	cover: string | undefined;
-	/** From the keyboard: a pointer's click is the field's to tell from a drag. */
-	onPlay: () => void;
-}) {
-	const documents = useDocuments(src, revision);
-	return (
-		<div
-			className="absolute"
-			data-viewer-frame={frame.name}
-			style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h }}
-		>
-			<ShellClip camera={camera} near={near} frame={frame}>
-				<div className="absolute inset-0 bg-surface-panel" />
-				{cover !== undefined && (
-					<img
-						src={cover}
-						alt=""
-						draggable={false}
-						data-viewer-cover=""
-						className="absolute inset-0 h-full w-full object-cover object-top"
-					/>
-				)}
-				{documents.list.map((document, index) => {
-					const newest = index === documents.list.length - 1;
-					return (
-						<iframe
-							key={document.revision}
-							src={document.src}
-							title={newest ? frame.name : `${frame.name}, before`}
-							data-viewer-revision={document.revision}
-							sandbox="allow-scripts"
-							className="absolute inset-0 h-full w-full border-0 bg-white"
-							style={{ opacity: document.drawn ? 1 : 0 }}
-							tabIndex={-1}
-							onLoad={() => documents.drawn(document.revision)}
-						/>
-					);
-				})}
-				<button
-					type="button"
-					aria-label={`Play ${pageName(frame.name)}`}
-					className="absolute inset-0 bg-transparent"
-					style={{ cursor: placing ? COMMENT_CURSOR : "pointer" }}
-					onPointerDown={(event) => event.preventDefault()}
-					onClick={(event) => event.detail === 0 && onPlay()}
-				/>
-			</ShellClip>
-		</div>
-	);
-}
-
-interface FieldDocument {
-	revision: number;
-	src: string;
-	drawn: boolean;
-}
-
-/**
- * A frame's documents while it is live: the one drawn, and the one made again in its place until that one has
- * drawn. The address is the one the frame was first or last made from: a grant that renews leaves a document on
- * screen where it is.
- */
-function useDocuments(src: string | null, revision: number) {
-	const [list, setList] = useState<FieldDocument[]>([]);
-	const address = useRef(src);
-	if (src !== null) address.current = src;
-	const live = src !== null;
-	useEffect(() => {
-		const at = address.current;
-		if (!live || at === null) {
-			setList([]);
-			return;
-		}
-		setList((current) => {
-			if (current.at(-1)?.revision === revision) return current;
-			const drawn = current.filter((document) => document.drawn).slice(-1);
-			return [...drawn, { revision, src: at, drawn: false }];
-		});
-	}, [live, revision]);
-	const drawn = useCallback(
-		(revision: number) =>
-			setList((current) => {
-				const at = current.findIndex((document) => document.revision === revision);
-				if (at === -1) return current;
-				// the newest drawn takes the place of every one before it
-				return current.slice(at).map((document, index) => (index === 0 ? { ...document, drawn: true } : document));
-			}),
-		[],
-	);
-	return { list, drawn };
-}
-
-/**
  * Open in spool, for an editor or admin on a computer whose spool answers: the link itself always stays in the
  * browser, and the button is there only where it can hand over. It asks again whenever the tab comes back into
  * view, so spool opened after the page still offers it.
@@ -1144,17 +1118,21 @@ function OpenInSpool({ project, onNotice }: { project: ViewerProject; onNotice: 
  * The one line an outsider is shown (DEV-114): who shared these pages, or the whole project, with them and when they
  * last changed. Nobody else is on it, and nothing says the rest of the project exists.
  */
+/** Who shared and when, kept short: the pages rail already names the pages, and the whole sentence is its title. */
 function SharedLine({ shared, project }: { shared: ViewerShared; project: string }) {
+	const what = shared.whole === true ? project : saidList(shared.pages.map(sharedPageName));
+	const ago = shared.updated === null ? "" : ` · ${saidAgo(shared.updated)}`;
 	return (
 		<span
 			data-viewer-shared=""
+			title={`${shared.by} shared ${what} with you${shared.updated === null ? "" : `, updated ${saidAgo(shared.updated)}`}`}
 			className="flex items-center gap-2 rounded-sm border border-line-default bg-surface-window/90 py-1.5 pr-3 pl-1.5 text-secondary backdrop-blur type-detail"
 		>
 			<span className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full border border-line-strong bg-surface-panel text-[9px] text-primary">
 				{shared.by[0]?.toUpperCase()}
 			</span>
-			{shared.by} shared {shared.whole === true ? project : saidList(shared.pages.map(sharedPageName))} with you
-			{shared.updated !== null && ` · updated ${saidAgo(shared.updated)}`}
+			Shared by {shared.by}
+			{ago}
 		</span>
 	);
 }
