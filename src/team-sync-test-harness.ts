@@ -2,9 +2,12 @@ import { createHash } from "node:crypto";
 import type { CloudRequestOptions } from "./cloud-auth";
 import type { OpenSyncSocket, SyncSocketEvents } from "./daemon/team-sync";
 import {
+	ACCEPTED_PROTOCOLS,
 	bundleParts,
 	CANVAS_PATH,
+	CLOSE_FORMAT,
 	CLOSE_NOT_EDITOR,
+	CLOSE_PROTOCOL,
 	CLOSE_SIGNED_OUT,
 	CLOSE_UNPAID,
 	COMMENTS_OPEN,
@@ -18,6 +21,7 @@ import {
 	type CommentReply,
 	type CommentsMessage,
 	type CopyChange,
+	canvasFormat,
 	changeRefusal,
 	commentBodyRefusal,
 	copyFingerprint,
@@ -130,6 +134,8 @@ interface Project {
 	last: Map<string, Uint8Array>;
 	/** Every hash each path was applied at, a delete's null included: what the history lookup answers from. */
 	had: Map<string, Set<string | null>>;
+	/** The team's design/ format: its first hello's, raised by every canvas.json save that says a higher one (#206). */
+	format?: number;
 }
 
 /** One save as the object reads it, alone or out of a bundle. */
@@ -166,6 +172,8 @@ interface Connected {
 	ticks?: boolean;
 	/** Its hello said `checks`, and the object makes them: it is sent the fingerprint after its catch-up. */
 	checks?: boolean;
+	/** The design/ format its hello said it writes: closed with `CLOSE_FORMAT` once the team's is higher (#206). */
+	format?: number;
 	/** Where this connection's person last said they were: kept only while it's connected. */
 	presence?: { state: PresenceState; at: number };
 	deliver(frame: string | Uint8Array): void;
@@ -201,6 +209,10 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let down = false;
 	/** While set, every sync connection is closed as it opens, with this code: a Worker that can't take it. */
 	let refusing: number | undefined;
+	/** Accounts whose every hello is closed with this code, as spool.page closes a Spool too old for it (#206). */
+	const tooOld = new Map<string, number>();
+	/** How many hellos were closed so: how often a paused copy asked again. */
+	let tooOldAsked = 0;
 	/** How many times a machine asked where it stands in a project, as a daemon does after a close. */
 	let asked = 0;
 	/** How many files each history lookup asked about, in order. */
@@ -578,10 +590,18 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		if (framed === null) return;
 		const { message, bytes } = framed;
 		if (message.type === "hello") {
-			if (message.protocol !== PROTOCOL_VERSION) {
-				from.close();
-				return;
+			// the code a Spool too old for spool.page is closed with, while a test says this daemon is (#206)
+			const old = tooOld.get(from.person.accountId);
+			if (old !== undefined) {
+				tooOldAsked++;
+				return from.close(old);
 			}
+			if (typeof message.protocol !== "number" || !ACCEPTED_PROTOCOLS.includes(message.protocol))
+				return from.close(CLOSE_PROTOCOL);
+			const format = typeof message.format === "number" ? message.format : 0;
+			at.format ??= format;
+			if (format < at.format) return from.close(CLOSE_FORMAT);
+			from.format = format;
 			from.moving = message.moving === true;
 			from.bundles = message.bundles === true;
 			from.ticks = ticks && message.ticks === true;
@@ -591,7 +611,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				encodeFrame({
 					type: "welcome",
 					protocol: PROTOCOL_VERSION,
-					format: 2,
+					format: at.format,
 					head: at.version,
 					...pace(at, from),
 					...(takesBundles ? { bundles: true } : {}),
@@ -1225,6 +1245,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		at.had.set(path, (at.had.get(path) ?? new Set()).add(hash(content)));
 		told.answers.push({ type: "saved", ref, path, version: file.version });
 		if (merged !== null) told.after.push(fileFrame(path, file));
+		const format = path === CANVAS_PATH && content !== null ? canvasFormat(content) : undefined;
+		if (format !== undefined && format > (at.format ?? 0)) raise(at, format);
 		told.relayed.push({
 			path,
 			version: file.version,
@@ -1232,6 +1254,13 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			content: content ?? undefined,
 			...(beatsDelete && current.by !== undefined ? { restores: current.by } : {}),
 		});
+	}
+
+	/** The team's format rose (#206): every daemon on an older one is closed, as spool.page closes it, after the relay. */
+	function raise(at: Project, format: number): void {
+		at.format = format;
+		for (const socket of at.sockets)
+			if (socket.format !== undefined && socket.format < format) socket.close(CLOSE_FORMAT);
 	}
 
 	/** Where a person stands: the latest of their connections' states, as the sync object keeps it. */
@@ -1545,6 +1574,38 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 		lift() {
 			limited = undefined;
 		},
+		/**
+		 * A machine's Spool is too old for spool.page (#206): its every connection is closed on its hello with `code`
+		 * (`CLOSE_PROTOCOL`, or `CLOSE_FORMAT` as a teammate's newer Spool moving the format on), those open now too,
+		 * until the returned undo, which is the newer Spool.
+		 */
+		tooOld(accountId: string, code: number = CLOSE_PROTOCOL) {
+			tooOld.set(accountId, code);
+			for (const at of projects.values())
+				for (const socket of at.sockets) if (socket.person.accountId === accountId) socket.close(code);
+			return () => {
+				tooOld.delete(accountId);
+			};
+		},
+		/** How many hellos were closed as too old: how often paused copies asked again. */
+		tooOldAsked: () => tooOldAsked,
+		/**
+		 * The team project as an older Spool left it (#206): the team's format, and these files the team's versions,
+		 * as spool.page would hold them, relayed to nobody.
+		 */
+		formatWas(name: string, format: number, files: Record<string, string>) {
+			const at = project(name);
+			if (at === undefined) return;
+			at.format = format;
+			for (const [path, text] of Object.entries(files)) {
+				at.version++;
+				const file = { version: at.version, bytes: encode(text) };
+				at.files.set(path, file);
+				at.versions.set(at.version, file);
+			}
+		},
+		/** The team's design/ format now (#206). */
+		format: (name: string) => project(name)?.format,
 		/** Every sync connection is closed as it opens, with `code`, until the returned undo. */
 		refuseSync(code: number) {
 			refusing = code;
