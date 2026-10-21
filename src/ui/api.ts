@@ -2362,7 +2362,21 @@ export interface HistoryStretch {
 	paths: string[];
 	/** how many more it touched */
 	more: number;
+	/** the restore it is (spool#188), with when the version it went back to was made; null or absent for saves */
+	restore?: HistoryRestore | null;
 }
+
+/** A restore as the history shows one: what went back, to which version, and when that version was made. */
+export interface HistoryRestore {
+	id: string;
+	kind: RestoreKind;
+	/** a design/-relative path, a frame's name, a page's path, or "" for the whole project */
+	target: string;
+	to: number;
+	toAt: number | null;
+}
+
+export type RestoreKind = "file" | "frame" | "page" | "project";
 
 export interface HistoryDay {
 	/** the asker's midnight, in ms */
@@ -2458,4 +2472,61 @@ export async function fetchStretchFiles(
 	} catch {
 		return null;
 	}
+}
+
+/* ── restoring from the team history (spool#188) ─────────────────────── */
+
+/** What to put back, and to which team version: a frame's shared files ticked, or exactly the paths an undo names. */
+export interface RestoreAsk {
+	kind: RestoreKind;
+	target: string;
+	to: number;
+	also?: string[];
+	paths?: string[];
+}
+
+/** What a restore would change: how many of its own files, and a frame's shared files that changed since. */
+export interface RestorePlan {
+	files: number;
+	shared: { path: string; frames: string[] }[];
+}
+
+/** A restore done: what the team applied and set aside, and the restore that undoes it (null when nothing changed). */
+export interface RestoreDone {
+	id: string;
+	applied: string[];
+	setAside: string[];
+	refused: string[];
+	undo: Required<Omit<RestoreAsk, "also">> | null;
+}
+
+const restoreUrl = (project: string) => `/api/p/${encodeURIComponent(project)}/history/restore`;
+
+/** What a restore would change, asked of this Mac's daemon; null when it can't say now. */
+export async function fetchRestorePlan(project: string, ask: RestoreAsk): Promise<RestorePlan | null> {
+	const query = new URLSearchParams({ kind: ask.kind, target: ask.target, to: String(ask.to) });
+	try {
+		const response = await controlFetch(`${restoreUrl(project)}?${query}`);
+		return response.ok ? ((await response.json()) as RestorePlan) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Put something back as it stood: done, or why not, as the daemon says it. */
+export async function restoreFromHistory(project: string, ask: RestoreAsk): Promise<RestoreDone> {
+	let response: Response;
+	try {
+		response = await controlFetch(restoreUrl(project), {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(ask),
+		});
+	} catch {
+		throw new Error("spool could not be reached.");
+	}
+	const body = (await response.json().catch(() => null)) as (RestoreDone & { message?: unknown }) | null;
+	if (!response.ok || body === null)
+		throw new Error(typeof body?.message === "string" ? body.message : "The restore couldn't be made. Try again.");
+	return body;
 }
