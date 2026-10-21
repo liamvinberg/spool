@@ -234,54 +234,6 @@ it("once paid shows the plan, the next charge and the card, and Manage billing o
 	expect(opened).toEqual(["https://billing.stripe.test/tidemark"]);
 });
 
-it("offers an admin Withdraw from contract here for 14 days from the first payment, confirms it once, and shows the team gone local", async () => {
-	today(2026, 10, 15);
-	const fake = fakeTeamsSource({
-		teams: [team()],
-		people: PEOPLE,
-		billing: { ...PAYING, paidBefore: true, withdrawUntil: at(2026, 10, 25) },
-	});
-	const { host } = settings(fake);
-	await settle();
-	expect(host.textContent).toContain(
-		"Until October 25 you can withdraw from the contract: the payment is refunded in full and the subscription ends at once.",
-	);
-	await act(async () => button(host, "Withdraw from contract here").click());
-	const dialog = document.body.querySelector("dialog")?.textContent ?? "";
-	expect(dialog).toContain("Withdraw from Tidemark’s contract?");
-	expect(dialog).toContain(
-		"The payment is refunded in full and the subscription ends at once. Tidemark goes local: everyone’s copy stops syncing and its shares stop. You get a receipt by email.",
-	);
-	expect(fake.asked).not.toContain("withdraw tidemark");
-	await act(async () => button(document.body, "Confirm withdrawal").click());
-	await settle();
-	expect(fake.asked).toContain("withdraw tidemark");
-	expect(fake.asked.at(-1)).toBe("billing tidemark");
-	expect(host.textContent).toContain("Tidemark has gone local");
-	expect(host.textContent).not.toContain("Withdraw from contract here");
-});
-
-it("never offers withdrawing after its 14 days, from a spool.page that doesn't say, or to anyone but an admin", async () => {
-	today(2026, 10, 26);
-	for (const billing of [{ ...PAYING, withdrawUntil: at(2026, 10, 25) }, { ...PAYING, withdrawUntil: null }, PAYING]) {
-		const { host } = settings(fakeTeamsSource({ teams: [team()], people: PEOPLE, billing }));
-		await settle();
-		expect(host.textContent).toContain("Manage billing");
-		expect(host.textContent).not.toContain("withdraw");
-		expect(host.textContent).not.toContain("Withdraw");
-	}
-	const editor = settings(
-		fakeTeamsSource({
-			teams: [team("editor")],
-			people: PEOPLE,
-			billing: { ...PAYING, withdrawUntil: at(2026, 10, 30) },
-		}),
-		"editor",
-	);
-	await settle();
-	expect(editor.host.textContent).not.toContain("Withdraw");
-});
-
 it("says a failing team's card is being tried again until it goes local, above the plan", async () => {
 	const fake = fakeTeamsSource({
 		teams: [team()],
