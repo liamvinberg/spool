@@ -6,13 +6,12 @@ import { accelLabel } from "./platform-keys";
 import {
 	barLayout,
 	DESK_BAR_PX,
+	DESK_RESIZE_MS,
 	DESK_RESTORED_MS,
 	type DeskWindow,
 	deskWindow,
-	readBarHidden,
-	usePeek,
 	useViewport,
-	writeBarHidden,
+	type Viewport,
 } from "./player-page";
 
 /**
@@ -26,11 +25,11 @@ import {
  * that site would in production.
  *
  * The only chrome is the bar along the top, the same 30px the Mac app's window
- * wears: the frame switcher, the window's size, and browser close. In a
- * tab it can be put away with the eye on it, and a nub at the top edge is then
- * its trace — rest the cursor there and it peeks back in, press the nub and it
- * stays. Styling lives in the served document's chrome stylesheet; this
- * component owns structure and wiring.
+ * wears: the frame's name, copy link and close, and the window's size while it
+ * is being resized. It is always worn: at 30px it costs less than a page's own
+ * nav, and a bar that can be put away is a way home that can be lost. Styling
+ * lives in the served document's chrome stylesheet; this component owns
+ * structure and wiring.
  */
 
 export interface PlayerController {
@@ -60,7 +59,6 @@ export function Player({
 	controller,
 	host,
 	loading = false,
-	onInset,
 	closeLabel = "Close the tab",
 	exitKey = EXIT_KEY,
 	linkable = false,
@@ -72,12 +70,6 @@ export function Player({
 	host?: ReactNode;
 	/** The screen is still on its way — the shell's iframe has not been revealed yet. */
 	loading?: boolean;
-	/**
-	 * How much of the window the bar stands in front of, told to whoever sizes
-	 * the frame's box. The bare document needs no telling: its screen is laid
-	 * out under the bar by the page itself.
-	 */
-	onInset?: (px: number) => void;
 	/** What leaving is called: a tab closes, and the read-only canvas in a browser goes back to the canvas. */
 	closeLabel?: string;
 	/** The key the bar says leaves: the tab's own close, or esc where the player stands over a page. */
@@ -90,27 +82,11 @@ export function Player({
 	const { w } = controller.geometry(frame);
 	const viewport = useViewport();
 	const Screen = frames[frame];
-	const [picking, setPicking] = useState(false);
 	// Which shell this document is in, asked once: a window the app made and
 	// handed a bridge draws the bar it was sized for, and everything else is the
 	// tab #227 designed. It cannot change under a live document, so it is read at
 	// mount and never again.
 	const [desk] = useState(deskWindow);
-	// Whether the tab's bar is put away, remembered across tabs. The app's bar is
-	// the window's title bar and is never put away.
-	const [hidden, setHidden] = useState(readBarHidden);
-	const hide = (next: boolean) => {
-		writeBarHidden(next);
-		setHidden(next);
-	};
-	// the external-link dialog is modal: it owns the moment, chrome and all.
-	const blocked = externalHref !== null;
-	const { peeked, enter, leave } = usePeek(desk === null && hidden && !blocked);
-	// A bar that went away takes its open switcher with it.
-	const worn = desk !== null || !hidden || peeked;
-	useEffect(() => {
-		if (!worn) setPicking(false);
-	}, [worn]);
 
 	usePlayedUrl(project, frame, controller);
 
@@ -130,38 +106,18 @@ export function Player({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [close]);
 
-	// The page is inset by the bar it wears. A peek is over the page, not above
-	// it: the frame does not jump for a hover.
-	const inset = desk !== null || !hidden;
-	useEffect(() => {
-		onInset?.(inset ? DESK_BAR_PX : 0);
-	}, [inset, onInset]);
 	const bar = (
 		<TopBar
 			project={project}
 			frame={frame}
-			frames={controller.frames()}
 			viewport={viewport}
-			picking={picking}
-			onPicking={setPicking}
-			onWalk={controller.walk}
 			loading={loading}
-			{...(desk === null
-				? {
-						hidden,
-						away: hidden && !peeked,
-						onHide: hide,
-						onClose: close,
-						closeLabel,
-						exitKey,
-						linkable,
-					}
-				: { desk })}
+			{...(desk === null ? { onClose: close, closeLabel, exitKey, linkable } : { desk })}
 		/>
 	);
 
 	return (
-		<div className={inset ? "spool-page has-bar" : "spool-page"}>
+		<div className="spool-page has-bar">
 			<div
 				className="spool-screen"
 				// The one number spool imposes: the authored width as a cap, and the
@@ -179,18 +135,7 @@ export function Player({
 					onOpen={controller.dismissExternal}
 				/>
 			)}
-			{desk === null && hidden ? (
-				// The strip the put-away bar left behind. The bar is inside it, so the
-				// browser's own hover says when the hand is on either: nothing crosses
-				// the frame boundary, and moving down into the page is what leaves.
-				// biome-ignore lint/a11y/noStaticElementInteractions: the strip is where the bar was, not a control; the nub inside it is the control
-				<div className={peeked ? "spool-peek is-open" : "spool-peek"} onMouseEnter={enter} onMouseLeave={leave}>
-					<button type="button" className="spool-nub" aria-label="Show the bar" onClick={() => hide(false)} />
-					{bar}
-				</div>
-			) : (
-				bar
-			)}
+			{bar}
 		</div>
 	);
 }
@@ -256,144 +201,30 @@ function usePlayedUrl(project: string, frame: string, controller: PlayerControll
 	}, [controller]);
 }
 
-/**
- * The name of the screen, and the way to another one. Written once because two
- * surfaces draw it: the tab's summoned edge bar, and the bar the Mac app's
- * window wears. The picker hangs off this rather than off either bar, so it
- * lines up under the name on both.
- */
-function FrameSwitcher({
-	project,
-	frame,
-	frames,
-	picking,
-	onPicking,
-	onWalk,
-}: {
-	/** Dropped when the bar is too narrow to carry it; the name never is. */
-	project?: string | undefined;
-	frame: string;
-	frames: string[];
-	picking: boolean;
-	onPicking: (picking: boolean) => void;
-	onWalk: (frame: string) => void;
-}) {
-	const [query, setQuery] = useState("");
-	const [instant, setInstant] = useState(false);
-	const search = useRef<HTMLInputElement>(null);
-	const picker = useRef<HTMLSpanElement>(null);
-	const trigger = useRef<HTMLButtonElement>(null);
-	const matches = frames.filter((name) => name.toLowerCase().includes(query.trim().toLowerCase()));
-	useEffect(() => {
-		if (!picking) return;
-		search.current?.focus();
-		const dismiss = (event: PointerEvent) => {
-			if (event.target instanceof Node && !picker.current?.contains(event.target)) onPicking(false);
-		};
-		const keyboard = (event: KeyboardEvent) => {
-			if (event.key !== "Escape") return;
-			event.preventDefault();
-			setInstant(true);
-			onPicking(false);
-			trigger.current?.focus();
-		};
-		document.addEventListener("pointerdown", dismiss);
-		document.addEventListener("keydown", keyboard);
-		return () => {
-			document.removeEventListener("pointerdown", dismiss);
-			document.removeEventListener("keydown", keyboard);
-		};
-	}, [picking, onPicking]);
+/** Close, with the key that does the same in its tooltip rather than printed on the bar. */
+function CloseButton({ label, chord, onClose }: { label: string; chord: string; onClose: () => void }) {
 	return (
-		<span ref={picker} className="spool-bar-switcher" data-instant={instant}>
-			<button
-				type="button"
-				ref={trigger}
-				id="spool-switcher"
-				className="spool-bar-frame"
-				aria-expanded={picking}
-				aria-controls="spool-frames"
-				onClick={(event) => {
-					setInstant(event.detail === 0);
-					setQuery("");
-					onPicking(!picking);
-				}}
-			>
-				{project !== undefined && <span className="spool-bar-project">{project} /</span>}
-				<span className="spool-bar-name">{frame}</span>
-				<svg
-					viewBox="0 0 10 10"
-					width="10"
-					height="10"
-					className={picking ? "spool-bar-chevron is-open" : "spool-bar-chevron"}
-					aria-hidden="true"
-				>
-					<path
-						d="m2 4 3 3 3-3"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="1.4"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
+		<span className="spool-bar-tipped">
+			<button type="button" id="spool-close" className="spool-bar-icon" aria-label={label} onClick={onClose}>
+				<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+					<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
 				</svg>
 			</button>
-			<span id="spool-frames" className={picking ? "spool-picker is-open" : "spool-picker"} inert={!picking}>
-				<input
-					ref={search}
-					type="search"
-					aria-label="Find a linked frame"
-					placeholder="Find a frame…"
-					value={query}
-					onChange={(event) => setQuery(event.target.value)}
-					onKeyDown={(event) => {
-						if (event.key === "ArrowDown") {
-							event.preventDefault();
-							picker.current?.querySelector<HTMLButtonElement>(".spool-picker-row")?.focus();
-						}
-						const first = matches[0];
-						if (event.key === "Enter" && first !== undefined) {
-							event.preventDefault();
-							setInstant(true);
-							if (first !== frame) onWalk(first);
-							onPicking(false);
-							trigger.current?.focus();
-						}
-					}}
-				/>
-				<span className="spool-picker-list">
-					{matches.map((name) => (
-						<button
-							type="button"
-							key={name}
-							className={name === frame ? "spool-picker-row is-here" : "spool-picker-row"}
-							onClick={() => {
-								onPicking(false);
-								if (name !== frame) onWalk(name);
-								trigger.current?.focus();
-							}}
-						>
-							<span className="spool-dash" />
-							{name}
-						</button>
-					))}
-					{matches.length === 0 && <span className="spool-picker-empty">No linked frames found.</span>}
-				</span>
-				<span className="spool-picker-foot">
-					{frames.length} {frames.length === 1 ? "frame" : "frames"}
-				</span>
-			</span>
+			<Tip label={label} chord={chord} />
 		</span>
 	);
 }
 
-function CloseButton({ label, onClose }: { label: string; onClose: () => void }) {
+/**
+ * A control's name under it on hover or keyboard focus, after a beat, with its
+ * key when it has one. Decoration only: the control carries its own label.
+ */
+function Tip({ label, chord }: { label: string; chord?: string }) {
 	return (
-		<button type="button" id="spool-close" className="spool-bar-icon" aria-label={label} onClick={onClose}>
-			<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-				<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
-			</svg>
-		</button>
+		<span className="spool-bar-tip" aria-hidden="true">
+			{label}
+			{chord !== undefined && <kbd>{chord}</kbd>}
+		</span>
 	);
 }
 
@@ -402,34 +233,28 @@ function CloseButton({ label, onClose }: { label: string; onClose: () => void })
  *
  * In the Mac app's play window it is the title bar: the window has none of its
  * own — `titleBarStyle: "hiddenInset"`, the traffic lights inset into this
- * strip — so these 30px are spent, always, and in exchange nothing has to be
- * summoned: the frame's name is readable, the switcher is one press away, and
- * the window says how big it is. Back to the canvas raises the window that is
- * still standing behind this one; a restore says so once, with the door back
- * beside it, because a person who does not remember moving this window last
- * week needs to know why it is not the width the frame was authored at.
+ * strip — so these 30px are spent, always. Back to the canvas raises the
+ * window that is still standing behind this one; a restore says so once, with
+ * the door back beside it, because a person who does not remember moving this
+ * window last week needs to know why it is not the width the frame was
+ * authored at.
  *
- * In a tab it is the same strip, worn for the same reasons, with what only a
- * tab needs: the exit chord is printed, and the eye puts the bar away for a
- * reader who wants the prototype and nothing else.
+ * In a tab it is the same strip with what only a tab needs: copy link, and
+ * close, whose tooltip names the key that does the same.
  *
- * Below {@link DESK_BAR_WIDE_PX} it drops the project prefix and size readout.
- * A phone frame's window is 390 wide and
- * the frame's name is the only thing in there worth its space.
+ * The frame's name is the only thing on the left. The window's size is said in
+ * the middle while the window is being resized, and goes once it settles: it is
+ * an answer to "how wide is this now", which nobody asks of a still window.
+ * Below {@link DESK_BAR_WIDE_PX} the project prefix and the size go too: a phone
+ * frame's window is 390 wide and the frame's name is the only thing in there
+ * worth its space.
  */
 function TopBar({
 	project,
 	frame,
-	frames,
 	viewport,
-	picking,
-	onPicking,
-	onWalk,
 	loading,
 	desk,
-	hidden,
-	away,
-	onHide,
 	onClose,
 	closeLabel = "Close the tab",
 	exitKey = EXIT_KEY,
@@ -437,26 +262,18 @@ function TopBar({
 }: {
 	project: string;
 	frame: string;
-	frames: string[];
-	viewport: { vw: number; vh: number };
-	picking: boolean;
-	onPicking: (picking: boolean) => void;
-	onWalk: (frame: string) => void;
+	viewport: Viewport;
 	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
 	loading: boolean;
 	/** The app's window, when this is its title bar. */
 	desk?: DeskWindow;
-	/** Tab only: whether the bar is put away, so the eye knows which way it faces. */
-	hidden?: boolean;
-	/** Tab only: put away and not peeking, so it is out of reach as well as out of sight. */
-	away?: boolean;
-	onHide?: (hidden: boolean) => void;
 	onClose?: () => void;
 	closeLabel?: string;
 	exitKey?: string;
 	linkable?: boolean;
 }) {
 	const layout = barLayout(viewport.vw);
+	const resizing = useResizing(viewport);
 	// Said once and then gone, the way a toast is; pressing reset ends it early
 	// because the thing it was announcing has just been undone.
 	const [restored, setRestored] = useState(desk?.restored ?? false);
@@ -466,19 +283,16 @@ function TopBar({
 		return () => window.clearTimeout(timer);
 	}, [restored]);
 	return (
-		<div
-			className={["spool-top", desk === undefined ? "" : "is-desk", away === true ? "is-away" : ""].join(" ").trim()}
-			style={{ height: DESK_BAR_PX }}
-			inert={away === true}
-		>
-			<FrameSwitcher
-				frame={frame}
-				frames={frames}
-				picking={picking}
-				onPicking={onPicking}
-				onWalk={onWalk}
-				{...(layout.project ? { project } : {})}
-			/>
+		<div className={desk === undefined ? "spool-top" : "spool-top is-desk"} style={{ height: DESK_BAR_PX }}>
+			<span className="spool-bar-title">
+				{layout.project && <span className="spool-bar-project">{project} /</span>}
+				<span className="spool-bar-name">{frame}</span>
+			</span>
+			{layout.size && (
+				<span className={resizing ? "spool-bar-size is-on" : "spool-bar-size"} aria-hidden={!resizing}>
+					{viewport.vw} × {viewport.vh}
+				</span>
+			)}
 			<span className="spool-bar-end">
 				{loading && (
 					<span className="spool-bar-hint spool-bar-loading" role="status">
@@ -499,82 +313,31 @@ function TopBar({
 						>
 							reset
 						</button>
-						<span className="spool-bar-rule" />
 					</span>
 				)}
-				{layout.size && (
-					<span className="spool-bar-hint">
-						{viewport.vw} × {viewport.vh}
-					</span>
-				)}
-				{desk === undefined && layout.size && <span className="spool-bar-hint">{exitKey} exits</span>}
-				{desk === undefined && linkable && (
-					<>
-						<span className="spool-bar-rule" />
-						<CopyLinkButton />
-					</>
-				)}
-				{desk === undefined && onHide !== undefined && (
-					<>
-						<span className="spool-bar-rule" />
-						<button
-							type="button"
-							id="spool-bar-eye"
-							className="spool-bar-icon"
-							aria-label={hidden === true ? "Keep the bar" : "Hide the bar"}
-							aria-pressed={hidden === true}
-							onClick={() => onHide(hidden !== true)}
-						>
-							<Eye shut={hidden === true} />
-						</button>
-					</>
-				)}
-				{desk === undefined && (
-					<>
-						<span className="spool-bar-rule" />
-						<CloseButton label={closeLabel} onClose={onClose ?? (() => {})} />
-					</>
-				)}
+				{desk === undefined && linkable && <CopyLinkButton />}
+				{desk === undefined && <CloseButton label={closeLabel} chord={exitKey} onClose={onClose ?? (() => {})} />}
 			</span>
 		</div>
 	);
 }
 
-/** An eye, open when the bar is worn and shut when it is put away. */
-function Eye({ shut }: { shut: boolean }) {
-	return (
-		<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-			{shut ? (
-				<>
-					<path
-						d="M1.5 9c1.6 2.3 3.9 3.5 6.5 3.5S12.9 11.3 14.5 9"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="1.4"
-						strokeLinecap="round"
-					/>
-					<path
-						d="m3.5 11-1 1.5M8 12.5V14m4.5-3 1 1.5"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="1.4"
-						strokeLinecap="round"
-					/>
-				</>
-			) : (
-				<>
-					<path
-						d="M1.5 8c1.6-2.7 3.9-4 6.5-4s4.9 1.3 6.5 4c-1.6 2.7-3.9 4-6.5 4S3.1 10.7 1.5 8Z"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="1.4"
-						strokeLinejoin="round"
-					/>
-					<circle cx="8" cy="8" r="1.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
-				</>
-			)}
-		</svg>
-	);
+/**
+ * Whether the window is being resized: true from a change of size until it has
+ * held still for {@link DESK_RESIZE_MS}. The size the bar mounts at is not a
+ * resize, so a window opened at any size says nothing.
+ */
+function useResizing({ vw, vh }: Viewport): boolean {
+	const [resizing, setResizing] = useState(false);
+	const first = useRef(`${vw}x${vh}`);
+	useEffect(() => {
+		if (first.current === `${vw}x${vh}`) return;
+		first.current = "";
+		setResizing(true);
+		const timer = window.setTimeout(() => setResizing(false), DESK_RESIZE_MS);
+		return () => window.clearTimeout(timer);
+	}, [vw, vh]);
+	return resizing;
 }
 
 /**
@@ -634,19 +397,22 @@ function CopyLinkButton() {
 		return () => clearTimeout(timer);
 	}, [copied]);
 	return (
-		<button
-			type="button"
-			className="spool-bar-icon spool-bar-copy"
-			aria-label="Copy link to this screen"
-			onClick={() => {
-				void navigator.clipboard?.writeText(window.location.href).then(
-					() => setCopied(true),
-					() => {},
-				);
-			}}
-		>
-			{copied ? <span className="spool-bar-hint">copied</span> : <LinkGlyph />}
-		</button>
+		<span className="spool-bar-tipped">
+			<button
+				type="button"
+				className="spool-bar-icon spool-bar-copy"
+				aria-label="Copy link to this screen"
+				onClick={() => {
+					void navigator.clipboard?.writeText(window.location.href).then(
+						() => setCopied(true),
+						() => {},
+					);
+				}}
+			>
+				{copied ? <span className="spool-bar-hint">copied</span> : <LinkGlyph />}
+			</button>
+			{!copied && <Tip label="Copy link" />}
+		</span>
 	);
 }
 

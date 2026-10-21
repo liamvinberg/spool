@@ -301,12 +301,12 @@ describe("the read-only canvas", () => {
 		await page.locator('[data-viewer-frame="home"]').click();
 		const player = page.locator("[data-viewer-player]");
 		await player.waitFor();
-		await expect.poll(() => page.locator("#spool-switcher").textContent()).toContain("home");
+		await expect.poll(() => page.locator(".spool-bar-name").textContent()).toContain("home");
 		expect(new URL(page.url()).searchParams.get("frame")).toBe("home");
 		expect(await player.locator(".spool-top").evaluate((el) => el.getBoundingClientRect().height)).toBe(30);
 
 		await player.frameLocator('iframe[title="home"]').getByRole("button", { name: "Go to menu" }).click();
-		await expect.poll(() => page.locator("#spool-switcher").textContent()).toContain("menu");
+		await expect.poll(() => page.locator(".spool-bar-name").textContent()).toContain("menu");
 		await player.frameLocator('iframe[title="menu"]').locator("h1").waitFor();
 		expect(new URL(page.url()).searchParams.get("frame")).toBe("menu");
 		// home stood in for menu until menu drew, and then left
@@ -335,7 +335,7 @@ describe("the read-only canvas", () => {
 
 		const played = await open(`${PATH}/shop?frame=shop%2Fcart`);
 		await played.page.locator("[data-viewer-player]").waitFor();
-		await expect.poll(() => played.page.locator("#spool-switcher").textContent()).toContain("shop/cart");
+		await expect.poll(() => played.page.locator(".spool-bar-name").textContent()).toContain("shop/cart");
 		await played.page.keyboard.press("Escape");
 		await played.page.locator("[data-viewer-player]").waitFor({ state: "detached" });
 		expect(new URL(played.page.url()).pathname).toBe(`${PATH}/shop`);
@@ -483,7 +483,7 @@ describe("the read-only canvas", () => {
 		await page.locator('[data-viewer-frame="home"]').click();
 		const player = page.locator("[data-viewer-player]");
 		await player.waitFor();
-		expect(await player.locator(".spool-top").textContent()).toContain("esc exits");
+		expect(await player.locator("#spool-close + .spool-bar-tip kbd").textContent()).toBe("esc");
 		await page.getByRole("button", { name: "Copy link to this screen" }).click();
 		await player.getByText("copied").waitFor();
 		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${APP}${PATH}?frame=home`);

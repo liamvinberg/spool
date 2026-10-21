@@ -46,9 +46,9 @@ body { margin: 0; background: #0e0e0e; }
 .spool-player-escape { display: inline-block; margin-top: 16px; color: #f0efed; text-decoration: underline; text-underline-offset: 3px; }
 /* the bar along the top (#275, #227): 30px, worn by both shells. In the app it
    is the window's title bar with the traffic lights inset into it; in a tab it
-   is the same strip, and the eye on it puts it away. Permanent rather than
-   summoned, which is the trade: 30px of page for a name that is always
-   readable and a switcher that never has to be found */
+   is the same strip with copy link and close. Always worn, on the page's own
+   dark with a hairline under it: the frame's name and the way home are never
+   more than a glance away, and nothing has to be found again */
 .spool-page.has-bar { box-sizing: border-box; padding-top: 30px; }
 .spool-page.has-bar .spool-screen { min-height: calc(100vh - 30px); }
 .spool-top {
@@ -60,9 +60,9 @@ body { margin: 0; background: #0e0e0e; }
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	padding: 0 12px 0 16px;
-	background: #282828;
-	border-bottom: 1px solid #363636;
+	padding: 0 6px 0 16px;
+	background: #0e0e0e;
+	border-bottom: 1px solid #212121;
 	color: #f0efed;
 	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
 	-webkit-font-smoothing: antialiased;
@@ -70,31 +70,26 @@ body { margin: 0; background: #0e0e0e; }
 }
 /* the first 76px are the OS's: three lights, inset by trafficLightPosition —
    and this bar is the window's title bar, so a hand on it moves the window */
-.spool-top.is-desk { padding-left: 76px; -webkit-app-region: drag; }
-.spool-top.is-desk button, .spool-top.is-desk .spool-picker { -webkit-app-region: no-drag; }
-/* full height, so the picker opens flush under the bar rather than under a button */
-.spool-top .spool-bar-switcher { align-self: stretch; align-items: center; }
-.spool-bar-rule { flex: none; width: 1px; height: 14px; background: #363636; }
-.spool-bar-switcher { position: relative; display: flex; }
-.spool-bar-frame {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin: 0 -6px;
-	padding: 4px 6px;
-	background: none;
-	border: 0;
-	border-radius: 4px;
-	color: inherit;
-	font: inherit;
-	cursor: pointer;
+.spool-top.is-desk { padding: 0 12px 0 76px; -webkit-app-region: drag; }
+.spool-top.is-desk button { -webkit-app-region: no-drag; }
+.spool-bar-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.spool-bar-project { color: #6c6a67; white-space: nowrap; }
+.spool-bar-name { overflow: hidden; color: #94918d; white-space: nowrap; text-overflow: ellipsis; }
+/* the window's size, said in the middle while it is being resized and gone once it settles */
+.spool-bar-size {
+	position: absolute;
+	left: 50%;
+	translate: -50% 0;
+	color: #94918d;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 180ms ease-out;
 }
-.spool-bar-frame:hover { background: #1c1c1c; }
-.spool-bar-project { color: #94918d; }
-.spool-bar-name { white-space: nowrap; }
-.spool-bar-chevron { color: #94918d; transition: rotate 150ms ease; }
-.spool-bar-chevron.is-open { rotate: 180deg; }
-.spool-bar-end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.spool-bar-size.is-on { opacity: 1; }
+.spool-bar-end { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .spool-bar-hint { color: #94918d; font-size: 11px; white-space: nowrap; }
 /* said while the screen is on its way: the compile and the first fetch happen
    behind the bar, and a box with nothing in it says nothing */
@@ -134,14 +129,14 @@ body { margin: 0; background: #0e0e0e; }
 	92%, 100% { scale: 0 1; transform-origin: right center; }
 }
 @media (prefers-reduced-motion: reduce) { .spool-arrival-mark path { animation: none; scale: 1 1; } }
-/* the eye and the close: one box each, lit on hover */
+/* copy link and close: one box each, lit on hover */
 .spool-bar-icon {
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	flex: none;
-	width: 20px;
-	height: 20px;
+	width: 24px;
+	height: 24px;
 	margin: 0;
 	padding: 0;
 	background: none;
@@ -149,89 +144,42 @@ body { margin: 0; background: #0e0e0e; }
 	border-radius: 4px;
 	color: #94918d;
 	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
-.spool-bar-icon:hover { background: #1c1c1c; color: #f0efed; }
+.spool-bar-icon:hover { background: rgb(240 239 237 / 0.06); color: #f0efed; }
 /* the copy link: as wide as the word that says it copied */
-.spool-bar-copy { width: auto; min-width: 20px; padding: 0 2px; }
-/* the bar put away (#227): the strip is where it was, the nub is its trace,
-   and the bar sits inside the strip so hovering either is one hover. Resting
-   there peeks it in over the page; leaving takes it away; pressing the nub
-   puts it back on */
-.spool-peek { position: fixed; inset: 0 0 auto; z-index: 10; height: 6px; }
-.spool-nub {
+.spool-bar-copy { width: auto; min-width: 24px; padding: 0 4px; }
+/* a control's name under it, after a beat, with its key when it has one */
+.spool-bar-tipped { position: relative; display: flex; }
+.spool-bar-tip {
 	position: absolute;
-	top: 0;
-	left: 50%;
-	width: 40px;
-	height: 3px;
-	margin: 0 0 0 -20px;
-	padding: 0;
-	border: 0;
-	border-radius: 0 0 999px 999px;
-	background: #363636;
-	opacity: 0.7;
-	cursor: pointer;
-	transition: opacity 200ms ease;
-}
-.spool-peek.is-open .spool-nub { opacity: 0; }
-.spool-peek .spool-top {
-	translate: 0 -100%;
-	opacity: 0;
-	pointer-events: none;
-	transition: translate 200ms ease-out, opacity 200ms ease-out;
-}
-.spool-peek.is-open .spool-top { translate: 0 0; opacity: 1; pointer-events: auto; }
-/* the switcher, closed by default: that is how it will be seen nine times in ten */
-.spool-picker {
-	position: absolute;
-	top: 100%;
-	left: -6px;
-	z-index: 1;
-	width: 280px;
-	overflow: hidden;
-	background: #161616;
-	border: 1px solid #363636;
-	border-top: 0;
-	border-radius: 0 0 12px 12px;
-	translate: 0 -4px;
-	opacity: 0;
-	pointer-events: none;
-	transition: translate 150ms ease, opacity 150ms ease;
-}
-.spool-picker.is-open { translate: 0 0; opacity: 1; pointer-events: auto; }
-.spool-picker input {
-	box-sizing: border-box;
-	width: calc(100% - 16px);
-	margin: 8px;
-	padding: 7px 8px;
-	border: 1px solid #363636;
-	border-radius: 4px;
-	background: #0e0e0e;
-	color: #f0efed;
-	font: inherit;
-	outline: none;
-}
-.spool-picker input:focus { border-color: #94918d; }
-.spool-picker-list { display: flex; flex-direction: column; max-height: 320px; overflow: auto; }
-.spool-picker-row {
+	top: calc(100% + 6px);
+	right: 0;
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 8px 12px;
-	background: none;
-	border: 0;
+	padding: 4px 8px;
+	background: #282828;
+	border: 1px solid #363636;
+	border-radius: 6px;
+	color: #f0efed;
+	font-size: 11px;
+	line-height: 16px;
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 140ms ease-out 0s;
+}
+.spool-bar-tip kbd {
+	padding: 0 5px;
+	border: 1px solid #363636;
 	border-radius: 4px;
 	color: #94918d;
 	font: inherit;
-	text-align: left;
-	cursor: pointer;
 }
-.spool-picker-row:hover { background: #1c1c1c; color: #f0efed; }
-.spool-picker-row.is-here { color: #f0efed; }
-.spool-picker-empty { padding: 8px 12px; color: #94918d; font-size: 11px; }
+.spool-bar-tipped:hover .spool-bar-tip,
+.spool-bar-tipped:has(:focus-visible) .spool-bar-tip { opacity: 1; transition-delay: 400ms; }
 .spool-dash { flex: none; width: 8px; height: 2px; background: transparent; }
-.spool-picker-row.is-here .spool-dash { background: #f5391a; }
-.spool-picker-foot { display: block; padding: 8px 14px; border-top: 1px solid #262626; color: #94918d; font-size: 11px; }
 .spool-desk-restored { display: flex; align-items: center; gap: 8px; color: #94918d; font-size: 11px; }
 .spool-dash.is-lit { background: #f5391a; }
 .spool-desk-reset {
@@ -261,14 +209,12 @@ body { margin: 0; background: #0e0e0e; }
 }
 .spool-bar-share:hover, .spool-bar-share[aria-expanded=true] { background: #1c1c1c; }
 .spool-bar-share:disabled { opacity: .55; cursor: default; }
-.spool-bar-switcher[data-instant=true] .spool-bar-chevron,
-.spool-bar-switcher[data-instant=true] .spool-picker { transition: none; }
 .spool-bar-sharing { display: flex; align-items: center; gap: 8px; }
 .spool-top button:focus-visible {
 	outline: 2px solid var(--color-accent);
 	outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
-	.spool-bar-chevron, .spool-picker { transition: none !important; }
+	.spool-bar-size, .spool-bar-icon, .spool-bar-tip { transition: none !important; }
 }
 `;

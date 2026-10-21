@@ -20,17 +20,27 @@ interface Probe {
  * the page.
  */
 async function summonEdgeBar(page: Page): Promise<void> {
-	await expect.poll(() => page.locator(".spool-top:not(.is-away)").count(), { timeout: 30_000 }).toBe(1);
+	await expect.poll(() => page.locator(".spool-top").count(), { timeout: 30_000 }).toBe(1);
 }
 
-/** Ask for the bar, open the switcher, and walk to a screen — a controller command a hand can send. */
-async function walkFromSwitcher(page: Page, name: string): Promise<void> {
+/**
+ * Walk to a screen the way the browser's own back and forward do: a history
+ * entry naming it pops, and the player walks there — a controller command a
+ * hand can send. Each entry stands past the last, so every walk plays forward.
+ */
+async function walkFromHistory(page: Page, name: string, times = 1): Promise<void> {
 	await summonEdgeBar(page);
-	await page.locator("#spool-switcher").click();
-	await page
-		.locator(".spool-picker-row")
-		.filter({ hasText: new RegExp(`^${name}$`) })
-		.click();
+	await page.evaluate(
+		([frame, count]) => {
+			const at = window as unknown as { __spoolPopIndex?: number };
+			for (let pop = 0; pop < count; pop++) {
+				at.__spoolPopIndex = (at.__spoolPopIndex ?? 1_000) + 1;
+				const state = { spool: "play", frame, index: at.__spoolPopIndex };
+				window.dispatchEvent(new PopStateEvent("popstate", { state }));
+			}
+		},
+		[name, times] as const,
+	);
 }
 
 async function installPlayerMountGate(page: Page): Promise<void> {
@@ -2448,16 +2458,8 @@ it("runs a queued walk after a pending transition settles", { timeout: 60_000 },
 	);
 	// far past MAX_PENDING_CONTROLLER_COMMANDS: the oldest are dropped, and
 	// whatever survives still drains once the transition settles
-	await summonEdgeBar(page);
 	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("origin");
-	await page.locator("#spool-switcher").click();
-	await page.evaluate(() => {
-		const row = [...document.querySelectorAll<HTMLButtonElement>(".spool-picker-row")].find(
-			(row) => row.textContent === "start",
-		);
-		if (row === undefined || row.classList.contains("is-here")) throw new Error("missing queued destination");
-		for (let index = 0; index < 40; index++) row.click();
-	});
+	await walkFromHistory(page, "start", 40);
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -2509,16 +2511,8 @@ it("waits for both navigation and its matching completion before draining contro
 	});
 
 	// Two walks, back to back, with the first one's completion held.
-	await summonEdgeBar(page);
-	await page.evaluate(() => {
-		const rows = [...document.querySelectorAll<HTMLButtonElement>(".spool-picker-row")];
-		const find = (name: string) => rows.find((row) => row.textContent === name);
-		const first = find("end");
-		const second = find("start");
-		if (first === undefined || second === undefined) throw new Error("missing switcher rows");
-		first.click();
-		second.click();
-	});
+	await walkFromHistory(page, "end");
+	await walkFromHistory(page, "start");
 
 	await inner.locator("#end").waitFor({ timeout: 5_000 });
 	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("end");
@@ -2600,7 +2594,7 @@ it("retains a controller command sent before an authored navigation reaches the 
 		)
 		.toBe(1);
 	expect(await page.locator(".spool-bar-name").textContent()).toBe("start");
-	await walkFromSwitcher(page, "end");
+	await walkFromHistory(page, "end");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2820,8 +2814,10 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 
 	// two walks: the first runs and its completion is held, so the second is
 	// still queued — and a queued walk has not navigated.
-	await walkFromSwitcher(page, "next");
-	await walkFromSwitcher(page, "start");
+	await walkFromHistory(page, "next");
+	// back to where it started is a walk only once the first has landed
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("next");
+	await walkFromHistory(page, "start");
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -2891,7 +2887,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		)
 		.toBe(1);
 	// the first completion arriving a second time is a duplicate, and drains nothing
-	await walkFromSwitcher(page, "next");
+	await walkFromHistory(page, "next");
 	await inner.locator("body").evaluate((_body, completion) => {
 		(
 			window as unknown as {
@@ -3382,7 +3378,7 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 			}
 		).__spoolRuntimeMessageGate.hold();
 	});
-	await walkFromSwitcher(page, "away");
+	await walkFromHistory(page, "away");
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>

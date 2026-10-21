@@ -95,7 +95,7 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 	expect(await canvas.evaluate(() => location.pathname)).toBe(`/p/${project.name}`);
 });
 
-it("wears the bar, puts it away on the eye, and peeks it back on a rest against the top edge", {
+it("wears the bar for good, and says the window's size only while it is resized", {
 	timeout: 180_000,
 }, async () => {
 	const browser = await testBrowser();
@@ -105,45 +105,28 @@ it("wears the bar, puts it away on the eye, and peeks it back on a rest against 
 	await played.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=one`);
 	await expect.poll(() => played.locator(".spool-screen").count(), { timeout: 30_000 }).toBe(1);
 
-	const away = () => played.locator(".spool-top.is-away").count();
-	// worn by default: the name is readable without asking, and the page sits under it
-	expect(await played.locator(".spool-top").count()).toBe(1);
-	expect(await away()).toBe(0);
-	await expect.poll(() => played.locator("#spool-switcher").innerText()).toContain("one");
+	// worn: the name is readable without asking, and the page sits under it
+	await expect.poll(() => played.locator(".spool-bar-name").innerText()).toBe("one");
 	expect(await played.locator(".spool-page.has-bar").count()).toBe(1);
-	expect(await played.locator(".spool-nub").count()).toBe(0);
+	// and there is nothing on it that puts it away, or a trace left to find it by
+	for (const gone of ["#spool-bar-eye", "#spool-switcher", ".spool-nub"]) {
+		expect(await played.locator(gone).count(), gone).toBe(0);
+	}
 
-	// the eye puts it away: the page gets the whole window, the nub is the trace
-	await played.locator("#spool-bar-eye").click();
-	await expect.poll(away, { timeout: 5_000 }).toBe(1);
-	expect(await played.locator(".spool-page.has-bar").count()).toBe(0);
-	expect(await played.locator(".spool-nub").count()).toBe(1);
+	// a still window says nothing about its size
+	const size = played.locator(".spool-bar-size");
+	expect(await size.evaluate((el) => getComputedStyle(el).opacity)).toBe("0");
+	// a resize says it, at the new size, and it goes once the window settles
+	await played.setViewportSize({ width: 1100, height: 800 });
+	await expect.poll(() => size.evaluate((el) => el.classList.contains("is-on")), { timeout: 5_000 }).toBe(true);
+	expect(await size.innerText()).toBe("1100 × 800");
+	await expect.poll(() => size.evaluate((el) => el.classList.contains("is-on")), { timeout: 5_000 }).toBe(false);
 
-	// the pointer is over the frame's own document, and nothing there peeks the bar
-	await played.mouse.move(640, 450);
-	await played.mouse.move(640, 600);
-	await played.waitForTimeout(400);
-	expect(await away()).toBe(1);
-
-	// resting against the top edge peeks it in over the page
-	await played.mouse.move(640, 2);
-	await expect.poll(away, { timeout: 5_000 }).toBe(0);
-	expect(await played.locator(".spool-page.has-bar").count()).toBe(0);
-
-	// and moving back down into the page takes it away
-	await played.mouse.move(640, 500);
-	await expect.poll(away, { timeout: 5_000 }).toBe(1);
-
-	// pressing the nub puts it back on, and a fresh tab remembers either way
-	await played.mouse.move(640, 2);
-	await expect.poll(away, { timeout: 5_000 }).toBe(0);
-	await played.locator("#spool-bar-eye").click();
-	await expect.poll(() => played.locator(".spool-page.has-bar").count(), { timeout: 5_000 }).toBe(1);
-	await played.locator("#spool-bar-eye").click();
-	await expect.poll(away, { timeout: 5_000 }).toBe(1);
-	const again = await context.newPage();
-	await again.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=one`);
-	await expect.poll(() => again.locator(".spool-top.is-away").count(), { timeout: 30_000 }).toBe(1);
+	// close names its key in a tooltip rather than on the bar
+	await played.locator("#spool-close").hover();
+	const tip = played.locator("#spool-close + .spool-bar-tip");
+	await expect.poll(() => tip.evaluate((el) => getComputedStyle(el).opacity), { timeout: 5_000 }).toBe("1");
+	expect(await tip.locator("kbd").innerText()).toMatch(/w$/);
 });
 
 it("opens on the page's dark, winds the mark through a long wait, and dissolves into the frame", {
