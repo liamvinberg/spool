@@ -1631,6 +1631,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			open: () => {
 				burst = randomUUID();
 				opened = true;
+				helloSince = state.head;
 				backoff.connected();
 				connectedWith = presented;
 				socket?.send(
@@ -1638,7 +1639,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 						type: "hello",
 						protocol: PROTOCOL_VERSION,
 						format: FORMAT_VERSION,
-						since: (helloSince = state.head),
+						since: helloSince,
 						bundles: true,
 						ticks: true,
 						...(live ? { checks: true } : {}),
