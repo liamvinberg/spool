@@ -168,6 +168,7 @@ import {
 	takeUndo,
 	type Way,
 } from "./history";
+import { CompareLayer, TouchedLayer, useComparing } from "./history-compare";
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useRestoring } from "./history-restore";
@@ -676,6 +677,11 @@ function CanvasField({
 	const syncState = useSyncState(project, root);
 	// restoring from the team history (spool#188): the question, the toast with its Undo, and ⌘Z while it stands
 	const restoring = useRestoring(project);
+	// comparing with now (spool#189): the frames as they stood beside today's, and what a stretch under the pointer touched
+	const comparing = useComparing(historyScope);
+	const closeCompare = comparing.close;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: another page puts the canvas back
+	useEffect(() => closeCompare(), [activePage, closeCompare]);
 	const restoringRef = useRef(restoring);
 	restoringRef.current = restoring;
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
@@ -5181,8 +5187,22 @@ function CanvasField({
 				scope={historyScope}
 				visible={visible}
 				onScope={setHistoryScope}
-				actions={restoring.actions}
-				restore={restoring.file}
+				actions={(stretch, scope) => (
+					<>
+						{comparing.action(stretch, scope)}
+						{restoring.actions(stretch, scope)}
+					</>
+				)}
+				restore={{
+					line: restoring.file.line,
+					setAside: (file, save, stretch) => (
+						<>
+							{comparing.setAside(file, save, stretch)}
+							{restoring.file.setAside(file, save, stretch)}
+						</>
+					),
+				}}
+				onHover={comparing.hover}
 			/>
 		),
 	};
@@ -5630,6 +5650,19 @@ function CanvasField({
 									slop={DRAG_THRESHOLD_PX}
 									onPoint={live.point}
 									onPick={live.pick}
+								/>
+							)}
+							{/* a team project's history on the canvas (spool#189): the frames a stretch under the pointer
+						    touched, and Compare with now over everything on the field */}
+							{team && <TouchedLayer hovered={comparing.hovered} frames={visibleFrames} camera={camera} />}
+							{team && (
+								<CompareLayer
+									project={project}
+									comparing={comparing.comparing}
+									frames={visibleFrames}
+									page={activePage}
+									camera={camera}
+									onClose={closeCompare}
 								/>
 							)}
 						</>
