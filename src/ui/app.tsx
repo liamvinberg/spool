@@ -27,6 +27,7 @@ import {
 } from "./api";
 import { BarEnd } from "./bar-end";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { matchTheTeam } from "./canvas/sync-state";
 import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow, menuAccelerators, TAB_COMMANDS } from "./desktop-window";
@@ -834,6 +835,11 @@ export function App() {
 							onExport={transfer.exportProject}
 							onChangeIcon={icons.change}
 							onRemoveIcon={icons.remove}
+							onMatchTeam={(tab) => {
+								// its canvas's Sync box says a refusal, so it comes to the front
+								focusProject(tab.root);
+								void matchTheTeam(tab.name);
+							}}
 							onPick={() => setPicking("new")}
 						/>
 					</div>

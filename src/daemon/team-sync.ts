@@ -2161,11 +2161,13 @@ export function createTeamSync(deps: {
 			copies.get(root)?.presence(state);
 		},
 		/** What a root's canvas says of its sync now: nothing to say for a solo project. */
-		state: (root: string): SyncState => ({
-			ended: endedWith(root) ?? null,
-			goneLocal: goneLocalWith(root) ?? null,
-			...(copies.get(root)?.state() ?? { paused: null, sending: null, held: [], offline: false }),
-		}),
+		state: (root: string): SyncState => {
+			const ended = endedWith(root) ?? null;
+			const goneLocal = goneLocalWith(root) ?? null;
+			const copy = copies.get(root)?.state() ?? { paused: null, sending: null, held: [], offline: false };
+			// ended or gone local says why nothing travels; offline would only say less
+			return { ended, goneLocal, ...copy, offline: copy.offline && ended === null && goneLocal === null };
+		},
 		/**
 		 * Match the team on a root's local copy (#205): refused with `MatchOffline` when it isn't followed or has no
 		 * caught-up connection, changing nothing; otherwise how many set-aside marks it made.

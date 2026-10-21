@@ -30,6 +30,7 @@ it("says a team project ended here, sync paused, and which files didn't travel, 
 					{ path: "shared/assets/film.mov", why: "it's over 25 MB" },
 					{ path: "shared/assets/raw.psd", why: "it's over 25 MB" },
 				],
+				offline: false,
 			},
 		}),
 	);
@@ -59,6 +60,7 @@ it("names the one file that didn't travel", () => {
 				paused: null,
 				sending: null,
 				held: [{ path: "shared/assets/film.mov", why: "it's over 25 MB" }],
+				offline: false,
 			},
 		}),
 	);
@@ -69,7 +71,9 @@ it("names the one file that didn't travel", () => {
 
 it("says nothing while a team project syncs as it should", () => {
 	const host = mount(
-		createElement(SyncNotices, { state: { ended: null, goneLocal: null, paused: null, sending: null, held: [] } }),
+		createElement(SyncNotices, {
+			state: { ended: null, goneLocal: null, paused: null, sending: null, held: [], offline: false },
+		}),
 	);
 	expect(host.querySelector("[data-sync-state]")).toBeNull();
 });
@@ -77,7 +81,7 @@ it("says nothing while a team project syncs as it should", () => {
 it("says the team went local and the copy keeps working here, until the team pays", () => {
 	const host = mount(
 		createElement(SyncNotices, {
-			state: { ended: null, goneLocal: "Devosurf", paused: null, sending: null, held: [] },
+			state: { ended: null, goneLocal: "Devosurf", paused: null, sending: null, held: [], offline: false },
 		}),
 	);
 	expect(host.querySelector("[data-sync-state]")?.textContent).toContain(
@@ -94,6 +98,7 @@ it("says changes waiting out a long spell on the minute's limit as progress, not
 				paused: null,
 				sending: "Sending 340 changes to devosurf, about 3 minutes",
 				held: [],
+				offline: false,
 			},
 		}),
 	);
@@ -136,7 +141,15 @@ it("counts a long wait down in the same notice, and a closed one stays closed un
 });
 
 it("stands the moved sheet over the canvas once the pull lands, and Remove from Home forgets the project", async () => {
-	const sync = { ended: null, goneLocal: null, paused: null, sending: null, held: [], moved: null as unknown };
+	const sync = {
+		ended: null,
+		goneLocal: null,
+		paused: null,
+		sending: null,
+		held: [],
+		offline: false,
+		moved: null as unknown,
+	};
 	const asked: { url: string; body: string | undefined }[] = [];
 	vi.stubGlobal(
 		"fetch",
@@ -181,7 +194,7 @@ it("offers Put design/ back in git on a copy that ended or went local, and says 
 		const asked: string[] = [];
 		const host = mount(
 			createElement(SyncNotices, {
-				state: { ...over, paused: null, sending: null, held: [], backInGit: true },
+				state: { ...over, paused: null, sending: null, held: [], offline: false, backInGit: true },
 				onBackInGit: async () => {
 					asked.push("back");
 					return "design/ is back in git in checkout: one commit, nothing pushed.";
@@ -199,9 +212,71 @@ it("offers Put design/ back in git on a copy that ended or went local, and says 
 it("offers no Put design/ back in git where the daemon doesn't", () => {
 	const host = mount(
 		createElement(SyncNotices, {
-			state: { ended: "devosurf", goneLocal: null, paused: null, sending: null, held: [] },
+			state: { ended: "devosurf", goneLocal: null, paused: null, sending: null, held: [], offline: false },
 			onBackInGit: async () => "",
 		}),
 	);
 	expect(host.textContent).not.toContain("Put design/ back in git");
+});
+
+const quiet = { ended: null, goneLocal: null, paused: null, sending: null, held: [], offline: false };
+
+it("says the copy is offline, with Match the team beside it, and nothing once it is back", () => {
+	const onMatchTeam = vi.fn();
+	const host = mount(createElement(SyncNotices, { state: { ...quiet, offline: true }, onMatchTeam }));
+	const notice = host.querySelector("[data-sync-state]");
+	expect(notice?.textContent).toContain("Offline. Your changes go up when you're back.");
+	act(() =>
+		[...(notice?.querySelectorAll("button") ?? [])]
+			.find((button) => button.textContent === "Match the team")
+			?.click(),
+	);
+	expect(onMatchTeam).toHaveBeenCalledOnce();
+	const back = mount(createElement(SyncNotices, { state: quiet, onMatchTeam }));
+	expect(back.querySelector("[data-sync-state]")).toBeNull();
+});
+
+it("puts Match the team on every line of a copy that follows its team, never on one that ended", () => {
+	const host = mount(
+		createElement(SyncNotices, {
+			state: {
+				...quiet,
+				ended: "devosurf",
+				paused: "this project took 120 saves in the last minute",
+				held: [
+					{ path: "a.mov", why: "it's over 25 MB" },
+					{ path: "b.mov", why: "it's over 25 MB" },
+				],
+				offline: false,
+			},
+			onMatchTeam: () => {},
+		}),
+	);
+	const actions = [...host.querySelectorAll("[data-sync-state]")].map((notice) =>
+		[...notice.querySelectorAll("button")].map((button) => button.textContent).filter((label) => label !== ""),
+	);
+	expect(actions.map((labels) => labels.includes("Match the team"))).toEqual([false, true, true]);
+	expect(actions[2]).toContain("Show");
+});
+
+it("says why Match the team was refused until the line is closed", () => {
+	const onRefusedRead = vi.fn();
+	const host = mount(
+		createElement(SyncNotices, {
+			state: { ...quiet, offline: true },
+			refused: "Match the team needs a connection to spool.page. Nothing was changed.",
+			onMatchTeam: () => {},
+			onRefusedRead,
+		}),
+	);
+	const said = [...host.querySelectorAll("[data-sync-state]")];
+	expect(said.map((notice) => notice.textContent)).toEqual([
+		expect.stringContaining("Offline."),
+		expect.stringContaining("Match the team needs a connection to spool.page. Nothing was changed."),
+	]);
+	expect([...(said[1]?.querySelectorAll("button") ?? [])].map((button) => button.textContent)).not.toContain(
+		"Match the team",
+	);
+	act(() => said[1]?.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')?.click());
+	expect(onRefusedRead).toHaveBeenCalledOnce();
 });
