@@ -12,6 +12,7 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_
 import { account, type CloudRequestOptions, originOf, sessionVault } from "../cloud-auth";
 import { type ColorScheme, coverShape } from "../cover";
 import { DOOR_ORIGIN, SPOOL_PAGE_ORIGIN } from "../door";
+import { SpoolError } from "../errors";
 import { placeOf } from "../home-places";
 import { mutateMachineState } from "../machine-state";
 import { finishMoves } from "../move-in";
@@ -19,7 +20,7 @@ import { fetchLocalCopy, NotAnEditor } from "../open";
 import { isFramePath, isPageSlot, isSafeName } from "../page-path";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { appearanceOf, themeInline } from "../settings/registry";
-import { backInGitOffered, finishOwedCommits } from "../team-moves";
+import { backInGitOffered, finishOwedCommits, putBackInGit } from "../team-moves";
 import { type Presence, readPresenceState } from "../team-sync-protocol";
 import { requestUpgrade } from "../upgrade";
 import { type AgentAppLauncher, createAgentAppLauncher } from "./agent-app";
@@ -1684,6 +1685,19 @@ export function createDaemonApp({
 				...(moved === undefined ? {} : { moved }),
 				...(backInGit ? { backInGit } : {}),
 			});
+		}),
+	);
+	/** Put design/ back in git (#198): a copy that ended or went local here, in its checkout, with one commit. */
+	app.post("/api/p/:project/back-in-git", (c) =>
+		withProject(c, resolveProject, async (root) => {
+			try {
+				const back = await putBackInGit(root, (ended) => teamSync.endHere(ended), { signal: moving.signal });
+				emitAppEvent({ kind: "registry" });
+				return c.json(back);
+			} catch (error) {
+				if (error instanceof SpoolError) return c.json({ error: error.message }, 409);
+				throw error;
+			}
 		}),
 	);
 	/** What an agent's next command on a project says of its sync: what didn't travel and a pause, each said once. */

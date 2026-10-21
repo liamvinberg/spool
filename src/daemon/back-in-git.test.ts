@@ -90,8 +90,14 @@ async function offered(daemon: ReturnType<typeof makeApp>, root: string) {
 	return { cover: card?.backInGit === true, notice: sync.backInGit === true };
 }
 
-const putBack = (daemon: ReturnType<typeof makeApp>, path: string) =>
-	daemon.controlRequest("/api/cloud/back-in-git", { method: "POST", headers: json, body: JSON.stringify({ path }) });
+/** Put design/ back in git, as the notice and the cover menu ask for it: by the project's name on this Mac. */
+async function putBack(daemon: ReturnType<typeof makeApp>, root: string) {
+	const cards = (await (await daemon.request("/api/projects")).json()) as {
+		projects: { root: string; name: string }[];
+	};
+	const name = cards.projects.find((project) => project.root === root)?.name;
+	return daemon.controlRequest(`/api/p/${name}/back-in-git`, { method: "POST", headers: json });
+}
 
 const ended = (root: string) => readFileSync(join(root, "design/.gitignore"), "utf8") === ".spool/\n";
 
