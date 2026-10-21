@@ -291,6 +291,9 @@ export function cloudTeams(spoolDir: string, options: CloudRequestOptions = {}) 
 					`${team(address)}/projects/${encodeURIComponent(name)}/history/seen`,
 					{ files: files.slice(at, at + SEEN_FILES) },
 				);
+				// an answer that isn't one is a spool.page that can't say, as one with no such route
+				if (!Array.isArray(part.files) || typeof part.held !== "number")
+					throw new CloudTeamRefused("invalid_answer", 502);
 				answered.files.push(...part.files);
 				answered.held = part.held;
 			}

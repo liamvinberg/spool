@@ -204,6 +204,8 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 	let takesBundles = true;
 	/** The object sends presence a tick at a time to a connection that reads them, as spool.page does since #107. */
 	let ticks = true;
+	/** The object answers what the team has seen of a Mac's files, as spool.page does since spool#193. */
+	let seenAnswers = true;
 	/** Saves taken per window on a clock the test turns, as spool.page's per-minute limit counts them. */
 	let rate: { saves: number; windowMs: number; now: () => number; start: number; taken: number } | undefined;
 	/** The minute's bucket, on a clock the test turns: its level when last taken from, and how fast it refills. */
@@ -373,6 +375,7 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 				return Response.json(described(at));
 			});
 		// whether the team has, had or never had each of a Mac's files: an editor's read, counted against no limit
+		if (match[3] === "/history/seen" && !seenAnswers) return new Response("404 Not Found", { status: 404 });
 		if (match[3] === "/history/seen" && request.method === "POST")
 			return request.json().then((body: { files: { path: string; hash: string }[] }) => {
 				if (role === "viewer") return Response.json({ error: "editor_required" }, { status: 403 });
@@ -1316,7 +1319,12 @@ export function fakeTeam(team = "devosurf", teamName = "Devosurf") {
 			return () => away.delete(accountId);
 		},
 		soloMoves,
+		/** How many files each ask of what the team has seen named. */
 		seenAsks,
+		/** The cloud is an older spool.page, which can't say what the team has seen: the route isn't there. */
+		withoutSeen() {
+			seenAnswers = false;
+		},
 		/** The repo spool.page has recorded for a project. */
 		repo: (name: string) => project(name)?.repo,
 		/**
