@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.45.0
+
+### Minor Changes
+
+- ff199d1: The player in a browser has a copy link button that copies the link to the screen on show, ready to send. Its bar now says esc exits, where it said a shortcut that closes the whole tab.
+- d484eb7: A people share emails the people it names a link to open it. The first click signs them in, with no code to type, and it works once, for a week. Untick "Email them a link to it" to tell them yourself. Someone you add to a share later gets the email too.
+- ce2d6c5: A new share opens on the frame you have selected. Its link plays that frame straight away, for whoever opens it, and a people share keeps it through signing in. Untick "Start on" to open on the canvas instead.
+
+### Patch Changes
+
+- 5ee2c81: Opening a comment from the Comments panel while the canvas flew to it could slide the whole canvas sideways in the browser, leaving the toolbar and frames cut off until the page was reloaded. The canvas now stays where it is, and the card's reply box takes the keys without moving anything.
+- e8aa706: A theme that draws grain or texture with an SVG data URI keeps its filters now. Spool used to rewrite the `url(#…)` inside the data URI as a file path, which broke the filter.
+- ff199d1: The canvas in a browser is lighter and clearer. A page opens fitted between the buttons at the top and the tools at the bottom, so neither covers a frame. A frame too small to read shows its picture instead of loading, as on the Mac. Pointing at a frame lights its name and offers play beside it, and the play button in the pages list no longer sits on a long name.
+
 ## 0.44.0
 
 ### Minor Changes
