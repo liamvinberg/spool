@@ -47,21 +47,19 @@ describe("the frame a set-aside save compares", () => {
 describe("where Compare stands the frames", () => {
 	it("puts the old frame where today's stood and slides today's aside past it", () => {
 		expect(
-			compareLayout([
-				{ name: "cart", now: { x: 100, y: 50, w: 400, h: 300 }, then: { x: 0, y: 0, w: 480, h: 320 } },
-			]),
+			compareLayout([{ name: "cart", now: { x: 100, y: 50, w: 400, h: 300 }, was: { x: 0, y: 0, w: 480, h: 320 } }]),
 		).toEqual({
-			then: [{ name: "cart", box: { x: 100, y: 50, w: 400, h: 300 }, deleted: false }],
+			old: [{ name: "cart", box: { x: 100, y: 50, w: 400, h: 300 }, deleted: false }],
 			now: [{ name: "cart", from: { x: 100, y: 50, w: 400, h: 300 }, to: { x: 580, y: 50, w: 400, h: 300 } }],
 		});
 	});
 
 	it("brings a frame deleted since back in its old place, and moves today's past every old one", () => {
 		const layout = compareLayout([
-			{ name: "cart", now: { x: 0, y: 0, w: 400, h: 300 }, then: { x: 0, y: 0, w: 400, h: 300 } },
-			{ name: "promo", now: null, then: { x: 500, y: 0, w: 300, h: 300 } },
+			{ name: "cart", now: { x: 0, y: 0, w: 400, h: 300 }, was: { x: 0, y: 0, w: 400, h: 300 } },
+			{ name: "promo", now: null, was: { x: 500, y: 0, w: 300, h: 300 } },
 		]);
-		expect(layout.then).toEqual([
+		expect(layout.old).toEqual([
 			{ name: "cart", box: { x: 0, y: 0, w: 400, h: 300 }, deleted: false },
 			{ name: "promo", box: { x: 500, y: 0, w: 300, h: 300 }, deleted: true },
 		]);
@@ -72,7 +70,7 @@ describe("where Compare stands the frames", () => {
 	});
 
 	it("stands a frame that didn't exist then where today's is, to say so", () => {
-		expect(compareLayout([{ name: "promo", now: { x: 0, y: 0, w: 300, h: 200 }, then: null }]).then).toEqual([
+		expect(compareLayout([{ name: "promo", now: { x: 0, y: 0, w: 300, h: 200 }, was: null }]).old).toEqual([
 			{ name: "promo", box: { x: 0, y: 0, w: 300, h: 200 }, deleted: false },
 		]);
 	});

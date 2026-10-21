@@ -37,20 +37,20 @@ export function setAsideFrame(path: string, scope: HistoryScope): string | null 
  * each of today's slides from its place to past the old ones' right edge. A frame with no place then or now has
  * none to stand in.
  */
-export function compareLayout(frames: readonly { name: string; now: Box | null; then: Box | null }[]): {
-	then: { name: string; box: Box; deleted: boolean }[];
+export function compareLayout(frames: readonly { name: string; now: Box | null; was: Box | null }[]): {
+	old: { name: string; box: Box; deleted: boolean }[];
 	now: { name: string; from: Box; to: Box }[];
 } {
-	const then = frames.flatMap(({ name, now, then }) => {
-		const box = now ?? then;
+	const old = frames.flatMap(({ name, now, was }) => {
+		const box = now ?? was;
 		return box === null ? [] : [{ name, box, deleted: now === null }];
 	});
-	if (then.length === 0) return { then, now: [] };
-	const left = Math.min(...then.map(({ box }) => box.x));
-	const right = Math.max(...then.map(({ box }) => box.x + box.w));
+	if (old.length === 0) return { old, now: [] };
+	const left = Math.min(...old.map(({ box }) => box.x));
+	const right = Math.max(...old.map(({ box }) => box.x + box.w));
 	const by = right - left + COMPARE_GAP;
 	const now = frames.flatMap(({ name, now }) =>
 		now === null ? [] : [{ name, from: now, to: { ...now, x: now.x + by } }],
 	);
-	return { then, now };
+	return { old, now };
 }
