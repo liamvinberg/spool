@@ -122,14 +122,18 @@ export function createProjectShares(options: ProjectSharesOptions) {
 	/**
 	 * Put a solo project's shared pages at spool.page as they stand: the files they are made of and nothing else,
 	 * the bytes it lacks first, then the list that makes them its copy, then the covers of their frames. The pages
-	 * are its live shares', or those a share about to be made asks for; with none, its copy there is emptied.
+	 * are its live shares', and those of a share about to be made (`asking`); a whole-project share's are every page
+	 * the project has now, so a page added since goes up with it (spool#185). With none, its copy there is emptied.
 	 */
-	async function upload(root: string, id: string, asked?: readonly string[]): Promise<void> {
+	async function upload(root: string, id: string, asking?: Pick<ShareRequest, "pages" | "whole">): Promise<void> {
 		const cloud = client();
-		const pages = asked ?? [
-			...new Set((await cloud.list({ kind: "solo", id })).shares.flatMap((share) => share.pages)),
-		];
-		const { files, frames, sources } = await sharedFiles(root, realDesignDir(root), pages, options.version);
+		const { shares } = await cloud.list({ kind: "solo", id });
+		const asked: Pick<ShareRequest, "pages" | "whole">[] = asking === undefined ? shares : [...shares, asking];
+		const designDir = realDesignDir(root);
+		const pages = asked.some((share) => share.whole === true)
+			? everyPage(designDir)
+			: [...new Set(asked.flatMap((share) => share.pages ?? []))];
+		const { files, frames, sources } = await sharedFiles(root, designDir, pages, options.version);
 		const hashes: Record<string, string> = {};
 		for (const [path, bytes] of files) hashes[path] = sha256(bytes);
 		const byHash = new Map([...files].map(([path, bytes]) => [hashes[path] ?? "", bytes]));
@@ -154,7 +158,7 @@ export function createProjectShares(options: ProjectSharesOptions) {
 			const cover = shots.get(`${root}\0${frame}`);
 			if (cover !== undefined && cover.source === sources.get(frame)) await sendCover(id, frame, cover);
 		}
-		if (asked !== undefined) return;
+		if (asking !== undefined) return;
 		if (pages.length === 0) stopWatching(root);
 		else follow(root);
 	}
@@ -241,11 +245,9 @@ export function createProjectShares(options: ProjectSharesOptions) {
 				if (place.kind === "team") return client().create(place, request);
 				// a solo project's new pages go up before the share that shows them, so it opens on them at once
 				const solo = place;
-				await enqueue(async () => {
-					const { shares } = await client().list(solo);
-					const pages = [...new Set([...shares.flatMap((share) => share.pages), ...(request.pages ?? [])])];
-					await upload(root, solo.id, pages);
-				});
+				await enqueue(() =>
+					upload(root, solo.id, request.whole === true ? { whole: true } : { pages: request.pages ?? [] }),
+				);
 				const share = await client().create(solo, request);
 				follow(root);
 				return share;
@@ -381,6 +383,11 @@ export async function sharedFiles(
 		}
 	}
 	return { files: shown.size === 0 ? new Map() : files, frames, sources };
+}
+
+/** Every page holding a frame, the root page's own frames included: what a whole-project share shows now. */
+function everyPage(designDir: string): string[] {
+	return [...new Set(projectDesign(designDir, diskDesignFiles).frames.map((frame) => frame.page ?? ROOT_PAGE))];
 }
 
 /** Every file in a folder and below it, design-relative, leaving out any frame nested inside and dot-entries. */

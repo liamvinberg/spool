@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CloudRequestOptions } from "../cloud-auth";
 import { initTeamProject } from "../init";
 import type { ShareView } from "../share-view";
@@ -20,7 +20,7 @@ import {
 import type { AgentEngine } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import { realDesignDir } from "./design-path";
-import { createProjectShares, sharedFiles } from "./shares";
+import { createProjectShares, SOLO_QUIET_MS, sharedFiles } from "./shares";
 
 /**
  * Sharing pages from the Mac: a team project's shares are spool.page's, changed through this Mac's session; a solo
@@ -32,7 +32,7 @@ const ORIGIN = "https://cloud.test";
 const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
 
 /** spool.page as a solo project meets it: its own project, its shares, and the files it is handed by hash. */
-function fakeCloud() {
+function fakeCloud(limit = Number.POSITIVE_INFINITY) {
 	const token = "sam-token".padEnd(43, "x");
 	let signedIn = true;
 	const blobs = new Map<string, Buffer>();
@@ -63,7 +63,8 @@ function fakeCloud() {
 		if (rest === "shares" && request.method === "POST") {
 			const body = (await request.json()) as {
 				kind: "people" | "link";
-				pages: string[];
+				pages?: string[];
+				whole?: true;
 				people?: string[];
 				ends?: string;
 			};
@@ -71,7 +72,8 @@ function fakeCloud() {
 			const share: ShareView = {
 				id: `share-${shares.length + 1}`,
 				kind: body.kind,
-				pages: body.pages,
+				pages: body.pages ?? [],
+				...(body.whole ? { whole: true as const } : {}),
 				people: body.people ?? [],
 				by: "sam@example.test",
 				at: 1,
@@ -106,6 +108,9 @@ function fakeCloud() {
 			const { files } = (await request.json()) as { files: Record<string, string> };
 			const missing = Object.values(files).filter((hash) => !blobs.has(hash));
 			if (missing.length > 0) return Response.json({ error: "blobs_missing", missing }, { status: 409 });
+			// a solo project holds no more than a team project may (fair use)
+			const size = [...new Set(Object.values(files))].reduce((sum, hash) => sum + (blobs.get(hash)?.length ?? 0), 0);
+			if (size > limit) return Response.json({ error: "too_large" }, { status: 413 });
 			sources.push(files);
 			return Response.json({ head: sources.length });
 		}
@@ -328,6 +333,140 @@ describe("a solo project's share", () => {
 		});
 		expect(refused.status).toBe(401);
 		expect(existsSync(join(root, "design/.spool/share.json"))).toBe(false);
+	});
+});
+
+describe("a solo project's whole-project share (spool#185)", () => {
+	const share = (shares: ReturnType<typeof createProjectShares>, name: string, body: object) =>
+		shares.routes.request(`/${name}/shares`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+
+	it("uploads what every page is made of and their covers, and nothing outside design/'s travelling layout", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "home", frame("Welcome in"));
+		writePageFrame(root, "checkout", "pay", frame("<Price /> to pay", PRICED));
+		writePageFrame(root, "menu", "list", frame("<Draft />", `import { Draft } from "../../../drafts/draft";\n`));
+		writeDesignFile(root, "shared/ui/price.tsx", "export function Price() {\n\treturn <b>640 kr</b>;\n}\n");
+		writeDesignFile(root, "drafts/draft.tsx", "export function Draft() {\n\treturn <i>not travelling</i>;\n}\n");
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+		});
+		const made = await share(shares, name, { kind: "link", whole: true });
+		expect(made.status, await made.clone().text()).toBe(200);
+		expect(cloud.shares.map((each) => each.whole)).toEqual([true]);
+		expect(Object.keys(cloud.copy()).sort()).toEqual([
+			"canvas.json",
+			"frames/checkout/pay/frame.tsx",
+			"frames/home/frame.tsx",
+			"frames/menu/list/frame.tsx",
+			"shared/fonts.css",
+			"shared/importmap.json",
+			"shared/scenarios/default.json",
+			"shared/tokens.css",
+			"shared/ui/price.tsx",
+		]);
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1]);
+		const { sources } = await sharedFiles(root, realDesignDir(root), ["", "checkout", "menu"], "0.0.0-test");
+		for (const frame of ["home", "checkout/pay", "menu/list"])
+			shares.covered(root, frame, sources.get(frame) ?? "", png);
+		await shares.settled();
+		expect([...cloud.covers.values()].sort()).toEqual(["checkout/pay", "home", "menu/list"]);
+		shares.close();
+	});
+
+	it("takes a page added later up after a quiet spell", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writePageFrame(root, "checkout", "pay", frame("Pay 640 kr"));
+		let saved = () => {};
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: (_root, onSave) => {
+				saved = onSave;
+				return () => {};
+			},
+		});
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			expect((await share(shares, name, { kind: "link", whole: true })).status).toBe(200);
+			writePageFrame(root, "menu", "list", frame("Tonight's menu"));
+			saved();
+			vi.advanceTimersByTime(SOLO_QUIET_MS);
+			await shares.settled();
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(cloud.copy()["frames/menu/list/frame.tsx"]).toContain("Tonight's menu");
+		shares.close();
+	});
+
+	it("takes a page added later up after its agent's turn, and stopping it leaves what other shares show", async () => {
+		const cloud = fakeCloud();
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writePageFrame(root, "checkout", "pay", frame("Pay 640 kr"));
+		let done = false;
+		const daemon = makeApp(spoolDir, {
+			cloud: cloud.request,
+			agentEngines: [
+				endingEngine(() => {
+					writePageFrame(root, "menu", "list", frame("Tonight's menu"));
+					done = true;
+				}),
+			],
+		});
+		const base = `/api/p/${name}/shares`;
+		const post = (body: object) =>
+			daemon.request(base, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		expect((await post({ kind: "link", pages: ["checkout"] })).status).toBe(200);
+		const whole = (await (await post({ kind: "link", whole: true })).json()) as ShareView;
+		const uploads = cloud.sources.length;
+		await turn(daemon, name);
+		await until(() => done && cloud.sources.length > uploads, 15_000);
+		expect(cloud.copy()["frames/menu/list/frame.tsx"]).toContain("Tonight's menu");
+
+		const before = cloud.sources.length;
+		expect((await daemon.request(`${base}/${whole.id}`, { method: "DELETE" })).status).toBe(200);
+		await until(() => cloud.sources.length > before, 15_000);
+		expect(Object.keys(cloud.copy())).toContain("frames/checkout/pay/frame.tsx");
+		expect(Object.keys(cloud.copy()).some((path) => path.startsWith("frames/menu/"))).toBe(false);
+	});
+
+	it("is refused with the too-large reason when the project is over the fair-use size", async () => {
+		const cloud = fakeCloud(1_000);
+		const spoolDir = makeTempDir();
+		const { root, name } = makeProject(spoolDir);
+		writePageFrame(root, "checkout", "pay", frame("Pay 640 kr"));
+		writePageFrame(root, "menu", "list", frame("x".repeat(2_000)));
+		const shares = createProjectShares({
+			spoolDir,
+			request: cloud.request,
+			version: "0.0.0-test",
+			resolve: () => ({ root }),
+			watch: () => () => {},
+		});
+		const refused = await share(shares, name, { kind: "link", whole: true });
+		expect(refused.status).toBe(413);
+		expect(await refused.json()).toEqual({ error: "too_large" });
+		expect(cloud.shares).toEqual([]);
+		shares.close();
 	});
 });
 
