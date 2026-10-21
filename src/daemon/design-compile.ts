@@ -266,9 +266,9 @@ export interface CompiledFrameDocument {
 	 */
 	hash: string;
 	/**
-	 * The same inputs hashed for the frame alone, whoever it is compiled for: one
-	 * version of the frame, as every machine and the cloud name it. A cover of the
-	 * document is filed under it.
+	 * The frame and the digests of its inputs alone, whoever it is compiled for and
+	 * by whichever spool: one version of the frame, as every machine and the cloud
+	 * name it, whatever release each runs. A cover of the document is filed under it.
 	 */
 	source: string;
 	/** An HTTP ETag for the document: its inputs and webfont revision when settled, its bytes when not. */
@@ -355,7 +355,7 @@ export async function compileFrameDocument(
 	return {
 		document,
 		hash,
-		source: inputsHash(version, frame, designDir, digests),
+		source: frameSource(frame, designDir, digests),
 		etag: `"${etag.slice(0, 32)}"`,
 		inputs: [...digests.keys()],
 		fonts: fontsRevision,
@@ -691,12 +691,27 @@ export function inputsHash(
 	designDir: string,
 	digests: ReadonlyMap<string, string>,
 ): string {
-	const files = [...digests]
+	return createHash("sha256")
+		.update(JSON.stringify([version, shimHash(), stamp, namedDigests(designDir, digests)]))
+		.digest("hex");
+}
+
+/**
+ * One version of a frame (`CompiledFrameDocument.source`): its name and its
+ * inputs' digests, without the release or the shims that compiled it, so a Mac
+ * and the cloud on different releases name the same files the same.
+ */
+export function frameSource(frame: string, designDir: string, digests: ReadonlyMap<string, string>): string {
+	return createHash("sha256")
+		.update(JSON.stringify(["frame", frame, namedDigests(designDir, digests)]))
+		.digest("hex");
+}
+
+/** Each input by its path in design/ and the digest of its bytes, in path order. */
+function namedDigests(designDir: string, digests: ReadonlyMap<string, string>): (readonly [string, string])[] {
+	return [...digests]
 		.map(([file, digest]) => [designRelativePath(designDir, file), digest] as const)
 		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-	return createHash("sha256")
-		.update(JSON.stringify([version, shimHash(), stamp, files]))
-		.digest("hex");
 }
 
 export function parseImportMap(raw: string | undefined): unknown {

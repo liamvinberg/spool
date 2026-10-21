@@ -115,6 +115,18 @@ describe("the compile entry, with the files in memory and esbuild-wasm", () => {
 		});
 		expect(cart.source).not.toBe(cloud.source);
 	});
+
+	it("names one version of a frame the same whichever release compiled it", { timeout: 60_000 }, async () => {
+		const { host, designDir } = inMemory();
+		const compiled = (version: string) =>
+			compileFrameDocument(host, { designDir, frame: "home", project: "fixture-project", authority, version });
+
+		const mac = await compiled("0.44.0");
+		const cloud = await compiled("0.45.1");
+		// another release's document is cached apart, but its cover is the same version's
+		expect(cloud.hash).not.toBe(mac.hash);
+		expect(cloud.source).toBe(mac.source);
+	});
 });
 
 /**
