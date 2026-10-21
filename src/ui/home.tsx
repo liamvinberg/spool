@@ -5,6 +5,7 @@ import { FindNav, FoundHead, finds, NARROW_NAV, ProjectsHead, type Sort, useFoun
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { ArrowRightIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark } from "./icons";
+import { MovedArt, MovedSheet, movedBy } from "./moved-away";
 import { tilde } from "./paths";
 import { Button, IconButton, SplitButton } from "./primitives/actions";
 import { EmptyFrames, EmptyState } from "./primitives/feedback";
@@ -665,150 +666,161 @@ function ProjectTile({
 	onRemoveThumbnail?: () => void;
 }) {
 	const cover = project.covers[0];
+	// a project whose design/ moved into a team this account can't edit opens the sheet saying where it went
+	const [movedOpen, setMovedOpen] = useState(false);
+	const moved = project.moved;
 	return (
-		<CoverTile
-			name={project.name}
-			open={{ onClick: onOpen }}
-			here={here}
-			transition={transitionName(project.root)}
-			line={<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />}
-			menuOpen={menuOpen}
-			onToggleMenu={onToggleMenu}
-			onCloseMenu={onCloseMenu}
-			art={
-				<>
-					{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
-					{project.thumbnail !== undefined ? (
-						<img
-							src={thumbnailUrl(project.name, project.thumbnail.hash)}
-							alt=""
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : cover ? (
-						<Thumbnail
-							project={project.name}
-							frame={cover.frame}
-							cover={cover.cover}
-							alt={cover.frame}
-							draggable={false}
-							className="h-full w-full object-contain"
-						/>
-					) : (
-						// nothing to picture yet: its own mark, so an empty project still reads as itself
-						<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
-					)}
-				</>
-			}
-			menu={({ close, refocus }) => (
-				<>
-					<MenuItem
-						label="Open"
-						onClick={() => {
-							close();
-							onOpen();
-						}}
-					/>
-					{onChangeIcon && (
-						<MenuItem
-							label="Change icon…"
-							onClick={() => {
-								refocus();
-								close();
-								onChangeIcon();
-							}}
-						/>
-					)}
-					{onRemoveIcon && (
-						<MenuItem
-							label="Remove icon"
-							onClick={() => {
-								refocus();
-								close();
-								onRemoveIcon();
-							}}
-						/>
-					)}
-					{onRemoveThumbnail && (
-						<MenuItem
-							label="Remove thumbnail"
-							onClick={() => {
-								refocus();
-								close();
-								onRemoveThumbnail();
-							}}
-						/>
-					)}
-					<MenuItem
-						label="Export project…"
-						onClick={() => {
-							refocus();
-							close();
-							onExport();
-						}}
-					/>
-					<MenuItem
-						label="Rename…"
-						onClick={() => {
-							refocus();
-							close();
-							onRename();
-						}}
-					/>
-					{moves
-						.filter((move) => !move.end)
-						.map((move) => (
-							<MenuItem
-								key={move.label}
-								label={move.label}
-								onClick={() => {
-									refocus();
-									close();
-									move.onClick();
-								}}
-							/>
-						))}
-					<MenuItem
-						label="Copy path"
-						onClick={() => {
-							close();
-							void navigator.clipboard?.writeText(project.root);
-						}}
-					/>
-					<MenuSeparator />
-					<MenuItem
-						label="Hide from Spool"
-						onClick={() => {
-							close();
-							withViewTransition(onForget);
-						}}
-					/>
-					{moves
-						.filter((move) => move.end)
-						.map((move) => (
-							<MenuItem
-								key={move.label}
-								label={move.label}
-								destructive
-								onClick={() => {
-									refocus();
-									close();
-									move.onClick();
-								}}
-							/>
-						))}
-					<MenuItem
-						label={`Move to ${systemTrashName()}…`}
-						destructive
-						onClick={() => {
-							refocus();
-							close();
-							onTrash();
-						}}
-					/>
-				</>
+		<>
+			{moved !== undefined && movedOpen && (
+				<MovedSheet name={project.name} moved={moved} onRemove={onForget} onClose={() => setMovedOpen(false)} />
 			)}
-		/>
+			<CoverTile
+				name={project.name}
+				open={{ onClick: moved === undefined ? onOpen : () => setMovedOpen(true) }}
+				here={here}
+				transition={transitionName(project.root)}
+				line={<QuietLine project={project} copies={copies} detail={menuOpen || pathHit} />}
+				menuOpen={menuOpen}
+				onToggleMenu={onToggleMenu}
+				onCloseMenu={onCloseMenu}
+				art={
+					<>
+						{/* fitted whole on the canvas colour, never cropped: a phone frame stands whole, a wide one nearly fills */}
+						{moved !== undefined ? (
+							<MovedArt moved={moved} />
+						) : project.thumbnail !== undefined ? (
+							<img
+								src={thumbnailUrl(project.name, project.thumbnail.hash)}
+								alt=""
+								draggable={false}
+								className="h-full w-full object-contain"
+							/>
+						) : cover ? (
+							<Thumbnail
+								project={project.name}
+								frame={cover.frame}
+								cover={cover.cover}
+								alt={cover.frame}
+								draggable={false}
+								className="h-full w-full object-contain"
+							/>
+						) : (
+							// nothing to picture yet: its own mark, so an empty project still reads as itself
+							<ProjectIconView project={project.name} name={project.name} icon={project.icon} size="md" />
+						)}
+					</>
+				}
+				menu={({ close, refocus }) => (
+					<>
+						<MenuItem
+							label="Open"
+							onClick={() => {
+								close();
+								if (moved === undefined) onOpen();
+								else setMovedOpen(true);
+							}}
+						/>
+						{onChangeIcon && (
+							<MenuItem
+								label="Change icon…"
+								onClick={() => {
+									refocus();
+									close();
+									onChangeIcon();
+								}}
+							/>
+						)}
+						{onRemoveIcon && (
+							<MenuItem
+								label="Remove icon"
+								onClick={() => {
+									refocus();
+									close();
+									onRemoveIcon();
+								}}
+							/>
+						)}
+						{onRemoveThumbnail && (
+							<MenuItem
+								label="Remove thumbnail"
+								onClick={() => {
+									refocus();
+									close();
+									onRemoveThumbnail();
+								}}
+							/>
+						)}
+						<MenuItem
+							label="Export project…"
+							onClick={() => {
+								refocus();
+								close();
+								onExport();
+							}}
+						/>
+						<MenuItem
+							label="Rename…"
+							onClick={() => {
+								refocus();
+								close();
+								onRename();
+							}}
+						/>
+						{moves
+							.filter((move) => !move.end)
+							.map((move) => (
+								<MenuItem
+									key={move.label}
+									label={move.label}
+									onClick={() => {
+										refocus();
+										close();
+										move.onClick();
+									}}
+								/>
+							))}
+						<MenuItem
+							label="Copy path"
+							onClick={() => {
+								close();
+								void navigator.clipboard?.writeText(project.root);
+							}}
+						/>
+						<MenuSeparator />
+						<MenuItem
+							label="Hide from Spool"
+							onClick={() => {
+								close();
+								withViewTransition(onForget);
+							}}
+						/>
+						{moves
+							.filter((move) => move.end)
+							.map((move) => (
+								<MenuItem
+									key={move.label}
+									label={move.label}
+									destructive
+									onClick={() => {
+										refocus();
+										close();
+										move.onClick();
+									}}
+								/>
+							))}
+						<MenuItem
+							label={`Move to ${systemTrashName()}…`}
+							destructive
+							onClick={() => {
+								refocus();
+								close();
+								onTrash();
+							}}
+						/>
+					</>
+				)}
+			/>
+		</>
 	);
 }
 
@@ -956,7 +968,8 @@ function QuietLine({ project, copies, detail }: { project: ProjectCard; copies: 
 		team?.name,
 		project.syncPaused !== undefined && "sync paused",
 		project.goneLocal !== undefined && "gone local",
-		relativeTime(project.openedAt),
+		relativeTime(project.moved?.commit?.date ?? project.openedAt),
+		project.moved !== undefined && movedBy(project.moved),
 		project.ended !== undefined &&
 			(project.movedOut === undefined
 				? `no longer synced with ${project.ended}`
