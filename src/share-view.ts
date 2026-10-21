@@ -30,6 +30,8 @@ export interface ShareView {
 	link?: string;
 	/** The frame its link opens playing, when it opens on one. */
 	start?: string;
+	/** When it ends, in seconds (spool#183); absent for a share that never ends. */
+	endsAt?: number;
 }
 
 /** What a project's Shared control knows: its shares and whether this person may change them, or why not. */
@@ -108,7 +110,30 @@ export type ShareRequest = (
 	start?: string;
 	/** Email the people it names a link that opens it. */
 	notify?: boolean;
+	/** When it ends, counted by spool.page from when it is made (spool#183); absent, it never ends. */
+	ends?: ShareEnds;
 };
+
+/** When a new share ends: never, or so many days from when it is made (spool#183). */
+export type ShareEnds = "never" | "30d" | "7d";
+
+const ENDS_DAYS: Record<ShareEnds, number | undefined> = { never: undefined, "30d": 30, "7d": 7 };
+
+/** The moment, in seconds, a share made now with this end would end; undefined for never. */
+export function endsFrom(ends: ShareEnds, now = Date.now() / 1000): number | undefined {
+	const days = ENDS_DAYS[ends];
+	return days === undefined ? undefined : now + days * 86_400;
+}
+
+/** A day as a share says when it ends: "9 Nov". */
+export function saidDay(seconds: number): string {
+	return new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/** "ends 9 Nov" for a share with an end, as its rows say it; null for one that never ends. */
+export function saidEnds(share: Pick<ShareView, "endsAt">): string | null {
+	return share.endsAt === undefined ? null : `ends ${saidDay(share.endsAt)}`;
+}
 
 /** People named on a people share or taken off it; whoever is named is emailed a link to it when `notify` is set. */
 export interface ShareChange {
