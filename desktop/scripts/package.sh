@@ -36,6 +36,20 @@ if [ -n "${NOTARY_KEY:-}" ] && [ -n "${NOTARY_KEY_ID:-}" ] && [ -n "${NOTARY_ISS
 	NOTARIZING=true
 fi
 
+# Stapling fetches the ticket Apple just issued, and that fetch has lost its
+# connection to Apple for minutes at a time on the runner (error 68), twice in
+# a row on 0.46.2. A few tries, a minute apart, before the release fails.
+staple() {
+	local try
+	for try in 1 2 3 4 5; do
+		xcrun stapler staple "$1" && return 0
+		[ "$try" = 5 ] && break
+		echo "Stapling $1 failed (try $try of 5). Trying again in 60 seconds." >&2
+		sleep 60
+	done
+	return 1
+}
+
 notarize() {
 	local result
 	result=$(xcrun notarytool submit "$1" \
@@ -71,7 +85,7 @@ if [ "$NOTARIZING" = true ]; then
 	# staple lands on the bundle rather than on the zip.
 	ditto -c -k --keepParent "$APP" "$OUT/Spool.zip"
 	notarize "$OUT/Spool.zip"
-	xcrun stapler staple "$APP"
+	staple "$APP"
 	rm -f "$OUT/Spool.zip"
 fi
 
@@ -112,7 +126,7 @@ codesign --force "${TIMESTAMP[@]}" --sign "$SIGN_IDENTITY" "$DMG"
 
 if [ "$NOTARIZING" = true ]; then
 	notarize "$DMG"
-	xcrun stapler staple "$DMG"
+	staple "$DMG"
 	# What Gatekeeper will say on the other machine, said here first.
 	spctl --assess --type open --context context:primary-signature -vv "$DMG"
 else
