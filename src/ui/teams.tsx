@@ -55,6 +55,8 @@ export type ReadyTeams = Extract<CloudTeamsState, { state: "ready" }>;
 
 /** Where the team pages under it read and change teams: the daemon in the Mac app, spool.page in a browser. */
 export const TeamsSourceContext = createContext<TeamsSource>(daemonTeams);
+/** Said when something on a team's page put one of its projects in the trash: its Removed list reads itself again. */
+export const TeamTrashContext = createContext<() => void>(() => {});
 export type { SettingsTab, TeamPage };
 
 export const ROLE_LABEL: Record<TeamRole, string> = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
@@ -374,6 +376,8 @@ export function TeamProjects({
 	const [listing, setListing] = useState(false);
 	// a restore reads the projects not on this Mac again, as their list reads itself
 	const [restored, setRestored] = useState(0);
+	// a project moved out from the page reads the trash again
+	const [trashed, setTrashed] = useState(0);
 	const [refusing, setRefusing] = useState(false);
 	const lapsed = team.billing?.state === "lapsed";
 	return (
@@ -407,9 +411,11 @@ export function TeamProjects({
 				(away || listing ? null : (
 					<EmptyState className="min-h-[420px] justify-center p-[35px]" art={<EmptyFrames />} title={empty} />
 				))}
-			<Fragment key={`away:${restored}`}>{away}</Fragment>
+			<TeamTrashContext.Provider value={() => setTrashed((n) => n + 1)}>
+				<Fragment key={`away:${restored}`}>{away}</Fragment>
+			</TeamTrashContext.Provider>
 			<TeamRemoved
-				key={`removed:${team.address}`}
+				key={`removed:${team.address}:${trashed}`}
 				team={team}
 				onRestored={() => {
 					setRestored((n) => n + 1);

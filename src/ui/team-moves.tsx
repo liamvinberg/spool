@@ -1,4 +1,4 @@
-import { type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { personName } from "../person-name";
 import { saidList } from "../share-view";
 import {
@@ -32,7 +32,7 @@ import { tilde } from "./paths";
 import { ProjectPicker } from "./picker";
 import { Button, IconButton } from "./primitives/actions";
 import { Field, TextField } from "./primitives/inputs";
-import { Menu, MenuItem } from "./primitives/overlays";
+import { Menu, MenuItem, MenuSeparator } from "./primitives/overlays";
 import { RadioCard, RadioGroup } from "./primitives/selection";
 import { systemTrashName } from "./system-trash";
 import {
@@ -48,7 +48,7 @@ import {
 	waitingNote,
 } from "./team-move";
 import { teamSays } from "./team-source";
-import { TeamsSourceContext } from "./teams";
+import { TeamsSourceContext, TeamTrashContext } from "./teams";
 
 /**
  * Getting a team project onto this Mac, and moving a project into a team (DEV-190). The daemon does the work; these
@@ -58,7 +58,7 @@ import { TeamsSourceContext } from "./teams";
 
 /**
  * The team's projects not yet on this Mac, dimmed, each with "Get it", and for the team's admins a "…" menu that
- * moves one to another team. Read once when it mounts: Home mounts it again whenever this Mac's
+ * moves one to another team or out of this one, into its trash. Read once when it mounts: Home mounts it again whenever this Mac's
  * own projects change, so a project just got leaves the list, as one moved away does. Nothing shows while spool.page
  * can't say.
  */
@@ -82,6 +82,8 @@ export function TeamProjectsAway({
 	const [getting, setGetting] = useState<TeamProjectOnMac | null>(null);
 	const [menu, setMenu] = useState<string | null>(null);
 	const [moving, setMoving] = useState<TeamProjectOnMac | null>(null);
+	const [movingOut, setMovingOut] = useState<TeamProjectOnMac | null>(null);
+	const trashed = useContext(TeamTrashContext);
 	useEffect(() => {
 		let current = true;
 		void fetchTeamProjects(team.address).then((listed) => {
@@ -92,8 +94,13 @@ export function TeamProjectsAway({
 		};
 	}, [team.address]);
 	// moving one out is only offered on a copy: its commit is what brings design/ back into git
-	const moves = (project: TeamProjectOnMac): MoveItem[] =>
-		mayMoveFrom(teams, team.address) ? [{ label: "Move to team…", onClick: () => setMoving(project) }] : [];
+	const moves = (project: TeamProjectOnMac): MoveItem[] => [
+		...(mayMoveFrom(teams, team.address) ? [{ label: "Move to team…", onClick: () => setMoving(project) }] : []),
+		// with no copy here, moving it out only takes it out of the team, into its trash
+		...(team.role === "admin"
+			? [{ label: `Move out of ${team.name}…`, end: true, onClick: () => setMovingOut(project) }]
+			: []),
+	];
 	/** A project moved to another team leaves this team's list. */
 	const moved = (project: TeamProjectOnMac, done: MoveDone) => {
 		setProjects((listed) => listed?.filter((each) => each.url !== project.url));
@@ -133,16 +140,18 @@ export function TeamProjectsAway({
 						</div>
 						{menu === project.url && (
 							<Menu className="absolute top-full right-0 z-20 origin-top-right">
-								{moves(project).map((move) => (
-									<MenuItem
-										key={move.label}
-										label={move.label}
-										destructive={move.end}
-										onClick={() => {
-											setMenu(null);
-											move.onClick();
-										}}
-									/>
+								{moves(project).map((move, index, all) => (
+									<Fragment key={move.label}>
+										{move.end === true && index > 0 && all[index - 1]?.end !== true && <MenuSeparator />}
+										<MenuItem
+											label={move.label}
+											destructive={move.end}
+											onClick={() => {
+												setMenu(null);
+												move.onClick();
+											}}
+										/>
+									</Fragment>
 								))}
 							</Menu>
 						)}
@@ -157,6 +166,17 @@ export function TeamProjectsAway({
 					targets={moveTargets(teams, team.address)}
 					onMoved={(outcome, to) => moved(moving, teamMoveDone(moving.name, outcome, to))}
 					onClose={() => setMoving(null)}
+				/>
+			)}
+			{movingOut !== null && (
+				<MoveOutSheet
+					team={team}
+					project={movingOut.name}
+					onMoved={(done) => {
+						moved(movingOut, done);
+						trashed();
+					}}
+					onClose={() => setMovingOut(null)}
 				/>
 			)}
 			{getting !== null && (

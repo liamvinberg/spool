@@ -7,7 +7,7 @@ import { fakeTeamsSource } from "./fake-teams-source";
 import { Home } from "./home";
 import type { MoveDone } from "./team-move";
 import { TeamProjectsAway, useCoverMoves } from "./team-moves";
-import { TeamsSourceContext } from "./teams";
+import { TeamProjects, TeamsSourceContext } from "./teams";
 
 /**
  * Moving a team project to another team, out of its team and into a checkout, from Home's covers on a Mac: Ada is an
@@ -511,7 +511,7 @@ it("gives an admin a menu on a dimmed cover, and an editor none", async () => {
 	const ada = away(fakeTeamsSource({ teams: ADA }), ADA);
 	await settle();
 	await openMenu(ada.host, "onboarding");
-	expect(items(ada.host)).toEqual(["Move to team…"]);
+	expect(items(ada.host)).toEqual(["Move to team…", "!Move out of Tidemark…"]);
 
 	const mira = away(fakeTeamsSource({ teams: MIRA }), MIRA);
 	await settle();
@@ -532,6 +532,55 @@ it("moves a project not on this Mac to another team, with no commit to make here
 	await click(host, "Move to Northlight");
 	expect(fake.asked).toContain("move tidemark/onboarding northlight onboarding");
 	expect(done).toEqual([{ toast: "Moved onboarding to Northlight.", show: "northlight" }]);
+});
+
+const AWAY_OUT = (method: string, url: string) =>
+	method === "POST" && url.endsWith("/out")
+		? Response.json({ root: null, committed: false, commitWaiting: false })
+		: ONBOARDING(url);
+
+it("moves a project not on this Mac out of its team, into its trash, and the cover leaves", async () => {
+	const asked = daemon(AWAY_OUT);
+	const { host, done } = away(fakeTeamsSource({ teams: ADA, people: PEOPLE }), ADA);
+	await settle();
+	await openMenu(host, "onboarding");
+	await choose(host, "Move out of Tidemark…");
+	const shown = sheet(host);
+	expect(shown?.querySelector("h2")?.textContent).toBe("Move onboarding out of Tidemark");
+	expect(shown?.textContent).toContain(
+		"Tidemark no longer has onboarding. No copy of it is on this Mac, so nothing is committed here.",
+	);
+	expect(shown?.textContent).toContain(
+		"Tidemark keeps onboarding in its trash for 30 days: an admin can restore it until then, with its comments and shares.",
+	);
+	await click(host, "Move out of Tidemark");
+	expect(asked).toContain("POST /api/cloud/teams/tidemark/projects/onboarding/out {}");
+	expect(done).toEqual([{ toast: "onboarding is out of Tidemark." }]);
+	expect(host.textContent).not.toContain("onboarding");
+});
+
+it("reads the team's trash again once a project not on this Mac moves out of it", async () => {
+	daemon(AWAY_OUT);
+	const fake = fakeTeamsSource({ teams: ADA, people: PEOPLE });
+	const trash = vi.spyOn(fake.source, "removed");
+	const shown = ADA[0] as CloudTeam;
+	const host = render(
+		createElement(
+			TeamsSourceContext.Provider,
+			{ value: fake.source },
+			createElement(TeamProjects, {
+				team: shown,
+				onOpen: () => {},
+				away: createElement(TeamProjectsAway, { team: shown, teams: ADA, onGot: vi.fn() }),
+			}),
+		),
+	);
+	await settle();
+	expect(trash).toHaveBeenCalledTimes(1);
+	await openMenu(host, "onboarding");
+	await choose(host, "Move out of Tidemark…");
+	await click(host, "Move out of Tidemark");
+	expect(trash).toHaveBeenCalledTimes(2);
 });
 
 it("says a copy whose project moved out is to pull its repo, and an ended one that it no longer syncs", () => {
