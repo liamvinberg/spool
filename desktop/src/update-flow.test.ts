@@ -125,6 +125,8 @@ let sent: unknown[][];
 let response: number;
 let dialogResponse: Promise<{ response: number }> | undefined;
 let newer: boolean;
+let latest: string;
+let staged: string | undefined;
 let downloads: number;
 let checks: number;
 let restarts: number;
@@ -164,6 +166,8 @@ beforeEach(async () => {
 	response = 1;
 	dialogResponse = undefined;
 	newer = true;
+	latest = "0.20.2";
+	staged = undefined;
 	downloads = 0;
 	checks = 0;
 	restarts = 0;
@@ -183,16 +187,20 @@ beforeEach(async () => {
 		readCheckCache: () => cache,
 		checkForUpdate: async () => {
 			checks++;
-			return { latest: "0.20.2", newer };
+			return { latest, newer };
 		},
 		installUpdate: async (_report: unknown, progress: (state: InstallProgress) => void) => {
 			downloads++;
-			progress({ kind: "downloading", version: "0.20.2", percent: 20 });
+			progress({ kind: "downloading", version: latest, percent: 20 });
 			return new Promise<string>((resolve, reject) => {
-				finish = resolve;
+				finish = (version) => {
+					staged = version;
+					resolve(version);
+				};
 				fail = reject;
 			});
 		},
+		stagedUpdate: () => staged,
 		relaunchIntoUpdate: () => {
 			restarts++;
 		},
@@ -545,4 +553,104 @@ test("a disconnected display cannot strand the restored window", async () => {
 	assert.equal(canvasOptions.x, undefined);
 	assert.equal(canvasOptions.y, undefined);
 	assert.equal(canvasOptions.width, 1440);
+});
+
+test("an hourly check while an update waits downloads a newer release in its place", async () => {
+	api.boot();
+	await turn();
+	mock.timers.tick(10_000);
+	await turn();
+	finish("0.20.2");
+	await turn();
+	latest = "0.20.3";
+	mock.timers.tick(60 * 60 * 1000);
+	await turn();
+	assert.equal(checks, 2);
+	assert.equal(downloads, 2);
+	assert.equal(progressWindows, 0);
+	finish("0.20.3");
+	await turn();
+	assert.deepEqual(sent.at(-1), ["spool:app-update-changed", { kind: "ready", version: "0.20.3" }]);
+	assert.equal(dialogs.length, 0);
+	ipc.emit("spool:app-update-install", sender());
+	await turn();
+	assert.equal(downloads, 2);
+	assert.equal(restarts, 1);
+	assert.equal(updateRestartState(directory, "0.20.2"), "waiting");
+	assert.equal(updateRestartState(directory, "0.20.3"), "completed");
+});
+
+test("an hourly check with nothing newer leaves the waiting update alone", async () => {
+	api.boot();
+	await turn();
+	mock.timers.tick(10_000);
+	await turn();
+	finish("0.20.2");
+	await turn();
+	const before = sent.length;
+	mock.timers.tick(60 * 60 * 1000);
+	await turn();
+	assert.equal(checks, 2);
+	assert.equal(downloads, 1);
+	assert.equal(sent.length, before);
+});
+
+test("restarting while a newer release is out lands on it with one restart", async () => {
+	api.boot();
+	await turn();
+	mock.timers.tick(10_000);
+	await turn();
+	finish("0.20.2");
+	await turn();
+	latest = "0.20.3";
+	ipc.emit("spool:app-update-install", sender());
+	await turn();
+	assert.equal(downloads, 2);
+	assert.equal(progressWindows, 1);
+	assert.equal(restarts, 0);
+	finish("0.20.3");
+	await turn();
+	assert.equal(restarts, 1);
+	assert.equal(dialogs.length, 0);
+	assert.equal(updateRestartState(directory, "0.20.2"), "waiting");
+	assert.equal(updateRestartState(directory, "0.20.3"), "completed");
+});
+
+test("a newer release that fails to download leaves the waiting one to restart into", async () => {
+	api.boot();
+	await turn();
+	mock.timers.tick(10_000);
+	await turn();
+	finish("0.20.2");
+	await turn();
+	latest = "0.20.3";
+	mock.timers.tick(60 * 60 * 1000);
+	await turn();
+	const { UpdateCheckError } = require_("./updates") as typeof import("./updates");
+	fail(new UpdateCheckError("offline"));
+	await turn();
+	assert.deepEqual(sent.at(-1), ["spool:app-update-changed", { kind: "ready", version: "0.20.2" }]);
+	assert.equal(dialogs.length, 0);
+	click("Restart Spool to Update…");
+	await turn();
+	assert.equal(dialogs.length, 1);
+});
+
+test("a restart whose catch-up fails still restarts once, into the waiting update", async () => {
+	api.boot();
+	await turn();
+	mock.timers.tick(10_000);
+	await turn();
+	finish("0.20.2");
+	await turn();
+	latest = "0.20.3";
+	ipc.emit("spool:app-update-install", sender());
+	await turn();
+	const { UpdateCheckError } = require_("./updates") as typeof import("./updates");
+	fail(new UpdateCheckError("offline"));
+	await turn();
+	assert.equal(restarts, 1);
+	assert.equal(dialogs.length, 0);
+	assert.equal(updateRestartState(directory, "0.20.1"), "waiting");
+	assert.equal(updateRestartState(directory, "0.20.2"), "completed");
 });

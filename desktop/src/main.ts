@@ -69,6 +69,7 @@ import {
 	RestartRequiredError,
 	readCheckCache,
 	relaunchIntoUpdate,
+	stagedUpdate,
 	UpdateCheckError,
 	updaterAvailable,
 } from "./updates";
@@ -1321,9 +1322,12 @@ function scheduleCheckIn(delay: number): void {
 }
 
 async function automaticCheck(): Promise<void> {
-	if (busy || shuttingDown || update?.kind === "ready" || update?.kind === "restarting") return;
+	if (busy || shuttingDown || update?.kind === "restarting") return;
+	// A waiting update is still checked past, so a newer release replaces it
+	// before the restart rather than after it. The ready state stays up meanwhile.
+	const waiting = update?.kind === "ready" ? update.version : undefined;
 	busy = true;
-	setUpdate({ kind: "checking", version: version() });
+	if (waiting === undefined) setUpdate({ kind: "checking", version: version() });
 	let found: Awaited<ReturnType<typeof checkForUpdate>>;
 	try {
 		found = await checkForUpdate((line) => log("updates", line));
@@ -1333,11 +1337,16 @@ async function automaticCheck(): Promise<void> {
 		// Offline is a normal day; automatic failures stay in the menu and log.
 		const detail = error instanceof UpdateCheckError ? error.message : String(error);
 		log("updates", "skip", detail);
+		if (waiting !== undefined) return;
 		setUpdate({ kind: "failed", version: version(), message: detail, retryable: true });
 		closeUpdateProgress();
 		return;
 	} finally {
 		busy = false;
+	}
+	if (waiting !== undefined) {
+		if (newerThan(found.latest, waiting)) await prepareUpdate(found.latest, false);
+		return;
 	}
 	if (found.newer) await prepareUpdate(found.latest, false);
 	else {
@@ -1575,8 +1584,18 @@ async function installCommand(): Promise<void> {
 	tell("The spool command is installed.", "Open a new terminal window and run spool.", "info");
 }
 
-/** Prepare while the canvas remains usable; only a verified bundle earns a restart offer. */
-async function prepareUpdate(target: string, manual = true): Promise<void> {
+function newerThan(candidate: string, current: string): boolean {
+	const a = parseVersion(candidate);
+	const b = parseVersion(current);
+	return a !== undefined && b !== undefined && compareVersions(a, b) > 0;
+}
+
+/**
+ * Prepare while the canvas remains usable; only a verified bundle earns a restart
+ * offer. With `offer` off, a manual preparation shows its progress and asks nothing
+ * after, for the restart that is waiting on it.
+ */
+async function prepareUpdate(target: string, manual = true, offer = manual): Promise<void> {
 	if (busy || shuttingDown) return;
 	const refusal = whyNotInstallable();
 	if (refusal !== undefined) {
@@ -1606,6 +1625,13 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 		busy = false;
 		const detail = error instanceof UpdateCheckError ? error.message : String(error);
 		log("updates", "FAIL", detail);
+		const staged = stagedUpdate();
+		if (staged !== undefined) {
+			// A newer release failed to replace the waiting one, which still stands.
+			closeUpdateProgress();
+			setUpdate({ kind: "ready", version: staged });
+			return;
+		}
 		setUpdate({
 			kind: "failed",
 			version: target,
@@ -1622,7 +1648,7 @@ async function prepareUpdate(target: string, manual = true): Promise<void> {
 	if (shuttingDown) return;
 	closeUpdateProgress();
 	setUpdate({ kind: "ready", version: target });
-	if (manual) await offerRestart();
+	if (offer) await offerRestart();
 }
 
 /** A fresh process clears an attempt Squirrel could not cancel; the cached check prepares it again on launch. */
@@ -1653,8 +1679,37 @@ async function offerRestart(): Promise<void> {
 	}
 }
 
+/**
+ * Before a restart, ask once more whether a newer release than the waiting one
+ * is out, and prepare it in its place: one restart then lands on the newest. A
+ * check that fails or is slow leaves the waiting update to restart into.
+ */
+async function catchUpBeforeRestart(waiting: string): Promise<void> {
+	busy = true;
+	let latest: string;
+	try {
+		latest = (await checkForUpdate((line) => log("updates", line), RESTART_CHECK_TIMEOUT_MS)).latest;
+	} catch (error) {
+		log("updates", "skip", error instanceof UpdateCheckError ? error.message : String(error));
+		return;
+	} finally {
+		busy = false;
+	}
+	rememberCheck(latest);
+	if (!newerThan(latest, waiting) || shuttingDown) return;
+	log("updates", "replacing", `waiting=${waiting}`, `latest=${latest}`);
+	await prepareUpdate(latest, true, false);
+}
+
+/** Short: the person has asked for a restart, and the waiting update is fine. */
+const RESTART_CHECK_TIMEOUT_MS = 5_000;
+
 async function restartUpdate(relaunch = true): Promise<void> {
 	if (busy || shuttingDown || cover || update?.kind !== "ready") return;
+	if (relaunch) {
+		await catchUpBeforeRestart(update.version);
+		if (busy || shuttingDown || cover || update?.kind !== "ready") return;
+	}
 	const target = update.version;
 	busy = true;
 	// Squirrel replaces the app on quit and relaunches it. The daemon this app

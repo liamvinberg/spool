@@ -371,3 +371,49 @@ test("preparing a discovered release does not repeat its network check", async (
 	assert.equal(checks, 1);
 	assert.equal(fake.downloaded, 1);
 });
+
+test("a newer release found while one is staged replaces it in the same run", async () => {
+	assert.equal(await api.installUpdate(silent, silent, options), "0.12.0");
+	await api.checkForUpdate(silent);
+	assert.equal(await api.installUpdate(silent, silent, options), "0.12.0");
+	assert.equal(fake.downloaded, 1);
+	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.13.0" } };
+	await api.checkForUpdate(silent);
+	const states: InstallProgress[] = [];
+	assert.equal(await api.installUpdate(silent, (state) => states.push(state), options), "0.13.0");
+	assert.equal(fake.downloaded, 2);
+	assert.deepEqual(states.at(-1), { kind: "preparing", version: "0.13.0" });
+	assert.equal(api.stagedUpdate(), "0.13.0");
+	api.relaunchIntoUpdate();
+	assert.equal(fake.quitAndInstallCalls, 1);
+});
+
+test("a replacement that fails while downloading keeps the staged update", async () => {
+	await api.installUpdate(silent, silent, options);
+	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.13.0" } };
+	await api.checkForUpdate(silent);
+	fake.download = async () => {
+		throw new Error("net::ERR_FAILED");
+	};
+	await assert.rejects(
+		api.installUpdate(silent, silent, options),
+		(error) => !(error instanceof api.RestartRequiredError),
+	);
+	assert.equal(api.stagedUpdate(), "0.12.0");
+	api.relaunchIntoUpdate();
+	assert.equal(fake.quitAndInstallCalls, 1);
+});
+
+test("a replacement Squirrel refuses leaves nothing staged to relaunch into", async () => {
+	await api.installUpdate(silent, silent, options);
+	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.13.0" } };
+	await api.checkForUpdate(silent);
+	fake.download = async () => {
+		downloaded();
+		setImmediate(() => squirrel.emit("error", new Error("Code signature did not pass validation")));
+		return ["/tmp/update.zip"];
+	};
+	await assert.rejects(api.installUpdate(silent, silent, options), api.RestartRequiredError);
+	assert.equal(api.stagedUpdate(), undefined);
+	assert.throws(() => api.relaunchIntoUpdate(), /not been verified/);
+});

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseVersion, type Version } from "./version";
+import { compareVersions, parseVersion, type Version } from "./version";
 
 // Is there a newer release than this one, and getting onto it.
 //
@@ -289,6 +289,17 @@ function electronSquirrel(): Squirrel {
 	return autoUpdater;
 }
 
+function newerThan(candidate: string | undefined, current: string): boolean {
+	const a = candidate === undefined ? undefined : parseVersion(candidate);
+	const b = parseVersion(current);
+	return a !== undefined && b !== undefined && compareVersions(a, b) > 0;
+}
+
+/** The version Squirrel holds verified for the next quit, if any. */
+export function stagedUpdate(): string | undefined {
+	return stagedVersion;
+}
+
 /**
  * Download the newer release and stage it with Squirrel, resolving only once
  * Squirrel has said the bundle is verified and ready to be swapped in. Nothing
@@ -297,6 +308,14 @@ function electronSquirrel(): Squirrel {
  *
  * The library's update-downloaded event starts preparation, before Squirrel
  * fetches the local archive. Only Squirrel's own event permits a restart.
+ *
+ * With an update already staged, a check that found a newer release downloads
+ * that one in its place, so one restart lands on the newest. Squirrel takes the
+ * second handoff in the same run: electron-updater's `setFeedURL` gives it a
+ * fresh SQRLUpdater, and ShipIt reads its request again once the app quits.
+ * That fresh updater prunes the staged bundle as it starts, though, so a
+ * replacement that fails after the handoff leaves nothing staged; one that
+ * fails while downloading leaves the waiting update as it was.
  */
 export async function installUpdate(
 	report: (line: string) => void,
@@ -305,7 +324,8 @@ export async function installUpdate(
 ): Promise<string> {
 	if (installing) throw new UpdateCheckError("An update is already in progress.");
 	if (restartRequired) throw new RestartRequiredError("Restart Spool before trying the update again.");
-	if (stagedVersion !== undefined) return stagedVersion;
+	if (stagedVersion !== undefined && !newerThan(checkedUpdate?.updateInfo.version, stagedVersion))
+		return stagedVersion;
 	installing = true;
 	try {
 		return await downloadAndPrepare(report, progress, options);
@@ -392,6 +412,7 @@ async function downloadAndPrepare(
 		preparing = true;
 		if (stopped) {
 			restartRequired = true;
+			stagedVersion = undefined;
 			return;
 		}
 		report(`preparing version=${version} elapsed=${elapsed()}`);
@@ -434,7 +455,9 @@ async function downloadAndPrepare(
 		if (preparing) {
 			// Squirrel has no cancellation API. A late verdict must not finish a
 			// new attempt, so retrying this native handoff requires a fresh app.
+			// Its housekeeping may already have removed a bundle staged earlier.
 			restartRequired = true;
+			stagedVersion = undefined;
 		} else {
 			token.cancel();
 			if (download !== undefined) {
