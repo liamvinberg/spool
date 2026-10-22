@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -507,7 +507,8 @@ async function typecheckClosure(
 					return !isDesignPackagePath(designDir, canonical) && directoryExistsOnDisk(canonical);
 				}
 				if (isAncestor(directory, designDir)) return directoryExistsOnDisk(directory);
-				return isTrusted(directory, trusted) ? undefined : false;
+				if (isTrusted(directory, trusted)) return undefined;
+				return trusted.some((root) => isAncestor(directory, root)) ? directoryExistsOnDisk(directory) : false;
 			},
 			realpath(path) {
 				if (path === configFile || virtualFiles.has(path)) return path;
@@ -761,8 +762,22 @@ function trustedRoots(): string[] {
 		dirname(reactPackage),
 		dirname(requireFromSpool.resolve("@types/react-dom/package.json")),
 		dirname(reactRequire.resolve("csstype/package.json")),
+		...linkedPackage(dirname(reactPackage), "csstype"),
 		dirname(spoolTypes),
 	];
+}
+
+/**
+ * Where the compiler meets `name` walking up from `from`: under pnpm that is a
+ * link beside the importing package, not the real folder require resolves to.
+ */
+function linkedPackage(from: string, name: string): string[] {
+	for (let dir = from; ; dir = dirname(dir)) {
+		const candidate = join(dir, "node_modules", name);
+		if (basename(dir) !== "node_modules" && statSync(candidate, { throwIfNoEntry: false })?.isDirectory())
+			return [candidate];
+		if (dirname(dir) === dir) return [];
+	}
 }
 
 function permittedFile(designDir: string, file: string, trusted: string[]): string | undefined {

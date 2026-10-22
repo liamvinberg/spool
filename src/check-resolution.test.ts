@@ -7,6 +7,18 @@ import { messages } from "./check-test-harness";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 describe("design module resolution", () => {
+	it("types React's style objects from csstype", async () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(
+			root,
+			"home",
+			'import type { CSSProperties } from "react";\nconst style: CSSProperties = { transform: "none" };\nexport default function Home() { return <i style={style}>{style.transform}</i>; }\n',
+		);
+
+		expect(await messages(root)).toEqual([]);
+	});
+
 	it("keeps an extensionless live TypeScript module ahead of JavaScript", async () => {
 		const root = makeTempDir();
 		markProject(root);
