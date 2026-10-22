@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.46.2
+
+### Patch Changes
+
+- 76d2030: When a newer Spool comes out while the Mac app already has an update waiting, the app now downloads the newer one in its place. Restarting lands you on the newest version in one go, instead of updating once and then again.
+- 9c69ae1: A team admin can now take a project out of the team from its "…" menu on Home even when it isn't on their Mac. It goes to the team's trash, where an admin can restore it for 30 days, and it shows under Removed right away.
+
 ## 0.46.1
 
 ### Patch Changes
