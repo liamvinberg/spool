@@ -318,7 +318,7 @@ export const HOTKEYS = [
 		id: "canvas.nudge",
 		scope: "canvas",
 		group: "Selection",
-		label: "Nudge the frames 1 px, or move the element held one step",
+		label: "Nudge the frames 1 px, move the element held one step, or under Comment, aim a level out or in",
 		keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"],
 		shown: ["←↑→↓"],
 	},

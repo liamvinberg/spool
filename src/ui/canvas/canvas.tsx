@@ -118,6 +118,7 @@ import {
 	visiblePlaceholdersOf,
 } from "./canvas-store";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
+import { aimedHit, type CommentAim, placedHit, reaim, stepAim } from "./comment-aim";
 import { audienceOf } from "./comment-audience";
 import { COMMENT_CURSOR } from "./comment-cursor";
 import { COMMENTS_CHANGE, daemonStills, useCommentPeople, useComments } from "./comments-daemon";
@@ -870,6 +871,11 @@ function CanvasField({
 	// hover picks ride pointer-move (#37): throttled, one in flight at a time
 	const hoverLast = useRef(0);
 	const hoverBusy = useRef(false);
+	/** Under the Comment tool, what a press would pin: the ancestry under the pointer and how far ↑ has climbed it */
+	const commentAim = useRef<CommentAim | null>(null);
+	useEffect(() => {
+		if (tool !== "comment") commentAim.current = null;
+	}, [tool]);
 	// where the ring was last drawn, so pressing or releasing ⌘ redraws it
 	// under a pointer that has not moved (#254)
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
@@ -3677,6 +3683,7 @@ function CanvasField({
 			(toolOf(store.get()) === "select" && store.get().accelDown);
 		if (frame === null || !(toolOf(store.get()) === "edit" || toolOf(store.get()) === "comment" || accel)) {
 			hoverPoint.current = frame === null ? null : { frame, world };
+			commentAim.current = null;
 			setPreview(null);
 			return;
 		}
@@ -3699,6 +3706,11 @@ function CanvasField({
 					setPreview(null);
 					return;
 				}
+				if (toolOf(store.get()) === "comment") {
+					showCommentAim(reaim(commentAim.current, frame, chain));
+					return;
+				}
+				commentAim.current = null;
 				const target = deepest(chain);
 				setPreview(
 					target === undefined
@@ -3719,6 +3731,34 @@ function CanvasField({
 			false,
 		);
 	};
+
+	/**
+	 * The Comment tool's outline: the element its aim is on, or the whole frame once the aim has climbed past the
+	 * frame's top-level element, or the pointer is on the frame's label.
+	 */
+	const showCommentAim = useCallback(
+		(aim: CommentAim) => {
+			commentAim.current = aim;
+			const hit = aimedHit(aim);
+			if (hit !== null) {
+				setPreview({
+					frame: aim.frame,
+					selector: hit.selector,
+					rect: hit.rect,
+					...(hit.rects === undefined ? {} : { rects: hit.rects }),
+					radius: hit.radius,
+				});
+				return;
+			}
+			const box = visibleFramesOf(store.get()).find((one) => one.name === aim.frame);
+			setPreview(
+				box === undefined
+					? null
+					: { frame: aim.frame, selector: "", rect: { x: 0, y: 0, w: box.w, h: box.h }, radius: 0 },
+			);
+		},
+		[store],
+	);
 
 	/** Redraw the outline where the pointer already rests — ⌘ changes what it means. */
 	refreshRings.current = () => {
@@ -3895,7 +3935,11 @@ function CanvasField({
 
 		// the Comment tool places a pin where it is pressed, and nothing else (spool#169)
 		if (toolOf(store.get()) === "comment") {
-			placeComment(toWorld(p, cam), datasetHit(event.target, "page-object"));
+			placeComment(
+				toWorld(p, cam),
+				datasetHit(event.target, "page-object"),
+				datasetHit(event.target, "frame-label"),
+			);
 			return;
 		}
 
@@ -4034,8 +4078,25 @@ function CanvasField({
 		const held = commentHold.current;
 		if (held !== null) commentHold.current = { ...held, placed: true };
 	};
-	const placeComment = (world: Point, pressedPage: string | null) => {
+	const placeComment = (world: Point, pressedPage: string | null, pressedLabel: string | null) => {
 		const page = store.get().activePage;
+		const aim = commentAim.current;
+		commentAim.current = null;
+		// a frame's label pins the whole frame, at its top edge under the press
+		const labelled =
+			pressedLabel === null ? undefined : visibleFramesOf(store.get()).find((f) => f.name === pressedLabel);
+		if (labelled !== undefined) {
+			const at = { x: Math.min(labelled.w, Math.max(0, world.x - labelled.x)), y: 0 };
+			store.set({
+				commentDraft: { page, frame: labelled.name, at, element: null },
+				commentOpen: null,
+				selected: [],
+				picked: [],
+			});
+			setTool("select");
+			placedUnderHold();
+			return;
+		}
 		const frame = frameAtWorld(world);
 		if (frame === null) {
 			const object = pressedPage ?? pageObjectAt(pageObjectsOf(store.get()), world)?.page ?? null;
@@ -4058,8 +4119,9 @@ function CanvasField({
 			frame,
 			local,
 			(chain) => {
-				const target = deepest(chain);
-				if (target === undefined || store.get().commentDraft !== draft) return;
+				// the level ↑ and ↓ aimed at while the pointer rested here, or the deepest element
+				const target = placedHit(aim, frame, chain);
+				if (target === null || store.get().commentDraft !== draft) return;
 				const { selector, tag, outerHtml, source, generated } = target;
 				store.set({ commentDraft: { ...draft, element: { selector, tag, outerHtml, source, generated } } });
 			},
@@ -4100,6 +4162,12 @@ function CanvasField({
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
 			// and a pointer resting on a frame is resting on it in the Hand too.
 			if (toolOf(store.get()) === "hand") return;
+			// a frame's label under the Comment tool aims at the whole frame
+			if (label !== null && toolOf(store.get()) === "comment") {
+				hoverPoint.current = null;
+				showCommentAim({ frame: label, chain: [], up: 0 });
+				return;
+			}
 			hoverPickAt(label === null ? frame : null, world, accelPressed(event));
 			return;
 		}
@@ -4571,6 +4639,14 @@ function CanvasField({
 		};
 		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
 			if (event === undefined) return;
+			// under the Comment tool, ↑ and ↓ climb out of and back into what the pointer rests on
+			const aim = commentAim.current;
+			const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
+			if (toolOf(store.get()) === "comment" && aim !== null && step === 1 && vertical) {
+				event.preventDefault();
+				showCommentAim(stepAim(aim, event.key === "ArrowUp" ? "up" : "down"));
+				return;
+			}
 			// a held element moves one step among its siblings instead (#340)
 			if (store.get().selected.length === 0 && store.get().picked.length > 0) {
 				const earlier = event.key === "ArrowUp" || event.key === "ArrowLeft";
@@ -4957,6 +5033,7 @@ function CanvasField({
 		endEdit,
 		goInsidePage,
 		goUpPage,
+		showCommentAim,
 		camera,
 		store,
 	]);

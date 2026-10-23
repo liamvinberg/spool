@@ -74,6 +74,8 @@ export function createGlide(ms: () => number): Glide {
 				if (frame !== undefined) cancelAnimationFrame(frame);
 				frame = undefined;
 				settle();
+				// a cut is a step too: whatever draws the box hears it, as it hears a jump
+				tell();
 				return;
 			}
 			if (was !== null && was.x === next.x && was.y === next.y && was.w === next.w && was.h === next.h) return;
