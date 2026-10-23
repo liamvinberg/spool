@@ -168,10 +168,9 @@ import {
 	takeUndo,
 	type Way,
 } from "./history";
-import { CompareLayer, TouchedLayer, useComparing } from "./history-compare";
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
-import { useRestoring } from "./history-restore";
+import { useVersions } from "./history-version";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { FrameLife, type LifecycleStore, useDocumentsBooting, useFrameLifecycle, useFrameReady } from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
@@ -675,15 +674,11 @@ function CanvasField({
 	);
 	const permissions = useAgentPermissions(project, deckOpen, turnPhase, agentDefaults.mode);
 	const syncState = useSyncState(project, root);
-	// restoring from the team history (spool#188): the question, the toast with its Undo, and ⌘Z while it stands
-	const restoring = useRestoring(project);
-	// comparing with now (spool#189): the frames as they stood beside today's, and what a stretch under the pointer touched
-	const comparing = useComparing(historyScope);
-	const closeCompare = comparing.close;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: another page puts the canvas back
-	useEffect(() => closeCompare(), [activePage, closeCompare]);
-	const restoringRef = useRef(restoring);
-	restoringRef.current = restoring;
+	// the team history as versions (spool#214): the one shown on the canvas, its restore's question, the toast with
+	// its Undo, and ⌘Z while it stands
+	const versions = useVersions(project, historyScope, activePage, you);
+	const versionsRef = useRef(versions);
+	versionsRef.current = versions;
 	// whether there is an agent on this machine at all (#201). A `which` rather than a
 	// spawn, asked when the rail opens, because a missing binary is a fact about this
 	// machine that is true before anybody types
@@ -4640,7 +4635,7 @@ function CanvasField({
 			"canvas.undo": (event) => {
 				event?.preventDefault();
 				if (store.get().pendingTrash !== null) undoTrash();
-				else if (restoringRef.current.undoLast()) return;
+				else if (versionsRef.current.undoLast()) return;
 				else if (gestureStill()) walk("undo");
 			},
 			"canvas.redo": (event) => {
@@ -5187,22 +5182,12 @@ function CanvasField({
 				scope={historyScope}
 				visible={visible}
 				onScope={setHistoryScope}
-				actions={(stretch, scope) => (
-					<>
-						{comparing.action(stretch, scope)}
-						{restoring.actions(stretch, scope)}
-					</>
-				)}
-				restore={{
-					line: restoring.file.line,
-					setAside: (file, save, stretch) => (
-						<>
-							{comparing.setAside(file, save, stretch)}
-							{restoring.file.setAside(file, save, stretch)}
-						</>
-					),
+				shown={versions.shown}
+				onShow={versions.show}
+				onListed={(listed) => {
+					versions.listed.current = listed;
 				}}
-				onHover={comparing.hover}
+				did={versions.did}
 			/>
 		),
 	};
@@ -5652,19 +5637,9 @@ function CanvasField({
 									onPick={live.pick}
 								/>
 							)}
-							{/* a team project's history on the canvas (spool#189): the frames a stretch under the pointer
-						    touched, and Compare with now over everything on the field */}
-							{team && <TouchedLayer hovered={comparing.hovered} frames={visibleFrames} camera={camera} />}
-							{team && (
-								<CompareLayer
-									project={project}
-									comparing={comparing.comparing}
-									frames={visibleFrames}
-									page={activePage}
-									camera={camera}
-									onClose={closeCompare}
-								/>
-							)}
+							{/* a team project's history on the canvas (spool#214): the version picked in the History pane,
+						    drawn over the page as it stood then, and the frames a restore just put back */}
+							{team && versions.layer(visibleFrames, camera)}
 						</>
 					)}
 					{followed !== undefined && <FollowMark mate={followed} />}
@@ -5769,7 +5744,7 @@ function CanvasField({
 								onUndo={undoTrash}
 							/>
 						)}
-						{restoring.toast}
+						{versions.toast}
 						{notice !== null ? <NoticeToast notice={notice} /> : null}
 					</NoticeStack>
 					{/* The agent rail stays available beside an empty canvas. The path also
@@ -5821,7 +5796,7 @@ function CanvasField({
 					) : null}
 				</div>
 			</PaneWindow>
-			{restoring.question}
+			{versions.question}
 			{agentHandoff && root !== undefined && (
 				<AgentHandoff project={project} root={root} onClose={() => setAgentHandoff(false)} />
 			)}

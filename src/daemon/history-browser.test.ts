@@ -103,10 +103,11 @@ it("opens a frame's history from its right-click, widens it to the project's, an
 	expect(await rows.nth(1).locator("[data-history-who]").textContent()).toBe("ana");
 	expect(await rows.nth(1).locator("[data-history-quiet]").textContent()).toBe("50 min quiet");
 
-	// picked, it opens to its files
-	await bens.locator("button[aria-expanded]").click();
-	await bens.locator('[data-history-file="shared/ui/order-button.tsx"]').waitFor({ timeout: 10_000 });
-	expect(await bens.locator("[data-history-file]").count()).toBe(1);
+	// picked, the canvas shows it; picked again, now
+	await bens.locator("button").first().click();
+	await page.locator("[data-version-bar]").waitFor({ timeout: 10_000 });
+	await bens.locator("button").first().click();
+	await expect.poll(() => page.locator("[data-version-bar]").count()).toBe(0);
 
 	// × widens it to the project's, where Ben's menu save shows too
 	await pane.getByRole("button", { name: "Show the whole project" }).click();

@@ -61,31 +61,14 @@ export function touchedSays(stretch: HistoryStretch): string {
 	return stretch.more > 0 ? `${names.join(", ")} and ${stretch.more} more` : names.join(", ");
 }
 
-/** A frame's file as its history names it, `cart/frame.tsx`; a file outside the frames by its name. */
-export function shortPath(path: string): string {
-	const frame = frameOf(path);
-	return frame === null ? fileOf(path) : `${frame}/${fileOf(path)}`;
-}
-
 /** Whether a path is a frame's own, in its folder, rather than a file it imports. */
-export const ownPath = (path: string, frame: string) => path.startsWith(`frames/${frame}/`);
+const ownPath = (path: string, frame: string) => path.startsWith(`frames/${frame}/`);
 
 /** In a frame's history, what reached it through the files it imports: `through order-button.tsx`; null for none. */
 export function throughOf(stretch: HistoryStretch, frame: string | null): string | null {
 	if (frame === null) return null;
 	const through = stretch.paths.filter((path) => !ownPath(path, frame)).map(fileOf);
 	return through.length === 0 ? null : `through ${[...new Set(through)].join(" and ")}`;
-}
-
-/** Inside an open stretch, over a save the team set aside: whose save arrived first, if spool.page could say. */
-export function setAsideSays(
-	stretch: HistoryStretch,
-	stood: { by: { accountId: string; name: string } } | null,
-): string {
-	const kept = "It is kept here 90 days.";
-	return stood === null
-		? `${stretch.by.name}'s save was set aside. ${kept}`
-		: `${stood.by.name}'s save arrived first, so ${stretch.by.name}'s was set aside. ${kept}`;
 }
 
 const dateOf = (at: number) =>
