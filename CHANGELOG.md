@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.47.0
+
+### Minor Changes
+
+- 69c10cc: The History pane on a team project lists versions. Current version is the top row, and each row below is the moment someone's saves ended. Pick a row and the canvas shows the page as it stood then: what that version changed is marked and ringed, the rest steps back, and a frame it deleted stands dashed where it was, with Bring back. ↑ ↓ step through versions and Esc goes back to now. Restore this version… lists each frame that differs from now, all ticked, so restoring part of it is unticking; a shared file that changed since is offered, off. It reads Same as now when nothing differs, so a restore always changes something. A version with a save the team set aside says whose save arrived first under its bar, with Put back. This replaces Compare with now, the Restore… menu, and Restore on a file's line.
+
+### Patch Changes
+
+- 27a86db: `spool check` reads React's style types again when spool is installed with pnpm, so a frame that reads a style object's fields, like `style.transform`, no longer fails the check.
+- 5908763: The Comment tool can comment on a whole frame. Point at a frame's name and its whole frame is outlined; click to pin the comment there. Over a frame, ↑ moves the outline out to the element around the one under the pointer, as far as the whole frame, and ↓ moves it back in, so a click pins the level you chose rather than always the deepest element.
+- 422f91b: Undoing a Put back of a set-aside save puts back the save that stood over it, rather than being refused.
+
 ## 0.46.2
 
 ### Patch Changes
