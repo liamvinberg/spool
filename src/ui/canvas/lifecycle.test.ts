@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
-import { admitMounts, sweepLifecycle } from "./lifecycle";
+import { admitMounts, selectionTargetsOf, sweepLifecycle } from "./lifecycle";
 
 /**
  * The lifecycle decision function (#40, #112): fabricated frames in, per-sweep
@@ -190,6 +190,26 @@ describe("intent", () => {
 
 		expect(s.sweep(frames, { entered: "a", selectionTargets: new Set(["a"]) }).states).toEqual({ a: "live" });
 		expect(s.sweep(frames, { entered: "a" }).states).toEqual({ a: "live" });
+	});
+});
+
+describe("what a selection holds live", () => {
+	const base = { picked: [], pointerTool: true, selected: [], accelDown: false, entered: null };
+	it("holds one selected frame", () => {
+		expect(selectionTargetsOf({ ...base, selected: ["a"] })).toEqual(new Set(["a"]));
+	});
+	it("holds none of a selection of several", () => {
+		expect(selectionTargetsOf({ ...base, selected: ["a", "b", "c"] })).toEqual(new Set());
+	});
+	it("holds every frame an element is picked in", () => {
+		const picked = [{ frame: "a" }, { frame: "b" }];
+		expect(selectionTargetsOf({ ...base, picked, selected: ["a", "b"] })).toEqual(new Set(["a", "b"]));
+	});
+	it("holds nothing for the hand", () => {
+		expect(selectionTargetsOf({ ...base, pointerTool: false, selected: ["a"] })).toEqual(new Set());
+	});
+	it("holds the entered frame while ⌘ borrows its pointer", () => {
+		expect(selectionTargetsOf({ ...base, accelDown: true, entered: "a" })).toEqual(new Set(["a"]));
 	});
 });
 
