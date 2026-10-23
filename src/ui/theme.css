@@ -158,6 +158,8 @@
 	--animate-history-rise: history-rise var(--transition-duration-base) var(--ease-out) both;
 	/* a restore's row arriving at the top of the history (spool#188): washed in the accent, which fades */
 	--animate-history-wash: history-wash calc(var(--transition-duration-slower) * 3) var(--ease-out);
+	/* a frame a restore just put back (task 225): ringed once in the accent, which fades */
+	--animate-history-ring: history-ring calc(var(--transition-duration-slower) * 3) var(--ease-out) both;
 	/* the finder: the scrim fades in, the panel settles from just above */
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -808,6 +810,15 @@
 		}
 	}
 
+	@keyframes history-ring {
+		from {
+			box-shadow: 0 0 0 calc(3px / var(--compare-k, 1)) var(--color-accent);
+		}
+		to {
+			box-shadow: 0 0 0 calc(3px / var(--compare-k, 1)) transparent;
+		}
+	}
+
 	@keyframes find-in {
 		from {
 			opacity: 0;
@@ -899,6 +910,7 @@
 	.animate-place-in,
 	.animate-history-rise,
 	.animate-history-wash,
+	.animate-history-ring,
 	.animate-find-panel-in,
 	.animate-agent-entry,
 	.animate-agent-open,
