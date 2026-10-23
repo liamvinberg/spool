@@ -1,8 +1,9 @@
 # #38 · Idea: how people's agents show up on a team canvas
 
-- State: open
+- State: closed (done: teammates' agents show on the team canvas)
 - Created: 2026-10-18T17:43:55.646Z
-- Updated: 2026-10-18T17:43:55.646Z
+- Updated: 2026-10-22T18:33:39.952Z
+- Closed: 2026-10-22T18:33:39.952Z
 
 Taken out of the Spool Cloud for teams map on 2026-10-04: the first team version shows people only (live cursors and who's looking), and agent presence gets its own effort later.
 
@@ -19,3 +20,9 @@ Nothing is decided.
 Related: #63, #65, #14, #10, #3
 
 Plane: SPOOL-38
+
+## Comments
+
+### agent, 2026-10-22T18:33:39.952Z
+
+Shipped outside this ticket: `2083e190` (presence: teammates see each other's agents at work, in their colour, 2026-10-09) and the merge `5e901fa2` (agent work on the frame's name row). Closed in agent-hub task 221.
