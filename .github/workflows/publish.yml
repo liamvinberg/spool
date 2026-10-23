@@ -78,7 +78,7 @@ jobs:
     needs: release
     if: ${{ !cancelled() && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
       actions: read

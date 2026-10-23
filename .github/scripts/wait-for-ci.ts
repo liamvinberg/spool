@@ -53,7 +53,7 @@ async function waitForCi(sha: string): Promise<void> {
 		if (!response.ok) throw new Error(`GitHub CI lookup returned HTTP ${response.status}.`);
 		return (await response.json()) as T;
 	};
-	const deadline = Date.now() + 15 * 60_000;
+	const deadline = Date.now() + 35 * 60_000;
 	while (Date.now() < deadline) {
 		const { workflow_runs: runs } = await request<{ workflow_runs: WorkflowRun[] }>(
 			`actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=100`,
@@ -67,7 +67,7 @@ async function waitForCi(sha: string): Promise<void> {
 		if (verdict.state === "failed") throw new Error(verdict.message);
 		await setTimeout(15_000);
 	}
-	throw new Error("Full CI did not finish within 15 minutes. Run ci.yml on the release tag before retrying.");
+	throw new Error("Full CI did not finish within 35 minutes. Run ci.yml on the release tag before retrying.");
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
