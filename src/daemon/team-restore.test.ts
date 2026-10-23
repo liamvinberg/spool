@@ -119,6 +119,39 @@ describe("restoring from the team history", { timeout: 60_000 }, () => {
 		});
 	});
 
+	it("puts back the frames a version's restore ticks, and only those, as one restore", async () => {
+		const { ana, ben, head, team, cloud } = await twoEditors();
+		writePageFrame(ana.root, "shop", "cart", "cart 1\n");
+		writePageFrame(ana.root, "shop", "receipt", "receipt 1\n");
+		writePageFrame(ana.root, "shop", "promo", "promo 1\n");
+		await everywhere([ben.root], team, { "frames/shop/promo/frame.tsx": "promo 1\n" });
+		const then = head();
+		writePageFrame(ana.root, "shop", "cart", "cart 2\n");
+		writePageFrame(ana.root, "shop", "receipt", "receipt 2\n");
+		rmSync(join(ana.root, "design/frames/shop/promo"), { recursive: true });
+		await everywhere([ben.root], team, {
+			"frames/shop/receipt/frame.tsx": "receipt 2\n",
+			"frames/shop/promo/frame.tsx": undefined,
+		});
+
+		const done = await restore(ben.daemon, {
+			kind: "project",
+			target: "",
+			to: then,
+			frames: ["shop/cart", "shop/promo"],
+		});
+		expect(done.status).toBe(200);
+		expect([...done.body.applied].sort()).toEqual(["frames/shop/cart/frame.tsx", "frames/shop/promo/frame.tsx"]);
+		await everywhere([ana.root, ben.root], team, {
+			"frames/shop/cart/frame.tsx": "cart 1\n",
+			"frames/shop/promo/frame.tsx": "promo 1\n",
+			"frames/shop/receipt/frame.tsx": "receipt 2\n",
+		});
+		const restores = new Set(cloud.history("checkout").flatMap((save) => (save.restore === null ? [] : [save.restore.id])));
+		expect(restores.size).toBe(1);
+		expect((await restore(ben.daemon, { kind: "project", target: "", to: then, frames: ["../x"] })).status).toBe(400);
+	});
+
 	it("puts back one file, a page and the whole project, each touching only its own", async () => {
 		const { ana, ben, head, team } = await twoEditors();
 		writePageFrame(ana.root, "shop", "cart", "cart 1\n");
