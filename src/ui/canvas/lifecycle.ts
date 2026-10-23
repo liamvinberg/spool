@@ -22,9 +22,10 @@ import { watchRestStrain } from "./rest-strain";
  * frame whose source changed keeps its old picture until then. The canvas
  * only shows them.
  *
- * Selection makes its frames live at every zoom, so moving, resizing and
- * editing work on the visible document. A frame being exported is held
- * separately, behind its still.
+ * Selecting one frame makes it live at every zoom, so moving, resizing and
+ * editing work on the visible document. A selection of several stays what the
+ * zoom makes it: a document each would boot them all at once. A frame being
+ * exported is held separately, behind its still.
  *
  * A picture stands in below the readable threshold. Above it, a nearby frame
  * is live; a held frame remains behind its still.
@@ -116,6 +117,28 @@ const CROWD_SETTLE_MS = 1000;
  * frame that only mounts once it is on screen is a frame you watch arrive.
  */
 const LIVE_MARGIN = 0.25;
+
+/**
+ * The frames a pointing tool holds live. Element picks own every frame they
+ * are in, since each is a document already being pointed into. Without picks,
+ * one selected frame is held live and a selection of several is not: booting a
+ * document for every frame a marquee caught is what made a multi-selection lag.
+ * ⌘ over an entered frame borrows its pointer, so that frame is held too.
+ */
+export function selectionTargetsOf(input: {
+	picked: readonly { frame: string }[];
+	pointerTool: boolean;
+	selected: readonly string[];
+	accelDown: boolean;
+	entered: string | null;
+}): Set<string> {
+	const { picked, pointerTool, selected, accelDown, entered } = input;
+	if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
+	if (!pointerTool) return new Set();
+	if (selected.length === 1) return new Set(selected);
+	if (selected.length > 1) return new Set();
+	return accelDown && entered !== null ? new Set([entered]) : new Set();
+}
 
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];

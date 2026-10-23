@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, type MockInstance, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { CaptureSourceMessage } from "./protocol";
 
 const broker = vi.hoisted(() => ({
@@ -129,20 +129,11 @@ describe("multi-frame canvas export", () => {
 		await select(canvas, 40, false);
 		await select(canvas, 360, true);
 		await select(canvas, 200, true);
-		await until(() => host.querySelector('iframe[title="b"]') !== null);
-		const heldB = host.querySelector<HTMLIFrameElement>('iframe[title="b"]');
-		const heldBWindow = heldB?.contentWindow;
-		if (heldB === null || heldBWindow == null) throw new Error("selected frame did not mount");
-		const heldBPost = vi.spyOn(heldBWindow, "postMessage");
-		await act(async () => {
-			window.dispatchEvent(
-				new MessageEvent("message", {
-					data: { spool: "loaded", frame: "b" },
-					source: heldBWindow,
-				}),
-			);
-		});
-		await until(() => heldB.parentElement?.style.visibility === "visible");
+		// a selection of several stays pictures: only one selected frame is held live
+		await act(() =>
+			vi.isFakeTimers() ? vi.advanceTimersByTimeAsync(400) : new Promise((resolve) => setTimeout(resolve, 400)),
+		);
+		expect(host.querySelectorAll("iframe")).toHaveLength(0);
 
 		// export lost its key to the Edit tool, so the frame's own menu opens it
 		await act(async () => {
@@ -161,27 +152,27 @@ describe("multi-frame canvas export", () => {
 		await act(async () => exportButton?.click());
 
 		await completeMountedCapture(host, "a", "11111111111111111111111111111111");
-		// A selected document must survive a download that outlasts several sweeps
-		// and an arrival deadline. A JSON/EOF event fixture would reconnect and replace it here.
+		// The held document must survive a download that outlasts several sweeps
+		// and an arrival deadline, and the next frame waits for it.
 		if (delayed) {
+			const heldA = host.querySelector<HTMLIFrameElement>('iframe[title="a"]');
 			await act(async () => vi.advanceTimersByTimeAsync(1800));
 			expect(downloads).toEqual([]);
 			expect(broker.raster.mock.calls.map(([source]) => source.frame)).toEqual(["a"]);
-			expect(host.querySelector('iframe[title="b"]')).toBe(heldB);
-			expect(heldB.contentWindow).toBe(heldBWindow);
+			expect(host.querySelector('iframe[title="a"]')).toBe(heldA);
+			expect(host.querySelector('iframe[title="b"]')).toBeNull();
 			releaseDownload?.();
 		}
 		await until(() => downloads.length === 1);
 		expect(downloads).toEqual(["a.png"]);
-		await completeMountedCapture(host, "b", "22222222222222222222222222222222", heldBPost);
+		await completeMountedCapture(host, "b", "22222222222222222222222222222222");
 		await until(() => host.textContent?.includes("Exported 2 PNG images") === true);
 
 		expect(downloads).toEqual(["a.png", "b.png"]);
 		expect(broker.id).toHaveBeenCalledTimes(2);
 		expect(broker.raster.mock.calls.map(([source]) => source.frame)).toEqual(["a", "b"]);
 		expect(requests.filter((path) => path.startsWith("/covers/"))).toEqual([]);
-		const restoredSelection = host.querySelector<HTMLIFrameElement>('iframe[title="b"]');
-		expect(restoredSelection?.parentElement?.style.visibility).toBe("visible");
+		await until(() => host.querySelectorAll("iframe").length === 0);
 	});
 });
 
@@ -210,29 +201,23 @@ async function select(canvas: HTMLElement, x: number, shiftKey: boolean): Promis
 	});
 }
 
-async function completeMountedCapture(
-	host: HTMLElement,
-	frame: string,
-	id: string,
-	loadedPost?: MockInstance<Window["postMessage"]>,
-): Promise<void> {
+async function completeMountedCapture(host: HTMLElement, frame: string, id: string): Promise<void> {
 	await until(() => host.querySelector(`iframe[title="${frame}"]`) !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>(`iframe[title="${frame}"]`);
 	const sourceWindow = iframe?.contentWindow;
 	if (iframe === null || sourceWindow == null) throw new Error(`${frame} did not mount`);
-	expect(iframe.parentElement?.style.visibility).toBe("visible");
-	const postMessage = loadedPost ?? vi.spyOn(sourceWindow, "postMessage");
+	expect(iframe.parentElement?.style.visibility).toBe("hidden");
+	expect(host.querySelector(`[data-frame-cover="${frame}"]`)).not.toBeNull();
+	const postMessage = vi.spyOn(sourceWindow, "postMessage");
 
-	if (loadedPost === undefined) {
-		await act(async () => {
-			window.dispatchEvent(
-				new MessageEvent("message", {
-					data: { spool: "loaded", frame },
-					source: sourceWindow,
-				}),
-			);
-		});
-	}
+	await act(async () => {
+		window.dispatchEvent(
+			new MessageEvent("message", {
+				data: { spool: "loaded", frame },
+				source: sourceWindow,
+			}),
+		);
+	});
 	await until(() =>
 		postMessage.mock.calls.some(
 			([message]) =>

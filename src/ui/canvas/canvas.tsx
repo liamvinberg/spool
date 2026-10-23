@@ -173,7 +173,14 @@ import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { FrameLife, type LifecycleStore, useDocumentsBooting, useFrameLifecycle, useFrameReady } from "./lifecycle";
+import {
+	FrameLife,
+	type LifecycleStore,
+	selectionTargetsOf,
+	useDocumentsBooting,
+	useFrameLifecycle,
+	useFrameReady,
+} from "./lifecycle";
 import { overviewNeighbours, stepDirection } from "./live-moves";
 import { watchMotionStrain } from "./motion-strain";
 import { NoticeStack } from "./notice-stack";
@@ -932,14 +939,10 @@ function CanvasField({
 		[frameReads],
 	);
 
-	// A pointing tool owns every frame represented by its element picks. Without
-	// picks, the selected frame and entered-frame modifier keep their intent.
-	const selectionTargets = useMemo(() => {
-		if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
-		if (!pointerTool) return new Set<string>();
-		if (selected.length > 0) return new Set(selected);
-		return accelDown && entered !== null ? new Set([entered]) : new Set<string>();
-	}, [pointerTool, picked, selected, accelDown, entered]);
+	const selectionTargets = useMemo(
+		() => selectionTargetsOf({ picked, pointerTool, selected, accelDown, entered }),
+		[pointerTool, picked, selected, accelDown, entered],
+	);
 	// the walks this page can take that no arrow can reach: the ones that land
 	// on another page (#151). Derived at rest — the layer is never gated on a
 	// selection, because the gap it fills is the frames you did not pick.
