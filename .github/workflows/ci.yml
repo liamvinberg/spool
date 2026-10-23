@@ -29,7 +29,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # the browser install leans on Ubuntu's mirror, which has taken 13 minutes on its own
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
