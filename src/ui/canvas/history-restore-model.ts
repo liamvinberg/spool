@@ -134,3 +134,11 @@ export function stepOf(
 	if (next < 0) return null;
 	return listed[next];
 }
+
+/** Over a version's set-aside save: whose save arrived first, if spool.page could say. */
+export function setAsideSays(by: string, path: string, stood: { by: { name: string } } | null): string {
+	const file = fileOf(path);
+	return stood === null
+		? `${by}'s save to ${file} was set aside.`
+		: `${stood.by.name}'s save arrived first, so ${by}'s save to ${file} was set aside.`;
+}

@@ -7,6 +7,7 @@ import {
 	momentSays,
 	restoredSays,
 	restoreLabel,
+	setAsideSays,
 	stepOf,
 	targetSays,
 	tickedAtFirst,
@@ -86,6 +87,13 @@ describe("restoring, as the pane says it", () => {
 			frames: ["checkout/cart", "menu"],
 			also: ["shared/ui/x.tsx"],
 		});
+	});
+
+	it("says whose save arrived first over a version's set-aside save", () => {
+		expect(setAsideSays("Ben", "frames/cart/frame.tsx", { by: { name: "Ana" } })).toBe(
+			"Ana's save arrived first, so Ben's save to frame.tsx was set aside.",
+		);
+		expect(setAsideSays("Ben", "shared/ui/x.tsx", null)).toBe("Ben's save to x.tsx was set aside.");
 	});
 
 	it("walks the versions: down is older, up is newer, above the newest is now", () => {

@@ -2438,6 +2438,42 @@ export async function fetchHistory(
 	}
 }
 
+/** A save the team set aside in a stretch: its file, its version, when, and whose save stood over it, if known. */
+export interface VersionSetAside {
+	path: string;
+	version: number;
+	at: number;
+	stood: { by: { accountId: string; name: string } } | null;
+}
+
+/** The saves a stretch had set aside, oldest first; null when they can't be read now. */
+export async function fetchVersionSetAside(
+	project: string,
+	stretch: HistoryStretch,
+): Promise<VersionSetAside[] | null> {
+	const query = {
+		from: String(stretch.from),
+		to: String(stretch.to),
+		account: stretch.by.accountId,
+		device: stretch.by.device,
+		limit: "200",
+	};
+	try {
+		const response = await controlFetch(historyUrl(project, "stretch", { kind: "project" }, query));
+		if (!response.ok) return null;
+		const body = (await response.json()) as {
+			files: { path: string; setAside: Omit<VersionSetAside, "path">[] }[];
+		};
+		return body.files
+			.flatMap((file) =>
+				file.setAside.map((save) => ({ path: file.path, version: save.version, at: save.at, stood: save.stood })),
+			)
+			.sort((a, b) => a.version - b.version);
+	} catch {
+		return null;
+	}
+}
+
 /* ── restoring from the team history (spool#188) ─────────────────────── */
 
 /**

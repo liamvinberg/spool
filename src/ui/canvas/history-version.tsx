@@ -11,12 +11,14 @@ import { pageName } from "../../page-path";
 import { accelLabel } from "../../runtime/platform-keys";
 import {
 	fetchVersion,
+	fetchVersionSetAside,
 	type HistoryScope,
 	type HistoryStretch,
 	type RestoreAsk,
 	restoreFromHistory,
 	type VersionFrame,
 	type VersionRead,
+	type VersionSetAside,
 } from "../api";
 import { cn } from "../cn";
 import { ConfirmDialog } from "../confirm-dialog";
@@ -26,6 +28,7 @@ import { TextAction, Toast } from "../primitives/feedback";
 import { Checkbox } from "../primitives/selection";
 import { shellRadius } from "./camera";
 import { type CameraStore, useCameraFollow } from "./camera-store";
+import { fileOf } from "./history-model";
 import { HISTORY_CHANGE } from "./history-pane";
 import {
 	changeSays,
@@ -33,6 +36,7 @@ import {
 	framesSays,
 	momentSays,
 	restoreLabel,
+	setAsideSays,
 	stepOf,
 	tickedAtFirst,
 	versionRestore,
@@ -72,8 +76,9 @@ type Box = Omit<CanvasFrame, "name">;
 
 /** The one question: a version's restore, or Bring back for a frame it deleted. */
 type Asking =
-	| { kind: "version"; stretch: HistoryStretch; read: Extract<VersionRead, { state: "ready" }> }
-	| { kind: "bring"; frame: string; stretch: HistoryStretch };
+	| { kind: "version"; stretch: HistoryStretch; to: number; read: Extract<VersionRead, { state: "ready" }> }
+	| { kind: "bring"; frame: string; stretch: HistoryStretch }
+	| { kind: "put-back"; save: VersionSetAside; stretch: HistoryStretch };
 
 interface Said {
 	key: number;
@@ -190,9 +195,39 @@ export function useVersions(project: string, scope: HistoryScope, page: string, 
 		[project, say],
 	);
 
-	const restore = async (ask: RestoreAsk, frames: readonly string[], at: number) => {
+	// a version with saves set aside offers each back from under the bar
+	const [setAside, setSetAside] = useState<{ key: string; saves: VersionSetAside[] | null } | null>(null);
+	useEffect(() => {
+		if (shown === null || shown.setAside === 0) return;
+		let live = true;
+		const mine = `${shown.from}\n${shown.to}`;
+		void fetchVersionSetAside(project, shown).then((saves) => {
+			if (live) setSetAside({ key: mine, saves });
+		});
+		return () => {
+			live = false;
+		};
+	}, [project, shown]);
+	const asideRead = shown !== null && setAside?.key === `${shown.from}\n${shown.to}` ? setAside : null;
+	const asideNow = shown !== null && shown.setAside > 0 ? (asideRead?.saves ?? null) : null;
+	/**
+	 * The version a restore of the one shown names. spool.page takes a version that is a set-aside save as that save's
+	 * own bytes, so a stretch ending on one goes back to just before it, where the applied files stand the same.
+	 */
+	const restoreTo =
+		shown === null
+			? null
+			: shown.setAside === 0
+				? shown.to
+				: asideRead === null
+					? null
+					: asideRead.saves?.some((save) => save.version === shown.to)
+						? shown.to - 1
+						: shown.to;
+
+	const restore = async (ask: RestoreAsk, frames: readonly string[], at: number, named?: string) => {
 		const done = await restoreFromHistory(project, ask);
-		const what = frames.length > 0 ? framesSays(frames) : "the shared files";
+		const what = named ?? (frames.length > 0 ? framesSays(frames) : "the shared files");
 		setShown(null);
 		setRang({ key: ++keys.current, frames: [...frames] });
 		say({
@@ -216,8 +251,21 @@ export function useVersions(project: string, scope: HistoryScope, page: string, 
 				asking={asking}
 				scope={scope}
 				onClose={() => setAsking(null)}
-				onRestore={(frames, also) =>
-					restore(versionRestore(asking.stretch.to, frames, also), frames, asking.stretch.end)
+				onRestore={(frames, also) => restore(versionRestore(asking.to, frames, also), frames, asking.stretch.end)}
+			/>
+		) : asking.kind === "put-back" ? (
+			<ConfirmDialog
+				title={`Put back ${asking.stretch.by.name}'s save to ${fileOf(asking.save.path)}?`}
+				description={`${asking.save.path} goes back to the save that was set aside at ${momentSays(asking.save.at)}. Nothing else changes. The team gets it as a new save, and Undo puts it back.`}
+				confirmLabel="Put back"
+				onClose={() => setAsking(null)}
+				onConfirm={() =>
+					restore(
+						{ kind: "file", target: asking.save.path, to: asking.save.version },
+						[],
+						asking.save.at,
+						fileOf(asking.save.path),
+					)
 				}
 			/>
 		) : (
@@ -297,12 +345,16 @@ export function useVersions(project: string, scope: HistoryScope, page: string, 
 				onBack={() => setShown(null)}
 				onStep={step}
 				onRestore={
-					ready === null || shown === null
+					ready === null || shown === null || restoreTo === null
 						? undefined
-						: () => setAsking({ kind: "version", stretch: shown, read: ready })
+						: () => setAsking({ kind: "version", stretch: shown, to: restoreTo, read: ready })
 				}
 				onBringBack={(frame) => {
 					if (shown !== null) setAsking({ kind: "bring", frame, stretch: shown });
+				}}
+				setAside={asideNow}
+				onPutBack={(save) => {
+					if (shown !== null) setAsking({ kind: "put-back", save, stretch: shown });
 				}}
 			/>
 		),
@@ -424,6 +476,8 @@ function VersionLayer({
 	onStep,
 	onRestore,
 	onBringBack,
+	setAside,
+	onPutBack,
 }: {
 	shown: HistoryStretch | null;
 	read: VersionRead | null;
@@ -438,6 +492,9 @@ function VersionLayer({
 	/** undefined while the version is read */
 	onRestore: (() => void) | undefined;
 	onBringBack: (frame: string) => void;
+	/** the version's saves the team set aside, once read */
+	setAside: VersionSetAside[] | null;
+	onPutBack: (save: VersionSetAside) => void;
 }) {
 	// the last read stays drawn while the next is read, so stepping never flashes today's canvas
 	const [drawn, setDrawn] = useState<Extract<VersionRead, { state: "ready" }> | null>(null);
@@ -627,11 +684,30 @@ function VersionLayer({
 					{differs === 0 ? "Same as now" : "Restore this version…"}
 				</Button>
 			</div>
-			{read?.state === "failed" ? (
-				<div className="absolute top-18 left-1/2 z-30 -translate-x-1/2" {...held}>
-					<Toast tone="error" message={read.message} />
-				</div>
-			) : null}
+			<div className="absolute top-18 left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2" {...held}>
+				{setAside === null || setAside.length === 0 ? null : (
+					<div
+						className="flex w-max max-w-[min(640px,calc(100vw-32px))] animate-chrome-in flex-col gap-1 rounded-md border border-line-strong bg-surface-raised px-3 py-2 shadow-float"
+						data-version-set-aside=""
+					>
+						{setAside.map((save) => (
+							<div
+								key={save.version}
+								className="flex items-center gap-3"
+								data-version-set-aside-save={save.path}
+							>
+								<span className="min-w-0 flex-1 truncate text-secondary type-label">
+									{setAsideSays(shown.by.name, save.path, save.stood)}
+								</span>
+								{onRestore === undefined ? null : (
+									<TextAction onClick={() => onPutBack(save)}>Put back</TextAction>
+								)}
+							</div>
+						))}
+					</div>
+				)}
+				{read?.state === "failed" ? <Toast tone="error" message={read.message} /> : null}
+			</div>
 		</>
 	);
 }
