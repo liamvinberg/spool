@@ -1,9 +1,11 @@
 # #130 · Clear the design canvas's type errors so spool check is a gate
 
-- State: open
+- State: closed (completed)
 - Labels: ready-for-agent
+- Tasks: task 218 (Fix design canvas type errors)
 - Created: 2026-10-18T17:43:56.657Z
-- Updated: 2026-10-18T17:44:01.220Z
+- Updated: 2026-10-22T18:48:36.761Z
+- Closed: 2026-10-22T18:48:36.761Z
 
 Moved from liamvinberg/spool#356 (closed there; GitHub issues are no longer where this work is tracked).
 
@@ -99,3 +101,17 @@ Still open: 3 (stale `app` frames) and the canvas's own type errors, which `spoo
 6. bwrap/socat: moot. No test references them any more, and devobee has both.
 
 Left: the design canvas's own type errors (liamvinberg/spool#271). `spool check design/frames/app` today: 68 frames, 13 errors, all in design/shared (claude-turn.ts, primitives/feedback.tsx, spool/play-field.tsx). Retitled to that.
+
+### agent, 2026-10-22T18:48:34.265Z
+
+**Agent, task 218:** The design canvas's type errors are cleared, so `spool check` can be used as a gate. Every page checks clean: app 79 frames, explore 69, site 25, system 12, all with 0 errors and exit 0. `spool check design` on the whole canvas also fits the budget now (185 frames, 439 source files, 0 errors).
+
+- **feedback.tsx (src fix, spool c15854d2):** the error `Property 'transform' does not exist on type 'CSSProperties'` wasn't in the canvas. Under pnpm, check couldn't find `csstype` through the link pnpm places beside `@types/react`, so every `CSSProperties` came out empty. Check now trusts that link and the folders above it. There's a regression test in `check-resolution.test.ts` and a patch changeset. This fix reaches the installed `spool` with the next release.
+- **claude-turn.ts:** `as number | null` on the index reads of `anchor`/`at`, and `(live as Live)` after the forEach.
+- **play-field.tsx:** `Take !== undefined && <Take />` (the early return already guarantees it).
+- **Other pages' shared files:** fair/radar.tsx, fair/shader.tsx and gust/window.tsx get `!` on index reads. sola/ring.tsx gets a tuple cast on the `finishes` spread. sola/slides.tsx (Nav), ring.tsx (from, name), sova/prices.tsx (lamp) and site/chapters/waitlist.tsx (state, email) now spell out `| undefined` on optional props. stilla/speaker.tsx types the `traverse` callback.
+- **Frames site/demo/stilla-colour, stilla-top and stilla-order:** the `ui.state` reads are cast to `ColourId`, `keyof typeof finishes` and `PoseName`, using type-only imports.
+
+All the canvas edits are type-only, so the frames render as before. They reached spool.page (checked with `spool history`). The full suite passed except `cover-browser.test.ts`, which failed once under load and passes when run on its own.
+
+Side note: the shared 7767 daemon is still running from task 206's deleted worktree. It warns that it can stop syncing team projects and should be restarted from a checkout that exists.
