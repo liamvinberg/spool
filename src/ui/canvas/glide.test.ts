@@ -77,9 +77,13 @@ describe("createGlide", () => {
 	it("cuts where the motion scale is zero, as stillness makes it", () => {
 		const glide = createGlide(() => 0);
 		glide.to(A);
+		const heard = vi.fn();
+		glide.listen(heard);
 		glide.to(B);
 		expect(glide.at()).toEqual(B);
 		expect(frames.size).toBe(0);
+		// whatever draws the box hears the cut, or it stays drawn where it was
+		expect(heard).toHaveBeenCalledTimes(1);
 	});
 
 	it("jumps when told to, ending any flight", () => {
