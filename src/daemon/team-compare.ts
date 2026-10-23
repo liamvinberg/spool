@@ -9,11 +9,11 @@ import { type CompileHost, compileFrameDocument, describeCompileError, type Fram
 import type { DesignEntry, DesignFileKind, DesignFiles } from "./design-files";
 import { errorDocument } from "./document";
 import type { HistoryCache } from "./history-cache";
+import { type MomentFiles, readVersion } from "./history-version";
 import { parseSidecar } from "./sidecar";
 import { pinnedTailwind } from "./stylesheet-workers";
 import { inProcessStylesheets } from "./tailwind";
 import { HistoryUnread, teamHistoryReads } from "./team-history-reads";
-import { type MomentFiles, readVersion } from "./history-version";
 import { inertWebfonts, type Webfonts } from "./webfonts";
 
 /*
@@ -231,7 +231,7 @@ export function teamCompareRoutes(deps: {
 			const earlier = before < 0 ? {} : await filesAt(found.link, before, undefined);
 			const now: Record<string, string> = {};
 			for (const [path, file] of Object.entries(known)) if (file.hash !== null) now[path] = file.hash;
-			const read = readVersion({ then, before: earlier, now, page });
+			const read = readVersion({ at: then, before: earlier, now, page });
 			const project = c.req.param("project") ?? "";
 			const frames = await Promise.all(
 				read.frames.map(async (frame) => ({
@@ -239,8 +239,11 @@ export function teamCompareRoutes(deps: {
 					now: frame.now,
 					same: frame.same,
 					did: frame.did,
-					then: frame.then
-						? { url: documentUrl(project, frame.name, at, undefined), place: await placeAt(found.link, then, frame.name) }
+					stood: frame.stood
+						? {
+								url: documentUrl(project, frame.name, at, undefined),
+								place: await placeAt(found.link, then, frame.name),
+							}
 						: null,
 					before:
 						frame.did === "deleted"

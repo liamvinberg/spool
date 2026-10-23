@@ -200,7 +200,7 @@ it("reads a version for the History pane: its frames on a page, what it did, and
 				now: true,
 				same: false,
 				did: "added",
-				then: { url: `/p/checkout/history/${moment}/frames/cart`, place: { x: 0, y: 0, w: 480, h: 320 } },
+				stood: { url: `/p/checkout/history/${moment}/frames/cart`, place: { x: 0, y: 0, w: 480, h: 320 } },
 				before: null,
 			},
 			{
@@ -208,10 +208,10 @@ it("reads a version for the History pane: its frames on a page, what it did, and
 				now: false,
 				same: false,
 				did: "added",
-				then: { url: `/p/checkout/history/${moment}/frames/menu`, place: { x: 600, y: 40, w: 400, h: 300 } },
+				stood: { url: `/p/checkout/history/${moment}/frames/menu`, place: { x: 600, y: 40, w: 400, h: 300 } },
 				before: null,
 			},
-			{ name: "promo", now: true, same: false, did: null, then: null, before: null },
+			{ name: "promo", now: true, same: false, did: null, stood: null, before: null },
 		],
 		differs: [
 			{ frame: "cart", change: "changed" },

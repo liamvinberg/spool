@@ -16,7 +16,7 @@ export type VersionChange = "changed" | "back" | "gone";
 export interface VersionFrame {
 	name: string;
 	/** whether it stood at the version, just before it, and now */
-	then: boolean;
+	stood: boolean;
 	before: boolean;
 	now: boolean;
 	/** it stood then exactly as it stands now: its own files, and every shared file */
@@ -73,12 +73,12 @@ function changedUnder(a: MomentFiles, b: MomentFiles, prefix: string): string[] 
 
 /** The project at a version, beside the version before it and now, with the frames on `page` drawn out. */
 export function readVersion(input: {
-	then: MomentFiles;
+	at: MomentFiles;
 	before: MomentFiles;
 	now: MomentFiles;
 	page: string;
 }): VersionRead {
-	const { then, before, now, page } = input;
+	const { at: then, before, now, page } = input;
 	const atThen = framesIn(then);
 	const atBefore = framesIn(before);
 	const atNow = framesIn(now);
@@ -101,7 +101,7 @@ export function readVersion(input: {
 							: null;
 			return {
 				name,
-				then: wasThen,
+				stood: wasThen,
 				before: wasBefore,
 				now: isNow,
 				same: wasThen && isNow && shared.length === 0 && key(then, name) === key(now, name),

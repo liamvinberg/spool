@@ -147,7 +147,9 @@ describe("restoring from the team history", { timeout: 60_000 }, () => {
 			"frames/shop/promo/frame.tsx": "promo 1\n",
 			"frames/shop/receipt/frame.tsx": "receipt 2\n",
 		});
-		const restores = new Set(cloud.history("checkout").flatMap((save) => (save.restore === null ? [] : [save.restore.id])));
+		const restores = new Set(
+			cloud.history("checkout").flatMap((save) => (save.restore === null ? [] : [save.restore.id])),
+		);
 		expect(restores.size).toBe(1);
 		expect((await restore(ben.daemon, { kind: "project", target: "", to: then, frames: ["../x"] })).status).toBe(400);
 	});
