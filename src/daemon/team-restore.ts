@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Context, Hono } from "hono";
 import { type CloudRequestOptions, originOf } from "../cloud-auth";
+import { isFramePath } from "../page-path";
 import type { ProjectLink } from "../team-project";
 import type { RestoreRef } from "../team-sync-protocol";
 import { HistoryUnread, teamHistoryReads } from "./team-history-reads";
@@ -23,6 +24,8 @@ export interface RestoreAsk {
 	also: string[];
 	/** Exactly these paths, as an undo names them, instead of what `kind` and `target` cover. */
 	paths: string[] | undefined;
+	/** These frames' folders, as a version's restore ticks them (task 225), instead of what `kind` and `target` cover. */
+	frames: string[] | undefined;
 }
 
 export function teamRestoreRoutes(deps: {
@@ -42,6 +45,7 @@ export function teamRestoreRoutes(deps: {
 	/** What a restore covers: the paths named, and those under the prefixes named. */
 	const scopeOf = (ask: RestoreAsk): { paths: string[]; prefixes: string[] } => {
 		if (ask.paths !== undefined) return { paths: ask.paths, prefixes: [] };
+		if (ask.frames !== undefined) return { paths: ask.also, prefixes: ask.frames.map((frame) => `frames/${frame}/`) };
 		if (ask.kind === "file") return { paths: [ask.target], prefixes: [] };
 		if (ask.kind === "frame") return { paths: ask.also, prefixes: [`frames/${ask.target}/`] };
 		if (ask.kind === "page")
@@ -178,12 +182,13 @@ const isPaths = (value: unknown): value is string[] =>
 /** What the canvas asked to put back; undefined when it asked for nothing a restore can be. */
 export function readAsk(value: unknown): RestoreAsk | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
-	const { kind, target, to, also, paths } = value as Record<string, unknown>;
+	const { kind, target, to, also, paths, frames } = value as Record<string, unknown>;
 	if (typeof kind !== "string" || !KINDS.has(kind) || typeof target !== "string") return undefined;
 	if (typeof to !== "number" || !Number.isSafeInteger(to) || to < 0) return undefined;
 	if (also !== undefined && !isPaths(also)) return undefined;
 	if (paths !== undefined && !isPaths(paths)) return undefined;
+	if (frames !== undefined && !(isPaths(frames) && frames.length > 0 && frames.every(isFramePath))) return undefined;
 	if (kind === "file" && target === "") return undefined;
 	if (kind === "frame" && target === "") return undefined;
-	return { kind: kind as RestoreRef["kind"], target, to, also: also ?? [], paths };
+	return { kind: kind as RestoreRef["kind"], target, to, also: also ?? [], paths, frames };
 }

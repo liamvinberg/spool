@@ -9,6 +9,7 @@ import { type CompileHost, compileFrameDocument, describeCompileError, type Fram
 import type { DesignEntry, DesignFileKind, DesignFiles } from "./design-files";
 import { errorDocument } from "./document";
 import type { HistoryCache } from "./history-cache";
+import { type MomentFiles, readVersion } from "./history-version";
 import { parseSidecar } from "./sidecar";
 import { pinnedTailwind } from "./stylesheet-workers";
 import { inProcessStylesheets } from "./tailwind";
@@ -25,9 +26,6 @@ import { inertWebfonts, type Webfonts } from "./webfonts";
  * A set-aside save is never in what the history says the files held: comparing at one names its path and hash, and
  * the moment is the files then with that one save in place.
  */
-
-/** A moment: every file the project held then, by design/-relative path, and the hash of its bytes. */
-type MomentFiles = Record<string, string>;
 
 /** One save put in place over what the files held: a set-aside save's own bytes, `hash` null for a delete. */
 interface Saved {
@@ -51,6 +49,8 @@ export function teamCompareRoutes(deps: {
 	cache: HistoryCache;
 	authority: (root: string) => FrameAuthority;
 	webfonts?: Webfonts | undefined;
+	/** What the team holds now as this Mac knows it, while the root follows its team: each path's hash, null deleted. */
+	known: (root: string) => Readonly<Record<string, { hash: string | null }>> | undefined;
 }) {
 	const reads = teamHistoryReads(deps);
 	const documents = new Map<string, { document: string; etag: string }>();
@@ -70,7 +70,7 @@ export function teamCompareRoutes(deps: {
 		if (kept !== undefined) return JSON.parse(Buffer.from(kept).toString("utf8")) as MomentFiles;
 		const held = await reads.filesAt(link, at, [], [""]);
 		if (saved !== undefined) held.set(saved.path, saved.hash);
-		const files: MomentFiles = {};
+		const files: Record<string, string> = {};
 		for (const [path, hash] of [...held].sort(([a], [b]) => (a < b ? -1 : 1))) if (hash !== null) files[path] = hash;
 		deps.cache.write(key, new TextEncoder().encode(JSON.stringify(files)));
 		return files;
@@ -196,6 +196,65 @@ export function teamCompareRoutes(deps: {
 				url: documentUrl(c.req.param("project") ?? "", frame, moment.at, moment.saved),
 				place,
 			});
+		} catch (error) {
+			return unread(c, error);
+		}
+	});
+
+	/** A frame's sidecar place at a moment; null without one. */
+	const placeAt = async (link: ProjectLink, files: MomentFiles, frame: string) => {
+		const sidecar = files[`frames/${frame}/frame.json`];
+		if (sidecar === undefined) return null;
+		const read = parseSidecar(jsonOf(await blob(link, sidecar)));
+		return read.kind === "placed" ? read.geometry : null;
+	};
+
+	/**
+	 * A version as the History pane shows it (task 225): the frames on a page as they stood at `at`, what the
+	 * version did to each from `before` (the version just before it), which stand the same now, and what restoring
+	 * it would change across the project. A frame it deleted is served as it stood just before.
+	 */
+	api.get("/:project/history/version", async (c) => {
+		const found = where(c);
+		if ("response" in found) return found.response;
+		const at = Number(c.req.query("at"));
+		const before = Number(c.req.query("before"));
+		const page = c.req.query("page") ?? "";
+		if (!Number.isSafeInteger(at) || at < 0 || !Number.isSafeInteger(before) || before < -1 || before > at)
+			return c.json({ error: "invalid_input" }, 400);
+		if (page !== "" && !isFramePath(page)) return c.json({ error: "invalid_input" }, 400);
+		const known = deps.known(found.root);
+		if (known === undefined)
+			return c.json({ error: "not_synced", message: "this Mac doesn't sync the project with its team now" }, 409);
+		try {
+			const then = await filesAt(found.link, at, undefined);
+			const earlier = before < 0 ? {} : await filesAt(found.link, before, undefined);
+			const now: Record<string, string> = {};
+			for (const [path, file] of Object.entries(known)) if (file.hash !== null) now[path] = file.hash;
+			const read = readVersion({ at: then, before: earlier, now, page });
+			const project = c.req.param("project") ?? "";
+			const frames = await Promise.all(
+				read.frames.map(async (frame) => ({
+					name: frame.name,
+					now: frame.now,
+					same: frame.same,
+					did: frame.did,
+					stood: frame.stood
+						? {
+								url: documentUrl(project, frame.name, at, undefined),
+								place: await placeAt(found.link, then, frame.name),
+							}
+						: null,
+					before:
+						frame.did === "deleted"
+							? {
+									url: documentUrl(project, frame.name, before, undefined),
+									place: await placeAt(found.link, earlier, frame.name),
+								}
+							: null,
+				})),
+			);
+			return c.json({ frames, differs: read.differs, shared: read.shared });
 		} catch (error) {
 			return unread(c, error);
 		}

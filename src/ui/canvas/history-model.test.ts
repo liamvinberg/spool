@@ -7,7 +7,6 @@ import {
 	paceOf,
 	people,
 	ranSays,
-	setAsideSays,
 	shownDays,
 	throughOf,
 	touchedSays,
@@ -93,16 +92,6 @@ describe("what a stretch touched", () => {
 		expect(throughOf(stretch({ paths: ["frames/cart-old/frame.tsx"] }), "cart")).toBe("through frame.tsx");
 	});
 
-	it("says whose save arrived first over one set aside", () => {
-		const bens = stretch({ who: "ben" });
-		expect(setAsideSays(bens, { by: { accountId: "ana", name: "Ana" } })).toBe(
-			"Ana's save arrived first, so Ben's was set aside. It is kept here 90 days.",
-		);
-		expect(setAsideSays(bens, null)).toBe("Ben's save was set aside. It is kept here 90 days.");
-	});
-});
-
-describe("the days and the people", () => {
 	it("names today and yesterday with their date, and any other day by its own", () => {
 		const now = at(15);
 		expect(dayName(WEDNESDAY, now)).toBe("Today · Wed 21 Oct");

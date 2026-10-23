@@ -2399,20 +2399,6 @@ export type HistoryRead =
 	| { state: "ready"; days: HistoryDay[]; next: number | null; movedIn: HistoryMovedIn | null }
 	| { state: "failed"; message: string };
 
-/** One file a stretch touched: its last save there, how many it made, each one set aside and whose save stood over it. */
-export interface HistoryStretchFile {
-	path: string;
-	version: number;
-	hash: string | null;
-	saves: number;
-	setAside: {
-		version: number;
-		hash: string | null;
-		at: number;
-		stood: { version: number; at: number; by: { accountId: string; name: string } } | null;
-	}[];
-}
-
 const historyUrl = (project: string, read: string, scope: HistoryScope, query: Record<string, string>) => {
 	const search = new URLSearchParams(query);
 	if (scope.kind === "frame") search.set("frame", scope.frame);
@@ -2452,43 +2438,19 @@ export async function fetchHistory(
 	}
 }
 
-/** The files one stretch touched, in the scope it shows in; null when they can't be read. */
-export async function fetchStretchFiles(
-	project: string,
-	scope: HistoryScope,
-	stretch: HistoryStretch,
-): Promise<HistoryStretchFile[] | null> {
-	const query = {
-		from: String(stretch.from),
-		to: String(stretch.to),
-		account: stretch.by.accountId,
-		device: stretch.by.device,
-		limit: "200",
-	};
-	try {
-		const response = await controlFetch(historyUrl(project, "stretch", scope, query));
-		if (!response.ok) return null;
-		return ((await response.json()) as { files: HistoryStretchFile[] }).files;
-	} catch {
-		return null;
-	}
-}
-
 /* ── restoring from the team history (spool#188) ─────────────────────── */
 
-/** What to put back, and to which team version: a frame's shared files ticked, or exactly the paths an undo names. */
+/**
+ * What to put back, and to which team version: the frames a version's restore ticks and the shared files ticked
+ * beside them, or exactly the paths an undo names.
+ */
 export interface RestoreAsk {
 	kind: RestoreKind;
 	target: string;
 	to: number;
+	frames?: string[];
 	also?: string[];
 	paths?: string[];
-}
-
-/** What a restore would change: how many of its own files, and a frame's shared files that changed since. */
-export interface RestorePlan {
-	files: number;
-	shared: { path: string; frames: string[] }[];
 }
 
 /** A restore done: what the team applied and set aside, and the restore that undoes it (null when nothing changed). */
@@ -2497,21 +2459,10 @@ export interface RestoreDone {
 	applied: string[];
 	setAside: string[];
 	refused: string[];
-	undo: Required<Omit<RestoreAsk, "also">> | null;
+	undo: Required<Omit<RestoreAsk, "also" | "frames">> | null;
 }
 
 const restoreUrl = (project: string) => `/api/p/${encodeURIComponent(project)}/history/restore`;
-
-/** What a restore would change, asked of this Mac's daemon; null when it can't say now. */
-export async function fetchRestorePlan(project: string, ask: RestoreAsk): Promise<RestorePlan | null> {
-	const query = new URLSearchParams({ kind: ask.kind, target: ask.target, to: String(ask.to) });
-	try {
-		const response = await controlFetch(`${restoreUrl(project)}?${query}`);
-		return response.ok ? ((await response.json()) as RestorePlan) : null;
-	} catch {
-		return null;
-	}
-}
 
 /** Put something back as it stood: done, or why not, as the daemon says it. */
 export async function restoreFromHistory(project: string, ask: RestoreAsk): Promise<RestoreDone> {
@@ -2531,32 +2482,58 @@ export async function restoreFromHistory(project: string, ask: RestoreAsk): Prom
 	return body;
 }
 
-/* ── comparing with now (spool#189) ──────────────────────────────────── */
+/* ── a team version on the canvas (task 225) ─────────────────────────── */
 
-/** A moment Compare goes back to: a team version, and a set-aside save's own file in place when it is one. */
-export interface CompareMoment {
-	at: number;
-	saved?: { path: string; hash: string | null } | undefined;
+/** A frame as a version shows it: its document at a moment and where its sidecar stood it then. */
+export interface VersionPlace {
+	url: string;
+	place: { x: number; y: number; w: number; h: number } | null;
 }
 
-/** A frame at a moment: served at its own address, placed where its sidecar stood it; absent when it didn't exist. */
-export type CompareRead =
-	| { state: "ready"; url: string; place: { x: number; y: number; w: number; h: number } | null }
-	| { state: "absent" }
+/** A frame on the page shown, as a version left it: what the version did to it, and whether it stands so now. */
+export interface VersionFrame {
+	name: string;
+	now: boolean;
+	/** it stood then exactly as now, its shared files too: today's frame shows it */
+	same: boolean;
+	did: "added" | "changed" | "deleted" | null;
+	/** as it stood at the version; null when it didn't */
+	stood: VersionPlace | null;
+	/** as it stood just before, for a frame the version deleted */
+	before: VersionPlace | null;
+}
+
+/** What restoring a version would do to a frame: change it back, bring it back, or take it away. */
+export type VersionChange = "changed" | "back" | "gone";
+
+export type VersionRead =
+	| {
+			state: "ready";
+			frames: VersionFrame[];
+			differs: { frame: string; change: VersionChange }[];
+			shared: string[];
+	  }
 	| { state: "failed"; message: string };
 
-/** How a frame stood at a moment, asked of this Mac's daemon, which reads and keeps the bytes from the team history. */
-export async function fetchCompare(project: string, frame: string, moment: CompareMoment): Promise<CompareRead> {
-	const query = new URLSearchParams({ frame, at: String(moment.at) });
-	if (moment.saved !== undefined) {
-		query.set("path", moment.saved.path);
-		query.set("hash", moment.saved.hash ?? "");
-	}
+/** A team version's frames on a page, asked of this Mac's daemon: `at` the version, `before` the one just before it. */
+export async function fetchVersion(project: string, at: number, before: number, page: string): Promise<VersionRead> {
+	const query = new URLSearchParams({ at: String(at), before: String(before), page });
 	try {
-		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/history/compare?${query}`);
+		const response = await controlFetch(`/api/p/${encodeURIComponent(project)}/history/version?${query}`);
 		if (!response.ok) return { state: "failed", message: await historyFailure(response) };
-		const body = (await response.json()) as CompareRead;
-		return body.state === "ready" ? { ...body, url: new URL(body.url, renderOrigin).href } : body;
+		const body = (await response.json()) as Omit<Extract<VersionRead, { state: "ready" }>, "state">;
+		const absolute = (place: VersionPlace | null) =>
+			place === null ? null : { ...place, url: new URL(place.url, renderOrigin).href };
+		return {
+			state: "ready",
+			frames: body.frames.map((frame) => ({
+				...frame,
+				stood: absolute(frame.stood),
+				before: absolute(frame.before),
+			})),
+			differs: body.differs,
+			shared: body.shared,
+		};
 	} catch {
 		return { state: "failed", message: "spool could not be reached." };
 	}

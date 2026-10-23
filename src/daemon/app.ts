@@ -1831,6 +1831,7 @@ export function createDaemonApp({
 		cache: historyCache(join(spoolDir, "history-cache"), { maxBytes: historyCacheBytes ?? 128 * 1024 * 1024 }),
 		authority: frameAuthority,
 		webfonts,
+		known: (root) => teamSync.copy(root)?.known(),
 	});
 	app.route("/api/p", comparing.api);
 	app.route("/p", comparing.served);

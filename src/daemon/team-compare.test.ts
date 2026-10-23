@@ -180,3 +180,57 @@ it("compares at a set-aside save with that save's own file, not what the team ap
 	).json()) as { url: string };
 	expect((await document(applied.url)).html).toContain("cart now");
 });
+
+it("reads a version for the History pane: its frames on a page, what it did, and what a restore of it changes", {
+	timeout: 60_000,
+}, async () => {
+	const { cloud, app, moment } = await team();
+	const version = async (at: number, before: number, page = "") => {
+		const response = await app.request(
+			`/api/p/checkout/history/version?${new URLSearchParams({ at: String(at), before: String(before), page })}`,
+		);
+		return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+	};
+	const then = await version(moment, -1);
+	expect(then.status).toBe(200);
+	expect(then.body).toEqual({
+		frames: [
+			{
+				name: "cart",
+				now: true,
+				same: false,
+				did: "added",
+				stood: { url: `/p/checkout/history/${moment}/frames/cart`, place: { x: 0, y: 0, w: 480, h: 320 } },
+				before: null,
+			},
+			{
+				name: "menu",
+				now: false,
+				same: false,
+				did: "added",
+				stood: { url: `/p/checkout/history/${moment}/frames/menu`, place: { x: 600, y: 40, w: 400, h: 300 } },
+				before: null,
+			},
+			{ name: "promo", now: true, same: false, did: null, stood: null, before: null },
+		],
+		differs: [
+			{ frame: "cart", change: "changed" },
+			{ frame: "menu", change: "back" },
+			{ frame: "promo", change: "gone" },
+		],
+		shared: ["shared/ui/badge.tsx", "shared/ui/order-button.tsx"],
+	});
+	// the newest version, from the one we compared at: menu was deleted since, served as it stood just before
+	const head = cloud.history("checkout").at(-1)?.version ?? 0;
+	const now = await version(head, moment);
+	const menu = (now.body.frames as { name: string; did: string | null; before: unknown }[]).find(
+		(frame) => frame.name === "menu",
+	);
+	expect(menu).toMatchObject({
+		did: "deleted",
+		before: { url: `/p/checkout/history/${moment}/frames/menu`, place: { x: 600, y: 40, w: 400, h: 300 } },
+	});
+	expect(now.body.differs).toEqual([]);
+	expect(now.body.shared).toEqual([]);
+	expect((await version(moment, moment + 1)).status).toBe(400);
+});
