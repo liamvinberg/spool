@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.47.1
+
+### Patch Changes
+
+- c1e6bea: 0.47.0 was tagged but never published, so this is the first release with its changes: versions in the History pane, commenting on a whole frame, and the fixes listed under 0.47.0.
+- b50b6aa: Selecting several frames no longer makes them all live at once, which made large selections lag. A single selected frame still stays live at every zoom.
+
 ## 0.47.0
 
 ### Minor Changes
