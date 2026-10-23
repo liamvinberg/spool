@@ -77,6 +77,23 @@ export function teamRestoreRoutes(deps: {
 		return { wanted, changes };
 	};
 
+	/**
+	 * The version an undo goes back to: the one just before the restore's first save. spool.page takes a version that
+	 * is a set-aside save to a path as that save's own bytes, so one set aside on a path the undo puts back, as a
+	 * put-back's own save is, is stepped over: the applied files stand the same just before it.
+	 */
+	const before = async (link: ProjectLink, first: number, paths: readonly string[]) => {
+		let to = first - 1;
+		// a long restore's undo isn't checked save by save: only a few paths can have been set aside just before it
+		if (paths.length > UNDO_CHECKS) return to;
+		for (let step = 0; step < UNDO_CHECKS && to > 0; step++) {
+			const saves = await Promise.all(paths.map((path) => savedAt(link, path, to)));
+			if (!saves.some((save) => save?.outcome === "set_aside")) break;
+			to -= 1;
+		}
+		return to;
+	};
+
 	/** A frame's shared files that changed since: offered to go back with it, naming the other frames using each. */
 	const sharedOf = async (root: string, link: ProjectLink, copy: LocalCopy, frame: string, to: number) => {
 		const imports = [...((await deps.importsOf(root, frame)) ?? [])].sort();
@@ -153,7 +170,11 @@ export function teamRestoreRoutes(deps: {
 					restore,
 					wanted.map(({ path, hash }) => ({ path, bytes: hash === null ? undefined : bytes.get(hash) })),
 				);
-				const first = Math.min(...answers.applied.map(({ version }) => version));
+				const applied = answers.applied.map(({ path }) => path).sort();
+				const first =
+					applied.length === 0
+						? 0
+						: await before(found.link, Math.min(...answers.applied.map(({ version }) => version)), applied);
 				return c.json({
 					id: restore.id,
 					applied: answers.applied.map(({ path }) => path),
@@ -165,8 +186,8 @@ export function teamRestoreRoutes(deps: {
 							: {
 									kind: ask.kind,
 									target: ask.target,
-									to: first - 1,
-									paths: answers.applied.map(({ path }) => path).sort(),
+									to: first,
+									paths: applied,
 								},
 				});
 			} catch (error) {
@@ -180,6 +201,9 @@ const isPaths = (value: unknown): value is string[] =>
 	Array.isArray(value) && value.every((path) => typeof path === "string");
 
 /** What the canvas asked to put back; undefined when it asked for nothing a restore can be. */
+/** The most paths an undo's version is checked for a set-aside save on, and the most versions it steps over. */
+const UNDO_CHECKS = 20;
+
 export function readAsk(value: unknown): RestoreAsk | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { kind, target, to, also, paths, frames } = value as Record<string, unknown>;

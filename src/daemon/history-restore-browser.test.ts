@@ -66,7 +66,14 @@ async function teamCanvas() {
 	await until(() => text("frames/menu/frame.tsx").includes("Ben's menu"), 15_000);
 	await until(() => text("shared/ui/order-button.tsx").includes("ben"), 15_000);
 	now = NINE + 70 * MINUTE;
-	return { url: daemon.url, cloud, root, text, later: (minutes: number) => (now = NINE + minutes * MINUTE) };
+	return {
+		url: daemon.url,
+		cloud,
+		root,
+		text,
+		bens,
+		later: (minutes: number) => (now = NINE + minutes * MINUTE),
+	};
 }
 
 async function projectHistory(url: string) {
@@ -207,4 +214,33 @@ it("brings back a frame a version deleted, as it stood just before", { timeout: 
 	await until(() => cloud.file("checkout", "frames/menu/frame.tsx") === using("Ben's menu"), 15_000);
 	// nothing else went back
 	expect(readFileSync(join(root, "design/frames/cart/frame.tsx"), "utf8")).toBe(using("Ben's cart"));
+});
+
+it("puts back a version's set-aside save from under its bar", { timeout: 180_000 }, async () => {
+	const { url, cloud, text, bens, later } = await teamCanvas();
+	// Ben saves menu again, built on Ana's first version: Ben's own newer save stands, and this one is set aside
+	later(90);
+	const first = cloud.history("checkout").find((row) => row.path === "frames/menu/frame.tsx")?.version ?? null;
+	await bens.save("frames/menu/frame.tsx", using("Ben's other menu"), first);
+	await until(() => cloud.history("checkout").some((row) => row.outcome === "set_aside"), 15_000);
+	expect(text("frames/menu/frame.tsx")).toBe(using("Ben's menu"));
+	const { page, rows } = await projectHistory(url);
+	await expect.poll(() => rows.count(), { timeout: 15_000 }).toBe(3);
+	expect(await rows.nth(0).locator("[data-history-chip]").allTextContents()).toEqual(["1 set aside"]);
+	await rows.nth(0).locator("button").first().click();
+	const aside = page.locator('[data-version-set-aside-save="frames/menu/frame.tsx"]');
+	await expect
+		.poll(() => aside.textContent(), { timeout: 15_000 })
+		.toMatch(/^ben's save arrived first, so ben's save to frame\.tsx was set aside\./u);
+	await aside.getByRole("button", { name: "Put back" }).click();
+	const question = page.getByRole("dialog");
+	expect(await question.locator("h2").textContent()).toBe("Put back ben's save to frame.tsx?");
+	await question.getByRole("button", { name: "Put back" }).click();
+	await until(() => text("frames/menu/frame.tsx") === using("Ben's other menu"), 15_000);
+	await until(() => cloud.file("checkout", "frames/menu/frame.tsx") === using("Ben's other menu"), 15_000);
+	await expect
+		.poll(() => page.locator("[data-restored]").textContent(), { timeout: 10_000 })
+		.toMatch(/^Restored frame\.tsx to /u);
+	await page.locator("[data-restored]").getByRole("button", { name: "Undo" }).click();
+	await until(() => text("frames/menu/frame.tsx") === using("Ben's menu"), 15_000);
 });

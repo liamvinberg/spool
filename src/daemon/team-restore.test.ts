@@ -256,8 +256,12 @@ describe("restoring from the team history", { timeout: 60_000 }, () => {
 		back();
 		await everywhere([ben.root], team, { "frames/cart/frame.tsx": "ana's\n" });
 		const aside = cloud.history("checkout").find((row) => row.outcome === "set_aside");
-		await restore(ben.daemon, { kind: "file", target: "frames/cart/frame.tsx", to: aside?.version });
+		const done = await restore(ben.daemon, { kind: "file", target: "frames/cart/frame.tsx", to: aside?.version });
 		await everywhere([ana.root, ben.root], team, { "frames/cart/frame.tsx": "ben's\n" });
+		// its undo puts back what stood over the set-aside save, not the set-aside save again
+		expect(done.body.undo?.to).toBe((aside?.version ?? 0) - 1);
+		expect((await restore(ben.daemon, done.body.undo ?? {})).body.applied).toEqual(["frames/cart/frame.tsx"]);
+		await everywhere([ana.root, ben.root], team, { "frames/cart/frame.tsx": "ana's\n" });
 	});
 
 	it("sets a restore's save aside when a teammate's save lands first, like any collision", async () => {
