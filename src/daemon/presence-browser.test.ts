@@ -281,11 +281,15 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	};
 	await zoom(1200);
 	await expect.poll(() => pill.getAttribute("data-presence-dot")).toBe("");
-	await page.waitForTimeout(800);
+	// the shrink is a transition, slower on a busy machine: measured once it has landed
+	await expect
+		.poll(async () => {
+			const dot = await box(page, '[data-presence-pill="ben"]');
+			return Math.max(Math.abs(dot.width - 10), Math.abs(dot.height - 10));
+		})
+		.toBeLessThan(0.5);
 	const benDot = await box(page, '[data-presence-pill="ben"]');
 	const cleoDot = await box(page, '[data-presence-pill="cleo"]');
-	expect(benDot.width).toBeCloseTo(10, 0);
-	expect(benDot.height).toBeCloseTo(10, 0);
 	expect(cleoDot.x + cleoDot.width).toBeGreaterThan(benDot.x);
 	expect(cleoDot.x).toBeLessThan(benDot.x);
 	await zoom(-1200);
