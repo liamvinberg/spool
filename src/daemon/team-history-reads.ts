@@ -59,7 +59,7 @@ export function teamHistoryReads(deps: { spoolDir: string; request: () => CloudR
 	/** What a path held at exactly `to` when that version is a save to it, set aside or not: a set-aside put back. */
 	const savedAt = async (link: ProjectLink, path: string, to: number) => {
 		const query = new URLSearchParams({ path, before: String(to + 1), limit: "1" });
-		const page: { saves: { version: number; hash: string | null }[] } = await json(
+		const page: { saves: { version: number; hash: string | null; outcome?: "applied" | "set_aside" }[] } = await json(
 			await history(link, "/saves", query),
 		);
 		const [save] = page.saves;
