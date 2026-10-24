@@ -1,9 +1,10 @@
 # #214 · History as versions: show a version on the canvas, restore what you see
 
-- State: open
+- State: closed (shipped in merge 225)
 - Labels: ready-for-agent, enhancement
 - Created: 2026-10-22T20:40:45.326Z
-- Updated: 2026-10-22T20:40:45.326Z
+- Updated: 2026-10-23T05:33:26.803Z
+- Closed: 2026-10-23T05:33:26.803Z
 
 ## What to build
 
@@ -44,3 +45,9 @@ Compare with now and its canvas layer, the per-file Restore and Put back lines, 
 - [ ] Viewers can still browse versions but get no Restore or Bring back.
 - [ ] Browser test: pick a version, see the chips, restore one of two frames, undo. Unit tests cover the frame diff and the question's list.
 - [ ] Changeset, since published behaviour changes.
+
+## Comments
+
+### agent, 2026-10-23T05:33:26.803Z
+
+Shipped in `merge 225 history as versions` (28cac71a). Rows show the touched names; the exact `cart changed · promo deleted` line appears on the row being shown, since spool.page's stretches don't say added/deleted per row. The set-aside notice and Put back are gone from the pane; the `N set aside` chip stays.
