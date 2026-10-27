@@ -337,6 +337,7 @@ describe("a new team's setup list", () => {
 		const pay = step(host, "pay");
 		expect(said(pay)).toMatch(/^Pay for Tidemark/u);
 		expect(said(pay)).toContain("This account has had its trial, so Tidemark starts paid.");
+		expect(said(pay)).not.toContain("held");
 		// the payment choice starts on the cycle the landing showed
 		expect(pay.querySelector<HTMLInputElement>('input[type="radio"][value="monthly"]')?.checked).toBe(true);
 		tickBusiness(pay);
@@ -352,6 +353,26 @@ describe("a new team's setup list", () => {
 		fake.set({ setup: steps({ pay: { paid: true }, invited: "skipped" }) });
 		await back();
 		expect(said(step(host, "mac"))).toContain("Sign in there as ada@tidemark.app and spool carries on with step 5.");
+	});
+
+	it("says until when the team is held for its first payment, once spool.page says", async () => {
+		const zone = process.env.TZ;
+		process.env.TZ = "UTC";
+		onTestFinished(() => {
+			if (zone === undefined) delete process.env.TZ;
+			else process.env.TZ = zone;
+		});
+		const fake = fakeTeamsSource({
+			teams: [team()],
+			setup: steps({ pay: { paid: false } }),
+			people: PEOPLE,
+			billing: { ...LAPSED, deletesAt: Date.UTC(2026, 9, 24, 12, 32) / 1000 },
+		});
+		const { host } = mount(fake);
+		await settle();
+		expect(said(step(host, "pay"))).toContain(
+			"This account has had its trial, so Tidemark starts paid. It’s held for you until 12:32. Unpaid by then, it’s removed and its name is free again.",
+		);
 	});
 
 	it("lists this Mac's own projects in the app, each moving in through Move to the team", async () => {

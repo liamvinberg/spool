@@ -298,6 +298,15 @@ it("says a lapsed team's trial has ended, or that it has gone local once it had 
 		"Tidemark has gone local. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.",
 	);
 	button(local.host, "Continue to payment");
+
+	// spool.page says when its cloud copy goes, six months after the lapse
+	const deleting = settings(
+		fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: { ...lapsed, deletesAt: at(2027, 4, 27) } }),
+	);
+	await settle();
+	expect(deleting.host.querySelector(".pj-team-billing p")?.textContent).toBe(
+		"Tidemark’s trial has ended. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer. Unpaid, its cloud copy is deleted on April 27.",
+	);
 });
 
 it("says a free team is free and never asks Stripe for anything", async () => {
@@ -318,6 +327,21 @@ it("asks a team that never had time to pay for itself", async () => {
 	expect(host.textContent).not.toContain("On trial");
 	expect(rows(host)).toHaveLength(4);
 	button(host, "Continue to payment");
+});
+
+it("tells the admin of a team started with the trial used until when it's held for them to pay, in their own time", async () => {
+	const zone = process.env.TZ;
+	process.env.TZ = "Europe/Stockholm";
+	onTestFinished(() => {
+		if (zone === undefined) delete process.env.TZ;
+		else process.env.TZ = zone;
+	});
+	const held: BillingSummary = { ...NONE, state: "lapsed", deletesAt: Date.UTC(2026, 9, 24, 12, 32) / 1000 };
+	const { host } = settings(fakeTeamsSource({ teams: [team()], people: PEOPLE, billing: held }));
+	await settle();
+	expect(host.querySelector(".pj-team-billing p")?.textContent).toBe(
+		"Pay for Tidemark. It’s held for you until 14:32. Unpaid by then, it’s removed and its name is free again.",
+	);
 });
 
 it("says what spool.page refused when Checkout can't start", async () => {

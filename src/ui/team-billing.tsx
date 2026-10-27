@@ -106,8 +106,10 @@ export const BILLING_STATES: Record<
 		paid: false,
 		choice: true,
 		line: (team, summary) => {
-			if (!summary.hadTime) return `Pay for ${team.name}`;
-			return `${summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.`;
+			const held = heldSays(summary);
+			if (!summary.hadTime) return held === null ? `Pay for ${team.name}` : `Pay for ${team.name}. ${held}`;
+			const deleted = summary.deletesAt ? ` Unpaid, its cloud copy is deleted on ${day(summary.deletesAt)}.` : "";
+			return `${summary.paidBefore === true ? `${team.name} has gone local` : `${team.name}’s trial has ended`}. Choose who stays an editor and pay to keep syncing. Anyone left out becomes a viewer.${deleted}`;
 		},
 	},
 };
@@ -403,6 +405,20 @@ export function money(cents: number): string {
 
 function per(cents: number, cycle: BillingCycle): string {
 	return `${money(cents)} ${cycle === "monthly" ? "a month" : "a year"}`;
+}
+
+/**
+ * Until when a team started with the trial used waits for its first payment, said to its admin; null for any other
+ * team, or a spool.page that doesn't say.
+ */
+export function heldSays(summary: BillingSummary): string | null {
+	if (summary.state !== "lapsed" || summary.hadTime || !summary.deletesAt) return null;
+	return `It’s held for you until ${clock(summary.deletesAt)}. Unpaid by then, it’s removed and its name is free again.`;
+}
+
+/** "14:32", in the reader's own time zone. */
+function clock(seconds: number): string {
+	return new Date(seconds * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
 /** "October 25", or "October 25, 2027" with its year: US style in UTC, as spool.page's emails write dates. */
