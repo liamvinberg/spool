@@ -16,6 +16,8 @@ const ADA: CloudAccount = {
 function harness() {
 	let signedIn: CloudAccount | null = null;
 	let finish: ((account: CloudAccount) => void) | undefined;
+	let fail: ((error: Error) => void) | undefined;
+	const logged: string[] = [];
 	const opened: string[] = [];
 	const services: CloudAccountServices = {
 		origin: () => "https://cloud.test",
@@ -31,6 +33,7 @@ function harness() {
 					signedIn = account;
 					resolve(account);
 				};
+				fail = reject;
 			}),
 		logout: vi.fn(async () => {
 			signedIn = null;
@@ -43,6 +46,7 @@ function harness() {
 		controlHost: "localhost",
 		controlToken: "control-secret",
 		cloudAccountServices: services,
+		cloudAccountLog: (line) => logged.push(line),
 	});
 	onTestFinished(() => daemon.close());
 	const control = { "x-spool-control": "control-secret", origin: "http://localhost" };
@@ -58,6 +62,8 @@ function harness() {
 		services,
 		opened,
 		finish: (account: CloudAccount) => finish?.(account),
+		fail: (error: Error) => fail?.(error),
+		logged,
 		/** `spool login` or `spool logout` in a terminal: the Keychain changes without the daemon. */
 		elsewhere: (account: CloudAccount | null) => {
 			signedIn = account;
@@ -93,6 +99,29 @@ it("cancels a sign-in that is waiting on the browser", async () => {
 	expect((await api("/cancel", "POST")).status).toBe(204);
 	await vi.waitFor(async () => expect((await api("")).body).toEqual({ state: "signed-out" }));
 	expect(await api("/reopen", "POST")).toEqual({ status: 200, body: { reopened: false } });
+});
+
+it("says why a sign-in did not finish, logs what failed under it, and forgets it on the next try", async () => {
+	const { api, fail, logged } = harness();
+	await api("/sign-in", "POST");
+	fail(
+		new SpoolError("spool.page could not be reached; sign-in was not stored", {
+			cause: Object.assign(new Error("connect timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" }),
+		}),
+	);
+	await vi.waitFor(async () =>
+		expect((await api("")).body).toEqual({
+			state: "signed-out",
+			failed: "spool.page could not be reached; sign-in was not stored",
+		}),
+	);
+	expect(logged).toEqual([
+		"sign-in did not finish: spool.page could not be reached; sign-in was not stored: connect timeout (UND_ERR_CONNECT_TIMEOUT)",
+	]);
+	expect(await api("/sign-in", "POST")).toEqual({ status: 202, body: { state: "signing-in" } });
+	expect((await api("/cancel", "POST")).status).toBe(204);
+	await vi.waitFor(async () => expect((await api("")).body).toEqual({ state: "signed-out" }));
+	expect(logged).toHaveLength(1);
 });
 
 it("reads the account again when the CLI says it changed, and tells every page", async () => {
