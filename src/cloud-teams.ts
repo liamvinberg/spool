@@ -53,6 +53,12 @@ export interface BillingSummary {
 	cancelAt: number | null;
 	failingSince: number | null;
 	lapsesAt: number | null;
+	/**
+	 * When a lapsed team goes for good if nobody pays: a team started with the trial used is held an hour for its first
+	 * payment and removed then, and any other has its cloud copy deleted six months after it lapsed. Null unless
+	 * lapsed; absent from a spool.page before held teams.
+	 */
+	deletesAt?: number | null;
 }
 
 /**

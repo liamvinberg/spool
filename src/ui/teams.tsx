@@ -1080,7 +1080,7 @@ export function DeletedTeamPage({ team, onExport }: { team: DeletedTeam; onExpor
 /** What the new team begins as, said before it is made: the account's one trial, free, or paid for from the start. */
 const NEW_TEAM_STARTS: Record<NewTeamStart, string> = {
 	trial: "It starts your 14-day free trial. No card needed.",
-	paid: "You’ve used your free trial, so this team is paid for from the start. You pay first, then invite people.",
+	paid: "You’ve used your free trial, so this team is paid for from the start. You pay first, then invite people. It’s held for an hour while you pay.",
 	free: "Teams you start are free.",
 };
 

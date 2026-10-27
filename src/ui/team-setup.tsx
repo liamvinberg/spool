@@ -9,7 +9,7 @@ import { Button } from "./primitives/actions";
 import { TextAction, Toast } from "./primitives/feedback";
 import { TextField } from "./primitives/inputs";
 import { Segment, SegmentedControl } from "./primitives/selection";
-import { PayChoice, useBilling } from "./team-billing";
+import { heldSays, PayChoice, useBilling } from "./team-billing";
 import { peopleSays, seatCost, TeamsSourceContext, teamSays } from "./teams";
 
 /**
@@ -213,7 +213,10 @@ function PayStep({ team, host }: { team: CloudTeam; host: SetupHost }) {
 	const { summary, people, notice, pay } = useBilling(team, host.onOpen);
 	return (
 		<div className="flex flex-col gap-[16px]">
-			<p className="text-secondary type-control">This account has had its trial, so {team.name} starts paid.</p>
+			<p className="text-secondary type-control">
+				This account has had its trial, so {team.name} starts paid.
+				{summary && heldSays(summary) && ` ${heldSays(summary)}`}
+			</p>
 			{notice && (
 				<p role="status" className="type-control">
 					{notice}
