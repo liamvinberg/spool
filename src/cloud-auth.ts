@@ -357,8 +357,8 @@ export async function login(spoolDir: string, options: AuthOptions = {}): Promis
 			body: JSON.stringify({ code, verifier, returnUrl: callback }),
 			signal: AbortSignal.timeout(60_000),
 		});
-	} catch {
-		throw new SpoolError("spool.page could not be reached; sign-in was not stored");
+	} catch (cause) {
+		throw new SpoolError("spool.page could not be reached; sign-in was not stored", { cause });
 	}
 	const body = await responseJson(response);
 	if (!response.ok || typeof body.token !== "string")
