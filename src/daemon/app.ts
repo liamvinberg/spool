@@ -200,6 +200,8 @@ export interface DaemonOptions {
 	onMachineStateWatchError?: (error: Error) => void;
 	/** Controlled Cloud boundary for the account at the foot of Home. */
 	cloudAccountServices?: CloudAccountServices;
+	/** Where a sign-in that did not finish is logged: daemon.log by default. */
+	cloudAccountLog?: (line: string) => void;
 	/** The daemon's one boundary to spool.page, for teams, sync, covers and shares: a test's fake, or the Mac's own. */
 	cloud?: DaemonCloud;
 	/** Where what team sync says about a project goes, besides its open canvases: the log, unless a test listens. */
@@ -312,6 +314,7 @@ export function createDaemonApp({
 	onHistoryNotice,
 	home,
 	cloudAccountServices,
+	cloudAccountLog = (line) => console.error(`spool: ${line}`),
 	cloud,
 	teamNotice = (message) => console.error(`spool: ${message}`),
 	goneLocalAskMs,
@@ -562,6 +565,7 @@ export function createDaemonApp({
 	const cloudAccount = createCloudAccount({
 		spoolDir,
 		...(cloudAccountServices === undefined ? {} : { services: cloudAccountServices }),
+		log: cloudAccountLog,
 		onChange: () => {
 			emitAppEvent({ kind: "account" });
 			movedAwayFrom.account();

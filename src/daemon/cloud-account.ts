@@ -3,7 +3,8 @@ import { account, type CloudAccount, CloudSignedOut, cloudOrigin, login, logout 
 
 /** What the foot of Home's sidebar shows. */
 export type CloudAccountState =
-	| { state: "signed-out" }
+	/** `failed` says why the last sign-in from this app did not finish, until the next one starts. */
+	| { state: "signed-out"; failed?: string | undefined }
 	| { state: "signing-in" }
 	| {
 			state: "signed-in";
@@ -35,11 +36,14 @@ export function createCloudAccount(options: {
 	services?: CloudAccountServices;
 	onChange: () => void;
 	now?: () => number;
+	/** A line for daemon.log: a packaged app has no console, and a failed sign-in is otherwise silent. */
+	log?: (line: string) => void;
 }) {
 	const services = options.services ?? defaultServices();
 	const now = options.now ?? Date.now;
 	let pending: { cancel: AbortController; url: string | null } | null = null;
 	let known: { account: CloudAccount; at: number } | null = null;
+	let failed: string | null = null;
 
 	const signedIn = (current: CloudAccount): CloudAccountState => ({
 		state: "signed-in",
@@ -56,7 +60,8 @@ export function createCloudAccount(options: {
 			return signedIn(known.account);
 		} catch (error) {
 			known = null;
-			return error instanceof CloudSignedOut ? { state: "signed-out" } : { state: "unreachable" };
+			if (!(error instanceof CloudSignedOut)) return { state: "unreachable" };
+			return failed === null ? { state: "signed-out" } : { state: "signed-out", failed };
 		}
 	}
 
@@ -64,6 +69,7 @@ export function createCloudAccount(options: {
 		if (pending) return;
 		const attempt = { cancel: new AbortController(), url: null as string | null };
 		pending = attempt;
+		failed = null;
 		void services
 			.login(options.spoolDir, {
 				signal: attempt.cancel.signal,
@@ -76,7 +82,11 @@ export function createCloudAccount(options: {
 				(current) => {
 					known = { account: current, at: now() };
 				},
-				() => {},
+				(error: unknown) => {
+					if (attempt.cancel.signal.aborted) return;
+					failed = error instanceof Error ? error.message : String(error);
+					options.log?.(`sign-in did not finish: ${causes(error)}`);
+				},
 			)
 			.finally(() => {
 				if (pending === attempt) pending = null;
@@ -100,11 +110,13 @@ export function createCloudAccount(options: {
 		/** `spool login` or `spool logout` changed the account outside this daemon: read it again. */
 		changed(): void {
 			known = null;
+			failed = null;
 			options.onChange();
 		},
 		async signOut(): Promise<void> {
 			pending?.cancel.abort();
 			known = null;
+			failed = null;
 			try {
 				await services.logout(options.spoolDir);
 			} finally {
@@ -112,6 +124,18 @@ export function createCloudAccount(options: {
 			}
 		},
 	};
+}
+
+/** An error and the causes under it, so the log names what actually failed (a refused certificate, a timeout). */
+function causes(error: unknown): string {
+	const parts: string[] = [];
+	for (let at: unknown = error; at !== undefined && parts.length < 4; at = at instanceof Error ? at.cause : undefined)
+		parts.push(
+			at instanceof Error
+				? `${at.message}${"code" in at && typeof at.code === "string" ? ` (${at.code})` : ""}`
+				: String(at),
+		);
+	return parts.join(": ");
 }
 
 function defaultServices(): CloudAccountServices {

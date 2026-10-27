@@ -32,7 +32,13 @@ export function AccountFoot({
 	if (account.state === "signed-out")
 		return (
 			<div className="pj-account flex flex-col gap-[10px] [@media(max-width:720px)]:hidden">
-				<p className="pl-[2px] text-secondary type-label">Sign in to share links and join a team.</p>
+				{account.failed === undefined ? (
+					<p className="pl-[2px] text-secondary type-label">Sign in to share links and join a team.</p>
+				) : (
+					<p role="alert" className="pl-[2px] text-danger-strong type-label">
+						Sign-in didn’t finish: {account.failed}
+					</p>
+				)}
 				<Button className="w-full justify-start" onClick={onSignIn}>
 					Sign in
 				</Button>

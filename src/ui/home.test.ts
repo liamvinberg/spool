@@ -328,6 +328,16 @@ describe("the account at the foot of Home's sidebar", () => {
 		expect(calls.onSignIn).toHaveBeenCalledOnce();
 	});
 
+	it("says why the last sign-in did not finish, and offers Sign in again", () => {
+		const { host, calls } = foot({ state: "signed-out", failed: "spool.page could not be reached" });
+		expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+			"Sign-in didn’t finish: spool.page could not be reached",
+		);
+		expect(host.textContent).not.toContain("Sign in to share links");
+		act(() => button(host, "Sign in").click());
+		expect(calls.onSignIn).toHaveBeenCalledOnce();
+	});
+
 	it("waits for the browser, and opens it again or cancels", () => {
 		const { host, calls } = foot({ state: "signing-in" });
 		expect(host.textContent).toContain("Finish in your browser");
