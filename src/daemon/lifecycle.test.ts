@@ -265,21 +265,18 @@ describe("serveDaemon", () => {
 		expect(statSync(join(spoolDir, "daemon.json")).mode & 0o777).toBe(0o600);
 	});
 
-	it.each(["localhost", "::1"])(
-		"serves both virtual hosts through the supported bind %s",
-		async (host) => {
-			const daemon = await serveDaemon({
-				spoolDir: makeSpoolDir(),
-				version: "0.0.0-test",
-				host,
-				port: 0,
-			});
-			onTestFinished(() => daemon.close());
+	it.each(["localhost", "::1"])("serves both virtual hosts through the supported bind %s", async (host) => {
+		const daemon = await serveDaemon({
+			spoolDir: makeSpoolDir(),
+			version: "0.0.0-test",
+			host,
+			port: 0,
+		});
+		onTestFinished(() => daemon.close());
 
-			expect((await fetch(`${daemon.url}/api/health`)).status).toBe(200);
-			expect((await fetch(`${renderOrigin(daemon.url)}/vendor/spool.js`)).status).toBe(200);
-		},
-	);
+		expect((await fetch(`${daemon.url}/api/health`)).status).toBe(200);
+		expect((await fetch(`${renderOrigin(daemon.url)}/vendor/spool.js`)).status).toBe(200);
+	});
 
 	it("clears its state on close", async () => {
 		const spoolDir = makeSpoolDir();
