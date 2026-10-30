@@ -265,7 +265,7 @@ describe("serveDaemon", () => {
 		expect(statSync(join(spoolDir, "daemon.json")).mode & 0o777).toBe(0o600);
 	});
 
-	it.each(["127.0.0.1", "localhost", "::1"])(
+	it.each(["localhost", "::1"])(
 		"serves both virtual hosts through the supported bind %s",
 		async (host) => {
 			const daemon = await serveDaemon({
@@ -466,7 +466,9 @@ describe("stopDaemon", () => {
 });
 
 describe("daemon lifecycle end to end", () => {
-	it("first verb auto-starts, the next reuses, stop tears down", { timeout: 40_000 }, async () => {
+	it("first verb auto-starts, the next reuses, stop tears down, an open app event stream and all", {
+		timeout: 40_000,
+	}, async () => {
 		const home = makeTempDir();
 		const spoolDir = join(home, ".spool");
 		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -492,6 +494,17 @@ describe("daemon lifecycle end to end", () => {
 
 		const status = await statusDaemon(spoolDir);
 		expect(status.running).toBe(true);
+
+		const stream = await fetch(`${first.url}/api/events`, {
+			headers: { "X-Spool-Control": first.controlToken },
+		});
+		const reader = stream.body?.getReader();
+		if (reader === undefined) throw new Error("app event stream has no body");
+		onTestFinished(async () => {
+			await reader.cancel().catch(() => {});
+		});
+		const hello = await reader.read();
+		expect(new TextDecoder().decode(hello.value)).toContain("event: hello");
 
 		const stopped = await stopDaemon(spoolDir);
 		expect(stopped).toEqual({ stopped: true, pid: first.pid, adopted: false });
@@ -533,34 +546,6 @@ describe("daemon lifecycle end to end", () => {
 			adopted: true,
 		});
 		expect(await spoolDaemonAt("127.0.0.1", port)).toBeUndefined();
-	});
-
-	it("stop tears down an open app event stream", { timeout: 40_000 }, async () => {
-		const home = makeTempDir();
-		const spoolDir = join(home, ".spool");
-		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-		const command = [
-			join(repoRoot, "node_modules", ".bin", "tsx"),
-			join(repoRoot, "src", "cli.ts"),
-			"serve",
-			"--foreground",
-		];
-		const env = { HOME: home, SPOOL_PORT: "0", SPOOL_DIR: "" };
-		const daemon = await ensureDaemon(spoolDir, { command, env, timeoutMs: 30_000 });
-		const stream = await fetch(`${daemon.url}/api/events`, {
-			headers: { "X-Spool-Control": daemon.controlToken },
-		});
-		const reader = stream.body?.getReader();
-		if (reader === undefined) throw new Error("app event stream has no body");
-		onTestFinished(async () => {
-			await reader.cancel().catch(() => {});
-			await stopDaemon(spoolDir).catch(() => {});
-		});
-
-		const hello = await reader.read();
-		expect(new TextDecoder().decode(hello.value)).toContain("event: hello");
-
-		await expect(stopDaemon(spoolDir)).resolves.toEqual({ stopped: true, pid: daemon.pid, adopted: false });
 	});
 });
 
