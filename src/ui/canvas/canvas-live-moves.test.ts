@@ -37,6 +37,8 @@ async function openCanvas(
 	world: { frames: Array<Record<string, unknown>>; edges: unknown[]; pages: string[] } = { frames, edges, pages: [] },
 	start: { x: number; y: number; k: number } = START,
 ): Promise<{ host: HTMLElement; canvas: HTMLElement }> {
+	// the overview's hold and the canvas's rests are timers: walked, not waited out
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
@@ -81,6 +83,7 @@ async function openCanvas(
 		host.remove();
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
+		vi.useRealTimers();
 	});
 	await act(async () => root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} })));
 	await until(() => cameraTransform(host) === `translate(${start.x}px, ${start.y}px) scale(${start.k})`);
@@ -728,13 +731,13 @@ async function until(done: () => boolean, ms = 2000): Promise<void> {
 	const deadline = Date.now() + ms;
 	while (Date.now() < deadline) {
 		if (done()) return;
-		await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+		await act(() => vi.advanceTimersByTimeAsync(10));
 	}
 	throw new Error("canvas did not settle");
 }
 
 function wait(ms: number): Promise<void> {
-	return act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	return act(() => vi.advanceTimersByTimeAsync(ms));
 }
 
 function cameraTransform(host: HTMLElement): string {
