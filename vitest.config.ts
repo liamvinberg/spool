@@ -67,6 +67,16 @@ function testWorkers(): number {
 	return Math.min(MAX_WORKERS, Math.max(MIN_WORKERS, Math.floor(free / CORES_PER_WORKER)));
 }
 
+/**
+ * Node 25 turned its own Web Storage on by default, and its `localStorage`
+ * global, empty without `--localstorage-file`, hides happy-dom's from every
+ * suite that stores something. Every Node from 22 knows the flag, and on one
+ * where Web Storage is already off it changes nothing.
+ */
+const workerArgs = process.allowedNodeEnvironmentFlags.has("--experimental-webstorage")
+	? ["--no-experimental-webstorage"]
+	: [];
+
 export default defineConfig({
 	resolve: {
 		alias: pins,
@@ -81,6 +91,7 @@ export default defineConfig({
 		// The checked-out revision owns this selection, including release recovery.
 		...(process.env.SPOOL_TEST_DARWIN === "1" ? { testNamePattern: "macOS only" } : {}),
 		maxWorkers: testWorkers(),
+		execArgv: workerArgs,
 		// A hang guard, not a measure: no case is judged by its timeout, and the 5 s
 		// default reads a shared, loaded machine as a failure (a TypeScript check or
 		// a website build is a second or two alone, five on a busy devobee). A case
