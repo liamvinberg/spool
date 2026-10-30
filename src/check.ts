@@ -3,7 +3,9 @@ import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ParserPlugin, parse } from "@babel/parser";
-import { API, type Diagnostic, type Program } from "typescript/unstable/async";
+import { API, type Diagnostic, type Program, type Snapshot } from "typescript/unstable/async";
+import type { FileSystem } from "typescript/unstable/fs";
+import type { UpdateSnapshotParams } from "typescript/unstable/proto";
 import { CheckerAliasAllocator } from "./check-alias";
 import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage, checkSourceLimits } from "./check-budget";
 import { BoundedFileTooLargeError, readBoundedRegularFile, UnsafeFileReadError } from "./check-file";
@@ -468,122 +470,193 @@ async function typecheckClosure(
 		files: [...rootFiles],
 	});
 	const diagnosticSources = new Map([...closure, ...virtualFiles, [configFile, config]]);
-	const api = new API({
-		cwd: designDir,
-		fs: {
-			readFile(file) {
-				if (file === configFile) return config;
-				if (isDesignPackagePath(designDir, file)) return null;
-				const virtual = virtualFiles.get(file);
-				if (virtual !== undefined) return virtual;
-				const permitted = permittedFile(designDir, file, trusted);
-				if (permitted !== undefined) {
-					if (isWithin(designDir, permitted) && !closure.has(permitted)) return null;
-					const indexed = rewrittenSources.get(permitted) ?? closure.get(permitted);
-					if (indexed !== undefined) return indexed;
-					return readFileSync(permitted, "utf8");
-				}
-				return isTrusted(file, trusted) ? undefined : null;
-			},
-			fileExists(file) {
-				if (file === configFile) return true;
-				if (isDesignPackagePath(designDir, file)) return false;
-				if (virtualFiles.has(file)) return true;
-				const permitted = permittedFile(designDir, file, trusted);
-				if (permitted !== undefined) {
-					return isWithin(designDir, permitted) ? closure.has(permitted) : fileExists(permitted);
-				}
-				return isTrusted(file, trusted) ? undefined : false;
-			},
-			directoryExists(directory) {
-				if (
-					isAncestor(directory, configFile) ||
-					[...virtualFiles.keys()].some((file) => isAncestor(directory, file))
-				)
-					return true;
-				if (isDesignPackagePath(designDir, directory)) return false;
-				if (isWithin(designDir, directory)) {
-					const canonical = resolveDesignPath(designDir, directory, designPath(designDir, directory));
-					return !isDesignPackagePath(designDir, canonical) && directoryExistsOnDisk(canonical);
-				}
-				if (isAncestor(directory, designDir)) return directoryExistsOnDisk(directory);
-				if (isTrusted(directory, trusted)) return undefined;
-				return trusted.some((root) => isAncestor(directory, root)) ? directoryExistsOnDisk(directory) : false;
-			},
-			realpath(path) {
-				if (path === configFile || virtualFiles.has(path)) return path;
-				if (isDesignPackagePath(designDir, path)) return resolve(path);
-				if (isWithin(designDir, path)) {
-					const canonical = resolveDesignPath(designDir, path, designPath(designDir, path));
-					return isDesignPackagePath(designDir, canonical) ? resolve(path) : canonical;
-				}
-				return isTrusted(path, trusted) || isAncestor(path, designDir) ? undefined : resolve(path);
-			},
+	const fs: FileSystem = {
+		readFile(file) {
+			if (file === configFile) return config;
+			if (isDesignPackagePath(designDir, file)) return null;
+			const virtual = virtualFiles.get(file);
+			if (virtual !== undefined) return virtual;
+			const permitted = permittedFile(designDir, file, trusted);
+			if (permitted !== undefined) {
+				if (isWithin(designDir, permitted) && !closure.has(permitted)) return null;
+				const indexed = rewrittenSources.get(permitted) ?? closure.get(permitted);
+				if (indexed !== undefined) return indexed;
+				return readFileSync(permitted, "utf8");
+			}
+			return isTrusted(file, trusted) ? undefined : null;
 		},
-	});
-	try {
-		const snapshot = await api.updateSnapshot({ openProjects: [configFile] });
-		try {
-			const project = snapshot.getProject(configFile);
-			if (project === undefined) return dedupe(boundaries);
-			const diagnostics: CheckDiagnostic[] = [];
-			for (const diagnostic of [
-				...(await project.program.getConfigFileParsingDiagnostics()),
-				...(await project.program.getProgramDiagnostics()),
-			]) {
-				diagnostics.push(
-					formatDiagnostic(
-						designDir,
-						diagnostic,
-						diagnosticSources,
-						trusted,
-						sourceBudget,
-						inspections,
-						localModuleResolutions,
-						localJsxResolutions,
-						configFile,
-					),
-				);
+		fileExists(file) {
+			if (file === configFile) return true;
+			if (isDesignPackagePath(designDir, file)) return false;
+			if (virtualFiles.has(file)) return true;
+			const permitted = permittedFile(designDir, file, trusted);
+			if (permitted !== undefined) {
+				return isWithin(designDir, permitted) ? closure.has(permitted) : fileExists(permitted);
 			}
-			for (const diagnostic of await designFileDiagnostics(project.program, designDir)) {
-				if (
-					isBoundaryDependencyDiagnostic(designDir, diagnostic, boundaryDependencies.moduleUses) ||
-					isTrackedModuleDiagnostic(
-						designDir,
-						diagnostic,
-						authoredModules.permissiveUses,
-						authoredModules.rejectedUses,
-					) ||
-					isNeutralizedAmbientDiagnostic(designDir, diagnostic, authoredModules.ambientDeclarations) ||
-					isPermissiveExportDiagnostic(designDir, diagnostic, inspections, permissiveStarExports) ||
-					isLocalAssetResolutionDiagnostic(
-						designDir,
-						diagnostic,
-						localAssets.javaScriptUses,
-						localAssets.missingUses,
-					)
-				)
-					continue;
-				if (diagnostic.fileName === undefined || !isWithin(designDir, diagnostic.fileName)) continue;
-				diagnostics.push(
-					formatDiagnostic(
-						designDir,
-						diagnostic,
-						diagnosticSources,
-						trusted,
-						sourceBudget,
-						inspections,
-						localModuleResolutions,
-						localJsxResolutions,
-					),
-				);
+			return isTrusted(file, trusted) ? undefined : false;
+		},
+		directoryExists(directory) {
+			if (isAncestor(directory, configFile) || [...virtualFiles.keys()].some((file) => isAncestor(directory, file)))
+				return true;
+			if (isDesignPackagePath(designDir, directory)) return false;
+			if (isWithin(designDir, directory)) {
+				const canonical = resolveDesignPath(designDir, directory, designPath(designDir, directory));
+				return !isDesignPackagePath(designDir, canonical) && directoryExistsOnDisk(canonical);
 			}
-			return dedupe([...diagnostics, ...boundaries]);
-		} finally {
-			await snapshot.dispose();
+			if (isAncestor(directory, designDir)) return directoryExistsOnDisk(directory);
+			if (isTrusted(directory, trusted)) return undefined;
+			return trusted.some((root) => isAncestor(directory, root)) ? directoryExistsOnDisk(directory) : false;
+		},
+		realpath(path) {
+			if (path === configFile || virtualFiles.has(path)) return path;
+			if (isDesignPackagePath(designDir, path)) return resolve(path);
+			if (isWithin(designDir, path)) {
+				const canonical = resolveDesignPath(designDir, path, designPath(designDir, path));
+				return isDesignPackagePath(designDir, canonical) ? resolve(path) : canonical;
+			}
+			return isTrusted(path, trusted) || isAncestor(path, designDir) ? undefined : resolve(path);
+		},
+	};
+	return withChecker(designDir, configFile, fs, async (snapshot) => {
+		const project = snapshot.getProject(configFile);
+		if (project === undefined) return dedupe(boundaries);
+		const diagnostics: CheckDiagnostic[] = [];
+		for (const diagnostic of [
+			...(await project.program.getConfigFileParsingDiagnostics()),
+			...(await project.program.getProgramDiagnostics()),
+		]) {
+			diagnostics.push(
+				formatDiagnostic(
+					designDir,
+					diagnostic,
+					diagnosticSources,
+					trusted,
+					sourceBudget,
+					inspections,
+					localModuleResolutions,
+					localJsxResolutions,
+					configFile,
+				),
+			);
 		}
+		for (const diagnostic of await designFileDiagnostics(project.program, designDir)) {
+			if (
+				isBoundaryDependencyDiagnostic(designDir, diagnostic, boundaryDependencies.moduleUses) ||
+				isTrackedModuleDiagnostic(
+					designDir,
+					diagnostic,
+					authoredModules.permissiveUses,
+					authoredModules.rejectedUses,
+				) ||
+				isNeutralizedAmbientDiagnostic(designDir, diagnostic, authoredModules.ambientDeclarations) ||
+				isPermissiveExportDiagnostic(designDir, diagnostic, inspections, permissiveStarExports) ||
+				isLocalAssetResolutionDiagnostic(designDir, diagnostic, localAssets.javaScriptUses, localAssets.missingUses)
+			)
+				continue;
+			if (diagnostic.fileName === undefined || !isWithin(designDir, diagnostic.fileName)) continue;
+			diagnostics.push(
+				formatDiagnostic(
+					designDir,
+					diagnostic,
+					diagnosticSources,
+					trusted,
+					sourceBudget,
+					inspections,
+					localModuleResolutions,
+					localJsxResolutions,
+				),
+			);
+		}
+		return dedupe([...diagnostics, ...boundaries]);
+	});
+}
+
+/** The TypeScript process every check shares while {@link shareChecker} holds it open. */
+let sharedChecker: { api: API; fs: FileSystem | undefined; turn: Promise<unknown> } | undefined;
+
+/**
+ * Run later checks in this process on one TypeScript process instead of one
+ * each, until the returned close. Each check takes the process in turn, serves
+ * it its own files, and invalidates every file the last one read, so no check
+ * sees another's sources. Tests share one per file.
+ */
+export function shareChecker(): () => Promise<void> {
+	if (sharedChecker !== undefined) throw new Error("the checker is already shared");
+	const route = <K extends keyof FileSystem>(name: K): NonNullable<FileSystem[K]> =>
+		((file: string) => {
+			const fs = sharedChecker?.fs;
+			if (fs === undefined) throw new Error("the shared checker read a file outside a check");
+			return (fs[name] as (file: string) => unknown)(file);
+		}) as NonNullable<FileSystem[K]>;
+	const checker = {
+		api: new API({
+			cwd: dirname(fileURLToPath(import.meta.url)),
+			fs: {
+				readFile: route("readFile"),
+				fileExists: route("fileExists"),
+				directoryExists: route("directoryExists"),
+				realpath: route("realpath"),
+			},
+		}),
+		fs: undefined,
+		turn: Promise.resolve(),
+	};
+	sharedChecker = checker;
+	return async () => {
+		if (sharedChecker === checker) sharedChecker = undefined;
+		await checker.turn.catch(() => {});
+		await checker.api.close();
+	};
+}
+
+async function withChecker<T>(
+	designDir: string,
+	configFile: string,
+	fs: FileSystem,
+	check: (snapshot: Snapshot) => Promise<T>,
+): Promise<T> {
+	const shared = sharedChecker;
+	if (shared === undefined) {
+		const api = new API({ cwd: designDir, fs });
+		try {
+			return await openAndCheck(api, configFile, {}, check);
+		} finally {
+			await api.close();
+		}
+	}
+	const run = shared.turn
+		.catch(() => {})
+		.then(async () => {
+			shared.fs = fs;
+			try {
+				// invalidateAll drops every cached file but not a parsed tsconfig, so
+				// one checked before at this path is reported changed first
+				await (await shared.api.updateSnapshot({ fileChanges: { changed: [configFile] } })).dispose();
+				return await openAndCheck(shared.api, configFile, { fileChanges: { invalidateAll: true } }, check);
+			} finally {
+				// a project left open would only cost the next checks time, never leak into them
+				await shared.api
+					.updateSnapshot({ closeProjects: [configFile] })
+					.then((snapshot) => snapshot.dispose())
+					.catch(() => {});
+				shared.fs = undefined;
+			}
+		});
+	shared.turn = run;
+	return run;
+}
+
+async function openAndCheck<T>(
+	api: API,
+	configFile: string,
+	params: UpdateSnapshotParams,
+	check: (snapshot: Snapshot) => Promise<T>,
+): Promise<T> {
+	const snapshot = await api.updateSnapshot({ ...params, openProjects: [configFile] });
+	try {
+		return await check(snapshot);
 	} finally {
-		await api.close();
+		await snapshot.dispose();
 	}
 }
 

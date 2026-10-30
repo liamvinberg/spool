@@ -1,10 +1,10 @@
-import { mkdirSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { checkSourceLimits } from "./check-budget";
 import { messages } from "./check-test-harness";
-import { makeTempDir, markProject, writeFrame } from "./test-helpers";
+import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 describe("offline design checking", () => {
 	it("returns clean when a project has no HTML frames", async () => {
@@ -12,6 +12,28 @@ describe("offline design checking", () => {
 		markProject(root);
 
 		expect(await messages(root)).toEqual([]);
+	});
+
+	it("rechecks a project from its sources as they are now", async () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(
+			root,
+			"home",
+			'import { label } from "../../parts/label";\nexport default () => <p>{label * 2}</p>;\n',
+		);
+		writeDesignFile(root, "parts/label.ts", 'export const label = "x";\n');
+		expect(await messages(root)).toEqual([
+			"design/frames/home/frame.tsx:2:26 TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+		]);
+
+		writeDesignFile(root, "parts/label.ts", "export const label = 1;\n");
+		expect(await messages(root)).toEqual([]);
+
+		rmSync(join(root, "design", "parts"), { recursive: true });
+		expect(await messages(root)).toEqual([
+			"design/frames/home/frame.tsx:1:23 TS2307: Cannot find module '../../parts/label' or its corresponding type declarations.",
+		]);
 	});
 
 	it("reports a regular file at design/frames instead of treating it as an empty project", async () => {
