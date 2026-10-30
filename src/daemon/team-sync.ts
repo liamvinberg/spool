@@ -560,7 +560,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	 * Saves read in this pass over the changes, each send's worth, sent together once the pass is done: a cleanup's
 	 * thousands of files go up in a few bundles. A send each, one save in each, to an object that takes no bundles.
 	 */
-	let outgoing: { saves: { path: string; bytes: Buffer | undefined }[]; size: number }[] = [];
+	let outgoing: { saves: { path: string; bytes: Buffer | undefined; base: number | null }[]; size: number }[] = [];
 	let shipping: NodeJS.Immediate | undefined;
 	/** The object takes bundles: its welcome said so. */
 	let bundles = false;
@@ -568,8 +568,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	let burst: string | undefined;
 	/** Paths that changed again while their last save was in flight. */
 	const dirty = new Set<string>();
-	/** Paths whose save was set aside: the team's version that follows overwrites what is here. */
-	const yielding = new Set<string>();
+	/** Paths whose save was set aside, with the hash it was: the team's version that follows overwrites what is here. */
+	const yielding = new Map<string, string | null>();
 	const changed = new Set<string>();
 	let settle: NodeJS.Timeout | undefined;
 	let watch: TreeWatch | undefined;
@@ -880,10 +880,13 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (socket === undefined) return;
 		const size = bytes?.byteLength ?? 0;
 		const last = outgoing.at(-1);
+		// built on the version these bytes were read against: a team version landing before the send goes
+		// must not make an older edit look like one built on it
+		const base = state.files[path]?.version ?? null;
 		if (last !== undefined && fits(size)) {
-			last.saves.push({ path, bytes });
+			last.saves.push({ path, bytes, base });
 			last.size += size;
-		} else outgoing.push({ saves: [{ path, bytes }], size });
+		} else outgoing.push({ saves: [{ path, bytes, base }], size });
 		going.add(path);
 		shipping ??= setImmediate(ship);
 	};
@@ -901,11 +904,11 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			const sent = ++sends;
 			// what a bundle sets aside is marked together, as one batch
 			const batch = burst ?? randomUUID();
-			const framed = saves.map(({ path, bytes }) => {
+			const framed = saves.map(({ path, bytes, base }) => {
 				const ref = String(++refs);
 				const hash = bytes === undefined ? null : digest(bytes);
 				inflight.set(ref, { path, hash, bytes, batch, sent });
-				return { ref, path, base: state.files[path]?.version ?? null, deleted: bytes === undefined, bytes };
+				return { ref, path, base, deleted: bytes === undefined, bytes };
 			});
 			sendsOut.set(sent, framed.length);
 			const moved = moves.carried(
@@ -1039,6 +1042,8 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (why !== undefined) return hold(path, why);
 		const bytes = readLocal(path);
 		const hash = bytes === undefined ? null : digest(bytes);
+		// the very save the team just set aside: it is kept in its mark, and the team's version is on its way over it
+		if (yielding.has(path) && yielding.get(path) === hash) return;
 		const known = state.files[path];
 		if (hash !== (known?.hash ?? null) && gitWrote(path, bytes)) return restore(path, bytes);
 		held.delete(path);
@@ -1286,7 +1291,7 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 			}
 		}
 		if (message.type === "set-aside") {
-			yielding.add(sent.path);
+			yielding.set(sent.path, sent.hash);
 			const version = typeof message.version === "number" ? message.version : 0;
 			mark({ path: sent.path, kind: "set-aside", version, by: byOf(message.by), batch: sent.batch }, sent.bytes);
 		}

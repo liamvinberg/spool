@@ -412,14 +412,14 @@ describe("the agent rail in a browser", () => {
 		const box = await log.boundingBox();
 		if (box === null) throw new Error("no log");
 		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-		// a wheel the compositor takes before it has hit-tested the pointer scrolls nothing,
-		// so the hand turns it until the log has moved
+		// a wheel the compositor takes before it has hit-tested the pointer scrolls nothing, and the chip it
+		// raised goes again once the log sees it still at the end, so the hand turns it until the log has moved
 		await expect
 			.poll(async () => {
 				await page.mouse.wheel(0, -300);
-				return chip.count();
+				return (await gap()) > 1 && (await chip.count()) === 1;
 			})
-			.toBe(1);
+			.toBe(true);
 		await chip.waitFor();
 		expect(await chip.textContent()).toContain("live");
 		// the last turn of the wheel may still be landing: read where the reader came to rest

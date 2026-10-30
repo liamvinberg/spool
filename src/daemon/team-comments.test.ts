@@ -487,6 +487,14 @@ describe("a comment over its frame's life (spool#160)", () => {
 		await bens.online();
 		await anas.write({ body: "Before it lapsed." });
 		await bens.told();
+		// Ben's copy holds the frame and the comment before the team lapses: after, nothing more arrives, and a
+		// comment on a frame his copy never got is refused for that instead
+		await eventually(async () => {
+			const listed = (await (await bens.app.request("/api/p/checkout/frames")).json()) as {
+				frames: { name: string }[];
+			};
+			return listed.frames.some((frame) => frame.name === "receipt") && (await bens.read()).comments.length === 1;
+		});
 
 		cloud.lapse();
 		await eventually(async () => (await bens.read()).unpaid);

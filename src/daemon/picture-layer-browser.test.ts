@@ -540,13 +540,17 @@ it("keeps every paint's uploads within its share, past it only by the one textur
 	const context = await browser.newContext({ viewport: { width: 1800, height: 900 }, deviceScaleFactor: 2 });
 	const page = await context.newPage();
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	// Slow by nature where the GPU is software: a slow upload spends a paint's
+	// share on one texture, so the 24 stills take 24 paints, each a full redraw
+	// of a 3600×1800 canvas; a loaded 4-core runner spends over a minute on them.
+	// Asked seldom, so the asking takes no time from the paints.
 	await expect
 		.poll(
 			async () => {
 				const now = await report(page);
 				return now?.complete === true && now.drawn.length >= 12;
 			},
-			{ timeout: 60_000 },
+			{ timeout: 150_000, interval: 500 },
 		)
 		.toBe(true);
 	const uploads = (await report(page))?.uploads ?? [];

@@ -48,9 +48,9 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 	const opened = context.waitForEvent("page");
 	await canvas.keyboard.press("p");
 	const played = await opened;
-	await played.waitForLoadState();
-
-	expect(new URL(played.url()).pathname).toBe(`/play/${project.name}`);
+	// a noopener tab has no opener for Playwright to wait on, so it can hand the
+	// page over still on about:blank: the address is waited on, not read once
+	await expect.poll(() => new URL(played.url()).pathname, { timeout: 30_000 }).toBe(`/play/${project.name}`);
 	expect(new URL(played.url()).searchParams.get("frame")).toBe("one");
 	// the canvas is untouched behind it: no player over it, no flight
 	expect(await canvas.locator(".spool-page").count()).toBe(0);
