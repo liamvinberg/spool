@@ -4,7 +4,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:https";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cliPath, spool, spoolAsync, tsxBin } from "./cli-test-helpers";
+import { cliCommand, spool, spoolAsync } from "./cli-test-helpers";
 import { makeTempDir } from "./test-helpers";
 
 /** A terminal with a browser in front of it: a desktop session, not one reached over SSH. */
@@ -174,7 +174,7 @@ case "$op" in add-generic-password) printf '%s' "$password" > ${JSON.stringify(s
 		const cloud = await signInCloud();
 		const openers = fakeOpenersOn(home);
 		try {
-			const child = spawn(tsxBin, [cliPath, "login"], {
+			const child = spawn(...cliCommand(["login"]), {
 				cwd: home,
 				env: {
 					...process.env,

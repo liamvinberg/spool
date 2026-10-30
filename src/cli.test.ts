@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { cliPath, repoRoot, spool, tsxBin } from "./cli-test-helpers";
+import { cliCommand, repoRoot, spool } from "./cli-test-helpers";
 import { readDaemonState } from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
 import { makeTempDir } from "./test-helpers";
@@ -34,7 +34,7 @@ describe("spool cli daemon", { timeout: 30_000 }, () => {
 		// spawn, not spawnSync — the port holder lives in this process and must
 		// keep answering health while the child decides to stand down
 		const result = await new Promise<{ status: number | null; stdout: string }>((done, fail) => {
-			const child = spawn(tsxBin, [cliPath, "serve", "--foreground"], {
+			const child = spawn(...cliCommand(["serve", "--foreground"]), {
 				cwd: repoRoot,
 				env: { ...process.env, HOME: home, SPOOL_DIR: "", SPOOL_PORT: String(daemon.port) },
 			});
@@ -62,7 +62,7 @@ describe("spool cli daemon", { timeout: 30_000 }, () => {
 		rmSync(join(spoolDir, "daemon.json"));
 
 		const result = await new Promise<{ status: number | null; stderr: string }>((done, fail) => {
-			const child = spawn(tsxBin, [cliPath, "serve", "--foreground"], {
+			const child = spawn(...cliCommand(["serve", "--foreground"]), {
 				cwd: repoRoot,
 				env: { ...process.env, HOME: home, SPOOL_DIR: "", SPOOL_PORT: String(daemon.port) },
 			});
