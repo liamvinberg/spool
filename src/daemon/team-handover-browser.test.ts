@@ -53,6 +53,15 @@ it("opens this Mac's local copy of the team project a link handed over, and Home
 	const page = await (await testBrowser()).newPage({ viewport: { width: 1280, height: 800 } });
 	const local = (address: string) => `${daemon.url}${new URL(address).pathname}${new URL(address).search}`;
 
+	// the first cards and teams answered together, so Home's address and the handed tab land in one commit
+	const held: (() => void)[] = [];
+	let asked = 0;
+	await page.route(/\/api\/(projects|cloud\/teams)$/, async (route) => {
+		if (++asked > 2) return route.continue();
+		const response = await route.fetch();
+		held.push(() => void route.fulfill({ response }));
+		if (held.length === 2) for (const answer of held) answer();
+	});
 	await page.goto(local(handoverAddress({ team: "devosurf", project: "checkout" })));
 	await expect.poll(() => new URL(page.url()).pathname, { timeout: 30_000 }).toBe("/p/checkout");
 	expect(new URL(page.url()).search).toBe("");
