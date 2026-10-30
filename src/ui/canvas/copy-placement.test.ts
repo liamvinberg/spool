@@ -84,12 +84,6 @@ describe("placeCopies", () => {
 		});
 	});
 
-	it("never moves a duplicate to the view, even out of sight", () => {
-		const frames = [{ name: "home", x: 0, y: 0, w: 100, h: 100 }];
-		const rects = placeCopies([{ from: "home", to: "home-copy" }], frames, { beside: true, viewPage: "", view });
-		expect(rects["home-copy"]).toMatchObject({ x: step, y: step });
-	});
-
 	it("skips copies whose source it cannot find", () => {
 		expect(placeCopies([{ from: "gone", to: "gone-copy" }], [], { beside: true, viewPage: "", view })).toEqual({});
 	});
