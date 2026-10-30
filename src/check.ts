@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ParserPlugin, parse } from "@babel/parser";
-import { API, type Diagnostic } from "typescript/unstable/async";
+import { API, type Diagnostic, type Program } from "typescript/unstable/async";
 import { CheckerAliasAllocator } from "./check-alias";
 import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage, checkSourceLimits } from "./check-budget";
 import { BoundedFileTooLargeError, readBoundedRegularFile, UnsafeFileReadError } from "./check-file";
@@ -545,11 +545,7 @@ async function typecheckClosure(
 					),
 				);
 			}
-			for (const diagnostic of [
-				...(await project.program.getSyntacticDiagnostics()),
-				...(await project.program.getBindDiagnostics()),
-				...(await project.program.getSemanticDiagnostics()),
-			]) {
+			for (const diagnostic of await designFileDiagnostics(project.program, designDir)) {
 				if (
 					isBoundaryDependencyDiagnostic(designDir, diagnostic, boundaryDependencies.moduleUses) ||
 					isTrackedModuleDiagnostic(
@@ -589,6 +585,22 @@ async function typecheckClosure(
 	} finally {
 		await api.close();
 	}
+}
+
+/**
+ * Syntactic, bind and semantic diagnostics of the program's files under
+ * design/, in that order. Only those are reported, and asking per file keeps
+ * the checker from walking the default libraries and trusted declarations.
+ */
+async function designFileDiagnostics(program: Program, designDir: string): Promise<Diagnostic[]> {
+	const files = (await program.getSourceFileNames()).filter((file) => isWithin(designDir, file));
+	const each = async (get: (file: string) => Promise<readonly Diagnostic[]>) =>
+		(await Promise.all(files.map(get))).flat();
+	return [
+		...(await each((file) => program.getSyntacticDiagnostics(file))),
+		...(await each((file) => program.getBindDiagnostics(file))),
+		...(await each((file) => program.getSemanticDiagnostics(file))),
+	];
 }
 
 function discoverHtmlFrames(designDir: string): FrameDiscovery {
