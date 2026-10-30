@@ -167,22 +167,6 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		);
 	});
 
-	it("filters by page and frame, and lists nothing with a line that still says how old it is", async () => {
-		const { ana } = await team();
-		const anas = await mac(ana);
-		await anas.online();
-		const added = await anas.spool("add", "receipt", "No pointer here.");
-		expect(added.status).toBe(0);
-
-		const onFrame = await anas.spool("list", "--frame", "receipt");
-		expect(onFrame.stdout).toContain("1 open comment, live from spool.page\n\n");
-		expect(onFrame.stdout).toContain("on receipt — design/frames/receipt/frame.tsx\n");
-
-		const elsewhere = await anas.spool("--page", "shop");
-		expect(elsewhere.status).toBe(0);
-		expect(elsewhere.stdout).toBe("0 open comments, live from spool.page\n");
-	});
-
 	it("reads offline from the snapshot and says when it was heard, and refuses to write", async () => {
 		const { cloud, ana, ben } = await team();
 		const anas = await mac(ana);
@@ -250,7 +234,7 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		expect(offline.stderr).toContain("offline: comments need spool.page");
 	});
 
-	it("says what isn't there: a comment by id, and an element on the frame", async () => {
+	it("says what isn't there, and filters by page and frame with a line that still says how old it is", async () => {
 		const { ana } = await team();
 		const anas = await mac(ana);
 		await anas.online();
@@ -272,6 +256,18 @@ describe("spool comments", { timeout: 90_000 }, () => {
 		expect(nowhere.status).toBe(1);
 		expect(nowhere.stderr).toContain("there's no frame receipts");
 		expect((await anas.read()).comments).toEqual([]);
+
+		// filtered by frame and by page
+		const filed = await anas.spool("add", "receipt", "No pointer here.");
+		expect(filed.status).toBe(0);
+
+		const onFrame = await anas.spool("list", "--frame", "receipt");
+		expect(onFrame.stdout).toContain("1 open comment, live from spool.page\n\n");
+		expect(onFrame.stdout).toContain("on receipt — design/frames/receipt/frame.tsx\n");
+
+		const elsewhere = await anas.spool("--page", "shop");
+		expect(elsewhere.status).toBe(0);
+		expect(elsewhere.stdout).toBe("0 open comments, live from spool.page\n");
 	});
 
 	it("says a reply on a share's comment is a draft that waits for its person", async () => {
