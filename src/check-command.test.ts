@@ -2,11 +2,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkSourceLimits } from "./check-budget";
 import { runCheck } from "./check-command";
+import { shareCheckerInFile } from "./check-test-harness";
 import { writePace } from "./daemon/thumbs";
 import { makeTempDir, markProject, writeDesignFile, writeFrame, writePageFrame } from "./test-helpers";
 
 const FRAME = "export default function Frame() { return <main />; }\n";
 const BROKEN = "export default function Frame() { const n: string = 1; return <main>{n}</main>; }\n";
+
+shareCheckerInFile();
 
 function project(): string {
 	const root = makeTempDir();
