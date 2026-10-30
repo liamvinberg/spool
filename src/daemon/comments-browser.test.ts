@@ -103,6 +103,19 @@ async function teamCanvas() {
 	};
 }
 
+/**
+ * C tapped. Playwright sends a key's up only once the page has handled its down, and on a loaded machine the
+ * render that down starts stretches the press past the hold it is then read as: the two are made together here,
+ * so their own times say a tap however long the page takes over them.
+ */
+const tapC = (page: Page) =>
+	page.evaluate(() => {
+		const down = new KeyboardEvent("keydown", { key: "c", code: "KeyC" });
+		const up = new KeyboardEvent("keyup", { key: "c", code: "KeyC" });
+		window.dispatchEvent(down);
+		window.dispatchEvent(up);
+	});
+
 /** The tool whose button is pressed. */
 const toolIn = (page: Page) =>
 	page.locator('[aria-label="canvas tools"] [aria-pressed="true"]').getAttribute("aria-label");
@@ -113,11 +126,11 @@ it("takes the Comment tool with C, borrows it while C is held, and leaves it on 
 	const { page } = await teamCanvas();
 	expect(await toolIn(page)).toBe("select");
 
-	await page.keyboard.press("c");
+	await tapC(page);
 	expect(await toolIn(page)).toBe("comment");
 	await page.keyboard.press("v");
 	expect(await toolIn(page)).toBe("select");
-	await page.keyboard.press("c");
+	await tapC(page);
 	await page.keyboard.press("Escape");
 	expect(await toolIn(page)).toBe("select");
 
@@ -167,7 +180,7 @@ it("places a pin on a frame at the frame's own point, sends it on Enter, and sho
 	timeout: 120_000,
 }, async () => {
 	const { cloud, page, benSays, benReplies } = await teamCanvas();
-	await page.keyboard.press("c");
+	await tapC(page);
 	const on = await pagePointOf(page, { x: 100, y: 60 });
 	await page.mouse.click(on.x, on.y);
 	const composer = page.locator("[data-comment-composer]");
@@ -227,7 +240,7 @@ it("goes inside a page standing on the field rather than commenting on it", { ti
 	const { page } = await teamCanvas();
 	const shop = page.locator('[data-page-object="shop"]');
 	await shop.waitFor({ timeout: 20_000 });
-	await page.keyboard.press("c");
+	await tapC(page);
 	const box = await shop.boundingBox();
 	if (box === null) throw new Error("no page object");
 	await page.mouse.click(box.x + box.width / 2, box.y + 40);
@@ -241,7 +254,7 @@ it("shows the comments it had offline, and says it's offline rather than sending
 	await expect.poll(() => page.locator("[data-comment-pin]").count(), { timeout: 10_000 }).toBe(1);
 
 	offline();
-	await page.keyboard.press("c");
+	await tapC(page);
 	const on = await pagePointOf(page, { x: 200, y: 100 });
 	await page.mouse.click(on.x, on.y);
 	const composer = page.locator("[data-comment-composer]");
@@ -338,7 +351,7 @@ it("edits and deletes your own from its menu, marks a teammate's unread, and res
 	timeout: 120_000,
 }, async () => {
 	const { cloud, page, benSays } = await teamCanvas();
-	await page.keyboard.press("c");
+	await tapC(page);
 	const on = await pagePointOf(page, { x: 100, y: 60 });
 	await page.mouse.click(on.x, on.y);
 	const composer = page.locator("[data-comment-composer]");
@@ -408,7 +421,7 @@ it("says a comment's frame was edited since, compares, and keeps one whose frame
 }, async () => {
 	const { cloud, page, root, benSays } = await teamCanvas();
 	// Ana's comment on home, made at its revision now
-	await page.keyboard.press("c");
+	await tapC(page);
 	const on = await pagePointOf(page, { x: 100, y: 60 });
 	await page.mouse.click(on.x, on.y);
 	const composer = page.locator("[data-comment-composer]");
