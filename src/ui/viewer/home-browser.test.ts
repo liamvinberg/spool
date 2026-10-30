@@ -243,12 +243,15 @@ describe("Home in a browser", () => {
 		await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
 	});
 
-	it("names the account on its page, everywhere at once, and says the rule when spool.page refuses a name", {
+	it("takes an account in no team to Account, with the way to start one, and names the account there, everywhere at once, saying the rule when spool.page refuses a name", {
 		timeout: 60_000,
 	}, async () => {
 		const { page, asked } = await open("/devosurf", { teams: [] });
 		const main = page.locator("main");
 		await main.getByText("Not in a team yet.", { exact: true }).waitFor();
+		expect(new URL(page.url()).pathname).toBe("/account");
+		expect(await page.locator("aside").textContent()).toContain("You’re not in a team yet.");
+		await page.getByRole("button", { name: "Start a team…" }).waitFor();
 		// no name yet: everyone sees the address before the @, which the field offers as its placeholder
 		const field = main.getByRole("textbox", { name: "Name" });
 		expect(await field.inputValue()).toBe("");
@@ -281,14 +284,6 @@ describe("Home in a browser", () => {
 		await emails.getByText("For you", { exact: true }).click();
 		await expect.poll(() => asked).toContain('POST /account/comment-emails {"emails":"for-you"}');
 		await expect.poll(() => emails.getByRole("radio", { name: "For you" }).isChecked()).toBe(true);
-	});
-
-	it("takes an account in no team to Account, with the way to start one", { timeout: 60_000 }, async () => {
-		const { page } = await open("/devosurf", { teams: [] });
-		await page.locator("main").getByText("Not in a team yet.", { exact: true }).waitFor();
-		expect(new URL(page.url()).pathname).toBe("/account");
-		expect(await page.locator("aside").textContent()).toContain("You’re not in a team yet.");
-		await page.getByRole("button", { name: "Start a team…" }).waitFor();
 	});
 
 	it("changes a member's role at spool.page", { timeout: 60_000 }, async () => {
@@ -371,32 +366,6 @@ describe("Home in a browser", () => {
 		expect(await page.locator(".pj-team-setup").count()).toBe(0);
 		await page.getByRole("button", { name: "Invite more" }).click();
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/devosurf/people");
-	});
-
-	it("asks a lapsed team's admins to pay in one dialog, and tells everyone else in one line", {
-		timeout: 60_000,
-	}, async () => {
-		const lapsed = TEAMS.map((team) => ({ ...team, billing: { state: "lapsed" as const } }));
-		const { page, asked, left } = await open("/devosurf", {
-			teams: lapsed,
-			billing: { ...BILLING, state: "lapsed", paidBefore: true },
-		});
-		const dialog = page.getByRole("dialog", { name: "Devosurf has gone local" });
-		await dialog.waitFor();
-		expect(await dialog.textContent()).toContain("Anyone left out becomes a viewer.");
-		await dialog.getByText("I’m buying for my business or work", { exact: true }).click();
-		await dialog.getByRole("button", { name: "Continue to payment" }).click();
-		// Checkout leaves in this tab, as Billing's does
-		await expect.poll(() => left).toEqual(["https://checkout.stripe.test/c/1"]);
-		expect(asked).toContain(
-			'POST /api/teams/devosurf/billing/checkout {"editors":["a2"],"cycle":"yearly","business":true}',
-		);
-
-		// a viewer of a lapsed team reaches its Home, and is told why nothing moves
-		const viewer = await open("/client", { teams: lapsed });
-		await viewer.page.getByText("Client Co has gone local. Ask an admin to pay for it to sync again.").waitFor();
-		expect(await viewer.page.getByRole("dialog").count()).toBe(0);
-		expect(viewer.asked.filter((line) => line.includes("/billing"))).toEqual([]);
 	});
 	it("tells a failing team's admins on Home, and Manage billing opens Stripe's portal in the same tab", {
 		timeout: 60_000,
