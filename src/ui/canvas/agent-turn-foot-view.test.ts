@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { FADE_OUT_MS, FOLD_MS, MOTION } from "./agent-motion";
 import {
@@ -47,9 +47,14 @@ const footOf = (tiles: AgentTile[], ms: number | null = null): AgentTurnFoot => 
 });
 
 let unmount: (() => void) | null = null;
+// every exit here is a timer the length of its motion, walked rather than waited out
+beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+});
 afterEach(() => {
 	unmount?.();
 	unmount = null;
+	vi.useRealTimers();
 });
 
 async function draw(foot: AgentTurnFoot) {
@@ -67,7 +72,7 @@ async function draw(foot: AgentTurnFoot) {
 	return { host, render };
 }
 
-const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 describe("the turn's grid, drawn", () => {
 	it("draws finished tiles smaller while others still work, and full size once the turn is over", async () => {
