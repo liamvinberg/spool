@@ -245,9 +245,6 @@ const pictures = (page: Page) =>
 			| null;
 		return canvas?.spoolPictures?.() ?? null;
 	});
-/** The frames the picture layer drew with their pictures in. */
-const drawnPictures = async (page: Page) =>
-	((await pictures(page))?.drawn ?? []).filter((each) => each.texture !== null).map((each) => each.name);
 
 const cameraOf = (page: Page) =>
 	page.locator("[data-canvas-camera]").evaluate((el) => (el as HTMLElement).style.transform);
