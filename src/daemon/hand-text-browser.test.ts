@@ -180,8 +180,11 @@ it("edits the veil page's words in place and saves each once", { timeout: 240_00
 	await fileHas('<Footer name="veil®" note="Curious &amp; &quot;bold&quot;."/>');
 	expect(f.bytes("shared/ui/page-parts.tsx")).toBe(PAGE_PARTS);
 
-	// undo puts the file and the frame back without a reload; redo brings both forward
+	// undo puts the file and the frame back without a reload; redo brings both forward,
+	// pressed once the canvas has the undo's answer, which is what puts the step on its redo side
+	const reverted = page.waitForResponse((response) => response.url().endsWith("/revert"));
 	await f.history();
+	await (await reverted).finished();
 	await fileHas('<Footer name="veil®" note="Independent by nature. Curious by default."/>');
 	await expect.poll(() => text("footer span")).toBe("Independent by nature. Curious by default.");
 	await f.history(true);
