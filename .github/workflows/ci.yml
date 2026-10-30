@@ -55,7 +55,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A shard's tests take two to three minutes; a hung one fails the run (and
+    # the release waiting on it) in ten rather than sitting out fifteen.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
