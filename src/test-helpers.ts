@@ -45,17 +45,19 @@ export function closeAfterTest(resource: { close(): Promise<void> }): void {
 }
 
 /**
- * The canvas bundle every browser test serves, built once per vitest run.
+ * A vite bundle the browser tests serve, built once per vitest run.
  *
- * Each case used to build it into its own temp directory: the same source and
- * the same vite config produce the same bytes, and the daemon only reads the
- * directory, so one build per run is the identical bundle without the CPU each
- * build cost beside a running Chromium. The first worker to need it builds
- * under a lock; the rest wait for the ready marker.
+ * Each case, and later each file, used to build it into its own temp
+ * directory: the same source and the same vite config produce the same bytes,
+ * and the tests only read the directory, so one build per run is the identical
+ * bundle without the CPU each build cost beside a running Chromium. The first
+ * worker to need it builds under a lock; the rest wait for the ready marker,
+ * or the failed one, which says why so no worker waits out the deadline.
  */
-export async function builtUi(): Promise<string> {
-	const dir = join(inject("spoolTestRunDir"), "ui");
+async function sharedViteBuild(name: string, configFile: string): Promise<string> {
+	const dir = join(inject("spoolTestRunDir"), name);
 	const ready = `${dir}.ready`;
+	const failed = `${dir}.failed`;
 	if (existsSync(ready)) return dir;
 	let builder = false;
 	try {
@@ -66,20 +68,36 @@ export async function builtUi(): Promise<string> {
 	}
 	if (builder) {
 		const { build } = await import("vite");
-		await build({
-			configFile: join(process.cwd(), "vite.config.ts"),
-			logLevel: "silent",
-			build: { outDir: dir, emptyOutDir: true },
-		});
+		try {
+			await build({
+				configFile: join(process.cwd(), configFile),
+				logLevel: "silent",
+				build: { outDir: dir, emptyOutDir: true },
+			});
+		} catch (error) {
+			writeFileSync(failed, error instanceof Error ? (error.stack ?? error.message) : String(error));
+			throw error;
+		}
 		writeFileSync(ready, "");
 		return dir;
 	}
 	const deadline = Date.now() + 120_000;
 	while (!existsSync(ready)) {
-		if (Date.now() > deadline) throw new Error("the shared ui build never became ready");
+		if (existsSync(failed)) throw new Error(`the shared ${name} build failed:\n${readFileSync(failed, "utf8")}`);
+		if (Date.now() > deadline) throw new Error(`the shared ${name} build never became ready`);
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	return dir;
+}
+
+/** The canvas bundle (vite.config.ts) every daemon browser test serves. */
+export function builtUi(): Promise<string> {
+	return sharedViteBuild("ui", "vite.config.ts");
+}
+
+/** The spool.page viewer bundle (vite.viewer.config.ts) the viewer browser tests serve. */
+export function builtViewer(): Promise<string> {
+	return sharedViteBuild("viewer", "vite.viewer.config.ts");
 }
 
 /**
