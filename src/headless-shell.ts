@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import type { Browser } from "playwright-core";
-import { chromium } from "playwright-core";
+import type { Browser, BrowserServer } from "playwright-core";
 
 /**
  * Spool's own Chrome (#12): the chromium headless-shell build pinned by
@@ -79,7 +78,9 @@ export interface HeadlessShell {
  * be able to keep the memory it holds.
  */
 export async function launchHeadlessShell(): Promise<HeadlessShell> {
-	let server: Awaited<ReturnType<typeof chromium.launchServer>>;
+	// loaded on the first launch: every CLI verb would otherwise pay for it at start
+	const { chromium } = await import("playwright-core");
+	let server: BrowserServer;
 	try {
 		server = await chromium.launchServer({
 			channel: "chromium-headless-shell",

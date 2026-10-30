@@ -1,5 +1,4 @@
 import type { Browser } from "playwright-core";
-import { chromium } from "playwright-core";
 import type { RenderedTarget } from "./resolved-targets";
 
 /**
@@ -51,9 +50,11 @@ export function createGoReader(): GoReader {
 	let unavailable = false;
 
 	function boot(): Promise<Browser> {
-		browser ??= chromium
-			.launch({ channel: "chromium-headless-shell", headless: true })
-			.catch(() => chromium.launch({ headless: true }));
+		browser ??= import("playwright-core").then(({ chromium }) =>
+			chromium
+				.launch({ channel: "chromium-headless-shell", headless: true })
+				.catch(() => chromium.launch({ headless: true })),
+		);
 		return browser;
 	}
 
