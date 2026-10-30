@@ -66,13 +66,20 @@ export async function handCanvas(
 		// the selection is real once the daemon holds it, and it is this one
 		// rather than the last: the same tag as the element clicked, or a
 		// different element than was held before the click
+		/** the canvas told the daemon its selection since the click */
+		let told = false;
+		const put = (request: Request) => {
+			if (request.method() === "PUT" && request.url().endsWith("/selection")) told = true;
+		};
 		const outcome = async () => {
 			const now = await held();
-			// a frame held before the click says nothing about this one
-			if (now?.kind === "frame") return before?.kind === "frame" ? "waiting" : "frame";
+			// a frame held before the click says nothing about this one until the canvas says it again
+			if (now?.kind === "frame") return before?.kind === "frame" && !told ? "waiting" : "frame";
 			return now !== undefined && (now.name === tag || now.selector !== before?.selector) ? "element" : "waiting";
 		};
+		page.on("requestfinished", put);
 		for (let press = 1; ; press += 1) {
+			told = false;
 			await target.click({ position: at, modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
 			await expect.poll(outcome, { timeout: 15_000 }).not.toBe("waiting");
 			if ((await outcome()) === "element") break;
@@ -84,6 +91,7 @@ export async function handCanvas(
 			await expect.poll(() => target.count(), { timeout: 15_000 }).toBeGreaterThan(0);
 			before = await held();
 		}
+		page.off("requestfinished", put);
 		return { target, box, at: { x: box.x + at.x, y: box.y + at.y } };
 	};
 	/** ⌘Z or ⇧⌘Z out on the canvas, which is where the one stack listens. */
