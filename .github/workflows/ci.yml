@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      darwin:
+        description: "Run the whole suite on macOS too"
+        type: boolean
+        default: true
 
 # A newer push to a branch or PR supersedes its older run. Main's runs never
 # cancel each other: each commit there may be a release, and publishing waits
@@ -110,11 +115,11 @@ jobs:
 
   darwin-gates:
     # The darwin-only coverage (launchd plist validation, machine state) on
-    # demand. Publishing checks the macOS-only cases after full Linux CI.
-    if: github.event_name == 'workflow_dispatch'
+    # demand. Publishing checks the macOS-only cases after full Linux CI. The
+    # suite is darwin-tests below; this job is the checks around it.
+    if: github.event_name == 'workflow_dispatch' && inputs.darwin
     runs-on: macos-latest
-    # the suite alone takes 13 to 14 minutes on a hosted Mac
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -123,9 +128,7 @@ jobs:
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright-core install chromium-headless-shell
       - run: pnpm typecheck
-      - run: pnpm test
       - run: pnpm check
       - run: pnpm build
       # The Mac app's own checks. `desktop/` is its own pnpm root and is not in
@@ -137,6 +140,31 @@ jobs:
       - run: pnpm --dir desktop typecheck
       - run: pnpm --dir desktop test
       - run: pnpm --dir desktop smoke
+
+  darwin-tests:
+    # The whole suite on macOS, split three ways by the Linux run's times: on
+    # one hosted Mac it took 17 to 21 minutes (October 2026), too near any
+    # timeout worth having.
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' && inputs.darwin
+    runs-on: macos-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      SPOOL_TEST_DURATIONS: ${{ needs.changes.outputs.durations }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright-core install chromium-headless-shell
+      - run: pnpm exec vitest run --shard=${{ matrix.shard }}/3
 
   design:
     needs: changes
@@ -155,7 +183,8 @@ jobs:
 
   desktop:
     needs: changes
-    if: needs.changes.outputs.desktop == 'true' && github.event_name != 'workflow_dispatch'
+    # darwin-gates runs these same checks when it runs.
+    if: needs.changes.outputs.desktop == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.darwin)
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -171,7 +200,7 @@ jobs:
       - run: pnpm --dir desktop smoke
 
   ci:
-    needs: [changes, tests, quality, gates, design, desktop, darwin-gates]
+    needs: [changes, tests, quality, gates, design, desktop, darwin-gates, darwin-tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
