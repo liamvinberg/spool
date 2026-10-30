@@ -350,7 +350,8 @@ export function useCommentKeys(comments: ViewerComments | null): void {
 			}
 			if (event.code === "KeyC" && !event.shiftKey) {
 				if (event.repeat || hold.current !== null || !now.writes) return;
-				hold.current = { at: Date.now() };
+				// when the key went down, not when this page got to it: a busy page reads a tap late, not long
+				hold.current = { at: event.timeStamp };
 				now.setTool("comment");
 				return;
 			}
@@ -361,7 +362,7 @@ export function useCommentKeys(comments: ViewerComments | null): void {
 			const held = hold.current;
 			hold.current = null;
 			// held, it was borrowed: letting go hands the Pointer back
-			if (held !== null && Date.now() - held.at >= HOLD_MS) latest.current?.setTool("pointer");
+			if (held !== null && event.timeStamp - held.at >= HOLD_MS) latest.current?.setTool("pointer");
 		};
 		// a window left with C held never hears it let go
 		const blur = () => up(new KeyboardEvent("keyup", { code: "KeyC" }));
