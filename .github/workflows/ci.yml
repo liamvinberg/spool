@@ -10,10 +10,14 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       full: ${{ steps.scope.outputs.full }}
       design: ${{ steps.scope.outputs.design }}
       desktop: ${{ steps.scope.outputs.desktop }}
+      durations: ${{ steps.durations.outputs.durations }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -24,6 +28,17 @@ jobs:
           package-manager-cache: false
       - id: scope
         run: node --experimental-strip-types .github/scripts/ci-scope.ts
+      # How long each test file took on the last main run, read once here so
+      # every shard deals the files out from the same table. Without one the
+      # shards guess from file names, and still split the files between them.
+      - id: durations
+        if: steps.scope.outputs.full == 'true'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types .github/scripts/test-shards.ts
+
 
   tests:
     needs: changes
@@ -34,6 +49,8 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      SPOOL_TEST_DURATIONS: ${{ needs.changes.outputs.durations }}
     concurrency:
       group: ci-tests-${{ github.ref }}-${{ matrix.shard }}
       cancel-in-progress: true
