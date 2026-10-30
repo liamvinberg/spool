@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import type { AgentEngineId } from "../../daemon/agent-engine";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
@@ -154,7 +154,8 @@ export function ThreadDrop({
 	const { list, open, onOpen, onClose } = threads;
 	const shown = now !== null;
 	const at = useHeld(now) ?? Date.now();
-	useEffect(() => {
+	// in with the list itself, so an Escape pressed the moment it shows, before a busy page has run its effects, is heard
+	useLayoutEffect(() => {
 		if (!shown) return;
 		const onKey = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
