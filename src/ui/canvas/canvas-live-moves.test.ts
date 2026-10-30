@@ -737,7 +737,9 @@ async function until(done: () => boolean, ms = 2000): Promise<void> {
 }
 
 function wait(ms: number): Promise<void> {
-	return act(() => vi.advanceTimersByTimeAsync(ms));
+	return act(async () => {
+		await vi.advanceTimersByTimeAsync(ms);
+	});
 }
 
 function cameraTransform(host: HTMLElement): string {
