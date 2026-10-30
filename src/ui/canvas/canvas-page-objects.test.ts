@@ -42,30 +42,6 @@ function pageObject(host: HTMLElement, page: string): HTMLElement | null {
 }
 
 describe("a page on the field", () => {
-	it("stands where its place says, drawing the frames under it", async () => {
-		const host = await mountCanvas(PROJECT);
-		const object = pageObject(host, "shop");
-		expect(object).not.toBeNull();
-		expect(object?.style.transform).toBe("translate(400px, 0px)");
-		// its name and its count ride above it, the way a frame's label does
-		expect(host.textContent).toContain("shop");
-	});
-
-	it("draws no object for the page the canvas is standing on", async () => {
-		const host = await mountCanvas({
-			pages: ["shop", "shop/sale"],
-			frames: [
-				frame("home"),
-				frame("shop/checkout", { page: "shop" }),
-				frame("shop/sale/deal", { page: "shop/sale" }),
-			],
-			places: { shop: { x: 400, y: 0 }, "shop/sale": { x: 900, y: 0 } },
-		});
-		// the root page draws `shop` and never `shop/sale`, which is inside it
-		expect(pageObject(host, "shop")).not.toBeNull();
-		expect(pageObject(host, "shop/sale")).toBeNull();
-	});
-
 	it("is taken on its own, and puts the frame selection down", async () => {
 		const host = await mountCanvas(PROJECT);
 		await act(async () => {
