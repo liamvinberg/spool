@@ -14,7 +14,7 @@ describe("test shards", () => {
 	});
 
 	it("evens the shards out by time, the long files spread rather than stacked", () => {
-		const table = { "src/long.test.ts": 100, "src/longer.test.ts": 120, ...durations };
+		const table: Record<string, number> = { "src/long.test.ts": 100, "src/longer.test.ts": 120, ...durations };
 		const shards = assignShards(Object.keys(table), table, 4);
 		const loads = shards.map((shard) => shard.reduce((sum, file) => sum + (table[file] ?? 0) + 1.5, 0));
 		expect(shards.findIndex((shard) => shard.includes("src/long.test.ts"))).not.toBe(

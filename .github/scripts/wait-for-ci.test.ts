@@ -67,8 +67,10 @@ describe("release CI prerequisite", () => {
 		});
 		return { wait, log, minutes: () => clock / 60_000 };
 	}
-	const runs = (...list: object[]) => (path: string) =>
-		path.includes("/jobs") ? { jobs: [{ name: "gates", conclusion: "success" }] } : { workflow_runs: list };
+	const runs =
+		(...list: object[]) =>
+		(path: string) =>
+			path.includes("/jobs") ? { jobs: [{ name: "gates", conclusion: "success" }] } : { workflow_runs: list };
 	const blip = () => new TransientLookupError("GitHub CI lookup returned HTTP 502.");
 
 	it("waits out a CI run however long it takes, and GitHub's blips on the way", async () => {

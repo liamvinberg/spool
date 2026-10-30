@@ -132,7 +132,9 @@ function lastMainDurations(repository: string): Record<string, number> {
 				return durations;
 			}
 		} catch (error) {
-			console.log(`No test reports from run ${run}: ${error instanceof Error ? error.message.split("\n")[0] : error}`);
+			console.log(
+				`No test reports from run ${run}: ${error instanceof Error ? error.message.split("\n")[0] : error}`,
+			);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
