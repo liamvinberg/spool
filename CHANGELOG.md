@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.47.2
+
+### Patch Changes
+
+- 5691fa5: Escape closes the agent rail's chat list even when pressed the moment it opens. Before, on a busy machine, the press could go unheard and leave the list open.
+- 705f065: A change of yours that lost a clash in a team project is set aside once and no longer goes up again a moment later. On a busy machine it could be set aside twice, or replace your teammate's version on the team and drop the clash notice.
+- 2b99440: A comment placed on a frame keeps the element under its pin when the frame is slow to answer, as it can be on a busy machine. Before, it could go without one.
+- 85bb7a0: A quick tap of C keeps the Comment tool on a team canvas even when the canvas is slow to answer it. Before, a busy page could read the tap as a hold and hand the pointer straight back.
+- be354cd: Exporting a frame with a lot of text no longer freezes that frame for a moment on a busy machine. The text is now read in short steps while the export runs.
+- 598d5a7: `spool check` is faster: it type checks only your design files instead of walking the whole browser and React type libraries each run.
+- d789508: Opening a team project from its link at spool.page now leaves its own address in the bar. It could show the team's Home address instead, so a reload went back to Home.
+- f52c788: A team started after your free trial is used now says how long it's held for you to pay: an hour, after which spool.page removes it and its name is free again. Billing for a team that stopped paying says the day its cloud copy is deleted.
+- 1a61af5: Every `spool` command starts about a third of a second sooner: the browser library now loads only when a command needs a browser.
+- a9ac71d: Updated the libraries spool bundles, and the Mac app's Electron, to releases that fix known security issues.
+- d8c3499: A shot taken with `--at` no longer fails on a busy machine with "Cannot fast-forward to the past".
+- caa4139: A sign-in from the app that does not finish now says why under Sign in, and writes what failed to daemon.log, instead of quietly going back to Sign in.
+- 1646862: A closed tab now leaves the strip only once it has shrunk away. Before, on a busy machine, it could vanish while still part wide, and the tabs after it jumped.
+- ac974dc: A tab opened in a full tab strip on a busy Mac could stop scrolling a couple of pixels short, leaving its edge cut off. The strip now scrolls until the new tab is wholly in view.
+- 2f289b7: On a busy computer, a quick press of C in a shared canvas at spool.page could count as holding it, and the Comment tool went away when the key came up. A tap now always keeps the Comment tool.
+
 ## 0.47.1
 
 ### Patch Changes
