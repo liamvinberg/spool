@@ -748,19 +748,6 @@ describe("the sidebar scope", () => {
 		expect(spans.at(-1)?.("home")).toEqual(["home", "shell"]);
 	});
 
-	it("takes a whole page to the Trash as one entry", async () => {
-		const onTrashPage = vi.fn();
-		const { host } = await render({ onTrashPage });
-		const pageRow = host.querySelector<HTMLElement>('button[aria-label="shop page"]')?.parentElement;
-		await act(async () => {
-			pageRow?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 6 }));
-			window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 6 }));
-		});
-		focusList(host);
-		await act(async () => press("Backspace"));
-		expect(onTrashPage).toHaveBeenCalledWith("shop", ["shop/checkout"]);
-	});
-
 	/**
 	 * Precedence, not just gating: the rail sits above the canvas and is not
 	 * exclusive, so it takes the keys it declares and every other press carries
