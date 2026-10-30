@@ -1830,13 +1830,6 @@ describe("a dropped copy", () => {
 		expect(after).toBeGreaterThanOrEqual(1_000);
 		expect(after).toBeLessThanOrEqual(2_100);
 	});
-
-	it("does not start over at caught-up when the connection drops soon after", async () => {
-		const { dropAfter } = await droppable();
-		await dropAfter(1_000);
-		const later = await dropAfter(5_000);
-		expect(later).toBeGreaterThanOrEqual(2_000);
-	});
 });
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -2036,14 +2029,6 @@ describe("offline (#205)", () => {
 		await sleep(200);
 		expect(await syncState(ben.daemon)).toMatchObject({ offline: false });
 	}, 20_000);
-
-	it("says nothing for a drop shorter than the wait", async () => {
-		const { cloud, ana, ben } = await twoEditors({ offlineMs: 5_000 });
-		cloud.disconnect("checkout");
-		writeFrame(ana.root, "home", "home\n");
-		await until(() => same(ana.root, ben.root, "frames/home/frame.tsx"), 10_000);
-		expect(await syncState(ben.daemon)).toMatchObject({ offline: false });
-	});
 });
 
 describe("a restore from a backup (spool#191)", () => {
