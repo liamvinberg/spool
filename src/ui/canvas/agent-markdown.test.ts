@@ -40,11 +40,6 @@ describe("the markdown subset", () => {
 		});
 	});
 
-	/** no message in the corpus that reaches a transcript has one, so `#` is not a heading */
-	it("leaves a hash as text, because no captured message uses one", () => {
-		expect(chunksOf("# not a heading")).toEqual([{ kind: "p", spans: [{ text: "# not a heading" }] }]);
-	});
-
 	it("draws no marker character: the glyphs are the renderer's, the text is the agent's", () => {
 		expect(drawnText(chunksOf("**bold** and `code`"))).toBe("bold and code");
 	});

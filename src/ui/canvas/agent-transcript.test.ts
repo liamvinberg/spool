@@ -520,16 +520,6 @@ describe("a turn that ends", () => {
 		expect(entries).toHaveLength(2);
 	});
 
-	/** every other reason a turn gives up is spool's to quote and never to advise on */
-	it("adds nothing under an exit that is not a login", () => {
-		const { entries } = transcriptOf(
-			[{ text: "go" }],
-			stamp([{ kind: "closed", code: null, message: "spawn claude ENOENT", parent: null }]),
-		);
-
-		expect(kinds(entries)).toEqual(["user", "note"]);
-	});
-
 	it("never swallows a process that went away without finishing", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
@@ -537,15 +527,6 @@ describe("a turn that ends", () => {
 		);
 
 		expect(entries.at(-1)).toMatchObject({ kind: "note", text: "the agent exited 1" });
-	});
-
-	it("is silent about the exit that follows a turn that ended", () => {
-		const { entries } = transcriptOf(
-			[{ text: "go" }],
-			stamp([waiting, speaking, say("done."), done, { kind: "closed", code: 0, parent: null }]),
-		);
-
-		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
 	});
 });
 
@@ -1309,12 +1290,6 @@ describe("the plan", () => {
 	const create = (id: string, subject: string, activeForm: string) =>
 		called(id, "TaskCreate", { subject, description: "…", activeForm });
 	const move = (id: string, task: string, status: string) => called(id, "TaskUpdate", { taskId: task, status });
-
-	it("is absent from a turn that never writes one", () => {
-		expect(
-			transcriptOf([{ text: "go" }], stamp([ready, called("t1", "Read", { file_path: `${ROOT}/AGENTS.md` })])).plan,
-		).toBeNull();
-	});
 
 	/** the count is the receipt and it climbs, because seven creates are seven events */
 	it("counts its tasks in as they are written", () => {

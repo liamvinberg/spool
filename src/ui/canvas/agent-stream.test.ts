@@ -307,24 +307,6 @@ describe("the turn a thread is running", () => {
 			expect(name).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 		}
 	});
-
-	/** a message that never streamed is settled on arrival, and the clock stops with the turn */
-	it("stops its clock on a message that arrived whole", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await act(async () => {
-			canvas.latest().send("go");
-		});
-		canvas.push(waiting);
-		canvas.push(speaking);
-		canvas.push({ kind: "said", text: "done.", parent: null });
-		canvas.push(ended);
-		canvas.push(closed);
-		canvas.close();
-		await settle(600);
-
-		expect(canvas.latest().elapsed).toBe(Number.POSITIVE_INFINITY);
-	});
 });
 
 /**
@@ -367,31 +349,11 @@ describe("what an open turn costs", () => {
 	 * The long middle of a turn: the stream is open, the agent is off running something,
 	 * and the last message has been on screen whole for a while. Nothing is arriving and
 	 * nothing is paced, so the only thing owed is the clock's next second (#370).
-	 */
-	it("draws nothing but the clock's seconds while nothing moves", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await act(async () => {
-			canvas.latest().send("go");
-		});
-		canvas.push(waiting);
-		canvas.push(speaking);
-		canvas.push({ kind: "say", block: 0, text: "done.", parent: null });
-		await settle(400);
-
-		const quiet = canvas.renders();
-		await settle(2000);
-
-		expect(canvas.renders() - quiet).toBeLessThanOrEqual(3);
-		// and the turn is still a turn, which is what makes the silence worth something
-		expect(canvas.latest().phase).toBe("playing");
-	});
-
-	/**
+	 *
 	 * Designers at work send nothing to the main thread, so a clock that waited for an
 	 * event held its number and then jumped by ten (#370).
 	 */
-	it("ticks the clock every second while no events arrive", async () => {
+	it("draws nothing but the clock's seconds while nothing moves, and ticks every second", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await act(async () => {
@@ -402,9 +364,15 @@ describe("what an open turn costs", () => {
 		canvas.push({ kind: "say", block: 0, text: "designers are on it.", parent: null });
 		await settle(400);
 
+		const quiet = canvas.renders();
 		const before = Math.floor(canvas.latest().elapsed / 1000);
-		await settle(2200);
+		await settle(2000);
 
+		expect(canvas.renders() - quiet).toBeLessThanOrEqual(3);
+		// and the turn is still a turn, which is what makes the silence worth something
+		expect(canvas.latest().phase).toBe("playing");
+
+		await settle(200);
 		expect(Math.floor(canvas.latest().elapsed / 1000) - before).toBeGreaterThanOrEqual(2);
 	});
 

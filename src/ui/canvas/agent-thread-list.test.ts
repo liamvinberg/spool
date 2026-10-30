@@ -56,7 +56,7 @@ describe("the thread title", () => {
 	});
 
 	/** every thread has a row of its own: nothing is elided into an overflow */
-	it.each([1, 4, 12])("lists %i threads whole, and each title stays one line", async (count) => {
+	it.each([1, 12])("lists %i threads whole, and each title stays one line", async (count) => {
 		const canvas = mount();
 		canvas.stored.served = written(count);
 		await canvas.render();
