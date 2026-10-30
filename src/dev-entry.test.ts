@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { daemonUrl, readDaemonState, stopDaemon } from "./daemon/lifecycle";
 import { makeTempDir } from "./test-helpers";
 
@@ -21,8 +22,15 @@ afterEach(async () => {
 });
 
 describe("checkout development entry", () => {
+	// one copy for both cases, so tsx compiles the CLI once: its cache is keyed on the
+	// file's path, and a cold compile of the whole CLI is most of what a case costs
+	let checkout: string;
+	beforeAll(() => {
+		checkout = copyCheckout(mkdtempSync(join(tmpdir(), "spool-test-")));
+	});
+	afterAll(() => rmSync(checkout, { recursive: true, force: true }));
+
 	it("says it is the checkout CLI on the bare skill only, not on topics", { timeout: 60_000 }, async () => {
-		const checkout = copyCheckout();
 		const env = { ...process.env, HOME: makeTempDir(), SPOOL_DIR: join(makeTempDir(), ".spool"), SPOOL_PORT: "0" };
 		const skill = async (...topics: string[]) => {
 			const child = spawn(
@@ -50,7 +58,6 @@ describe("checkout development entry", () => {
 	// a hang guard, not a budget: three tsx starts and two whole Vite builds take
 	// a minute on a starved machine
 	it("serves rebuilt UI assets and stands down without leaving another watcher", { timeout: 180_000 }, async () => {
-		const checkout = copyCheckout();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const home = makeTempDir();
 		daemonSpoolDirs.push(spoolDir);
@@ -87,8 +94,7 @@ describe("checkout development entry", () => {
 	});
 });
 
-function copyCheckout(): string {
-	const checkout = makeTempDir();
+function copyCheckout(checkout: string): string {
 	cpSync(join(repoRoot, "src"), join(checkout, "src"), { recursive: true });
 	// the entry mirrors the captures into the canvas before it serves, so a
 	// checkout without them is not one
@@ -128,8 +134,10 @@ async function servedAsset(url: string): Promise<string> {
 	return (await fetch(new URL(path, url))).text();
 }
 
+/** polls until the probe answers; the case's own timeout is the hang guard, not a count of tries */
 async function until<T>(probe: () => T | Promise<T | undefined> | undefined): Promise<T> {
-	for (let attempt = 0; attempt < 200; attempt++) {
+	const deadline = Date.now() + 170_000;
+	while (Date.now() < deadline) {
 		const value = await probe();
 		if (value !== undefined) return value;
 		await new Promise((resolve) => setTimeout(resolve, 50));
