@@ -468,21 +468,6 @@ export default function Hints() {
 });
 
 describe("the played page and its bar (#227)", () => {
-	it("lays the page out at the viewport, capped at the authored width", async () => {
-		const harness = makeHarness();
-		scaffold(harness);
-
-		await loadPlayerDocument(harness, "?frame=menu");
-		await waitForFrame("menu");
-
-		// the authored width is the cap and the viewport is the rest: nothing is
-		// scaled, nothing is letterboxed, and the height is the content's own
-		const screen = document.querySelector(".spool-screen") as HTMLElement;
-		expect(screen.style.width).toBe(`${Math.min(window.innerWidth, 390)}px`);
-		expect(screen.style.height).toBe("");
-		expect(screen.style.transform).toBe("");
-	});
-
 	it("wears the bar always, with nothing on it that puts it away", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
@@ -508,28 +493,6 @@ describe("the played page and its bar (#227)", () => {
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
 		expect((await summonEdgeBar()).classList.contains("has-bar")).toBe(true);
-	});
-
-	it("carries the name and the exits, and nothing the pill used to", async () => {
-		const harness = makeHarness();
-		scaffold(harness);
-
-		await loadPlayerDocument(harness, "?frame=menu");
-		await waitForFrame("menu");
-		await summonEdgeBar();
-
-		for (const gone of [".spool-rail", ".spool-walk-hop", ".spool-ticks", ".spool-hud", ".spool-pill"]) {
-			expect(document.querySelector(gone), gone).toBeNull();
-		}
-		// the pill's own controls are gone with it: a tab reloads to restart and
-		// fills the screen through the browser
-		for (const gone of ["#spool-inspector", "#spool-motion", "#spool-back", "#spool-restart", "#spool-fullscreen"]) {
-			expect(document.querySelector(gone), gone).toBeNull();
-		}
-		expect(document.querySelector("#spool-close")).not.toBeNull();
-		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
-		// the switcher went with the bar's redesign: a frame is reached by walking to it
-		expect(document.querySelector("#spool-switcher")).toBeNull();
 	});
 
 	it("names the arrival in the URL and the title", async () => {

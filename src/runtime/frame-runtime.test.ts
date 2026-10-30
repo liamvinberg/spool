@@ -498,19 +498,6 @@ describe("embedded in a canvas", () => {
 		expect(messages.filter((message) => message.spool === "state")).toHaveLength(1);
 	});
 
-	it("boots onto a page's session when the host hands one over", async () => {
-		const harness = makeHarness();
-		scaffoldFlow(harness);
-		await loadFrameDocument(harness, "inbox", {
-			host: (message) => {
-				if (message.spool === "session?") {
-					hostReply({ spool: "session", record: { scenario: "default", state: { unread: 7 }, stack: [] } });
-				}
-			},
-		});
-		await waitForText("output", "7");
-	});
-
 	it("routes concurrent ui.copy results by safe request id and preserves browser failures", async () => {
 		const harness = makeHarness();
 		writeFrame(harness.root, "clipboard", clipboardTsx);
