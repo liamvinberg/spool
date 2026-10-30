@@ -74,6 +74,9 @@ export default defineConfig({
 	test: {
 		include: ["src/**/*.test.ts", ".github/scripts/*.test.ts", ".agents/skills/*/scripts/*.test.ts"],
 		setupFiles: ["./src/test-setup.ts"],
+		// happy-dom 21 stopped loading iframes and stylesheets by default (an SSRF guard for
+		// untrusted HTML). The canvas tests mount their own frames in iframes, so they load.
+		environmentOptions: { happyDOM: { settings: { enableIframePageLoading: true, enableCSSFileLoading: true } } },
 		globalSetup: ["./src/test-global-setup.ts"],
 		// The checked-out revision owns this selection, including release recovery.
 		...(process.env.SPOOL_TEST_DARWIN === "1" ? { testNamePattern: "macOS only" } : {}),
