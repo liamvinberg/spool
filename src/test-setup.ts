@@ -9,6 +9,17 @@ if (testPath.includes("/src/ui/")) {
 	Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 }
 
+// The Web Animations spec marks the finished promise a cancel rejects as handled;
+// happy-dom 21 rejects it bare, so a motion animation stopped mid-test would
+// surface as an unhandled rejection where a browser stays quiet.
+if (typeof Animation !== "undefined") {
+	const cancel = Animation.prototype.cancel;
+	Animation.prototype.cancel = function (this: Animation) {
+		this.finished.catch(() => {});
+		cancel.call(this);
+	};
+}
+
 // A file's shared Chromium (test-browser.ts) closes with the file, through
 // Playwright's own 30s graceful-shutdown window.
 afterAll(closeTestBrowser, 35_000);
