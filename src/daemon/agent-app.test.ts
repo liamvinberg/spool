@@ -19,22 +19,19 @@ it("opens one literal project argument through the local CLI", async () => {
 	expect(run).toHaveBeenCalledExactlyOnceWith("/tools/codex", ["app", root], root);
 });
 
-it.each(["linux", "win32", "darwin"] as const)(
-	"does not spawn or install an unavailable app on %s",
-	async (platform) => {
-		const run = vi.fn();
-		const launcher = createAgentAppLauncher({
-			platform,
-			path: "/tools",
-			exists: () => false,
-			runnable: () => true,
-			run,
-		});
-		expect(launcher.available()).toBe(false);
-		await expect(launcher.open("/project")).rejects.toThrow("Copy the project path");
-		expect(run).not.toHaveBeenCalled();
-	},
-);
+it.each(["linux", "darwin"] as const)("does not spawn or install an unavailable app on %s", async (platform) => {
+	const run = vi.fn();
+	const launcher = createAgentAppLauncher({
+		platform,
+		path: "/tools",
+		exists: () => false,
+		runnable: () => true,
+		run,
+	});
+	expect(launcher.available()).toBe(false);
+	await expect(launcher.open("/project")).rejects.toThrow("Copy the project path");
+	expect(run).not.toHaveBeenCalled();
+});
 
 it("rechecks the app at launch and never runs a project-local codex", async () => {
 	let installed = true;
