@@ -1300,7 +1300,10 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	 */
 	async function stopClocks(tab: Tab): Promise<void> {
 		const now = Date.now();
-		await tab.page.clock.install({ time: now });
+		// installed a minute back, as the installed clock runs on until it is
+		// paused and a pause can only go forward: on a busy machine the install
+		// alone can outlast the time it was given. Nothing has a timer yet to fire
+		await tab.page.clock.install({ time: now - 60_000 });
 		await tab.page.clock.pauseAt(now);
 		await tab.cdp.send("Animation.enable");
 		await tab.cdp.send("Animation.setPlaybackRate", { playbackRate: 0 });
