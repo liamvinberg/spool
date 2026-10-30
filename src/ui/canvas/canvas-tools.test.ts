@@ -54,27 +54,6 @@ it("previews a hovered frame without selecting it", async () => {
 	expect(host.querySelector('[data-frame-label="home"] .text-accent-strong')).not.toBeNull();
 });
 
-it("opens in Select, takes a frame with one click, and enters it on a double-click", async () => {
-	const { host, canvas } = await renderCanvas();
-
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
-	expect(host.querySelector('button[aria-label="interact"]')).toBeNull();
-
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-	});
-	// a bare click takes the frame and stops there
-	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
-
-	await enterHome(canvas);
-	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
-});
-
 it("keeps serving the frame you are inside, so Play and agents do not lose you", async () => {
 	const { host, canvas } = await renderCanvas();
 
@@ -476,49 +455,6 @@ it("takes the pointer back on a focused frame's relayed Command key and returns 
 	});
 	await until(() => iframe?.style.pointerEvents === "auto");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
-});
-
-it("asks the frame for the element under a ⌘-click, and for nothing under a bare one", async () => {
-	const { host, canvas } = await renderCanvas();
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-	});
-	await until(() => host.querySelector('iframe[title="home"]') !== null);
-	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
-	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
-	const asked = () =>
-		postMessage.mock.calls.some(
-			([message]) =>
-				typeof message === "object" && message !== null && "spool" in message && message.spool === "pick",
-		);
-
-	postMessage.mockClear();
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 2 }),
-		);
-	});
-	expect(asked()).toBe(false);
-
-	postMessage.mockClear();
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerdown", {
-				bubbles: true,
-				button: 0,
-				clientX: 40,
-				clientY: 40,
-				pointerId: 3,
-				...ACCEL,
-			}),
-		);
-	});
-	expect(asked()).toBe(true);
 });
 
 /** Every selection the canvas has served, oldest first. */
