@@ -685,6 +685,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 	/** The bytes of a regular file at a design-relative path, or nothing for a missing file, a folder or a link. */
 	const readLocal = (path: string): Buffer | undefined =>
 		statOf(path)?.isFile() === true ? readFileSync(join(designDir, ...path.split("/"))) : undefined;
+	const localHash = (path: string): string | null => {
+		const bytes = readLocal(path);
+		return bytes === undefined ? null : digest(bytes);
+	};
 
 	const stays = (path: string) => whyStays(designDir, path);
 
@@ -1289,7 +1293,10 @@ function localCopy(options: LocalCopyOptions, live: boolean): LocalCopy {
 		if (message.type === "refused" && message.reason === "rate_limited" && live)
 			waitForRoom(sent.path, message.retryAfter);
 		else if (message.type === "refused") refused(sent.path, message.reason, message.retryAfter);
-		if (dirty.delete(sent.path)) check(sent.path);
+		// a path that changed again while its save was out goes up again, but not the very bytes just set aside: the
+		// watcher can name the file after its save left, and sending those again would only be set aside again
+		if (dirty.delete(sent.path) && !(message.type === "set-aside" && localHash(sent.path) === sent.hash))
+			check(sent.path);
 		const restored = restoreWaits.get(message.ref);
 		restoreWaits.delete(message.ref);
 		restored?.answer(message);
