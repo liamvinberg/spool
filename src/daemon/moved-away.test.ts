@@ -88,7 +88,7 @@ async function cardUntil(condition: () => Promise<boolean>): Promise<void> {
 }
 
 describe("design/ moved away", () => {
-	it("says on the cover where design/ went and who moved it, from git, to someone outside the team", {
+	it("says on the cover where design/ went and who moved it, from git, to someone outside the team, until it is removed", {
 		timeout: 30_000,
 	}, async () => {
 		const cloud = fakeTeam();
@@ -131,6 +131,16 @@ describe("design/ moved away", () => {
 		expect(asked.length).toBeGreaterThan(0);
 		for (const url of asked)
 			expect(new URL(url).pathname).toMatch(/^\/api\/(me|teams|teams\/devosurf\/projects\/kaffe(\/covers)?)$/u);
+
+		// removed, it leaves Home, and the frame never committed stays on disk
+		const forgot = await daemon.controlRequest("/api/projects/forget", {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ root: clone.root }),
+		});
+		expect(forgot.ok).toBe(true);
+		expect(await cardOf(daemon, clone.root)).toBeUndefined();
+		expect(existsSync(join(clone.root, "design/frames/sketch/frame.tsx"))).toBe(true);
 	});
 
 	it("fills the copy in by itself once the account is made an editor, sending the frames never committed", {
@@ -170,23 +180,5 @@ describe("design/ moved away", () => {
 		await cardUntil(async () => (await cardOf(viewing, viewer.root))?.moved?.standing === "viewer");
 		await cardUntil(async () => (await cardOf(out, signedOut.root))?.moved?.standing === "signed-out");
 		expect((await cardOf(out, signedOut.root))?.moved?.commit?.author).toBe("Ada Lind");
-	});
-
-	it("hides the project from Home when it is removed", { timeout: 30_000 }, async () => {
-		const cloud = fakeTeam();
-		const ben = cloud.machine("ben", null);
-		const { theirs } = await adaMoves(cloud, (remote) => JSON.stringify(bensClone(remote)));
-		const clone = JSON.parse(theirs) as { root: string; state: string };
-		const daemon = makeApp(clone.state, { cloud: ben.cloud, teamNotice: () => {} });
-		git(clone.root, "pull", "--quiet", "--ff-only", "origin", "main");
-		await cardUntil(async () => (await cardOf(daemon, clone.root))?.moved !== undefined);
-		const forgot = await daemon.controlRequest("/api/projects/forget", {
-			method: "POST",
-			headers: json,
-			body: JSON.stringify({ root: clone.root }),
-		});
-		expect(forgot.ok).toBe(true);
-		expect(await cardOf(daemon, clone.root)).toBeUndefined();
-		expect(existsSync(join(clone.root, "design/frames/sketch/frame.tsx"))).toBe(true);
 	});
 });

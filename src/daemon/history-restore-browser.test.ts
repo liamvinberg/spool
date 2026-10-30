@@ -90,7 +90,7 @@ async function projectHistory(url: string) {
 	return { page, errors, pane, rows };
 }
 
-it("shows a version on the canvas, restores one of its two frames, and undoes it from ⌘Z and the toast", {
+it("steps through versions with the keys, shows one on the canvas, restores one of its two frames, and undoes it from ⌘Z and the toast", {
 	timeout: 180_000,
 }, async () => {
 	const { url, cloud, text } = await teamCanvas();
@@ -98,6 +98,22 @@ it("shows a version on the canvas, restores one of its two frames, and undoes it
 	await expect.poll(() => rows.count(), { timeout: 15_000 }).toBe(2);
 	// Current version is the top row, picked while no version shows
 	const current = pane.locator("[data-history-now]");
+	expect(await current.getAttribute("aria-pressed")).toBe("true");
+	const bar = page.locator("[data-version-bar]");
+
+	// ↓ from Current version shows the newest: Ben's, which is how everything stands now
+	await current.focus();
+	await page.keyboard.press("ArrowDown");
+	await expect.poll(() => rows.nth(0).locator("button").first().getAttribute("aria-pressed")).toBe("true");
+	const same = bar.getByRole("button", { name: "Same as now" });
+	await expect.poll(() => same.isDisabled(), { timeout: 15_000 }).toBe(true);
+	await page.keyboard.press("ArrowDown");
+	await expect.poll(() => rows.nth(1).locator("button").first().getAttribute("aria-pressed")).toBe("true");
+	await expect.poll(() => bar.textContent(), { timeout: 15_000 }).toContain("Restore this version…");
+	await page.keyboard.press("ArrowUp");
+	await expect.poll(() => rows.nth(0).locator("button").first().getAttribute("aria-pressed")).toBe("true");
+	await page.keyboard.press("Escape");
+	await expect.poll(() => page.locator("[data-version]").count()).toBe(0);
 	expect(await current.getAttribute("aria-pressed")).toBe("true");
 
 	// Ana's version: the page as she left it, both frames added in it and marked so
@@ -114,7 +130,6 @@ it("shows a version on the canvas, restores one of its two frames, and undoes it
 	await expect
 		.poll(() => anas.locator("[data-history-touched]").textContent())
 		.toMatch(/ · cart added · menu added$/u);
-	const bar = page.locator("[data-version-bar]");
 	expect(await bar.textContent()).toContain("2 of 2");
 
 	// its restore lists both frames that differ, ticked, and the shared button, off; unticking menu restores cart alone
@@ -167,30 +182,6 @@ it("shows a version on the canvas, restores one of its two frames, and undoes it
 	await until(() => text("frames/menu/frame.tsx") === using("Ben's menu"), 15_000);
 	await until(() => text("frames/cart/frame.tsx") === using("Ben's cart"), 15_000);
 	expect(errors).toEqual([]);
-});
-
-it("steps through versions with the keys, goes back to now with Esc, and says Same as now when nothing differs", {
-	timeout: 180_000,
-}, async () => {
-	const { url } = await teamCanvas();
-	const { page, pane, rows } = await projectHistory(url);
-	await expect.poll(() => rows.count(), { timeout: 15_000 }).toBe(2);
-	const current = pane.locator("[data-history-now]");
-	const bar = page.locator("[data-version-bar]");
-	// ↓ from Current version shows the newest: Ben's, which is how everything stands now
-	await current.focus();
-	await page.keyboard.press("ArrowDown");
-	await expect.poll(() => rows.nth(0).locator("button").first().getAttribute("aria-pressed")).toBe("true");
-	const same = bar.getByRole("button", { name: "Same as now" });
-	await expect.poll(() => same.isDisabled(), { timeout: 15_000 }).toBe(true);
-	await page.keyboard.press("ArrowDown");
-	await expect.poll(() => rows.nth(1).locator("button").first().getAttribute("aria-pressed")).toBe("true");
-	await expect.poll(() => bar.textContent(), { timeout: 15_000 }).toContain("Restore this version…");
-	await page.keyboard.press("ArrowUp");
-	await expect.poll(() => rows.nth(0).locator("button").first().getAttribute("aria-pressed")).toBe("true");
-	await page.keyboard.press("Escape");
-	await expect.poll(() => page.locator("[data-version]").count()).toBe(0);
-	expect(await current.getAttribute("aria-pressed")).toBe("true");
 });
 
 it("brings back a frame a version deleted, as it stood just before", { timeout: 180_000 }, async () => {
