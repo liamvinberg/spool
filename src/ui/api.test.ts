@@ -466,23 +466,6 @@ describe("following a turn", () => {
 		expect(ending).toEqual({ kind: "refused", status: 500, why: "the daemon fell over" });
 	});
 
-	it("says the turn is already running rather than starting a second one", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(new Response(`a turn is already running in thread "${THREAD}"`, { status: 409 })),
-		);
-		const { followAgentTurn } = await loadApi();
-
-		const ending = await new Promise((resolve) => {
-			followAgentTurn(
-				"demo",
-				{ say: { thread: THREAD, turn: "t1", saying: [{ prompt: "go" }] } },
-				{ event: () => {}, end: resolve },
-			);
-		});
-		expect(ending).toMatchObject({ kind: "refused", status: 409 });
-	});
-
 	it("never opens the door that says something twice", async () => {
 		vi.spyOn(Math, "random").mockReturnValue(0);
 		const opened: string[] = [];

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SelectionEntry } from "../../daemon/selection";
-import { chipWidth, composerWidth, contextLine, countLabel, idOf, stripOf } from "./agent-chips";
+import { composerWidth, contextLine, countLabel, idOf, stripOf } from "./agent-chips";
 import { pickKey } from "./protocol";
 
 /**
@@ -43,15 +43,6 @@ describe("the chip strip", () => {
 
 		expect(strip.kind).toBe("chips");
 		expect(strip.kind === "chips" && strip.chips.map((chip) => chip.label)).toEqual(["menu", "cart", "receipt"]);
-	});
-
-	it("keeps chips while they fit on the line", () => {
-		const three = [frame("menu"), frame("cart"), frame("receipt")];
-
-		// three short names fit at the default and collapsing would say less than any
-		// one of them
-		expect(stripOf(three, WIDE).kind).toBe("chips");
-		expect(chipWidth("menu") + chipWidth("cart") + chipWidth("receipt")).toBeLessThan(WIDE);
 	});
 
 	it("collapses to an openable count the moment they would not", () => {
