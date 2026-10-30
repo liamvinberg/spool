@@ -47,7 +47,7 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 
 		// a read of a FIFO that is never written blocks forever, so any finite timeout
 		// tells the refusal from the hang; it takes what the describe above allows,
-		// since a `tsx` cold start on a saturated runner has taken more than ten seconds
+		// since a cold start on a saturated runner has taken more than ten seconds
 		const result = spool(["check", root], makeTempDir(), undefined, {}, 25_000);
 
 		expect(result.error).toBeUndefined();
