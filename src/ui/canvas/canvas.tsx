@@ -357,6 +357,8 @@ const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
 /** How long C is held before letting go of it hands back the tool it took over from, rather than keeping Comment. */
 const COMMENT_HOLD_MS = 300;
+/** How long a pin's frame has to say what is under the pin, while its composer is open. */
+const COMMENT_PICK_MS = 10_000;
 /** How long a gesture made ahead of the selection's read waits for it before it refuses (DEV-299). */
 const READ_WAIT_MS = 5000;
 /**
@@ -2159,6 +2161,7 @@ function CanvasField({
 			request: (id: number) => unknown,
 			apply: (value: T) => void,
 			onSilence?: () => void,
+			waitMs = PICK_REPLY_MS,
 		) => {
 			const target = iframes.current.get(frame)?.contentWindow;
 			if (target == null) {
@@ -2174,7 +2177,7 @@ function CanvasField({
 			target.postMessage(request(id), "*");
 			setTimeout(() => {
 				if (waiters.delete(id) && live()) onSilence?.();
-			}, PICK_REPLY_MS);
+			}, waitMs);
 		},
 		[],
 	);
@@ -4118,10 +4121,13 @@ function CanvasField({
 		store.set({ commentDraft: draft, commentOpen: null, selected: [], picked: [] });
 		setTool("select");
 		placedUnderHold();
-		beginPick(
+		// nothing stands in for a late answer here, and the draft it fills is checked to be the one still open, so
+		// a frame slow to answer on a busy machine still has its element under the pin
+		askFrame(
 			frame,
-			local,
-			(chain) => {
+			pickWaiters.current,
+			(id) => pickMessage(local.x, local.y, id, false),
+			(chain: PickedHit[]) => {
 				// the level ↑ and ↓ aimed at while the pointer rested here, or the deepest element
 				const target = placedHit(aim, frame, chain);
 				if (target === null || store.get().commentDraft !== draft) return;
@@ -4129,7 +4135,7 @@ function CanvasField({
 				store.set({ commentDraft: { ...draft, element: { selector, tag, outerHtml, source, generated } } });
 			},
 			undefined,
-			false,
+			COMMENT_PICK_MS,
 		);
 	};
 
