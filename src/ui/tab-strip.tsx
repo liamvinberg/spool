@@ -247,20 +247,25 @@ export function TabStrip({
 		const from = element.scrollLeft;
 		const step = (progress: number) => {
 			const slot = slotOf(element, focused);
-			if (slot === null) return;
+			if (slot === null) return null;
 			const target = revealing(element, slot, from);
 			if (target !== from) element.scrollLeft = from + (target - from) * progress;
+			return target;
 		};
 		if (reduced || !mounted.current) {
 			step(1);
 			return;
 		}
 		const start = performance.now();
-		// after motion has written the frame's widths, so the growing tab is read as painted
+		let last: number | null | undefined;
+		// after motion has written the frame's widths, so the growing tab is read as painted; a tab whose growth
+		// began a late frame after this (a busy machine) is followed on until it holds still, so it ends in view
 		const tick = () => {
 			const progress = scale.slow <= 0 ? 1 : Math.min(1, (performance.now() - start) / scale.slow);
-			step(easing(progress));
-			if (progress === 1) stopReveal();
+			const target = step(easing(progress));
+			if (progress < 1) return;
+			if (target === last) stopReveal();
+			last = target;
 		};
 		frame.postRender(tick, true);
 		reveal.current = { stop: () => cancelFrame(tick) };

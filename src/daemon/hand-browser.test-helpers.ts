@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
+import type { Page, Request } from "playwright-core";
 import { expect } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, fixtureAgentExecutor, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
@@ -59,23 +59,39 @@ export async function handCanvas(
 			const response = await fetch(`${project.url}/api/p/${project.name}/selection`, {
 				headers: { "X-Spool-Control": project.controlToken },
 			});
-			const body = (await response.json()) as { selection?: { selector?: string; name?: string }[] };
+			const body = (await response.json()) as { selection?: { kind?: string; selector?: string; name?: string }[] };
 			return body.selection?.length === 1 ? body.selection[0] : undefined;
 		};
-		const before = await held();
-		await target.click({ position: at, modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+		let before = await held();
 		// the selection is real once the daemon holds it, and it is this one
 		// rather than the last: the same tag as the element clicked, or a
 		// different element than was held before the click
-		await expect
-			.poll(
-				async () => {
-					const now = await held();
-					return now !== undefined && (now.name === tag || now.selector !== before?.selector);
-				},
-				{ timeout: 15_000 },
-			)
-			.toBe(true);
+		/** the canvas told the daemon its selection since the click */
+		let told = false;
+		const put = (request: Request) => {
+			if (request.method() === "PUT" && request.url().endsWith("/selection")) told = true;
+		};
+		const outcome = async () => {
+			const now = await held();
+			// a frame held before the click says nothing about this one until the canvas says it again
+			if (now?.kind === "frame") return before?.kind === "frame" && !told ? "waiting" : "frame";
+			return now !== undefined && (now.name === tag || now.selector !== before?.selector) ? "element" : "waiting";
+		};
+		page.on("requestfinished", put);
+		for (let press = 1; ; press += 1) {
+			told = false;
+			await target.click({ position: at, modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+			await expect.poll(outcome, { timeout: 15_000 }).not.toBe("waiting");
+			if ((await outcome()) === "element") break;
+			// The frame went unanswered and was held whole, which is the canvas's
+			// answer to a document between loads (a write's reload) that cannot
+			// say what is under the pointer yet. A person clicks again, once the
+			// document stands.
+			expect(press, `${selector} held its frame, not itself`).toBeLessThan(3);
+			await expect.poll(() => target.count(), { timeout: 15_000 }).toBeGreaterThan(0);
+			before = await held();
+		}
+		page.off("requestfinished", put);
 		return { target, box, at: { x: box.x + at.x, y: box.y + at.y } };
 	};
 	/** ⌘Z or ⇧⌘Z out on the canvas, which is where the one stack listens. */
@@ -88,24 +104,37 @@ export async function handCanvas(
 /** Every request the canvas sends the daemon's API from now on, until asked. */
 export function apiRequests(page: Page, project: string): { taken(): string[]; quiet(): Promise<void>; stop(): void } {
 	const seen: string[] = [];
-	const listener = (request: { url(): string; method(): string }) => {
-		const url = request.url();
-		if (url.includes(`/api/p/${project}/`)) seen.push(`${request.method()} ${new URL(url).pathname}`);
+	/** sent and not yet answered: a read still on its way is not quiet, however long ago it left */
+	const pending = new Set<Request>();
+	const ours = (request: Request) => request.url().includes(`/api/p/${project}/`);
+	const sent = (request: Request) => {
+		if (!ours(request)) return;
+		pending.add(request);
+		seen.push(`${request.method()} ${new URL(request.url()).pathname}`);
 	};
-	page.on("request", listener);
+	const done = (request: Request) => pending.delete(request);
+	page.on("request", sent);
+	page.on("requestfinished", done);
+	page.on("requestfailed", done);
 	const taken = () => seen.splice(0);
 	return {
 		taken,
-		/** resolves once a whole window has passed with nothing sent, and takes what came before it */
+		/** resolves once a whole window has passed with nothing sent or on its way, and takes what came before it */
 		quiet: async () => {
 			for (let tries = 0; tries < 40; tries += 1) {
 				taken();
 				await new Promise((resolve) => setTimeout(resolve, 250));
-				if (seen.length === 0) return;
+				if (seen.length === 0 && pending.size === 0) return;
 			}
-			throw new Error(`the canvas never went quiet: ${seen.join(", ")}`);
+			throw new Error(
+				`the canvas never went quiet: ${[...seen, ...[...pending].map((request) => request.url())].join(", ")}`,
+			);
 		},
-		stop: () => page.off("request", listener),
+		stop: () => {
+			page.off("request", sent);
+			page.off("requestfinished", done);
+			page.off("requestfailed", done);
+		},
 	};
 }
 

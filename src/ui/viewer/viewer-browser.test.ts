@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page, WebSocketRoute } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { PresenceState } from "../../team-sync-protocol";
 import { testBrowser } from "../../test-browser";
+import { builtViewer } from "../../test-helpers";
 import type { PictureReport } from "../canvas/picture-layer";
 import { buildEntry } from "./build-entry";
 import type { ViewerProject } from "./source";
@@ -111,17 +111,9 @@ let built: string;
 let entry: { file: string; css: string[] };
 
 beforeAll(async () => {
-	built = mkdtempSync(join(tmpdir(), "spool-viewer-"));
-	const { build } = await import("vite");
-	await build({
-		configFile: join(process.cwd(), "vite.viewer.config.ts"),
-		logLevel: "silent",
-		build: { outDir: built, emptyOutDir: true },
-	});
+	built = await builtViewer();
 	entry = buildEntry(JSON.parse(readFileSync(join(built, "manifest.json"), "utf8")), "index.html");
 }, 120_000);
-
-afterAll(() => rmSync(built, { recursive: true, force: true }));
 
 interface Opened {
 	page: Page;

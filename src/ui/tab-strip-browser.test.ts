@@ -6,6 +6,18 @@ import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi } from "../test-helpers";
 
+/** The app's compiled stylesheets, read once for the file. */
+let stylesheets: Promise<string[]> | undefined;
+function uiStyles(): Promise<string[]> {
+	stylesheets ??= builtUi().then((dir) => {
+		const assets = join(dir, "assets");
+		return readdirSync(assets)
+			.filter((name) => name.endsWith(".css"))
+			.map((file) => readFileSync(join(assets, file), "utf8"));
+	});
+	return stylesheets;
+}
+
 it("focuses projects across the tab surface while keeping close and drag separate", async () => {
 	const bundle = await build({
 		stdin: {
@@ -51,10 +63,7 @@ it("focuses projects across the tab surface while keeping close and drag separat
 	</style><div id="root"></div>`);
 	// The tabs use the same compiled utilities as the app. esbuild alone only
 	// bundles JavaScript and cannot supply their layout or hit areas.
-	const assets = join(await builtUi(), "assets");
-	for (const file of readdirSync(assets).filter((name) => name.endsWith(".css"))) {
-		await page.addStyleTag({ content: readFileSync(join(assets, file), "utf8") });
-	}
+	for (const content of await uiStyles()) await page.addStyleTag({ content });
 	for (const file of bundle.outputFiles) {
 		if (file.path.endsWith(".css")) await page.addStyleTag({ content: file.text });
 		else await page.addScriptTag({ content: file.text });
@@ -115,14 +124,20 @@ interface Sample {
  * would, and closing the focused tab hands focus to its right-hand neighbour,
  * or its left one when it was last.
  */
-async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", "gamma-delta", "epsilon"] } = {}) {
-	const bundle = await build({
+/**
+ * The strip's page script, bundled once for the file: each page says its
+ * tabs and width in `window.stripSetup` before the script runs.
+ */
+let stripBundle: Promise<string> | undefined;
+function stripScript(): Promise<string> {
+	stripBundle ??= build({
 		stdin: {
 			contents: `
 				import { createElement, useState } from "react";
 				import { createRoot } from "react-dom/client";
 				import { TabStrip } from "./src/ui/tab-strip";
-				const initial = ${JSON.stringify(names)}.map((name) => ({ root: "/w/" + name, name }));
+				const { names, width } = window.stripSetup;
+				const initial = names.map((name) => ({ root: "/w/" + name, name }));
 				function App() {
 					const [tabs, setTabs] = useState(initial);
 					const [focused, setFocused] = useState(initial[0].root);
@@ -145,7 +160,7 @@ async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", 
 						focus: setFocused,
 						roots: () => [...document.querySelectorAll("[data-tab]")].map((tab) => tab.dataset.tab),
 					};
-					return createElement("header", { style: { display: "flex", height: "44px", width: "${width}px" } },
+					return createElement("header", { style: { display: "flex", height: "44px", width: width + "px" } },
 						createElement("div", { style: { display: "flex", minWidth: 0, flex: "1 1 auto", height: "100%" } },
 							createElement(TabStrip, {
 								tabs,
@@ -167,15 +182,17 @@ async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", 
 		format: "iife",
 		jsx: "automatic",
 		define: { "process.env.NODE_ENV": '"production"' },
-	});
+	}).then((bundle) => bundle.outputFiles.map((file) => file.text).join("\n"));
+	return stripBundle;
+}
+
+async function strip({ width = 1200, reduced = false, names = ["alpha", "beta", "gamma-delta", "epsilon"] } = {}) {
 	const browser = await testBrowser();
 	const page = await browser.newPage({ reducedMotion: reduced ? "reduce" : "no-preference" });
 	await page.setContent(`<style>body { margin: 0; }</style><div id="root"></div>`);
-	const assets = join(await builtUi(), "assets");
-	for (const file of readdirSync(assets).filter((name) => name.endsWith(".css"))) {
-		await page.addStyleTag({ content: readFileSync(join(assets, file), "utf8") });
-	}
-	for (const file of bundle.outputFiles) await page.addScriptTag({ content: file.text });
+	for (const content of await uiStyles()) await page.addStyleTag({ content });
+	await page.evaluate((setup) => Reflect.set(window, "stripSetup", setup), { names, width });
+	await page.addScriptTag({ content: await stripScript() });
 	await page.locator("[data-tab]").first().waitFor();
 	await page.evaluate(() => document.fonts.ready);
 	await atRest(page);
