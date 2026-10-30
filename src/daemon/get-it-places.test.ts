@@ -142,26 +142,9 @@ describe("the scan of the code folders", () => {
 });
 
 describe("Get it's places", () => {
-	it("offers a clone found in the code folders, registering nothing, with what is there", {
+	it("offers a clone found in the code folders and a folder picked before, the linked checkout first, registering nothing", {
 		timeout: 30_000,
 	}, async () => {
-		const cloud = fakeTeam();
-		const ana = await anaStarts(cloud);
-		const ben = bensMac(cloud);
-		mkdirSync(join(ben.home, "code"));
-		git(join(ben.home, "code"), "clone", "--quiet", ana.root, "app");
-		const clone = join(ben.home, "code", "app");
-		git(clone, "remote", "set-url", "origin", "https://github.com/devosurf/app.git");
-
-		const places = await ben.places();
-		expect(places.checkouts).toEqual([
-			{ path: clone, root: clone, linked: true, survey: { kind: "empty" }, common: 0, usedAt: 0 },
-		]);
-		expect(places.mac.survey).toEqual({ kind: "empty" });
-		expect(readRegistry(ben.state).projects).toEqual([]);
-	});
-
-	it("offers a folder picked before at the next Get it, a linked checkout first", { timeout: 30_000 }, async () => {
 		const cloud = fakeTeam();
 		const ana = await anaStarts(cloud);
 		const ben = bensMac(cloud);
@@ -182,6 +165,16 @@ describe("Get it's places", () => {
 			{ path: picked, linked: false, kind: "other" },
 		]);
 		expect(places.checkouts[1]?.survey.why).toBe(`Already holds another team project, ${TEAM_ORIGIN}/devosurf/other`);
+		expect(places.checkouts[0]).toEqual({
+			path: clone,
+			root: clone,
+			linked: true,
+			survey: { kind: "empty" },
+			common: 0,
+			usedAt: 0,
+		});
+		expect(places.mac.survey).toEqual({ kind: "empty" });
+		expect(readRegistry(ben.state).projects).toEqual([]);
 	});
 
 	it("says what a design/ spool never synced holds, and takes one identical to the team's with no question", {
