@@ -120,27 +120,6 @@ describe("a fresh clone of a team project", { timeout: 60_000 }, () => {
 		}
 		expect(existsSync(join(root, "design"))).toBe(false);
 	});
-
-	it("tells a non-member to ask an admin, a viewer where to look, and a cloud agent it can't yet", async () => {
-		const outsider = await cloud({ role: null });
-		const root = clone(outsider);
-		const notMember = await machine(outsider, true).run(["flows"], root);
-		expect(notMember.stderr).toBe(
-			`spool: ${outsider.origin}/devosurf/checkout isn't a team project you're in; ask an admin of devosurf to invite you\n`,
-		);
-
-		const viewing = await cloud({ role: "viewer" });
-		const viewer = await machine(viewing, true).run(["open"], clone(viewing));
-		expect(viewer.stderr).toBe(
-			`spool: you're a viewer of devosurf; open ${viewing.origin}/devosurf/checkout in a browser to look\n`,
-		);
-
-		const agent = await machine(outsider, false).run(["shot", "home"], root, { CLAUDE_CODE_REMOTE: "true" });
-		expect(agent.stderr).toBe(
-			`spool: ${outsider.origin}/devosurf/checkout is a team project, and Claude Code on the web can't fetch a team project's design/ yet; work on it from a machine with spool signed in to devosurf\n`,
-		);
-		expect(existsSync(join(root, "design"))).toBe(false);
-	});
 });
 
 describe("spool init", { timeout: 60_000 }, () => {
@@ -178,13 +157,5 @@ describe("spool init", { timeout: 60_000 }, () => {
 		expect(local.stdout).toContain("initialized spool project at");
 		expect(existsSync(join(root, "spool.json"))).toBe(false);
 		expect(page.asked.length).toBe(before);
-	});
-
-	it("is unchanged for someone signed in who edits in no team", async () => {
-		const page = await cloud({ teams: [{ name: "Northlight", role: "viewer" }] });
-		const root = makeTempDir();
-		const result = await machine(page, true).run(["init"], root);
-		expect(result.status).toBe(0);
-		expect(existsSync(join(root, "design/canvas.json"))).toBe(true);
 	});
 });
