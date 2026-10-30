@@ -449,7 +449,7 @@ it("photographs in a new browser the frames that were in one that died, and blam
 	}, 20);
 	onTestFinished(() => clearInterval(watch));
 	armed = true;
-	await project.projection();
+	await readUntilSat(project, () => !armed);
 
 	await expect.poll(() => project.coverOf("victim"), { timeout: 45_000 }).toBeDefined();
 	expect(armed).toBe(false);
