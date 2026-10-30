@@ -18,6 +18,9 @@ import { type AgentDeck, type AgentTurn, useAgentThreads } from "./agent-stream"
  */
 
 function mount(stored: readonly ServedThread[] = []) {
+	// the hook's clock, its save throttle and the reconnect backoff all run on these, so
+	// a test walks them forward rather than waiting them out (#234, #370)
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
 	const seen: AgentDeck[] = [];
 	const encoder = new TextEncoder();
 	const asked: string[] = [];
@@ -108,6 +111,7 @@ function mount(stored: readonly ServedThread[] = []) {
 		act(() => root.unmount());
 		host.remove();
 		vi.unstubAllGlobals();
+		vi.useRealTimers();
 	});
 
 	function Probe() {
@@ -155,7 +159,7 @@ function mount(stored: readonly ServedThread[] = []) {
 
 async function settle(ms: number) {
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, ms));
+		await vi.advanceTimersByTimeAsync(ms);
 	});
 }
 
