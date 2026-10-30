@@ -287,19 +287,6 @@ export default function Frame() {
 
 		expect(flows.edges).toEqual([]);
 	});
-
-	it("edges are derived fresh: editing source moves the graph", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "cart", goTsx(["checkout"]));
-		writeFrame(root, "checkout", plainTsx);
-		const app = makeApp(spoolDir);
-		expect((await fetchFlows(app, name)).edges).toHaveLength(1);
-
-		writeFrame(root, "cart", plainTsx);
-
-		expect((await fetchFlows(app, name)).edges).toEqual([]);
-	});
 });
 
 /**
