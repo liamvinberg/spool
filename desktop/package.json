@@ -16,12 +16,12 @@
 	},
 	"devDependencies": {
 		"@types/node": "^22.20.1",
-		"app-builder-lib": "26.15.3",
-		"electron": "43.4.1",
-		"electron-builder": "26.15.3",
+		"app-builder-lib": "26.18.0",
+		"electron": "43.8.4",
+		"electron-builder": "26.18.0",
 		"typescript": "7.0.2"
 	},
 	"dependencies": {
-		"electron-updater": "^6.8.9"
+		"electron-updater": "^6.8.11"
 	}
 }
