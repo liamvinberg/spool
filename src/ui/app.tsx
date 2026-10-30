@@ -487,19 +487,6 @@ export function App() {
 		[focusProject],
 	);
 
-	// a team project handed over from its link at spool.page: this Mac's local copy opens, and with none here
-	// Home shows the team it is in; a team handed over alone, from its setup list, is shown on Home
-	useEffect(() => {
-		if (handed === null || !booted || !projectsLoaded) return;
-		setHanded(null);
-		const copy =
-			handed.project === null || handed.export
-				? undefined
-				: projects.find((project) => project.team?.team === handed.team && project.team.project === handed.project);
-		if (copy !== undefined) openTab(copy);
-		else window.history.replaceState(null, "", homePath.current);
-	}, [handed, booted, projectsLoaded, projects, openTab]);
-
 	// back and forward: to a tab's address, that tab; to one of Home's places, Home, which goes there itself
 	useEffect(() => {
 		const moved = () => {
@@ -783,6 +770,21 @@ export function App() {
 		exportAsked,
 	);
 	homePath.current = teamHome.path;
+
+	// a team project handed over from its link at spool.page: this Mac's local copy opens, and with none here
+	// Home shows the team it is in; a team handed over alone, from its setup list, is shown on Home. Declared after
+	// Home's, so a tab opened here has the last word on the address when Home settles its own in the same commit.
+	useEffect(() => {
+		if (handed === null || !booted || !projectsLoaded) return;
+		setHanded(null);
+		const copy =
+			handed.project === null || handed.export
+				? undefined
+				: projects.find((project) => project.team?.team === handed.team && project.team.project === handed.project);
+		if (copy !== undefined) openTab(copy);
+		else window.history.replaceState(null, "", homePath.current);
+	}, [handed, booted, projectsLoaded, projects, openTab]);
+
 	/** "Move to team…" on a project in no team, while this account edits in a team. */
 	const moveToTeam =
 		teamHome.editing.length === 0 ? undefined : (project: { root: string; name: string }) => setMoving(project);
