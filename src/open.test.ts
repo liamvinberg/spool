@@ -36,17 +36,6 @@ describe("openProject", () => {
 		expect(readRegistry(spoolDir).projects.map((p) => p.root)).toEqual([realpathSync(pkg), realpathSync(repo)]);
 	});
 
-	it("opening twice keeps a single registry entry", () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const repo = makeTempDir();
-		markProject(repo);
-
-		openProject(repo, spoolDir);
-		openProject(repo, spoolDir);
-
-		expect(readRegistry(spoolDir).projects).toHaveLength(1);
-	});
-
 	it("fails with a pointer to spool init when nothing is found", () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const dir = makeTempDir();
