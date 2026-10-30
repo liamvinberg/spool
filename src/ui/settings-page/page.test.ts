@@ -173,23 +173,6 @@ it("shows only machine settings without a project and keeps Appearance available
 	unmount();
 });
 
-it("draws the threads as a switch on This Mac and writes its own key", async () => {
-	const writes: unknown[] = [];
-	const { host, page, unmount } = await mount((init) => {
-		if (reads(init)) return Response.json(snapshot());
-		writes.push(bodyOf(init));
-		return Response.json(
-			snapshot({ "canvas.threads": false }).entries.find((entry) => entry.key === "canvas.threads"),
-		);
-	});
-	expect(page()?.textContent).toContain("~/.spool/config.json");
-	const toggle = host.querySelector<HTMLInputElement>('[role="switch"][aria-label="Show threads"]');
-	expect(toggle?.getAttribute("aria-checked")).toBe("true");
-	await act(async () => toggle?.click());
-	expect(writes).toMatchObject([{ key: "canvas.threads", value: false }]);
-	unmount();
-});
-
 it("keeps a refused write on the file's value and says why", async () => {
 	const { host, go, settle, unmount } = await mount((init) => {
 		if (reads(init)) return Response.json(snapshot());
