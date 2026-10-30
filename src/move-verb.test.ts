@@ -75,7 +75,9 @@ async function ada() {
 }
 
 describe("spool move", () => {
-	it("says what the move does and asks, and moves nothing on a no", { timeout: 30_000 }, async () => {
+	it("says what the move does and asks, moves nothing on a no, and without a terminal only on --yes", {
+		timeout: 30_000,
+	}, async () => {
 		const { cloud, root, deps, printed } = await ada();
 		const questions: string[] = [];
 		await expect(
@@ -94,6 +96,13 @@ describe("spool move", () => {
 			`spool.json changes in ${root}, in one commit on its current branch; nothing is pushed`,
 		]);
 		expect(cloud.moves).toEqual([]);
+
+		await expect(runMove({ team: "northlight" }, deps())).rejects.toThrow(
+			"nothing moved: spool move asks first. Ask the person, and run it again with --yes once they said yes",
+		);
+		expect(cloud.moves).toEqual([]);
+		await runMove({ team: "northlight", yes: true }, deps());
+		expect(cloud.moves).toEqual([{ from: "tidemark/site", to: "northlight/site", by: "ada" }]);
 	});
 
 	it("moves on a yes, and says what happened", { timeout: 30_000 }, async () => {
@@ -109,18 +118,6 @@ describe("spool move", () => {
 		]);
 		const named = JSON.parse(readFileSync(join(root, "spool.json"), "utf8")) as { project: string };
 		expect(parseProjectLink(named.project)?.team).toBe("northlight");
-	});
-
-	it("refuses without a terminal to ask at unless --yes says the person already said yes", {
-		timeout: 30_000,
-	}, async () => {
-		const { cloud, deps } = await ada();
-		await expect(runMove({ team: "northlight" }, deps())).rejects.toThrow(
-			"nothing moved: spool move asks first. Ask the person, and run it again with --yes once they said yes",
-		);
-		expect(cloud.moves).toEqual([]);
-		await runMove({ team: "northlight", yes: true }, deps());
-		expect(cloud.moves).toEqual([{ from: "tidemark/site", to: "northlight/site", by: "ada" }]);
 	});
 
 	it("says why a move is refused before asking", { timeout: 30_000 }, async () => {

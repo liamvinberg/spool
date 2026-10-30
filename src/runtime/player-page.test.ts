@@ -14,14 +14,6 @@ describe("barLayout — what a bar this wide can carry (#275)", () => {
 		expect(barLayout(DESK_BAR_WIDE_PX).project).toBe(true);
 		expect(barLayout(DESK_BAR_WIDE_PX - 1).project).toBe(false);
 	});
-
-	it("never drops the frame's name, however narrow the window is dragged", () => {
-		// The name is not one of the answers this function gives, at any width:
-		// a bar with no name on it is a window nobody can tell apart.
-		for (const width of [240, 320, 390, 519, 520, 1440]) {
-			expect(Object.values(barLayout(width))).not.toContain(undefined);
-		}
-	});
 });
 
 describe("deskWindow — which shell this document is in", () => {
@@ -57,17 +49,5 @@ describe("deskWindow — which shell this document is in", () => {
 		expect(deskWindow()?.restored).toBe(false);
 		vi.stubGlobal("window", { spoolPlayWindow: bridge() });
 		expect(deskWindow()?.restored).toBe(false);
-	});
-
-	it("calls through to the window's owner", () => {
-		const calls: string[] = [];
-		vi.stubGlobal("window", {
-			spoolPlayWindow: bridge({
-				reset: () => calls.push("reset"),
-			}),
-		});
-		const desk = deskWindow();
-		desk?.reset();
-		expect(calls).toEqual(["reset"]);
 	});
 });

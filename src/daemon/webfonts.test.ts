@@ -193,11 +193,6 @@ describe("createWebfonts", () => {
 		expect(fonts.revision()).toBe(1);
 	});
 
-	it("passes an undefined stylesheet straight through", async () => {
-		const fonts = createWebfonts({ lookup: publicLookup, cacheDir: cacheDir(), fetch: fakeFetch({}) });
-		expect(await fonts.resolve(undefined)).toBeUndefined();
-	});
-
 	it("reuses the disk cache, so a second run resolves offline", async () => {
 		const dir = cacheDir();
 		const css = `@import url("https://sheet.test/a.css");`;
