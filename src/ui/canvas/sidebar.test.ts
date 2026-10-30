@@ -73,6 +73,7 @@ afterEach(() => {
 	}
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
+	vi.useRealTimers();
 });
 
 describe("page tree", () => {
@@ -1204,6 +1205,9 @@ async function dragRow(host: HTMLElement, selector: string, fromY: number, toY: 
 
 /** Press a row and travel far enough that the press became a drag. */
 async function liftRow(host: HTMLElement, selector: string, fromY: number, pointerId: number) {
+	// the drag loop reads the pointer on animation frames and times the spring-load
+	// dwell on performance.now(): both walked from here rather than waited out
+	vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
 	// every box reads as zero here, which would put the pointer inside the list's
 	// bottom auto-scroll band for the whole drag and drift the drop; give the
 	// list the height it has on screen
@@ -1234,7 +1238,7 @@ async function dragTo(y: number, pointerId: number) {
 		window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId, clientY: y }));
 	});
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, 40));
+		await vi.advanceTimersByTimeAsync(40);
 	});
 }
 
@@ -1244,7 +1248,7 @@ async function dragTo(y: number, pointerId: number) {
  */
 async function rest() {
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, 520));
+		await vi.advanceTimersByTimeAsync(520);
 	});
 }
 
