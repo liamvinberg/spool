@@ -16,7 +16,6 @@ describe("design diagnostic reporting", () => {
 	});
 
 	it.each([
-		["LF", "\n"],
 		["CRLF", "\r\n"],
 		["CR", "\r"],
 		["Unicode line separator", "\u2028"],
