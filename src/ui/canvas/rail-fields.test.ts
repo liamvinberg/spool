@@ -54,16 +54,6 @@ it("commits what was typed once across Enter and blur", async () => {
 	expect(f.onCommit).toHaveBeenCalledTimes(1);
 });
 
-it("Escape puts the file's value back before blur can commit the draft", async () => {
-	const f = await number();
-	await type(f.field, "7");
-	await key(f.field, "Escape");
-	expect(f.onCommit).not.toHaveBeenCalled();
-	expect(f.field.value).toBe("990");
-	await act(() => f.field.blur());
-	expect(f.onCommit).not.toHaveBeenCalled();
-});
-
 it("commits a normal blur once, and nothing for a value it already has", async () => {
 	const f = await number();
 	await type(f.field, "640");

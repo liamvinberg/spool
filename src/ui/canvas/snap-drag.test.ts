@@ -30,20 +30,12 @@ beforeEach(() => {
 	asked = [];
 });
 
-it("lands a dragged frame on the gutter the row already keeps", async () => {
+it("lands a dragged frame on the gutter the row already keeps, marking every gap carrying the matched spacing", async () => {
 	const { host, canvas } = await renderCanvas();
 	// 804 would leave a gap of 84 — four short of the row's 80
 	await drag(canvas, { from: 1010, to: 814 });
 
 	expect(host.querySelectorAll("[data-snap-span]")).toHaveLength(2);
-
-	await release(canvas);
-	expect(lastGeometry()?.detail?.x).toBe(800);
-});
-
-it("marks every gap carrying the matched spacing", async () => {
-	const { host, canvas } = await renderCanvas();
-	await drag(canvas, { from: 1010, to: 814 });
 
 	const spans = [...host.querySelectorAll<HTMLElement>('[data-snap-span="x"]')];
 	// the row's own gutter and the one the drag just made, both 80 wide
@@ -51,6 +43,9 @@ it("marks every gap carrying the matched spacing", async () => {
 	expect(spans.map((span) => span.style.width)).toEqual(["80px", "80px"]);
 	// laid across the middle of the shared overlap, which is the row's own band
 	expect(spans.map((span) => span.style.top)).toEqual(["117px", "117px"]);
+
+	await release(canvas);
+	expect(lastGeometry()?.detail?.x).toBe(800);
 });
 
 it("gives the frame to the pointer when the platform modifier is held", async () => {

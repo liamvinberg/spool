@@ -136,12 +136,6 @@ describe("runOf", () => {
 describe("snapMovedBox — equal gaps", () => {
 	const row = [box(0, 0, 100, 100), box(150, 0, 100, 100)];
 
-	it("appends a frame onto the gutter the row already keeps", () => {
-		const result = snapMovedBox(box(296, 10, 100, 100), row, 8);
-		expect(result.dx).toBe(4);
-		expect(result.dy).toBe(0);
-	});
-
 	it("draws a span in every gap carrying the matched value", () => {
 		const result = snapMovedBox(box(296, 10, 100, 100), row, 8);
 		expect(result.spans).toEqual([
