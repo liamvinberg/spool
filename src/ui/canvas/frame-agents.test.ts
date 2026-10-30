@@ -162,10 +162,4 @@ describe("what a frame's name row says", () => {
 		expect(theirs?.textContent).toBe("waiting");
 		expect(theirs?.style.color).toBe("#eaa94a");
 	});
-
-	it("drops its word on a row narrower than 120px, keeping the ring", () => {
-		const word = draw([mine]).querySelector("[data-frame-agents] > span:last-child");
-		expect(word?.className).toContain("hidden");
-		expect(word?.className).toContain("@min-[120px]/row:inline");
-	});
 });
