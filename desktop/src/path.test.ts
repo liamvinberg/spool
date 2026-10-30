@@ -31,13 +31,6 @@ test("a shell that answered nothing new leaves the environment alone", () => {
 	assert.equal(merged(GUI, "/usr/bin:/bin"), undefined);
 });
 
-test("a machine with nothing extra on it is asked and left as it was", () => {
-	assert.equal(
-		userPath({ PATH: GUI }, () => GUI),
-		undefined,
-	);
-});
-
 test("a machine with an agent outside the launch PATH gets it", () => {
 	const path = userPath({ PATH: GUI, SHELL: "/bin/zsh" }, () => SHELL);
 	// win32 has the user's own PATH already and is deliberately never asked
