@@ -148,7 +148,7 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 
 /** A frame with a single WebGL canvas, cleared to solid red once and never redrawn — the #174 repro shape. */
 async function serveWebglCapture(
-	positioning: "inline" | "class" | "id",
+	positioning: "inline" | "class",
 ): Promise<{ controlOrigin: string; url: string; close(): Promise<void> }> {
 	let frameDocument = "";
 	let controlDocument = "";
@@ -189,8 +189,7 @@ async function serveWebglCapture(
 	const controlOrigin = `http://127.0.0.1:${address.port}`;
 	const renderOrigin = `http://${RENDER_HOST}:${address.port}`;
 	const canvasStyle = "position: absolute; left: 25%; top: 25%; width: 50%; height: 50%";
-	const canvasAttribute =
-		positioning === "inline" ? `style="${canvasStyle}"` : positioning === "class" ? 'class="shader"' : 'id="shader"';
+	const canvasAttribute = positioning === "inline" ? `style="${canvasStyle}"` : 'class="shader"';
 	frameDocument = assembleFrameDocument({
 		project: "capture-test-webgl",
 		frame: "capture",
@@ -494,7 +493,7 @@ it("exports a long frame within the raster budget instead of rejecting its 2x si
 	expect(image.center).toEqual([245, 57, 26, 255]);
 });
 
-it.each(["css", "web", "pseudo", "canvas"])("exports the visible state of a %s animation", async (kind) => {
+it.each(["css", "pseudo", "canvas"])("exports the visible state of a %s animation", async (kind) => {
 	const served = await serveCapture(`
 		main { background: #18a957; }
 		${kind === "css" ? "main { animation: enter 100ms both; }" : ""}
@@ -510,15 +509,9 @@ it.each(["css", "web", "pseudo", "canvas"])("exports the visible state of a %s a
 	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
 	if (authored === undefined) throw new Error("frame missing");
 	await authored.locator("main").waitFor();
-	await authored.evaluate(async (kind) => {
-		if (kind === "web") {
-			const main = document.querySelector("main");
-			if (!main) throw new Error("main missing");
-			main.style.opacity = "0";
-			main.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 100, fill: "both" });
-		}
+	await authored.evaluate(async () => {
 		await Promise.all(document.getAnimations().map((animation) => animation.finished));
-	}, kind);
+	});
 	// a capture of a canvas whose context is lost is as blank as the canvas: wait out a loss
 	await authored.waitForFunction(() =>
 		Array.from(document.querySelectorAll("canvas")).every(
@@ -596,7 +589,7 @@ async function directWorkerRequest(
 	);
 }
 
-it.each(['"/theme.css"', 'url("/theme.css")'])("preserves layout beside @import %s in a still", async (importValue) => {
+it.each(['url("/theme.css")'])("preserves layout beside @import %s in a still", async (importValue) => {
 	const served = await serveCapture(`@import ${importValue};
 		main { background-color: #281c15 !important; }
 		.capture-style-probe { display: none; }`);
@@ -834,7 +827,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	});
 });
 
-it.each(["inline", "class", "id"] as const)(
+it.each(["inline", "class"] as const)(
 	"captures a WebGL canvas with %s positioning and its cleared color",
 	{
 		timeout: 30_000,

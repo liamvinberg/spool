@@ -2,18 +2,6 @@ import { expect, it } from "vitest";
 import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
-it("scrolls the finder without moving the canvas underneath", { timeout: 180_000 }, async () => {
-	const { page, finder, camera } = await openFinder();
-	const list = finder.locator(".overflow-y-auto");
-	const resting = await camera();
-	expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-
-	await list.hover();
-	await page.mouse.wheel(0, 180);
-	await expect.poll(() => list.evaluate((el) => el.scrollTop), { timeout: 1000 }).toBeGreaterThan(0);
-	expect(await camera()).toBe(resting);
-});
-
 it("lands on a finder row when clicked and still accepts keyboard navigation", { timeout: 180_000 }, async () => {
 	const { page, finder } = await openFinder();
 	const input = finder.getByRole("textbox", { name: "Find a frame" });
@@ -32,9 +20,19 @@ it("lands on a finder row when clicked and still accepts keyboard navigation", {
 	expect(picked).toContain(selected.trim());
 });
 
-it("keeps drags and backdrop scrolling out of the canvas until the finder closes", { timeout: 180_000 }, async () => {
+it("scrolls the finder, and keeps wheels, drags and backdrop scrolling out of the canvas until it closes", {
+	timeout: 180_000,
+}, async () => {
 	const { page, finder, camera } = await openFinder();
+	const list = finder.locator(".overflow-y-auto");
 	const resting = await camera();
+	expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+
+	await list.hover();
+	await page.mouse.wheel(0, 180);
+	await expect.poll(() => list.evaluate((el) => el.scrollTop), { timeout: 1000 }).toBeGreaterThan(0);
+	expect(await camera()).toBe(resting);
+
 	await finder.locator('[data-at="3"]').hover();
 	await page.mouse.down({ button: "middle" });
 	await page.mouse.move(700, 400, { steps: 4 });
