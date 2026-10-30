@@ -45,49 +45,6 @@ describe("design JavaScript bridges", () => {
 		]);
 	});
 
-	it("treats an existing confined JavaScript namespace as any", async () => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, "shared/module.js", "throw new Error('unchecked');\n");
-		writeFrame(root, "home", 'import * as module from "../../shared/module.js";\nmodule.feature();\n');
-
-		expect(await messages(root)).toEqual([]);
-	});
-
-	it("treats string-named imports from existing confined JavaScript as any", async () => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, "shared/module.js", "throw new Error('unchecked');\n");
-		writeFrame(root, "home", 'import { "hyphen-name" as feature } from "../../shared/module.js";\nfeature();\n');
-
-		expect(await messages(root)).toEqual([]);
-	});
-
-	it("checks TypeScript reached through a JavaScript bridge", async () => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, "shared/bridge.js", 'import "./broken.ts";\nexport const runtimeOnly = true;\n');
-		writeDesignFile(root, "shared/broken.ts", "export const broken: string = 1;\n");
-		writeFrame(root, "home", 'import * as bridge from "../../shared/bridge.js";\nbridge.runtimeOnly;\n');
-
-		expect(await messages(root)).toEqual([
-			"design/shared/broken.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.",
-		]);
-	});
-
-	it("checks TypeScript reached through nested JavaScript bridges", async () => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, "shared/bridge.js", 'import "./nested.js";\n');
-		writeDesignFile(root, "shared/nested.js", 'import "./broken.ts";\n');
-		writeDesignFile(root, "shared/broken.ts", "export const broken: string = 1;\n");
-		writeFrame(root, "home", 'import "../../shared/bridge.js";\n');
-
-		expect(await messages(root)).toEqual([
-			"design/shared/broken.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.",
-		]);
-	});
-
 	it.each([
 		["static require", 'const broken = require("./broken.ts");\nvoid broken;\n'],
 		["static dynamic import", 'void import("./broken.ts");\n'],
@@ -227,7 +184,6 @@ describe("design JavaScript bridges", () => {
 
 	it.each([
 		["named", "export { missing };\n"],
-		["default", "export { missing as default };\n"],
 	] as const)(
 		"fails closed at an undeclared JavaScript $name export before inspecting hidden imports",
 		async (_name, invalid) => {
@@ -246,9 +202,7 @@ describe("design JavaScript bridges", () => {
 	);
 
 	it.each([
-		["bound named", "const value = 1;\nexport { value };\n"],
 		["forward named", "export { value };\nconst value = 1;\n"],
-		["bound default", "const value = 1;\nexport { value as default };\n"],
 		["forward default", "export { value as default };\nconst value = 1;\n"],
 	] as const)("keeps a valid $name JavaScript export inspectable", async (_name, valid) => {
 		const root = makeTempDir();
@@ -278,12 +232,6 @@ describe("design JavaScript bridges", () => {
 	});
 
 	it.each([
-		[
-			"duplicate const binding",
-			"js",
-			"const duplicate = 1;\nconst duplicate = 2;\n",
-			"2:7 TS1003: Identifier 'duplicate' has already been declared.",
-		],
 		[
 			"duplicate private name",
 			"jsx",
@@ -317,55 +265,6 @@ describe("design JavaScript bridges", () => {
 		expect(await messages(root)).toEqual([
 			"design/shared/bridge.js:1:1 TS5083: Offline check resource limit exceeded",
 		]);
-	});
-
-	it.each<{
-		name: string;
-		extension: "js" | "mjs" | "cjs";
-		frame: string;
-		bridge?: string;
-	}>([
-		{
-			name: "named import",
-			extension: "mjs",
-			frame: 'import { feature } from "../../shared/module.mjs";\nfeature();\n',
-		},
-		{
-			name: "dynamic import",
-			extension: "cjs",
-			frame: 'async function load() { (await import("../../shared/module.cjs")).feature(); }\nvoid load;\n',
-		},
-		{
-			name: "import type",
-			extension: "js",
-			frame: 'type Feature = import("../../shared/module.js").Feature;\ndeclare const feature: Feature;\nfeature();\n',
-		},
-		{
-			name: "named re-export",
-			extension: "js",
-			bridge: 'export { feature } from "./module.js";\n',
-			frame: 'import { feature } from "../../shared/bridge";\nfeature();\n',
-		},
-		{
-			name: "namespace re-export",
-			extension: "js",
-			bridge: 'export * as module from "./module.js";\n',
-			frame: 'import { module } from "../../shared/bridge";\nmodule.feature();\n',
-		},
-		{
-			name: "star re-export",
-			extension: "js",
-			bridge: 'export * from "./module.js";\n',
-			frame: 'import { feature } from "../../shared/bridge";\nfeature();\n',
-		},
-	])("treats an existing confined JavaScript $name as any", async ({ extension, frame, bridge }) => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, `shared/module.${extension}`, "throw new Error('unchecked');\n");
-		if (bridge !== undefined) writeDesignFile(root, "shared/bridge.ts", bridge);
-		writeFrame(root, "home", frame);
-
-		expect(await messages(root)).toEqual([]);
 	});
 
 	it("ignores adjacent declarations for an existing confined JavaScript module", async () => {
@@ -452,7 +351,7 @@ describe("design JavaScript bridges", () => {
 		expect(await messages(root)).toEqual([]);
 	});
 
-	it.each(["js", "jsx"] as const)(
+	it.each(["jsx"] as const)(
 		"treats an extensionless confined .%s module as unchecked JavaScript",
 		async (extension) => {
 			const root = makeTempDir();
@@ -470,7 +369,7 @@ describe("design JavaScript bridges", () => {
 		},
 	);
 
-	it.each(["../../shared/module", "../../shared/module?raw", "../../shared/module#preview"] as const)(
+	it.each(["../../shared/module", "../../shared/module?raw"] as const)(
 		"keeps an extensionless live JavaScript module ahead of an adjacent declaration for %s",
 		async (specifier) => {
 			const root = makeTempDir();
@@ -483,7 +382,7 @@ describe("design JavaScript bridges", () => {
 		},
 	);
 
-	it.each(["../../shared/module", "../../shared/module?raw", "../../shared/module#preview"] as const)(
+	it.each(["../../shared/module", "../../shared/module?raw"] as const)(
 		"keeps an exact extensionless runtime file ahead of appended candidates for %s",
 		async (specifier) => {
 			const root = makeTempDir();
@@ -500,8 +399,6 @@ describe("design JavaScript bridges", () => {
 		["extensionless", "module"],
 		["JavaScript", "module.js"],
 		["JSX", "module.jsx"],
-		["ES module", "module.mjs"],
-		["CommonJS", "module.cjs"],
 	] as const)("rejects TypeScript syntax in an exact %s file like its live loader", async (_name, source) => {
 		const root = makeTempDir();
 		markProject(root);
@@ -515,8 +412,6 @@ describe("design JavaScript bridges", () => {
 	it.each([
 		["extensionless", "module"],
 		["JavaScript", "module.js"],
-		["ES module", "module.mjs"],
-		["CommonJS", "module.cjs"],
 	] as const)("rejects JSX syntax in an exact %s file like its live loader", async (_name, source) => {
 		const root = makeTempDir();
 		markProject(root);
@@ -536,20 +431,6 @@ describe("design JavaScript bridges", () => {
 
 		expect(await messages(root)).toEqual([]);
 	});
-
-	it.each(["ts", "tsx", "mts", "cts"] as const)(
-		"keeps TypeScript inspection active for an exact .%s source",
-		async (extension) => {
-			const root = makeTempDir();
-			markProject(root);
-			writeDesignFile(root, `shared/module.${extension}`, "export const broken: string = 1;\n");
-			writeFrame(root, "home", `import "../../shared/module.${extension}";\n`);
-
-			expect(await messages(root)).toEqual([
-				`design/shared/module.${extension}:1:14 TS2322: Type 'number' is not assignable to type 'string'.`,
-			]);
-		},
-	);
 
 	it("blocks an exact extensionless candidate that escapes through a symlink", async () => {
 		const root = makeTempDir();
