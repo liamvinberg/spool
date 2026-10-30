@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to a branch or PR supersedes its older run. Main's runs never
+# cancel each other: each commit there may be a release, and publishing waits
+# for that exact commit's run to pass.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -39,7 +46,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types .github/scripts/test-shards.ts
 
-
   tests:
     needs: changes
     if: needs.changes.outputs.full == 'true'
@@ -51,9 +57,6 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       SPOOL_TEST_DURATIONS: ${{ needs.changes.outputs.durations }}
-    concurrency:
-      group: ci-tests-${{ github.ref }}-${{ matrix.shard }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
