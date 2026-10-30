@@ -77,7 +77,8 @@ export async function handCanvas(
 		for (let attempt = 1; ; attempt += 1) {
 			await target.click({ position: at, modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
 			if (attempt === 3) break;
-			const outcome = async () => ((await held())?.kind === "frame" ? "frame" : (await landed()) ? "element" : "waiting");
+			const outcome = async () =>
+				(await held())?.kind === "frame" ? "frame" : (await landed()) ? "element" : "waiting";
 			await expect.poll(outcome, { timeout: 15_000 }).not.toBe("waiting");
 			if ((await outcome()) === "element") break;
 		}
