@@ -236,7 +236,7 @@ it("outlines the element a click would take, and names the one held", async () =
 	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
 
 	await press("e");
-	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+	await act(() => vi.advanceTimersByTimeAsync(100));
 	await act(async () => {
 		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
 	});
@@ -265,7 +265,7 @@ it("says a refusal on the element, with the door to the agent, and lets it go", 
 	await clickAt(canvas, 40, 40);
 	await frame.answer(WORDS);
 	// the selection's read of the file lands before the words are asked for
-	await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+	await act(() => vi.advanceTimersByTimeAsync(50));
 
 	await press("Enter");
 	const note = () => host.querySelector("[data-hand-refusal]");
@@ -304,7 +304,7 @@ it("leaves ⌘C, ⌘D and ⌘V to a frame that is entered", async () => {
 	await doubleClickAt(canvas, 40, 40);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
 	for (const key of ["c", "d", "v"]) expect(chord(key).defaultPrevented).toBe(false);
-	await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+	await act(() => vi.advanceTimersByTimeAsync(50));
 	expect(duplicates()).toEqual([]);
 });
 
@@ -319,7 +319,7 @@ it("leaves ⌘C, ⌘D and ⌘V to words being typed", async () => {
 	await press("Enter");
 	expect(frame.lastAsk("edit")).toMatchObject({ selector: "screen > footer > pay" });
 	for (const key of ["c", "d", "v"]) expect(chord(key).defaultPrevented).toBe(false);
-	await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+	await act(() => vi.advanceTimersByTimeAsync(50));
 	expect(duplicates()).toEqual([]);
 });
 
@@ -337,6 +337,8 @@ interface FramePlayer {
 async function readyCanvas(
 	options: { rungs?: readonly Record<string, unknown>[] } = {},
 ): Promise<{ host: HTMLDivElement; canvas: HTMLElement; frame: FramePlayer }> {
+	// the selection's debounce and every settle here are timers, walked rather than waited out
+	if (!vi.isFakeTimers()) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 	stubCanvasApis(options.rungs ?? []);
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -346,6 +348,7 @@ async function readyCanvas(
 		host.remove();
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
+		vi.useRealTimers();
 	});
 
 	await act(async () => {
@@ -485,7 +488,7 @@ function selectionPuts(): ({ frames?: string[] } & { elements?: { selector: stri
 
 /** The selection reaches the daemon on a debounce, so a reader waits it out. */
 async function served(): Promise<{ frames?: string[]; elements?: { selector: string }[] }> {
-	await act(() => new Promise((resolve) => setTimeout(resolve, 200)));
+	await act(() => vi.advanceTimersByTimeAsync(200));
 	return selectionPuts().at(-1) ?? {};
 }
 
@@ -545,7 +548,7 @@ function stubCanvasApis(rungs: readonly Record<string, unknown>[]): void {
 async function until(done: () => boolean): Promise<void> {
 	for (let attempt = 0; attempt < 50; attempt++) {
 		if (done()) return;
-		await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+		await act(() => vi.advanceTimersByTimeAsync(10));
 	}
 	throw new Error("canvas did not settle");
 }

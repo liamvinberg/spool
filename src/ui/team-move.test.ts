@@ -45,10 +45,15 @@ const LOSING = {
 	],
 };
 
+/**
+ * One opening time for every card: Home lists the newest first, so two cards stamped off the wall clock a
+ * millisecond apart would swap places.
+ */
+const OPENED = new Date().toISOString();
 const card = (name: string, root: string, link?: { team: string; project: string; inRepo?: boolean }): ProjectCard => ({
 	name,
 	root,
-	openedAt: new Date().toISOString(),
+	openedAt: OPENED,
 	frameCount: 1,
 	covers: [],
 	...(link === undefined ? {} : { team: { ...link, url: `https://spool.page/${link.team}/${link.project}` } }),
@@ -66,6 +71,8 @@ const listed = (name: string) => ({ name, url: `https://spool.page/tidemark/${na
 
 function render(element: ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	// the sheet's wait for typing to settle is a timer, walked rather than waited out
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
@@ -73,6 +80,7 @@ function render(element: ReactNode) {
 	onTestFinished(() => {
 		act(() => root.unmount());
 		host.remove();
+		vi.useRealTimers();
 		vi.unstubAllGlobals();
 	});
 	return host;
@@ -127,7 +135,7 @@ function daemon(answer: (method: string, url: string) => Response | undefined = 
 
 async function settle(ms = 0) {
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, ms));
+		await vi.advanceTimersByTimeAsync(ms);
 	});
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Presence, PresenceState } from "../../team-sync-protocol";
 import {
 	agentSays,
@@ -65,6 +65,10 @@ describe("what one person sees of another", () => {
 	});
 
 	it("fades someone who left, then forgets them", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
 		let now = 0;
 		const room = createPresenceRoom(() => now);
 		let told = 0;
@@ -75,7 +79,7 @@ describe("what one person sees of another", () => {
 		room.hear(heard(null));
 		expect(room.get("ben")?.left).toBe(0);
 		now = LEAVE_MS;
-		await new Promise((done) => setTimeout(done, LEAVE_MS + 50));
+		await vi.advanceTimersByTimeAsync(LEAVE_MS);
 		expect(room.teammates()).toEqual([]);
 		expect(told).toBe(3);
 		// leaving twice says nothing new

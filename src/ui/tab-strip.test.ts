@@ -16,9 +16,15 @@ const tabs = [
 	{ root: "/w/gamma", name: "gamma" },
 ];
 
+/** the landing is a timer the length of the slow transition, walked rather than waited out */
+function landingClock() {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+}
+
 const mounted: Array<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> = [];
 
 afterEach(() => {
+	vi.useRealTimers();
 	for (const { root, host } of mounted.splice(0)) {
 		act(() => root.unmount());
 		host.remove();
@@ -27,6 +33,7 @@ afterEach(() => {
 
 describe("the tab strip", () => {
 	it("carries a tab past its neighbour and writes the arrangement on the drop", async () => {
+		landingClock();
 		const onReorder = vi.fn();
 		const onFocus = vi.fn();
 		const { host } = await render({ onReorder, onFocus });
@@ -51,7 +58,7 @@ describe("the tab strip", () => {
 		expect(onReorder).not.toHaveBeenCalled();
 
 		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 260));
+			await vi.advanceTimersByTimeAsync(260);
 		});
 		expect(onReorder).toHaveBeenCalledWith(["/w/beta", "/w/alpha", "/w/gamma"]);
 
@@ -70,6 +77,7 @@ describe("the tab strip", () => {
 	});
 
 	it.each(["dragging", "settling"])("does not overwrite a changed session while %s", async (phase) => {
+		landingClock();
 		const onReorder = vi.fn();
 		const { host, rerender } = await render({ onReorder });
 		place(host);
@@ -84,7 +92,7 @@ describe("the tab strip", () => {
 		await rerender({ tabs: [...tabs.slice(0, 2), { root: "/w/delta", name: "delta" }] });
 		await act(async () => {
 			if (phase === "dragging") window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 5, clientX: 170 }));
-			await new Promise((resolve) => setTimeout(resolve, 260));
+			await vi.advanceTimersByTimeAsync(260);
 		});
 		expect(onReorder).not.toHaveBeenCalled();
 	});
@@ -117,6 +125,7 @@ describe("the tab strip", () => {
 	});
 
 	it("takes the arrangement at once when a tab is pressed while the dropped one is still landing", async () => {
+		landingClock();
 		const onReorder = vi.fn();
 		const { host } = await render({ onReorder });
 		place(host);
@@ -136,7 +145,7 @@ describe("the tab strip", () => {
 		expect(onReorder).toHaveBeenCalledWith(["/w/beta", "/w/alpha", "/w/gamma"]);
 		await act(async () => {
 			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 8, clientX: 250 }));
-			await new Promise((resolve) => setTimeout(resolve, 260));
+			await vi.advanceTimersByTimeAsync(260);
 		});
 		expect(onReorder).toHaveBeenCalledTimes(1);
 	});
@@ -158,6 +167,7 @@ describe("the tab strip", () => {
 	});
 
 	it("keeps the dragged tab under the pointer when the strip scrolls", async () => {
+		landingClock();
 		const onReorder = vi.fn();
 		const { host } = await render({ onReorder });
 		place(host);
@@ -178,7 +188,7 @@ describe("the tab strip", () => {
 
 		await act(async () => {
 			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 4, clientX: 70 }));
-			await new Promise((resolve) => setTimeout(resolve, 260));
+			await vi.advanceTimersByTimeAsync(260);
 		});
 		expect(onReorder).toHaveBeenCalledWith(["/w/beta", "/w/alpha", "/w/gamma"]);
 	});

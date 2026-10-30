@@ -41,7 +41,12 @@ void nestedMachineStateMutationTypeContract;
 void rejectedMachineStateCallbackTypeContract;
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
+/**
+ * Workers run on node with tsx's loader rather than through tsx's own bin, which starts
+ * a second node to run the script in: one cold start per worker instead of two, and a
+ * kill lands on the process holding the lock rather than on a relay in front of it.
+ */
+const workerArgs = ["--import", "tsx"];
 
 interface Worker {
 	child: ChildProcessWithoutNullStreams;
@@ -919,7 +924,7 @@ function makeHarness(): {
 	return {
 		dir,
 		start: (args, env) => {
-			const child = spawn(tsxBin, [script, ...args], {
+			const child = spawn(process.execPath, [...workerArgs, script, ...args], {
 				cwd: repoRoot,
 				env: env === undefined ? process.env : { ...process.env, ...env },
 			});

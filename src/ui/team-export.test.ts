@@ -28,7 +28,8 @@ const DELETED: DeletedTeam = { address: "harbour", name: "Harbour", logo: null, 
 
 function render(element: ReactNode) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-	vi.useFakeTimers({ toFake: ["Date"], now: NOW });
+	// the progress poll and the notice's fade are timers too, walked rather than waited out
+	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"], now: NOW });
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
@@ -81,7 +82,7 @@ function settings(fake: ReturnType<typeof fakeTeamsSource>, shown: CloudTeam) {
 
 async function settle(ms = 0) {
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, ms));
+		await vi.advanceTimersByTimeAsync(ms);
 	});
 }
 
