@@ -188,7 +188,7 @@ function type(element: HTMLInputElement | null, text: string) {
 
 async function settle(ms: number) {
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, ms));
+		await vi.advanceTimersByTimeAsync(ms);
 	});
 }
 
@@ -211,6 +211,8 @@ function lastOrder(): Record<string, unknown> | undefined {
 }
 
 async function renderCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement }> {
+	// the geometry flush and the undo toasts are timers, walked rather than waited out
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 	stubCanvasApis();
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -220,6 +222,7 @@ async function renderCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLEleme
 		host.remove();
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
+		vi.useRealTimers();
 	});
 
 	await act(async () => {
@@ -275,7 +278,7 @@ async function until(ready: () => boolean, tries = 40): Promise<void> {
 	for (let i = 0; i < tries; i++) {
 		if (ready()) return;
 		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 5));
+			await vi.advanceTimersByTimeAsync(5);
 		});
 	}
 	throw new Error("condition never became true");
