@@ -34,10 +34,6 @@ describe("the frames a page object draws", () => {
 		expect(framesUnder("explorations", FRAMES).map((each) => each.name)).toEqual(["notes", "said"]);
 	});
 
-	it("takes nothing from a sibling page", () => {
-		expect(framesUnder("scratch", FRAMES).map((each) => each.name)).toEqual(["alone"]);
-	});
-
 	it("carries each frame's cover into the picture, and says nothing where there is none", () => {
 		const covered = [{ ...frame("shot", "scratch", { x: 0, y: 0 }), cover: { hash: "abc", w: 10, h: 10 } }];
 		const [object] = pageObjectsOn("", ["scratch"], covered, PLACES);

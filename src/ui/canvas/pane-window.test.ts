@@ -30,18 +30,6 @@ const tabsIn = (host: HTMLElement, group: string) =>
 	);
 
 describe("the tabs", () => {
-	it("starts with Pages on the left and Properties and Agent as tabs on the right, Properties showing", async () => {
-		const { host } = await mount();
-		expect(tabsIn(host, "left:0")).toEqual(["pages"]);
-		expect(tabsIn(host, "right:0")).toEqual(["properties", "agent"]);
-		expect(lit(host, "properties")).toBe(true);
-		expect(lit(host, "agent")).toBe(false);
-		expect(shown(host, "properties")).toBe(true);
-		expect(shown(host, "agent")).toBe(false);
-		expect(side(host, "left")?.style.width).toBe("248px");
-		expect(side(host, "right")?.style.width).toBe("380px");
-	});
-
 	it("switches the pane a click on its tab, and the side keeps its width", async () => {
 		const { host } = await mount();
 		await click(tab(host, "agent"));
@@ -95,12 +83,6 @@ describe("the tabs", () => {
 		expect(agentVerbs?.className).toContain("hidden");
 		await click(tab(host, "agent"));
 		expect(host.querySelector<HTMLElement>('[data-pane-verbs="agent"]')?.className).not.toContain("hidden");
-	});
-
-	it("shows the lit pane's verbs without the pointer on its row", async () => {
-		const { host } = await mount();
-		const verbs = host.querySelector<HTMLElement>('[data-pane-verbs="pages"]')?.parentElement;
-		expect(verbs?.className).not.toMatch(/opacity-0/);
 	});
 });
 

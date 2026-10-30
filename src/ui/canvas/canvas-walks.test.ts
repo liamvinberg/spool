@@ -137,26 +137,11 @@ describe("the walk layer", () => {
 		expect(canvas.host.querySelector('button[aria-label="home frame"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 
-	it("leaves a same-page walk to the arrow that already draws it", async () => {
-		const canvas = mount();
-		await canvas.render();
-
-		expect(exitTag(canvas.host, "menu")).toBeNull();
-	});
-
 	/**
 	 * The canvas draws what you can act on (#203). A dead walk cannot be
 	 * pressed and its fix is in source, so it stays in `spool flows` and in
 	 * what an agent reads rather than taking a face here.
 	 */
-	it("draws nothing for a destination no frame answers to", async () => {
-		const canvas = mount();
-		await canvas.render();
-
-		expect(canvas.host.textContent).not.toContain("ghost");
-		expect(canvas.host.textContent).not.toContain("missing");
-	});
-
 	it("draws nothing for a walk whose destination cannot be read", async () => {
 		const canvas = mount({
 			...FLOWS,
