@@ -182,9 +182,7 @@ describe("design JavaScript bridges", () => {
 		},
 	);
 
-	it.each([
-		["named", "export { missing };\n"],
-	] as const)(
+	it.each([["named", "export { missing };\n"]] as const)(
 		"fails closed at an undeclared JavaScript $name export before inspecting hidden imports",
 		async (_name, invalid) => {
 			const root = makeTempDir();

@@ -467,21 +467,18 @@ describe("design external and ambient modules", () => {
 		]);
 	});
 
-	it.each([null, [], 42] as const)(
-		"treats a non-record import map root as having no mappings",
-		async (value) => {
-			const root = makeTempDir();
-			markProject(root);
-			writeDesignFile(root, "shared/importmap.json", `${JSON.stringify(value)}\n`);
-			writeFrame(root, "home", 'import mapped from "mapped";\nvoid mapped;\n');
+	it.each([null, [], 42] as const)("treats a non-record import map root as having no mappings", async (value) => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(root, "shared/importmap.json", `${JSON.stringify(value)}\n`);
+		writeFrame(root, "home", 'import mapped from "mapped";\nvoid mapped;\n');
 
-			const result = await messages(root);
+		const result = await messages(root);
 
-			expect(result).toHaveLength(1);
-			expect(result[0]).toContain("TS2307: Cannot find module 'mapped'");
-			expect(result.join("\n")).not.toContain(root);
-		},
-	);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toContain("TS2307: Cannot find module 'mapped'");
+		expect(result.join("\n")).not.toContain(root);
+	});
 
 	it("keeps a query-like suffix on a bare specifier in import-map policy", async () => {
 		const root = makeTempDir();
