@@ -107,6 +107,12 @@ async function teamCanvas(options: { far?: boolean } = {}) {
 	};
 }
 
+/** The canvas camera's zoom. */
+const cameraScale = (page: Page) =>
+	page
+		.locator("[data-canvas-camera]")
+		.evaluate((element) => /scale\(([-\d.e]+)\)/.exec((element as HTMLElement).style.transform)?.[1]);
+
 const box = async (page: Page, selector: string) => {
 	const found = await page.locator(selector).boundingBox();
 	if (found === null) throw new Error(`no ${selector}`);
@@ -248,28 +254,41 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	await expect
 		.poll(() => page.locator('[data-presence-pill="cleo"]').getAttribute("data-presence-docked"))
 		.toBe("home");
-	await page.waitForTimeout(800);
-	const ben = await box(page, '[data-presence-pill="ben"]');
-	const cleo = await box(page, '[data-presence-pill="cleo"]');
+	// the line-up is a transition, slower on a busy machine: measured once it has landed
+	const lined = async () => {
+		const ben = await box(page, '[data-presence-pill="ben"]');
+		const cleo = await box(page, '[data-presence-pill="cleo"]');
+		return { ben, cleo, gap: ben.x - (cleo.x + cleo.width) };
+	};
+	await expect
+		.poll(async () => {
+			const { ben, cleo, gap } = await lined();
+			return Math.abs(gap - 6) < 0.5 && Math.abs(cleo.y - ben.y) < 1;
+		})
+		.toBe(true);
+	const { ben, cleo } = await lined();
 	// by the width each is drawn at, an even gap between them
 	expect(ben.x - (cleo.x + cleo.width)).toBeCloseTo(6, 0);
 	expect(Math.abs(cleo.y - ben.y)).toBeLessThan(1);
 	say(CLEO, at(200, 100, { inside: "home" }), 5 * 60_000);
-	await page.waitForTimeout(400);
-	expect(
-		Number(
-			await page.locator('[data-presence-pill="cleo"]').evaluate((element) => getComputedStyle(element).opacity),
-		),
-	).toBeLessThan(0.6);
+	await expect
+		.poll(async () =>
+			Number(
+				await page.locator('[data-presence-pill="cleo"]').evaluate((element) => getComputedStyle(element).opacity),
+			),
+		)
+		.toBeLessThan(0.6);
 
 	// the docked names keep their size at any zoom
 	const before = ben.height;
+	const sized = async () => Math.abs((await box(page, '[data-presence-pill="ben"]')).height - before);
+	const unzoomed = await cameraScale(page);
 	await page.mouse.move(700, 600);
 	await page.keyboard.down("Control");
 	await page.mouse.wheel(0, 300);
 	await page.keyboard.up("Control");
-	await page.waitForTimeout(600);
-	expect((await box(page, '[data-presence-pill="ben"]')).height).toBeCloseTo(before, 0);
+	await expect.poll(() => cameraScale(page)).not.toBe(unzoomed);
+	await expect.poll(sized).toBeLessThan(0.5);
 
 	// zoomed out until they'd crowd the frame's name, they shrink to dots stacked on one another, and back
 	const zoom = async (dy: number) => {
@@ -292,8 +311,8 @@ it("docks the name on a frame's label while they're inside it, lines several up,
 	expect(cleoDot.x).toBeLessThan(benDot.x);
 	await zoom(-1200);
 	await expect.poll(() => pill.getAttribute("data-presence-dot")).toBe(null);
-	await page.waitForTimeout(800);
-	expect((await box(page, '[data-presence-pill="ben"]')).height).toBeCloseTo(before, 0);
+	// growing back is the same transition
+	await expect.poll(sized).toBeLessThan(0.5);
 
 	// stepping out flies the pill home to the pointer
 	say(BEN, at(300, 500));
@@ -441,8 +460,9 @@ it("shows the faces of who's here on the canvas, opens the list from them, colla
 
 	// a crowd collapses into a count past the faces that fit
 	for (const name of ["dag", "eva", "finn", "gus"]) say({ accountId: name, name, color: "#58c6dc" }, at(10, 10));
-	await expect.poll(() => page.locator("[data-presence-face]").count()).toBe(3);
-	expect(await page.locator("[data-presence-faces]").textContent()).toContain("+3");
+	// three faces are also what three people show, so the count is waited on, not the faces
+	await expect.poll(() => page.locator("[data-presence-faces]").textContent()).toContain("+3");
+	expect(await page.locator("[data-presence-face]").count()).toBe(3);
 	await page.locator("[data-presence-open]").click();
 	expect(await page.locator("[data-presence-count]").textContent()).toBe("6 here");
 	expect(await page.locator("[data-presence-row]").count()).toBe(6);
