@@ -45,10 +45,15 @@ const LOSING = {
 	],
 };
 
+/**
+ * One opening time for every card: Home lists the newest first, so two cards stamped off the wall clock a
+ * millisecond apart would swap places.
+ */
+const OPENED = new Date().toISOString();
 const card = (name: string, root: string, link?: { team: string; project: string; inRepo?: boolean }): ProjectCard => ({
 	name,
 	root,
-	openedAt: new Date().toISOString(),
+	openedAt: OPENED,
 	frameCount: 1,
 	covers: [],
 	...(link === undefined ? {} : { team: { ...link, url: `https://spool.page/${link.team}/${link.project}` } }),
