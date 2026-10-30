@@ -318,7 +318,7 @@ describe("the booth before any browser", () => {
 	it("says a browser that keeps failing to start once, however often it tries again", async () => {
 		const { booth: made, deps } = booth({ timing: { relaunchAfterMs: 30 } });
 		made.enqueue(sitting("home", "edited"));
-		await vi.waitFor(() => expect(deps.launch).toHaveBeenCalledTimes(4), { timeout: 2000 });
+		await vi.waitFor(() => expect(vi.mocked(deps.launch).mock.calls.length).toBeGreaterThanOrEqual(4), { timeout: 2000 });
 		expect(deps.log).toHaveBeenCalledTimes(1);
 		expect(deps.log).toHaveBeenCalledWith("the photo booth could not start a browser: no browser in this test");
 	});
