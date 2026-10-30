@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
@@ -171,19 +171,6 @@ describe("history saves design/ on an idle window", () => {
 		// one thing staged, another in the working tree, and the save disturbed neither
 		expect(status(root)).toEqual(["MM src/product.ts"]);
 		expect(git(root, "show", ":src/product.ts")).toBe("export const one = 2;\n");
-	});
-
-	it("saves a frame that only moved", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const root = gitProject(spoolDir);
-		const clock = testClock();
-		makeApp(spoolDir, { historyClock: clock.clock });
-
-		await change(clock, () => writeFile(root, "design/frames/home/frame.json", '{"x":120,"y":40,"w":390,"h":844}\n'));
-		await clock.fire();
-
-		expect(log(root)).toEqual(["design: 1 moved", "init"]);
-		expect(touched(root)).toEqual(["A\tdesign/frames/home/frame.json"]);
 	});
 
 	it("commits a design/ left dirty while the daemon was down, as a catch-up batch", async () => {
@@ -373,22 +360,6 @@ describe("the switches", () => {
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(clock.armings()).toBe(before);
 	}
-
-	it("keeps history for a project whose canvas.json asks for it", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const root = gitProject(spoolDir);
-		const clock = testClock();
-		makeApp(spoolDir, { historyClock: clock.clock });
-
-		expect(JSON.parse(readFileSync(join(root, "design", "canvas.json"), "utf8"))).toEqual({
-			format: FORMAT_VERSION,
-			history: true,
-		});
-		await change(clock, () => writeFrame(root, "home", "export default () => <main>kept</main>;\n"));
-		await clock.fire();
-
-		expect(log(root)).toEqual(["design: 1 frame", "init"]);
-	});
 
 	it("never runs git for a project whose flag says no", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");

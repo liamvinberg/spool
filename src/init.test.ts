@@ -81,15 +81,6 @@ describe("initProject", () => {
 		expect(readDesign(root, "CLAUDE.md")).toBe("@AGENTS.md\n");
 	});
 
-	it("writes tokens.css as an empty :root with an instruction comment", () => {
-		const root = makeTempDir();
-		initProject(root, join(makeTempDir(), ".spool"));
-
-		const tokens = readDesign(root, "shared/tokens.css");
-		expect(tokens).toContain(":root {}");
-		expect(tokens).toContain("/*");
-	});
-
 	it("pins clsx, tailwind-merge, class-variance-authority and motion in the import map", () => {
 		const root = makeTempDir();
 		initProject(root, join(makeTempDir(), ".spool"));

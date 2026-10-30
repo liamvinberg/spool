@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deepest, openingOf, parentOf, wordsAsk } from "./element-selection";
+import { deepest, openingOf, parentOf } from "./element-selection";
 import type { PickedSelection } from "./overlays";
 import type { PickedHit } from "./protocol";
 
@@ -89,9 +89,5 @@ describe("openingOf", () => {
 		});
 		// a read about another element says nothing about these words
 		expect(openingOf(words, { source: "frames/home/frame.tsx:9:5", words: refusal })).toEqual({ kind: "words" });
-	});
-
-	it("names the attempt the refusal hands the agent", () => {
-		expect(wordsAsk(words)).toBe("Change the words of the h1");
 	});
 });

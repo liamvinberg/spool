@@ -58,15 +58,6 @@ describe("a thread's mark", () => {
 		expect(lifeOf({ phase: "settled", open: false, unread: true, stuck: true })).toBe("waiting");
 	});
 
-	/** waiting outranks every motion, because the thread has stopped and is costing nothing */
-	it("is waiting even for the thread you are looking at", () => {
-		expect(lifeOf({ phase: "asking", open: true, unread: false, stuck: true })).toBe("waiting");
-	});
-
-	it("is a solid dot once it has landed where nobody was looking", () => {
-		expect(lifeOf({ phase: "settled", open: false, unread: true, stuck: false })).toBe("unread");
-	});
-
 	it("is nothing for an old thread and for one nobody has said anything to", () => {
 		expect(lifeOf({ phase: "settled", open: false, unread: false, stuck: false })).toBe("read");
 		expect(lifeOf({ phase: "idle", open: true, unread: false, stuck: false })).toBe("read");

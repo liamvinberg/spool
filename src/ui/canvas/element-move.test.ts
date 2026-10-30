@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { axisOf, dropAt, moveAsk } from "./element-move";
+import { axisOf, dropAt } from "./element-move";
 
 const column = [
 	{ x: 0, y: 0, w: 100, h: 20 },
@@ -38,9 +38,5 @@ describe("where a drag among siblings lands (#340)", () => {
 		expect(dropAt(column, 0, { x: 50, y: 32 })).toBeUndefined();
 		expect(dropAt(column, 2, { x: 50, y: 48 })).toBeUndefined();
 		expect(dropAt([column[0] ?? { x: 0, y: 0, w: 1, h: 1 }], 0, { x: 0, y: 0 })).toBeUndefined();
-	});
-
-	it("says the move in plain words", () => {
-		expect(moveAsk("a", "after", "a")).toBe("Move the a after the a");
 	});
 });

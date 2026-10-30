@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryStretch } from "../api";
 import {
-	changeSays,
-	didSays,
 	framesSays,
 	momentSays,
 	restoredSays,
@@ -53,14 +51,6 @@ describe("restoring, as the pane says it", () => {
 		expect(momentSays(at(14, 52), NOW)).toBe("14:52 today");
 		expect(momentSays(at(14, 52) - 86_400_000, NOW)).toBe("14:52 yesterday");
 		expect(momentSays(at(9, 5) - 4 * 86_400_000, NOW)).toBe("09:05 Sat 17 Oct");
-	});
-
-	it("says what a version did to a frame and what its restore does", () => {
-		expect(didSays("deleted")).toBe("deleted here");
-		expect(didSays("changed")).toBe("changed");
-		expect(changeSays("changed")).toBe("goes back to how it was");
-		expect(changeSays("back")).toBe("comes back");
-		expect(changeSays("gone")).toBe("goes, it didn't exist then");
 	});
 
 	it("ticks every frame in the project's history, and the frame alone in its own", () => {

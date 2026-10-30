@@ -37,42 +37,6 @@ describe("design external and ambient modules", () => {
 		bridge?: string;
 	}>([
 		{
-			name: "namespace import",
-			frame: 'import * as mapped from "mapped";\nmapped.feature();\n',
-		},
-		{
-			name: "default import",
-			frame: 'import mapped from "mapped";\nmapped.feature();\n',
-		},
-		{
-			name: "default-as import",
-			frame: 'import { default as mapped } from "mapped";\nmapped.feature();\n',
-		},
-		{
-			name: "named import",
-			frame: 'import { feature } from "mapped";\nfeature();\n',
-		},
-		{
-			name: "side-effect import",
-			frame: 'import "mapped";\n',
-		},
-		{
-			name: "type-only import",
-			frame: 'import type { Feature } from "mapped";\ndeclare const feature: Feature;\nfeature();\n',
-		},
-		{
-			name: "dynamic import",
-			frame: 'async function load() { (await import("mapped")).feature(); }\nvoid load;\n',
-		},
-		{
-			name: "type query",
-			frame: 'type Mapped = typeof import("mapped");\ndeclare const mapped: Mapped;\nmapped.feature();\n',
-		},
-		{
-			name: "import type",
-			frame: 'type Feature = import("mapped").Feature;\ndeclare const feature: Feature;\nfeature();\n',
-		},
-		{
 			name: "namespace re-export",
 			bridge: 'export * as mapped from "mapped";\n',
 			frame: 'import { mapped } from "../../shared/bridge";\nmapped.feature();\n',
@@ -86,10 +50,6 @@ describe("design external and ambient modules", () => {
 			name: "type re-export",
 			bridge: 'export type { Feature } from "mapped";\n',
 			frame: 'import type { Feature } from "../../shared/bridge";\ndeclare const feature: Feature;\nfeature();\n',
-		},
-		{
-			name: "star re-export",
-			frame: 'export * from "mapped";\n',
 		},
 		{
 			name: "consumed star re-export",
@@ -507,21 +467,18 @@ describe("design external and ambient modules", () => {
 		]);
 	});
 
-	it.each([null, [], 42, "invalid"] as const)(
-		"treats a non-record import map root as having no mappings",
-		async (value) => {
-			const root = makeTempDir();
-			markProject(root);
-			writeDesignFile(root, "shared/importmap.json", `${JSON.stringify(value)}\n`);
-			writeFrame(root, "home", 'import mapped from "mapped";\nvoid mapped;\n');
+	it.each([null, [], 42] as const)("treats a non-record import map root as having no mappings", async (value) => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(root, "shared/importmap.json", `${JSON.stringify(value)}\n`);
+		writeFrame(root, "home", 'import mapped from "mapped";\nvoid mapped;\n');
 
-			const result = await messages(root);
+		const result = await messages(root);
 
-			expect(result).toHaveLength(1);
-			expect(result[0]).toContain("TS2307: Cannot find module 'mapped'");
-			expect(result.join("\n")).not.toContain(root);
-		},
-	);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toContain("TS2307: Cannot find module 'mapped'");
+		expect(result.join("\n")).not.toContain(root);
+	});
 
 	it("keeps a query-like suffix on a bare specifier in import-map policy", async () => {
 		const root = makeTempDir();

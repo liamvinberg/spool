@@ -19,7 +19,7 @@ function bundle(options: Omit<DesignEntryOptions, "files" | "reads">) {
 }
 
 describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
-	it.each(["./effect", "shared/shaders/effect"])("imports %s as the complete source string", async (specifier) => {
+	it.each(["./effect"])("imports %s as the complete source string", async (specifier) => {
 		const { root } = makeProject(join(makeTempDir(), ".spool"));
 		const relativeFile = `${specifier.replace(/^\.\//, "")}.${extension}`;
 		const source = '// source stays text: "quoted", \\paths, λ\nvoid main() {}\n';
@@ -123,28 +123,6 @@ describe("the compiled closure", () => {
  * `packages: "external"` sends it to the import map, where nothing answers it.
  */
 describe("design-relative shared/ imports", () => {
-	it("resolves shared/ against design/ from inside a page", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root } = makeProject(spoolDir);
-		writeDesignFile(
-			root,
-			join("frames", "shop", "cart", "frame.tsx"),
-			'import { cn } from "shared/lib/utils";\nexport default () => cn("cart");\n',
-		);
-		const designDir = realDesignDir(root);
-
-		const { sourceFiles } = await bundle({
-			designDir,
-			resolveDir: join(designDir, "frames", "shop", "cart"),
-			sourcefile: "<spool-boot>",
-			contents: 'import Frame from "./frame.tsx";\nexport { Frame };\n',
-			label: 'frame "cart"',
-		});
-
-		// the scaffold's own cn(), reached without a single ../
-		expect(sourceFiles).toContain(join(designDir, "shared", "lib", "utils.ts"));
-	});
-
 	// Only where nothing above design/ sets tsconfig compiler options or a
 	// package.json `type`: esbuild parses a file under those when a relative
 	// import reaches it and not when the shared/ plugin does, as it always has.

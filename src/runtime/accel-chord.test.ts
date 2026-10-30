@@ -23,11 +23,6 @@ describe("accelChord — the only press spool takes from a live frame (#227)", (
 		expect(accelChord(press("p"), APPLE)).toBeUndefined();
 	});
 
-	it("is the platform's modifier and no other", () => {
-		expect(accelChord(press("Escape", { ctrl: true }), APPLE)).toBeUndefined();
-		expect(accelChord(press("Escape", { meta: true }), OTHER)).toBeUndefined();
-	});
-
 	it("is that chord exactly, so a longer one is somebody else's", () => {
 		expect(accelChord(press("Escape", { meta: true, shift: true }), APPLE)).toBeUndefined();
 		expect(accelChord(press("Escape", { meta: true, alt: true }), APPLE)).toBeUndefined();

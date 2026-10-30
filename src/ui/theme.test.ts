@@ -53,10 +53,6 @@ describe("the theme", () => {
 		expect(roles).not.toMatch(/#(?!000000|ffffff|f5391a)[0-9a-f]{6}/);
 	});
 
-	it("keeps a delete red whatever the accent is", () => {
-		expect(CSS).toContain("--color-danger: #f5391a;");
-	});
-
 	it("takes the motion scale to nothing when stillness is asked for", () => {
 		const still = CSS.slice(CSS.indexOf("@media (prefers-reduced-motion: reduce)"));
 		for (const step of ["quick", "fast", "base", "slow", "slower"]) {

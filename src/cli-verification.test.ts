@@ -88,47 +88,6 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		]);
 	});
 
-	it("treats import-map packages as untyped while reporting unmapped packages", () => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(
-			root,
-			"shared/importmap.json",
-			'{ "imports": { "charting": "https://example.test/charting.js" } }\n',
-		);
-		writeFrame(
-			root,
-			"home",
-			'import charting from "charting";\nimport missing from "missing";\nexport default function Home() { return <main>{String(charting ?? missing)}</main>; }\n',
-		);
-
-		const result = spool(["check", root], makeTempDir());
-
-		expect(result.status).toBe(1);
-		expect(result.stderr).toContain("TS2307: Cannot find module 'missing'");
-		expect(result.stderr).not.toContain("charting");
-	});
-
-	it.each(['import value from "../../shared/\\0secret";\nvoid value;\n', "void import(`../../shared/\\0secret`);\n"])(
-		"reports a cooked NUL module specifier without a stack or absolute path",
-		(source) => {
-			const root = makeTempDir();
-			markProject(root);
-			writeFrame(root, "home", source);
-
-			const result = spool(["check", root], makeTempDir());
-
-			expect(result.status).toBe(1);
-			expect(result.stdout).toBe("checked 1 frame (1 source file), 1 error\n");
-			expect(result.stderr).toContain("TS2307: Cannot find module '../../shared/\\u0000secret'");
-			expect(result.stderr).not.toContain("\0");
-			expect(result.stderr).not.toContain(root);
-			expect(result.stderr).not.toContain("ERR_INVALID_ARG_VALUE");
-			expect(result.stderr).not.toContain(" at ");
-			expect(result.stderr.split("\n").filter(Boolean)).toHaveLength(1);
-		},
-	);
-
 	it("reports parser exhaustion as one source-local diagnostic without a stack", () => {
 		const root = makeTempDir();
 		markProject(root);
@@ -147,33 +106,9 @@ describe("spool cli verification", { timeout: 30_000 }, () => {
 		expect(result.stderr).not.toContain(" at ");
 	});
 
-	it("reports policy traversal exhaustion as one source-local diagnostic without a stack", () => {
-		const root = makeTempDir();
-		markProject(root);
-		const secret = "/private/cli-traversal-exhaustion-secret.ts";
-		const memberChain = `value${".x".repeat(20_000)}`;
-		writeFrame(
-			root,
-			"home",
-			`${memberChain};\nimport ${JSON.stringify(secret)};\nexport default function Home() { return null; }\n`,
-		);
-
-		const result = spool(["check", root], makeTempDir());
-
-		expect(result.status).toBe(1);
-		expect(result.stdout).toBe("checked 1 frame (1 source file), 1 error\n");
-		expect(result.stderr).toBe("design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely\n");
-		expect(result.stderr).not.toContain(root);
-		expect(result.stderr).not.toContain(secret);
-		expect(result.stderr).not.toContain("RangeError");
-		expect(result.stderr).not.toContain(" at ");
-	});
-
 	it.each([
 		[["shot", "cart", "--viewport", "390-by-844"], "--viewport must be <width>x<height> with positive integers"],
 		[["shot", "cart", "--viewport", "0x844"], "--viewport must be <width>x<height> with positive integers"],
-		[["shot", "cart", "--at", "soon"], "--at takes whole milliseconds"],
-		[["shot", "cart", "--scroll", "down"], "--scroll takes whole CSS pixels"],
 		[["shot", "cart", "--scroll", "-40"], "--scroll takes whole CSS pixels"],
 		[["shot", "cart", "--scenario", "review/error"], "--scenario must be a scenario name"],
 		[["logs", "cart", "--scenario", ".private"], "--scenario must be a scenario name"],

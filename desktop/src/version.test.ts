@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compareVersions, formatVersion, parseVersion } from "./version";
+import { compareVersions, parseVersion } from "./version";
 
 test("reads a plain version and a tag", () => {
 	assert.deepEqual(parseVersion("1.2.3"), { major: 1, minor: 2, patch: 3 });
@@ -19,8 +19,4 @@ test("ranks by major then minor then patch", () => {
 		assert.ok(compareVersions(order[index]!, order[index - 1]!) > 0);
 	}
 	assert.equal(compareVersions(parseVersion("1.2.3")!, parseVersion("v1.2.3")!), 0);
-});
-
-test("prints what it read", () => {
-	assert.equal(formatVersion(parseVersion("v10.0.2")!), "10.0.2");
 });

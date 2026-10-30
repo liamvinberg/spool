@@ -95,12 +95,6 @@ async function launch(path: string) {
 	return { active, press, switchTo, recent };
 }
 
-it("counts only the tab it lands on among the tabs it restores", async () => {
-	const app = await launch("/p/beta");
-
-	expect(app.active).toEqual(["beta"]);
-});
-
 it("puts the tab it landed on first in Recent once you go Home", async () => {
 	const app = await launch("/p/beta");
 

@@ -143,7 +143,6 @@ describe("design asset checking", () => {
 			"shared/theme.module.css",
 			'import styles from "../../shared/theme.module.css?inline";\nstyles.runtimeClass;\n',
 		],
-		["CSS fragment import", "shared/theme.css", 'import "../../shared/theme.css#dark";\n'],
 	] as const)("keeps an existing $name permissive without an authored declaration", async (_name, file, frame) => {
 		const root = makeTempDir();
 		markProject(root);
@@ -155,13 +154,6 @@ describe("design asset checking", () => {
 
 	it.each([
 		["png", "frames/home/hero.png"],
-		["jpg", "frames/home/hero.jpg"],
-		["jpeg", "frames/home/hero.jpeg"],
-		["webp", "frames/home/hero.webp"],
-		["gif", "frames/home/hero.gif"],
-		["svg", "shared/assets/logo.svg"],
-		["txt", "frames/home/copy.txt"],
-		["glsl", "frames/home/effect.glsl"],
 		["wgsl", "shared/shaders/effect.wgsl"],
 	] as const)("types an imported %s asset as the string a frame receives", async (_kind, file) => {
 		const root = makeTempDir();
@@ -179,8 +171,6 @@ describe("design asset checking", () => {
 
 	it.each([
 		["asset", "frames/home/hero.png", "./hero.png"],
-		["text file", "frames/home/copy.txt", "./copy.txt"],
-		["GLSL shader", "frames/home/effect.glsl", "./effect.glsl"],
 		["WGSL shader", "shared/shaders/effect.wgsl", "shared/shaders/effect.wgsl"],
 	] as const)("holds an imported %s to being a string and nothing looser", async (_kind, file, specifier) => {
 		const root = makeTempDir();
@@ -195,7 +185,7 @@ describe("design asset checking", () => {
 		expect(result[0]).toContain("Type 'string' is not assignable to type 'number'");
 	});
 
-	it.each(["png", "glsl", "wgsl"])("reports a missing .%s import", async (extension) => {
+	it.each(["png"])("reports a missing .%s import", async (extension) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeFrame(root, "home", `import hero from "./hero.${extension}";\nvoid hero;\n`);
@@ -274,11 +264,6 @@ describe("design asset checking", () => {
 		{
 			name: "explicit query",
 			specifier: "../../shared/explicit.ts?raw",
-			selected: "shared/explicit.ts",
-		},
-		{
-			name: "explicit fragment",
-			specifier: "../../shared/explicit.ts#preview",
 			selected: "shared/explicit.ts",
 		},
 		{

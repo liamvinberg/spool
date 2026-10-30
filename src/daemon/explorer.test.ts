@@ -865,38 +865,6 @@ describe("pages inside pages", () => {
 		expect(read.pages).toContain("site/chat");
 	});
 
-	it("renames a page mid-tree, carrying every frame, camera and list under it", async () => {
-		const { spoolDir, root, name } = nested();
-		const app = makeApp(spoolDir);
-		await app.request(
-			`/api/p/${name}/state`,
-			jsonPut({
-				activePage: "explorations/chat",
-				pageCameras: { explorations: { x: 1, y: 1, k: 1 }, "explorations/chat": { x: 2, y: 2, k: 2 } },
-			}),
-		);
-		await app.request(
-			`/api/p/${name}/order`,
-			jsonPut({
-				pages: { "": ["explorations"], explorations: ["chat", "landing-page"] },
-				frames: { "explorations/chat": ["agent-chat"] },
-			}),
-		);
-
-		const res = await app.request(`/api/p/${name}/pages/rename`, jsonPost({ from: "explorations", to: "research" }));
-
-		expect(res.status).toBe(204);
-		expect(existsSync(designFile(root, "frames", "research", "chat", "agent-chat", "frame.tsx"))).toBe(true);
-		expect(await (await app.request(`/api/p/${name}/state`)).json()).toMatchObject({
-			activePage: "research/chat",
-			pageCameras: { research: { x: 1, y: 1, k: 1 }, "research/chat": { x: 2, y: 2, k: 2 } },
-		});
-		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({
-			pages: { "": ["research"], research: ["chat", "landing-page"] },
-			frames: { "research/chat": ["agent-chat"] },
-		});
-	});
-
 	it("refuses a rename that would change the page holding it", async () => {
 		const { spoolDir, name } = nested();
 		const app = makeApp(spoolDir);

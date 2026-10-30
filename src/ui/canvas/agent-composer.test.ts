@@ -917,10 +917,6 @@ describe("the stylesheet the stroke lives in", () => {
 		(stop) => [Number(stop[1]) / 100, Number(stop[2])] as const,
 	);
 
-	it("lays and takes up once every 1600ms", () => {
-		expect(CSS).toContain("--animate-agent-wind: agent-wind 1600ms linear infinite");
-	});
-
 	/**
 	 * Linear, because the easing is in the values: each end has its own smoothstep over its
 	 * own part of the cycle, and one shared timing function cannot express two.

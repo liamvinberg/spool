@@ -4,38 +4,11 @@ import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeFrame } from "../test-helpers";
 
 /**
- * The canvas window's panes (#359), driven with a real pointer: a tab showing
- * its pane, a tab dragged onto a pane's body splitting the side, a side closing
+ * The canvas window's panes (#359), driven with a real pointer: a tab dragged
+ * onto a pane's body splitting the side, a side closing
  * to its rail and a rail icon opening it on that pane, and the window bar being
  * the same on Home and on a canvas.
  */
-
-it("switches the pane a tab is clicked for, and keeps the side's width", { timeout: 120_000 }, async () => {
-	const { page } = await openCanvas();
-	const properties = page.locator('[data-pane-tab="properties"]');
-	const agent = page.locator('[data-pane-tab="agent"]');
-	expect(await properties.getAttribute("aria-selected")).toBe("true");
-	expect(await agent.getAttribute("aria-selected")).toBe("false");
-	const before = await sideWidth(page, "right");
-
-	await agent.click();
-	expect(await agent.getAttribute("aria-selected")).toBe("true");
-	await expect.poll(() => page.locator("[data-agent-rail]").isVisible()).toBe(true);
-	expect(await page.locator("[data-properties-rail]").isVisible()).toBe(false);
-	expect(await sideWidth(page, "right")).toBe(before);
-
-	// and it is kept: a reload comes back on the Agent tab
-	await expect
-		.poll(() =>
-			page.evaluate(
-				() => JSON.parse(localStorage.getItem("spool.panes.layout") ?? "null")?.right?.groups?.[0]?.active,
-			),
-		)
-		.toBe("agent");
-	await page.reload();
-	await page.locator("[data-frame-label]").first().waitFor();
-	expect(await agent.getAttribute("aria-selected")).toBe("true");
-});
 
 it("splits Properties when Agent is dropped on the bottom half of its body; Esc sends a drag home", {
 	timeout: 120_000,

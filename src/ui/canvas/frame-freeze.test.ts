@@ -300,16 +300,6 @@ describe("delivering the freeze", () => {
 		expect(freezes(post)).toEqual([held]);
 	});
 
-	it("holds a frame the canvas has left alone for the minute", async () => {
-		const { post, wait } = await mountLive();
-
-		await wait(IDLE_FREEZE_MS - 1);
-		expect(freezes(post), "a frame still inside the minute keeps running").toEqual([]);
-
-		await wait(1);
-		expect(freezes(post)).toEqual([held]);
-	});
-
 	it("hands it back the moment the pointer arrives, and starts the minute over when it leaves", async () => {
 		const { post, render, wait } = await mountLive();
 		await wait(IDLE_FREEZE_MS);

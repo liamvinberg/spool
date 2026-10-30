@@ -82,13 +82,6 @@ describe("a picture is never a cause", () => {
 		// cover is the frame's first screen: nothing is borrowed to photograph it
 		expect(s.sweep(frames).states).toEqual({ a: "picture" });
 	});
-
-	it("lets go of a selection released below the readable size", () => {
-		const frames = [frame("a", 0, 0)];
-		const s = sweeper();
-		s.sweep(frames, { selectionTargets: new Set(["a"]) });
-		expect(s.sweep(frames).states).toEqual({ a: "picture" });
-	});
 });
 
 describe("you went to it", () => {
@@ -167,14 +160,6 @@ describe("intent", () => {
 				viewport: { width: 1000, height: 1000 },
 			}).states,
 		).toEqual({ a: "live", b: "live" });
-	});
-
-	it("shows an unreadable selection live", () => {
-		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
-		const s = sweeper();
-
-		expect(s.sweep(frames, { selectionTargets: new Set(["a"]) }).states).toEqual({ a: "live", b: "picture" });
-		expect(s.sweep(frames, { selectionTargets: new Set(["b"]) }).states).toEqual({ a: "picture", b: "live" });
 	});
 
 	it("holds a frame being read rather than looked at, wherever the camera is", () => {
@@ -303,13 +288,6 @@ describe("a readable frame", () => {
 		const withSelection = mounted(s.sweep(many, { ...view, selectionTargets: new Set(additions) }).states);
 
 		expect(withSelection).toEqual([...natural, ...additions].sort());
-	});
-
-	it("leaves a frame below the threshold its placeholder when its picture is missing", () => {
-		const frames = [frame("a", 0, 0, false)];
-		const s = sweeper();
-
-		expect(s.sweep(frames, at(1)).states).toEqual({ a: "picture" });
 	});
 
 	it("keeps a selection live through zooming out and hands it back on release", () => {

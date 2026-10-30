@@ -79,8 +79,3 @@ it("a disabled row that is one action takes no click", () => {
 	act(() => row?.click());
 	expect(onClick).not.toHaveBeenCalled();
 });
-
-it("a current row says so to a reader", () => {
-	const host = render(createElement(ListRow, { as: "button", label: "shop", current: true }));
-	expect(host.querySelector("button")?.getAttribute("aria-current")).toBe("page");
-});

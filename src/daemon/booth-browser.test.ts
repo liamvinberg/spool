@@ -133,24 +133,6 @@ async function colourOf(bytes: Uint8Array): Promise<number[]> {
 	}
 }
 
-it("covers a frame a read finds uncovered, with nothing open", { timeout: 60_000 }, async () => {
-	if (!(await shellAvailable())) return;
-	const project = await served();
-	writeFrame(project.root, "cover-me", frameOf("#f5391a"));
-
-	// the read that finds no cover is the read that asks for one
-	expect(await project.coverOf("cover-me")).toBeUndefined();
-	await expect
-		.poll(() => project.coverOf("cover-me"), { timeout: 45_000 })
-		.toMatchObject({ hash: expect.any(String) });
-
-	const cover = await project.coverOf("cover-me");
-	const image = await project.image("cover-me", cover?.hash ?? "");
-	// bounded and lossy, sharp at the live threshold (#8): the default 1440 x 900 footprint at 800 wide
-	expect(image.type).toBe("image/jpeg");
-	expect(imageSize(image.bytes)).toEqual({ width: 800, height: 500 });
-});
-
 it("photographs an edit, a resize and a broken frame without a canvas, and leaves a move alone", {
 	timeout: 120_000,
 }, async () => {

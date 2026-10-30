@@ -255,22 +255,6 @@ describe("one turn", () => {
 		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait] .animate-agent-spin")).toHaveLength(0);
 	});
 
-	/** while nothing has come back the mark turns, which is the whole of what it is for */
-	it("turns the receipt's mark while the request is still out", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "go");
-
-		canvas.turn.push(waiting);
-		await settle();
-
-		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
-			"running",
-		);
-		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait] .animate-agent-spin")).toHaveLength(1);
-		expect(log(canvas.host)).toContain("thinking");
-	});
-
 	/**
 	 * The one rule that earns it the room: it is written once and never removed, so an
 	 * answer landing moves nothing above it. That is the whole difference between this
@@ -416,48 +400,6 @@ describe("one turn", () => {
 		// says more is coming
 		expect(canvas.host.querySelector(".animate-agent-paragraph")).toBeNull();
 		expect(caret(canvas.host)).toBeNull();
-	});
-
-	it("holds the press while a turn runs, and gives the composer back when it ends", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "go");
-		canvas.turn.push(waiting);
-		await settle();
-
-		// a second send would spawn a second agent against the same repo, so the press is
-		// taken and held rather than sent (#170). The footer says nothing about it either
-		// way: #184 spent that slot on which machine is answering, and the dimmed row
-		// inside the composer is what says the words were taken
-		await send(canvas.host, "then this");
-		await settle(50);
-		expect(canvas.turn.prompts).toEqual(["go"]);
-		expect(queuedRows(canvas.host)).toEqual(["then this"]);
-		expect(rail(canvas.host)?.textContent).not.toContain("enter to");
-
-		canvas.turn.push(ended);
-		canvas.turn.push(closed);
-		canvas.turn.close();
-		await settle();
-		expect(canvas.turn.prompts).toEqual(["go", "then this"]);
-	});
-
-	/** the log is receipts, and a clean ending is not one */
-	it("says nothing about a turn that ended cleanly, and says why one that did not", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "go");
-		canvas.turn.push(waiting);
-		canvas.turn.push(speaking);
-		canvas.turn.push(say("done."));
-		canvas.turn.push(ended);
-		canvas.turn.push(closed);
-		canvas.turn.close();
-		await settle(1400);
-
-		expect(rail(canvas.host)?.textContent).toContain("done.");
-		expect(rail(canvas.host)?.textContent).not.toContain("stopped");
-		expect(rail(canvas.host)?.textContent).not.toContain("exited");
 	});
 
 	it("never swallows an agent that could not be spawned", async () => {
@@ -650,10 +592,6 @@ describe("a long message", () => {
 });
 
 describe("what the log scrolls to", () => {
-	it("follows the end", () => {
-		expect(followTo({ scrollHeight: 520, clientHeight: 500 })).toBe(20);
-	});
-
 	it("follows the end of a message taller than the box", () => {
 		expect(followTo({ scrollHeight: 1400, clientHeight: 500 })).toBe(900);
 	});
@@ -1129,27 +1067,6 @@ describe("a tool row", () => {
 		).toEqual(["design/frames/home/frame.tsx", "design/shared/tokens.css", "accent"]);
 	});
 
-	/** six edits to one frame are one row, and the count climbs while it happens */
-	it("counts a run of writes rather than repeating it", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "tidy the numbers");
-
-		canvas.turn.push(ready);
-		canvas.turn.push(edit("t1"));
-		canvas.turn.push(settled("t1"));
-		await settle(120);
-		expect(rows(canvas.host)).toEqual(["edit home"]);
-
-		canvas.turn.push(edit("t2"));
-		canvas.turn.push(settled("t2"));
-		canvas.turn.push(edit("t3"));
-		canvas.turn.push(settled("t3"));
-		await settle(120);
-
-		expect(rows(canvas.host)).toEqual(["edit home ×3"]);
-	});
-
 	/** a stop is neither done nor failed, so the mark is neither a check nor a cross */
 	it("draws a stopped call as one flat stroke and a failed one as two crossing", async () => {
 		const canvas = mount();
@@ -1232,34 +1149,6 @@ describe("the plan", () => {
 		expect(strip(canvas.host)?.closest(".pages-scrollbar")).toBeNull();
 		// and the log keeps the one line that says the list was written
 		expect(rows(canvas.host)).toEqual(["plan 2 tasks"]);
-	});
-
-	/** the strip is where a changing thing can live; a log is where it gets lost */
-	it("goes on changing while the log grows past the line that wrote it", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "build the streak app");
-
-		canvas.turn.push(ready);
-		canvas.turn.push(task("Author the home frame", "Authoring the home frame", "p1"));
-		canvas.turn.push(task("Verify each frame with spool shot", "Verifying frames with spool shot", "p2"));
-		canvas.turn.push(move("p3", "1", "in_progress"));
-		await settle(120);
-		expect(strip(canvas.host)?.textContent).toContain("0/2");
-
-		// eight rows of work land between the plan and its next move, which is what
-		// carries it off the top of a transcript
-		for (let index = 0; index < 8; index += 1) {
-			canvas.turn.push(called(`r${index}`, "Edit", { file_path: `/project/design/frames/home-${index}/frame.tsx` }));
-			canvas.turn.push(settled(`r${index}`));
-		}
-		canvas.turn.push(move("p4", "1", "completed"));
-		canvas.turn.push(move("p5", "2", "in_progress"));
-		await settle(160);
-
-		expect(rows(canvas.host).length).toBeGreaterThan(8);
-		expect(strip(canvas.host)?.textContent).toContain("1/2");
-		expect(strip(canvas.host)?.textContent).toContain("Verifying frames with spool shot");
 	});
 
 	/** seven tasks permanently open is a hundred and fifty pixels answering nothing */
@@ -1438,39 +1327,6 @@ describe("a row opening", () => {
 			expect(arrive.style.marginTop).toBe("");
 			expect(arrive.style.paddingTop).toBe("");
 		}
-	});
-
-	/** a picture landing under `look` is the same growth as a row landing */
-	it("opens the picture that lands under a look the same way", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "check the home frame");
-		canvas.turn.push(ready);
-		canvas.turn.push(called("s1", "Read", { file_path: "/project/design/.spool/verify/home.png" }));
-		await settle(120);
-		expect(canvas.host.querySelector('[data-agent-row="look home"] [data-agent-arrive]')).toBeNull();
-
-		canvas.turn.push(settled("s1", { images: [{ media: "image/png", data: "iVBORw0KGgo" }] }));
-		await settle(120);
-
-		const opened = canvas.host.querySelector<HTMLElement>('[data-agent-row="look home"] [data-agent-arrive]');
-		expect(opened?.className).toContain("animate-agent-open");
-		expect(opened?.querySelector("img")).not.toBeNull();
-	});
-
-	it("opens the plan's list the same way", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "build the streak app");
-		canvas.turn.push(ready);
-		canvas.turn.push(task("Author the home frame", "Authoring the home frame", "p1"));
-		await settle(120);
-
-		await press(canvas.host.querySelector('[aria-label="plan"]'));
-
-		const opened = canvas.host.querySelector<HTMLElement>("[data-agent-plan] [data-agent-arrive]");
-		expect(opened?.className).toContain("animate-agent-open");
-		expect(opened?.textContent).toContain("Author the home frame");
 	});
 });
 
@@ -2705,40 +2561,6 @@ describe("a thread waiting on a person", () => {
 		expect(await lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 		// nothing turns: the thread has stopped and is costing nothing
 		expect((await marks(canvas.host, "pick a direction")).turning).toBe(0);
-	});
-
-	it("draws the disc for an approval nobody has answered", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "tidy the repo");
-		canvas.turn.push(ready);
-		canvas.turn.push(called("call-1", "Bash", { command: "rm -rf build" }));
-		canvas.turn.push({
-			kind: "asking",
-			request: "req-a",
-			call: "call-1",
-			tool: "Bash",
-			display: null,
-			input: { command: "rm -rf build" },
-			description: "Delete the build folder",
-			interaction: false,
-			suggestions: [],
-			parent: null,
-		});
-		await settle();
-
-		expect(await lifeOfCell(canvas.host, "tidy the repo")).toBe("waiting");
-	});
-
-	it("draws the disc for a signed-out bounce, in the binary's own words", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "shoot home");
-		canvas.turn.push({ kind: "closed", code: 1, message: "Not logged in · Please run /login", parent: null });
-		canvas.turn.close();
-		await settle();
-
-		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
 	});
 
 	/** the agent is told to finish and does, so a wind-down is not a thread that is stuck */

@@ -86,7 +86,7 @@ async function team(options: { historyCacheBytes?: number } = {}) {
 	return { cloud, app, root, spoolDir, moment, compare, document, ben: cloud.machine("ben") };
 }
 
-it("serves a frame as it stood, its own file and the shared files it imported then, today's unchanged", {
+it("serves a frame as it stood, its own file and the shared files it imported then, today's unchanged, a deleted one in its old place, and an absent one as absent", {
 	timeout: 60_000,
 }, async () => {
 	const { cloud, app, root, moment, compare, document } = await team();
@@ -117,12 +117,8 @@ it("serves a frame as it stood, its own file and the shared files it imported th
 	expect(tree(join(root, "design"))).toEqual(before);
 	expect(cloud.file("checkout", "frames/cart/frame.tsx")).toBe(CART_NOW);
 	expect(cloud.history("checkout").at(-1)?.version).toBe(head);
-});
 
-it("serves a frame deleted since in its old place, and says a frame that didn't exist then didn't", {
-	timeout: 60_000,
-}, async () => {
-	const { moment, compare, document } = await team();
+	// a frame deleted since is served in its old place, and one that didn't exist then is said not to have
 	const menu = await compare("menu", moment);
 	expect(menu.body).toMatchObject({ state: "ready", place: { x: 600, y: 40, w: 400, h: 300 } });
 	expect((await document(String(menu.body.url))).html).toContain("menu then");

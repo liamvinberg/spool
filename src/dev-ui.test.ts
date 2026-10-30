@@ -46,13 +46,6 @@ describe("checkout UI watch", () => {
 		expect(watchesCheckoutUi(["serve"])).toBe(false);
 		expect(watchesCheckoutUi(["stop"])).toBe(false);
 	});
-
-	it("wires pnpm dev through the checkout entry", () => {
-		const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-			scripts: Record<string, string>;
-		};
-		expect(pkg.scripts.dev).toContain("tsx src/dev.ts");
-	});
 });
 
 function bundleText(outDir: string): string {

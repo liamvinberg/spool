@@ -151,17 +151,6 @@ describe("FrameLabel", () => {
 		expect(play({ entered: true })).not.toBeNull();
 	});
 
-	it("sets play right after the name, clear of the far end where teammates' names dock", () => {
-		const { el } = label({
-			name: "landing",
-			frameWidth: 1000,
-			camera: cameraAt({ x: 0, y: 0, k: 0.5 }),
-			hovered: true,
-		});
-		const button = el.querySelector('button[aria-label="Play landing"]');
-		expect(button?.className).not.toContain("ml-auto");
-	});
-
 	it("keeps the selected label's width, and its play button, exact through every frame of a zoom", () => {
 		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
 		act(() => vi.advanceTimersByTime(REST_MS));

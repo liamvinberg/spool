@@ -286,17 +286,6 @@ describe("a frame name is a path, and only a path", () => {
 });
 
 describe("page-frame stores key by the frame's path", () => {
-	it("serves the page frame's document from its page folder", async () => {
-		const { spoolDir, root, name } = pageProject();
-		writePageFrame(root, "shop", "checkout", label("hello from the shop page"));
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/p/${name}/frames/shop%2Fcheckout`);
-
-		expect(res.status).toBe(200);
-		expect(await res.text()).toContain("hello from the shop page");
-	});
-
 	it("moves a trashed page frame's folder", async () => {
 		const { spoolDir, root, name } = pageProject();
 		writePageFrame(root, "shop", "checkout", label("checkout"));

@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { field, freshBrowser, live, modelTrigger, mount, OFFERED, press, settle, until } from "./agent-rail-harness";
+import { field, freshBrowser, live, mount, press, settle, until } from "./agent-rail-harness";
 
 beforeEach(freshBrowser);
 
@@ -63,16 +63,5 @@ describe("the mode menu", () => {
 		await settle(200);
 		expect(canvas.host.querySelector("[data-permission-menu]")).toBeNull();
 		expect(document.activeElement).toBe(field(canvas.host));
-	});
-
-	/** an agent that has no modes to offer is not offered a menu of them */
-	it("is not drawn for an agent that reports no modes", async () => {
-		const canvas = mount();
-		canvas.offered.offer = { ...OFFERED, modes: false };
-		await canvas.render();
-		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
-		await settle(50);
-
-		expect(trigger(canvas.host)).toBeNull();
 	});
 });

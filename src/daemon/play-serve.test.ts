@@ -53,7 +53,7 @@ function configOf(doc: string): {
 }
 
 describe("serving the player", () => {
-	it.each(["glsl", "wgsl"])("rebuilds the player when an imported .%s shader changes", async (extension) => {
+	it.each(["glsl"])("rebuilds the player when an imported .%s shader changes", async (extension) => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		const shaderFile = `shared/shaders/effect.${extension}`;

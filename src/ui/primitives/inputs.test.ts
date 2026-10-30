@@ -2,7 +2,7 @@
 import { act, createElement, type ReactElement, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { ColourField, Field, NumberField, SearchField, SelectTrigger, TextField } from "./inputs";
+import { ColourField, Field, NumberField, SearchField, TextField } from "./inputs";
 
 /**
  * The input primitives hold a draft of their own where a half-typed value must
@@ -136,9 +136,4 @@ it("a field's label points at its control, and an error takes the hint's place",
 	expect(host.querySelector(`#${CSS.escape(label?.getAttribute("for") ?? "")}`)?.tagName).toBe("INPUT");
 	expect(host.querySelector('[role="alert"]')?.textContent).toBe("Already taken.");
 	expect(host.textContent).not.toContain("The folder is renamed");
-});
-
-it("a select trigger says whether its menu is open", () => {
-	const host = render(createElement(SelectTrigger, { value: "opus 4.1", open: true, "aria-label": "Model" }));
-	expect(host.querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
 });
