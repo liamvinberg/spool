@@ -19,20 +19,40 @@ function yieldCaptureTask(): Promise<void> {
 
 // The characters this document actually shows — a face whose unicode-range
 // covers none of them is bytes nobody would ever see. Large authored text
-// is scanned in bounded tasks so font subsetting cannot stall its renderer.
+// is scanned in its own tasks, each bounded by time rather than length, and
+// node by node rather than as one copied string, so font subsetting cannot
+// stall its renderer however slowly a busy machine runs the scan.
 async function documentCodepoints(root: Node): Promise<Set<number>> {
 	const seen = new Set<number>();
-	const text = root.textContent || "";
-	let index = 0;
-	while (index < text.length) {
-		const end = Math.min(text.length, index + 64 * 1024);
-		while (index < end) {
-			const code = text.codePointAt(index) as number;
-			seen.add(code);
-			index += code > 0xffff ? 2 : 1;
+	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+	// a pair split across two text nodes is still one character, as in textContent
+	let pending = "";
+	await yieldCaptureTask();
+	let taskStart = performance.now();
+	while (walker.nextNode()) {
+		const data = (walker.currentNode as Text).data;
+		const text = pending === "" ? data : pending + data;
+		pending = "";
+		let index = 0;
+		while (index < text.length) {
+			const end = Math.min(text.length, index + 4 * 1024);
+			while (index < end) {
+				const code = text.codePointAt(index) as number;
+				if (code >= 0xd800 && code <= 0xdbff && index === text.length - 1) {
+					pending = text[index] as string;
+					index += 1;
+					break;
+				}
+				seen.add(code);
+				index += code > 0xffff ? 2 : 1;
+			}
+			if (performance.now() - taskStart > 4) {
+				await yieldCaptureTask();
+				taskStart = performance.now();
+			}
 		}
-		if (index < text.length) await yieldCaptureTask();
 	}
+	if (pending !== "") seen.add(pending.charCodeAt(0));
 	return seen;
 }
 
