@@ -53,7 +53,9 @@ it("deletes every held element as one write and puts them all back", { timeout: 
 	const items = () => frame.locator("ul.work li").count();
 
 	await f.select("li#one");
+	// each ⇧-click lands before the next press, which voids a pick the frame has not answered yet
 	await shift("li#two");
+	await expect.poll(picks, { timeout: 15_000 }).toBe(2);
 	await shift("li#three");
 	await expect.poll(picks, { timeout: 15_000 }).toBe(3);
 	// the ring says what several held elements are
