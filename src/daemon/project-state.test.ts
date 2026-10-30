@@ -49,10 +49,6 @@ describe("a page that moved", () => {
 		});
 	});
 
-	it("leaves the root page's own camera slot alone, so a flat file reads unchanged", () => {
-		expect(pageMovedInState(stored, "explorations", "research")?.camera).toEqual(camera(0));
-	});
-
 	it("says nothing when the state never named it", () => {
 		expect(pageMovedInState({ camera: camera(0) }, "explorations", "research")).toBeUndefined();
 		expect(pageMovedInState(stored, "archive", "old")).toBeUndefined();

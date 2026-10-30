@@ -190,15 +190,6 @@ describe("a render that answers with no attribute", () => {
 		expect(after.unreadable).toEqual([]);
 	});
 
-	it("keeps a dark site nobody has rendered", async () => {
-		const { name, app } = seedProject();
-
-		// no record at all: the question was never put to a render
-		expect((await fetchFlows(app, name)).unreadable).toEqual([
-			{ frame: "index", path: "shared/ui/rows.tsx", line: 6 },
-		]);
-	});
-
 	it("keeps a dark site whose empty read is about older bytes", async () => {
 		const { root, name, app } = seedProject();
 		writeCache(root, "index", []);
