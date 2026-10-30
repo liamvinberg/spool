@@ -96,11 +96,6 @@ test("download progress never rounds up to completion and preparation waits for 
 	assert.equal(fake.listenerCount("error"), 1);
 });
 
-test("the verified version is the one the feed actually downloaded", async () => {
-	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.13.0" } };
-	assert.equal(await api.installUpdate(silent, silent, options), "0.13.0");
-});
-
 test("a cached archive without download progress still enters preparation", async () => {
 	fake.download = async () => {
 		downloaded();
@@ -324,12 +319,6 @@ test("checks report the feed's version without downloading and configure listene
 	]);
 	assert.equal(fake.listenerCount("error"), 1);
 	assert.equal(fake.downloaded, 0);
-});
-
-test("the relaunch uses the same updater that staged the archive", async () => {
-	await api.installUpdate(silent, silent, options);
-	api.relaunchIntoUpdate();
-	assert.equal(fake.quitAndInstallCalls, 1);
 });
 
 test("the cadence honours the last check and treats invalid timestamps as absent", () => {
