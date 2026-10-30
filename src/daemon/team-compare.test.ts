@@ -60,8 +60,16 @@ async function team(options: { historyCacheBytes?: number } = {}) {
 	writeFrame(root, "menu", "export default function Menu() {\n\treturn <h1>menu then</h1>;\n}\n");
 	writeDesignFile(root, "frames/menu/frame.json", '{ "x": 600, "y": 40, "w": 400, "h": 300 }\n');
 	const app = makeApp(spoolDir, { cloud: ana.cloud, teamNotice: () => {}, ...options });
-	await until(() => cloud.file("checkout", "frames/menu/frame.json") !== undefined, 15_000);
-	await until(() => cloud.file("checkout", "shared/ui/badge.tsx") !== undefined, 15_000);
+	// every file of then is in the team before its moment is taken: they need not arrive in the order written
+	for (const path of [
+		"shared/ui/order-button.tsx",
+		"shared/ui/badge.tsx",
+		"frames/cart/frame.tsx",
+		"frames/cart/frame.json",
+		"frames/menu/frame.tsx",
+		"frames/menu/frame.json",
+	])
+		await until(() => cloud.file("checkout", path) !== undefined, 15_000);
 	const moment = cloud.history("checkout").at(-1)?.version ?? 0;
 	// since: cart and the button change, the badge goes, menu is deleted and promo is made
 	writeFrame(root, "cart", CART_NOW);
@@ -73,6 +81,16 @@ async function team(options: { historyCacheBytes?: number } = {}) {
 	await until(() => cloud.file("checkout", "shared/ui/badge.tsx") === null, 15_000);
 	await until(() => cloud.file("checkout", "frames/menu/frame.tsx") === null, 15_000);
 	await until(() => cloud.file("checkout", "frames/promo/frame.tsx") !== undefined, 15_000);
+	// the team has each save a moment before this Mac hears it was saved, and "now" is what this Mac has heard: wait
+	// until its record is the team's newest version, which then differs from it in nothing
+	const head = cloud.history("checkout").at(-1)?.version ?? 0;
+	for (const start = Date.now(); ; await new Promise((wake) => setTimeout(wake, 25))) {
+		const read = await app.request(
+			`/api/p/checkout/history/version?${new URLSearchParams({ at: String(head), before: "-1" })}`,
+		);
+		if (read.ok && ((await read.json()) as { differs: unknown[] }).differs.length === 0) break;
+		if (Date.now() - start > 15_000) throw new Error("this Mac never heard the team's newest version");
+	}
 	const compare = async (frame: string, at: number) => {
 		const response = await app.request(
 			`/api/p/checkout/history/compare?${new URLSearchParams({ frame, at: String(at) })}`,
