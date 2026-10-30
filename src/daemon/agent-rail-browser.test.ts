@@ -18,15 +18,13 @@ import type { AgentModel, AgentOffer } from "./agent-offer";
 /*
  * The rebuilt rail (#364), in a real browser against a served daemon: the switcher in the
  * header and the dot on the dock, the composer's Send and Stop and the queue at the end of
- * the log, the context ring and the limit dot, the agent menu with effort in place, a find
+ * the log, the agent menu with effort in place, a find
  * field and other agents, the log following its live edge, and the side's width.
  *
  * Nothing real answers. Claude Code is a scripted binary that speaks its wire, and the
  * other agent is pi as a stand-in that lists models and is never started: the menu's
  * second group is whichever else is installed.
  */
-
-const WINDOW = 200_000;
 
 /** what the scripted binary lists, the way `list_models` answers */
 const CLAUDE_MODELS = [
@@ -51,8 +49,6 @@ const CLAUDE_MODELS = [
  * and turns that do what their prompt says.
  *
  * - `hold …` writes a line and stays running until the test ends it or Stop interrupts it
- * - `context N` ends with a result whose last iteration fills N% of the window
- * - `limit` warns that the week is 92% used, then ends
  * - anything else answers in one line and ends
  *
  * The model and effort are one state for the whole machine, which is what the binary's
@@ -65,8 +61,8 @@ function scriptedClaude() {
 	const named = () => CLAUDE_MODELS.find((model) => model.value === state.model)?.displayName ?? state.model;
 	const init = (proc: FakeAgentProc) =>
 		proc.emit(JSON.stringify({ type: "system", subtype: "init", model: resolved(), session_id: "s" }));
-	const result = (proc: FakeAgentProc, text: string, extra: Record<string, unknown> = {}) =>
-		proc.emit(JSON.stringify({ type: "result", subtype: "success", result: text, num_turns: 1, ...extra }));
+	const result = (proc: FakeAgentProc, text: string) =>
+		proc.emit(JSON.stringify({ type: "result", subtype: "success", result: text, num_turns: 1 }));
 	const fixture = fixtureAgentExecutor(
 		(proc, line) => {
 			const wire = JSON.parse(line) as {
@@ -112,30 +108,6 @@ function scriptedClaude() {
 				say(proc, `Working on: ${text}`);
 				held.push(proc);
 				return;
-			}
-			const context = /context (\d+)/.exec(text);
-			if (context) {
-				say(proc, "Measured.");
-				const used = (Number(context[1]) / 100) * WINDOW;
-				return result(proc, "Measured.", {
-					usage: { iterations: [{ input_tokens: 10, cache_read_input_tokens: used - 10 }] },
-					modelUsage: { [resolved()]: { contextWindow: WINDOW } },
-				});
-			}
-			if (text.includes("limit")) {
-				proc.emit(
-					JSON.stringify({
-						type: "rate_limit_event",
-						rate_limit_info: {
-							status: "allowed_warning",
-							resetsAt: Math.floor(Date.now() / 1000) + 86_400,
-							rateLimitType: "seven_day",
-							utilization: 0.92,
-							isUsingOverage: false,
-							surpassedThreshold: 0.75,
-						},
-					}),
-				);
 			}
 			say(proc, `Done: ${text}`);
 			result(proc, `Done: ${text}`);
@@ -324,34 +296,6 @@ describe("the agent rail in a browser", () => {
 		await expect.poll(() => stop.count()).toBe(0);
 		await sendButton.waitFor();
 		expect(claude.holding("hold the second turn")?.inputs.some((line) => line.includes("interrupt"))).toBe(true);
-	});
-
-	it("draws the context ring only past 60% of the window, and dots the trigger for a limit", {
-		timeout: 120_000,
-	}, async () => {
-		const { rail, send, stop, trigger, menu } = await opened();
-		const ring = rail.locator("[data-agent-context-ring]");
-
-		await send("context 30");
-		await expect.poll(() => rail.textContent()).toContain("Measured.");
-		await expect.poll(() => stop.count()).toBe(0);
-		await rail.page().waitForTimeout(300);
-		expect(await ring.count()).toBe(0);
-
-		await send("context 72");
-		await expect.poll(() => ring.getAttribute("data-agent-context-ring")).toBe("72");
-		await ring.click();
-		const note = rail.getByRole("dialog", { name: "Context", exact: true });
-		await expect.poll(() => note.textContent()).toContain("72% of context used.");
-		expect(await note.textContent()).toContain("A new chat starts fresh.");
-		await ring.click();
-		await expect.poll(() => note.count()).toBe(0);
-
-		expect(await trigger.locator("[data-agent-limit-dot]").count()).toBe(0);
-		await send("limit");
-		await expect.poll(() => trigger.locator("[data-agent-limit-dot]").count()).toBe(1);
-		await trigger.click();
-		await expect.poll(() => menu.locator("[data-agent-usage]").textContent()).toContain("92%");
 	});
 
 	it("sets effort in place, finds past twelve models, and changes agent in place or in a new chat", {

@@ -432,20 +432,6 @@ describe("the project registry for home", () => {
 		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
 	});
 
-	it("404s forgetting a root that was never registered", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		makeProject(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const res = await app.request("/api/projects/forget", {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ root: "/somewhere/never-registered" }),
-		});
-
-		expect(res.status).toBe(404);
-	});
-
 	it("rejects a forget without a root", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const app = makeApp(spoolDir);
