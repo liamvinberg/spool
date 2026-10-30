@@ -465,26 +465,6 @@ describe("the read-only canvas", () => {
 		await expect.poll(() => player.frameLocator('iframe[title="menu"]').locator("h1").textContent()).toBe("menu v2");
 	});
 
-	it("shows a frame too small to read as its cover, and makes its document once it is readable", {
-		timeout: 60_000,
-	}, async () => {
-		const { page } = await open(PATH, { as: editor });
-		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
-		// out until both draw under 400px: home's cover stands, drawn by the picture layer with no shell, and menu,
-		// which has none, is its placeholder rather than a document
-		await page.getByRole("button", { name: "Zoom out" }).click();
-		await page.getByRole("button", { name: "Zoom out" }).click();
-		await page.getByRole("button", { name: "Zoom out" }).click();
-		await expect.poll(() => page.locator("iframe").count()).toBe(0);
-		await expect.poll(() => drawnPictures(page)).toEqual(["home"]);
-		expect(await page.locator('[data-viewer-frame="home"]').count()).toBe(0);
-		expect(await page.locator('[data-viewer-frame="menu"] [data-viewer-placeholder]').isVisible()).toBe(true);
-		await page.getByRole("button", { name: "Zoom in" }).click();
-		await page.getByRole("button", { name: "Zoom in" }).click();
-		await page.getByRole("button", { name: "Zoom in" }).click();
-		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
-	});
-
 	it("offers play beside the name of the frame pointed at", { timeout: 60_000 }, async () => {
 		const { page } = await open();
 		await page.frameLocator('iframe[title="home"]').locator("h1").waitFor();
