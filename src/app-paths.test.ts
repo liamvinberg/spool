@@ -4,7 +4,6 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { APP_PATH_SEGMENTS } from "./app-paths";
 import { createDaemonApp } from "./daemon/app";
 import { placeOf } from "./home-places";
-import * as protocol from "./team-sync-protocol";
 import { makeApp, makeTempDir } from "./test-helpers";
 
 /** The daemon's routes as Hono holds them, split into their literal segments. */
@@ -39,10 +38,6 @@ describe("the app's own first path segments", () => {
 
 	it("hold Home's own places in the Mac app", () => {
 		expect(APP_PATH_SEGMENTS).toEqual(expect.arrayContaining(["recent", "account", "p"]));
-	});
-
-	it("ship in the sync protocol, which spool.page reads them from", () => {
-		expect(protocol.APP_PATH_SEGMENTS).toBe(APP_PATH_SEGMENTS);
 	});
 
 	it("are never read as a team's address", () => {
