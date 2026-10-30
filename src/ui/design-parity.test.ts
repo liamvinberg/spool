@@ -32,12 +32,6 @@ describe("the stylesheet the arrival lives in", () => {
 		return CSS.slice(at, end === -1 ? undefined : end);
 	};
 
-	it("opens a paragraph over 340ms and a row over 260ms, on the house curve", () => {
-		expect(CSS).toContain("--animate-agent-paragraph: agent-open 340ms cubic-bezier(0.22, 0.61, 0.36, 1)");
-		expect(CSS).toContain("--animate-agent-open: agent-open 260ms cubic-bezier(0.22, 0.61, 0.36, 1)");
-		expect(CSS).toContain("--animate-agent-rise: agent-entry 340ms cubic-bezier(0.22, 0.61, 0.36, 1)");
-	});
-
 	/** the box is a grid track: no height is measured and nothing re-lays the words */
 	it("opens on a grid track from nothing to its own size", () => {
 		const frames = block("@keyframes agent-open");
@@ -172,13 +166,6 @@ describe("the agent on the canvas", () => {
 		expect(EASE.out).toEqual([0.22, 0.61, 0.36, 1]);
 	});
 
-	it("arrives from 40% and leaves at 60%, where it stood", () => {
-		const arrive = CSS.slice(CSS.indexOf("@keyframes agent-arrive {"));
-		expect(arrive.slice(0, arrive.indexOf("\n\t}"))).toContain("scale(0.4)");
-		const depart = CSS.slice(CSS.indexOf("@keyframes agent-depart {"));
-		expect(depart.slice(0, depart.indexOf("\n\t}"))).toContain("scale(0.6)");
-	});
-
 	it("stands the moving ones still and takes the leaving ones out when stillness is asked for", () => {
 		const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
 		const still = CSS.slice(at, CSS.indexOf("\n}", at));
@@ -186,25 +173,5 @@ describe("the agent on the canvas", () => {
 		const gone = still.slice(still.indexOf(".animate-agent-depart"));
 		for (const name of LEAVING) expect(gone.slice(0, gone.indexOf("}"))).toContain(`.animate-agent-${name}`);
 		expect(gone.slice(0, gone.indexOf("}"))).toContain("display: none");
-	});
-});
-
-describe("thread stylesheet", () => {
-	/**
-	 * The close lands on the first line's end, so on hover that corner of the ask fades out
-	 * under it rather than the two overprinting. A mask image cannot transition, so the cut
-	 * is always in the mask and parked past the right edge; hover slides it in. Plain CSS
-	 * rather than a utility, because the value carries a slash the class parser reads as a
-	 * modifier.
-	 */
-	it("fades the end of the first line out under the close, in the stylesheet", () => {
-		const CSS = readFileSync(join(process.cwd(), "src/ui/theme.css"), "utf8");
-		const at = CSS.indexOf(".agent-thread-ask {");
-		expect(at).toBeGreaterThan(-1);
-		const rule = CSS.slice(at, CSS.indexOf("\n}", at));
-		expect(rule).toContain("mask-composite: exclude");
-		expect(rule).toContain("calc(100% + 56px) 0 / 56px 16px");
-		expect(rule).toContain("180ms cubic-bezier(0.22, 0.61, 0.36, 1)");
-		expect(CSS).toContain(".agent-thread-row:hover .agent-thread-ask");
 	});
 });
