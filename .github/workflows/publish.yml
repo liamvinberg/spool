@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write # run ci.yml on the release PR, below
     outputs:
       published: ${{ steps.changesets.outputs.published }}
       tag: ${{ steps.tag.outputs.tag }}
@@ -73,6 +74,33 @@ jobs:
           version=$(gh api "repos/${{ github.repository }}/contents/package.json?ref=changeset-release/main" --jq .content | base64 -d | jq -r .version)
           gh pr edit "$pr" --title "release: spool.page $version"
           gh pr view "$pr" --json body -q .body | sed -n '/^# Releases/,$p' | gh pr edit "$pr" --body-file -
+      # The release PR's own CI. GITHUB_TOKEN pushed its branch, and since June
+      # 2026 GitHub holds the pull_request run that push starts until someone
+      # approves it (it sat at action_required, then failed when the approval
+      # expired). A dispatch from GITHUB_TOKEN runs straight away, on the same
+      # commit, so its checks land on the PR. The held runs only ask for an
+      # approval nobody needs to give, so they go.
+      - if: steps.changesets.outputs.pullRequestNumber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          branch=changeset-release/main
+          head=$(gh api "repos/$REPO/commits/$branch" --jq .sha)
+          gh workflow run ci.yml --repo "$REPO" --ref "$branch" -f darwin=false
+          # GitHub creates the held run a few seconds after the push.
+          for try in $(seq 1 12); do
+            held=$(gh api "repos/$REPO/actions/runs?branch=$branch&event=pull_request&status=action_required&per_page=100" \
+              --jq '.workflow_runs[] | "\(.id) \(.head_sha)"') || held=""
+            found=false
+            while read -r id sha; do
+              [ -n "$id" ] || continue
+              gh api -X DELETE "repos/$REPO/actions/runs/$id" || true
+              [ "$sha" = "$head" ] && found=true
+            done <<< "$held"
+            [ "$found" = true ] && break
+            sleep 5
+          done
 
   validate:
     needs: release

@@ -1,7 +1,9 @@
 import { availableParallelism, loadavg } from "node:os";
+import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
+import { assignShards, fileWeight, parseDurations } from "./.github/scripts/test-shards.ts";
 
 /**
  * These aliases are the import map pins from daemon/vendor.ts, mirrored:
@@ -26,12 +28,41 @@ const pins = [
  * most of the run and are scheduled first so the tail is unit files, not a
  * browser suite starting after the rest have finished. Within each group the
  * base order stands: longest first from the local cache, largest first without.
+ *
+ * CI hands over how long each file took on the last main run
+ * (SPOOL_TEST_DURATIONS, see .github/scripts/test-shards.ts). With it a shard
+ * gets its files by time rather than by hash, so the shards finish together,
+ * and runs them longest first.
  */
 const heavy = /(-browser|-native|\/cli(?:-[^/]+)?)\.test\.ts$/;
+const durations = parseDurations(process.env.SPOOL_TEST_DURATIONS);
+const timed = Object.keys(durations).length > 0;
 
-class HeavyFirstSequencer extends BaseSequencer {
+class SpoolSequencer extends BaseSequencer {
+	override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
+		const { root, shard } = this.ctx.config;
+		if (shard === undefined) return files;
+		const byPath = new Map<string, TestSpecification[]>();
+		for (const file of files) {
+			const path = relative(root, file.moduleId).replaceAll("\\", "/");
+			byPath.set(path, [...(byPath.get(path) ?? []), file]);
+		}
+		const mine = assignShards([...byPath.keys()], durations, shard.count)[shard.index - 1] ?? [];
+		const load = mine.reduce((sum, path) => sum + fileWeight(path, durations), 0);
+		console.log(
+			`Shard ${shard.index}/${shard.count}: ${mine.length} of ${byPath.size} files, about ${Math.round(load)} s of work` +
+				(timed ? " by the last main run's times." : ", guessed from file names (no times handed over)."),
+		);
+		return mine.flatMap((path) => byPath.get(path) ?? []);
+	}
+
 	override async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
 		const sorted = await super.sort(files);
+		if (timed) {
+			const weight = (file: TestSpecification) =>
+				fileWeight(relative(this.ctx.config.root, file.moduleId).replaceAll("\\", "/"), durations);
+			return sorted.sort((a, b) => weight(b) - weight(a));
+		}
 		return [
 			...sorted.filter((file) => heavy.test(file.moduleId)),
 			...sorted.filter((file) => !heavy.test(file.moduleId)),
@@ -67,6 +98,16 @@ function testWorkers(): number {
 	return Math.min(MAX_WORKERS, Math.max(MIN_WORKERS, Math.floor(free / CORES_PER_WORKER)));
 }
 
+/**
+ * Node 25 turned its own Web Storage on by default, and its `localStorage`
+ * global, empty without `--localstorage-file`, hides happy-dom's from every
+ * suite that stores something. Every Node from 22 knows the flag, and on one
+ * where Web Storage is already off it changes nothing.
+ */
+const workerArgs = process.allowedNodeEnvironmentFlags.has("--experimental-webstorage")
+	? ["--no-experimental-webstorage"]
+	: [];
+
 export default defineConfig({
 	resolve: {
 		alias: pins,
@@ -81,6 +122,7 @@ export default defineConfig({
 		// The checked-out revision owns this selection, including release recovery.
 		...(process.env.SPOOL_TEST_DARWIN === "1" ? { testNamePattern: "macOS only" } : {}),
 		maxWorkers: testWorkers(),
+		execArgv: workerArgs,
 		// A hang guard, not a measure: no case is judged by its timeout, and the 5 s
 		// default reads a shared, loaded machine as a failure (a TypeScript check or
 		// a website build is a second or two alone, five on a busy devobee). A case
@@ -88,6 +130,6 @@ export default defineConfig({
 		testTimeout: 30_000,
 		// Keep one CI retry for process/browser scheduling noise; local failures remain visible.
 		retry: process.env.CI === undefined ? 0 : 1,
-		sequence: { sequencer: HeavyFirstSequencer },
+		sequence: { sequencer: SpoolSequencer },
 	},
 });
