@@ -189,8 +189,7 @@ async function serveWebglCapture(
 	const controlOrigin = `http://127.0.0.1:${address.port}`;
 	const renderOrigin = `http://${RENDER_HOST}:${address.port}`;
 	const canvasStyle = "position: absolute; left: 25%; top: 25%; width: 50%; height: 50%";
-	const canvasAttribute =
-		positioning === "inline" ? `style="${canvasStyle}"` : 'class="shader"';
+	const canvasAttribute = positioning === "inline" ? `style="${canvasStyle}"` : 'class="shader"';
 	frameDocument = assembleFrameDocument({
 		project: "capture-test-webgl",
 		frame: "capture",
