@@ -59,23 +59,29 @@ export async function handCanvas(
 			const response = await fetch(`${project.url}/api/p/${project.name}/selection`, {
 				headers: { "X-Spool-Control": project.controlToken },
 			});
-			const body = (await response.json()) as { selection?: { selector?: string; name?: string }[] };
+			const body = (await response.json()) as { selection?: { kind?: string; selector?: string; name?: string }[] };
 			return body.selection?.length === 1 ? body.selection[0] : undefined;
 		};
 		const before = await held();
-		await target.click({ position: at, modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
 		// the selection is real once the daemon holds it, and it is this one
 		// rather than the last: the same tag as the element clicked, or a
 		// different element than was held before the click
-		await expect
-			.poll(
-				async () => {
-					const now = await held();
-					return now !== undefined && (now.name === tag || now.selector !== before?.selector);
-				},
-				{ timeout: 15_000 },
-			)
-			.toBe(true);
+		const landed = async () => {
+			const now = await held();
+			return now !== undefined && (now.name === tag || now.selector !== before?.selector);
+		};
+		// A frame that has not answered the canvas's ask within PICK_REPLY_MS is
+		// held whole, as a frame that never answers is. On a loaded runner the
+		// frame's renderer can take longer than that to answer an idle ask, so a
+		// click the frame was too slow for is made again, as a person would.
+		for (let attempt = 1; ; attempt += 1) {
+			await target.click({ position: at, modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+			if (attempt === 3) break;
+			const outcome = async () => ((await held())?.kind === "frame" ? "frame" : (await landed()) ? "element" : "waiting");
+			await expect.poll(outcome, { timeout: 15_000 }).not.toBe("waiting");
+			if ((await outcome()) === "element") break;
+		}
+		await expect.poll(landed, { timeout: 15_000 }).toBe(true);
 		return { target, box, at: { x: box.x + at.x, y: box.y + at.y } };
 	};
 	/** ⌘Z or ⇧⌘Z out on the canvas, which is where the one stack listens. */
