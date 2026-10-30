@@ -875,8 +875,27 @@ function Tab({
 		element.style.transition = "";
 		element.style.maxWidth = "0px";
 		element.style.opacity = "0";
-		const gone = setTimeout(() => safeToRemove?.(), closeMs);
-		return () => clearTimeout(gone);
+		// gone once it has shrunk to nothing, by the shrink's own clock: a busy page starts that a late frame
+		// after this, and a timer begun now would take the slot out still wide, and the row would jump by it
+		let settled = false;
+		const remove = () => {
+			if (settled) return;
+			settled = true;
+			safeToRemove?.();
+		};
+		const shrink =
+			typeof element.getAnimations === "function"
+				? element
+						.getAnimations()
+						.filter((animation) => (animation as CSSTransition).transitionProperty === "max-width")
+				: [];
+		// a hidden page paints no frames to finish it on
+		const gone = shrink.length === 0 || document.hidden ? setTimeout(remove, closeMs) : undefined;
+		if (gone === undefined) void Promise.all(shrink.map((animation) => animation.finished)).then(remove, remove);
+		return () => {
+			settled = true;
+			clearTimeout(gone);
+		};
 	}, [present]);
 
 	useLayoutEffect(() => {

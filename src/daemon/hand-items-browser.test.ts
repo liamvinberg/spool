@@ -78,6 +78,13 @@ it("deletes one row of a list from the array behind it", { timeout: 240_000 }, a
 		expect.poll(() => array().includes(snippet), { timeout: 15_000 }).toBe(there);
 	const rows = (count: number) => expect.poll(() => frame.locator(".row").count(), { timeout: 20_000 }).toBe(count);
 	/**
+	 * The page with nothing left to run. A reload's boot is many tasks after its
+	 * requests have gone quiet, and a frame answers the canvas's ask only after
+	 * them while the canvas waits `PICK_REPLY_MS`; the frames share the page's
+	 * renderer here, so its idle is theirs.
+	 */
+	const idle = () => page.evaluate(() => new Promise((resolve) => requestIdleCallback(resolve, { timeout: 5_000 })));
+	/**
 	 * Hold one element the way a person does.
 	 *
 	 * Quiet on both sides of the click: a write to a shared file reloads every
@@ -88,8 +95,10 @@ it("deletes one row of a list from the array behind it", { timeout: 240_000 }, a
 	 */
 	const hold = async (selector: string, at?: { x: number; y: number }) => {
 		await requests.quiet();
+		await idle();
 		const held = await f.select(selector, at);
 		await requests.quiet();
+		await idle();
 		return held;
 	};
 

@@ -402,7 +402,8 @@ it("closes a tab in a strip scrolled to its end without the row jumping", async 
 	);
 	// the end of the row stays put while the content before the gap fills it from the left
 	const last = samples.map((sample) => sample.last ?? 0);
-	for (const value of last) expect(Math.abs(value - (last[0] ?? 0))).toBeLessThan(1);
+	const trace = samples.map((sample, index) => `${Math.round(sample.t)}ms ${last[index]}`).join(", ");
+	for (const value of last) expect(Math.abs(value - (last[0] ?? 0)), trace).toBeLessThan(1);
 	const first = samples.map((sample) => sample.first ?? 0);
 	const settled = first[first.length - 1] ?? 0;
 	expect(settled).toBeGreaterThan(first[0] ?? 0);
