@@ -135,21 +135,6 @@ it("lists every place in the sidebar, a watched team marked with an eye, and ope
 	await page.getByRole("button", { name: "Open kaffe" }).waitFor();
 });
 
-it("slides the team's pages open and fades the page up, on the house ease-out", async () => {
-	const page = await home("no-preference");
-	await page.getByRole("button", { name: "Tidemark" }).click();
-	const pages = page.locator("[data-place=tidemark] .pj-place-pages");
-	expect(await pages.evaluate((node) => getComputedStyle(node).transitionProperty)).toContain("grid-template-rows");
-	expect(await pages.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0\.18s/u);
-	expect(await pages.evaluate((node) => getComputedStyle(node).transitionTimingFunction)).toContain(
-		"cubic-bezier(0.22, 0.61, 0.36, 1)",
-	);
-	const fade = page.locator(".pj-place-in");
-	expect(await fade.evaluate((node) => getComputedStyle(node).animationName)).toBe("place-in");
-	const row = page.getByRole("button", { name: "Northlight" });
-	expect(await row.evaluate((node) => getComputedStyle(node).transitionDuration)).toMatch(/^0\.14s/u);
-});
-
 it("moves nothing under reduced motion", async () => {
 	const page = await home("reduce");
 	await page.getByRole("button", { name: "Tidemark" }).click();

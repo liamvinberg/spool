@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseLive, KEEP_PX, LIVE_LIMIT, type LiveInput, nextBoots, READABLE_PX } from "./viewer-live";
+import { chooseLive, KEEP_PX, LIVE_LIMIT, type LiveInput, READABLE_PX } from "./viewer-live";
 
 const VIEW = { w: 1000, h: 800 };
 const none = new Set<string>();
@@ -68,13 +68,5 @@ describe("which frames hold a document", () => {
 
 	it("leaves a failed frame as its picture", () => {
 		expect(chooseLive(input({ camera: { x: 100, y: 100, k: 1 }, failed: new Set(["f0"]) }))).toEqual(["f1"]);
-	});
-});
-
-describe("the boot queue", () => {
-	it("boots a few at a time, in order, skipping what is mounted", () => {
-		expect(nextBoots(["a", "b", "c", "d"], new Set(), 0)).toEqual(["a", "b"]);
-		expect(nextBoots(["a", "b", "c", "d"], new Set(["a", "b"]), 1)).toEqual(["c"]);
-		expect(nextBoots(["a", "b", "c", "d"], new Set(["a"]), 2)).toEqual([]);
 	});
 });

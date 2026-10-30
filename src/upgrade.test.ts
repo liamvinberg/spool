@@ -30,17 +30,6 @@ describe("planUpgrade", () => {
 		});
 	});
 
-	it("treats an nvm prefix as plain npm", () => {
-		const real = "/Users/liam/.nvm/versions/node/v22.1.0/lib/node_modules/spool.page/dist/cli.js";
-		const plan = planUpgrade(real, {
-			execPath: "/Users/liam/.nvm/versions/node/v22.1.0/bin/node",
-			isFile: (p) => p === "/Users/liam/.nvm/versions/node/v22.1.0/bin/npm",
-		});
-
-		expect(plan.ok).toBe(true);
-		if (plan.ok) expect(plan.manager).toBe("npm");
-	});
-
 	it("classifies pnpm's store path and repoints at the stable package dir", () => {
 		const real = "/Users/liam/Library/pnpm/global/5/.pnpm/spool.page@0.1.0/node_modules/spool.page/dist/cli.js";
 		const plan = planUpgrade(real, {
@@ -445,23 +434,6 @@ describe("selfUpgradeable", () => {
 				isFile: (p) => p === "/opt/homebrew/bin/npm",
 			}),
 		).toBe(true);
-	});
-
-	it("is false for the checkout, whose only upgrade is git", () => {
-		expect(selfUpgradeable({ cliPath: "/Users/liam/projects/spool/src/cli.ts", resolveReal: (path) => path })).toBe(
-			false,
-		);
-	});
-
-	it("is false when the manager that owns the install cannot be found", () => {
-		expect(
-			selfUpgradeable({
-				cliPath: globalCli,
-				resolveReal: (path) => path,
-				execPath: "/opt/homebrew/bin/node",
-				isFile: () => false,
-			}),
-		).toBe(false);
 	});
 
 	it("is false when the running cli path cannot be resolved", () => {

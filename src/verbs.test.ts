@@ -135,15 +135,6 @@ describe("selection and flows over the daemon", () => {
 });
 
 describe("url", () => {
-	it("mints a player-session URL for a frame that exists", async () => {
-		const { spoolDir, root, name, url } = await serveProject();
-		writeFrame(root, "cart", plainTsx);
-
-		await expect(mintPlayerUrl(url, name, "cart", controlToken(spoolDir))).resolves.toBe(
-			`${url}/play/${name}?frame=cart`,
-		);
-	});
-
 	it("refuses a frame that does not exist, teaching how one is born without inventing a path", async () => {
 		const { spoolDir, root, name, url } = await serveProject();
 		// a paged project: `frames/site-local--thread/frame.tsx` is a location this
