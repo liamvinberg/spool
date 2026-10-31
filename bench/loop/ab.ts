@@ -5,6 +5,7 @@
  *   node bench/loop/ab.ts --rows pan,reload --arms base=<checkout>,cand=<checkout>+<experiment> --rounds 2
  *   node bench/loop/ab.ts --rows all --arms a=<checkout>,b=<checkout of the same commit> --rounds 4 --aa
  *   node bench/loop/ab.ts --from <runs.jsonl> --aa --write-bands
+ * On a shared machine add `--quiet 8`: each run waits for the load to fall below 8.
  *
  * An arm is a built spool checkout, and the experiments it switches on after a
  * `+`. Every bench runs as its own process from this checkout's bench code,
@@ -33,6 +34,8 @@ interface Options {
 	rounds: number;
 	aa: boolean;
 	out: string;
+	/** Wait for the one-minute load to fall below this before each run (up to half an hour). */
+	quiet?: number;
 }
 
 const BANDS = join(repoRoot, "bench", "loop", "bands.json");
@@ -46,6 +49,7 @@ function parseArgs(argv: readonly string[]): Options {
 	let rounds = 2;
 	let aa = false;
 	let out = "";
+	let quiet: number | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
@@ -57,6 +61,9 @@ function parseArgs(argv: readonly string[]): Options {
 			i++;
 		} else if (arg === "--rounds" && next !== undefined) {
 			rounds = Number(next);
+			i++;
+		} else if (arg === "--quiet" && next !== undefined) {
+			quiet = Number(next);
 			i++;
 		} else if (arg === "--out" && next !== undefined) {
 			out = resolve(next);
@@ -82,7 +89,7 @@ function parseArgs(argv: readonly string[]): Options {
 	}
 	if (aa && arms.length !== 2) throw new Error("--aa compares exactly two arms of one commit");
 	if (out === "") out = join(mkdtempSync(join(tmpdir(), "spool-loop-")), "runs.jsonl");
-	return { rows, arms, rounds, aa, out };
+	return { rows, arms, rounds, aa, out, ...(quiet === undefined ? {} : { quiet }) };
 }
 
 function findRow(id: string): Row {
@@ -162,6 +169,14 @@ interface Run {
 	at: string;
 	metrics: Record<string, number>;
 	error?: string;
+}
+
+/** Another job on a shared machine (the m1 is Liam's laptop too) is waited out, not measured. */
+async function quietMachine(below: number): Promise<void> {
+	const until = Date.now() + 30 * 60_000;
+	while ((loadavg()[0] ?? 0) >= below && Date.now() < until) {
+		await new Promise((done) => setTimeout(done, 30_000));
+	}
 }
 
 async function measure(row: Row, arm: Arm, commit: string, round: number): Promise<Run> {
@@ -314,6 +329,7 @@ async function main(): Promise<void> {
 				const index = (turn + round) % options.arms.length;
 				const arm = options.arms[index] as Arm;
 				process.stderr.write(`loop: round ${round + 1}/${options.rounds}, ${row.id}, ${arm.label}\n`);
+				if (options.quiet !== undefined) await quietMachine(options.quiet);
 				const run = await measure(row, arm, commits[index] as string, round);
 				runs.push(run);
 				appendFileSync(options.out, `${JSON.stringify(run)}\n`);
