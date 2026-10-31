@@ -53,6 +53,7 @@ import {
 	type ShareView,
 } from "../share-view";
 import { type Comment, type PresenceState, readComment } from "../team-sync-protocol";
+import { experimentOn } from "./experiments";
 import { base64Logo, TeamActionRefused, type TeamsSource, teamSays, teamsAt } from "./team-source";
 import { reloadCanvas, trackUpdateWrite } from "./update-lifecycle";
 
@@ -851,7 +852,10 @@ export async function locateWrite(project: string, path: string, find: string[])
 
 export function frameDocumentUrl(project: string, frame: string, nonce: number): string {
 	const base = `/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(frame)}`;
-	return new URL(nonce === 0 ? base : `${base}?v=${nonce}`, renderOrigin).href;
+	const url = new URL(nonce === 0 ? base : `${base}?v=${nonce}`, renderOrigin);
+	// the document compiled for Fast Refresh, which a save swaps into rather than reloads
+	if (experimentOn("fast-refresh")) url.searchParams.set("refresh", "1");
+	return url.href;
 }
 
 /**

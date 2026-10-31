@@ -318,6 +318,12 @@ interface ResizePaint {
 }
 
 const SETTLE_PERSIST_MS = 600;
+/**
+ * How long a Fast Refresh update (the fast-refresh experiment) may take before
+ * the frame is reloaded as if it had refused: a compile on a busy daemon, and
+ * the import, comfortably inside it.
+ */
+const HOT_UPDATE_BOUND_MS = 4000;
 
 /** Relayed keys that count only from the frame that is entered. */
 const ENTERED_ONLY_RELAYS: ReadonlySet<HotkeyId> = new Set([
@@ -843,6 +849,14 @@ function CanvasField({
 	 * asks the document it is in, and a document still booting answers nobody.
 	 */
 	const reloading = useRef(new Set<string>());
+	/**
+	 * Fast Refresh (the fast-refresh experiment): the iframes whose document has
+	 * said loaded, the only ones an update is offered to, and each frame's update
+	 * in flight, by id, which a refusal or silence turns into a reload.
+	 */
+	const loadedIframes = useRef(new WeakSet<HTMLIFrameElement>());
+	const hotUpdates = useRef(new Map<string, number>());
+	const hotSeq = useRef(0);
 	const loadWaiters = useRef(new Map<string, (() => void)[]>());
 	/** the frame's answer to a whole generation: children or siblings (#339) */
 	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
@@ -1031,6 +1045,42 @@ function CanvasField({
 	);
 
 	/**
+	 * A frame's document changed on disk, and nothing holds it: with the
+	 * fast-refresh experiment on, the open document is asked to swap the changed
+	 * components in with React Refresh, keeping its state (`daemon/fast-refresh.ts`),
+	 * and reloads as before when it refuses or does not answer in time. A frame
+	 * whose document has not loaded, or that the hand has saved and is still in,
+	 * reloads as it always did: the hand lane is untouched.
+	 */
+	const refreshOrReload = useCallback(
+		(frame: string) => {
+			const iframe = iframes.current.get(frame);
+			const target = iframe?.contentWindow;
+			if (
+				!experimentOn("fast-refresh") ||
+				iframe === undefined ||
+				target == null ||
+				!loadedIframes.current.has(iframe) ||
+				reloading.current.has(frame) ||
+				saved.current.has(frame)
+			) {
+				hotUpdates.current.delete(frame);
+				reloadFrameDocument(frame);
+				return;
+			}
+			const id = ++hotSeq.current;
+			hotUpdates.current.set(frame, id);
+			target.postMessage({ spool: "hot", id }, "*");
+			setTimeout(() => {
+				if (hotUpdates.current.get(frame) !== id) return;
+				hotUpdates.current.delete(frame);
+				reloadFrameDocument(frame);
+			}, HOT_UPDATE_BOUND_MS);
+		},
+		[reloadFrameDocument],
+	);
+
+	/**
 	 * A frame's document changed on disk, when the hand may be holding it (#319).
 	 *
 	 * The frame you have an element picked in does not reload under you. A reload
@@ -1050,9 +1100,9 @@ function CanvasField({
 				writtenUnderHand.current.add(frame);
 				return;
 			}
-			reloadFrameDocument(frame);
+			refreshOrReload(frame);
 		},
-		[reloadFrameDocument, store],
+		[refreshOrReload, store],
 	);
 
 	/**
@@ -3184,7 +3234,16 @@ function CanvasField({
 					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
 					return;
 				}
+				case "hot": {
+					if (hotUpdates.current.get(message.frame) !== message.id) return;
+					hotUpdates.current.delete(message.frame);
+					if (!message.ok) reloadFrameDocument(message.frame);
+					else requestSiteBoxes(message.frame);
+					return;
+				}
 				case "loaded": {
+					const loadedIframe = iframes.current.get(message.frame);
+					if (loadedIframe !== undefined) loadedIframes.current.add(loadedIframe);
 					lifecycleRef.current.noteLoaded(message.frame);
 					liveRef.current.loaded(message.frame);
 					// what waited on this document being there can ask it now (#340)
@@ -3507,6 +3566,7 @@ function CanvasField({
 		altered,
 		camera,
 		store,
+		reloadFrameDocument,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel

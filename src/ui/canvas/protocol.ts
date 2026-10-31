@@ -217,6 +217,8 @@ export type CaptureSourceReply = CaptureSourceMessage | CaptureSourceErrorMessag
 export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
+	// a Fast Refresh update's answer (the fast-refresh experiment): applied, or refused and owed a reload
+	| { spool: "hot"; frame: string; id: number; ok: boolean }
 	| { spool: "arrived"; frame: string }
 	| { spool: "content-size"; frame: string; id: number; width: number; height: number | null }
 	| { spool: "error"; frame: string; error: string }
@@ -270,6 +272,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "copy":
 			return parseClipboardCopyRequest(data);
+		case "hot":
+			return typeof m.id === "number" && typeof m.ok === "boolean"
+				? { spool: "hot", frame: m.frame, id: m.id, ok: m.ok }
+				: undefined;
 		case "loaded":
 		case "arrived":
 		case "error":

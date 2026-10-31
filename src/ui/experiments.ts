@@ -21,9 +21,11 @@ declare global {
  * (#268), nothing asks about the name any more, and a machine still carrying it
  * in config.json boots exactly as it did. `element-tree` holds the pages rail's
  * element tree back while its direction is still open: off, Edit leaves the
- * rail exactly as Select does.
+ * rail exactly as Select does. `fast-refresh` swaps a saved frame's components
+ * into its open document with React Refresh, state kept, rather than reloading
+ * it (spool#218, `daemon/fast-refresh.ts`): off, every save reloads.
  */
-export type Experiment = "agent-panel" | "element-tree";
+export type Experiment = "agent-panel" | "element-tree" | "fast-refresh";
 
 export function experimentOn(name: Experiment): boolean {
 	const enabled = typeof window === "undefined" ? undefined : window.__SPOOL_EXPERIMENTS__;
