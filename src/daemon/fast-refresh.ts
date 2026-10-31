@@ -35,6 +35,8 @@ export const FAST_REFRESH_RUNTIME = `import * as Refresh from "react-refresh/run
 Refresh.injectIntoGlobalHook(window);
 let collecting = null;
 let updates = 0;
+// what the document booted with that may not run again: its saves refuse at once, without the import
+const stuck = [];
 const tick = () => new Promise((done) => { const channel = new MessageChannel(); channel.port1.onmessage = () => done(); channel.port2.postMessage(0); });
 function swapStyle(id, css, after) {
 	if (typeof css !== "string") return;
@@ -64,8 +66,10 @@ window.__spoolHot = {
 	},
 	module(id, rerunnable) {
 		if (collecting !== null) collecting.set(id, rerunnable);
+		else if (!rerunnable) stuck.push(id);
 	},
 	async update(url) {
+		if (stuck.length > 0) return stuck[0] + " exports more than components";
 		if (++updates > ${HOT_UPDATE_LIMIT}) return "${HOT_UPDATE_LIMIT} updates: a reload lets their modules go";
 		collecting = new Map();
 		let next;
