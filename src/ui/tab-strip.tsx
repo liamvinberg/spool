@@ -28,8 +28,15 @@ import type { TabMate } from "./tab-presence";
  *
  * A full strip compresses, as a browser's does: every tab gives up width alike
  * down to its mark, the focused one keeps its name, and after a close by the
- * pointer the widths hold until the pointer leaves the strip, so the next close
- * button lands under it. Past that the strip scrolls.
+ * pointer the row holds its length until the pointer leaves the strip, so the
+ * next close button lands under it. Past that the strip scrolls.
+ *
+ * Every width is worked out here, by `tabWidths`, and each slot travels to its
+ * own on one clock, as Chromium lays out and animates its tabs. A width left to
+ * flex between CSS clamps moves only on the stretch of a clamp's transition that
+ * crosses it, which is a leap at the start of one and a stall in another; real
+ * widths moving together keep the row's length, so nothing but the tabs that
+ * change moves.
  *
  * A tab is a place rather than a list entry, so the order is the person's: drag
  * one sideways and the others step aside for it, exactly as a browser's do. The
@@ -85,6 +92,58 @@ const FACE_PAD =
 	"clamp(var(--spacing) * 3, min((var(--tw, 200) * 1px - var(--spacing) * 4) / 2, var(--spacing) * 3 + (88px - var(--tw, 200) * 1px) / 4), var(--spacing) * 5)";
 const NAME_SHOWN = "pow(clamp(0, (var(--tw, 200) - 56) / 32, 1), 3)";
 const NAME_FADE = "linear-gradient(to right, black calc(100% - var(--spacing) * 3), transparent)";
+
+/** How wide a tab may be, the focused one's floor, and the mark alone. */
+export interface TabSizes {
+	readonly max: number;
+	readonly min: number;
+	readonly compact: number;
+}
+
+/** Shipped tab sizes, for a page that carries no theme (a unit test's). */
+const UNTHEMED_TABS: TabSizes = { max: 200, min: 112, compact: 40 };
+
+/** The tab sizes as the theme has them. */
+function tabSizes(element: Element): TabSizes {
+	const style = getComputedStyle(element);
+	const px = (name: keyof TabSizes) => {
+		const value = Number.parseFloat(style.getPropertyValue(`--tab-${name}`));
+		return Number.isFinite(value) ? value : UNTHEMED_TABS[name];
+	};
+	return { max: px("max"), min: px("min"), compact: px("compact") };
+}
+
+/**
+ * Each tab's width in a row `room` wide, as a browser lays its tabs out: all at
+ * their widest while they fit, then every tab alike down to its mark, the focused
+ * one (at `focused`, or -1 for none) keeping its floor. Past that the row is
+ * longer than the room, and scrolls.
+ */
+export function tabWidths(count: number, focused: number, room: number, sizes: TabSizes): number[] {
+	if (count === 0) return [];
+	const even = room / count;
+	if (even >= sizes.max) return Array.from({ length: count }, () => sizes.max);
+	const lit = focused >= 0 && focused < count;
+	const floor = lit && even < sizes.min;
+	const share = floor && count > 1 ? (room - sizes.min) / (count - 1) : even;
+	const other = Math.min(sizes.max, Math.max(sizes.compact, share));
+	return Array.from({ length: count }, (_, index) => (lit && index === focused ? Math.max(sizes.min, other) : other));
+}
+
+/**
+ * The room a row holds to after a tab is closed under the pointer, as Chromium
+ * holds it: the row shorter by one tab not focused, so the tabs after the gap
+ * keep their widths and the next one's close comes to stand under the pointer.
+ * Closing the focused tab, the tab after it takes the focus and the floor that
+ * goes with it, so the row is shorter by what that tab had. Closing the last tab,
+ * the row keeps its length and the tabs before it grow into it, so the new last
+ * tab's close is the one under the pointer.
+ */
+export function heldRoom(widths: readonly number[], closing: number, focused: number): number {
+	const length = widths.reduce((sum, width) => sum + width, 0);
+	if (closing < 0 || closing >= widths.length - 1) return length;
+	return length - (widths[closing === focused ? closing + 1 : closing] ?? 0);
+}
 
 /** Shipped values of the motion scale, for a page that carries no theme (a unit test's). */
 const UNTHEMED = { base: 180, slow: 260, snap: [0.32, 0.72, 0, 1] };
@@ -202,10 +261,22 @@ export function TabStrip({
 	const mounted = useRef(false);
 	/** the scroll carrying the focused tab into view */
 	const reveal = useRef<{ stop: () => void } | null>(null);
-	/** each tab's width when one was closed under the pointer, held until the pointer leaves */
-	const [held, setHeld] = useState<ReadonlyMap<string, number> | null>(null);
+	/** the room the row holds to after a close under the pointer, until the pointer leaves */
+	const [held, setHeld] = useState<{ room: number; roots: ReadonlySet<string> } | null>(null);
 	// a tab opened since is a new row, and nothing in it is waiting under the pointer
-	const holding = held !== null && tabs.every((tab) => held.has(tab.root)) ? held : null;
+	const holding = held !== null && tabs.every((tab) => held.roots.has(tab.root)) ? held.room : null;
+	/** the room the strip has for its tabs, and the theme's tab sizes; null until measured */
+	const [room, setRoom] = useState<{ width: number; sizes: TabSizes } | null>(null);
+	/** the frame a resize lands in: the row follows the window rather than gliding after it */
+	const [resized, setResized] = useState(false);
+	const focusedIndex = tabs.findIndex((tab) => tab.root === focused);
+	const widths = useMemo(() => {
+		const sizes = room?.sizes ?? UNTHEMED_TABS;
+		const width = room === null || room.width <= 0 ? Number.POSITIVE_INFINITY : room.width;
+		return tabWidths(tabs.length, focusedIndex, holding === null ? width : Math.min(width, holding), sizes);
+	}, [tabs.length, focusedIndex, room, holding]);
+	const widthsRef = useRef(widths);
+	widthsRef.current = widths;
 
 	const tabsRef = useRef(tabs);
 	tabsRef.current = tabs;
@@ -230,6 +301,48 @@ export function TabStrip({
 	useEffect(() => {
 		mounted.current = true;
 	}, []);
+
+	// The room is the bar's, less Home, the "+" and the strip's own padding: what
+	// the tabs may fill before the strip scrolls. Read before the first paint, and
+	// again whenever the bar changes width.
+	const home = useRef<HTMLDivElement | null>(null);
+	const plus = useRef<HTMLDivElement | null>(null);
+	const measured = useRef<{ width: number; sizes: TabSizes } | null>(null);
+	useLayoutEffect(() => {
+		const element = nav.current;
+		const scroller = strip.current;
+		if (element === null || scroller === null) return;
+		const read = () => {
+			const pad = Number.parseFloat(getComputedStyle(scroller).paddingLeft) || 0;
+			const width =
+				element.getBoundingClientRect().width -
+				(home.current?.getBoundingClientRect().width ?? 0) -
+				(plus.current?.getBoundingClientRect().width ?? 0) -
+				pad;
+			const was = measured.current;
+			if (was !== null && Math.abs(was.width - width) < 0.5) return;
+			measured.current = { width, sizes: was?.sizes ?? tabSizes(element) };
+			setRoom(measured.current);
+			if (was !== null) setResized(true);
+		};
+		read();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(read);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, []);
+	useEffect(() => {
+		if (!resized) return;
+		// two frames: one for the new widths to paint, one before transitions come back
+		let second = 0;
+		const first = requestAnimationFrame(() => {
+			second = requestAnimationFrame(() => setResized(false));
+		});
+		return () => {
+			cancelAnimationFrame(first);
+			cancelAnimationFrame(second);
+		};
+	}, [resized]);
 
 	const stopReveal = useCallback(() => {
 		reveal.current?.stop();
@@ -485,32 +598,29 @@ export function TabStrip({
 		};
 	}
 
-	/** Closed under the pointer: every tab keeps its width, so the next close lands where this one was. */
+	/** Closed under the pointer: the row holds its length, so the next close lands where this one was. */
 	const closeHolding = (root: string) => {
-		const element = strip.current;
-		if (element !== null) {
-			const widths = new Map<string, number>();
-			for (const slot of element.querySelectorAll<HTMLElement>("[data-tab-slot]")) {
-				if (slot.dataset.tabSlot !== undefined)
-					widths.set(slot.dataset.tabSlot, slot.getBoundingClientRect().width);
-			}
-			setHeld(widths);
-		}
+		const closing = tabs.findIndex((tab) => tab.root === root);
+		setHeld({
+			room: heldRoom(widthsRef.current, closing, focusedIndex),
+			roots: new Set(tabs.map((tab) => tab.root)),
+		});
 		onClose(root);
 	};
 
-	const home = focused === null;
+	const atHome = focused === null;
 	return (
 		<MotionConfig reducedMotion="user" transition={{ duration: settleMs / 1000, ease: scale.curve }}>
 			<nav
 				ref={nav}
 				aria-label="Open projects"
-				className="project-tabs relative flex h-full min-w-0 items-stretch"
+				// the theme's tab sizes, carried where the widths are worked out
+				className="project-tabs relative flex h-full min-w-0 flex-1 items-stretch [--tab-compact:var(--spacing-tab-compact)] [--tab-max:var(--spacing-tab-max)] [--tab-min:var(--spacing-tab-min)]"
 				onPointerLeave={() => setHeld(null)}
 			>
-				<Sheet target={sheet} home={home} />
-				<div className="relative z-[1] flex h-full shrink-0 pl-2">
-					<HomeTab home={home} onHome={onHome} />
+				<Sheet target={sheet} home={atHome} />
+				<div ref={home} className="relative z-[1] flex h-full shrink-0 pl-2">
+					<HomeTab home={atHome} onHome={onHome} />
 				</div>
 				<motion.div
 					ref={strip}
@@ -523,7 +633,8 @@ export function TabStrip({
 								key={tab.root}
 								tab={tab}
 								active={focused === tab.root}
-								hold={holding?.get(tab.root)}
+								width={widths[index] ?? 0}
+								resized={resized}
 								shift={shiftOf(drag, tab.root)}
 								lifted={drag?.root === tab.root}
 								dragging={drag !== null}
@@ -542,7 +653,7 @@ export function TabStrip({
 						))}
 					</AnimatePresence>
 				</motion.div>
-				<div className="relative z-[1] flex shrink-0 items-center pt-1 pl-1">
+				<div ref={plus} className="relative z-[1] flex shrink-0 items-center pt-1 pl-1">
 					<IconButton icon={<PlusIcon />} label="New project" onClick={onPick} />
 				</div>
 			</nav>
@@ -792,7 +903,8 @@ function useWidth(ref: RefObject<HTMLElement | null>) {
 function Tab({
 	tab,
 	active,
-	hold,
+	width,
+	resized,
 	shift,
 	lifted,
 	dragging,
@@ -808,8 +920,10 @@ function Tab({
 }: {
 	tab: TabProject;
 	active: boolean;
-	/** the width it keeps after a close under the pointer */
-	hold: number | undefined;
+	/** the width the row gives it, which it travels to */
+	width: number;
+	/** the bar was resized this frame: the slot takes its width at once */
+	resized: boolean;
 	shift: number;
 	lifted: boolean;
 	/** a drag is carrying tabs out of their slots, which must show them rather than clip them */
@@ -829,52 +943,31 @@ function Tab({
 	useWidth(slot);
 	/** the keyboard was in this tab when it closed, and goes on to a neighbour */
 	const hadFocus = useRef(false);
-	/** the width it had on screen when it closed, read before the close restyles it */
-	const closingFrom = useRef<number | null>(null);
-	if (present) closingFrom.current = null;
-	else if (closingFrom.current === null) {
-		closingFrom.current = slot.current?.getBoundingClientRect().width ?? 0;
-		hadFocus.current = slot.current?.contains(document.activeElement) ?? false;
-	}
+	/** the closing tab is let go while the keyboard is in it */
+	const wasPresent = useRef(present);
+	if (wasPresent.current && !present) hadFocus.current = slot.current?.contains(document.activeElement) ?? false;
+	wasPresent.current = present;
 
-	// open from nothing, once: the clamp it grows to is the slot's own, so a full strip's share is where it stops
+	// open from nothing, once, to the width the row gives it
 	// biome-ignore lint/correctness/useExhaustiveDependencies: a tab opens once
 	useLayoutEffect(() => {
 		const element = slot.current;
 		if (element === null || !opening) return;
+		const to = element.style.width;
 		element.style.transition = "none";
-		element.style.maxWidth = "0px";
-		element.style.minWidth = "0px";
+		element.style.width = "0px";
 		element.style.opacity = "0";
 		void element.offsetWidth;
 		element.style.transition = "";
-		element.style.maxWidth = "";
-		element.style.minWidth = "";
+		element.style.width = to;
 		element.style.opacity = "";
 	}, []);
 
-	// held after a close under the pointer, and let go to the strip's clamp; reopened, from wherever it got to
-	useLayoutEffect(() => {
-		const element = slot.current;
-		if (element === null || !present) return;
-		element.style.maxWidth = hold === undefined ? "" : `${hold}px`;
-		element.style.minWidth =
-			hold === undefined ? "" : `min(${hold}px, var(--spacing-tab-${active ? "min" : "compact"}))`;
-		element.style.opacity = "";
-	}, [present, hold, active]);
-
-	// close from the width it has on screen to nothing
+	// close from the width it has on screen to nothing: a width's transition starts where it stands
 	// biome-ignore lint/correctness/useExhaustiveDependencies: keyed on presence alone
 	useLayoutEffect(() => {
 		const element = slot.current;
 		if (element === null || present) return;
-		element.style.transition = "none";
-		element.style.maxWidth = `${closingFrom.current ?? 0}px`;
-		element.style.minWidth = "0px";
-		void element.offsetWidth;
-		element.style.transition = "";
-		element.style.maxWidth = "0px";
-		element.style.opacity = "0";
 		// gone once it has shrunk to nothing, by the shrink's own clock: a busy page starts that a late frame
 		// after this, and a timer begun now would take the slot out still wide, and the row would jump by it
 		let settled = false;
@@ -885,9 +978,7 @@ function Tab({
 		};
 		const shrink =
 			typeof element.getAnimations === "function"
-				? element
-						.getAnimations()
-						.filter((animation) => (animation as CSSTransition).transitionProperty === "max-width")
+				? element.getAnimations().filter((animation) => (animation as CSSTransition).transitionProperty === "width")
 				: [];
 		// a hidden page paints no frames to finish it on
 		const gone = shrink.length === 0 || document.hidden ? setTimeout(remove, closeMs) : undefined;
@@ -910,16 +1001,15 @@ function Tab({
 			ref={slot}
 			data-tab-slot={present ? tab.root : undefined}
 			className={cn(
-				"project-tab-slot group/slot relative flex h-full w-tab-max max-w-tab-max",
+				"project-tab-slot group/slot relative flex h-full shrink-0 max-w-tab-max",
 				// opening and closing uncover the tab by clipping it, but a drag moves the
 				// tab inside its slot: clipped then, it would leave its slot's sheet empty
 				!(dragging && present) && "overflow-x-clip",
-				"transition-[max-width,min-width,opacity] duration-slow ease-snap",
-				active && present ? "min-w-tab-min" : "min-w-tab-compact",
+				resized ? "transition-none" : "transition-[width,opacity] duration-slow ease-snap",
 				lifted && "z-10",
-				// a closing tab gives up its width by its own clock, not to the strip's squeeze
-				present ? "shrink" : "pointer-events-none shrink-0",
+				!present && "pointer-events-none",
 			)}
+			style={{ width: present ? width : 0, opacity: present ? undefined : 0 }}
 			layout={layout && present ? "position" : false}
 		>
 			{/* The slot opens, closes and carries layout moves; the measured drag owns

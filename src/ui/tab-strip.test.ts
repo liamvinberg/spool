@@ -3,7 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { focusAfterClose, TabStrip } from "./tab-strip";
+import { focusAfterClose, heldRoom, TabStrip, tabWidths } from "./tab-strip";
 
 /**
  * The tabs, arranged. Every box reads as zero under happy-dom, so each tab is
@@ -347,6 +347,31 @@ describe("focusAfterClose", () => {
 	it("goes Home only when the only tab closed", () => {
 		expect(focusAfterClose(["/w/alpha"], "/w/alpha")).toBeNull();
 		expect(focusAfterClose(roots, "/w/missing")).toBeNull();
+	});
+});
+
+describe("tabWidths", () => {
+	const sizes = { max: 200, min: 112, compact: 40 };
+	it("gives every tab its widest while they fit, then every tab alike", () => {
+		expect(tabWidths(3, 0, 1000, sizes)).toEqual([200, 200, 200]);
+		expect(tabWidths(4, 1, 600, sizes)).toEqual([150, 150, 150, 150]);
+	});
+	it("keeps the focused tab's floor out of the others' share, down to the mark", () => {
+		expect(tabWidths(5, 2, 432, sizes)).toEqual([80, 80, 112, 80, 80]);
+		expect(tabWidths(5, 2, 200, sizes)).toEqual([40, 40, 112, 40, 40]);
+		expect(tabWidths(4, -1, 200, sizes)).toEqual([50, 50, 50, 50]);
+	});
+});
+
+describe("heldRoom", () => {
+	const widths = [80, 80, 112, 80, 80];
+	it("shortens the row by a tab not focused, so the tabs after the gap keep their widths", () => {
+		expect(tabWidths(4, 1, heldRoom(widths, 1, 2), { max: 200, min: 112, compact: 40 })).toEqual([80, 112, 80, 80]);
+		// the focused one closing: the tab after it takes the floor, and the row is shorter by what it had
+		expect(tabWidths(4, 2, heldRoom(widths, 2, 2), { max: 200, min: 112, compact: 40 })).toEqual([80, 80, 112, 80]);
+	});
+	it("keeps the row's length when the last tab closes, so the new last tab ends where it ended", () => {
+		expect(heldRoom(widths, 4, 2)).toBe(432);
 	});
 });
 

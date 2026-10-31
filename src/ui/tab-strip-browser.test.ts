@@ -646,8 +646,8 @@ it("compresses a full strip, every tab alike, down to its mark, the focused one 
 	}
 });
 
-it("holds the widths after a close by the pointer, so the next close is under it, until the pointer leaves", async () => {
-	const page = await strip({ width: 700, names: ["alpha", "beta", "gamma-delta", "epsilon", "zeta"] });
+it("holds the row after closes by the pointer, each next close under it, and lets go gliding when the pointer leaves", async () => {
+	const page = await strip({ width: 700, names: CROWD });
 	const widths = () =>
 		page.evaluate(() =>
 			Object.fromEntries(
@@ -657,30 +657,44 @@ it("holds the widths after a close by the pointer, so the next close is under it
 				]),
 			),
 		);
+	// a full strip: only the focused tab is wide enough for its close
+	await page.locator('[data-tab="/w/beta"] .project-tab-label').click({ position: { x: 10, y: 18 } });
+	await atRest(page);
 	const before = await widths();
-	expect(before["/w/beta"]).toBeLessThan(200);
-	await page.locator('[data-tab="/w/beta"]').hover();
+	expect(before["/w/alpha"]).toBeLessThan(88);
 	const close = await page.locator('[data-tab="/w/beta"] .project-tab-close').boundingBox();
 	if (close === null) throw new Error("missing close");
 	const x = close.x + close.width / 2;
 	const y = close.y + close.height / 2;
-	await page.mouse.click(x, y);
-	await atRest(page);
-	// every tab keeps the width it had, and the next tab's close has come to stand under the pointer
-	const held = await widths();
-	for (const root of ["/w/alpha", "/w/gamma-delta", "/w/epsilon", "/w/zeta"])
-		expect(held[root]).toBeCloseTo(before[root] ?? 0, 0);
-	expect(
-		await page.evaluate(
-			({ x, y }) => document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-tab]")?.dataset.tab,
+	const under = () =>
+		page.evaluate(
+			({ x, y }) => document.elementFromPoint(x, y)?.closest(".project-tab-close")?.getAttribute("aria-label"),
 			{ x, y },
-		),
-	).toBe("/w/gamma-delta");
-	// the pointer leaves the strip: the tabs take the room the close left
-	await page.mouse.move(x, 300);
-	await atRest(page);
-	const after = await widths();
-	expect(after["/w/gamma-delta"]).toBeGreaterThan((before["/w/gamma-delta"] ?? 0) + 4);
+		);
+	// each close hands the focus on to the tab after it, whose close comes to stand under the pointer,
+	// while every other tab keeps the width it had
+	for (const [closing, next] of [
+		["beta", "gamma-delta"],
+		["gamma-delta", "epsilon"],
+	]) {
+		expect(await under()).toBe(`Close ${closing}`);
+		await page.mouse.click(x, y);
+		await atRest(page);
+		expect(await under()).toBe(`Close ${next}`);
+		const held = await widths();
+		for (const root of ["/w/alpha", "/w/eta", "/w/kappa"]) expect(held[root]).toBeCloseTo(before[root] ?? 0, 0);
+	}
+	expect(await page.locator("body").getAttribute("data-closed")).toBe("/w/beta;/w/gamma-delta;");
+	// the pointer leaves the strip: the tabs glide into the room the closes left
+	const samples = await frames(
+		page,
+		`document.querySelector(".project-tabs").dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: document.body }));`,
+		`return { width: box('[data-tab-slot="/w/alpha"]').width, last: box('[data-tab="/w/kappa"]').right };`,
+	);
+	const [first, last] = [samples[0], samples[samples.length - 1]];
+	expect(last?.width).toBeGreaterThan((first?.width ?? 0) + 4);
+	expectGlide(samples, "width", first?.width ?? 0, last?.width ?? 0);
+	expectGlide(samples, "last", first?.last ?? 0, last?.last ?? 0);
 });
 
 it("starts the tabs right after Home", async () => {
