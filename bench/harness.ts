@@ -7,6 +7,7 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -35,6 +36,30 @@ import type { Browser, Page as BrowserPage } from "playwright-core";
  */
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * The checkout whose build a bench measures when no `--builds` names one: this
+ * one, unless `SPOOL_BENCH_BUILD` points at another. The loop's runner
+ * (`bench/loop/ab.ts`) uses it to run every bench, `--builds` or not, against
+ * each arm from one copy of the bench code.
+ */
+export const benchBuild = resolve(process.env.SPOOL_BENCH_BUILD ?? repoRoot);
+
+/**
+ * A folder of covers made earlier for this subject by this build
+ * (`SPOOL_BENCH_SEED`), so a bench run is not seven minutes of photo booth
+ * before its first measurement. Empty, the first run to finish its covers fills
+ * it. The loop's runner names one per arm and subject; a seed is only ever
+ * the build's own covers, and the daemon still retakes any it judges stale.
+ */
+const benchSeed = process.env.SPOOL_BENCH_SEED;
+const seedThumbs = (): string | undefined => (benchSeed === undefined ? undefined : join(benchSeed, "thumbs"));
+
+/** The `experiments` an arm switches on, from `SPOOL_BENCH_EXPERIMENTS` (comma-separated). */
+const benchExperiments = (process.env.SPOOL_BENCH_EXPERIMENTS ?? "")
+	.split(",")
+	.map((name) => name.trim())
+	.filter((name) => name !== "");
 
 /** A 14-inch MacBook Pro's default scaled window, in CSS pixels. */
 export const VIEWPORT = { width: 1512, height: 945 };
@@ -67,10 +92,13 @@ export function copyProject(source: string): { root: string; name: string; spool
 	const copiedState = join(root, "design", ".spool");
 	rmSync(copiedState, { recursive: true, force: true });
 	mkdirSync(copiedState, { recursive: true });
+	const seeded = seedThumbs();
+	if (seeded !== undefined && existsSync(seeded)) cpSync(seeded, join(copiedState, "thumbs"), { recursive: true });
 	const spoolDir = join(work, "spool");
 	mkdirSync(spoolDir, { recursive: true });
 	// the update check would put a network fetch inside the measurement
-	writeFileSync(join(spoolDir, "config.json"), `${JSON.stringify({ updateCheck: false })}\n`);
+	const config = benchExperiments.length > 0 ? { updateCheck: false, experiments: benchExperiments } : { updateCheck: false };
+	writeFileSync(join(spoolDir, "config.json"), `${JSON.stringify(config)}\n`);
 	return { root, name: basename(root), spoolDir };
 }
 
@@ -235,7 +263,7 @@ export function takeBuildOptions(argv: readonly string[]): { builds: Build[]; ro
 			rest.push(arg);
 		}
 	}
-	const chosen = builds ?? [readBuild("this", repoRoot)];
+	const chosen = builds ?? [readBuild("this", benchBuild)];
 	assertBalanced(chosen, rounds);
 	return { builds: chosen, rounds, rest };
 }
@@ -339,7 +367,7 @@ export async function startDaemon(
 	spoolDir: string,
 	root: string,
 	port: number,
-	cli = join(repoRoot, "dist/cli.js"),
+	cli = join(benchBuild, "dist/cli.js"),
 	/** Node flags for the serving daemon alone, such as a profiler's. */
 	nodeArgs: readonly string[] = [],
 ): Promise<Daemon> {
@@ -512,6 +540,13 @@ export async function prepareCurrentCovers(
 			`bench: prepared ${frames.length} current covers on page "${pageName}" in ${(tookMs / 1000).toFixed(1)} s\n`,
 		);
 		if (daemon.booth) await letBoothFinish(root);
+		const seed = seedThumbs();
+		if (seed !== undefined && !existsSync(seed)) {
+			mkdirSync(dirname(seed), { recursive: true });
+			// whole or not at all: a half-copied seed would be taken for a full one
+			cpSync(join(root, "design", ".spool", "thumbs"), `${seed}.part`, { recursive: true });
+			renameSync(`${seed}.part`, seed);
+		}
 		return tookMs;
 	} finally {
 		await context.close();
