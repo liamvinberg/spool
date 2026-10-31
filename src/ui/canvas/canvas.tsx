@@ -3200,7 +3200,7 @@ function CanvasField({
 			if (message === undefined) return;
 			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
 			// a document that may have changed under the element tree reads it again (#342)
-			if (["loaded", "arrived", "edited", "altered", "restored"].includes(message.spool)) {
+			if (["loaded", "hot", "arrived", "edited", "altered", "restored"].includes(message.spool)) {
 				elementTreeRef.current.stale(message.frame);
 			}
 			switch (message.spool) {
