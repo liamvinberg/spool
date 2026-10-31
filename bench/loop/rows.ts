@@ -506,6 +506,7 @@ export const ROWS: Row[] = [
 		extract: metricsOf,
 		// a first run on an arm pays the photo booth for the whole subject, 5 to 10 minutes
 		timeoutMs: 25 * 60_000,
+		stage: "m1",
 	},
 ];
 
