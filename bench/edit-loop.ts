@@ -52,7 +52,8 @@ import {
  * must say `x-spool-cache: miss`. A second fetch is the warm answer:
  *
  *   compile_ms / shared_compile_ms   the missing fetch, write to its last byte
- *   document_hit_ms                  the warm fetch of the same document
+ *   document_hit_ms                  the warm fetch of the same document, when it was
+ *                                    a hit (the booth can drop it first)
  *
  * The photo booth retakes the fixture's cover after every write, as it does on
  * a person's machine; each round waits for that cover before the next.
@@ -479,7 +480,7 @@ function fetchDocument(daemon: Daemon, project: string): Promise<{ ms: number; c
 }
 
 async function compileRounds(daemon: Daemon, project: string, fixture: Fixture, rounds: number) {
-	const out = { frame: [] as number[], shared: [] as number[], hit: [] as number[], notMissed: 0 };
+	const out = { frame: [] as number[], shared: [] as number[], hit: [] as number[], notMissed: 0, warmMissed: 0 };
 	for (let round = 0; round < rounds; round++) {
 		for (const kind of ["frame", "shared"] as const) {
 			const write = agentWrite(fixture, kind);
@@ -490,7 +491,10 @@ async function compileRounds(daemon: Daemon, project: string, fixture: Fixture, 
 				out.notMissed++;
 				log(`${kind} compile: the first fetch after the write was a ${miss.cache}, not counted`);
 			} else out[kind].push(miss.ms);
-			out.hit.push(hit.ms);
+			// with no canvas on its page the booth lets the document go once it has
+			// photographed it, so the second fetch can find it gone: a hit only
+			if (hit.cache === "hit") out.hit.push(hit.ms);
+			else out.warmMissed++;
 			log(`${kind} compile: miss ${miss.ms.toFixed(0)} ms, warm ${hit.ms.toFixed(1)} ms (${hit.cache})`);
 			await coverAfter(fixture, write.at);
 			await sleep(500);
