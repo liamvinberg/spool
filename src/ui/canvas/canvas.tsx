@@ -172,6 +172,7 @@ import {
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
+import { hotUpdates } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import {
 	FrameLife,
@@ -320,10 +321,11 @@ interface ResizePaint {
 const SETTLE_PERSIST_MS = 600;
 /**
  * How long a Fast Refresh update (the fast-refresh experiment) may take before
- * the frame is reloaded as if it had refused: a compile on a busy daemon, and
- * the import, comfortably inside it.
+ * the frame is reloaded as if it had refused: about what a reload takes, so
+ * silence costs no more than the reload it stands for. An update lands in
+ * 20 to 190 ms on a loaded devobee.
  */
-const HOT_UPDATE_BOUND_MS = 4000;
+const HOT_UPDATE_BOUND_MS = 1000;
 
 /** Relayed keys that count only from the frame that is entered. */
 const ENTERED_ONLY_RELAYS: ReadonlySet<HotkeyId> = new Set([
@@ -855,8 +857,8 @@ function CanvasField({
 	 * in flight, by id, which a refusal or silence turns into a reload.
 	 */
 	const loadedIframes = useRef(new WeakSet<HTMLIFrameElement>());
-	const hotUpdates = useRef(new Map<string, number>());
-	const hotSeq = useRef(0);
+	const hotFallBack = useRef<(frame: string) => void>(() => {});
+	const hot = useRef(hotUpdates(HOT_UPDATE_BOUND_MS, (frame) => hotFallBack.current(frame)));
 	const loadWaiters = useRef(new Map<string, (() => void)[]>());
 	/** the frame's answer to a whole generation: children or siblings (#339) */
 	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
@@ -1021,6 +1023,8 @@ function CanvasField({
 			// bound, because a document that never arrives must not leave a dead
 			// one standing in front of it
 			const was = store.get().docNonces[frame] ?? 0;
+			// whatever reloads the frame retires the update in flight, and its bound
+			hot.current.cancel(frame);
 			reloading.current.add(frame);
 			if (holdNext.current.delete(frame)) {
 				setHeldPaint((current) => ({ ...current, [frame]: was }));
@@ -1045,11 +1049,40 @@ function CanvasField({
 	);
 
 	/**
+	 * The reload a Fast Refresh update owes when it is refused, goes unanswered,
+	 * or lands under the hand: deferred like any change while an element is
+	 * picked in the frame (#319), and otherwise paid behind the frame's last
+	 * paint (#253).
+	 */
+	const holdOrReload = useCallback(
+		(frame: string) => {
+			if (store.get().picked.some((pick) => pick.frame === frame)) {
+				writtenUnderHand.current.add(frame);
+				return;
+			}
+			holdNext.current.add(frame);
+			reloadFrameDocument(frame);
+		},
+		[reloadFrameDocument, store],
+	);
+	hotFallBack.current = holdOrReload;
+
+	/** The hand is in the frame or about to write to it: editing words, saved, or holding a write's readers. */
+	const handInFrame = useCallback(
+		(frame: string) =>
+			store.get().editing?.frame === frame ||
+			store.get().picked.some((pick) => pick.frame === frame) ||
+			saved.current.has(frame) ||
+			holdNext.current.has(frame),
+		[store],
+	);
+
+	/**
 	 * A frame's document changed on disk, and nothing holds it: with the
 	 * fast-refresh experiment on, the open document is asked to swap the changed
 	 * components in with React Refresh, keeping its state (`daemon/fast-refresh.ts`),
 	 * and reloads as before when it refuses or does not answer in time. A frame
-	 * whose document has not loaded, or that the hand has saved and is still in,
+	 * whose document has not loaded, or that the hand is in (`handInFrame`),
 	 * reloads as it always did: the hand lane is untouched.
 	 */
 	const refreshOrReload = useCallback(
@@ -1062,22 +1095,14 @@ function CanvasField({
 				target == null ||
 				!loadedIframes.current.has(iframe) ||
 				reloading.current.has(frame) ||
-				saved.current.has(frame)
+				handInFrame(frame)
 			) {
-				hotUpdates.current.delete(frame);
 				reloadFrameDocument(frame);
 				return;
 			}
-			const id = ++hotSeq.current;
-			hotUpdates.current.set(frame, id);
-			target.postMessage({ spool: "hot", id }, "*");
-			setTimeout(() => {
-				if (hotUpdates.current.get(frame) !== id) return;
-				hotUpdates.current.delete(frame);
-				reloadFrameDocument(frame);
-			}, HOT_UPDATE_BOUND_MS);
+			hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
 		},
-		[reloadFrameDocument],
+		[handInFrame, reloadFrameDocument],
 	);
 
 	/**
@@ -3235,9 +3260,12 @@ function CanvasField({
 					return;
 				}
 				case "hot": {
-					if (hotUpdates.current.get(message.frame) !== message.id) return;
-					hotUpdates.current.delete(message.frame);
-					if (!message.ok) reloadFrameDocument(message.frame);
+					const outcome = hot.current.answer(message.frame, message.id, message.ok);
+					if (outcome === "stale") return;
+					// refused, or the hand came into the frame while it swapped: the
+					// swapped bundle may predate the hand's write, so the reload is owed
+					if (outcome === "refused" || handInFrame(message.frame)) holdOrReload(message.frame);
+					// holdNext is the hand's, and counts as in the frame: an applied swap never has one to clear
 					else requestSiteBoxes(message.frame);
 					return;
 				}
@@ -3566,7 +3594,8 @@ function CanvasField({
 		altered,
 		camera,
 		store,
-		reloadFrameDocument,
+		handInFrame,
+		holdOrReload,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
