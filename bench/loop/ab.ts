@@ -37,6 +37,8 @@ interface Options {
 
 const BANDS = join(repoRoot, "bench", "loop", "bands.json");
 const SEEDS = join(tmpdir(), "spool-loop-seeds");
+/** A one-minute load above this is another job on the machine, not the arm (program.md's stages). */
+const LOADED = 16;
 
 function parseArgs(argv: readonly string[]): Options {
 	let rowNames: string[] = [];
@@ -201,6 +203,11 @@ function report(options: Options, runs: readonly Run[]): string {
 	lines.push(
 		`arms: ${options.arms.map((arm) => `${arm.label}=${arm.checkout}${arm.experiments.map((name) => `+${name}`).join("")} (${runs.find((run) => run.arm === arm.label)?.commit ?? "?"})`).join(", ")}`,
 		`${options.rounds} rounds, order rotated; one-minute load ${fmt(Math.min(...loads))} to ${fmt(Math.max(...loads))}`,
+		...(loads.some((load) => load > LOADED)
+			? [
+					`${loads.filter((load) => load > LOADED).length} runs above load ${LOADED}: repeat them before deciding anything (program.md)`,
+				]
+			: []),
 		"",
 	);
 	for (const row of options.rows) {
