@@ -97,7 +97,8 @@ export function copyProject(source: string): { root: string; name: string; spool
 	const spoolDir = join(work, "spool");
 	mkdirSync(spoolDir, { recursive: true });
 	// the update check would put a network fetch inside the measurement
-	const config = benchExperiments.length > 0 ? { updateCheck: false, experiments: benchExperiments } : { updateCheck: false };
+	const config =
+		benchExperiments.length > 0 ? { updateCheck: false, experiments: benchExperiments } : { updateCheck: false };
 	writeFileSync(join(spoolDir, "config.json"), `${JSON.stringify(config)}\n`);
 	return { root, name: basename(root), spoolDir };
 }
