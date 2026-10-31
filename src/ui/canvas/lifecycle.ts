@@ -2,9 +2,9 @@ import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LIVE_MIN_CSS_PX, SETTLE_BUDGET_MS } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
+import { experimentOn } from "../experiments";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, captureRequestId, type ExportRaster, rasterCaptureSource } from "./capture-broker";
-import { experimentOn } from "../experiments";
 import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage, resolutionMessage } from "./protocol";
 import { watchRestStrain } from "./rest-strain";
 

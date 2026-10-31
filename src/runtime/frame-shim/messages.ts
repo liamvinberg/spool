@@ -5,9 +5,9 @@ import { type Altered, alterElement, beginEdit, endEdit, restoreAsked } from "./
 import { setFrozen } from "./freeze";
 import { nativeRaf, shimConfig } from "./natives";
 import { elementTree, familyAt, type Hit, kinChain, pickChain } from "./pick";
+import { setShownDensity } from "./resolution";
 import { settle } from "./settle";
 import { siteBoxes } from "./sites";
-import { setShownDensity } from "./resolution";
 import { restamp } from "./stamps";
 
 /**
