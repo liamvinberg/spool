@@ -1,7 +1,15 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Frame, type Page } from "playwright-core";
-import { copyProject, freePort, prepareCurrentCovers, readPages, startDaemon, writeCamera } from "./harness.ts";
+import {
+	copyProject,
+	freePort,
+	onFrame,
+	prepareCurrentCovers,
+	readPages,
+	startDaemon,
+	writeCamera,
+} from "./harness.ts";
 
 /**
  * Editing feel on a real project (task 141): how long each everyday hand
@@ -224,7 +232,7 @@ async function candidates(page: Page, frame: Frame, name: string): Promise<Candi
 		return { list: out, width: document.documentElement.clientWidth };
 	});
 	const scale = box.width / inner.width;
-	return inner.list
+	const placed = inner.list
 		.map((c) => ({
 			index: c.index,
 			tag: c.tag,
@@ -233,6 +241,53 @@ async function candidates(page: Page, frame: Frame, name: string): Promise<Candi
 			y: box.y + (c.y + c.h / 2) * scale,
 		}))
 		.filter((c) => c.x > 40 && c.y > 70 && c.x < VIEW.width - 300 && c.y < VIEW.height - 40);
+	const shown = await onFrame(page, name, placed);
+	return placed.filter((_, at) => shown[at]);
+}
+
+/**
+ * Where a candidate is now, as page coordinates. A save earlier in the run can
+ * reflow the frame (a tab grown by typed words pushes its neighbours along),
+ * so the place read at the start is stale: the element is found again, the one
+ * listed while it still stands with the same words, else the first with them,
+ * and held as `__qaNow` for the gesture to watch. Nothing where it is gone.
+ */
+async function placeNow(page: Page, frame: Frame, name: string, c: Candidate): Promise<Candidate | undefined> {
+	const box = await (await page.$(`iframe[title="${name}"]`))?.boundingBox();
+	if (!box) return undefined;
+	const inner = await frame
+		.evaluate(
+			({ index, tag, text }) => {
+				const w = window as unknown as { __qa?: Element[]; __qaNow?: Element };
+				const own = (el: Element) =>
+					Array.from(el.childNodes)
+						.filter((n) => n.nodeType === 3)
+						.map((n) => n.textContent ?? "")
+						.join("")
+						.trim();
+				const same = (el: Element | undefined) =>
+					el?.isConnected === true && el.tagName.toLowerCase() === tag && own(el) === text;
+				const listed = w.__qa?.[index];
+				const el = same(listed)
+					? listed
+					: Array.from(document.querySelectorAll(`#root ${tag}`)).find((one) => same(one));
+				if (el === undefined) return undefined;
+				w.__qaNow = el;
+				const r = el.getBoundingClientRect();
+				return { x: r.x, y: r.y, w: r.width, h: r.height, width: document.documentElement.clientWidth };
+			},
+			{ index: c.index, tag: c.tag, text: c.text },
+		)
+		.catch(() => undefined);
+	if (inner === undefined) return undefined;
+	const scale = box.width / inner.width;
+	const now = {
+		...c,
+		x: box.x + (inner.x + Math.min(inner.w / 2, 30)) * scale,
+		y: box.y + (inner.y + inner.h / 2) * scale,
+	};
+	const [shown] = await onFrame(page, name, [now]);
+	return shown ? now : undefined;
 }
 
 /** Whether the frame still shows the document marked before the gesture. */
@@ -245,10 +300,12 @@ async function stillHere(page: Page, name: string): Promise<boolean> {
 	);
 }
 
+/** The refusal note on screen now, read in one go: it goes by itself after a few seconds. */
 async function refusalShown(page: Page): Promise<string | undefined> {
-	const refusal = page.locator("[data-hand-refusal]");
-	if ((await refusal.count()) === 0) return undefined;
-	return (await refusal.first().getAttribute("data-hand-refusal")) ?? "refused";
+	const code = await page.evaluate(() =>
+		document.querySelector("[data-hand-refusal]")?.getAttribute("data-hand-refusal"),
+	);
+	return code === undefined || code === null ? undefined : code || "refused";
 }
 
 async function main(): Promise<void> {
@@ -389,42 +446,45 @@ async function main(): Promise<void> {
 		// --- words -----------------------------------------------------------
 		await hud(page, "3. double-click words, type, Enter");
 		let edits = 0;
-		for (const c of list) {
+		for (const listed of list) {
 			if (edits >= 3) break;
 			frame = await liveFrame(page, opts.frame);
+			const c = await placeNow(page, frame, opts.frame, listed);
+			if (c === undefined) {
+				note(`words of <${listed.tag}> "${listed.text.slice(0, 30)}": gone from the frame`);
+				continue;
+			}
 			const read = page.waitForResponse((r) => r.url().endsWith("/rungs"), { timeout: 8000 }).catch(() => undefined);
 			await page.mouse.click(c.x, c.y);
 			await read;
 			await sleep(150);
-			await frame.evaluate(
-				({ index }) => {
-					const now = () => performance.timeOrigin + performance.now();
-					const w = window as unknown as Record<string, unknown> & { __qa: Element[] };
-					const el = w.__qa[index];
-					w.__openAt = undefined;
-					w.__keys = [];
-					w.__marker = "still-here";
-					if (!el) return;
-					new MutationObserver(() => {
-						if (el.getAttribute("contenteditable") !== null && w.__openAt === undefined) w.__openAt = now();
-					}).observe(el, { attributes: true });
-					// the Edit tool holds the frame's own animation frames, so the
-					// paint is read from Event Timing: a key's duration runs to the
-					// next paint after it, and only keys of 16 ms or more are listed
-					if (w.__observing !== true) {
-						w.__observing = true;
-						new PerformanceObserver((list) => {
-							for (const entry of list.getEntries()) {
-								if (entry.name === "keydown") (w.__keys as number[]).push(entry.duration);
-								if (entry.name === "keydown" || entry.name === "keyup")
-									w.__keyCount = ((w.__keyCount as number) ?? 0) + 0.5;
-							}
-						}).observe({ type: "event", durationThreshold: 16 } as PerformanceObserverInit);
-					}
-					w.__keyCount = 0;
-				},
-				{ index: c.index },
-			);
+			await placeNow(page, frame, opts.frame, c);
+			await frame.evaluate(() => {
+				const now = () => performance.timeOrigin + performance.now();
+				const w = window as unknown as Record<string, unknown> & { __qaNow?: Element };
+				const el = w.__qaNow;
+				w.__openAt = undefined;
+				w.__keys = [];
+				w.__marker = "still-here";
+				if (!el) return;
+				new MutationObserver(() => {
+					if (el.getAttribute("contenteditable") !== null && w.__openAt === undefined) w.__openAt = now();
+				}).observe(el, { attributes: true });
+				// the Edit tool holds the frame's own animation frames, so the
+				// paint is read from Event Timing: a key's duration runs to the
+				// next paint after it, and only keys of 16 ms or more are listed
+				if (w.__observing !== true) {
+					w.__observing = true;
+					new PerformanceObserver((list) => {
+						for (const entry of list.getEntries()) {
+							if (entry.name === "keydown") (w.__keys as number[]).push(entry.duration);
+							if (entry.name === "keydown" || entry.name === "keyup")
+								w.__keyCount = ((w.__keyCount as number) ?? 0) + 0.5;
+						}
+					}).observe({ type: "event", durationThreshold: 16 } as PerformanceObserverInit);
+				}
+				w.__keyCount = 0;
+			});
 			await page.evaluate(() => {
 				const now = () => performance.timeOrigin + performance.now();
 				const w = window as unknown as Record<string, unknown>;
@@ -471,11 +531,22 @@ async function main(): Promise<void> {
 			api.length = 0;
 			const t0 = Date.now();
 			await page.keyboard.press("Enter");
+			// the refusal note goes by itself after a few seconds, so it is
+			// watched for while the save is waited on, not after
+			let r: string | undefined;
+			let waiting = true;
+			const watching = (async () => {
+				while (waiting && r === undefined) {
+					r = await refusalShown(page);
+					await sleep(25);
+				}
+			})();
 			const wrote = await nextWrite(root, before);
+			waiting = false;
+			await watching;
 			if (wrote === undefined) {
-				const r = await refusalShown(page);
 				note(
-					`words of <${c.tag}> "${c.text.slice(0, 30)}": Enter saved nothing within 8 s${r ? `, refused (${r})` : ""}`,
+					`words of <${c.tag}> "${c.text.slice(0, 30)}": ${r ? `Enter refused (${r})` : "Enter saved nothing within 8 s, no refusal shown"}`,
 				);
 				await page.keyboard.press("Escape");
 				continue;
@@ -502,9 +573,11 @@ async function main(): Promise<void> {
 		let deleteTries = 0;
 		frame = await liveFrame(page, opts.frame);
 		const fresh = await candidates(page, frame, opts.frame);
-		for (const c of fresh.slice().reverse()) {
+		for (const listed of fresh.slice().reverse()) {
 			if (deletes >= 3) break;
 			frame = await liveFrame(page, opts.frame);
+			const c = await placeNow(page, frame, opts.frame, listed);
+			if (c === undefined) continue;
 			await page.keyboard.press("Escape");
 			await armRing(page);
 			const read = page.waitForResponse((r) => r.url().endsWith("/rungs"), { timeout: 8000 }).catch(() => undefined);
