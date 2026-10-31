@@ -1,7 +1,15 @@
 import { readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium, type Frame, type Page } from "playwright-core";
-import { copyProject, freePort, prepareCurrentCovers, readPages, startDaemon, writeCamera } from "./harness.ts";
+import {
+	copyProject,
+	freePort,
+	onFrame,
+	prepareCurrentCovers,
+	readPages,
+	startDaemon,
+	writeCamera,
+} from "./harness.ts";
 
 /**
  * The selection's read and the gestures that wait on it (DEV-299): how long a
@@ -98,7 +106,7 @@ async function candidates(page: Page, frame: Frame) {
 		return { list, width: document.documentElement.clientWidth };
 	});
 	const scale = box.width / inner.width;
-	return inner.list
+	const placed = inner.list
 		.map((c) => ({
 			index: c.index,
 			text: c.text,
@@ -106,13 +114,16 @@ async function candidates(page: Page, frame: Frame) {
 			y: box.y + (c.y + c.h / 2) * scale,
 		}))
 		.filter((c) => c.x > 40 && c.y > 70 && c.x < VIEW.width - 300 && c.y < VIEW.height - 40);
+	const shown = await onFrame(page, frameName, placed);
+	return placed.filter((_, at) => shown[at]);
 }
 
+/** The refusal note on screen now, read in one go: it goes by itself after a few seconds. */
 const refusal = async (page: Page) => {
-	const shown = page.locator("[data-hand-refusal]");
-	return (await shown.count()) === 0
-		? undefined
-		: ((await shown.first().getAttribute("data-hand-refusal")) ?? "refused");
+	const code = await page.evaluate(() =>
+		document.querySelector("[data-hand-refusal]")?.getAttribute("data-hand-refusal"),
+	);
+	return code === undefined || code === null ? undefined : code || "refused";
 };
 
 /** Where the selection ring stands now, to see the next one land. */

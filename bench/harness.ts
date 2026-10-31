@@ -759,6 +759,32 @@ export const mountedCount = (page: BrowserPage): Promise<number> =>
 export const framesOnCanvas = (page: BrowserPage): Promise<number> =>
 	page.evaluate(() => document.querySelectorAll("[data-frame-label]").length);
 
+/**
+ * Whether a click at each page point lands on the frame drawn there: inside
+ * its iframe's box and on the canvas field, not on chrome over it (the bar, a
+ * pane, a frame's label). An element a frame document draws outside its own
+ * viewport is still in the document, but a click at its place lands on
+ * whatever the canvas shows there, which is never that element.
+ */
+export const onFrame = (
+	page: BrowserPage,
+	frame: string,
+	points: readonly { x: number; y: number }[],
+): Promise<boolean[]> =>
+	page.evaluate(
+		({ frame, points }) => {
+			const box = document.querySelector(`iframe[title="${frame}"]`)?.getBoundingClientRect();
+			const field = document.querySelector('[role="application"]');
+			return points.map(({ x, y }) => {
+				if (box === undefined || field === null) return false;
+				if (x < box.left || x > box.right || y < box.top || y > box.bottom) return false;
+				const top = document.elementFromPoint(x, y);
+				return top !== null && field.contains(top) && top.closest("[data-frame-label]") === null;
+			});
+		},
+		{ frame, points },
+	);
+
 // --- the gesture collector (#82) -------------------------------------------
 //
 // Shared by bench/canvas.ts and bench/dither-attribution.ts, which quote
