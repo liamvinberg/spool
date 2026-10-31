@@ -440,6 +440,9 @@ function assertHtmlFrames(root: string, frames: readonly { name: string }[]): vo
 	);
 }
 
+/** What `src/daemon/thumbs.ts` writes beside a still: `scheme`, `booth`, `source`. */
+const COVER_SIDECARS = new Set(["scheme", "booth", "source"]);
+
 function missingCurrentCoverNames(root: string, frames: readonly { name: string }[]): string[] {
 	const thumbs = join(root, "design", ".spool", "thumbs");
 	const missing: string[] = [];
@@ -452,8 +455,9 @@ function missingCurrentCoverNames(root: string, frames: readonly { name: string 
 			files = [];
 		}
 		const images = files.filter((file) => CURRENT_COVER.test(file));
-		// one image, beside nothing but the colour scheme a scheme-following frame was taken in
-		if (images.length !== 1 || files.some((file) => file !== images[0] && file !== "scheme" && file !== "booth")) {
+		// one image, beside nothing but its sidecars: the colour scheme a scheme-following
+		// frame was taken in, the booth's mark, and the version of the frame it is of
+		if (images.length !== 1 || files.some((file) => file !== images[0] && !COVER_SIDECARS.has(file))) {
 			missing.push(frame.name);
 		}
 	}
