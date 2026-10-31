@@ -336,7 +336,7 @@ export const FrameShell = memo(function FrameShell({
 						ref={refCb}
 						key={docNonce}
 						title={name}
-						name={bootDensityName()}
+						name={bootDensityName(name)}
 						// A frame document opened on its own may write the clipboard, so
 						// embedding it must not take that away (#181). Chrome's default
 						// clipboard-write allowlist is self, which never matches a sandboxed

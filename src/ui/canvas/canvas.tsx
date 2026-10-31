@@ -3220,6 +3220,13 @@ function CanvasField({
 				case "capture-source":
 					lifecycleRef.current.noteCaptureSource(message, event.source);
 					return;
+				case "resolution-reload":
+					// it boots again at the density it is shown, behind its last paint
+					if (!experimentOn("frame-resolution")) return;
+					lifecycleRef.current.noteDensityReload(message.frame);
+					holdNext.current.add(message.frame);
+					reloadFrameDocument(message.frame);
+					return;
 				case "shot":
 					// Pre-ID capture replies cannot complete an ID-bound request.
 					return;
@@ -3501,6 +3508,7 @@ function CanvasField({
 		requestSiteBoxes,
 		siteBoxes,
 		releaseHold,
+		reloadFrameDocument,
 		finishEdit,
 		showRefusal,
 		restored,

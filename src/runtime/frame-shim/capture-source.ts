@@ -1,6 +1,6 @@
 import { FORBIDDEN_ELEMENTS, SAFE_IMAGE_SRC_PREFIX, URL_ATTRIBUTES, unsafeCaptureCss } from "./capture-safety";
 import { nativeFetch, nativeRaf } from "./natives";
-import { realDevicePixelRatio } from "./resolution";
+import { atFullDensity, realDevicePixelRatio } from "./resolution";
 import { settle } from "./settle";
 
 /**
@@ -285,9 +285,12 @@ function snapshotAnimations(clone: Element): void {
 	}
 }
 
-export async function captureSource(
-	settleMs: number,
-): Promise<{ svg: Blob; width: number; height: number; dpr: number }> {
+export function captureSource(settleMs: number): Promise<{ svg: Blob; width: number; height: number; dpr: number }> {
+	// at the screen's density, whatever the zoom the frame was shown at (resolution.ts)
+	return atFullDensity(() => captureAtDensity(settleMs));
+}
+
+async function captureAtDensity(settleMs: number): Promise<{ svg: Blob; width: number; height: number; dpr: number }> {
 	await settle(settleMs, nativeRaf);
 	const W = document.documentElement.clientWidth || innerWidth;
 	const H = document.documentElement.clientHeight || innerHeight;

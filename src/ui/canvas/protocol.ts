@@ -218,6 +218,8 @@ export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
 	| { spool: "arrived"; frame: string }
+	// a frame that read devicePixelRatio once asks to boot again at a finer one (`frame-resolution`)
+	| { spool: "resolution-reload"; frame: string }
 	| { spool: "content-size"; frame: string; id: number; width: number; height: number | null }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
@@ -272,6 +274,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return parseClipboardCopyRequest(data);
 		case "loaded":
 		case "arrived":
+		case "resolution-reload":
 		case "error":
 		case "shot":
 		case "session?":

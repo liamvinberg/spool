@@ -129,9 +129,11 @@ export function densityShownAt(k: number, screenDpr: number): number {
  */
 let bootDensity: number | null = null;
 const DENSITY_NAME = "spool-dpr=";
+/** Frames held at the screen's density: the one being exported boots at it. */
+const fullDensity = new Set<string>();
 
-export function bootDensityName(): string | undefined {
-	return bootDensity === null ? undefined : `${DENSITY_NAME}${bootDensity}`;
+export function bootDensityName(frame: string): string | undefined {
+	return bootDensity === null || fullDensity.has(frame) ? undefined : `${DENSITY_NAME}${bootDensity}`;
 }
 
 function densityOfName(name: string): number | undefined {
@@ -579,6 +581,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			if (
 				iframe == null ||
 				sourceWindow == null ||
+				fullDensity.has(frame) ||
 				!store.ready.has(frame) ||
 				arrivalTimers.current.has(frame) ||
 				frozen.current.has(frame)
@@ -587,6 +590,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 			const dpr = densityNow();
 			if (dpr === null || told.current.get(frame) === dpr) return;
+			// a reload it asks for boots at it
+			bootDensity = dpr;
 			sourceWindow.postMessage(resolutionMessage(dpr), "*");
 			told.current.set(frame, dpr);
 		},
@@ -934,6 +939,37 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	useEffect(() => () => cancelAnimationFrame(step.current ?? 0), []);
 
+	/** Frames that asked to boot again at a finer density (`frame-resolution`). */
+	const densityReloads = useRef(new Set<string>());
+	const noteDensityReload = useCallback((frame: string) => {
+		densityReloads.current.add(frame);
+	}, []);
+	/** The frame's next document, once it has replaced `before` and is ready for a capture. */
+	const freshDocument = useCallback(
+		(frame: string, before: Window | null | undefined) =>
+			new Promise<boolean>((resolve) => {
+				const ready = () => {
+					const now = iframes.current.get(frame)?.contentWindow;
+					return now !== before && isExportMountReady(store.states[frame], store.ready.has(frame), now);
+				};
+				if (ready()) {
+					resolve(true);
+					return;
+				}
+				const timeout = setTimeout(() => {
+					stop();
+					resolve(false);
+				}, EXPORT_MOUNT_TIMEOUT_MS);
+				const stop = store.subscribe(() => {
+					if (!ready()) return;
+					clearTimeout(timeout);
+					stop();
+					resolve(true);
+				});
+			}),
+		[store],
+	);
+
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
 	 * capture a full-resolution PNG, then hand the document back.
@@ -945,6 +981,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 
 			exportFrame.current = frame;
+			// at the screen's density, booting included (`frame-resolution`)
+			if (experimentOn("frame-resolution")) fullDensity.add(frame);
+			densityReloads.current.delete(frame);
 			let mountPromise: Promise<boolean> | undefined;
 			if (
 				!isExportMountReady(store.states[frame], store.ready.has(frame), iframes.current.get(frame)?.contentWindow)
@@ -958,14 +997,21 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 			try {
 				if (mountPromise !== undefined && !(await mountPromise)) return undefined;
+				const before = iframes.current.get(frame)?.contentWindow;
+				const shot = await requestCapture(frame);
+				// a frame that cannot draw finer without booting again asked for a
+				// reload instead of an export softer than the screen: take it from that
+				if (shot !== undefined || !densityReloads.current.delete(frame)) return shot;
+				if (!(await freshDocument(frame, before))) return undefined;
 				return await requestCapture(frame);
 			} finally {
+				fullDensity.delete(frame);
 				finishExportMount(frame, false);
 				if (exportFrame.current === frame) exportFrame.current = null;
 				compute();
 			}
 		},
-		[store, compute, finishExportMount, framesRef, requestCapture],
+		[store, compute, finishExportMount, framesRef, requestCapture, freshDocument],
 	);
 
 	useEffect(
@@ -1036,6 +1082,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		noteLoaded,
 		noteArrived,
 		noteCaptureSource,
+		noteDensityReload,
 		noteCameraMoving,
 		wake,
 		captureExport,

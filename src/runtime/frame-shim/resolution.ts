@@ -1,3 +1,5 @@
+import { nativeRaf, shimConfig } from "./natives";
+
 /**
  * Frames draw at the size they are shown (spool#218, the `frame-resolution`
  * experiment). A live frame on the canvas is shown at the camera's zoom, but a
@@ -13,8 +15,16 @@
  * the usual way already redraws on. The canvas only sends one at rest and to a
  * frame that is not frozen, so a redraw is never left blank behind a held rAF.
  *
- * The export capture reads the real density (`realDevicePixelRatio`): an
- * export is the frame at full resolution, not at the zoom it was standing at.
+ * Code that read the density once and never again (a canvas sized at mount)
+ * cannot follow a change: when the density goes up, the shim watches whether
+ * the frame reads it again by two frames after the resize, and if a frame that
+ * read it once did not, asks the canvas to reload it behind its last paint
+ * ({spool:"resolution-reload"}), to boot again at the new density. Going down
+ * needs nothing: drawn finer than shown is only cost.
+ *
+ * An export is the frame at the screen's density, not the zoom it stood at:
+ * the capture lifts it to the real density for as long as it takes
+ * (`atFullDensity`), and says so when the frame cannot follow without a reload.
  */
 const NAME_PREFIX = "spool-dpr=";
 
@@ -32,6 +42,9 @@ export function realDevicePixelRatio(): number {
 }
 
 let shown: number | null = null;
+/** Whether frame code has read devicePixelRatio, ever and since the last change. */
+let readEver = false;
+let readSince = false;
 
 function parseDpr(value: unknown): number | null {
 	const dpr = typeof value === "string" ? Number(value) : value;
@@ -46,7 +59,11 @@ export function shownDensity(): void {
 		Object.defineProperty(window, "devicePixelRatio", {
 			configurable: true,
 			enumerable: true,
-			get: () => shown ?? realDevicePixelRatio(),
+			get: () => {
+				readEver = true;
+				readSince = true;
+				return shown ?? realDevicePixelRatio();
+			},
 			// the attribute is [Replaceable]: an assignment replaces it for good
 			set(value: unknown) {
 				Object.defineProperty(window, "devicePixelRatio", {
@@ -60,10 +77,53 @@ export function shownDensity(): void {
 	} catch {}
 }
 
-/** The canvas says this document is now shown at `dpr` device pixels per CSS pixel. */
-export function setShownDensity(value: unknown): void {
-	const dpr = parseDpr(value);
-	if (dpr === null || dpr === (shown ?? realDevicePixelRatio())) return;
-	shown = dpr;
+const twoFrames = () => new Promise<void>((done) => nativeRaf(() => nativeRaf(() => done())));
+
+/**
+ * Change the density and tell the frame. Resolves whether the frame followed
+ * it: true unless the density went up and a frame that read it before did not
+ * read it again by two frames on.
+ */
+async function changeDensity(next: number | null): Promise<boolean> {
+	const was = shown ?? realDevicePixelRatio();
+	shown = next;
+	const now = shown ?? realDevicePixelRatio();
+	if (now === was) return true;
+	readSince = false;
 	dispatchEvent(new Event("resize"));
+	if (now < was || !readEver) return true;
+	await twoFrames();
+	return readSince;
+}
+
+/** The canvas says this document is now shown at `dpr` device pixels per CSS pixel. */
+export async function setShownDensity(value: unknown): Promise<void> {
+	const dpr = parseDpr(value);
+	if (dpr === null) return;
+	if (!(await changeDensity(dpr))) askReload();
+}
+
+function askReload(): void {
+	parent.postMessage({ spool: "resolution-reload", frame: shimConfig().frame }, "*");
+}
+
+/**
+ * Run `capture` with the frame drawn at the screen's density, then put the
+ * shown one back. A frame that cannot follow without a reload is asked to be
+ * reloaded and the capture fails, for the canvas to take again from the
+ * reloaded document: an export is never softer than the screen.
+ */
+
+export async function atFullDensity<T>(capture: () => Promise<T>): Promise<T> {
+	const kept = shown;
+	if (kept === null || kept >= realDevicePixelRatio()) return capture();
+	try {
+		if (!(await changeDensity(null))) {
+			askReload();
+			throw new Error("frame reloads at the screen's density");
+		}
+		return await capture();
+	} finally {
+		void changeDensity(kept);
+	}
 }
