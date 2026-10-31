@@ -47,6 +47,24 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("second");
 	expect(await doc.locator("button").textContent()).toBe("count 2");
 
+	// asks that overlap in one document coalesce into the latest: nothing throws, and the next save still swaps
+	await page.evaluate(() => {
+		const errors: unknown[] = [];
+		(window as unknown as { frameErrors: unknown[] }).frameErrors = errors;
+		addEventListener("message", (event) => {
+			if ((event.data as { spool?: unknown } | null)?.spool === "error") errors.push(event.data);
+		});
+	});
+	await page.locator('iframe[title="counter"]').evaluate((el) => {
+		const target = (el as HTMLIFrameElement).contentWindow;
+		target?.postMessage({ spool: "hot", id: 90_001 }, "*");
+		target?.postMessage({ spool: "hot", id: 90_002 }, "*");
+	});
+	writeFrame(project.root, "counter", frame("overlapped"));
+	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("overlapped");
+	expect(await doc.locator("button").textContent()).toBe("count 2");
+	expect(await page.evaluate(() => (window as unknown as { frameErrors: unknown[] }).frameErrors)).toEqual([]);
+
 	// an export that is no component: React Refresh can't keep it, so the document reloads
 	writeFrame(project.root, "counter", frame("third", "export const items = [1];\n"));
 	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("third");

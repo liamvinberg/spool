@@ -26,7 +26,7 @@ import {
 	mergeImportMap,
 	shimHash,
 } from "./document";
-import { HOT_BOOT_CLIENT, HOT_UPDATE_ENTRY, refreshFooter } from "./fast-refresh";
+import { HOT_BOOT_CLIENT, HOT_UPDATE_ENTRY, hotHeadKey, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
@@ -355,7 +355,10 @@ export async function compileFrameDocument(
 		bootJs,
 		fonts,
 		bundledCss,
-		hotRuntime: hot?.runtime,
+		hotRuntime:
+			hot === undefined
+				? undefined
+				: `${hot.runtime}\nwindow.__spoolHot.head = ${JSON.stringify(hotHead(designDir, reads, themed))};`,
 	});
 	// Every input, present or not, by the digest of the very bytes the document
 	// was made of: the bundle's, the stylesheet's, the fonts' and the import map's.
@@ -403,7 +406,17 @@ export async function compileFrameUpdate(
 	const themed = compiled.theme === undefined ? undefined : themeStylesheet(designDir, compiled, reads, resolvePath);
 	const css = themed?.css ?? compiled.css;
 	const bundled = bundledCss === undefined ? "" : layeredProjectCss(bundledCss);
-	return `${bootJs}\nexport const css = ${JSON.stringify(css)};\nexport const bundledCss = ${JSON.stringify(bundled)};\n`;
+	const head = hotHead(designDir, reads, themed);
+	return `${bootJs}\nexport const css = ${JSON.stringify(css)};\nexport const bundledCss = ${JSON.stringify(bundled)};\nexport const head = ${JSON.stringify(head)};\n`;
+}
+
+/** The fonts and import map a Fast Refresh document stands on, as `hotHeadKey` names them. */
+function hotHead(designDir: string, reads: DesignReads, themed: { fonts: string | undefined } | undefined): string {
+	const shared = join(designDir, "shared");
+	return hotHeadKey(
+		themed === undefined ? reads.text(join(shared, "fonts.css")) : themed.fonts,
+		reads.text(join(shared, "importmap.json")),
+	);
 }
 
 /**
