@@ -76,6 +76,8 @@ Run any rows: `node bench/loop/ab.ts --rows <ids|all> --arms base=<checkout>,can
 | `hand.click_to_rungs_ms` | ms | lower | 12.8 | 1.25 | 8 |
 | `hand.caret_ms` | ms | lower | 5.20 | 0.85 | 8 |
 | `hand.slow_keys_share` | % | lower | 100 | 2.50 | 8 |
+| `hand.control_slow_keys_share` | % | lower | 83.3 | 0 | 8 |
+| `hand.key_work_ms` | ms | lower | 0.94 | 0.20 | 8 |
 | `hand.enter_to_saved_ms` | ms | lower | 35.0 | 4.50 | 8 |
 | `edit.save_to_pixels_ms` | ms | lower | 215 | 55.1 | 8 |
 | `edit.save_to_loaded_ms` | ms | lower | 212 | 72.4 | 8 |
@@ -108,6 +110,11 @@ Run any rows: `node bench/loop/ab.ts --rows <ids|all> --arms base=<checkout>,can
 | `code.ui_js_gzip_kb` | KiB | lower | 565 | 0.00 | 8 |
 | `code.ui_css_gzip_kb` | KiB | lower | 27.2 | 0.00 | 8 |
 | `code.deps` | pkgs | lower | 13.0 | 0.00 | 8 |
+
+## Rows that measure the screen, not spool
+
+- `hand.slow_keys_share`: a bare contenteditable in a cross-site frame is as slow (LOG #13). Judge keys by `key_work_ms` and the gap to `control_slow_keys_share` (its band is from a loaded run, load 15 to 23: re-measure).
+- `live.*_idle_slow_share` and `live.*_slow_share`: on the m1 a bare page with nothing on it misses 39 to 42% of 120 Hz intervals at idle, and pan-trace's own `control` variant (no live frame) misses as many as `base` while panning (LOG #14). Only `live.k45_pan_p95_ms` and pan-trace's p95 against its control carry spool's cost.
 
 ## devobee
 
