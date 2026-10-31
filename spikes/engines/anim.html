@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:#0f1115;font:14px/1.4 system-ui,sans-serif;color:#e5e7eb}
+.card{box-sizing:border-box;width:390px;height:300px;padding:20px;display:flex;flex-direction:column;gap:14px;background:linear-gradient(160deg,#1f2937,#111827);border-radius:16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px}
+.spin{width:40px;height:40px;border-radius:50%;border:4px solid #374151;border-top-color:#f97316;animation:spin 1s linear infinite}
+.pulse{height:10px;border-radius:5px;background:#22c55e;animation:pulse 1.2s ease-in-out infinite}
+.track{height:8px;border-radius:4px;background:#1f2937}
+.fill{height:8px;border-radius:4px;background:#60a5fa;animation:grow 2s ease-in-out infinite alternate}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:5px;background:#e5e7eb;animation:bob .9s ease-in-out infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.3;transform:scaleX(.6)}50%{opacity:1;transform:scaleX(1)}}
+@keyframes grow{from{width:5%}to{width:95%}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+</style></head><body><div class="card">
+<div class="row"><div class="spin"></div><div><b>Uploading 3 files</b><br><span style="color:#9ca3af">design/frames/checkout</span></div></div>
+<div class="pulse"></div><div class="track"><div class="fill"></div></div>
+<div class="dots"><i></i><i></i><i></i></div>
+<div style="color:#9ca3af">A card that never stops moving: a spinner and dots on the compositor, a bar whose width changes layout every frame.</div>
+</div></body></html>
