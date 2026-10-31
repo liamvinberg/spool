@@ -20,7 +20,7 @@ The experience is a gate, not a metric. A change that loses any of these is reve
 
 - **Subjects are frozen.** `spool-bench` at `4e30245` (generated, 1449 frames; `node generate.mjs` after checkout) and `spool-real` (Spool's own `design/`, 510 frames, real Tailwind and shared imports), a git snapshot at `a2cd6c0`. On devobee they live in `~/dev/scratch/spool-bench` and `~/dev/scratch/spool-real-324`; on the m1 in `~/dev/scratch/loop218/`. A bench never measures a live canvas.
 - **The bench code is fixed** while rows are compared. A change to a bench is its own commit, and every row it touches gets its band measured again before it is used.
-- **Noise first.** A row's band is the spread of an A/A run: the same commit built in two checkouts, measured as two arms, interleaved. Until a row has a band it is not used to keep anything.
+- **Noise first.** A row's band comes from an A/A run: the same commit built in two checkouts, measured as two arms, interleaved (`ab.ts --aa`, then `--from <runs> --aa --write-bands`). Until a row has a band it is not used to keep anything. The bands in `bands.json` are the m1's. On the m1 the arms live in `~/dev/scratch/loop218/` (a clone of the public repo, one detached worktree per commit) and the bench code in `~/dev/scratch/loop218/loop` (rsynced from the loop branch); `ab.ts` runs there through `~/.agent-hub/m1/gui env SPOOL_LOOP_SUBJECTS=$HOME/dev/scratch/loop218 node bench/loop/ab.ts ...`.
 
 ## One experiment
 
