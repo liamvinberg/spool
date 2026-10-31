@@ -113,6 +113,38 @@ export const ROWS: Row[] = [
 		extract: () => ({}),
 		timeoutMs: 60_000,
 	},
+	{
+		id: "wall",
+		what: "How live a wall of animated frames is at the zoom that holds the most documents, at rest and panning, and what each costs",
+		subject: "spool-bench",
+		bench: "live-wall.ts",
+		args: () => ["--project", BENCH],
+		metrics: [
+			higher("live_frames_count", "docs"),
+			lower("rest_canvas_p95_ms", "ms"),
+			lower("rest_canvas_dropped_count", "frames"),
+			higher("rest_frames_full_rate_count", "docs"),
+			higher("rest_frame_raf_median_fps", "fps"),
+			lower("pan_canvas_p95_ms", "ms"),
+			lower("pan_canvas_dropped_count", "frames"),
+			higher("pan_frames_full_rate_count", "docs"),
+			higher("pan_frame_raf_median_fps", "fps"),
+			lower("mem_per_live_mb", "MB"),
+			lower("mem_per_live_private_mb", "MB"),
+			lower("frame_renderer_count", "procs"),
+			lower("pixel_ratio", "x"),
+			higher("dither_rest_frames_full_rate_count", "docs"),
+			higher("dither_rest_frame_raf_median_fps", "fps"),
+			lower("dither_pan_canvas_p95_ms", "ms"),
+			higher("dither_pan_frames_full_rate_count", "docs"),
+			higher("dither_pan_frame_raf_median_fps", "fps"),
+			lower("dither_mem_per_live_mb", "MB"),
+			lower("dither_pixel_ratio", "x"),
+		],
+		extract: metricsOf,
+		// a first run on an arm pays the photo booth for the whole subject, 5 to 10 minutes
+		timeoutMs: 25 * 60_000,
+	},
 ];
 
 export { BENCH, execFileSync, metricsOf, REAL, repoRoot };
