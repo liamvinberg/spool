@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium, type Frame, type Page } from "playwright-core";
+import { type BrowserContext, chromium, type Frame, type Page } from "playwright-core";
 import {
 	copyProject,
 	freePort,
@@ -308,6 +308,93 @@ async function refusalShown(page: Page): Promise<string | undefined> {
 	return code === undefined || code === null ? undefined : code || "refused";
 }
 
+interface KeyEntry {
+	name: string;
+	id: number;
+	start: number;
+	end: number;
+	duration: number;
+}
+
+/**
+ * Each key's paint (its keydown's Event Timing duration, rounded to 8 ms and
+ * running to the next paint) and its handlers' end (the last processingEnd of
+ * its keydown and keypress, unrounded, from the keydown's start).
+ */
+function keystrokes(entries: KeyEntry[]): { paints: number[]; work: number[] } {
+	const paints: number[] = [];
+	const work: number[] = [];
+	for (const down of entries) {
+		if (down.name !== "keydown") continue;
+		const own = entries.filter((e) => e === down || (down.id !== 0 && e.id === down.id));
+		paints.push(down.duration);
+		work.push(Math.max(...own.map((e) => e.end)) - down.start);
+	}
+	return { paints, work };
+}
+
+const CONTROL_PARENT = "http://spool-control.test/";
+const CONTROL_FRAME = "http://spool-control-frame.test/";
+
+async function typeIntoControl(context: BrowserContext, pause: number): Promise<void> {
+	await context.route(`${CONTROL_PARENT}**`, (route) =>
+		route.fulfill({
+			contentType: "text/html",
+			body: `<!doctype html><body style="margin:0"><iframe src="${CONTROL_FRAME}" style="width:800px;height:400px;border:0"></iframe>`,
+		}),
+	);
+	await context.route(`${CONTROL_FRAME}**`, (route) =>
+		route.fulfill({
+			contentType: "text/html",
+			body: `<!doctype html><body style="font:16px sans-serif"><p id="words" contenteditable>Spool control</p>`,
+		}),
+	);
+	const page = await context.newPage();
+	try {
+		await page.goto(CONTROL_PARENT);
+		const frame = page.frames().find((f) => f.url() === CONTROL_FRAME);
+		const box = await (await frame?.waitForSelector("#words"))?.boundingBox();
+		if (!frame || !box) throw new Error("the control frame did not load");
+		await frame.evaluate(() => {
+			const w = window as unknown as { __keys: unknown[] };
+			w.__keys = [];
+			new PerformanceObserver((list) => {
+				for (const entry of list.getEntries() as PerformanceEventTiming[]) {
+					if (entry.name !== "keydown" && entry.name !== "keypress") continue;
+					w.__keys.push({
+						name: entry.name,
+						id: entry.interactionId,
+						start: entry.startTime,
+						end: entry.processingEnd,
+						duration: entry.duration,
+					});
+				}
+			}).observe({ type: "event", durationThreshold: 16 } as PerformanceObserverInit);
+		});
+		await page.mouse.click(box.x + 20, box.y + box.height / 2);
+		for (let round = 0; round < 3; round++) {
+			await sleep(300);
+			await frame.evaluate(() => {
+				(window as unknown as { __keys: unknown[] }).__keys = [];
+			});
+			await page.keyboard.press("End");
+			for (const ch of " QA") {
+				await page.keyboard.type(ch);
+				await sleep(pause);
+			}
+			await sleep(300);
+			const { paints, work } = keystrokes(
+				(await frame.evaluate(() => (window as unknown as { __keys: KeyEntry[] }).__keys)) as KeyEntry[],
+			);
+			for (const k of paints) record("control keystroke → next paint (only those ≥16 ms are reported)", k);
+			for (const k of work) record("control keystroke → handlers done (only keys ≥16 ms to paint)", k);
+			tally("control keystrokes ≥16 ms to paint", paints.length);
+		}
+	} finally {
+		await page.close();
+	}
+}
+
 async function main(): Promise<void> {
 	const { root, name, spoolDir } = copyProject(opts.project);
 	const pageName = opts.frame.split("/").slice(0, -1).join("/");
@@ -472,18 +559,24 @@ async function main(): Promise<void> {
 				}).observe(el, { attributes: true });
 				// the Edit tool holds the frame's own animation frames, so the
 				// paint is read from Event Timing: a key's duration runs to the
-				// next paint after it, and only keys of 16 ms or more are listed
+				// next paint after it, and only keys of 16 ms or more are listed.
+				// Its handlers' end is read unrounded beside it: the paint wait is
+				// mostly Chromium's own (the control below), the handlers are ours
 				if (w.__observing !== true) {
 					w.__observing = true;
 					new PerformanceObserver((list) => {
-						for (const entry of list.getEntries()) {
-							if (entry.name === "keydown") (w.__keys as number[]).push(entry.duration);
-							if (entry.name === "keydown" || entry.name === "keyup")
-								w.__keyCount = ((w.__keyCount as number) ?? 0) + 0.5;
+						for (const entry of list.getEntries() as PerformanceEventTiming[]) {
+							if (entry.name !== "keydown" && entry.name !== "keypress") continue;
+							(w.__keys as unknown[]).push({
+								name: entry.name,
+								id: entry.interactionId,
+								start: entry.startTime,
+								end: entry.processingEnd,
+								duration: entry.duration,
+							});
 						}
 					}).observe({ type: "event", durationThreshold: 16 } as PerformanceObserverInit);
 				}
-				w.__keyCount = 0;
 			});
 			await page.evaluate(() => {
 				const now = () => performance.timeOrigin + performance.now();
@@ -517,16 +610,15 @@ async function main(): Promise<void> {
 				await sleep(opts.pause ? 140 : 60);
 			}
 			await sleep(300);
-			const typed = (await frame.evaluate(() => {
-				const w = window as unknown as { __keys: number[]; __keyCount: number };
-				return { slow: w.__keys, count: w.__keyCount };
-			})) as { slow: number[]; count: number };
-			const keys = typed.slow;
-			note(
-				`4 keys typed, of them 16 ms or slower to the next paint: ${keys.length}${keys.length ? ` (${keys.map((k) => k.toFixed(0)).join(", ")} ms)` : ""}`,
+			const { paints, work } = keystrokes(
+				(await frame.evaluate(() => (window as unknown as { __keys: KeyEntry[] }).__keys)) as KeyEntry[],
 			);
-			for (const k of keys) record("keystroke → next paint (only those ≥16 ms are reported)", k);
-			tally("keystrokes ≥16 ms to paint", keys.length);
+			note(
+				`4 keys typed, of them 16 ms or slower to the next paint: ${paints.length}${paints.length ? ` (${paints.map((k) => k.toFixed(0)).join(", ")} ms; handlers done at ${work.map((k) => k.toFixed(1)).join(", ")} ms)` : ""}`,
+			);
+			for (const k of paints) record("keystroke → next paint (only those ≥16 ms are reported)", k);
+			for (const k of work) record("keystroke → handlers done (only keys ≥16 ms to paint)", k);
+			tally("keystrokes ≥16 ms to paint", paints.length);
 			const before = sourceTimes(root);
 			api.length = 0;
 			const t0 = Date.now();
@@ -561,7 +653,7 @@ async function main(): Promise<void> {
 			);
 			await hud(
 				page,
-				`edit words: caret ${(opened - up).toFixed(0)} ms · keys ${keys.length === 0 ? "<16" : Math.max(...keys).toFixed(0)} ms · saved ${wrote.at - t0} ms`,
+				`edit words: caret ${(opened - up).toFixed(0)} ms · keys ${paints.length === 0 ? "<16" : Math.max(...paints).toFixed(0)} ms · saved ${wrote.at - t0} ms`,
 			);
 			edits++;
 			await sleep(opts.pause);
@@ -713,6 +805,12 @@ async function main(): Promise<void> {
 			frame = await liveFrame(page, opts.frame);
 			await candidates(page, frame, opts.frame);
 		}
+
+		// --- control -----------------------------------------------------------
+		// The same keys into a bare contenteditable in a cross-site frame, read
+		// the same way: what Chromium's input-to-paint costs with no spool at all
+		await hud(page, "control: the same keys into a bare frame");
+		await typeIntoControl(context, opts.pause ? 140 : 60);
 
 		// --- summary ---------------------------------------------------------
 		const summary: string[] = [];

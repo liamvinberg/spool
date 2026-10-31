@@ -281,14 +281,21 @@ export const ROWS: Row[] = [
 			lower("click_to_rungs_ms", "ms"),
 			lower("caret_ms", "ms"),
 			lower("slow_keys_share", "%"),
+			// the same keys into a bare frame: the floor slow_keys_share sits on
+			lower("control_slow_keys_share", "%"),
+			lower("key_work_ms", "ms"),
 			lower("enter_to_saved_ms", "ms"),
 		],
 		extract: (out) => {
 			const results = (out as { results: Record<string, number[]> }).results;
 			const of = (label: string): number => median(results[label] ?? []);
-			const slowKeys = (results["keystrokes ≥16 ms to paint"] ?? []).reduce((sum, value) => sum + value, 0);
-			// each words edit types four keys (qa-editing.ts)
-			const typed = 4 * (results["keystrokes ≥16 ms to paint"] ?? []).length;
+			// each words edit, and each control round, types four keys (qa-editing.ts)
+			const share = (label: string): number => {
+				const counts = results[label] ?? [];
+				return counts.length === 0
+					? Number.NaN
+					: (100 * counts.reduce((sum, value) => sum + value, 0)) / (4 * counts.length);
+			};
 			return {
 				pan_p95_ms: of("pan frame interval p95"),
 				pan_slow_count: of("pan intervals over 12 ms"),
@@ -297,7 +304,9 @@ export const ROWS: Row[] = [
 				click_to_ring_ms: of("click → selection ring"),
 				click_to_rungs_ms: of("click → file read, edits allowed (POST /rungs)"),
 				caret_ms: of("second click → caret in the words"),
-				slow_keys_share: typed === 0 ? Number.NaN : (100 * slowKeys) / typed,
+				slow_keys_share: share("keystrokes ≥16 ms to paint"),
+				control_slow_keys_share: share("control keystrokes ≥16 ms to paint"),
+				key_work_ms: of("keystroke → handlers done (only keys ≥16 ms to paint)"),
 				enter_to_saved_ms: of("Enter → file saved"),
 			};
 		},
