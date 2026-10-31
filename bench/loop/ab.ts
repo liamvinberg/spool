@@ -240,7 +240,28 @@ function report(options: Options, runs: readonly Run[]): string {
 	return lines.join("\n");
 }
 
+/**
+ * `--from <runs.jsonl> [--aa]`: the report of runs measured earlier, even a
+ * session still going, without measuring anything.
+ */
+function redraw(argv: readonly string[]): boolean {
+	const at = argv.indexOf("--from");
+	const file = argv[at + 1];
+	if (at < 0 || file === undefined) return false;
+	const runs = readFileSync(file, "utf8")
+		.split("\n")
+		.filter((line) => line.trim() !== "")
+		.map((line) => JSON.parse(line) as Run);
+	const labels = [...new Set(runs.map((run) => run.arm))];
+	const rows = ROWS.filter((row) => runs.some((run) => run.row === row.id));
+	const arms = labels.map((label) => ({ label, checkout: "", experiments: [] }));
+	const rounds = Math.max(...runs.map((run) => run.round)) + 1;
+	process.stdout.write(`${report({ rows, arms, rounds, aa: argv.includes("--aa"), out: file }, runs)}\n`);
+	return true;
+}
+
 async function main(): Promise<void> {
+	if (redraw(process.argv.slice(2))) return;
 	const options = parseArgs(process.argv.slice(2));
 	mkdirSync(SEEDS, { recursive: true });
 	const commits = await Promise.all(options.arms.map((arm) => commitOf(arm.checkout)));
