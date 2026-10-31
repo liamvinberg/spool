@@ -113,6 +113,37 @@ export const ROWS: Row[] = [
 		extract: () => ({}),
 		timeoutMs: 60_000,
 	},
+	{
+		id: "edit",
+		what: "An agent's write landing in the live frame a person is inside: to its pixels, its state kept, the daemon's compile",
+		subject: "spool-real",
+		bench: "edit-loop.ts",
+		args: () => ["--project", REAL],
+		metrics: [
+			lower("save_to_pixels_ms", "ms"),
+			lower("save_to_loaded_ms", "ms"),
+			lower("shared_save_to_pixels_ms", "ms"),
+			lower("shared_save_to_loaded_ms", "ms"),
+			higher("state_kept_count", "of 4"),
+			higher("shared_state_kept_count", "of 4"),
+			lower("compile_ms", "ms"),
+			lower("shared_compile_ms", "ms"),
+			lower("document_hit_ms", "ms"),
+		],
+		extract: metricsOf,
+		// a first run on a commit makes the subject's covers before it measures
+		timeoutMs: 1_800_000,
+	},
+	{
+		id: "cold",
+		what: "A cold start, no covers: daemon spawned to the canvas up and its first live frame loaded",
+		subject: "spool-real",
+		bench: "edit-loop.ts",
+		args: () => ["--project", REAL, "--measure", "cold"],
+		metrics: [lower("daemon_up_ms", "ms"), lower("canvas_ready_ms", "ms"), lower("cold_first_live_ms", "ms")],
+		extract: metricsOf,
+		timeoutMs: 600_000,
+	},
 ];
 
 export { BENCH, execFileSync, metricsOf, REAL, repoRoot };
