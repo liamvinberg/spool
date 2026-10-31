@@ -119,8 +119,24 @@ export function densityShownAt(k: number, screenDpr: number): number {
 	return Math.min(step, screenDpr);
 }
 
-/** The iframe name that carries a document's first density to the shim (resolution.ts). */
-const densityName = (dpr: number) => `spool-dpr=${dpr}`;
+/**
+ * The iframe name that carries a document's first density to the shim
+ * (resolution.ts), so code that reads devicePixelRatio once at mount reads
+ * the shown one. Chromium hands a cross-origin frame the name it was created
+ * with and not a later one, so it is rendered into the iframe (frame-shell.tsx)
+ * from where the camera last rested, read at render rather than passed down:
+ * the shells are memo'd hard against camera changes.
+ */
+let bootDensity: number | null = null;
+const DENSITY_NAME = "spool-dpr=";
+
+export function bootDensityName(): string | undefined {
+	return bootDensity === null ? undefined : `${DENSITY_NAME}${bootDensity}`;
+}
+
+function densityOfName(name: string): number | undefined {
+	return name.startsWith(DENSITY_NAME) ? Number(name.slice(DENSITY_NAME.length)) : undefined;
+}
 
 /**
  * How long a canvas rests, and a frame's document has been loaded, before the
@@ -572,8 +588,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			const dpr = densityNow();
 			if (dpr === null || told.current.get(frame) === dpr) return;
 			sourceWindow.postMessage(resolutionMessage(dpr), "*");
-			// a reload of the same element boots at it too
-			iframe.name = densityName(dpr);
 			told.current.set(frame, dpr);
 		},
 		[store, densityNow],
@@ -778,12 +792,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				frozen.current.delete(frame);
 				attendedAt.current.delete(frame);
 				told.current.delete(frame);
-				// the first density rides the name, read before any frame code runs
-				const dpr = el !== null && experimentOn("frame-resolution") ? densityNow() : null;
-				if (el !== null && dpr !== null) {
-					el.name = densityName(dpr);
-					told.current.set(frame, dpr);
-				}
+				// what the document boots at, read before any frame code runs
+				const booted = el === null ? undefined : densityOfName(el.name);
+				if (booted !== undefined) told.current.set(frame, booted);
 			}
 			if (current !== undefined && current !== el) {
 				const pending = captureWaiters.current.get(frame);
@@ -802,7 +813,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 			forgetArrival(frame);
 		},
-		[store, forgetArrival, noteShot, densityNow],
+		[store, forgetArrival, noteShot],
 	);
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
@@ -891,6 +902,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	// and a frame after a sweep that left the ring's documents waiting.
 	const compute = useCallback(() => {
 		const now = performance.now();
+		// before the sweep's mounts render, so they boot at where the camera rests
+		bootDensity = experimentOn("frame-resolution") ? densityNow() : null;
 		const input: SweepInput = {
 			frames: framesRef.current,
 			entered: enteredRef.current,
@@ -917,7 +930,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		// against the states this sweep just decided, not last render's: a frame
 		// handed back from an export becomes freezable as soon as it is live again
 		applyFreeze(states, now);
-	}, [store, framesRef, cameraRef, viewportRef, applyFreeze]);
+	}, [store, framesRef, cameraRef, viewportRef, applyFreeze, densityNow]);
 
 	useEffect(() => () => cancelAnimationFrame(step.current ?? 0), []);
 
