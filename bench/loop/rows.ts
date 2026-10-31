@@ -462,6 +462,7 @@ export const ROWS: Row[] = [
 		extract: metricsOf,
 		// a first run on a commit makes the subject's covers before it measures
 		timeoutMs: 1_800_000,
+		stage: "m1",
 	},
 	{
 		id: "cold",
@@ -472,6 +473,7 @@ export const ROWS: Row[] = [
 		metrics: [lower("daemon_up_ms", "ms"), lower("canvas_ready_ms", "ms"), lower("cold_first_live_ms", "ms")],
 		extract: metricsOf,
 		timeoutMs: 600_000,
+		stage: "m1",
 	},
 ];
 
