@@ -24,7 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { loadavg, platform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { repoRoot } from "../harness.ts";
-import { type Arm, type Metric, ROWS, type Row } from "./rows.ts";
+import { type Arm, type Metric, median, ROWS, type Row } from "./rows.ts";
 
 interface Options {
 	rows: Row[];
@@ -100,7 +100,11 @@ const commitOf = (checkout: string): Promise<string> =>
 		git.stdout.on("data", (chunk) => {
 			text += chunk;
 		});
-		git.once("exit", () => done(text.trim()));
+		// a copy made without its repo (on the m1) names its commit in .loop-commit
+		git.once("exit", () => {
+			const marker = join(checkout, ".loop-commit");
+			done(text.trim() || (existsSync(marker) ? readFileSync(marker, "utf8").trim() : "unknown"));
+		});
 	});
 
 /**
@@ -170,15 +174,6 @@ async function measure(row: Row, arm: Arm, commit: string, round: number): Promi
 		rmSync(dir, { recursive: true, force: true });
 	}
 }
-
-export const median = (values: readonly number[]): number => {
-	const sorted = [...values].sort((a, b) => a - b);
-	if (sorted.length === 0) return Number.NaN;
-	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2 === 1
-		? (sorted[mid] as number)
-		: ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
-};
 
 const fmt = (value: number): string =>
 	!Number.isFinite(value)
