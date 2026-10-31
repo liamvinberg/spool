@@ -21,9 +21,11 @@ declare global {
  * (#268), nothing asks about the name any more, and a machine still carrying it
  * in config.json boots exactly as it did. `element-tree` holds the pages rail's
  * element tree back while its direction is still open: off, Edit leaves the
- * rail exactly as Select does.
+ * rail exactly as Select does. `frame-resolution` has a live frame draw its
+ * canvases at the density it is shown at rather than the screen's (spool#218):
+ * cheaper at overview zooms, a short blur while a zoom in settles.
  */
-export type Experiment = "agent-panel" | "element-tree";
+export type Experiment = "agent-panel" | "element-tree" | "frame-resolution";
 
 export function experimentOn(name: Experiment): boolean {
 	const enabled = typeof window === "undefined" ? undefined : window.__SPOOL_EXPERIMENTS__;

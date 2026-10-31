@@ -468,6 +468,8 @@ function webHref(value: unknown): value is string {
 }
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
+/** The density a live document is shown at, which it reads as devicePixelRatio (`frame-resolution`). */
+export const resolutionMessage = (dpr: number) => ({ spool: "resolution", dpr }) as const;
 /**
  * Ask a freshly loaded document to say when it has finished arriving (#177) —
  * fonts, entry animations, a quiet DOM. `settleMs` is the frame's own budget for

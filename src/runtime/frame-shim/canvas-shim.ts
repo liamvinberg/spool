@@ -7,6 +7,7 @@ import { relayKeysOut, relayModifierRelease } from "./keys";
 import { answerHost } from "./messages";
 import { relayMiddlePan } from "./pan";
 import { tellPresenceOut } from "./presence";
+import { shownDensity } from "./resolution";
 import { relayWheel } from "./scroll";
 
 /**
@@ -16,6 +17,9 @@ import { relayWheel } from "./scroll";
  * Select owns the pointer; a freeze is the rAF gate (freeze.ts). It speaks the
  * host protocol (messages.ts):
  *
+ * {spool:"resolution", dpr} is the density this document is shown at, which
+ * frame code reads as devicePixelRatio (resolution.ts, the `frame-resolution`
+ * experiment), the first one carried in the iframe's name;
  * {spool:"freeze", on} holds this document's animations while the camera moves
  * (#171) or while nothing has attended the frame for a long minute (#172), and
  * re-delivers every held rAF callback on thaw;
@@ -57,6 +61,7 @@ import { relayWheel } from "./scroll";
  * Every listener is on the window, and the order they are added in is the
  * order they hear an event in, so it is kept here in one place.
  */
+shownDensity();
 preserveDrawingBuffers();
 gateAnimationFrames();
 guardEdits();

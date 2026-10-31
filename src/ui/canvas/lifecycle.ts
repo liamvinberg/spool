@@ -4,7 +4,8 @@ import { LIVE_MIN_CSS_PX, SETTLE_BUDGET_MS } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, captureRequestId, type ExportRaster, rasterCaptureSource } from "./capture-broker";
-import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
+import { experimentOn } from "../experiments";
+import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage, resolutionMessage } from "./protocol";
 import { watchRestStrain } from "./rest-strain";
 
 /**
@@ -103,6 +104,23 @@ export const IDLE_FREEZE_MS = 60_000;
  * whole zoom long. A mouse wheel's notches can land as far apart.
  */
 export const MOVE_HOLD_MS = 400;
+
+/**
+ * The densities a live frame is told it is shown at (spool#218, the
+ * `frame-resolution` experiment): few, so a zoom crosses one rarely, and the
+ * next one up from what the zoom needs, so a frame is never drawn coarser
+ * than it is shown by more than the 5% a step allows.
+ */
+const SHOWN_DENSITIES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
+
+export function densityShownAt(k: number, screenDpr: number): number {
+	const need = k * screenDpr;
+	const step = SHOWN_DENSITIES.find((density) => density >= need * 0.95) ?? need;
+	return Math.min(step, screenDpr);
+}
+
+/** The iframe name that carries a document's first density to the shim (resolution.ts). */
+const densityName = (dpr: number) => `spool-dpr=${dpr}`;
 
 /**
  * How long a canvas rests, and a frame's document has been loaded, before the
@@ -526,6 +544,41 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[store],
 	);
 
+	/** The density each document was last told it is shown at (`frame-resolution`). */
+	const told = useRef(new Map<string, number>());
+	const densityNow = useCallback(() => {
+		const camera = cameraRef.current;
+		return camera == null ? null : densityShownAt(camera.k, window.devicePixelRatio || 1);
+	}, [cameraRef]);
+	/**
+	 * Tell a document the density it is shown at, once the camera has rested and
+	 * only while its frames run: its resize redraw clears a canvas, and a frozen
+	 * rAF would leave it clear. A message, like the freeze, never a render.
+	 */
+	const postResolution = useCallback(
+		(frame: string) => {
+			if (!experimentOn("frame-resolution") || moveHeld.current) return;
+			const iframe = iframes.current.get(frame);
+			const sourceWindow = iframe?.contentWindow;
+			if (
+				iframe == null ||
+				sourceWindow == null ||
+				!store.ready.has(frame) ||
+				arrivalTimers.current.has(frame) ||
+				frozen.current.has(frame)
+			) {
+				return;
+			}
+			const dpr = densityNow();
+			if (dpr === null || told.current.get(frame) === dpr) return;
+			sourceWindow.postMessage(resolutionMessage(dpr), "*");
+			// a reload of the same element boots at it too
+			iframe.name = densityName(dpr);
+			told.current.set(frame, dpr);
+		},
+		[store, densityNow],
+	);
+
 	/**
 	 * Roll the idle clocks forward and tell each frame where that leaves it. Runs
 	 * on every sweep, because idleness is the one cause that arrives by itself:
@@ -563,12 +616,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 							crowded: crowded.current.has(name) && !attendedNow(name),
 						}),
 				);
+				if (state === "live") postResolution(name);
 			}
 			// frames that left the projection take their clock with them
 			for (const name of [...attendedAt.current.keys()]) if (!alive.has(name)) attendedAt.current.delete(name);
 			for (const name of [...crowded.current]) if (!alive.has(name)) crowded.current.delete(name);
 		},
-		[store, framesRef, postFreeze, attentionTo, attendedNow],
+		[store, framesRef, postFreeze, postResolution, attentionTo, attendedNow],
 	);
 
 	useEffect(
@@ -723,6 +777,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			if (current !== el) {
 				frozen.current.delete(frame);
 				attendedAt.current.delete(frame);
+				told.current.delete(frame);
+				// the first density rides the name, read before any frame code runs
+				const dpr = el !== null && experimentOn("frame-resolution") ? densityNow() : null;
+				if (el !== null && dpr !== null) {
+					el.name = densityName(dpr);
+					told.current.set(frame, dpr);
+				}
 			}
 			if (current !== undefined && current !== el) {
 				const pending = captureWaiters.current.get(frame);
@@ -741,7 +802,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 			forgetArrival(frame);
 		},
-		[store, forgetArrival, noteShot],
+		[store, forgetArrival, noteShot, densityNow],
 	);
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */

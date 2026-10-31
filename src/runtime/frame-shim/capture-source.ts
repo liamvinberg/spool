@@ -1,5 +1,6 @@
 import { FORBIDDEN_ELEMENTS, SAFE_IMAGE_SRC_PREFIX, URL_ATTRIBUTES, unsafeCaptureCss } from "./capture-safety";
 import { nativeFetch, nativeRaf } from "./natives";
+import { realDevicePixelRatio } from "./resolution";
 import { settle } from "./settle";
 
 /**
@@ -371,7 +372,7 @@ export async function captureSource(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">` +
 		`<foreignObject width="100%" height="100%">${xml}</foreignObject></svg>`;
 	// An export is lossless and full-size, at the density the frame is shown.
-	const dpr = Math.min(window.devicePixelRatio || 1, 2);
+	const dpr = Math.min(realDevicePixelRatio(), 2);
 	const source = new Blob([svg], { type: "image/svg+xml" });
 	if (source.size > 16 * 1024 * 1024) throw new Error("capture source too large");
 	return { svg: source, width: W, height: H, dpr };
