@@ -32,10 +32,14 @@ export interface Row {
 	subject: "spool-bench" | "spool-real" | "none";
 	/** A bench under `bench/`, run as a process; or a measurement taken here, on the arm's checkout. */
 	bench: string | ((arm: Arm) => Promise<Record<string, number>>);
-	args: () => string[];
+	args: (arm: Arm) => string[];
 	metrics: Metric[];
 	extract: (out: unknown, log: string) => Record<string, number>;
 	timeoutMs: number;
+	/** A bench with no `--out` is read from what it prints; `extract` gets `undefined` and the log. */
+	noOut?: true;
+	/** Where its numbers can be believed: the m1 for feel, devobee for what needs Linux (its GPU, /proc). */
+	stage: "m1" | "devobee" | "any";
 }
 
 /** Where the frozen subjects are on this machine (program.md); `SPOOL_LOOP_SUBJECTS` moves them. */
@@ -132,6 +136,7 @@ export const ROWS: Row[] = [
 			};
 		},
 		timeoutMs: 40 * 60_000,
+		stage: "m1",
 	},
 	{
 		id: "entry",
@@ -170,6 +175,7 @@ export const ROWS: Row[] = [
 			};
 		},
 		timeoutMs: 40 * 60_000,
+		stage: "m1",
 	},
 	{
 		id: "reload",
@@ -199,6 +205,7 @@ export const ROWS: Row[] = [
 			return { cold_ms: stock("cold"), warm_ms: stock("warm"), covers_from_nothing_s: result.coverMs / 1000 };
 		},
 		timeoutMs: 30 * 60_000,
+		stage: "m1",
 	},
 	{
 		id: "walk",
@@ -214,6 +221,191 @@ export const ROWS: Row[] = [
 			return { same_page_ms: of("same-page"), cross_page_ms: of("cross-page") };
 		},
 		timeoutMs: 30 * 60_000,
+		stage: "m1",
+	},
+	{
+		id: "cost",
+		what: "What mounted frames cost the browser: memory and idle cpu over a bare host page, and one mount's insert to loaded (bench/frame-cost.ts, #85)",
+		subject: "spool-bench",
+		bench: "frame-cost.ts",
+		args: () => ["--project", BENCH, "--headed"],
+		metrics: [
+			lower("first_frame_mb", "MB"),
+			lower("live25_mb", "MB"),
+			lower("live50_mb", "MB"),
+			lower("live25_cpu_pct", "%"),
+			lower("offscreen24_cpu_pct", "%"),
+			lower("mount_cold_ms", "ms"),
+			lower("mount_warm_ms", "ms"),
+		],
+		extract: (out) => {
+			interface Reading {
+				rssMb: number;
+				idleCpuPercent: number;
+			}
+			const report = out as {
+				cases: Array<{ label: string; floor: Reading; held: Reading }>;
+				arrivals: Array<{ label: string; p50: number }>;
+			};
+			const over = (label: string, field: keyof Reading): number => {
+				const found = report.cases.find((each) => each.label === label);
+				return found === undefined ? Number.NaN : found.held[field] - found.floor[field];
+			};
+			const mount = (prefix: string): number =>
+				report.arrivals.find((each) => each.label.startsWith(prefix))?.p50 ?? Number.NaN;
+			return {
+				first_frame_mb: over("1 live", "rssMb"),
+				live25_mb: over("25 live", "rssMb"),
+				live50_mb: over("50 live", "rssMb"),
+				live25_cpu_pct: over("25 live", "idleCpuPercent"),
+				offscreen24_cpu_pct: over("24 live, offscreen", "idleCpuPercent"),
+				mount_cold_ms: mount("cold"),
+				mount_warm_ms: mount("warm"),
+			};
+		},
+		timeoutMs: 30 * 60_000,
+		stage: "any",
+	},
+	{
+		id: "hand",
+		what: "Hand editing on Spool's own home frame: pan and zoom with it live, click to ring, typing to paint, Enter to the file saved (bench/qa-editing.ts, task 141)",
+		subject: "spool-real",
+		bench: "qa-editing.ts",
+		args: () => ["--project", REAL, "--frame", "app/spool-home"],
+		metrics: [
+			lower("pan_p95_ms", "ms"),
+			lower("pan_slow_count", "n"),
+			lower("zoom_p95_ms", "ms"),
+			lower("zoom_slow_count", "n"),
+			lower("click_to_ring_ms", "ms"),
+			lower("click_to_rungs_ms", "ms"),
+			lower("caret_ms", "ms"),
+			lower("slow_keys_share", "%"),
+			lower("enter_to_saved_ms", "ms"),
+		],
+		extract: (out) => {
+			const results = (out as { results: Record<string, number[]> }).results;
+			const of = (label: string): number => median(results[label] ?? []);
+			const slowKeys = (results["keystrokes ≥16 ms to paint"] ?? []).reduce((sum, value) => sum + value, 0);
+			// each words edit types four keys (qa-editing.ts)
+			const typed = 4 * (results["keystrokes ≥16 ms to paint"] ?? []).length;
+			return {
+				pan_p95_ms: of("pan frame interval p95"),
+				pan_slow_count: of("pan intervals over 12 ms"),
+				zoom_p95_ms: of("zoom frame interval p95"),
+				zoom_slow_count: of("zoom intervals over 12 ms"),
+				click_to_ring_ms: of("click → selection ring"),
+				click_to_rungs_ms: of("click → file read, edits allowed (POST /rungs)"),
+				caret_ms: of("second click → caret in the words"),
+				slow_keys_share: typed === 0 ? Number.NaN : (100 * slowKeys) / typed,
+				enter_to_saved_ms: of("Enter → file saved"),
+			};
+		},
+		timeoutMs: 30 * 60_000,
+		stage: "m1",
+	},
+	{
+		id: "live",
+		what: "Pan, zoom and idle with Spool's live player frame on screen, at entry zoom and working zoom (bench/pan-trace.ts, DEV-297)",
+		subject: "spool-real",
+		bench: "pan-trace.ts",
+		args: () => ["--project", REAL, "--frame", "app/spool-player", "--rounds", "2", "--dpr", "2"],
+		noOut: true,
+		stage: "m1",
+		metrics: [
+			lower("k85_pan_slow_share", "%"),
+			lower("k85_zoom_slow_share", "%"),
+			lower("k85_idle_slow_share", "%"),
+			lower("k45_pan_slow_share", "%"),
+			lower("k45_zoom_slow_share", "%"),
+			lower("k45_idle_slow_share", "%"),
+			lower("k45_pan_p95_ms", "ms"),
+		],
+		extract: (_out, log) => {
+			const metrics: Record<string, number> = {};
+			// k=0.85 base       pan p95 16.8 ms, 19.3% over 12 ms, worst 21.0 | zoom p95 16.6 ms, 19.0% over 12 ms, worst 17.9 | idle 34.0% over 12 ms
+			const line =
+				/^k=([\d.]+) base\s+pan p95 ([\d.]+) ms, ([\d.]+)% over 12 ms.*\| zoom p95 ([\d.]+) ms, ([\d.]+)% over 12 ms.*\| idle ([\d.]+)% over 12 ms/gm;
+			for (const match of log.matchAll(line)) {
+				const k = `k${Math.round(Number(match[1]) * 100)}`;
+				metrics[`${k}_pan_p95_ms`] = Number(match[2]);
+				metrics[`${k}_pan_slow_share`] = Number(match[3]);
+				metrics[`${k}_zoom_slow_share`] = Number(match[5]);
+				metrics[`${k}_idle_slow_share`] = Number(match[6]);
+			}
+			return metrics;
+		},
+		timeoutMs: 20 * 60_000,
+	},
+	{
+		id: "save",
+		what: "What a hand save to a shared file costs the requests after it and the daemon's event loop (bench/save-busy.ts, DEV-300)",
+		subject: "spool-real",
+		bench: "save-busy.ts",
+		args: () => ["--project", REAL, "--frame", "app/spool-home", "--rounds", "6"],
+		stage: "any",
+		metrics: [
+			lower("flows_after_save_ms", "ms"),
+			lower("rungs_after_save_ms", "ms"),
+			lower("selection_after_save_ms", "ms"),
+			lower("loop_worst_ms", "ms"),
+		],
+		extract: (out) => {
+			interface Requests {
+				selection: number;
+				rungs: number;
+				flows: number;
+			}
+			const rounds = (out as { rounds: Array<{ first: Requests; loop: { worst: number } }> }).rounds;
+			return {
+				flows_after_save_ms: median(rounds.map((round) => round.first.flows)),
+				rungs_after_save_ms: median(rounds.map((round) => round.first.rungs)),
+				selection_after_save_ms: median(rounds.map((round) => round.first.selection)),
+				loop_worst_ms: median(rounds.map((round) => round.loop.worst)),
+			};
+		},
+		timeoutMs: 20 * 60_000,
+	},
+	{
+		id: "viewer",
+		what: "The read-only canvas (spool.page) on 600 synthetic frames: pan and zoom frame intervals on the GPU (bench/viewer.ts)",
+		subject: "none",
+		bench: "viewer.ts",
+		args: (arm) => ["--rounds", "2", "--gpu", "vulkan", "--build", join(arm.checkout, "dist", "viewer")],
+		noOut: true,
+		stage: "devobee",
+		metrics: [
+			lower("slow_count", "n"),
+			lower("long_task_ms", "ms"),
+			lower("cpu_main_ms", "ms"),
+			lower("cpu_all_ms", "ms"),
+			lower("booted_count", "n"),
+		],
+		extract: (_out, log) => {
+			//   readable pan (67%)   frames 120  p50 16.7  p95 16.7  max 16.8  >33ms   0  long   2 (  206 ms)  cpu main  2845 all   6090  iframes  7  booted 11
+			const phase =
+				/^ {2}(.+?) \(\d+%\)\s+frames\s+\d+.*>33ms\s+(\d+)\s+long\s+\d+ \(\s*(\d+) ms\)\s+cpu main\s+(\d+) all\s+(\d+)\s+iframes\s+\d+\s+booted (\d+)/gm;
+			const totals = { slow_count: 0, long_task_ms: 0, cpu_main_ms: 0, cpu_all_ms: 0, booted_count: 0 };
+			let rounds = 0;
+			for (const match of log.matchAll(phase)) {
+				if (match[1] === "open, fitted") rounds++;
+				totals.slow_count += Number(match[2]);
+				totals.long_task_ms += Number(match[3]);
+				totals.cpu_main_ms += Number(match[4]);
+				totals.cpu_all_ms += Number(match[5]);
+				totals.booted_count = Math.max(totals.booted_count, Number(match[6]));
+			}
+			if (rounds === 0) return {};
+			// per round, so a row's numbers do not depend on how many rounds it ran
+			return {
+				slow_count: totals.slow_count / rounds,
+				long_task_ms: totals.long_task_ms / rounds,
+				cpu_main_ms: totals.cpu_main_ms / rounds,
+				cpu_all_ms: totals.cpu_all_ms / rounds,
+				booted_count: totals.booted_count,
+			};
+		},
+		timeoutMs: 20 * 60_000,
 	},
 	{
 		id: "code",
@@ -248,6 +440,7 @@ export const ROWS: Row[] = [
 		],
 		extract: () => ({}),
 		timeoutMs: 60_000,
+		stage: "any",
 	},
 ];
 

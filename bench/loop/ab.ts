@@ -64,7 +64,11 @@ function parseArgs(argv: readonly string[]): Options {
 			throw new Error(`unknown option ${arg}`);
 		}
 	}
-	const rows = rowNames.includes("all") ? ROWS : rowNames.map(findRow);
+	// `all` is every row this machine's numbers can be believed for (program.md's stages)
+	const here = platform() === "darwin" ? "m1" : "devobee";
+	const rows = rowNames.includes("all")
+		? ROWS.filter((row) => row.stage === "any" || row.stage === here)
+		: rowNames.map(findRow);
 	if (rows.length === 0) throw new Error(`--rows takes some of: all, ${ROWS.map((row) => row.id).join(", ")}`);
 	if (arms.length === 0) throw new Error("--arms takes label=<checkout>[+experiment...], comma-separated");
 	if (new Set(arms.map((arm) => arm.label)).size !== arms.length) throw new Error("--arms needs distinct labels");
@@ -115,7 +119,7 @@ const commitOf = (checkout: string): Promise<string> =>
 function runBench(row: Row, arm: Arm, commit: string, out: string): Promise<{ code: number; log: string }> {
 	const bench = row.bench;
 	if (typeof bench !== "string") throw new Error("not a process row");
-	const args = [join(repoRoot, "bench", bench), ...row.args(), "--out", out];
+	const args = [join(repoRoot, "bench", bench), ...row.args(arm), ...(row.noOut ? [] : ["--out", out])];
 	const env = {
 		...process.env,
 		SPOOL_BENCH_BUILD: arm.checkout,
@@ -166,10 +170,10 @@ async function measure(row: Row, arm: Arm, commit: string, round: number): Promi
 	const out = join(dir, "out.json");
 	try {
 		const { code, log } = await runBench(row, arm, commit, out);
-		if (code !== 0 || !existsSync(out)) {
+		if (code !== 0 || (!row.noOut && !existsSync(out))) {
 			return { ...base, metrics: {}, error: `exit ${code}: ${log.split("\n").slice(-12).join("\n")}` };
 		}
-		return { ...base, metrics: row.extract(JSON.parse(readFileSync(out, "utf8")), log) };
+		return { ...base, metrics: row.extract(row.noOut ? undefined : JSON.parse(readFileSync(out, "utf8")), log) };
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
