@@ -7,6 +7,7 @@ import {
 	type CompileHost,
 	compileFrameDocument,
 	compileFrameSourceMap,
+	compileFrameUpdate,
 	describeCompileError,
 	type FrameAuthority,
 	frameStamp,
@@ -19,6 +20,7 @@ import { diskDesignFiles } from "./disk-files";
 import { errorDocument } from "./document";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
 import type { BundleMap } from "./stack-map";
+import { fastRefreshRuntimeJs } from "./vendor";
 import { inertWebfonts, type Webfonts } from "./webfonts";
 
 export type { FrameAuthority } from "./design-compile";
@@ -49,7 +51,16 @@ export function createFrameCompiler(
 ) {
 	const cache = new Map<string, CompiledFrameDocument>();
 
-	async function getDocument(root: string, frame: string, authority: FrameAuthority): Promise<FrameDocument> {
+	/**
+	 * `hot` asks for the document compiled for Fast Refresh, which only a canvas
+	 * with the `fast-refresh` experiment on asks for (`fast-refresh.ts`).
+	 */
+	async function getDocument(
+		root: string,
+		frame: string,
+		authority: FrameAuthority,
+		hot = false,
+	): Promise<FrameDocument> {
 		if (!isFramePath(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
 		const lookup = lookupFrame(root, frame);
 		if (lookup.kind === "missing") {
@@ -67,7 +78,7 @@ export function createFrameCompiler(
 			};
 		}
 
-		const stamp = frameStamp(frame, authority);
+		const stamp = frameStamp(frame, authority, hot);
 		const key = `${root}\0${stamp}`;
 		// What this request found. A miss answers only for that: another miss
 		// overlapping it may have cached a newer document meanwhile, which this one
@@ -97,6 +108,7 @@ export function createFrameCompiler(
 				authority,
 				version,
 				webfonts,
+				...(hot ? { hot: { runtime: await fastRefreshRuntimeJs() } } : {}),
 			});
 			if (cache.get(key) === cached) {
 				if (entry.settled) cache.set(key, entry);
@@ -134,7 +146,17 @@ export function createFrameCompiler(
 		}
 	}
 
-	return { getDocument, forget, sourceMap };
+	/**
+	 * A frame's Fast Refresh update, as a module (`fast-refresh.ts`): never
+	 * cached, because an update is asked for only when the frame changed.
+	 * Undefined when the frame is not there; a compile failure throws.
+	 */
+	async function getUpdate(root: string, frame: string): Promise<string | undefined> {
+		if (!isFramePath(frame) || lookupFrame(root, frame).kind === "missing") return undefined;
+		return compileFrameUpdate(host, { designDir: realDesignDir(root), frame });
+	}
+
+	return { getDocument, getUpdate, forget, sourceMap };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;

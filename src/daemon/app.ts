@@ -1453,7 +1453,21 @@ export function createDaemonApp({
 		.get("/p/:project/frames/:frame", async (c) =>
 			withProject(c, resolveProject, async (root) => {
 				const frame = c.req.param("frame");
-				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				// a Fast Refresh update (the fast-refresh experiment), which the
+				// frame's own document imports from its null origin
+				if (c.req.query("update") !== undefined) {
+					c.header("access-control-allow-origin", "*");
+					c.header("cache-control", "no-store");
+					try {
+						const update = await compiler.getUpdate(root, frame);
+						if (update === undefined) return c.text("no such frame", 404);
+						c.header("content-type", "text/javascript; charset=utf-8");
+						return c.body(update);
+					} catch {
+						return c.text("the frame does not compile", 500);
+					}
+				}
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root), c.req.query("refresh") === "1");
 				if (doc.kind === "missing") return c.text(doc.message, 404);
 				if (doc.kind === "error") return c.html(doc.document, 500);
 				// A frame document changes whenever its source does, and the etag is the
@@ -1628,6 +1642,16 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "text/javascript; charset=utf-8");
 			return c.body(await vendorReactJs());
+		})
+		.get("/vendor/react-dev.js", async (c) => {
+			// only a document compiled for Fast Refresh names it (the fast-refresh experiment)
+			c.header("access-control-allow-origin", "*");
+			const etag = `"react-dev-${reactVersion}"`;
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			c.header("etag", etag);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", "text/javascript; charset=utf-8");
+			return c.body(await vendorReactDevJs());
 		})
 		.get("/vendor/spool.js", (c) => serveRuntime(c, vendorSpoolJs))
 		.get("/vendor/spool-jsx.js", (c) => serveRuntime(c, vendorSpoolJsxJs))

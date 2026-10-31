@@ -22,6 +22,8 @@ export interface FrameDocumentParts {
 	bundledCss?: string | undefined;
 	importMap: object;
 	bootJs: string;
+	/** React Refresh's runtime, for a document compiled for Fast Refresh (`fast-refresh.ts`). */
+	hotRuntime?: string | undefined;
 }
 
 let escapedCaptureWorker: string | undefined;
@@ -174,6 +176,7 @@ export function assembleFrameDocument({
 	bundledCss,
 	importMap,
 	bootJs,
+	hotRuntime,
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
 	const bundledBlock =
@@ -187,8 +190,8 @@ export function assembleFrameDocument({
 		frame,
 		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame, projectCapability, controlOrigin })}</script>
 <script>${escapeInlineScript(frameShims.canvasShim)}</script>
-<style>html, body, #root { height: 100%; }</style>
-<style>${escapeInlineStyle(css)}</style>
+${hotRuntime === undefined ? "" : `<script>${escapeInlineScript(hotRuntime)}</script>\n`}<style>html, body, #root { height: 100%; }</style>
+<style${hotRuntime === undefined ? "" : ' id="spool-css"'}>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
 `,
 		`<div id="root"></div>

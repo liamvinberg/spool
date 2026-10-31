@@ -18,13 +18,21 @@ import { DesignBoundaryError, designPathResolver, designRelativePath } from "./d
 import type { DesignFiles } from "./design-files";
 import { createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { type DesignResolution, designResolver, RESOLVE_EXTENSIONS } from "./design-resolve";
-import { assembleFrameDocument, escapeInlineScript, hoistCssImports, mergeImportMap, shimHash } from "./document";
+import {
+	assembleFrameDocument,
+	escapeInlineScript,
+	hoistCssImports,
+	layeredProjectCss,
+	mergeImportMap,
+	shimHash,
+} from "./document";
+import { HOT_BOOT_CLIENT, HOT_UPDATE_ENTRY, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
 import { isThemeStylesheet } from "./themes";
 import { unstyledClasses } from "./unstyled-classes";
-import { importMapPins } from "./vendor-pins";
+import { importMapPins, VENDOR_REACT_DEV_URL } from "./vendor-pins";
 
 /**
  * The esbuild every compile runs, here and in a Worker: two versions bundle
@@ -114,6 +122,8 @@ export interface DesignEntryOptions {
 	reads: () => DesignReads | undefined;
 	/** Also emit the bundle's source map, which changes nothing in the bundle itself. */
 	sourcemap?: true;
+	/** Close every design module with its Fast Refresh registration (`fast-refresh.ts`). */
+	hot?: true | undefined;
 }
 
 /**
@@ -192,7 +202,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		absWorkingDir: designDir,
 		plugins: [
 			sharedImportPlugin(designDir, files),
-			spoolBoundaryPlugin(designDir, { ...DEFAULT_LOADERS, ...loader }, reads),
+			spoolBoundaryPlugin(designDir, { ...DEFAULT_LOADERS, ...loader }, reads, options.hot === true),
 			spoolAssetPlugin(designDir, label, imageBudget, files, reads),
 			// last, so the plugins above answer what is theirs first
 			designResolvePlugin(designDir, files),
@@ -254,6 +264,11 @@ export interface FrameDocumentRequest {
 	version: string;
 	/** Remote faces resolved for stills (#80); fonts.css as written when not given. */
 	webfonts?: Webfonts | undefined;
+	/**
+	 * Compile it for Fast Refresh (the `fast-refresh` experiment, `fast-refresh.ts`),
+	 * carrying React Refresh's runtime, which only the daemon builds.
+	 */
+	hot?: { runtime: string } | undefined;
 }
 
 /** A compiled frame document and what it was made of. */
@@ -290,12 +305,12 @@ export interface CompiledFrameDocument {
  */
 export async function compileFrameDocument(
 	host: CompileHost,
-	{ designDir, frame, project, authority, version, webfonts = inertWebfonts() }: FrameDocumentRequest,
+	{ designDir, frame, project, authority, version, webfonts = inertWebfonts(), hot }: FrameDocumentRequest,
 ): Promise<CompiledFrameDocument> {
 	const reads = createDesignReads(designDir, host.files);
 	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry(
 		host.esbuild,
-		frameEntryOptions(host, designDir, frame, reads),
+		frameEntryOptions(host, designDir, frame, reads, hot !== undefined),
 	);
 
 	const shared = join(designDir, "shared");
@@ -317,7 +332,10 @@ export async function compileFrameDocument(
 	// recording that later revision would keep these fonts past their retirement.
 	const fontsRevision = webfonts.revision();
 	const { css: fonts } = inlineLocalFonts(designDir, resolvedFonts, reads.bytes, resolvePath);
-	const importMap = mergeImportMap(parseImportMap(reads.text(join(shared, "importmap.json"))), importMapPins());
+	const importMap = mergeImportMap(
+		parseImportMap(reads.text(join(shared, "importmap.json"))),
+		importMapPins(hot === undefined ? undefined : VENDOR_REACT_DEV_URL),
+	);
 
 	// classes the frame names that its stylesheet never built, for a shot to report
 	const unstyled = unstyledClasses(
@@ -337,12 +355,13 @@ export async function compileFrameDocument(
 		bootJs,
 		fonts,
 		bundledCss,
+		hotRuntime: hot?.runtime,
 	});
 	// Every input, present or not, by the digest of the very bytes the document
 	// was made of: the bundle's, the stylesheet's, the fonts' and the import map's.
 	const settled = reads.settled();
 	const digests = reads.digests();
-	const stamp = frameStamp(frame, authority);
+	const stamp = frameStamp(frame, authority, hot !== undefined);
 	const hash = inputsHash(version, stamp, designDir, digests);
 	// A document a file moved under while it compiled is of no one state of the
 	// folder: it is named by its own bytes, never cached, and the next request
@@ -362,6 +381,29 @@ export async function compileFrameDocument(
 		settled,
 		unstyled,
 	};
+}
+
+/**
+ * A frame's Fast Refresh update (`fast-refresh.ts`): its bundle again, every
+ * design module registering its components, with no render of its own, and the
+ * stylesheets the document carries as they are now, as the module's `css` and
+ * `bundledCss` exports. Fonts and the import map stay as the document has them.
+ */
+export async function compileFrameUpdate(
+	host: CompileHost,
+	{ designDir, frame }: Pick<FrameDocumentRequest, "designDir" | "frame">,
+): Promise<string> {
+	const reads = createDesignReads(designDir, host.files);
+	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry(host.esbuild, {
+		...frameEntryOptions(host, designDir, frame, reads, true),
+		contents: HOT_UPDATE_ENTRY,
+	});
+	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
+	const resolvePath = designPathResolver(designDir, host.files);
+	const themed = compiled.theme === undefined ? undefined : themeStylesheet(designDir, compiled, reads, resolvePath);
+	const css = themed?.css ?? compiled.css;
+	const bundled = bundledCss === undefined ? "" : layeredProjectCss(bundledCss);
+	return `${bootJs}\nexport const css = ${JSON.stringify(css)};\nexport const bundledCss = ${JSON.stringify(bundled)};\n`;
 }
 
 /**
@@ -386,12 +428,14 @@ function frameEntryOptions(
 	designDir: string,
 	frame: string,
 	reads: DesignReads,
+	hot = false,
 ): DesignEntryOptions {
 	return {
 		designDir,
 		resolveDir: join(designDir, frameFolder(frame)),
 		sourcefile: STDIN_NAME,
-		contents: bootEntry(frame),
+		contents: bootEntry(frame, hot),
+		...(hot ? { hot: true as const } : {}),
 		label: `frame "${frame}"`,
 		imageBudget: IMAGE_BUDGET_BYTES,
 		files: host.files,
@@ -423,9 +467,9 @@ export async function compileFrameSourceMap(host: CompileHost, designDir: string
 	};
 }
 
-/** What a frame document is compiled for, besides its files: the frame and its authority. */
-export function frameStamp(frame: string, authority: FrameAuthority): string {
-	return `${frame}\0${authority.projectCapability}\0${authority.controlOrigin}`;
+/** What a frame document is compiled for, besides its files: the frame, its authority, and Fast Refresh when asked. */
+export function frameStamp(frame: string, authority: FrameAuthority, hot = false): string {
+	return `${frame}\0${authority.projectCapability}\0${authority.controlOrigin}${hot ? "\0hot" : ""}`;
 }
 
 /**
@@ -449,7 +493,7 @@ export function cssSources(reads: DesignReads, files: string[]): CssSource[] {
  * in frames that never import it — and its top-level await holds the first
  * render until the session is seeded.
  */
-function bootEntry(frame: string): string {
+function bootEntry(frame: string, hot = false): string {
 	return `import "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -467,7 +511,7 @@ function Ready() {
 createRoot(document.getElementById("root")).render(
 	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
 );
-`;
+${hot ? HOT_BOOT_CLIENT : ""}`;
 }
 
 /**
@@ -535,6 +579,9 @@ function resolvingEachPass(
 	};
 }
 
+/** The loaders whose modules carry a Fast Refresh footer. */
+const HOT_LOADERS: ReadonlySet<Loader> = new Set(["js", "jsx", "ts", "tsx"]);
+
 /**
  * The load-bearing boundary (#16), enforced where it is visible: shared/ui/
  * components have feel, never knowledge — an import of "spool" there fails
@@ -545,6 +592,7 @@ function spoolBoundaryPlugin(
 	designDir: string,
 	loaders: Readonly<Record<string, Loader>>,
 	readsOf: () => DesignReads | undefined,
+	hot: boolean,
 ): Plugin {
 	const uiDir = join(designDir, "shared", "ui") + sep;
 	return {
@@ -576,6 +624,10 @@ function spoolBoundaryPlugin(
 					// A theme is Tailwind's to compile (`themes.ts`), never the bundle's:
 					// it stays in the closure, so it is an input, and adds no CSS of its own.
 					if (loader === "css" && isThemeStylesheet(contents.toString("utf8"))) return { contents: "", loader };
+					if (hot && HOT_LOADERS.has(loader)) {
+						const text = contents.toString("utf8");
+						return { contents: text + refreshFooter(designRelativePath(designDir, args.path), text), loader };
+					}
 					return { contents, loader };
 				} catch (error) {
 					// The cause rides along in detail, which esbuild hands back to the JS
