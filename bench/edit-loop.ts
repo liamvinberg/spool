@@ -37,8 +37,10 @@ import {
  * the frame's own file and then the shared caption:
  *
  *   save_to_pixels_ms         write (epoch, node) to the first rAF in the frame's
- *                             document whose DOM holds the new text (epoch,
- *                             performance.timeOrigin + rAF timestamp)
+ *                             document whose DOM holds the new text (epoch, the
+ *                             clock when that rAF runs: its timestamp is when
+ *                             the frame began, which a document kept across
+ *                             edits can have begun before the write)
  *   save_to_loaded_ms         write to the frame's loaded report reaching the canvas
  *                             (absent when the edit did not reload the document)
  *   state_kept_count          of the four states, how many the painted frame still
@@ -202,7 +204,7 @@ if (!w.__editProbe) {
 					__editBench: {
 						kind: el.getAttribute("data-edit-mark"),
 						mark: el.textContent,
-						at: performance.timeOrigin + t,
+						at: performance.timeOrigin + performance.now(),
 						count: q("[data-edit-count]")?.textContent ?? null,
 						input: (q("[data-edit-input]") as HTMLInputElement | null)?.value ?? null,
 						scroll: (q("[data-edit-scroll]") as HTMLElement | null)?.scrollTop ?? null,
