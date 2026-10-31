@@ -4,6 +4,7 @@
  *
  *   node bench/loop/ab.ts --rows pan,reload --arms base=<checkout>,cand=<checkout>+<experiment> --rounds 2
  *   node bench/loop/ab.ts --rows all --arms a=<checkout>,b=<checkout of the same commit> --rounds 4 --aa
+ *   node bench/loop/ab.ts --from <runs.jsonl> --aa --write-bands
  *
  * An arm is a built spool checkout, and the experiments it switches on after a
  * `+`. Every bench runs as its own process from this checkout's bench code,
@@ -20,7 +21,7 @@
  * dir), so a report can be redrawn without measuring again.
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadavg, platform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { repoRoot } from "../harness.ts";
@@ -190,6 +191,9 @@ function readBands(): Record<string, number> {
 	return existsSync(BANDS) ? (JSON.parse(readFileSync(BANDS, "utf8")) as Record<string, number>) : {};
 }
 
+/** The bands the last A/A report measured, for `--write-bands`. */
+const measuredBands: Record<string, number> = {};
+
 function report(options: Options, runs: readonly Run[]): string {
 	const bands = readBands();
 	const lines: string[] = [];
@@ -219,7 +223,11 @@ function report(options: Options, runs: readonly Run[]): string {
 			if (options.aa) {
 				const gap = Math.abs((medians[0] as number) - (medians[1] as number));
 				const spread = Math.max(...per.map((values) => Math.max(...values) - Math.min(...values)));
-				verdict = `A/A gap ${fmt(gap)}, spread within an arm ${fmt(spread)}`;
+				// the band: the gap one commit showed against itself, or half the spread
+				// of one arm's rounds, whichever is wider
+				const band = Math.max(gap, spread / 2);
+				if (Number.isFinite(band)) measuredBands[key] = Number(band.toPrecision(3));
+				verdict = `A/A gap ${fmt(gap)}, spread within an arm ${fmt(spread)}, band ${fmt(band)}`;
 			} else {
 				const band = bands[key];
 				verdict = medians
@@ -257,7 +265,33 @@ function redraw(argv: readonly string[]): boolean {
 	const arms = labels.map((label) => ({ label, checkout: "", experiments: [] }));
 	const rounds = Math.max(...runs.map((run) => run.round)) + 1;
 	process.stdout.write(`${report({ rows, arms, rounds, aa: argv.includes("--aa"), out: file }, runs)}\n`);
+	if (argv.includes("--markdown")) process.stdout.write(`\n${scoreboardRows(rows, runs)}\n`);
+	if (argv.includes("--write-bands")) {
+		const bands = { ...readBands(), ...measuredBands };
+		const sorted = Object.fromEntries(Object.entries(bands).sort(([a], [b]) => a.localeCompare(b)));
+		writeFileSync(BANDS, `${JSON.stringify(sorted, null, "\t")}\n`);
+		process.stderr.write(`loop: ${Object.keys(measuredBands).length} bands written to ${BANDS}\n`);
+	}
 	return true;
+}
+
+/** SCOREBOARD.md's rows for these runs: every arm's runs pooled as the value on main, beside the band. */
+function scoreboardRows(rows: readonly Row[], runs: readonly Run[]): string {
+	const bands = { ...readBands(), ...measuredBands };
+	const lines = ["| row | unit | better | main | band | runs |", "|---|---|---|---|---|---|"];
+	for (const row of rows) {
+		for (const metric of row.metrics) {
+			const values = runs
+				.filter((run) => run.row === row.id)
+				.map((run) => run.metrics[metric.key])
+				.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+			const band = bands[`${row.id}.${metric.key}`];
+			lines.push(
+				`| \`${row.id}.${metric.key}\` | ${metric.unit} | ${metric.better} | ${fmt(median(values))} | ${band === undefined ? "-" : fmt(band)} | ${values.length} |`,
+			);
+		}
+	}
+	return lines.join("\n");
 }
 
 async function main(): Promise<void> {
