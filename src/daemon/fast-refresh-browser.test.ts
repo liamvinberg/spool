@@ -1,0 +1,54 @@
+import { expect, it } from "vitest";
+import { testBrowser } from "../test-browser";
+import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+
+const frame = (title: string, extra = "") => `import { useState } from "react";
+export default function Frame() {
+	const [count, setCount] = useState(0);
+	return (
+		<main>
+			<h1>${title}</h1>
+			<button onClick={() => setCount((n) => n + 1)}>count {count}</button>
+		</main>
+	);
+}
+${extra}`;
+
+it("swaps a saved frame into its open document with its state kept, and reloads what React refuses", {
+	timeout: 180_000,
+}, async () => {
+	const browser = await testBrowser();
+	const uiDir = await builtUi();
+	const project = await serveProject({ uiDir, experiments: ["fast-refresh"] });
+	writeFrame(project.root, "counter", frame("first"));
+	writeDesignFile(project.root, "frames/counter/frame.json", '{ "x": 0, "y": 0, "w": 600, "h": 400 }\n');
+	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
+	const doc = page.frameLocator('iframe[title="counter"]');
+	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 60_000 }).toBe("first");
+	const button = await doc.locator("button").boundingBox();
+	if (button === null) throw new Error("the frame drew no button");
+	// entered, so a click reaches into the document
+	await page.mouse.dblclick(button.x + 8, button.y + button.height / 2);
+	await expect
+		.poll(() => page.locator('iframe[title="counter"]').evaluate((el) => getComputedStyle(el).pointerEvents))
+		.toBe("auto");
+	const entered = await doc.locator("button").boundingBox();
+	if (entered === null) throw new Error("the frame lost its button");
+	await expect.poll(() => doc.locator("button").textContent()).toMatch(/^count \d$/);
+	const start = Number((await doc.locator("button").textContent())?.slice(6));
+	for (let i = 0; i < 2 - start; i++) await page.mouse.click(entered.x + 8, entered.y + entered.height / 2);
+	await expect.poll(() => doc.locator("button").textContent()).toBe("count 2");
+
+	// a component's text changed: swapped in, the count kept
+	writeFrame(project.root, "counter", frame("second"));
+	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("second");
+	expect(await doc.locator("button").textContent()).toBe("count 2");
+
+	// an export that is no component: React Refresh can't keep it, so the document reloads
+	writeFrame(project.root, "counter", frame("third", "export const items = [1];\n"));
+	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("third");
+	await expect.poll(() => doc.locator("button").textContent()).toBe("count 0");
+});
