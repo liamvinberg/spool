@@ -101,7 +101,7 @@ import {
 	zoomAt,
 	zoomFloor,
 } from "./camera";
-import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, createCameraStore, createViewChanges, useCameraFollow } from "./camera-store";
 import {
 	type CanvasContextMenu,
 	createCanvasStore,
@@ -1490,18 +1490,24 @@ function CanvasField({
 	 * middle of a frame's writes, where reading layout would force it.
 	 */
 	const viewSize = useRef({ width: 0, height: 0 });
+	const viewChanges = useMemo(createViewChanges, []);
+	const seen = useRef<{ camera: Camera; rect: Box } | null>(null);
 	useLayoutEffect(() => {
 		const el = viewportRef.current;
 		if (el === null) return;
 		const measure = () => {
+			const was = viewSize.current;
 			viewSize.current = { width: el.clientWidth, height: el.clientHeight };
+			if (was.width === viewSize.current.width && was.height === viewSize.current.height) return;
+			// what the camera sees is no longer what was asked of it
+			seen.current = null;
+			viewChanges.tell();
 		};
 		measure();
 		const observer = new ResizeObserver(measure);
 		observer.observe(el);
 		return () => observer.disconnect();
-	}, []);
-	const seen = useRef<{ camera: Camera; rect: Box } | null>(null);
+	}, [viewChanges]);
 	const near = useCallback<NearScreen>((at, box) => {
 		// one rectangle per drawn camera, however many followers ask about it
 		if (seen.current?.camera !== at) {
@@ -5584,6 +5590,7 @@ function CanvasField({
 										name={frame.name}
 										frame={frame}
 										near={near}
+										view={viewChanges}
 										camera={camera}
 										entered={isEntered}
 										selected={isSelected}
