@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { makeProject, makeTempDir, writeFrame } from "../test-helpers";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { createDaemonApp } from "./app";
 import { createFrameCompiler } from "./compile";
 import { type HotModule, hotPlan, isRefreshBoundary, refreshFooter } from "./fast-refresh";
+import { RENDER_HOST } from "./security";
 
 /** What a footer says, read back by running it against a stand-in runtime. */
 function footer(source: string, scope: Record<string, unknown> = {}) {
@@ -65,12 +68,20 @@ const Remote = memo(function Remote() {
 		expect(isRefreshBoundary("export function Card() {}\nexport type Props = {};\nexport { Card as Tile };\n")).toBe(
 			true,
 		);
+		expect(isRefreshBoundary("export const Row = memo(() => null);\nexport const Cell = (props) => null;\n")).toBe(
+			true,
+		);
 		for (const source of [
 			"export const items = [1];\n",
 			"const merge = make();\nexport function cn() {}\n",
 			"export const useStore = create(() => ({}));\n",
 			"export * from './x';\n",
 			"export default memo(Card);\n",
+			"export const USERS = [{ name: 'Ada' }];\n",
+			"export const Theme = { accent: 'red' };\n",
+			"export class Store {}\n",
+			"const Config = { dense: true };\nexport default Config;\n",
+			"const Palette = makePalette();\nexport { Palette };\n",
 		]) {
 			expect(isRefreshBoundary(source), source).toBe(false);
 		}
@@ -118,4 +129,77 @@ it("serves the document as it was unless Fast Refresh is asked for", async () =>
 	expect(plain.document).toContain('"react":"/vendor/react.js"');
 	expect(hot.document).toContain('"react":"/vendor/react-dev.js"');
 	expect(hot.etag).not.toBe(plain.etag);
+});
+
+it("assembles the document with the experiment off byte for byte as main does", async () => {
+	const { root, name } = makeProject(join(makeTempDir(), ".spool"));
+	writeDesignFile(root, "shared/badge.tsx", "export function Badge() { return <p>badge</p>; }\n");
+	writeFrame(
+		root,
+		"home",
+		'import { Badge } from "shared/badge";\nexport default function Home() { return <main className="p-4"><Badge /></main>; }\n',
+	);
+	const compiler = createFrameCompiler("0.0.0-test");
+	const doc = await compiler.getDocument(root, "home", {
+		projectCapability: "capability",
+		controlOrigin: "http://127.0.0.1:1",
+	});
+	if (doc.kind !== "ok") throw new Error("the frame did not compile");
+	// main's document for this frame, at the commit Fast Refresh branched from: a
+	// change to the plain document on main updates it with `vitest -u`
+	expect(createHash("sha256").update(doc.document.replaceAll(name, "PROJECT")).digest("hex")).toMatchInlineSnapshot(
+		`"9b5bcc8877c5965a450bb5b829c8a18266f9688cadf27f2c8b4397f864e732e2"`,
+	);
+});
+
+describe("a Fast Refresh document's modules", () => {
+	function harness() {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
+		onTestFinished(() => daemon.close());
+		const render = (path: string, origin?: string) =>
+			daemon.app.request(`http://${RENDER_HOST}${path}`, origin === undefined ? {} : { headers: { origin } });
+		const module = (session: string, path: string, origin = "null") =>
+			render(`/p/${name}/hot/${encodeURIComponent(path)}?s=${session}&v=0`, origin);
+		const open = async (frame: string) => {
+			const document = await (await render(`/p/${name}/frames/${frame}?refresh=1`)).text();
+			const session = /\?s=([\w-]{20,})&/.exec(document)?.[1];
+			if (session === undefined) throw new Error("the document carries no session");
+			return session;
+		};
+		return { root, name, render, module, open };
+	}
+
+	it("serves them only in a session the daemon minted, to the sandboxed frame, inside design/", async () => {
+		const { root, name, render, module, open } = harness();
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		writeDesignFile(root, "secret.ts", "export const secret = 1;\n");
+		const session = await open("home");
+		expect(await open("home")).not.toBe(session);
+
+		const served = await module(session, "frames/home/frame.tsx");
+		expect(served.status).toBe(200);
+		expect(served.headers.get("access-control-allow-origin")).toBe("null");
+		expect(await served.text()).toContain("home");
+
+		expect((await module(session, "frames/home/frame.tsx", "https://example.com")).status).toBe(403);
+		expect((await module("guessed", "frames/home/frame.tsx")).status).toBe(404);
+		expect((await module(session, "frames/home/../../secret.ts")).status).toBe(404);
+		expect((await module(session, "../secret.ts")).status).toBe(404);
+		const plan = await render(`/p/${name}/frames/home?hot=guessed&n=1`, "null");
+		expect(await plan.json()).toHaveProperty("refused");
+	});
+
+	it("compiles a module again when a new file changes what one of its imports resolves to", async () => {
+		const { root, module, open } = harness();
+		writeFrame(root, "home", 'import { Card } from "./card";\nexport default function Home() { return <Card />; }\n');
+		writeDesignFile(root, "frames/home/card/index.tsx", "export function Card() { return <p>folder</p>; }\n");
+		const before = await (await module(await open("home"), "frames/home/frame.tsx")).text();
+		expect(before).toContain(encodeURIComponent("frames/home/card/index.tsx"));
+		writeDesignFile(root, "frames/home/card.tsx", "export function Card() { return <p>file</p>; }\n");
+		const after = await (await module(await open("home"), "frames/home/frame.tsx")).text();
+		expect(after).toContain(encodeURIComponent("frames/home/card.tsx"));
+		expect(after).not.toContain(encodeURIComponent("card/index.tsx"));
+	});
 });
