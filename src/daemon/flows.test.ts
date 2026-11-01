@@ -1,8 +1,9 @@
-import { readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
-import { createFlowGraph, type Flows, frameSourceHash } from "./flows";
+import { createFlowGraph, createHeldBytes, type Flows, frameSourceHash } from "./flows";
+import { createSourcePass } from "./nav-sites";
 
 /**
  * The flow layer over the Hono seam (#34): the map is read, not walked —
@@ -363,6 +364,38 @@ describe("the kept graph", () => {
 		expect(read?.hash).toBe(before);
 		expect((await graph.sources(root)).get("start")?.hash).toBe(frameSourceHash(root, "start"));
 		expect(frameSourceHash(root, "start")).not.toBe(before);
+	});
+
+	it("hashes a file deleted after the read as the read saw it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="one">on</a>;\n`);
+		writeFrame(root, "start", `import { Go } from "../../shared/ui/go";\nexport default () => <Go />;\n`);
+		const before = frameSourceHash(root, "start");
+		const read = (await createFlowGraph().sources(root)).get("start");
+
+		rmSync(join(root, "design", "shared", "ui", "go.tsx"));
+
+		expect(read?.hash).toBe(before);
+	});
+
+	it("holds one Buffer per unchanged file across reads, and lets an edited one go", () => {
+		const designDir = realpathSync(makeTempDir());
+		const file = join(designDir, "go.tsx");
+		writeFileSync(file, "export const a = 1;\n");
+		const held = createHeldBytes();
+		const first = createSourcePass(designDir).bytes(file);
+		const second = createSourcePass(designDir).bytes(file);
+		expect(second).not.toBe(first);
+
+		// two reads' equal bytes come back as the one object every frame then holds
+		expect(held.hold(file, first)).toBe(first);
+		expect(held.hold(file, second)).toBe(first);
+
+		writeFileSync(file, "export const a = 2;\n");
+		const edited = createSourcePass(designDir).bytes(file);
+		expect(held.hold(file, edited)).toBe(edited);
+		expect(held.hold(file, createSourcePass(designDir).bytes(file))).toBe(edited);
 	});
 
 	it("resolves an import that only lands once the file it names exists", async () => {
