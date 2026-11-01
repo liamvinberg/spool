@@ -832,6 +832,30 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("reads the density the canvas shows it at as devicePixelRatio, and redraws on a change (frame-resolution)", async () => {
+		const shim = await servedShim();
+		window.name = "spool-dpr=0.75";
+		const dispose = runShim(shim);
+		let resizes = 0;
+		const onResize = () => resizes++;
+		window.addEventListener("resize", onResize);
+		try {
+			expect(window.devicePixelRatio, "the first density rides the name, before frame code runs").toBe(0.75);
+			window.postMessage({ spool: "resolution", dpr: 1.5 }, "*");
+			await beat();
+			expect(window.devicePixelRatio).toBe(1.5);
+			expect(resizes, "code that sizes its canvas on resize redraws at it").toBe(1);
+			window.postMessage({ spool: "resolution", dpr: 1.5 }, "*");
+			await beat();
+			expect(resizes, "the same density is no change").toBe(1);
+		} finally {
+			window.removeEventListener("resize", onResize);
+			window.name = "";
+			delete (window as { devicePixelRatio?: number }).devicePixelRatio;
+			dispose();
+		}
+	});
+
 	it("holds the animation clock with the frames, so a thawed loop resumes instead of leaping", async () => {
 		const shim = await servedShim();
 		const dispose = runShim(shim);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
-import { admitMounts, selectionTargetsOf, sweepLifecycle } from "./lifecycle";
+import { admitMounts, densityShownAt, selectionTargetsOf, sweepLifecycle } from "./lifecycle";
 
 /**
  * The lifecycle decision function (#40, #112): fabricated frames in, per-sweep
@@ -342,5 +342,14 @@ describe("the ring's documents, a few a frame (DEV-303)", () => {
 		const away = { camera: { x: 900_000, y: 0, k: 4 } };
 		const admitted = admitMounts(input(states, away), sweepLifecycle(input(states, away)).states, 1);
 		expect(mounted(admitted.states)).toEqual([]);
+	});
+});
+
+describe("the density a live frame is told it is shown at (frame-resolution)", () => {
+	it("is the next step up from what the zoom needs, and never past the screen's", () => {
+		expect(densityShownAt(0.34, 2)).toBe(0.75);
+		expect(densityShownAt(0.51, 2)).toBe(1);
+		expect(densityShownAt(1, 1)).toBe(1);
+		expect(densityShownAt(3, 2)).toBe(2);
 	});
 });

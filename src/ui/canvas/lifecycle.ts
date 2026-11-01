@@ -2,9 +2,10 @@ import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LIVE_MIN_CSS_PX, SETTLE_BUDGET_MS } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
+import { experimentOn } from "../experiments";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, captureRequestId, type ExportRaster, rasterCaptureSource } from "./capture-broker";
-import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
+import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage, resolutionMessage } from "./protocol";
 import { watchRestStrain } from "./rest-strain";
 
 /**
@@ -103,6 +104,41 @@ export const IDLE_FREEZE_MS = 60_000;
  * whole zoom long. A mouse wheel's notches can land as far apart.
  */
 export const MOVE_HOLD_MS = 400;
+
+/**
+ * The densities a live frame is told it is shown at (spool#218, the
+ * `frame-resolution` experiment): few, so a zoom crosses one rarely, and the
+ * next one up from what the zoom needs, so a frame is never drawn coarser
+ * than it is shown by more than the 5% a step allows.
+ */
+const SHOWN_DENSITIES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
+
+export function densityShownAt(k: number, screenDpr: number): number {
+	const need = k * screenDpr;
+	const step = SHOWN_DENSITIES.find((density) => density >= need * 0.95) ?? need;
+	return Math.min(step, screenDpr);
+}
+
+/**
+ * The iframe name that carries a document's first density to the shim
+ * (resolution.ts), so code that reads devicePixelRatio once at mount reads
+ * the shown one. Chromium hands a cross-origin frame the name it was created
+ * with and not a later one, so it is rendered into the iframe (frame-shell.tsx)
+ * from where the camera last rested, read at render rather than passed down:
+ * the shells are memo'd hard against camera changes.
+ */
+let bootDensity: number | null = null;
+const DENSITY_NAME = "spool-dpr=";
+/** Frames held at the screen's density: the one being exported boots at it. */
+const fullDensity = new Set<string>();
+
+export function bootDensityName(frame: string): string | undefined {
+	return bootDensity === null || fullDensity.has(frame) ? undefined : `${DENSITY_NAME}${bootDensity}`;
+}
+
+function densityOfName(name: string): number | undefined {
+	return name.startsWith(DENSITY_NAME) ? Number(name.slice(DENSITY_NAME.length)) : undefined;
+}
 
 /**
  * How long a canvas rests, and a frame's document has been loaded, before the
@@ -526,6 +562,42 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[store],
 	);
 
+	/** The density each document was last told it is shown at (`frame-resolution`). */
+	const told = useRef(new Map<string, number>());
+	const densityNow = useCallback(() => {
+		const camera = cameraRef.current;
+		return camera == null ? null : densityShownAt(camera.k, window.devicePixelRatio || 1);
+	}, [cameraRef]);
+	/**
+	 * Tell a document the density it is shown at, once the camera has rested and
+	 * only while its frames run: its resize redraw clears a canvas, and a frozen
+	 * rAF would leave it clear. A message, like the freeze, never a render.
+	 */
+	const postResolution = useCallback(
+		(frame: string) => {
+			if (!experimentOn("frame-resolution") || moveHeld.current) return;
+			const iframe = iframes.current.get(frame);
+			const sourceWindow = iframe?.contentWindow;
+			if (
+				iframe == null ||
+				sourceWindow == null ||
+				fullDensity.has(frame) ||
+				!store.ready.has(frame) ||
+				arrivalTimers.current.has(frame) ||
+				frozen.current.has(frame)
+			) {
+				return;
+			}
+			const dpr = densityNow();
+			if (dpr === null || told.current.get(frame) === dpr) return;
+			// a reload it asks for boots at it
+			bootDensity = dpr;
+			sourceWindow.postMessage(resolutionMessage(dpr), "*");
+			told.current.set(frame, dpr);
+		},
+		[store, densityNow],
+	);
+
 	/**
 	 * Roll the idle clocks forward and tell each frame where that leaves it. Runs
 	 * on every sweep, because idleness is the one cause that arrives by itself:
@@ -563,12 +635,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 							crowded: crowded.current.has(name) && !attendedNow(name),
 						}),
 				);
+				if (state === "live") postResolution(name);
 			}
 			// frames that left the projection take their clock with them
 			for (const name of [...attendedAt.current.keys()]) if (!alive.has(name)) attendedAt.current.delete(name);
 			for (const name of [...crowded.current]) if (!alive.has(name)) crowded.current.delete(name);
 		},
-		[store, framesRef, postFreeze, attentionTo, attendedNow],
+		[store, framesRef, postFreeze, postResolution, attentionTo, attendedNow],
 	);
 
 	useEffect(
@@ -723,6 +796,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			if (current !== el) {
 				frozen.current.delete(frame);
 				attendedAt.current.delete(frame);
+				told.current.delete(frame);
+				// what the document boots at, read before any frame code runs
+				const booted = el === null ? undefined : densityOfName(el.name);
+				if (booted !== undefined) told.current.set(frame, booted);
 			}
 			if (current !== undefined && current !== el) {
 				const pending = captureWaiters.current.get(frame);
@@ -830,6 +907,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	// and a frame after a sweep that left the ring's documents waiting.
 	const compute = useCallback(() => {
 		const now = performance.now();
+		// before the sweep's mounts render, so they boot at where the camera rests
+		bootDensity = experimentOn("frame-resolution") ? densityNow() : null;
 		const input: SweepInput = {
 			frames: framesRef.current,
 			entered: enteredRef.current,
@@ -856,9 +935,40 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		// against the states this sweep just decided, not last render's: a frame
 		// handed back from an export becomes freezable as soon as it is live again
 		applyFreeze(states, now);
-	}, [store, framesRef, cameraRef, viewportRef, applyFreeze]);
+	}, [store, framesRef, cameraRef, viewportRef, applyFreeze, densityNow]);
 
 	useEffect(() => () => cancelAnimationFrame(step.current ?? 0), []);
+
+	/** Frames that asked to boot again at a finer density (`frame-resolution`). */
+	const densityReloads = useRef(new Set<string>());
+	const noteDensityReload = useCallback((frame: string) => {
+		densityReloads.current.add(frame);
+	}, []);
+	/** The frame's next document, once it has replaced `before` and is ready for a capture. */
+	const freshDocument = useCallback(
+		(frame: string, before: Window | null | undefined) =>
+			new Promise<boolean>((resolve) => {
+				const ready = () => {
+					const now = iframes.current.get(frame)?.contentWindow;
+					return now !== before && isExportMountReady(store.states[frame], store.ready.has(frame), now);
+				};
+				if (ready()) {
+					resolve(true);
+					return;
+				}
+				const timeout = setTimeout(() => {
+					stop();
+					resolve(false);
+				}, EXPORT_MOUNT_TIMEOUT_MS);
+				const stop = store.subscribe(() => {
+					if (!ready()) return;
+					clearTimeout(timeout);
+					stop();
+					resolve(true);
+				});
+			}),
+		[store],
+	);
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
@@ -871,6 +981,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 
 			exportFrame.current = frame;
+			// at the screen's density, booting included (`frame-resolution`)
+			if (experimentOn("frame-resolution")) fullDensity.add(frame);
+			densityReloads.current.delete(frame);
 			let mountPromise: Promise<boolean> | undefined;
 			if (
 				!isExportMountReady(store.states[frame], store.ready.has(frame), iframes.current.get(frame)?.contentWindow)
@@ -884,14 +997,21 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 			try {
 				if (mountPromise !== undefined && !(await mountPromise)) return undefined;
+				const before = iframes.current.get(frame)?.contentWindow;
+				const shot = await requestCapture(frame);
+				// a frame that cannot draw finer without booting again asked for a
+				// reload instead of an export softer than the screen: take it from that
+				if (shot !== undefined || !densityReloads.current.delete(frame)) return shot;
+				if (!(await freshDocument(frame, before))) return undefined;
 				return await requestCapture(frame);
 			} finally {
+				fullDensity.delete(frame);
 				finishExportMount(frame, false);
 				if (exportFrame.current === frame) exportFrame.current = null;
 				compute();
 			}
 		},
-		[store, compute, finishExportMount, framesRef, requestCapture],
+		[store, compute, finishExportMount, framesRef, requestCapture, freshDocument],
 	);
 
 	useEffect(
@@ -962,6 +1082,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		noteLoaded,
 		noteArrived,
 		noteCaptureSource,
+		noteDensityReload,
 		noteCameraMoving,
 		wake,
 		captureExport,

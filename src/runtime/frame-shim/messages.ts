@@ -5,6 +5,7 @@ import { type Altered, alterElement, beginEdit, endEdit, restoreAsked } from "./
 import { setFrozen } from "./freeze";
 import { nativeRaf, shimConfig } from "./natives";
 import { elementTree, familyAt, type Hit, kinChain, pickChain } from "./pick";
+import { setShownDensity } from "./resolution";
 import { settle } from "./settle";
 import { siteBoxes } from "./sites";
 import { restamp } from "./stamps";
@@ -173,6 +174,10 @@ export function answerHost(): void {
 				boxes = siteBoxes(m.sites);
 			} catch {}
 			parent.postMessage({ spool: "site-boxes", frame, id: m.id, boxes }, "*");
+			return;
+		}
+		if (m.spool === "resolution") {
+			setShownDensity(m.dpr);
 			return;
 		}
 		if (m.spool === "freeze") {

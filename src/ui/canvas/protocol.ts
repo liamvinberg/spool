@@ -218,6 +218,8 @@ export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
 	| { spool: "arrived"; frame: string }
+	// a frame that read devicePixelRatio once asks to boot again at a finer one (`frame-resolution`)
+	| { spool: "resolution-reload"; frame: string }
 	| { spool: "content-size"; frame: string; id: number; width: number; height: number | null }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
@@ -272,6 +274,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return parseClipboardCopyRequest(data);
 		case "loaded":
 		case "arrived":
+		case "resolution-reload":
 		case "error":
 		case "shot":
 		case "session?":
@@ -468,6 +471,8 @@ function webHref(value: unknown): value is string {
 }
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
+/** The density a live document is shown at, which it reads as devicePixelRatio (`frame-resolution`). */
+export const resolutionMessage = (dpr: number) => ({ spool: "resolution", dpr }) as const;
 /**
  * Ask a freshly loaded document to say when it has finished arriving (#177) —
  * fonts, entry animations, a quiet DOM. `settleMs` is the frame's own budget for
