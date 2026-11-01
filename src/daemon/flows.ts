@@ -379,14 +379,10 @@ interface FrameEntry {
  * to recompute per read. Equal fingerprints mean equal bytes, so the hash the
  * persisted caches are keyed to survives untouched. */
 function fingerprintOf(pass: SourcePass, files: readonly string[]): string {
-	const hash = createHash("sha256");
-	for (const file of files) {
-		hash.update(file);
-		hash.update("\0");
-		hash.update(pass.digest(file));
-		hash.update("\0");
-	}
-	return hash.digest("hex");
+	// one update over the joined text hashes the same bytes as one per piece, at a fraction of the calls
+	let text = "";
+	for (const file of files) text += `${file}\0${pass.digest(file)}\0`;
+	return createHash("sha256").update(text).digest("hex");
 }
 
 function sameFiles(a: readonly string[], b: readonly string[]): boolean {
@@ -549,13 +545,9 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			return { entry: undefined, derived: false };
 		}
 		const listing = pass.listing(frameDir);
-		if (
-			known !== undefined &&
-			known.dir === frameDir &&
-			sameFiles(known.folder, listing.files) &&
-			fingerprintOf(pass, known.files) === known.fingerprint &&
-			sameImports(pass, known.imports)
-		) {
+		const knownFiles = known !== undefined && known.dir === frameDir && sameFiles(known.folder, listing.files);
+		const fingerprint = knownFiles ? fingerprintOf(pass, known.files) : undefined;
+		if (knownFiles && fingerprint === known.fingerprint && sameImports(pass, known.imports)) {
 			known.witness = witnessSource(pass.designDir, frameDir, listing, known, since, looks, pass.digest);
 			return { entry: known, derived: false };
 		}
@@ -566,7 +558,11 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			folder: source.folder,
 			files: source.files,
 			imports: source.imports,
-			fingerprint: fingerprintOf(pass, source.files),
+			// the same graph's fingerprint, if it was just taken
+			fingerprint:
+				fingerprint !== undefined && sameFiles(known?.files ?? [], source.files)
+					? fingerprint
+					: fingerprintOf(pass, source.files),
 			witness: witnessSource(pass.designDir, frameDir, listing, source, since, looks, pass.digest),
 			graph: {
 				frame,
