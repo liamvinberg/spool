@@ -24,6 +24,8 @@ export interface FrameDocumentParts {
 	bootJs: string;
 	/** React Refresh's runtime, for a document compiled for Fast Refresh (`fast-refresh.ts`). */
 	hotRuntime?: string | undefined;
+	/** The modulepreload links of a Fast Refresh document's modules, read right after its import map. */
+	hotPreloads?: string | undefined;
 }
 
 let escapedCaptureWorker: string | undefined;
@@ -177,6 +179,7 @@ export function assembleFrameDocument({
 	importMap,
 	bootJs,
 	hotRuntime,
+	hotPreloads = "",
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
 	const bundledBlock =
@@ -193,7 +196,7 @@ export function assembleFrameDocument({
 ${hotRuntime === undefined ? "" : `<script>${escapeInlineScript(hotRuntime)}</script>\n`}<style>html, body, #root { height: 100%; }</style>
 <style${hotRuntime === undefined ? "" : ' id="spool-css"'}>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
-`,
+${hotPreloads}`,
 		`<div id="root"></div>
 <script type="module">${escapeInlineScript(bootJs)}</script>
 `,

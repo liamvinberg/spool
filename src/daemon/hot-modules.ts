@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { join, resolve } from "node:path";
-import type { Metafile, Plugin } from "esbuild";
+import type { ImportKind, Metafile, Plugin } from "esbuild";
 import { frameFolder } from "../page-path";
 import { IMAGE_BUDGET_BYTES } from "./assets";
 import { designPathResolver, designRelativePath } from "./design-boundary";
@@ -19,8 +19,10 @@ import { type HotModule, hotModuleUrl, hotPlan, isHotModuleFile, isRefreshBounda
  *
  * A session is one open document: which version of each module it was handed,
  * and the version each module's next import must name, so a module that did not
- * change keeps the one instance the document's module map holds. A daemon
- * that restarts has none, and the next update reloads the document.
+ * change keeps the one instance the document's module map holds. Only the
+ * daemon mints one, as it serves the document, under an id no one can guess:
+ * a module or a plan asked for in any other is refused. A daemon that restarts
+ * holds none, nor one it has let go, and the next update reloads the document.
  */
 
 /** Inlined into the module that imports it, so a version of that module: what isn't a module or a stylesheet. */
@@ -34,14 +36,40 @@ function inlined(path: string): boolean {
  */
 function moduleHash(key: string, inputs: Metafile["inputs"], digestOf: (key: string) => string | undefined): string {
 	const own = digestOf(key) ?? "";
-	const parts = (inputs[key]?.imports ?? [])
+	const imports = inputs[key]?.imports ?? [];
+	const parts = imports
 		.filter((edge) => edge.external !== true && inlined(edge.path))
 		.map((edge) => `${edge.path}\0${digestOf(edge.path) ?? ""}`)
 		.sort();
+	// the design modules it imports, by path: an import that resolves elsewhere is a new version
+	const modules = imports
+		.map((edge) =>
+			edge.path.startsWith(PLACEHOLDER)
+				? decodeURIComponent(edge.path.slice(PLACEHOLDER.length))
+				: edge.external !== true && isHotModuleFile(edge.path)
+					? edge.path
+					: undefined,
+		)
+		.filter((path) => path !== undefined)
+		.sort();
 	return createHash("sha256")
-		.update(JSON.stringify([own, parts]))
+		.update(JSON.stringify([own, parts, modules]))
 		.digest("hex")
 		.slice(0, 16);
+}
+
+/** What one import resolves to, as a string to compare: a file, external, missing, or refused. */
+function answerOf(
+	resolveImport: ReturnType<typeof designResolver>,
+	specifier: string,
+	resolveDir: string,
+	kind: ImportKind,
+): string {
+	try {
+		return JSON.stringify(resolveImport(specifier, resolveDir, kind) ?? null);
+	} catch (error) {
+		return `refused: ${String(error)}`;
+	}
 }
 
 /** Where a compiled module names another design module, until a session's URL for it is put in. */
@@ -51,14 +79,28 @@ const PLACED = /__spool_hot__\/([A-Za-z0-9%._~!*'()-]+)/g;
 /** One module compiled, for every session: what it was made of, so a change to any of it compiles it again. */
 interface Compiled {
 	digests: ReadonlyMap<string, string>;
+	/** Every import it made, and what it resolved to, so a file that comes or goes beside one is a change. */
+	probes: readonly Probe[];
 	js: string;
 	hash: string;
 }
 
+interface Probe {
+	specifier: string;
+	resolveDir: string;
+	kind: ImportKind;
+	answer: string;
+}
+
 interface Session {
+	root: string;
 	served: Map<string, string>;
 	versions: Map<string, number>;
 	updates: number;
+	/** Each module's version as this session will be handed it: checked when the document was served, or planned. */
+	expected: Map<string, string>;
+	/** The document's modules compiled ahead: a module asked for waits on it. */
+	ready: Promise<void>;
 }
 
 /** The sessions one daemon keeps: the last ones opened, so a canvas left open for days never grows it. */
@@ -72,21 +114,39 @@ export function hotModules(host: CompileHost) {
 		for (const [file, digest] of entry.digests) {
 			if (contentDigest(readDesignBytes(resolvePath, file, host.files)) !== digest) return false;
 		}
+		const resolveImport = designResolver(designDir, host.files);
+		for (const probe of entry.probes) {
+			if (answerOf(resolveImport, probe.specifier, probe.resolveDir, probe.kind) !== probe.answer) return false;
+		}
 		return true;
 	};
-	const sessionOf = (root: string, id: string, open: boolean): Session | undefined => {
-		const key = `${root}\0${id}`;
-		let session = sessions.get(key);
-		if (session === undefined && open) {
-			session = { served: new Map(), versions: new Map(), updates: 0 };
-			sessions.set(key, session);
-			for (const old of sessions.keys()) {
-				if (sessions.size <= SESSIONS_KEPT) break;
-				sessions.delete(old);
-			}
-		}
+	/** A session by its id, as the one it was minted for: the most recently used kept, the least let go first. */
+	const sessionOf = (root: string, id: string): Session | undefined => {
+		const session = sessions.get(id);
+		if (session === undefined || session.root !== root) return undefined;
+		sessions.delete(id);
+		sessions.set(id, session);
 		return session;
 	};
+	let warming: Promise<unknown> = Promise.resolve();
+
+	/**
+	 * A session for a Fast Refresh document as it is served, its modules
+	 * compiled ahead alongside: the id it is served with.
+	 */
+	function open(root: string, designDir: string, modules: readonly string[]): string {
+		const id = randomBytes(18).toString("base64url");
+		const expected = new Map<string, string>();
+		// one warm at a time: a second document of the same closure finds the first's work
+		const ready = warming.then(() => warm(designDir, modules, expected));
+		warming = ready;
+		sessions.set(id, { root, served: new Map(), versions: new Map(), updates: 0, expected, ready });
+		for (const old of sessions.keys()) {
+			if (sessions.size <= SESSIONS_KEPT) break;
+			sessions.delete(old);
+		}
+		return id;
+	}
 
 	/**
 	 * One design module for a session, at the version its URL names. Undefined
@@ -99,16 +159,21 @@ export function hotModules(host: CompileHost) {
 		path: string,
 		id: string,
 	): Promise<string | undefined> {
-		if (!isHotModuleFile(path) || path.split("/").some((part) => part === ".." || part === "")) return undefined;
+		if (!isHotModuleFile(path) || path.split("/").some((part) => part === ".." || part === "." || part === "")) {
+			return undefined;
+		}
+		const session = sessionOf(root, id);
+		if (session === undefined) return undefined;
+		await session.ready;
 		const key = `${designDir}\0${path}`;
 		let entry = compiled.get(key);
-		if (entry === undefined || !fresh(designDir, entry)) {
+		// checked as the document was served, or as its update was planned: no need to read it all again
+		const known = entry !== undefined && entry.hash === session.expected.get(path);
+		if (entry === undefined || (!known && !fresh(designDir, entry))) {
 			entry = (await compile(designDir, [path])).get(path);
 			if (entry === undefined) return undefined;
 			compiled.set(key, entry);
 		}
-		const session = sessionOf(root, id, true);
-		if (session === undefined) return undefined;
 		session.served.set(path, entry.hash);
 		return entry.js.replace(PLACED, (_, dep: string) => {
 			const module = decodeURIComponent(dep);
@@ -131,6 +196,7 @@ export function hotModules(host: CompileHost) {
 		const done = new Map<string, Compiled>();
 		if (entries.size === 0) return done;
 		const resolveImport = designResolver(designDir, host.files);
+		const probes = new Map<string, Probe[]>();
 		const toPlaceholders: Plugin = {
 			name: "spool-hot-modules",
 			setup(build) {
@@ -140,13 +206,21 @@ export function hotModules(host: CompileHost) {
 						return undefined;
 					}
 					const shared = args.path.startsWith("shared/");
+					const specifier = shared ? `./${args.path}` : args.path;
+					const resolveDir = shared ? designDir : args.resolveDir;
+					const path = entries.get(args.importer) ?? "";
+					probes.set(path, [
+						...(probes.get(path) ?? []),
+						{
+							specifier,
+							resolveDir,
+							kind: args.kind,
+							answer: answerOf(resolveImport, specifier, resolveDir, args.kind),
+						},
+					]);
 					let resolved: ReturnType<typeof resolveImport>;
 					try {
-						resolved = resolveImport(
-							shared ? `./${args.path}` : args.path,
-							shared ? designDir : args.resolveDir,
-							args.kind,
-						);
+						resolved = resolveImport(specifier, resolveDir, args.kind);
 					} catch {
 						return undefined;
 					}
@@ -193,7 +267,12 @@ export function hotModules(host: CompileHost) {
 				const digest = digests.get(file);
 				if (digest !== undefined) made.set(file, digest);
 			}
-			done.set(path, { digests: made, js, hash: moduleHash(path, result.metafile.inputs, digestOf) });
+			done.set(path, {
+				digests: made,
+				probes: probes.get(path) ?? [],
+				js,
+				hash: moduleHash(path, result.metafile.inputs, digestOf),
+			});
 		}
 		return done;
 	}
@@ -202,13 +281,20 @@ export function hotModules(host: CompileHost) {
 	 * A Fast Refresh document's modules compiled ahead, in one build, as the
 	 * document is: its first load then asks for each from the cache.
 	 */
-	async function warm(designDir: string, paths: readonly string[]): Promise<void> {
+	async function warm(designDir: string, paths: readonly string[], expected: Map<string, string>): Promise<void> {
 		const stale = paths.filter((path) => {
 			const entry = compiled.get(`${designDir}\0${path}`);
-			return entry === undefined || !fresh(designDir, entry);
+			if (entry !== undefined && fresh(designDir, entry)) {
+				expected.set(path, entry.hash);
+				return false;
+			}
+			return true;
 		});
 		try {
-			for (const [path, entry] of await compile(designDir, stale)) compiled.set(`${designDir}\0${path}`, entry);
+			for (const [path, entry] of await compile(designDir, stale)) {
+				compiled.set(`${designDir}\0${path}`, entry);
+				expected.set(path, entry.hash);
+			}
 		} catch {
 			// each module compiles again when it is asked for, and says why there
 		}
@@ -226,8 +312,9 @@ export function hotModules(host: CompileHost) {
 		frame: string,
 		id: string,
 	): Promise<{ refused: string } | { imports: string[]; css: string; bundledCss: string; head: string }> {
-		const session = sessionOf(root, id, false);
+		const session = sessionOf(root, id);
 		if (session === undefined) return { refused: "the daemon has no record of this document's modules" };
+		await session.ready;
 		const state = await compileFrameHotState(host, { designDir, frame });
 		const entry = `${frameFolder(frame)}/frame.tsx`;
 		const digestOf = (key: string) => state.digests.get(designInputFile(designDir, key, host.files));
@@ -252,7 +339,11 @@ export function hotModules(host: CompileHost) {
 		const planned = hotPlan(modules, session.served);
 		if ("refused" in planned) return planned;
 		session.updates += 1;
-		for (const path of planned.rerun) session.versions.set(path, session.updates);
+		for (const path of planned.rerun) {
+			session.versions.set(path, session.updates);
+			const planned = modules.get(path);
+			if (planned !== undefined) session.expected.set(path, planned.hash);
+		}
 		return {
 			imports: planned.roots.map((path) => hotModuleUrl(project, path, id, session.updates)),
 			css: state.css,
@@ -261,5 +352,5 @@ export function hotModules(host: CompileHost) {
 		};
 	}
 
-	return { module, plan, warm };
+	return { open, module, plan };
 }

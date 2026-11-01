@@ -29,6 +29,9 @@ import { createHash } from "node:crypto";
 /** Updates one document takes before it asks to be reloaded: each leaves its module in the realm for good. */
 export const HOT_UPDATE_LIMIT = 50;
 
+/** Where a Fast Refresh document names its session, until the daemon serves it with one of its own. */
+export const HOT_SESSION_PLACEHOLDER = "__spool_hot_session__";
+
 /** React Refresh's runtime and the document's side of an update, bundled as a classic script run ahead of React (`vendor.ts`). */
 export const FAST_REFRESH_RUNTIME = `import * as Refresh from "react-refresh/runtime";
 Refresh.injectIntoGlobalHook(window);
@@ -50,8 +53,8 @@ function swapStyle(id, css, after) {
 const isType = (type) => typeof type === "function" || (typeof type === "object" && type !== null);
 window.__spoolHot = {
 	head: null,
-	// this document's name to the daemon, which keeps the versions of the modules it loaded
-	session: Math.random().toString(36).slice(2) + Date.now().toString(36),
+	// this document's name to the daemon, minted as it served the document (\`hot-modules.ts\`)
+	session: "${HOT_SESSION_PLACEHOLDER}",
 	register(type, id) {
 		if (isType(type)) Refresh.register(type, id);
 	},
@@ -339,6 +342,19 @@ export function hotModulePath(project: string, module: string): string {
 	return `/p/${encodeURIComponent(project)}/hot/${encodeURIComponent(module)}`;
 }
 
+/**
+ * Every module of a frame's closure fetched at once, as the document's head is
+ * read, so neither the boot's own imports nor one module's imports wait.
+ */
+export function hotPreloads(project: string, closure: readonly string[]): string {
+	return closure
+		.map(
+			(path) =>
+				`<link rel="modulepreload" href="${hotModuleUrl(project, path, HOT_SESSION_PLACEHOLDER, 0).replaceAll("&", "&amp;")}">\n`,
+		)
+		.join("");
+}
+
 /** One version of a module in one document's session: the URL its module map knows it by. */
 export function hotModuleUrl(project: string, module: string, session: string, version: number): string {
 	return `${hotModulePath(project, module)}?s=${encodeURIComponent(session)}&v=${version}`;
@@ -347,12 +363,9 @@ export function hotModuleUrl(project: string, module: string, session: string, v
 /**
  * A Fast Refresh document's own module: what `bootEntry` is, with the frame
  * imported from its served URL in this document's session rather than bundled.
- * Every module of the frame's closure is fetched at once, as a preload, so its
- * imports don't wait on one another level by level.
  */
-export function hotBootEntry(frame: string, project: string, entry: string, closure: readonly string[]): string {
-	const url = JSON.stringify(hotModulePath(project, entry));
-	const preload = JSON.stringify(closure.map((path) => hotModulePath(project, path)));
+export function hotBootEntry(frame: string, project: string, entry: string): string {
+	const url = JSON.stringify(hotModuleUrl(project, entry, HOT_SESSION_PLACEHOLDER, 0));
 	return `import "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -362,14 +375,7 @@ function report(spool, detail) {
 }
 addEventListener("error", (event) => report("error", { error: String(event.error ?? event.message) }));
 addEventListener("unhandledrejection", (event) => report("error", { error: String(event.reason) }));
-const SESSION = "?s=" + encodeURIComponent(window.__spoolHot.session) + "&v=0";
-for (const path of ${preload}) {
-	const link = document.createElement("link");
-	link.rel = "modulepreload";
-	link.href = path + SESSION;
-	document.head.append(link);
-}
-const { default: Frame } = await import(${url} + SESSION);
+const { default: Frame } = await import(${url});
 function Ready() {
 	useEffect(() => report("loaded", {}), []);
 	return null;

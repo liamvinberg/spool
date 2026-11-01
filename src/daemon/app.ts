@@ -1057,6 +1057,20 @@ export function createDaemonApp({
 		return undefined;
 	}
 
+	/**
+	 * A Fast Refresh document's own reads (the fast-refresh experiment): from the
+	 * sandboxed frame, whose origin is null, on the render host, which the
+	 * middleware keeps them to. The session id the daemon minted into the
+	 * document is what selects what they may read; the header lets that frame,
+	 * and only a null origin, read the answer.
+	 */
+	function hotReader(c: Context): boolean {
+		if (c.req.header("origin") !== "null") return false;
+		c.header("access-control-allow-origin", "null");
+		c.header("vary", "Origin");
+		return true;
+	}
+
 	function resolveProjectData(c: Context): { root: string } | { response: Response } {
 		const origin = c.req.header("origin");
 		if (origin !== "null") return { response: c.text("forbidden", 403) };
@@ -1463,8 +1477,8 @@ export function createDaemonApp({
 				// frame's own document asks for from its null origin
 				const session = c.req.query("hot");
 				if (session !== undefined) {
-					c.header("access-control-allow-origin", "*");
 					c.header("cache-control", "no-store");
+					if (!hotReader(c)) return c.text("forbidden", 403);
 					try {
 						const plan = await compiler.getHotPlan(root, frame, session);
 						if (plan === undefined) return c.text("no such frame", 404);
@@ -1473,9 +1487,15 @@ export function createDaemonApp({
 						return c.json({ refused: "the frame does not compile" });
 					}
 				}
-				const doc = await compiler.getDocument(root, frame, frameAuthority(root), c.req.query("refresh") === "1");
+				const hot = c.req.query("refresh") === "1";
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root), hot);
 				if (doc.kind === "missing") return c.text(doc.message, 404);
 				if (doc.kind === "error") return c.html(doc.document, 500);
+				// a Fast Refresh document carries a session of its own, every load a new one
+				if (hot) {
+					c.header("cache-control", "no-store");
+					return c.html(doc.document);
+				}
 				// A frame document changes whenever its source does, and the etag is the
 				// whole of how a browser learns that. Without this the browser is free to
 				// guess a freshness lifetime from nothing, so say it: ask every time, and
@@ -1490,14 +1510,16 @@ export function createDaemonApp({
 		.get("/p/:project/hot/:module", async (c) =>
 			withProject(c, resolveProject, async (root) => {
 				// one design module of a Fast Refresh document (the fast-refresh experiment)
-				c.header("access-control-allow-origin", "*");
 				c.header("cache-control", "no-store");
+				if (!hotReader(c)) return c.text("forbidden", 403);
 				const session = c.req.query("s");
 				if (session === undefined) return c.text("a module is asked for in a session", 400);
 				try {
 					const js = await compiler.getHotModule(root, c.req.param("module"), session);
-					if (js === undefined) return c.text("no such module", 404);
+					if (js === undefined) return c.text("no such module in this session", 404);
 					c.header("content-type", "text/javascript; charset=utf-8");
+					// the session and the version in its URL name these bytes for good
+					c.header("cache-control", "private, max-age=31536000, immutable");
 					return c.body(js);
 				} catch {
 					return c.text("the module does not compile", 500);

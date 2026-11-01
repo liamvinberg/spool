@@ -27,7 +27,7 @@ import {
 	mergeImportMap,
 	shimHash,
 } from "./document";
-import { hotBootEntry, hotHeadKey, isHotModuleFile, refreshFooter } from "./fast-refresh";
+import { hotBootEntry, hotHeadKey, hotPreloads, isHotModuleFile, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
@@ -319,9 +319,7 @@ export async function compileFrameDocument(
 	// is what finds the closure and its stylesheet, and the boot imports the frame
 	const hotModules = hot === undefined ? undefined : Object.keys(built.inputs).filter(isHotModuleFile);
 	const bootJs =
-		hotModules === undefined
-			? built.bootJs
-			: hotBootEntry(frame, project, `${frameFolder(frame)}/frame.tsx`, hotModules);
+		hotModules === undefined ? built.bootJs : hotBootEntry(frame, project, `${frameFolder(frame)}/frame.tsx`);
 
 	const shared = join(designDir, "shared");
 	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
@@ -369,6 +367,7 @@ export async function compileFrameDocument(
 			hot === undefined
 				? undefined
 				: `${hot.runtime}\nwindow.__spoolHot.head = ${JSON.stringify(hotHead(designDir, reads, themed))};`,
+		hotPreloads: hotModules === undefined ? undefined : hotPreloads(project, hotModules),
 	});
 	// Every input, present or not, by the digest of the very bytes the document
 	// was made of: the bundle's, the stylesheet's, the fonts' and the import map's.

@@ -17,6 +17,7 @@ import { designPathResolver, realDesignDir } from "./design-path";
 import { contentDigest, readDesignBytes } from "./design-reads";
 import { diskDesignFiles } from "./disk-files";
 import { errorDocument } from "./document";
+import { HOT_SESSION_PLACEHOLDER } from "./fast-refresh";
 import { hotModules } from "./hot-modules";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
 import type { BundleMap } from "./stack-map";
@@ -56,6 +57,15 @@ export function createFrameCompiler(
 	 * with the `fast-refresh` experiment on asks for (`fast-refresh.ts`).
 	 */
 	const served = hotModules(host);
+
+	/**
+	 * The document as one load gets it: a Fast Refresh one with a session of its
+	 * own, its modules compiled alongside (`hot-modules.ts`); any other as it is.
+	 */
+	function withSession(root: string, designDir: string, entry: CompiledFrameDocument): string {
+		if (entry.hotModules === undefined) return entry.document;
+		return entry.document.replaceAll(HOT_SESSION_PLACEHOLDER, served.open(root, designDir, entry.hotModules));
+	}
 
 	async function getDocument(
 		root: string,
@@ -100,8 +110,8 @@ export function createFrameCompiler(
 				// meanwhile retires this document as surely as one before it
 				cached.fonts === webfonts.revision()
 			) {
-				const { document, etag, source, unstyled } = cached;
-				return { kind: "ok", document, etag, source, unstyled, cache: "hit" };
+				const { etag, source, unstyled } = cached;
+				return { kind: "ok", document: withSession(root, designDir, cached), etag, source, unstyled, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
 				designDir,
@@ -116,10 +126,8 @@ export function createFrameCompiler(
 				if (entry.settled) cache.set(key, entry);
 				else cache.delete(key);
 			}
-			// its modules compiled ahead, in one build, before it asks for them
-			if (entry.hotModules !== undefined) await served.warm(designDir, entry.hotModules);
-			const { document, etag, source, unstyled } = entry;
-			return { kind: "ok", document, etag, source, unstyled, cache: "miss" };
+			const { etag, source, unstyled } = entry;
+			return { kind: "ok", document: withSession(root, designDir, entry), etag, source, unstyled, cache: "miss" };
 		} catch (error) {
 			if (cache.get(key) === cached) cache.delete(key);
 			const message = await describeCompileError(host.esbuild, error);
