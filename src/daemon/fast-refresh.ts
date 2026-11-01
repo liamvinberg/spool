@@ -74,10 +74,21 @@ window.__spoolHot = {
 		}
 		if (typeof plan.refused === "string") return plan.refused;
 		if (plan.head !== this.head) return "fonts or the import map changed";
+		let roots;
 		try {
-			await Promise.all(plan.imports.map((next) => import(next)));
+			roots = await Promise.all(plan.imports.map((next) => import(next)));
 		} catch (error) {
 			return "the update did not load: " + String(error);
+		}
+		// the daemon read each root as exporting only components; what it exports
+		// now is the proof, as Vite checks: anything else would leave its importers
+		// holding the old value while the refresh re-renders nothing
+		for (const [at, root] of roots.entries()) {
+			for (const [name, value] of Object.entries(root)) {
+				if (!Refresh.isLikelyComponentType(value) || Refresh.getFamilyByType(value) === undefined) {
+					return plan.imports[at] + " exports " + name + ", which is no component";
+				}
+			}
 		}
 		const mod = plan;
 		swapStyle("spool-css", mod.css, "");
@@ -108,6 +119,11 @@ const DECLARATION = new RegExp(
 	`^(export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:async\\s+)?(?:function\\s*\\*?\\s*(${IDENT})|(?:const|let|var)\\s+(${IDENT})|class\\s+(${IDENT}))`,
 );
 const COMPONENT_NAME = /^[A-Z]/;
+/** A capitalised name that reads as a constant, not a component: USERS, API_URL. */
+const CONSTANT_NAME = /^[A-Z][A-Z0-9_]+$/;
+/** What a component's `const` is set to: a function, or React's wrappers of one. */
+const COMPONENT_VALUE =
+	/^\s*(?:async\s*)?(?:\(|function\b|[A-Za-z_$][\w$]*\s*=>|(?:React\.)?(?:memo|forwardRef|lazy)\s*[(<])/;
 const HOOK_NAME = /^use[A-Z]/;
 const HOOK_CALL = /\b(use[A-Z][\w$]*|use)\s*(?:<[^()]*?>)?\s*\(/g;
 const TYPE_ONLY = /^(?:export\s+)?(?:declare\s+)?(?:type|interface)\b/;
@@ -145,8 +161,12 @@ function scan(source: string): { lines: string[]; tops: { name: string; from: nu
 	const lines = source.split("\n");
 	const tops: { name: string; from: number }[] = [];
 	let boundary = true;
+	// what each top-level name was declared as, and every name exported, read at the end
+	const kinds = new Map<string, "class" | "function" | "value">();
+	const exported: string[] = [];
 	const exportName = (name: string) => {
-		if (!COMPONENT_NAME.test(name)) boundary = false;
+		if (!COMPONENT_NAME.test(name) || CONSTANT_NAME.test(name)) boundary = false;
+		else exported.push(name);
 	};
 	let typeBlock = false;
 	for (const [at, line] of lines.entries()) {
@@ -184,12 +204,20 @@ function scan(source: string): { lines: string[]; tops: { name: string; from: nu
 			continue;
 		}
 		const name = declared[2] ?? declared[3] ?? declared[4] ?? "";
+		if (declared[2] !== undefined) kinds.set(name, "function");
+		else if (declared[4] !== undefined) kinds.set(name, "class");
+		else if (declared[3] !== undefined) {
+			const value = line.slice(line.indexOf("=", declared[0].length) + 1);
+			kinds.set(name, line.includes("=", declared[0].length) && COMPONENT_VALUE.test(value) ? "function" : "value");
+		}
 		if (declared[1] !== undefined) {
 			if (name === "") boundary = false;
 			else exportName(name);
 		}
 		tops.push({ name, from: at });
 	}
+	// a component is a function: a class or any other value exported is not one, whatever its name
+	for (const name of exported) if (kinds.has(name) && kinds.get(name) !== "function") boundary = false;
 	return { lines, tops, boundary };
 }
 

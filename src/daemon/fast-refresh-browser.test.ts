@@ -78,8 +78,12 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 	expect(await doc.locator("button").textContent()).toBe("count 2");
 	expect(await page.evaluate(() => (window as unknown as { frameErrors: unknown[] }).frameErrors)).toEqual([]);
 
-	// an export that is no component: React Refresh can't keep it, so the document reloads
-	writeFrame(project.root, "counter", frame("third", "export const items = [1];\n"));
+	// an export that reads as a component and is none, which only the document can tell: it reloads
+	writeFrame(
+		project.root,
+		"counter",
+		frame("third", 'import { born } from "shared/store";\nexport { born as Born };\n'),
+	);
 	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("third");
 	await expect.poll(() => doc.locator("button").textContent()).toBe("count 0");
 });
