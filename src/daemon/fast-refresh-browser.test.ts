@@ -42,11 +42,10 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 	await expect
 		.poll(() => page.locator('iframe[title="counter"]').evaluate((el) => getComputedStyle(el).pointerEvents))
 		.toBe("auto");
-	const entered = await doc.locator("button").boundingBox();
-	if (entered === null) throw new Error("the frame lost its button");
 	await expect.poll(() => doc.locator("button").textContent()).toMatch(/^count \d$/);
 	const start = Number((await doc.locator("button").textContent())?.slice(6));
-	for (let i = 0; i < 2 - start; i++) await page.mouse.click(entered.x + 8, entered.y + entered.height / 2);
+	// clicked where it is once the camera has settled on the entered frame
+	for (let i = 0; i < 2 - start; i++) await doc.locator("button").click();
 	await expect.poll(() => doc.locator("button").textContent()).toBe("count 2");
 
 	// a component's text changed: swapped in, the count kept
