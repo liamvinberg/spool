@@ -2,16 +2,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeFrame } from "../test-helpers";
 import { createFrameCompiler } from "./compile";
-import { refreshFooter } from "./fast-refresh";
+import { type HotModule, hotPlan, isRefreshBoundary, refreshFooter } from "./fast-refresh";
 
 /** What a footer says, read back by running it against a stand-in runtime. */
 function footer(source: string, scope: Record<string, unknown> = {}) {
-	const said: { rerunnable: boolean[]; signed: Record<string, { key: string; forceReset: boolean }> } = {
-		rerunnable: [],
-		signed: {},
-	};
+	const said: { signed: Record<string, { key: string; forceReset: boolean }> } = { signed: {} };
 	const hot = {
-		module: (_id: string, rerunnable: boolean) => said.rerunnable.push(rerunnable),
 		register: () => {},
 		sign: (type: { name: string }, key: string, forceReset: boolean) => {
 			said.signed[type.name] = { key, forceReset };
@@ -65,11 +61,10 @@ const Remote = memo(function Remote() {
 		expect(signed.Remote).toEqual({ key: "const value = useStore();", forceReset: true });
 	});
 
-	it("lets a module run again only when it exports nothing but components, or declares nothing but functions", () => {
-		const rerunnable = (source: string) => footer(source).rerunnable[0];
-		expect(rerunnable("export function Card() {}\nexport type Props = {};\nexport { Card as Tile };\n")).toBe(true);
-		expect(rerunnable('import x from "y";\n// helpers\nexport function format() {}\nfunction pad() {}\n')).toBe(true);
-		expect(rerunnable("const w = window;\nif (w) {}\nexport {};\n")).toBe(true);
+	it("names a module a boundary only when every export it has is a component", () => {
+		expect(isRefreshBoundary("export function Card() {}\nexport type Props = {};\nexport { Card as Tile };\n")).toBe(
+			true,
+		);
 		for (const source of [
 			"export const items = [1];\n",
 			"const merge = make();\nexport function cn() {}\n",
@@ -77,8 +72,35 @@ const Remote = memo(function Remote() {
 			"export * from './x';\n",
 			"export default memo(Card);\n",
 		]) {
-			expect(rerunnable(source), source).toBe(false);
+			expect(isRefreshBoundary(source), source).toBe(false);
 		}
+	});
+});
+
+describe("hotPlan", () => {
+	// frame -> Card (a boundary) -> cn (not); frame -> store (not)
+	const graph = (changed: string[], frameBoundary = true) => {
+		const modules = new Map<string, HotModule>([
+			["frame.tsx", { hash: "f", boundary: frameBoundary, importers: [] }],
+			["card.tsx", { hash: "c", boundary: true, importers: ["frame.tsx"] }],
+			["cn.ts", { hash: "n", boundary: false, importers: ["card.tsx"] }],
+			["store.ts", { hash: "s", boundary: false, importers: ["frame.tsx"] }],
+		]);
+		const served = new Map([...modules].map(([path, module]) => [path, module.hash]));
+		for (const path of changed) served.set(path, "old");
+		return hotPlan(modules, served);
+	};
+
+	it("runs the changed modules and their importers up to the nearest boundary, and nothing else", () => {
+		expect(graph(["card.tsx"])).toEqual({ rerun: ["card.tsx"], roots: ["card.tsx"] });
+		expect(graph(["cn.ts"])).toEqual({ rerun: ["card.tsx", "cn.ts"], roots: ["card.tsx"] });
+		expect(graph(["store.ts"])).toEqual({ rerun: ["frame.tsx", "store.ts"], roots: ["frame.tsx"] });
+		expect(graph([])).toEqual({ rerun: [], roots: [] });
+	});
+
+	it("refuses a change that climbs to a frame that exports more than components", () => {
+		expect(graph(["store.ts"], false)).toHaveProperty("refused");
+		expect(graph(["cn.ts"], false)).toEqual({ rerun: ["card.tsx", "cn.ts"], roots: ["card.tsx"] });
 	});
 });
 

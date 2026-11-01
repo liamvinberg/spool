@@ -7,7 +7,6 @@ import {
 	type CompileHost,
 	compileFrameDocument,
 	compileFrameSourceMap,
-	compileFrameUpdate,
 	describeCompileError,
 	type FrameAuthority,
 	frameStamp,
@@ -18,6 +17,7 @@ import { designPathResolver, realDesignDir } from "./design-path";
 import { contentDigest, readDesignBytes } from "./design-reads";
 import { diskDesignFiles } from "./disk-files";
 import { errorDocument } from "./document";
+import { hotModules } from "./hot-modules";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
 import type { BundleMap } from "./stack-map";
 import { fastRefreshRuntimeJs } from "./vendor";
@@ -146,17 +146,23 @@ export function createFrameCompiler(
 		}
 	}
 
+	const hot = hotModules(host);
+
 	/**
-	 * A frame's Fast Refresh update, as a module (`fast-refresh.ts`): never
-	 * cached, because an update is asked for only when the frame changed.
-	 * Undefined when the frame is not there; a compile failure throws.
+	 * One design module of a Fast Refresh document, in its session
+	 * (`hot-modules.ts`): undefined when no module is there; a compile failure throws.
 	 */
-	async function getUpdate(root: string, frame: string): Promise<string | undefined> {
-		if (!isFramePath(frame) || lookupFrame(root, frame).kind === "missing") return undefined;
-		return compileFrameUpdate(host, { designDir: realDesignDir(root), frame });
+	function getHotModule(root: string, path: string, session: string): Promise<string | undefined> {
+		return hot.module(root, basename(root), realDesignDir(root), path, session);
 	}
 
-	return { getDocument, getUpdate, forget, sourceMap };
+	/** A Fast Refresh document's plan for an update of its frame (`hot-modules.ts`); undefined when the frame is gone. */
+	async function getHotPlan(root: string, frame: string, session: string) {
+		if (!isFramePath(frame) || lookupFrame(root, frame).kind === "missing") return undefined;
+		return hot.plan(root, basename(root), realDesignDir(root), frame, session);
+	}
+
+	return { getDocument, getHotModule, getHotPlan, forget, sourceMap };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;

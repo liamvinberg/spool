@@ -1031,7 +1031,13 @@ export function createDaemonApp({
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
-		return isFrameDocumentPath(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
+		return (
+			isFrameDocumentPath(path) ||
+			path.startsWith("/vendor/") ||
+			isProjectDataPath(path) ||
+			// a Fast Refresh document's own modules (the fast-refresh experiment)
+			/^\/p\/[^/]+\/hot\/[^/]+$/.test(path)
+		);
 	}
 
 	function normalizedOrigin(value: string): string | undefined {
@@ -1453,18 +1459,18 @@ export function createDaemonApp({
 		.get("/p/:project/frames/:frame", async (c) =>
 			withProject(c, resolveProject, async (root) => {
 				const frame = c.req.param("frame");
-				// a Fast Refresh update (the fast-refresh experiment), which the
-				// frame's own document imports from its null origin
-				if (c.req.query("update") !== undefined) {
+				// a Fast Refresh update's plan (the fast-refresh experiment), which the
+				// frame's own document asks for from its null origin
+				const session = c.req.query("hot");
+				if (session !== undefined) {
 					c.header("access-control-allow-origin", "*");
 					c.header("cache-control", "no-store");
 					try {
-						const update = await compiler.getUpdate(root, frame);
-						if (update === undefined) return c.text("no such frame", 404);
-						c.header("content-type", "text/javascript; charset=utf-8");
-						return c.body(update);
+						const plan = await compiler.getHotPlan(root, frame, session);
+						if (plan === undefined) return c.text("no such frame", 404);
+						return c.json(plan);
 					} catch {
-						return c.text("the frame does not compile", 500);
+						return c.json({ refused: "the frame does not compile" });
 					}
 				}
 				const doc = await compiler.getDocument(root, frame, frameAuthority(root), c.req.query("refresh") === "1");
@@ -1479,6 +1485,23 @@ export function createDaemonApp({
 				c.header("etag", doc.etag);
 				c.header("x-spool-cache", doc.cache);
 				return c.html(doc.document);
+			}),
+		)
+		.get("/p/:project/hot/:module", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				// one design module of a Fast Refresh document (the fast-refresh experiment)
+				c.header("access-control-allow-origin", "*");
+				c.header("cache-control", "no-store");
+				const session = c.req.query("s");
+				if (session === undefined) return c.text("a module is asked for in a session", 400);
+				try {
+					const js = await compiler.getHotModule(root, c.req.param("module"), session);
+					if (js === undefined) return c.text("no such module", 404);
+					c.header("content-type", "text/javascript; charset=utf-8");
+					return c.body(js);
+				} catch {
+					return c.text("the module does not compile", 500);
+				}
 			}),
 		)
 		.get(

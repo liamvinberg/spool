@@ -6,18 +6,17 @@ import { createHash } from "node:crypto";
  * A canvas with the experiment on asks for its frames' documents with
  * `?refresh=1`, and gets them compiled for it: React's development build (the
  * only one that can swap a component), React Refresh's own runtime ahead of
- * React, and every design module closed with a footer that registers its
- * top-level components with their hook signatures and says whether the module
- * may be run again. A save then reaches the open document as a message: the
- * document imports its bundle again from `?update=<n>`, which registers every
- * component afresh, and React Refresh swaps them in place, state and DOM kept.
- * The document answers the canvas, which reloads it as before whenever it says no.
- *
- * The whole bundle is evaluated again on each update, not the changed module
- * alone, so an update is refused unless every module in it may run again: one
- * that exports only components, or only declares functions. A module with any
- * other export (a store, a cache, a table of constants) could hand kept state a
- * fresh copy of what it was made from, so its frame reloads, as before.
+ * React, and every design module served on its own (`hot-modules.ts`), at a
+ * URL that names the document's session and the module's version in it, each
+ * closed with a footer that registers its top-level components with their hook
+ * signatures. A save reaches the open document as a message, and the document
+ * asks the daemon for a plan (`hotPlan`): the modules whose source changed
+ * since this document loaded them, and their importers up to the nearest
+ * module that exports only components. Those alone get a new version and are
+ * imported again; every other module keeps its instance in the document's
+ * module map, its state with it, and React Refresh swaps the components in
+ * place. A change that climbs to the frame without meeting such a module, or
+ * any refusal, reloads the document as before.
  *
  * What the registration reads is the file's text, top-level declarations at
  * column 0, rather than a parse: a component it misses is remounted rather than
@@ -33,10 +32,7 @@ export const HOT_UPDATE_LIMIT = 50;
 /** React Refresh's runtime and the document's side of an update, bundled as a classic script run ahead of React (`vendor.ts`). */
 export const FAST_REFRESH_RUNTIME = `import * as Refresh from "react-refresh/runtime";
 Refresh.injectIntoGlobalHook(window);
-let collecting = null;
 let updates = 0;
-// what the document booted with that may not run again: its saves refuse at once, without the import
-const stuck = [];
 const tick = () => new Promise((done) => { const channel = new MessageChannel(); channel.port1.onmessage = () => done(); channel.port2.postMessage(0); });
 function swapStyle(id, css, after) {
 	if (typeof css !== "string") return;
@@ -54,6 +50,8 @@ function swapStyle(id, css, after) {
 const isType = (type) => typeof type === "function" || (typeof type === "object" && type !== null);
 window.__spoolHot = {
 	head: null,
+	// this document's name to the daemon, which keeps the versions of the modules it loaded
+	session: Math.random().toString(36).slice(2) + Date.now().toString(36),
 	register(type, id) {
 		if (isType(type)) Refresh.register(type, id);
 	},
@@ -64,26 +62,24 @@ window.__spoolHot = {
 		const inner = type.render ?? type.type;
 		if (typeof inner === "function") Refresh.setSignature(inner, key, forceReset);
 	},
-	module(id, rerunnable) {
-		if (collecting !== null) collecting.set(id, rerunnable);
-		else if (!rerunnable) stuck.push(id);
-	},
 	async update(url) {
-		if (stuck.length > 0) return stuck[0] + " exports more than components";
 		if (++updates > ${HOT_UPDATE_LIMIT}) return "${HOT_UPDATE_LIMIT} updates: a reload lets their modules go";
-		collecting = new Map();
-		let next;
-		let mod;
+		let plan;
 		try {
-			mod = await import(url);
+			const answer = await fetch(url, { cache: "no-store" });
+			if (!answer.ok) return "the plan failed: " + answer.status;
+			plan = await answer.json();
+		} catch (error) {
+			return "the plan did not load: " + String(error);
+		}
+		if (typeof plan.refused === "string") return plan.refused;
+		if (plan.head !== this.head) return "fonts or the import map changed";
+		try {
+			await Promise.all(plan.imports.map((next) => import(next)));
 		} catch (error) {
 			return "the update did not load: " + String(error);
-		} finally {
-			next = collecting;
-			collecting = null;
 		}
-		for (const [id, rerunnable] of next) if (!rerunnable) return id + " exports more than components";
-		if (mod.head !== this.head) return "fonts or the import map changed";
+		const mod = plan;
 		swapStyle("spool-css", mod.css, "");
 		swapStyle("spool-bundled-css", mod.bundledCss, "spool-css");
 		const root = document.getElementById("root");
@@ -111,12 +107,10 @@ const IDENT = "[A-Za-z_$][\\w$]*";
 const DECLARATION = new RegExp(
 	`^(export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:async\\s+)?(?:function\\s*\\*?\\s*(${IDENT})|(?:const|let|var)\\s+(${IDENT})|class\\s+(${IDENT}))`,
 );
-const FUNCTION = /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\b/;
 const COMPONENT_NAME = /^[A-Z]/;
 const HOOK_NAME = /^use[A-Z]/;
 const HOOK_CALL = /\b(use[A-Z][\w$]*|use)\s*(?:<[^()]*?>)?\s*\(/g;
 const TYPE_ONLY = /^(?:export\s+)?(?:declare\s+)?(?:type|interface)\b/;
-const QUIET = /^(?:import\b|\/\/|\/\*|\*|export\s*\{\s*\}\s*;?\s*$)/;
 /** React's own hooks: their state is React's to keep. Any other is a custom hook. */
 const REACT_HOOKS = new Set([
 	"use",
@@ -146,18 +140,11 @@ interface Signature {
 	forceReset: boolean;
 }
 
-/**
- * What a design module closes with in a document compiled for Fast Refresh:
- * its record (path, and whether it may run again: every export a component,
- * or nothing but functions declared), each top-level component registered
- * under `<path>#<name>`, and each one's signature, so a change to its hooks
- * remounts it rather than handing it state of another shape.
- */
-export function refreshFooter(id: string, source: string): string {
+/** A module's top-level declarations, read off column 0, and whether every export it has is a component. */
+function scan(source: string): { lines: string[]; tops: { name: string; from: number }[]; boundary: boolean } {
 	const lines = source.split("\n");
 	const tops: { name: string; from: number }[] = [];
 	let boundary = true;
-	let functionsOnly = true;
 	const exportName = (name: string) => {
 		if (!COMPONENT_NAME.test(name)) boundary = false;
 	};
@@ -172,7 +159,6 @@ export function refreshFooter(id: string, source: string): string {
 		}
 		if (typeBlock && /^[|&]/.test(line)) continue;
 		typeBlock = false;
-		if (!QUIET.test(line) && !FUNCTION.test(line) && !/^export\s*\{/.test(line)) functionsOnly = false;
 		if (/^export\b/.test(line)) {
 			const list = /^export\s*\{([^}]*)\}/.exec(line);
 			if (list !== null) {
@@ -186,7 +172,6 @@ export function refreshFooter(id: string, source: string): string {
 				}
 			} else if (/^export\s+(?:\*|\{)/.test(line) || /^export\s+(?:const\s+)?enum\b/.test(line)) {
 				boundary = false;
-				functionsOnly = false;
 			} else if (/^export\s+default\s+/.test(line) && !DECLARATION.test(line)) {
 				const named = /^export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$/.exec(line);
 				if (named === null) boundary = false;
@@ -205,6 +190,26 @@ export function refreshFooter(id: string, source: string): string {
 		}
 		tops.push({ name, from: at });
 	}
+	return { lines, tops, boundary };
+}
+
+/**
+ * Whether a module exports only components: the boundary an update stops
+ * climbing at, because React Refresh swaps its components in its importers'
+ * trees without their running again (`hotPlan`).
+ */
+export function isRefreshBoundary(source: string): boolean {
+	return scan(source).boundary;
+}
+
+/**
+ * What a design module closes with in a document compiled for Fast Refresh:
+ * each top-level component registered under `<path>#<name>`, and each one's
+ * signature, so a change to its hooks remounts it rather than handing it state
+ * of another shape.
+ */
+export function refreshFooter(id: string, source: string): string {
+	const { lines, tops } = scan(source);
 	const bodies = new Map<string, string>();
 	for (const [index, top] of tops.entries()) {
 		if (top.name !== "")
@@ -238,7 +243,7 @@ export function refreshFooter(id: string, source: string): string {
 		signed.set(name, signature);
 		return signature;
 	};
-	const out = [`\n;globalThis.__spoolHot?.module(${JSON.stringify(id)}, ${boundary || functionsOnly});`];
+	const out = [""];
 	for (const name of bodies.keys()) {
 		if (!COMPONENT_NAME.test(name) || HOOK_NAME.test(name)) continue;
 		const { key, forceReset } = signatureOf(name, new Set());
@@ -263,9 +268,10 @@ export function hotHeadKey(fonts: string | undefined, importMap: string | undefi
 
 /**
  * The document's half of an update, appended to its boot entry: the canvas
- * asks with a message, the document imports its bundle again and answers. One
- * update runs at a time; asks that arrive meanwhile coalesce into the latest,
- * which alone is answered, because the bundle it imports is the newest anyway.
+ * asks with a message, the document asks the daemon for its plan, imports what
+ * it names and answers. One update runs at a time; asks that arrive meanwhile
+ * coalesce into the latest, which alone is answered, because the plan it asks
+ * for is made from the files as they are by then.
  */
 export const HOT_BOOT_CLIENT = `let hotRunning = false;
 let hotNext = null;
@@ -275,7 +281,8 @@ async function drainHot() {
 		const id = hotNext;
 		hotNext = null;
 		const url = new URL(location.pathname, location.href);
-		url.searchParams.set("update", String(id));
+		url.searchParams.set("hot", window.__spoolHot.session);
+		url.searchParams.set("n", String(id));
 		let refused;
 		try {
 			refused = await window.__spoolHot.update(url.href);
@@ -294,5 +301,85 @@ addEventListener("message", (event) => {
 });
 `;
 
-/** The entry an update is bundled from: the frame, and nothing that renders it. */
-export const HOT_UPDATE_ENTRY = `import "./frame.tsx";\n`;
+/** Where a design module is served on its own for a Fast Refresh document: its path in design/, under its project. */
+export function hotModulePath(project: string, module: string): string {
+	return `/p/${encodeURIComponent(project)}/hot/${encodeURIComponent(module)}`;
+}
+
+/** One version of a module in one document's session: the URL its module map knows it by. */
+export function hotModuleUrl(project: string, module: string, session: string, version: number): string {
+	return `${hotModulePath(project, module)}?s=${encodeURIComponent(session)}&v=${version}`;
+}
+
+/**
+ * A Fast Refresh document's own module: what `bootEntry` is, with the frame
+ * imported from its served URL in this document's session rather than bundled.
+ */
+export function hotBootEntry(frame: string, project: string, entry: string): string {
+	const url = JSON.stringify(hotModulePath(project, entry));
+	return `import "spool";
+import { createElement, Fragment, useEffect } from "react";
+import { createRoot } from "react-dom/client";
+const FRAME = ${JSON.stringify(frame)};
+function report(spool, detail) {
+	if (parent !== window) parent.postMessage({ spool, frame: FRAME, ...detail }, "*");
+}
+addEventListener("error", (event) => report("error", { error: String(event.error ?? event.message) }));
+addEventListener("unhandledrejection", (event) => report("error", { error: String(event.reason) }));
+const { default: Frame } = await import(${url} + "?s=" + encodeURIComponent(window.__spoolHot.session) + "&v=0");
+function Ready() {
+	useEffect(() => report("loaded", {}), []);
+	return null;
+}
+createRoot(document.getElementById("root")).render(
+	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
+);
+${HOT_BOOT_CLIENT}`;
+}
+
+/** A design module in a frame's closure, as an update plans over it. */
+export interface HotModule {
+	/** Its version as served: its own bytes and what it inlines (`hot-modules.ts`). */
+	hash: string;
+	/** Exports only components (`isRefreshBoundary`). */
+	boundary: boolean;
+	/** The design modules that import it; none for the frame's own. */
+	importers: readonly string[];
+}
+
+export type HotPlan = { refused: string } | { rerun: string[]; roots: string[] };
+
+/**
+ * What an update runs again, Vite's way: every module whose version differs
+ * from what this document loaded, and from each, its importers up to the
+ * nearest component-only module, the root an update imports again. A module
+ * the document never loaded is no change: it loads fresh when it is first
+ * asked for. A change that climbs to the frame's own module, and it no
+ * boundary, can't be swapped in, and the document reloads.
+ */
+export function hotPlan(modules: ReadonlyMap<string, HotModule>, served: ReadonlyMap<string, string>): HotPlan {
+	const rerun = new Set<string>();
+	const roots = new Set<string>();
+	let refused: string | undefined;
+	const climb = (path: string) => {
+		if (rerun.has(path) || refused !== undefined) return;
+		rerun.add(path);
+		const module = modules.get(path);
+		if (module === undefined) return;
+		if (module.boundary) {
+			roots.add(path);
+			return;
+		}
+		if (module.importers.length === 0) {
+			refused = `${path} exports more than components, and nothing above it only components`;
+			return;
+		}
+		for (const importer of module.importers) climb(importer);
+	};
+	for (const [path, module] of modules) {
+		const was = served.get(path);
+		if (was !== undefined && was !== module.hash) climb(path);
+	}
+	if (refused !== undefined) return { refused };
+	return { rerun: [...rerun].sort(), roots: [...roots].sort() };
+}

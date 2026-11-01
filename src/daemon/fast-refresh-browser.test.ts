@@ -3,11 +3,13 @@ import { testBrowser } from "../test-browser";
 import { builtUi, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 
 const frame = (title: string, extra = "") => `import { useState } from "react";
+import { Badge } from "shared/badge";
 export default function Frame() {
 	const [count, setCount] = useState(0);
 	return (
 		<main>
 			<h1>${title}</h1>
+			<Badge />
 			<button onClick={() => setCount((n) => n + 1)}>count {count}</button>
 		</main>
 	);
@@ -20,6 +22,11 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 	const browser = await testBrowser();
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir, experiments: ["fast-refresh"] });
+	// a shared component over a module that is no boundary: a store that must keep its one instance
+	writeDesignFile(project.root, "shared/store.ts", "export const born = String(Math.random());\n");
+	const badge = (label: string) =>
+		`import { born } from "./store";\nexport function Badge() { return <p data-born={born}>${label}</p>; }\n`;
+	writeDesignFile(project.root, "shared/badge.tsx", badge("one"));
 	writeFrame(project.root, "counter", frame("first"));
 	writeDesignFile(project.root, "frames/counter/frame.json", '{ "x": 0, "y": 0, "w": 600, "h": 400 }\n');
 	writeDesignFile(project.root, ".spool/state.json", `${JSON.stringify({ camera: { x: 60, y: 60, k: 1 } })}\n`);
@@ -45,6 +52,13 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 	// a component's text changed: swapped in, the count kept
 	writeFrame(project.root, "counter", frame("second"));
 	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("second");
+	expect(await doc.locator("button").textContent()).toBe("count 2");
+
+	// a shared component changed: it alone runs again, so the store it imports keeps its instance
+	const born = await doc.locator("p").getAttribute("data-born");
+	writeDesignFile(project.root, "shared/badge.tsx", badge("two"));
+	await expect.poll(() => doc.locator("p").textContent(), { timeout: 30_000 }).toBe("two");
+	expect(await doc.locator("p").getAttribute("data-born")).toBe(born);
 	expect(await doc.locator("button").textContent()).toBe("count 2");
 
 	// asks that overlap in one document coalesce into the latest: nothing throws, and the next save still swaps

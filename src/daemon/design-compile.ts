@@ -8,6 +8,7 @@ import type {
 	formatMessages,
 	ImportKind,
 	Loader,
+	Metafile,
 	OnResolveResult,
 	Plugin,
 	PluginBuild,
@@ -26,7 +27,7 @@ import {
 	mergeImportMap,
 	shimHash,
 } from "./document";
-import { HOT_BOOT_CLIENT, HOT_UPDATE_ENTRY, hotHeadKey, refreshFooter } from "./fast-refresh";
+import { hotBootEntry, hotHeadKey, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
@@ -94,6 +95,8 @@ export interface DesignBundle {
 	bundledCss?: string | undefined;
 	/** The bundle's source map, when asked for. */
 	map?: string;
+	/** Every input of the bundle and what it imports, as esbuild's metafile keys them. */
+	inputs: Metafile["inputs"];
 }
 
 export interface DesignEntryOptions {
@@ -248,7 +251,7 @@ export async function buildDesignEntry(esbuild: CompileEsbuild, options: DesignE
 	if (bootJs === undefined) throw new Error(`${options.label} compiled to no module`);
 	const bundledCss = result.outputFiles.find((file) => file.path.endsWith(".css"))?.text;
 	const map = result.outputFiles.find((file) => file.path.endsWith(".js.map"))?.text;
-	return { sourceFiles, bootJs, bundledCss, ...(map === undefined ? {} : { map }) };
+	return { sourceFiles, bootJs, bundledCss, inputs: result.metafile.inputs, ...(map === undefined ? {} : { map }) };
 }
 
 /** One frame's document to compile: the canvas's dialect, stamped for the picker. */
@@ -308,10 +311,11 @@ export async function compileFrameDocument(
 	{ designDir, frame, project, authority, version, webfonts = inertWebfonts(), hot }: FrameDocumentRequest,
 ): Promise<CompiledFrameDocument> {
 	const reads = createDesignReads(designDir, host.files);
-	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry(
-		host.esbuild,
-		frameEntryOptions(host, designDir, frame, reads, hot !== undefined),
-	);
+	const built = await buildDesignEntry(host.esbuild, frameEntryOptions(host, designDir, frame, reads));
+	const { sourceFiles, bundledCss } = built;
+	// Fast Refresh serves every module on its own (`hot-modules.ts`): the bundle
+	// is what finds the closure and its stylesheet, and the boot imports the frame
+	const bootJs = hot === undefined ? built.bootJs : hotBootEntry(frame, project, `${frameFolder(frame)}/frame.tsx`);
 
 	const shared = join(designDir, "shared");
 	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
@@ -387,27 +391,37 @@ export async function compileFrameDocument(
 }
 
 /**
- * A frame's Fast Refresh update (`fast-refresh.ts`): its bundle again, every
- * design module registering its components, with no render of its own, and the
- * stylesheets the document carries as they are now, as the module's `css` and
- * `bundledCss` exports. Fonts and the import map stay as the document has them.
+ * A frame as a Fast Refresh update reads it (`hot-modules.ts`): its closure,
+ * every input with what it imports and the digest of its bytes, and the
+ * stylesheets and head key the document carries as they are now.
  */
-export async function compileFrameUpdate(
+export async function compileFrameHotState(
 	host: CompileHost,
 	{ designDir, frame }: Pick<FrameDocumentRequest, "designDir" | "frame">,
-): Promise<string> {
+): Promise<{
+	inputs: Metafile["inputs"];
+	digests: ReadonlyMap<string, string>;
+	read: (file: string) => string | undefined;
+	css: string;
+	bundledCss: string;
+	head: string;
+}> {
 	const reads = createDesignReads(designDir, host.files);
-	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry(host.esbuild, {
-		...frameEntryOptions(host, designDir, frame, reads, true),
-		contents: HOT_UPDATE_ENTRY,
-	});
+	const { sourceFiles, bundledCss, inputs } = await buildDesignEntry(
+		host.esbuild,
+		frameEntryOptions(host, designDir, frame, reads),
+	);
 	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
 	const resolvePath = designPathResolver(designDir, host.files);
 	const themed = compiled.theme === undefined ? undefined : themeStylesheet(designDir, compiled, reads, resolvePath);
-	const css = themed?.css ?? compiled.css;
-	const bundled = bundledCss === undefined ? "" : layeredProjectCss(bundledCss);
-	const head = hotHead(designDir, reads, themed);
-	return `${bootJs}\nexport const css = ${JSON.stringify(css)};\nexport const bundledCss = ${JSON.stringify(bundled)};\nexport const head = ${JSON.stringify(head)};\n`;
+	return {
+		inputs,
+		digests: reads.digests(),
+		read: (file) => reads.text(file),
+		css: themed?.css ?? compiled.css,
+		bundledCss: bundledCss === undefined ? "" : layeredProjectCss(bundledCss),
+		head: hotHead(designDir, reads, themed),
+	};
 }
 
 /** The fonts and import map a Fast Refresh document stands on, as `hotHeadKey` names them. */
@@ -441,14 +455,12 @@ function frameEntryOptions(
 	designDir: string,
 	frame: string,
 	reads: DesignReads,
-	hot = false,
 ): DesignEntryOptions {
 	return {
 		designDir,
 		resolveDir: join(designDir, frameFolder(frame)),
 		sourcefile: STDIN_NAME,
-		contents: bootEntry(frame, hot),
-		...(hot ? { hot: true as const } : {}),
+		contents: bootEntry(frame),
 		label: `frame "${frame}"`,
 		imageBudget: IMAGE_BUDGET_BYTES,
 		files: host.files,
@@ -506,7 +518,7 @@ export function cssSources(reads: DesignReads, files: string[]): CssSource[] {
  * in frames that never import it — and its top-level await holds the first
  * render until the session is seeded.
  */
-function bootEntry(frame: string, hot = false): string {
+function bootEntry(frame: string): string {
 	return `import "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -524,7 +536,7 @@ function Ready() {
 createRoot(document.getElementById("root")).render(
 	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
 );
-${hot ? HOT_BOOT_CLIENT : ""}`;
+`;
 }
 
 /**
