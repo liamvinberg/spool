@@ -56,3 +56,47 @@ export function hotUpdates(
 		pending: (frame) => inFlight.get(frame)?.id,
 	};
 }
+
+/**
+ * Which of a frame's documents boot hot (the fast-refresh experiment): every
+ * frame boots the plain document, as with the experiment off, so a cold
+ * page, covers and the player pay nothing for it, until it is saved or
+ * reloaded while entered. From that boot on its documents are hot, and its
+ * saves swap in. A document already booted never changes kind: entering a
+ * plain one switches nothing until its next save.
+ */
+export interface HotBoots {
+	/** From which document generation each frame boots hot. */
+	readonly from: Readonly<Record<string, number>>;
+	/** Whether the frame's document of this generation is hot. */
+	hot(frame: string, nonce: number): boolean;
+	/**
+	 * A save reached the frame's document of this generation: swap it in, when
+	 * that document is hot; otherwise it reloads, and its next document is hot.
+	 */
+	saved(frame: string, nonce: number): "swap" | "reload";
+	/** The frame reloads into this generation: hot when a save asked for it, or the frame is entered. */
+	reloading(frame: string, nonce: number, entered: boolean): void;
+}
+
+export function hotBoots(from: Record<string, number> = {}): HotBoots {
+	const wanted = new Set<string>();
+	const hot = (frame: string, nonce: number) => {
+		const first = from[frame];
+		return first !== undefined && nonce >= first;
+	};
+	return {
+		from,
+		hot,
+		saved(frame, nonce) {
+			if (hot(frame, nonce)) return "swap";
+			wanted.add(frame);
+			return "reload";
+		},
+		reloading(frame, nonce, entered) {
+			if (!wanted.delete(frame) && !entered) return;
+			const first = from[frame];
+			if (first === undefined || nonce < first) from[frame] = nonce;
+		},
+	};
+}

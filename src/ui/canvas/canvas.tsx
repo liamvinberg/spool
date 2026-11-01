@@ -172,7 +172,7 @@ import {
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
-import { hotUpdates } from "./hot-updates";
+import { hotBoots, hotUpdates } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import {
 	FrameLife,
@@ -859,6 +859,8 @@ function CanvasField({
 	const loadedIframes = useRef(new WeakSet<HTMLIFrameElement>());
 	const hotFallBack = useRef<(frame: string) => void>(() => {});
 	const hot = useRef(hotUpdates(HOT_UPDATE_BOUND_MS, (frame) => hotFallBack.current(frame)));
+	/** Which of each frame's documents boot hot: none, until it is saved or reloads entered. */
+	const boots = useRef(hotBoots());
 	const loadWaiters = useRef(new Map<string, (() => void)[]>());
 	/** the frame's answer to a whole generation: children or siblings (#339) */
 	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
@@ -1025,6 +1027,7 @@ function CanvasField({
 			const was = store.get().docNonces[frame] ?? 0;
 			// whatever reloads the frame retires the update in flight, and its bound
 			hot.current.cancel(frame);
+			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
 			reloading.current.add(frame);
 			if (holdNext.current.delete(frame)) {
 				setHeldPaint((current) => ({ ...current, [frame]: was }));
@@ -1087,10 +1090,19 @@ function CanvasField({
 	 */
 	const refreshOrReload = useCallback(
 		(frame: string) => {
+			if (!experimentOn("fast-refresh")) {
+				reloadFrameDocument(frame);
+				return;
+			}
+			// a frame booted plain reloads into the hot document, which its later saves swap
+			if (boots.current.saved(frame, store.get().docNonces[frame] ?? 0) === "reload") {
+				if (handInFrame(frame)) reloadFrameDocument(frame);
+				else holdOrReload(frame);
+				return;
+			}
 			const iframe = iframes.current.get(frame);
 			const target = iframe?.contentWindow;
 			if (
-				!experimentOn("fast-refresh") ||
 				iframe === undefined ||
 				target == null ||
 				!loadedIframes.current.has(iframe) ||
@@ -1102,7 +1114,7 @@ function CanvasField({
 			}
 			hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
 		},
-		[handInFrame, reloadFrameDocument],
+		[handInFrame, holdOrReload, reloadFrameDocument, store],
 	);
 
 	/**
@@ -5627,6 +5639,7 @@ function CanvasField({
 														}
 														pointerOnly={editing?.frame === frame.name ? editedBox : null}
 														docNonce={docNonces[frame.name] ?? 0}
+														hotFrom={boots.current.from[frame.name]}
 														holdNonce={heldPaint[frame.name] ?? null}
 														cover={frame.cover}
 														walkArrival={walkArrivals.has(frame.name)}

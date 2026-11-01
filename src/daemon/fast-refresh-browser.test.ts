@@ -35,6 +35,12 @@ it("swaps a saved frame into its open document with its state kept, and reloads 
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const doc = page.frameLocator('iframe[title="counter"]');
 	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 60_000 }).toBe("first");
+	// the frame booted plain, as with the experiment off: its first save reloads it into the hot document
+	const iframe = page.locator('iframe[title="counter"]');
+	expect(await iframe.getAttribute("src")).not.toContain("refresh=1");
+	writeFrame(project.root, "counter", frame("hot"));
+	await expect.poll(() => iframe.getAttribute("src"), { timeout: 30_000 }).toContain("refresh=1");
+	await expect.poll(() => doc.locator("h1").textContent(), { timeout: 30_000 }).toBe("hot");
 	const button = await doc.locator("button").boundingBox();
 	if (button === null) throw new Error("the frame drew no button");
 	// entered, so a click reaches into the document

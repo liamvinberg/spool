@@ -212,6 +212,7 @@ export const FrameShell = memo(function FrameShell({
 	active = false,
 	interactive,
 	docNonce,
+	hotFrom,
 	holdNonce,
 	cover,
 	walkArrival,
@@ -241,6 +242,8 @@ export const FrameShell = memo(function FrameShell({
 	pointerOnly?: { x: number; y: number; w: number; h: number } | null;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
+	/** The generation from which the frame's documents boot hot (the fast-refresh experiment, `hot-updates.ts`). */
+	hotFrom?: number | undefined;
 	/**
 	 * The document to keep on screen while the current one boots (#253's no
 	 * blink), or null for every ordinary reload.
@@ -327,7 +330,7 @@ export const FrameShell = memo(function FrameShell({
 							tabIndex={-1}
 							allow="clipboard-write"
 							sandbox="allow-scripts"
-							src={frameDocumentUrl(project, name, held)}
+							src={frameDocumentUrl(project, name, held, hotFrom !== undefined && held >= hotFrom)}
 							className="absolute inset-0 block h-full w-full border-0 bg-white"
 							style={{ pointerEvents: "none", zIndex: 1 }}
 						/>
@@ -342,7 +345,7 @@ export const FrameShell = memo(function FrameShell({
 						// frame's opaque origin, so the delegation has to be spelled out.
 						allow="clipboard-write"
 						sandbox="allow-scripts"
-						src={frameDocumentUrl(project, name, docNonce)}
+						src={frameDocumentUrl(project, name, docNonce, hotFrom !== undefined && docNonce >= hotFrom)}
 						className="block h-full w-full border-0 bg-white"
 						// a frame that does not own the pointer does not take the keyboard
 						// either: Tab out on the canvas must never land inside one (#339)
