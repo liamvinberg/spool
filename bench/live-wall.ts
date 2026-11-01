@@ -255,9 +255,21 @@ interface Memory {
 	renderers: number;
 }
 
+const UNITS: Record<string, number> = { B: 1 / 1024, KB: 1, MB: 1024, GB: 1024 * 1024 };
+
+/**
+ * What a process holds as its own: private pages on Linux; on macOS its
+ * physical footprint, which counts the IOSurfaces and GPU memory a canvas's
+ * backing lives in there and resident size misses.
+ */
 const privateKb = (pid: number): number => {
-	if (platform() !== "linux") return Number.NaN;
 	try {
+		if (platform() === "darwin") {
+			const out = execFileSync("footprint", ["-p", String(pid)], { encoding: "utf8" });
+			const match = /Footprint: ([\d.]+) (B|KB|MB|GB)/.exec(out);
+			return match ? Number(match[1]) * (UNITS[match[2] as string] ?? Number.NaN) : Number.NaN;
+		}
+		if (platform() !== "linux") return Number.NaN;
 		const rollup = readFileSync(`/proc/${pid}/smaps_rollup`, "utf8");
 		let kb = 0;
 		for (const match of rollup.matchAll(/^Private_(?:Clean|Dirty):\s+(\d+) kB/gm)) kb += Number(match[1]);

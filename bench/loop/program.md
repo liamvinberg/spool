@@ -35,8 +35,8 @@ Believe nothing that has not been run. A number quoted without its arm, round co
 
 ## Stages
 
-- **Fast stage, devobee.** Chromium 149 (Playwright 1.61.1, `chromium-1228`) headed under Xvfb, software GL. Shared and often loaded: a run whose load average is above 8 is repeated, not used. Good for direction, daemon and compile rows, memory and anything counted rather than timed.
-- **Gate, the m1.** M1 Pro, 120 Hz built-in display, headed, through `~/.agent-hub/m1/gui`. Feel rows (pan, zoom, entry, animation rate, dropped frames) are decided here, as #23's were. Nothing a person would feel is kept on devobee numbers alone.
+- **Fast stage, devobee.** Chromium 149 (Playwright 1.61.1, `chromium-1228`) headed under Xvfb, software GL. Shared and often loaded. Good for direction, daemon and compile rows, memory and anything counted rather than timed.
+- **Gate, the m1.** M1 Pro, 120 Hz built-in display, headed, through `~/.agent-hub/m1/gui`. Feel rows (pan, zoom, entry, animation rate, dropped frames) are decided here, as #23's were. Nothing a person would feel is kept on devobee numbers alone. Other agents use the m1 too (screen sharing, builds): `ab.ts` flags runs above load 16, and those are repeated, never used.
 
 ## What ships when
 
