@@ -101,7 +101,6 @@ export function createFrameCompiler(
 				cached.fonts === webfonts.revision()
 			) {
 				const { document, etag, source, unstyled } = cached;
-				if (cached.hotModules !== undefined) await served.warm(designDir, cached.hotModules);
 				return { kind: "ok", document, etag, source, unstyled, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
