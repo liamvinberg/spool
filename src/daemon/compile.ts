@@ -55,6 +55,8 @@ export function createFrameCompiler(
 	 * `hot` asks for the document compiled for Fast Refresh, which only a canvas
 	 * with the `fast-refresh` experiment on asks for (`fast-refresh.ts`).
 	 */
+	const served = hotModules(host);
+
 	async function getDocument(
 		root: string,
 		frame: string,
@@ -99,6 +101,7 @@ export function createFrameCompiler(
 				cached.fonts === webfonts.revision()
 			) {
 				const { document, etag, source, unstyled } = cached;
+				if (cached.hotModules !== undefined) await served.warm(designDir, cached.hotModules);
 				return { kind: "ok", document, etag, source, unstyled, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
@@ -114,6 +117,8 @@ export function createFrameCompiler(
 				if (entry.settled) cache.set(key, entry);
 				else cache.delete(key);
 			}
+			// its modules compiled ahead, in one build, before it asks for them
+			if (entry.hotModules !== undefined) await served.warm(designDir, entry.hotModules);
 			const { document, etag, source, unstyled } = entry;
 			return { kind: "ok", document, etag, source, unstyled, cache: "miss" };
 		} catch (error) {
@@ -146,20 +151,18 @@ export function createFrameCompiler(
 		}
 	}
 
-	const hot = hotModules(host);
-
 	/**
 	 * One design module of a Fast Refresh document, in its session
 	 * (`hot-modules.ts`): undefined when no module is there; a compile failure throws.
 	 */
 	function getHotModule(root: string, path: string, session: string): Promise<string | undefined> {
-		return hot.module(root, basename(root), realDesignDir(root), path, session);
+		return served.module(root, basename(root), realDesignDir(root), path, session);
 	}
 
 	/** A Fast Refresh document's plan for an update of its frame (`hot-modules.ts`); undefined when the frame is gone. */
 	async function getHotPlan(root: string, frame: string, session: string) {
 		if (!isFramePath(frame) || lookupFrame(root, frame).kind === "missing") return undefined;
-		return hot.plan(root, basename(root), realDesignDir(root), frame, session);
+		return served.plan(root, basename(root), realDesignDir(root), frame, session);
 	}
 
 	return { getDocument, getHotModule, getHotPlan, forget, sourceMap };

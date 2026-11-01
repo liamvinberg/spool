@@ -293,6 +293,8 @@ export interface CompiledFrameDocument {
 	etag: string;
 	/** Every file the document was made of, present or not, absolute. */
 	inputs: string[];
+	/** A Fast Refresh document's design modules, each served on its own (`hot-modules.ts`). */
+	hotModules?: string[];
 	/** The webfont revision its fonts were resolved at (#80). */
 	fonts: number;
 	/** Every input was one state through the compile (see DesignReads); an unsettled document is never cached. */
@@ -315,15 +317,11 @@ export async function compileFrameDocument(
 	const { sourceFiles, bundledCss } = built;
 	// Fast Refresh serves every module on its own (`hot-modules.ts`): the bundle
 	// is what finds the closure and its stylesheet, and the boot imports the frame
+	const hotModules = hot === undefined ? undefined : Object.keys(built.inputs).filter(isHotModuleFile);
 	const bootJs =
-		hot === undefined
+		hotModules === undefined
 			? built.bootJs
-			: hotBootEntry(
-					frame,
-					project,
-					`${frameFolder(frame)}/frame.tsx`,
-					Object.keys(built.inputs).filter(isHotModuleFile),
-				);
+			: hotBootEntry(frame, project, `${frameFolder(frame)}/frame.tsx`, hotModules);
 
 	const shared = join(designDir, "shared");
 	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));
@@ -395,6 +393,7 @@ export async function compileFrameDocument(
 		fonts: fontsRevision,
 		settled,
 		unstyled,
+		...(hotModules === undefined ? {} : { hotModules }),
 	};
 }
 

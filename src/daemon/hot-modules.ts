@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Metafile, Plugin } from "esbuild";
 import { frameFolder } from "../page-path";
 import { IMAGE_BUDGET_BYTES } from "./assets";
@@ -103,7 +103,7 @@ export function hotModules(host: CompileHost) {
 		const key = `${designDir}\0${path}`;
 		let entry = compiled.get(key);
 		if (entry === undefined || !fresh(designDir, entry)) {
-			entry = await compile(designDir, path);
+			entry = (await compile(designDir, [path])).get(path);
 			if (entry === undefined) return undefined;
 			compiled.set(key, entry);
 		}
@@ -116,18 +116,27 @@ export function hotModules(host: CompileHost) {
 		});
 	}
 
-	/** One module compiled on its own, every design module it imports named by a placeholder. */
-	async function compile(designDir: string, path: string): Promise<Compiled | undefined> {
-		const file = join(designDir, ...path.split("/"));
+	/**
+	 * Modules compiled each on its own, in one build, every design module they
+	 * import named by a placeholder; each with the files it was made of. A
+	 * module that is no file is left out; any that doesn't compile throws.
+	 */
+	async function compile(designDir: string, paths: readonly string[]): Promise<Map<string, Compiled>> {
 		const reads = createDesignReads(designDir, host.files);
-		if (reads.bytes(file) === undefined) return undefined;
+		const entries = new Map<string, string>();
+		for (const path of paths) {
+			const file = join(designDir, ...path.split("/"));
+			if (reads.bytes(file) !== undefined) entries.set(file, path);
+		}
+		const done = new Map<string, Compiled>();
+		if (entries.size === 0) return done;
 		const resolveImport = designResolver(designDir, host.files);
 		const toPlaceholders: Plugin = {
 			name: "spool-hot-modules",
 			setup(build) {
 				build.onResolve({ filter: /.*/ }, (args) => {
-					// only the module's own imports: what it inlines is bundled as before
-					if (args.kind === "entry-point" || args.importer !== file || Object.keys(args.with).length > 0) {
+					// only the modules' own imports: what they inline is bundled as before
+					if (args.kind === "entry-point" || !entries.has(args.importer) || Object.keys(args.with).length > 0) {
 						return undefined;
 					}
 					const shared = args.path.startsWith("shared/");
@@ -157,9 +166,9 @@ export function hotModules(host: CompileHost) {
 		} = designBuildOptions({
 			designDir,
 			resolveDir: designDir,
-			sourcefile: path,
+			sourcefile: "",
 			contents: "",
-			label: `design/${path}`,
+			label: "design/",
 			imageBudget: IMAGE_BUDGET_BYTES,
 			files: host.files,
 			reads: () => reads,
@@ -167,16 +176,42 @@ export function hotModules(host: CompileHost) {
 		});
 		const result = await host.esbuild.build({
 			...options,
-			entryPoints: [file],
+			entryPoints: [...entries.keys()],
 			plugins: [toPlaceholders, ...plugins],
 		});
-		const js = result.outputFiles.find((out) => out.path.endsWith(".js"))?.text;
-		if (js === undefined) throw new Error(`design/${path} compiled to no module`);
 		const digests = reads.digests();
-		const hash = moduleHash(path, result.metafile.inputs, (input) =>
-			digests.get(designInputFile(designDir, input, host.files)),
-		);
-		return { digests, js, hash };
+		const digestOf = (input: string) => digests.get(designInputFile(designDir, input, host.files));
+		for (const [out, meta] of Object.entries(result.metafile.outputs)) {
+			if (meta.entryPoint === undefined || !out.endsWith(".js")) continue;
+			const path = meta.entryPoint;
+			const js = result.outputFiles.find((file) => file.path === resolve(designDir, out))?.text;
+			if (js === undefined) continue;
+			// what this module was made of: its own file, and what it inlines
+			const made = new Map<string, string>();
+			for (const input of [path, ...(result.metafile.inputs[path]?.imports ?? []).map((edge) => edge.path)]) {
+				const file = designInputFile(designDir, input, host.files);
+				const digest = digests.get(file);
+				if (digest !== undefined) made.set(file, digest);
+			}
+			done.set(path, { digests: made, js, hash: moduleHash(path, result.metafile.inputs, digestOf) });
+		}
+		return done;
+	}
+
+	/**
+	 * A Fast Refresh document's modules compiled ahead, in one build, as the
+	 * document is: its first load then asks for each from the cache.
+	 */
+	async function warm(designDir: string, paths: readonly string[]): Promise<void> {
+		const stale = paths.filter((path) => {
+			const entry = compiled.get(`${designDir}\0${path}`);
+			return entry === undefined || !fresh(designDir, entry);
+		});
+		try {
+			for (const [path, entry] of await compile(designDir, stale)) compiled.set(`${designDir}\0${path}`, entry);
+		} catch {
+			// each module compiles again when it is asked for, and says why there
+		}
 	}
 
 	/**
@@ -226,5 +261,5 @@ export function hotModules(host: CompileHost) {
 		};
 	}
 
-	return { module, plan };
+	return { module, plan, warm };
 }
