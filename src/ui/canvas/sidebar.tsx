@@ -1827,6 +1827,9 @@ function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: bo
 				transform: `translateY(${row.top}px)`,
 				transition: `transform 280ms ${CURVE}, opacity 140ms ease-out`,
 				opacity: lifted ? 0.3 : 1,
+				// a page of a thousand frames is a thousand rows: the ones scrolled away
+				// are left unstyled and unlaid until they come near the list's view
+				contentVisibility: "auto",
 			}}
 		>
 			{children}
