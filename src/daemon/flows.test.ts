@@ -2,7 +2,7 @@ import { readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "no
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
-import { createFlowGraph, type Flows } from "./flows";
+import { createFlowGraph, type Flows, frameSourceHash } from "./flows";
 
 /**
  * The flow layer over the Hono seam (#34): the map is read, not walked —
@@ -342,6 +342,27 @@ describe("the kept graph", () => {
 		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="two">on</a>;\n`);
 
 		expect((await fetchFlows(app, name)).edges).toMatchObject([{ from: "start", to: "two" }]);
+	});
+
+	it("hashes a frame's source as its read saw it, however late the hash is asked for", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="one">on</a>;\n`);
+		writeFrame(
+			root,
+			"start",
+			`import { Go } from "../../shared/ui/go";\nexport default function Frame() {\n\treturn <Go />;\n}\n`,
+		);
+		const before = frameSourceHash(root, "start");
+		const graph = createFlowGraph();
+		const read = (await graph.sources(root)).get("start");
+
+		// the read keeps the bytes it was derived from, not the path to them
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="two">on</a>;\n`);
+
+		expect(read?.hash).toBe(before);
+		expect((await graph.sources(root)).get("start")?.hash).toBe(frameSourceHash(root, "start"));
+		expect(frameSourceHash(root, "start")).not.toBe(before);
 	});
 
 	it("resolves an import that only lands once the file it names exists", async () => {

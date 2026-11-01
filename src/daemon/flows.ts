@@ -91,14 +91,40 @@ export interface Flows {
  * verified marks and the resolved-target cache.
  */
 export function sourceHash(pass: SourcePass, files: readonly string[]): string {
+	return hashOfBytes(
+		files,
+		files.map((file) => pass.bytes(file)),
+	);
+}
+
+function hashOfBytes(files: readonly string[], bytes: readonly (Buffer | undefined)[]): string {
 	const hash = createHash("sha256");
-	for (const file of files) {
+	files.forEach((file, at) => {
 		hash.update(file);
 		hash.update("\0");
-		hash.update(pass.bytes(file) ?? "absent");
+		hash.update(bytes[at] ?? "absent");
 		hash.update("\0");
-	}
+	});
 	return hash.digest("hex");
+}
+
+/**
+ * The same hash, taken only when somebody asks for it. Most reads never do: it
+ * is a mark's or a rendered read's key, and few frames have either, while a
+ * shared edit derives hundreds of frames again, each hashing every byte of its
+ * graph. The bytes are the pass's, held until asked, so a late answer is still
+ * the pass's own.
+ */
+function deferredSourceHash(pass: SourcePass, files: readonly string[]): () => string {
+	let bytes: (Buffer | undefined)[] | undefined = files.map((file) => pass.bytes(file));
+	let hash: string | undefined;
+	return () => {
+		if (hash === undefined) {
+			hash = hashOfBytes(files, bytes ?? []);
+			bytes = undefined;
+		}
+		return hash;
+	};
 }
 
 /** What a frame with no readable source hashes to — a name that resolves nowhere. */
@@ -174,7 +200,10 @@ function verifiedWitness(walked: string | undefined, alive: ReadonlySet<string>)
 	for (const mark of parseVerifiedMarks(walked)) {
 		if (alive.has(mark.from) && alive.has(mark.to)) marks.set(`${mark.from}\0${mark.to}`, mark.hash);
 	}
-	return (from, to, hash) => marks.get(`${from}\0${to}`) === hash;
+	return (from, to, hash) => {
+		const marked = marks.get(`${from}\0${to}`);
+		return marked !== undefined && marked === hash();
+	};
 }
 
 /** The lawful targets a frame's folder claims, with the sites claiming them. */
@@ -249,7 +278,7 @@ export interface FrameGraph extends FrameSource {
 /** What the whole project supplies to one frame's decoration. */
 export interface FlowContext {
 	exists: ReadonlySet<string>;
-	verified: (from: string, to: string, hash: string) => boolean;
+	verified: (from: string, to: string, hash: () => string) => boolean;
 	rendered: RenderedReader;
 	scenarios: string;
 }
@@ -264,7 +293,8 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 	const from = graph.frame;
 	const edges: FlowEdge[] = [];
 	const unreadable: FlowUnreadable[] = [];
-	const read = context.rendered(from, graph.hash, context.scenarios);
+	const hash = () => graph.hash;
+	const read = context.rendered(from, hash, context.scenarios);
 	const filled = resolvedBySite(read ?? [], graph.unreadable);
 	// a resolved value is the site's, so it joins that site's own target list
 	const byTarget = derivedTargets(graph.sites);
@@ -295,7 +325,7 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 			to,
 			certainty: sites.some((site) => site.conditional === undefined) ? "will" : "might",
 			sites: sites.map(({ target: _target, ...site }) => site),
-			...(context.verified(from, to, graph.hash) ? { verified: true as const } : {}),
+			...(context.verified(from, to, hash) ? { verified: true as const } : {}),
 			...(context.exists.has(to) ? {} : { missing: true as const }),
 			// weaker than a literal: true for the scenarios rendered, not for every state
 			...(fromRender.has(to) ? { resolved: true as const } : {}),
@@ -337,8 +367,6 @@ interface FrameEntry {
 	imports: ImportEdge[];
 	/** Names and content digests: the cheap "did any of this move". */
 	fingerprint: string;
-	/** Names and bytes: what walked.json and resolved.json are keyed to. */
-	hash: string;
 	/** What vouches for all of the above without a read, when a stat can. */
 	witness: SourceWitness | undefined;
 	/** The half as callers receive it, handed out again while it stands. */
@@ -532,16 +560,21 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			return { entry: known, derived: false };
 		}
 		const source = frameSourceIn(pass, frameDir);
-		const hash = sourceHash(pass, source.files);
+		const hash = deferredSourceHash(pass, source.files);
 		const entry: FrameEntry = {
 			dir: frameDir,
 			folder: source.folder,
 			files: source.files,
 			imports: source.imports,
 			fingerprint: fingerprintOf(pass, source.files),
-			hash,
 			witness: witnessSource(pass.designDir, frameDir, listing, source, since, looks, pass.digest),
-			graph: { frame, ...source, hash },
+			graph: {
+				frame,
+				...source,
+				get hash() {
+					return hash();
+				},
+			},
 		};
 		entries.set(frame, entry);
 		moved.add(root);
