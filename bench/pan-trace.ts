@@ -292,6 +292,8 @@ interface TraceEvent {
 	tid: number;
 	ts: number;
 	dur?: number;
+	/** Thread CPU time, where the trace records it: far below `dur` is a thread kept off a core. */
+	tdur?: number;
 	args?: Record<string, unknown> & { name?: string; data?: { message?: string } };
 }
 
@@ -400,6 +402,7 @@ function attribute(events: TraceEvent[], gesture: string): string {
 	lines.push("trace: events, ms per interval, long / rest");
 	for (const [k, l, r] of top) lines.push(`trace:   ${k.slice(0, 90).padEnd(90)} ${l.toFixed(2)} / ${r.toFixed(2)}`);
 	lines.push(lateDeadlines(events, canvasPid, threadName, long));
+	lines.push(cpuAgainstWall(events, label, windows[0]?.start ?? 0, windows.at(-1)?.end ?? 0));
 	return `${lines.join("\n")}\n`;
 }
 
@@ -442,6 +445,41 @@ function lateDeadlines(
 }
 
 const LATE_MS = 2;
+
+/**
+ * Each busy thread's CPU time against its tasks' wall time over the gesture. A
+ * task that takes 50 ms of wall for 2 ms of CPU was runnable and kept off a
+ * core: the machine's load, not the page's work. On a loaded Mac most of a
+ * gesture's long intervals are that, live frame or not (spool#218, LOG #21).
+ */
+function cpuAgainstWall(
+	events: TraceEvent[],
+	label: (pid: number, tid: number) => string,
+	start: number,
+	end: number,
+): string {
+	const per = new Map<string, { cpu: number; wall: number }>();
+	for (const e of events) {
+		if (e.ph !== "X" || e.dur === undefined || e.tdur === undefined || e.ts < start || e.ts > end) continue;
+		if (e.name !== "ThreadControllerImpl::RunTask" && e.name !== "ThreadPool_RunTask") continue;
+		const key = label(e.pid, e.tid);
+		const got = per.get(key) ?? { cpu: 0, wall: 0 };
+		got.cpu += e.tdur;
+		got.wall += e.dur;
+		per.set(key, got);
+	}
+	const span = Math.max(1, end - start);
+	const total = [...per.values()].reduce((sum, v) => ({ cpu: sum.cpu + v.cpu, wall: sum.wall + v.wall }), {
+		cpu: 0,
+		wall: 0,
+	});
+	const busiest = [...per]
+		.filter(([, v]) => v.wall / span > 0.03)
+		.sort((a, b) => b[1].wall - a[1].wall)
+		.slice(0, 6)
+		.map(([key, v]) => `${key} ${((100 * v.cpu) / span).toFixed(0)}/${((100 * v.wall) / span).toFixed(0)}%`);
+	return `trace: cores used ${(total.cpu / span).toFixed(2)} of ${(total.wall / span).toFixed(2)} busy by wall; cpu/wall per thread: ${busiest.join(", ")}`;
+}
 
 const CATEGORIES = [
 	"toplevel",
