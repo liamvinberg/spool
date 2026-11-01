@@ -27,7 +27,7 @@ import {
 	mergeImportMap,
 	shimHash,
 } from "./document";
-import { hotBootEntry, hotHeadKey, refreshFooter } from "./fast-refresh";
+import { hotBootEntry, hotHeadKey, isHotModuleFile, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
@@ -315,7 +315,15 @@ export async function compileFrameDocument(
 	const { sourceFiles, bundledCss } = built;
 	// Fast Refresh serves every module on its own (`hot-modules.ts`): the bundle
 	// is what finds the closure and its stylesheet, and the boot imports the frame
-	const bootJs = hot === undefined ? built.bootJs : hotBootEntry(frame, project, `${frameFolder(frame)}/frame.tsx`);
+	const bootJs =
+		hot === undefined
+			? built.bootJs
+			: hotBootEntry(
+					frame,
+					project,
+					`${frameFolder(frame)}/frame.tsx`,
+					Object.keys(built.inputs).filter(isHotModuleFile),
+				);
 
 	const shared = join(designDir, "shared");
 	const compiled = await host.stylesheets(designDir, cssSources(reads, sourceFiles));

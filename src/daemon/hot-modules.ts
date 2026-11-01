@@ -3,11 +3,11 @@ import { join } from "node:path";
 import type { Metafile, Plugin } from "esbuild";
 import { frameFolder } from "../page-path";
 import { IMAGE_BUDGET_BYTES } from "./assets";
-import { designRelativePath } from "./design-boundary";
+import { designPathResolver, designRelativePath } from "./design-boundary";
 import { type CompileHost, compileFrameHotState, designBuildOptions, designInputFile } from "./design-compile";
-import { createDesignReads } from "./design-reads";
+import { contentDigest, createDesignReads, readDesignBytes } from "./design-reads";
 import { designResolver } from "./design-resolve";
-import { type HotModule, hotModuleUrl, hotPlan, isRefreshBoundary } from "./fast-refresh";
+import { type HotModule, hotModuleUrl, hotPlan, isHotModuleFile, isRefreshBoundary } from "./fast-refresh";
 
 /**
  * Fast Refresh's modules (the fast-refresh experiment, `fast-refresh.ts`):
@@ -22,11 +22,6 @@ import { type HotModule, hotModuleUrl, hotPlan, isRefreshBoundary } from "./fast
  * change keeps the one instance the document's module map holds. A daemon
  * that restarts has none, and the next update reloads the document.
  */
-
-/** A design module: a script esbuild reads as one, named by its path alone. */
-export function isHotModuleFile(path: string): boolean {
-	return /\.(?:[mc]?[jt]s|[jt]sx)$/.test(path) && !/[?#]/.test(path);
-}
 
 /** Inlined into the module that imports it, so a version of that module: what isn't a module or a stylesheet. */
 function inlined(path: string): boolean {
@@ -49,6 +44,17 @@ function moduleHash(key: string, inputs: Metafile["inputs"], digestOf: (key: str
 		.slice(0, 16);
 }
 
+/** Where a compiled module names another design module, until a session's URL for it is put in. */
+const PLACEHOLDER = "__spool_hot__/";
+const PLACED = /__spool_hot__\/([A-Za-z0-9%._~!*'()-]+)/g;
+
+/** One module compiled, for every session: what it was made of, so a change to any of it compiles it again. */
+interface Compiled {
+	digests: ReadonlyMap<string, string>;
+	js: string;
+	hash: string;
+}
+
 interface Session {
 	served: Map<string, string>;
 	versions: Map<string, number>;
@@ -60,6 +66,14 @@ const SESSIONS_KEPT = 256;
 
 export function hotModules(host: CompileHost) {
 	const sessions = new Map<string, Session>();
+	const compiled = new Map<string, Compiled>();
+	const fresh = (designDir: string, entry: Compiled) => {
+		const resolvePath = designPathResolver(designDir, host.files);
+		for (const [file, digest] of entry.digests) {
+			if (contentDigest(readDesignBytes(resolvePath, file, host.files)) !== digest) return false;
+		}
+		return true;
+	};
 	const sessionOf = (root: string, id: string, open: boolean): Session | undefined => {
 		const key = `${root}\0${id}`;
 		let session = sessions.get(key);
@@ -86,14 +100,29 @@ export function hotModules(host: CompileHost) {
 		id: string,
 	): Promise<string | undefined> {
 		if (!isHotModuleFile(path) || path.split("/").some((part) => part === ".." || part === "")) return undefined;
+		const key = `${designDir}\0${path}`;
+		let entry = compiled.get(key);
+		if (entry === undefined || !fresh(designDir, entry)) {
+			entry = await compile(designDir, path);
+			if (entry === undefined) return undefined;
+			compiled.set(key, entry);
+		}
 		const session = sessionOf(root, id, true);
 		if (session === undefined) return undefined;
+		session.served.set(path, entry.hash);
+		return entry.js.replace(PLACED, (_, dep: string) => {
+			const module = decodeURIComponent(dep);
+			return hotModuleUrl(project, module, id, session.versions.get(module) ?? 0);
+		});
+	}
+
+	/** One module compiled on its own, every design module it imports named by a placeholder. */
+	async function compile(designDir: string, path: string): Promise<Compiled | undefined> {
 		const file = join(designDir, ...path.split("/"));
 		const reads = createDesignReads(designDir, host.files);
 		if (reads.bytes(file) === undefined) return undefined;
 		const resolveImport = designResolver(designDir, host.files);
-		const versionOf = (dep: string) => session.versions.get(dep) ?? 0;
-		const toUrls: Plugin = {
+		const toPlaceholders: Plugin = {
 			name: "spool-hot-modules",
 			setup(build) {
 				build.onResolve({ filter: /.*/ }, (args) => {
@@ -114,8 +143,10 @@ export function hotModules(host: CompileHost) {
 					}
 					if (resolved === undefined || !("file" in resolved) || resolved.suffix !== "") return undefined;
 					if (!isHotModuleFile(resolved.file)) return undefined;
-					const dep = designRelativePath(designDir, resolved.file);
-					return { path: hotModuleUrl(project, dep, id, versionOf(dep)), external: true };
+					return {
+						path: PLACEHOLDER + encodeURIComponent(designRelativePath(designDir, resolved.file)),
+						external: true,
+					};
 				});
 			},
 		};
@@ -134,15 +165,18 @@ export function hotModules(host: CompileHost) {
 			reads: () => reads,
 			hot: true,
 		});
-		const result = await host.esbuild.build({ ...options, entryPoints: [file], plugins: [toUrls, ...plugins] });
+		const result = await host.esbuild.build({
+			...options,
+			entryPoints: [file],
+			plugins: [toPlaceholders, ...plugins],
+		});
 		const js = result.outputFiles.find((out) => out.path.endsWith(".js"))?.text;
 		if (js === undefined) throw new Error(`design/${path} compiled to no module`);
 		const digests = reads.digests();
-		session.served.set(
-			path,
-			moduleHash(path, result.metafile.inputs, (key) => digests.get(designInputFile(designDir, key, host.files))),
+		const hash = moduleHash(path, result.metafile.inputs, (input) =>
+			digests.get(designInputFile(designDir, input, host.files)),
 		);
-		return js;
+		return { digests, js, hash };
 	}
 
 	/**

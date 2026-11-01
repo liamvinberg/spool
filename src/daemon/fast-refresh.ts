@@ -301,6 +301,11 @@ addEventListener("message", (event) => {
 });
 `;
 
+/** A design module: a script esbuild reads as one, named by its path alone. */
+export function isHotModuleFile(path: string): boolean {
+	return /\.(?:[mc]?[jt]s|[jt]sx)$/.test(path) && !/[?#]/.test(path);
+}
+
 /** Where a design module is served on its own for a Fast Refresh document: its path in design/, under its project. */
 export function hotModulePath(project: string, module: string): string {
 	return `/p/${encodeURIComponent(project)}/hot/${encodeURIComponent(module)}`;
@@ -314,9 +319,12 @@ export function hotModuleUrl(project: string, module: string, session: string, v
 /**
  * A Fast Refresh document's own module: what `bootEntry` is, with the frame
  * imported from its served URL in this document's session rather than bundled.
+ * Every module of the frame's closure is fetched at once, as a preload, so its
+ * imports don't wait on one another level by level.
  */
-export function hotBootEntry(frame: string, project: string, entry: string): string {
+export function hotBootEntry(frame: string, project: string, entry: string, closure: readonly string[]): string {
 	const url = JSON.stringify(hotModulePath(project, entry));
+	const preload = JSON.stringify(closure.map((path) => hotModulePath(project, path)));
 	return `import "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -326,7 +334,14 @@ function report(spool, detail) {
 }
 addEventListener("error", (event) => report("error", { error: String(event.error ?? event.message) }));
 addEventListener("unhandledrejection", (event) => report("error", { error: String(event.reason) }));
-const { default: Frame } = await import(${url} + "?s=" + encodeURIComponent(window.__spoolHot.session) + "&v=0");
+const SESSION = "?s=" + encodeURIComponent(window.__spoolHot.session) + "&v=0";
+for (const path of ${preload}) {
+	const link = document.createElement("link");
+	link.rel = "modulepreload";
+	link.href = path + SESSION;
+	document.head.append(link);
+}
+const { default: Frame } = await import(${url} + SESSION);
 function Ready() {
 	useEffect(() => report("loaded", {}), []);
 	return null;
