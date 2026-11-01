@@ -133,6 +133,7 @@ import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { unstyledWarning } from "./unstyled-classes";
 import { createUpdateChecker } from "./update-check";
 import {
+	fastRefreshRuntimeJs,
 	reactVersion,
 	type VendorModule,
 	vendorPlayerShellJs,
@@ -334,6 +335,13 @@ export function createDaemonApp({
 	let captureOrigin = captureOriginFor(controlOrigin);
 	const projectCapabilities = new Map<string, string>();
 	const playerHandoffs = new Map<string, { project: string; frame: string; scenario: string; expiresAt: number }>();
+
+	// the fast-refresh experiment's own vendor builds, made as the daemon starts
+	// rather than on the first document that waits for them
+	if (experiments?.includes("fast-refresh") === true) {
+		void vendorReactDevJs().catch(() => {});
+		void fastRefreshRuntimeJs().catch(() => {});
+	}
 
 	function projectCapability(root: string): string {
 		let capability = projectCapabilities.get(root);
