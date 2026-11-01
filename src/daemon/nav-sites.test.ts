@@ -1,6 +1,8 @@
+import { realpathSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
-import { frameSource, parseNavSites, targetLiterals } from "./nav-sites";
+import { createSourcePass, frameSource, frameSourceIn, parseNavSites, targetLiterals } from "./nav-sites";
 
 /**
  * The claim reader (#34): arrows claim what the code says, so this parser is
@@ -289,6 +291,32 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 
 		expect(frameSource(root, "one").sites.map((s) => s.target)).toEqual(["home"]);
 		expect(frameSource(root, "two").sites.map((s) => s.target)).toEqual(["home"]);
+	});
+
+	it("hands every frame walking a shared file the same import edges, whatever folder the frame sits in", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "shared/ui/row.tsx", "export function Row() {\n\treturn <li />;\n}\n");
+		writeDesignFile(root, "shared/ui/list.tsx", `import { Row } from "./row";\nexport const List = () => <Row />;\n`);
+		writeDesignFile(
+			root,
+			"frames/one/frame.tsx",
+			`import { List } from "../../shared/ui/list";\nexport default () => <List />;\n`,
+		);
+		writeDesignFile(
+			root,
+			"frames/app/two/frame.tsx",
+			`import { List } from "../../../shared/ui/list";\nexport default () => <List />;\n`,
+		);
+		const designDir = realpathSync(join(root, "design"));
+		const pass = createSourcePass(designDir);
+		const fromList = (frame: string) =>
+			frameSourceIn(pass, join(designDir, "frames", frame)).imports.filter((edge) => edge.from.endsWith("list.tsx"));
+
+		const one = fromList("one");
+		expect(one).toEqual([
+			{ from: join(designDir, "shared/ui/list.tsx"), specifier: "./row", to: join(designDir, "shared/ui/row.tsx") },
+		]);
+		expect(fromList("app/two")[0]).toBe(one[0]);
 	});
 
 	it("follows a chain of imports, not just the first hop", () => {
