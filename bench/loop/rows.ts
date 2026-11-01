@@ -510,6 +510,7 @@ export const ROWS: Row[] = [
 			higher("dither_pan_frames_full_rate_count", "docs"),
 			higher("dither_pan_frame_raf_median_fps", "fps"),
 			lower("dither_mem_per_live_mb", "MB"),
+			lower("dither_mem_per_live_private_mb", "MB"),
 			lower("dither_pixel_ratio", "x"),
 		],
 		extract: metricsOf,
