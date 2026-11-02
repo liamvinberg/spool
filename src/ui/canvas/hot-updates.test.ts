@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { hotBoots, hotUpdates } from "./hot-updates";
+import { type Hand, hotBoots, hotUpdates, onAnswer, onChange } from "./hot-updates";
 
 beforeEach(() => {
 	vi.useFakeTimers();
@@ -56,4 +56,37 @@ it("boots a frame plain until a save asks for the hot document, then swaps its s
 	// any other reload of a frame nobody saved or entered stays plain
 	boots.reloading("c", 1, false);
 	expect(boots.hot("c", 1)).toBe(false);
+});
+
+/** The hand nowhere, or in frame "a" one way at a time. */
+const away: Hand = { editing: null, picked: [], saved: new Set(), writing: new Set() };
+const handIn: Record<string, Hand> = {
+	"editing words": { ...away, editing: "a" },
+	"a pick": { ...away, picked: [{ frame: "a" }] },
+	"a saved write": { ...away, saved: new Set(["a"]) },
+	"a write about to land": { ...away, writing: new Set(["a"]) },
+};
+
+it("offers no update while the hand is in the frame, and defers the reload under a pick", () => {
+	const change = (hand: Hand, frame = "a") => onChange({ hand, frame, boot: "swap", open: true });
+	expect(change(away)).toBe("swap");
+	for (const [how, hand] of Object.entries(handIn)) {
+		expect(change(hand), how).toBe(how === "a pick" ? "defer" : "reload");
+		// the hand in one frame leaves its neighbour's swaps alone
+		expect(change(hand, "b"), how).toBe("swap");
+	}
+	// a document that is not there to swap reloads, as a plain boot does
+	expect(onChange({ hand: away, frame: "a", boot: "swap", open: false })).toBe("reload");
+	expect(onChange({ hand: away, frame: "a", boot: "reload", open: true })).toBe("reload");
+});
+
+it("drops an update the hand came into while it ran, the reload owed, so no older bundle stands", () => {
+	expect(onAnswer("applied", away, "a")).toBe("keep");
+	expect(onAnswer("refused", away, "a")).toBe("reload");
+	expect(onAnswer("stale", handIn["a saved write"] as Hand, "a")).toBe("stale");
+	for (const [how, hand] of Object.entries(handIn)) {
+		// a hand save in the window is the newer: the swap read before it is reloaded over, never kept
+		expect(onAnswer("applied", hand, "a"), how).toBe(how === "a pick" ? "defer" : "reload");
+		expect(onAnswer("applied", hand, "b"), how).toBe("keep");
+	}
 });

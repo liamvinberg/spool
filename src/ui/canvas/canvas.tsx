@@ -172,7 +172,7 @@ import {
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
-import { hotBoots, hotUpdates } from "./hot-updates";
+import { type Hand, hotBoots, hotUpdates, onAnswer, onChange } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import {
 	FrameLife,
@@ -912,7 +912,7 @@ function CanvasField({
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
 	// frames whose next reload the canvas caused: the hand is about to write
-	// them (handInFrame), and their outgoing document is held whatever its
+	// them (`handIn`), and their outgoing document is held whatever its
 	// state (#253's no blink)
 	const holdNext = useRef(new Set<string>());
 	// frames whose file changed from outside while the hand held an element in
@@ -1089,13 +1089,14 @@ function CanvasField({
 	);
 	hotFallBack.current = holdOrReload;
 
-	/** The hand is in the frame or about to write to it: editing words, saved, or holding a write's readers. */
-	const handInFrame = useCallback(
-		(frame: string) =>
-			store.get().editing?.frame === frame ||
-			store.get().picked.some((pick) => pick.frame === frame) ||
-			saved.current.has(frame) ||
-			holdNext.current.has(frame),
+	/** Where the hand is: editing words, picks, saved, or holding a write's readers (`hot-updates.ts`). */
+	const hand = useCallback(
+		(): Hand => ({
+			editing: store.get().editing?.frame ?? null,
+			picked: store.get().picked,
+			saved: saved.current,
+			writing: holdNext.current,
+		}),
 		[store],
 	);
 
@@ -1104,7 +1105,7 @@ function CanvasField({
 	 * fast-refresh experiment on, the open document is asked to swap the changed
 	 * components in with React Refresh, keeping its state (`daemon/fast-refresh.ts`),
 	 * and reloads as before when it refuses or does not answer in time. A frame
-	 * whose document has not loaded, or that the hand is in (`handInFrame`),
+	 * whose document has not loaded, or that the hand is in (`handIn`),
 	 * reloads as it always did: the hand lane is untouched.
 	 */
 	const refreshOrReload = useCallback(
@@ -1113,27 +1114,24 @@ function CanvasField({
 				reloadFrameDocument(frame);
 				return;
 			}
-			// a frame booted plain reloads into the hot document, which its later saves swap
-			if (boots.current.saved(frame, store.get().docNonces[frame] ?? 0) === "reload") {
-				if (handInFrame(frame)) reloadFrameDocument(frame);
-				else holdOrReload(frame);
-				return;
-			}
 			const iframe = iframes.current.get(frame);
 			const target = iframe?.contentWindow;
-			if (
-				iframe === undefined ||
-				target == null ||
-				!loadedIframes.current.has(iframe) ||
-				reloading.current.has(frame) ||
-				handInFrame(frame)
-			) {
-				reloadFrameDocument(frame);
-				return;
-			}
-			hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
+			const route = onChange({
+				hand: hand(),
+				frame,
+				// a frame booted plain reloads into the hot document, which its later saves swap
+				boot: boots.current.saved(frame, store.get().docNonces[frame] ?? 0),
+				open:
+					iframe !== undefined &&
+					target != null &&
+					loadedIframes.current.has(iframe) &&
+					!reloading.current.has(frame),
+			});
+			if (route === "defer") writtenUnderHand.current.add(frame);
+			else if (route === "reload" || target == null) reloadFrameDocument(frame);
+			else hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
 		},
-		[handInFrame, holdOrReload, reloadFrameDocument, store],
+		[hand, reloadFrameDocument, store],
 	);
 
 	/**
@@ -3297,13 +3295,12 @@ function CanvasField({
 					return;
 				}
 				case "hot": {
-					const outcome = hot.current.answer(message.frame, message.id, message.ok);
-					if (outcome === "stale") return;
+					const route = onAnswer(hot.current.answer(message.frame, message.id, message.ok), hand(), message.frame);
+					// holdNext is the hand's, and counts as in the frame: an applied swap never has one to clear
+					if (route === "keep") requestSiteBoxes(message.frame);
 					// refused, or the hand came into the frame while it swapped: the
 					// swapped bundle may predate the hand's write, so the reload is owed
-					if (outcome === "refused" || handInFrame(message.frame)) holdOrReload(message.frame);
-					// holdNext is the hand's, and counts as in the frame: an applied swap never has one to clear
-					else requestSiteBoxes(message.frame);
+					else if (route !== "stale") holdOrReload(message.frame);
 					return;
 				}
 				case "loaded": {
@@ -3639,7 +3636,7 @@ function CanvasField({
 		altered,
 		camera,
 		store,
-		handInFrame,
+		hand,
 		holdOrReload,
 	]);
 

@@ -100,3 +100,62 @@ export function hotBoots(from: Record<string, number> = {}): HotBoots {
 		},
 	};
 }
+
+/**
+ * Where the hand is (#314, #318, #319): an edit open in a frame, elements
+ * picked in it, a write of the hand's it already shows, or a write about to
+ * land on it (its own, or a shared file it reads). A frame the hand is in is
+ * never swapped: the swap would run its components again under the words being
+ * typed, or bring a bundle read before the hand's write landed.
+ */
+export interface Hand {
+	editing: string | null;
+	picked: readonly { frame: string }[];
+	saved: { has(frame: string): boolean };
+	writing: { has(frame: string): boolean };
+}
+
+export function handIn(hand: Hand, frame: string): boolean {
+	return (
+		hand.editing === frame ||
+		hand.picked.some((pick) => pick.frame === frame) ||
+		hand.saved.has(frame) ||
+		hand.writing.has(frame)
+	);
+}
+
+/**
+ * What a change to a frame's file does to its document, with the experiment on:
+ * `defer` while an element is picked in it, the reload owed until the hand
+ * leaves (#319); `reload` when the document is not there to swap (not loaded,
+ * already reloading, booted plain) or the hand is in it; `swap` otherwise.
+ */
+export function onChange(input: {
+	hand: Hand;
+	frame: string;
+	/** What `HotBoots.saved` said of the frame's current document. */
+	boot: "swap" | "reload";
+	/** The document has said loaded and no reload is under way. */
+	open: boolean;
+}): "defer" | "reload" | "swap" {
+	const { hand, frame, boot, open } = input;
+	if (hand.picked.some((pick) => pick.frame === frame)) return "defer";
+	if (boot === "reload" || !open || handIn(hand, frame)) return "reload";
+	return "swap";
+}
+
+/**
+ * What a document's answer to an update leaves: `keep` an applied swap the
+ * hand stayed out of; a refusal, or a swap the hand came into while it ran,
+ * owes the reload, `defer`red while an element is picked there; a `stale`
+ * answer does nothing.
+ */
+export function onAnswer(
+	outcome: "applied" | "refused" | "stale",
+	hand: Hand,
+	frame: string,
+): "keep" | "defer" | "reload" | "stale" {
+	if (outcome === "stale") return "stale";
+	if (outcome === "applied" && !handIn(hand, frame)) return "keep";
+	return hand.picked.some((pick) => pick.frame === frame) ? "defer" : "reload";
+}
