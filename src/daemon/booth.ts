@@ -119,6 +119,9 @@ const PACE_DEADLINE_MS = 3000;
 /** How long a cover's document has to draw something into its root. */
 const COVER_BOOT_MS = 5000;
 
+/** How long a booted document's images have to load and decode before its settle (#216). */
+const IMAGES_BUDGET_MS = 5000;
+
 /**
  * How long a shot waits for the root to have children (#16). A frame that
  * renders nothing still shoots, so running this out is not a failure.
@@ -1344,10 +1347,19 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	}
 
 	/**
-	 * The shim's own settle, run where frame code cannot reach it, and waited on
-	 * for no longer than its budget and a grace before the picture is taken.
+	 * The frame's images and the shim's own settle, run where frame code cannot
+	 * reach them, each waited on for no longer than its budget and a grace before
+	 * the picture is taken.
 	 */
 	async function settled(tab: Tab, world: number): Promise<void> {
+		// an imported image arrives by URL after the boot, and a picture without it is wrong
+		await within(
+			evaluate(tab, world, `${frameShims.boothProbes}.imagesReady(${IMAGES_BUDGET_MS})`),
+			IMAGES_BUDGET_MS + SETTLE_GRACE_MS,
+			"loading images",
+		).catch((error: unknown) => {
+			if (!(error instanceof TimedOut)) throw error;
+		});
 		await within(
 			evaluate(
 				tab,

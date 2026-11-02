@@ -12,6 +12,14 @@ const AMBER_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4f
 const VIOLET_SVG =
 	"PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM3ZjAwZmYiLz48L3N2Zz4=";
 
+/** Both probes as a frame's imported images, at their asset URLs. */
+const VIOLET_SVG_URL = `/asset/${"a".repeat(64)}.svg`;
+const AMBER_PNG_URL = `/asset/${"b".repeat(64)}.png`;
+const ASSETS: Record<string, { type: string; base64: string }> = {
+	[VIOLET_SVG_URL]: { type: "image/svg+xml", base64: VIOLET_SVG },
+	[AMBER_PNG_URL]: { type: "image/png", base64: AMBER_PNG },
+};
+
 interface ServedCapture {
 	controlOrigin: string;
 	url: string;
@@ -42,6 +50,14 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 			response.setHeader("content-type", "text/html; charset=utf-8");
 			response.setHeader("cache-control", "no-store");
 			response.end(controlDocument);
+			return;
+		}
+		// the render host's asset route (#216), as a frame's imported images reach it
+		const asset = url.hostname === RENDER_HOST ? ASSETS[url.pathname] : undefined;
+		if (asset !== undefined) {
+			response.setHeader("content-type", asset.type);
+			response.setHeader("access-control-allow-origin", "*");
+			response.end(Buffer.from(asset.base64, "base64"));
 			return;
 		}
 		if (url.hostname === RENDER_HOST && url.pathname === "/frame") {
@@ -82,8 +98,8 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 				background-color: #f5391a;
 				background-image: url(/hero.png);
 			}
-			/* A project asset, as the compiler bakes one in (#101): the src copy of
-			   the allowlist carries the svg, the CSS copy carries the raster. */
+			/* A project asset, loaded by URL (#216): the shim inlines the svg of an
+			   <img src> and the raster of a CSS url() for the src and CSS copies of the allowlist. */
 			.capture-asset-probe {
 				position: absolute;
 				left: 100px;
@@ -97,7 +113,7 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 				top: 20px;
 				width: 80px;
 				height: 80px;
-				background-image: url(data:image/png;base64,${AMBER_PNG});
+				background-image: url(${AMBER_PNG_URL});
 			}`,
 		// The import is discarded, but the important green must survive it.
 		fonts:
@@ -110,7 +126,7 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 		importMap: { imports: {} },
 		bootJs: `
 			const heavyText = "x".repeat(65_535) + "😀" + "x".repeat(1_034_463);
-			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><img class="capture-asset-probe" alt="" src="data:image/svg+xml;base64,${VIOLET_SVG}"><span class="capture-asset-css-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
+			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><img class="capture-asset-probe" alt="" src="${VIOLET_SVG_URL}"><span class="capture-asset-css-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
 			// drawn again when restored, as a frame must: a busy Mac's Chrome loses canvas contexts, blank until then
 			document.querySelectorAll("canvas").forEach((canvas, index) => {
 				const paint = () => {
@@ -163,6 +179,14 @@ async function serveWebglCapture(
 			response.setHeader("content-type", "text/html; charset=utf-8");
 			response.setHeader("cache-control", "no-store");
 			response.end(controlDocument);
+			return;
+		}
+		// the render host's asset route (#216), as a frame's imported images reach it
+		const asset = url.hostname === RENDER_HOST ? ASSETS[url.pathname] : undefined;
+		if (asset !== undefined) {
+			response.setHeader("content-type", asset.type);
+			response.setHeader("access-control-allow-origin", "*");
+			response.end(Buffer.from(asset.base64, "base64"));
 			return;
 		}
 		if (url.hostname === RENDER_HOST && url.pathname === "/frame") {
@@ -654,7 +678,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	// One reply, one image: an export is one full-resolution lossless sheet, 2× for the 800×600 source.
 	const first = await requestCapture(page, captureOrigin.origin);
 	expect(first.resultReplies).toBe(1);
-	// The two project-asset routes (#101): an svg through <img src>, a raster
+	// The two project-asset routes (#101, #216): an svg through <img src>, a raster
 	// through a CSS background. Both must be in the picture, not stripped out.
 	expect(await readImage(first.image.url, page)).toEqual({
 		type: "image/png",

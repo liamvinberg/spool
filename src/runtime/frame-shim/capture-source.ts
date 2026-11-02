@@ -1,4 +1,11 @@
-import { FORBIDDEN_ELEMENTS, SAFE_IMAGE_SRC_PREFIX, URL_ATTRIBUTES, unsafeCaptureCss } from "./capture-safety";
+import { isAssetUrl } from "../../daemon/assets";
+import {
+	FORBIDDEN_ELEMENTS,
+	MAX_SOURCE_BYTES,
+	safeImageReference,
+	URL_ATTRIBUTES,
+	unsafeCaptureCss,
+} from "./capture-safety";
 import { nativeFetch, nativeRaf } from "./natives";
 import { atFullDensity, realDevicePixelRatio } from "./resolution";
 import { settle } from "./settle";
@@ -187,6 +194,85 @@ async function inlineFontFaces(root: Node): Promise<string> {
 	return css;
 }
 
+const assetDataUrls = new Map<string, Promise<string>>();
+function assetDataUrl(url: string): Promise<string> {
+	let held = assetDataUrls.get(url);
+	if (held === undefined) {
+		held = nativeFetch(url, { mode: "cors", credentials: "omit" })
+			.then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
+			.then((blob) =>
+				blob.size > MAX_SOURCE_BYTES
+					? Promise.reject(new Error("asset too large"))
+					: readAsDataUrl(blob, "asset read failed"),
+			);
+		assetDataUrls.set(url, held);
+		held.catch(() => assetDataUrls.delete(url));
+	}
+	return held;
+}
+
+const CSS_URL = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+
+/**
+ * The frame's own images in the still (#216). Imported images load from the
+ * render host by URL, and the isolated rasterization loads nothing, so each
+ * one the clone names becomes a data URL the shim fetched itself, as fonts
+ * do: an image's src (the candidate the live image chose from its srcset), an
+ * SVG image's href, and url() in a style attribute or a style element. Read
+ * from the clone as it was cloned, before any await; what fails to arrive is
+ * left for the sanitizer to drop.
+ */
+function inlineAssetImages(clone: Element): Promise<void> {
+	const base = document.baseURI;
+	const asset = (value: string | null): value is string => value !== null && isAssetUrl(value.trim(), base);
+	const edits: Array<{ url: string; apply: (data: string) => void }> = [];
+	const live = document.querySelectorAll("img");
+	clone.querySelectorAll("img").forEach((copy, index) => {
+		const shown = live[index]?.currentSrc || copy.getAttribute("src");
+		if (!asset(shown)) return;
+		edits.push({
+			url: shown,
+			apply: (data) => {
+				copy.removeAttribute("srcset");
+				copy.setAttribute("src", data);
+			},
+		});
+	});
+	for (const image of clone.querySelectorAll("image")) {
+		for (const name of ["href", "xlink:href"]) {
+			const value = image.getAttribute(name);
+			if (asset(value)) edits.push({ url: value, apply: (data) => image.setAttribute(name, data) });
+		}
+	}
+	const inCss = (css: string, write: (css: string) => void): void => {
+		const urls = [...css.matchAll(CSS_URL)].map((match) => match[2] as string).filter(asset);
+		if (urls.length === 0) return;
+		let rewritten = css;
+		for (const url of new Set(urls)) {
+			edits.push({
+				url,
+				apply: (data) => {
+					rewritten = rewritten.replace(CSS_URL, (whole, _quote, target: string) =>
+						target === url ? `url("${data}")` : whole,
+					);
+					write(rewritten);
+				},
+			});
+		}
+	};
+	for (const element of clone.querySelectorAll("[style]")) {
+		inCss(element.getAttribute("style") || "", (css) => element.setAttribute("style", css));
+	}
+	for (const style of clone.querySelectorAll("style")) {
+		inCss(style.textContent || "", (css) => {
+			style.textContent = css;
+		});
+	}
+	return Promise.all(
+		edits.map(({ url, apply }) => assetDataUrl(new URL(url.trim(), base).href).then(apply, () => {})),
+	).then(() => {});
+}
+
 function sanitizeCaptureClone(clone: Element): void {
 	for (const element of clone.querySelectorAll(FORBIDDEN_ELEMENTS.join(", "))) {
 		element.remove();
@@ -207,7 +293,11 @@ function sanitizeCaptureClone(clone: Element): void {
 			}
 			if (!URL_ATTRIBUTES.has(name)) continue;
 			const value = attribute.value.trim();
-			if (value === "" || value.startsWith("#") || (name === "src" && SAFE_IMAGE_SRC_PREFIX.test(value))) {
+			if (
+				value === "" ||
+				value.startsWith("#") ||
+				safeImageReference(element.localName.toLowerCase(), name, value)
+			) {
 				continue;
 			}
 			element.removeAttribute(attribute.name);
@@ -339,7 +429,8 @@ async function captureAtDensity(settleMs: number): Promise<{ svg: Blob; width: n
 		if (d) d.setAttribute("value", el.value);
 	});
 	const fontCssPromise = inlineFontFaces(clone);
-	const [canvasUrls, fontCss] = await Promise.all([canvasUrlsPromise, fontCssPromise]);
+	const assetsPromise = inlineAssetImages(clone);
+	const [canvasUrls, fontCss] = await Promise.all([canvasUrlsPromise, fontCssPromise, assetsPromise]);
 	// Cached font promises and canvas encodes may resolve in this same task.
 	// Give the renderer a paint before sanitizing and serializing the clone.
 	await yieldCaptureTask();
