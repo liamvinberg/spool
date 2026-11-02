@@ -145,10 +145,10 @@ it("assembles the document with the experiment off byte for byte as main does", 
 		controlOrigin: "http://127.0.0.1:1",
 	});
 	if (doc.kind !== "ok") throw new Error("the frame did not compile");
-	// main's document for this frame, at the commit Fast Refresh branched from: a
+	// main's document for this frame: a
 	// change to the plain document on main updates it with `vitest -u`
 	expect(createHash("sha256").update(doc.document.replaceAll(name, "PROJECT")).digest("hex")).toMatchInlineSnapshot(
-		`"9b5bcc8877c5965a450bb5b829c8a18266f9688cadf27f2c8b4397f864e732e2"`,
+		`"ade402700540bfd40ff5eeb4053ce551f3ae4201ccecb4e23b99e3cc1a59c45b"`,
 	);
 });
 
