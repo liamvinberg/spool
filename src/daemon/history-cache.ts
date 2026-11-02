@@ -22,6 +22,8 @@ export interface HistoryCache {
 	read(key: string): Uint8Array | undefined;
 	/** Keep bytes under a key, letting the least recently used go until all of it fits. */
 	write(key: string, bytes: Uint8Array): void;
+	/** The keys never let go to make room while held: these, until the next hold. */
+	hold(keys: ReadonlySet<string>): void;
 }
 
 /** A key is a relative path of plain segments: `blobs/<hash>`, `moments/<team>/<project>/<moment>.json`. */
@@ -32,6 +34,7 @@ export function historyCache(dir: string, { maxBytes }: { maxBytes: number }): H
 	let kept: Map<string, { size: number; used: number }> | undefined;
 	let total = 0;
 	let clock = 0;
+	let held: ReadonlySet<string> = new Set();
 
 	const fileOf = (key: string) => {
 		if (!KEY.test(key) || key.split("/").some((segment) => segment === "." || segment === ".."))
@@ -108,13 +111,16 @@ export function historyCache(dir: string, { maxBytes }: { maxBytes: number }): H
 			const oldest = [...entries].sort(([, a], [, b]) => a.used - b.used);
 			for (const [other] of oldest) {
 				if (total + bytes.byteLength <= maxBytes) break;
-				drop(other);
+				if (!held.has(other)) drop(other);
 			}
 			mkdirSync(dirname(file), { recursive: true });
 			writeFileSync(file, bytes);
 			entries.set(key, { size: bytes.byteLength, used: 0 });
 			total += bytes.byteLength;
 			touch(key, file);
+		},
+		hold(keys) {
+			held = keys;
 		},
 	};
 }

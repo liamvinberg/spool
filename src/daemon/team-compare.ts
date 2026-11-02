@@ -5,7 +5,13 @@ import { type Context, Hono } from "hono";
 import { type CloudRequestOptions, originOf } from "../cloud-auth";
 import { isFramePath } from "../page-path";
 import type { ProjectLink } from "../team-project";
-import { type CompileHost, compileFrameDocument, describeCompileError, type FrameAuthority } from "./design-compile";
+import {
+	type CompiledAsset,
+	type CompileHost,
+	compileFrameDocument,
+	describeCompileError,
+	type FrameAuthority,
+} from "./design-compile";
 import type { DesignEntry, DesignFileKind, DesignFiles } from "./design-files";
 import { errorDocument } from "./document";
 import type { HistoryCache } from "./history-cache";
@@ -53,7 +59,7 @@ export function teamCompareRoutes(deps: {
 	known: (root: string) => Readonly<Record<string, { hash: string | null }>> | undefined;
 }) {
 	const reads = teamHistoryReads(deps);
-	const documents = new Map<string, { document: string; etag: string }>();
+	const documents = new Map<string, { document: string; etag: string; assets: CompiledAsset[] }>();
 
 	const momentKey = (at: number, saved: Saved | undefined) =>
 		saved === undefined
@@ -128,12 +134,16 @@ export function teamCompareRoutes(deps: {
 				const message = await describeCompileError(esbuild, failed);
 				return { kind: "error" as const, document: errorDocument(frame, message), message };
 			}
-			const done = { document: compiled.document, etag: compiled.etag };
+			const done = { document: compiled.document, etag: compiled.etag, assets: compiled.assets };
 			documents.set(key, done);
 			for (const old of documents.keys()) {
 				if (documents.size <= DOCUMENTS) break;
 				documents.delete(old);
 			}
+			// the images a kept document loads stay in the cache for as long as it is kept
+			deps.cache.hold(
+				new Set([...documents.values()].flatMap((kept) => kept.assets.map((asset) => `blobs/${asset.hash}`))),
+			);
 			return { kind: "ok" as const, ...done };
 		}
 		const message = `frame "${frame}" reached for more files than a compare reads`;
@@ -281,7 +291,20 @@ export function teamCompareRoutes(deps: {
 		}
 	});
 
-	return { api, served };
+	/**
+	 * An image an old frame kept here loads (#216): its URL names the bytes it had then, which today's design/ may no
+	 * longer hold, so they are the history cache's, checked against their hash.
+	 */
+	const asset = (hash: string, type: string): Uint8Array | undefined => {
+		const named = [...documents.values()].some((kept) =>
+			kept.assets.some((asset) => asset.hash === hash && asset.type === type),
+		);
+		if (!named) return undefined;
+		const bytes = deps.cache.read(`blobs/${hash}`);
+		return bytes !== undefined && createHash("sha256").update(bytes).digest("hex") === hash ? bytes : undefined;
+	};
+
+	return { api, served, asset };
 }
 
 function jsonOf(bytes: Uint8Array): unknown {

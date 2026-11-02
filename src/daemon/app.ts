@@ -38,7 +38,7 @@ import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
 import { createAssetStore } from "./asset-store";
-import { ASSET_PATH } from "./assets";
+import { ASSET_MEDIA_TYPES, ASSET_PATH } from "./assets";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
@@ -1731,8 +1731,14 @@ export function createDaemonApp({
 			// holds now answers it. Null-origin sandboxed frames read it under CORS,
 			// to draw it into a canvas and to inline it into their own stills.
 			const match = ASSET_PATH.exec(c.req.path);
-			const asset = match === null ? undefined : await assetStore.read(match[1] ?? "", match[2] ?? "");
-			if (match === null || asset === undefined) {
+			const hash = match?.[1] ?? "";
+			const type = ASSET_MEDIA_TYPES[(match?.[2] ?? "").toLowerCase()] ?? "";
+			// today's design/, or the bytes an old team version a compare compiled had then (spool#189)
+			const asset: { bytes: Uint8Array; type: string } | undefined =
+				match === null ? undefined : await assetStore.read(hash, match[2] ?? "");
+			const then = match === null || asset !== undefined ? undefined : comparing.asset(hash, type);
+			const served = asset ?? (then === undefined ? undefined : { bytes: then, type });
+			if (match === null || served === undefined) {
 				c.header("cache-control", "no-store");
 				return c.text("no such asset", 404);
 			}
@@ -1740,14 +1746,14 @@ export function createDaemonApp({
 			c.header("access-control-allow-origin", "*");
 			c.header("cache-control", "public, max-age=31536000, immutable");
 			c.header("etag", etag);
-			c.header("content-type", asset.type);
+			c.header("content-type", served.type);
 			c.header("x-content-type-options", "nosniff");
 			// an svg opened on its own runs nothing and fetches nothing
-			if (asset.type === "image/svg+xml") {
+			if (served.type === "image/svg+xml") {
 				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
 			}
 			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
-			return c.body(new Uint8Array(asset.bytes));
+			return c.body(new Uint8Array(served.bytes));
 		})
 		.get("/vendor/webfont/:key", async (c) => {
 			// A project's own fonts.css named this file's URL and nothing else can
