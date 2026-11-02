@@ -1031,7 +1031,13 @@ export function createDaemonApp({
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
-		return isFrameDocumentPath(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
+		return (
+			isFrameDocumentPath(path) ||
+			path.startsWith("/vendor/") ||
+			isProjectDataPath(path) ||
+			// a Fast Refresh document's own modules (the fast-refresh experiment)
+			/^\/p\/[^/]+\/hot\/[^/]+$/.test(path)
+		);
 	}
 
 	function normalizedOrigin(value: string): string | undefined {
@@ -1049,6 +1055,20 @@ export function createDaemonApp({
 			if (registered.has(root) && matchesCapability(expected, capability)) return root;
 		}
 		return undefined;
+	}
+
+	/**
+	 * A Fast Refresh document's own reads (the fast-refresh experiment): from the
+	 * sandboxed frame, whose origin is null, on the render host, which the
+	 * middleware keeps them to. The session id the daemon minted into the
+	 * document is what selects what they may read; the header lets that frame,
+	 * and only a null origin, read the answer.
+	 */
+	function hotReader(c: Context): boolean {
+		if (c.req.header("origin") !== "null") return false;
+		c.header("access-control-allow-origin", "null");
+		c.header("vary", "Origin");
+		return true;
 	}
 
 	function resolveProjectData(c: Context): { root: string } | { response: Response } {
@@ -1453,9 +1473,29 @@ export function createDaemonApp({
 		.get("/p/:project/frames/:frame", async (c) =>
 			withProject(c, resolveProject, async (root) => {
 				const frame = c.req.param("frame");
-				const doc = await compiler.getDocument(root, frame, frameAuthority(root));
+				// a Fast Refresh update's plan (the fast-refresh experiment), which the
+				// frame's own document asks for from its null origin
+				const session = c.req.query("hot");
+				if (session !== undefined) {
+					c.header("cache-control", "no-store");
+					if (!hotReader(c)) return c.text("forbidden", 403);
+					try {
+						const plan = await compiler.getHotPlan(root, frame, session);
+						if (plan === undefined) return c.text("no such frame", 404);
+						return c.json(plan);
+					} catch {
+						return c.json({ refused: "the frame does not compile" });
+					}
+				}
+				const hot = c.req.query("refresh") === "1";
+				const doc = await compiler.getDocument(root, frame, frameAuthority(root), hot);
 				if (doc.kind === "missing") return c.text(doc.message, 404);
 				if (doc.kind === "error") return c.html(doc.document, 500);
+				// a Fast Refresh document carries a session of its own, every load a new one
+				if (hot) {
+					c.header("cache-control", "no-store");
+					return c.html(doc.document);
+				}
 				// A frame document changes whenever its source does, and the etag is the
 				// whole of how a browser learns that. Without this the browser is free to
 				// guess a freshness lifetime from nothing, so say it: ask every time, and
@@ -1465,6 +1505,25 @@ export function createDaemonApp({
 				c.header("etag", doc.etag);
 				c.header("x-spool-cache", doc.cache);
 				return c.html(doc.document);
+			}),
+		)
+		.get("/p/:project/hot/:module", async (c) =>
+			withProject(c, resolveProject, async (root) => {
+				// one design module of a Fast Refresh document (the fast-refresh experiment)
+				c.header("cache-control", "no-store");
+				if (!hotReader(c)) return c.text("forbidden", 403);
+				const session = c.req.query("s");
+				if (session === undefined) return c.text("a module is asked for in a session", 400);
+				try {
+					const js = await compiler.getHotModule(root, c.req.param("module"), session);
+					if (js === undefined) return c.text("no such module in this session", 404);
+					c.header("content-type", "text/javascript; charset=utf-8");
+					// the session and the version in its URL name these bytes for good
+					c.header("cache-control", "private, max-age=31536000, immutable");
+					return c.body(js);
+				} catch {
+					return c.text("the module does not compile", 500);
+				}
 			}),
 		)
 		.get(
@@ -1628,6 +1687,16 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "text/javascript; charset=utf-8");
 			return c.body(await vendorReactJs());
+		})
+		.get("/vendor/react-dev.js", async (c) => {
+			// only a document compiled for Fast Refresh names it (the fast-refresh experiment)
+			c.header("access-control-allow-origin", "*");
+			const etag = `"react-dev-${reactVersion}"`;
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			c.header("etag", etag);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", "text/javascript; charset=utf-8");
+			return c.body(await vendorReactDevJs());
 		})
 		.get("/vendor/spool.js", (c) => serveRuntime(c, vendorSpoolJs))
 		.get("/vendor/spool-jsx.js", (c) => serveRuntime(c, vendorSpoolJsxJs))

@@ -8,14 +8,17 @@ export const REACT_SPECIFIERS = ["react", "react-dom", "react-dom/client", "reac
 
 export const VENDOR_REACT_URL = "/vendor/react.js";
 
+/** React's development build, which only a document compiled for Fast Refresh names (`fast-refresh.ts`). */
+export const VENDOR_REACT_DEV_URL = "/vendor/react-dev.js";
+
 export const VENDOR_SPOOL_URL = "/vendor/spool.js";
 
 export const VENDOR_SPOOL_JSX_URL = "/vendor/spool-jsx.js";
 
 /** Spool's import map pins: the pinned React and the flow runtime always win. */
-export function importMapPins(): Record<string, string> {
+export function importMapPins(react: string = VENDOR_REACT_URL): Record<string, string> {
 	return {
-		...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, VENDOR_REACT_URL])),
+		...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, react])),
 		spool: VENDOR_SPOOL_URL,
 		// the stamping JSX runtime the compiler injects (#23) — not agent surface
 		"spool/jsx-dev-runtime": VENDOR_SPOOL_JSX_URL,
