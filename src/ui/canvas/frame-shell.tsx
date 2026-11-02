@@ -282,7 +282,7 @@ export const FrameShell = memo(function FrameShell({
 	// already gone by the time the cover fades. If a broken boot or mid-walk edit
 	// retires the marker while the frame stays covered, the honest cover returns.
 	// the document still on screen while this one boots, when there is one
-	const held = holdNonce !== null && holdNonce !== docNonce ? holdNonce : null;
+	const held = state !== "picture" && holdNonce !== null && holdNonce !== docNonce ? holdNonce : null;
 	const plan = coverPlan({
 		state,
 		ready,

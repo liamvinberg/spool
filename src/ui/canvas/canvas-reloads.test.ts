@@ -40,12 +40,59 @@ it("holds the last paint through an outside save and a shared save, until arriva
 	await post("arrived");
 	expect(held()).toBeNull();
 
-	// a shared file it reads: the same hold, and the bound lets go of a document that never arrives
+	// a shared file it reads: the same hold, and the bound lets go of a document that never arrives,
+	// counted from when the hold began however many saves follow
 	await change({ kind: "shared", frames: ["home"] });
 	expect(held()).not.toBeNull();
-	await act(() => vi.advanceTimersByTimeAsync(HOLD_PAINT_MS - 100));
+	await act(() => vi.advanceTimersByTimeAsync(HOLD_PAINT_MS - 1000));
+	await change({ kind: "shared", frames: ["home"] });
+	await act(() => vi.advanceTimersByTimeAsync(900));
 	expect(held()).not.toBeNull();
 	await act(() => vi.advanceTimersByTimeAsync(100));
+	expect(held()).toBeNull();
+
+	// a document that fails says so at once, rather than behind the paint before it
+	await post("loaded");
+	await post("arrived");
+	await change({ kind: "frame", frame: "home" });
+	expect(held()).not.toBeNull();
+	await post("error");
+	expect(held()).toBeNull();
+});
+
+it("holds no paint for a frame that is not live, and lets one go when the frame leaves live", async () => {
+	const { host, change, post } = await readyCanvas();
+	const held = () => host.querySelector('iframe[title="home (held)"]');
+	const current = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
+	// nothing selected: live only for being in view
+	for (const _ of [1, 2]) {
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+		});
+	}
+	await post("loaded");
+	await post("arrived");
+	// the frame moved off screen and back, as a teammate's arrange would: out of the live ring and in
+	const pan = async (dx: number) => {
+		const [frame] = frames;
+		if (frame !== undefined) frame.x = dx > 0 ? 100_000 : 0;
+		await change({ kind: "geometry" });
+		await act(() => vi.advanceTimersByTimeAsync(1000));
+	};
+	// leaving live mid-hold lets go, so coming back is a fresh boot rather than a stale held one
+	await change({ kind: "shared", frames: ["home"] });
+	expect(held()).not.toBeNull();
+	await pan(5000);
+	expect(current()).toBeNull();
+	await pan(-5000);
+	expect(current()).not.toBeNull();
+	expect(held()).toBeNull();
+
+	// out of view, a shared save holds nothing to come back to
+	await pan(5000);
+	await change({ kind: "shared", frames: ["home"] });
+	await pan(-5000);
+	expect(current()).not.toBeNull();
 	expect(held()).toBeNull();
 });
 
@@ -134,9 +181,10 @@ async function readyCanvas(): Promise<{
 	host: HTMLDivElement;
 	canvas: HTMLElement;
 	change: (event: Record<string, unknown>) => Promise<void>;
-	post: (kind: "loaded" | "arrived") => Promise<void>;
+	post: (kind: "loaded" | "arrived" | "error") => Promise<void>;
 }> {
-	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+	for (const frame of frames) frame.x = 0;
 	const streams = stubCanvasApis();
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -178,7 +226,7 @@ async function readyCanvas(): Promise<{
 			await act(async () => {
 				window.dispatchEvent(
 					new MessageEvent("message", {
-						data: { spool: kind, frame: "home" },
+						data: { spool: kind, frame: "home", ...(kind === "error" ? { error: "broke" } : {}) },
 						source: host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.contentWindow ?? null,
 					}),
 				);

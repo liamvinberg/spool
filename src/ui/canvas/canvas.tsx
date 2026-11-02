@@ -1031,9 +1031,10 @@ function CanvasField({
 			// painted document: a loaded one that is live (on screen or at its
 			// edge, which is what bounds a shared save's holds to the frames in
 			// view), or the paint a hold before it is still keeping up while the
-			// document after it boots. A frame that never loaded has nothing to
-			// hold. The timer is the bound, because a document that never arrives
-			// must not leave a dead one standing in front of it.
+			// document after it boots. A frame that never loaded, or is not live,
+			// has nothing on screen to hold. The timer is the bound, counted from
+			// when the hold began, because a document that never arrives must not
+			// leave a dead one standing in front of it.
 			const was = store.get().docNonces[frame] ?? 0;
 			// whatever reloads the frame retires the update in flight, and its bound,
 			// and pays the reload a change under the hand owed it (#319)
@@ -1042,17 +1043,15 @@ function CanvasField({
 			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
 			const standing = heldNow.current.get(frame);
 			const iframe = iframes.current.get(frame);
-			const painted =
-				iframe !== undefined &&
-				loadedIframes.current.has(iframe) &&
-				!reloading.current.has(frame) &&
-				frameLife.states[frame] === "live";
+			const live = frameLife.states[frame] === "live";
+			const painted = iframe !== undefined && loadedIframes.current.has(iframe) && !reloading.current.has(frame);
 			reloading.current.add(frame);
-			if (holdNext.current.delete(frame) || standing !== undefined || painted) {
-				const keep = standing ?? was;
-				heldNow.current.set(frame, keep);
-				setHeldPaint((current) => (current[frame] === keep ? current : { ...current, [frame]: keep }));
-				clearTimeout(holdTimers.current.get(frame));
+			const asked = holdNext.current.delete(frame);
+			if (!live) {
+				if (standing !== undefined) releaseHold(frame);
+			} else if (standing === undefined && (asked || painted)) {
+				heldNow.current.set(frame, was);
+				setHeldPaint((current) => ({ ...current, [frame]: was }));
 				holdTimers.current.set(
 					frame,
 					setTimeout(() => releaseHold(frame), HOLD_PAINT_MS),
@@ -1090,6 +1089,18 @@ function CanvasField({
 		[reloadFrameDocument, store],
 	);
 	hotFallBack.current = holdOrReload;
+
+	// a frame that leaves live lets go of its held paint: what is drawn there
+	// now is its still, and a held document it came back to would boot afresh
+	useEffect(
+		() =>
+			frameLife.subscribe(() => {
+				for (const frame of [...heldNow.current.keys()]) {
+					if (frameLife.states[frame] !== "live") releaseHold(frame);
+				}
+			}),
+		[frameLife, releaseHold],
+	);
 
 	// the hand coming into a frame drops the swap in flight there, unless its
 	// document has committed it: a swap read before the hand's write must not
@@ -3382,6 +3393,8 @@ function CanvasField({
 					// a walk boot that broke falls back to the honest cover: the quiet
 					// still must not dress a dead document as a settled one (#28)
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
+					// nor arrive: the paint held in front of it lets go, so the failure shows now
+					releaseHold(message.frame);
 					// a document that broke will never say loaded: what waited on it asks what there is
 					if (reloading.current.delete(message.frame)) {
 						const waiting = loadWaiters.current.get(message.frame) ?? [];
