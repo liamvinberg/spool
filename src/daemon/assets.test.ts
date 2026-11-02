@@ -1,13 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { COVER_PNG, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { IMAGE_BUDGET_BYTES, LOCAL_FONT_BUDGET_BYTES } from "./assets";
+import { FILE_LIMIT_BYTES } from "../team-sync-protocol";
+import { LOCAL_FONT_BUDGET_BYTES } from "./assets";
 
 /**
- * A frame imports an asset and the compiler bakes it into the document (#101).
- * There is no asset route and no asset URL, so every claim here is about the
- * served document's own bytes and the closure that decides when it changes.
+ * A frame imports an asset (#101) and its document names it by the URL of its
+ * bytes (#216): what the document says, the closure that decides when it
+ * changes, and what the route at that URL answers.
  */
 
 function writeAsset(root: string, rel: string, bytes: Uint8Array): void {
@@ -24,7 +26,7 @@ function project() {
 }
 
 describe("project assets", () => {
-	it("inlines an imported raster as a base64 data URI", async () => {
+	it("serves an imported image by a URL named for its bytes, never inlined", async () => {
 		const { root, document } = project();
 		writeAsset(root, "frames/entry/hero.png", COVER_PNG);
 		writeFrame(
@@ -35,22 +37,9 @@ describe("project assets", () => {
 
 		const response = await document();
 		expect(response.status).toBe(200);
-		expect(await response.text()).toContain(`data:image/png;base64,${Buffer.from(COVER_PNG).toString("base64")}`);
-	});
-
-	it("inlines an imported svg as base64 rather than percent-encoding it", async () => {
-		const { root, document } = project();
-		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
-		writeAsset(root, "shared/assets/logo.svg", Buffer.from(svg));
-		writeFrame(
-			root,
-			"entry",
-			`import logo from "../../shared/assets/logo.svg";\nexport default function Frame() { return <div style={{ backgroundImage: \`url(\${logo})\` }} />; }\n`,
-		);
-
-		const body = await (await document()).text();
-		expect(body).toContain(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
-		expect(body).not.toContain("data:image/svg+xml,");
+		const body = await response.text();
+		expect(body).toContain(`"/asset/${createHash("sha256").update(COVER_PNG).digest("hex")}.png"`);
+		expect(body).not.toContain("data:image/png");
 	});
 
 	it.each(["txt", "glsl", "wgsl"])(
@@ -95,35 +84,17 @@ describe("project assets", () => {
 		expect((await document()).headers.get("etag")).toBe(first);
 	});
 
-	it("fails the frame when its images outgrow the document budget, naming the file", async () => {
+	it("fails the frame on an image bigger than a project file may be, naming the file", async () => {
 		const { root, document } = project();
-		writeAsset(root, "frames/entry/huge.png", Buffer.alloc(IMAGE_BUDGET_BYTES, 7));
+		writeAsset(root, "frames/entry/huge.png", Buffer.alloc(FILE_LIMIT_BYTES + 1, 7));
 		writeFrame(
 			root,
 			"entry",
 			'import huge from "./huge.png";\nexport default function Frame() { return <img src={huge} alt="" />; }\n',
 		);
 
-		const response = await document();
-		const body = await response.text();
-		expect(body).toContain("design/frames/entry/huge.png");
-		expect(body).toContain("512 KB");
-		expect(body).not.toContain("data:image/png;base64,");
-	});
-
-	it("counts every asset in one document against the same budget", async () => {
-		const { root, document } = project();
-		// Each encodes to about 60% of the budget: either alone fits, both cannot.
-		const each = Buffer.alloc(Math.floor(IMAGE_BUDGET_BYTES * 0.45), 7);
-		writeAsset(root, "frames/entry/one.png", each);
-		writeAsset(root, "frames/entry/two.png", each);
-		writeFrame(
-			root,
-			"entry",
-			'import one from "./one.png";\nimport two from "./two.png";\nexport default function Frame() { return <><img src={one} alt="" /><img src={two} alt="" /></>; }\n',
-		);
-
-		expect(await (await document()).text()).toContain("512 KB");
+		const body = await (await document()).text();
+		expect(body).toContain("design/frames/entry/huge.png is 26 MB, over the 25 MB a project file may be");
 	});
 
 	it("names the import form when a stylesheet reaches an asset through url()", async () => {
@@ -157,32 +128,6 @@ describe("project assets", () => {
 		const body = await (await document()).text();
 		expect(body).toContain("https://example.test/hero.png");
 		expect(body).not.toContain("an asset is imported, not referenced");
-	});
-
-	// The budget guards a frame document, because the canvas loads a page full of
-	// them. The player is one document, loaded once, so it composes whatever the
-	// frames carry — three frames that each fit their own document must not add
-	// up to a dead player.
-	it("composes a player from frames that each fit their own budget but not one between them", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		const { request } = makeApp(spoolDir);
-		const each = Buffer.alloc(Math.floor(IMAGE_BUDGET_BYTES * 0.45), 7);
-		for (const frame of ["one", "two", "three"]) {
-			writeAsset(root, `frames/${frame}/art.png`, each);
-			writeFrame(
-				root,
-				frame,
-				'import art from "./art.png";\nexport default function Frame() { return <img src={art} alt="" />; }\n',
-			);
-			expect((await request(`/p/${name}/frames/${frame}`)).status).toBe(200);
-		}
-
-		const response = await request(`/play/${name}`);
-		expect(response.status).toBe(200);
-		const body = await response.text();
-		expect(body).not.toContain("image budget");
-		for (const frame of ["one", "two", "three"]) expect(body).toContain(frame);
 	});
 
 	it("refuses an asset that resolves outside design/", async () => {

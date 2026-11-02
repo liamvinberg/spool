@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { join, resolve } from "node:path";
 import type { ImportKind, Metafile, Plugin } from "esbuild";
 import { frameFolder } from "../page-path";
-import { IMAGE_BUDGET_BYTES } from "./assets";
 import { designPathResolver, designRelativePath } from "./design-boundary";
 import { type CompileHost, compileFrameHotState, designBuildOptions, designInputFile } from "./design-compile";
 import { contentDigest, createDesignReads, readDesignBytes } from "./design-reads";
@@ -243,7 +242,6 @@ export function hotModules(host: CompileHost) {
 			sourcefile: "",
 			contents: "",
 			label: "design/",
-			imageBudget: IMAGE_BUDGET_BYTES,
 			files: host.files,
 			reads: () => reads,
 			hot: true,

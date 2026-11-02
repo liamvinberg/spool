@@ -1397,7 +1397,7 @@ function authoredPathReadFailure(error: unknown): string | undefined {
 }
 
 /**
- * The asset kinds whose module is a string (#101) — an image's data URI, a text
+ * The asset kinds whose module is a string (#101) — an image's URL, a text
  * file's contents. Spool ships their declaration the way it ships React's,
  * because design/ never gets a package.json, and the checker resolves modules
  * independently of the bundler: without this, an import the daemon serves

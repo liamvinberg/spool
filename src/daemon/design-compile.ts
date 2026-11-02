@@ -14,10 +14,11 @@ import type {
 	PluginBuild,
 } from "esbuild";
 import { frameFolder } from "../page-path";
-import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes, TEXT_LOADERS } from "./assets";
+import { FILE_LIMIT_BYTES } from "../team-sync-protocol";
+import { ASSET_FILTER, ASSET_MEDIA_TYPES, assetTooLarge, assetUrl, TEXT_LOADERS } from "./assets";
 import { DesignBoundaryError, designPathResolver, designRelativePath } from "./design-boundary";
 import type { DesignFiles } from "./design-files";
-import { createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
+import { contentDigest, createDesignReads, type DesignReads, readDesignBytes } from "./design-reads";
 import { type DesignResolution, designResolver, RESOLVE_EXTENSIONS } from "./design-resolve";
 import {
 	assembleFrameDocument,
@@ -107,14 +108,6 @@ export interface DesignEntryOptions {
 	contents: string;
 	/** Names the compilation in errors: `frame "inbox"`, `the player`. */
 	label: string;
-	/**
-	 * How much inlined image this one document may carry (#101). A frame passes
-	 * its budget; the player composition passes none, because it is one document
-	 * loaded once rather than the page full of them the budget guards against —
-	 * and a composition that died on the sum of frames that each fit their own
-	 * document is the exact whole-player failure `composePlayer` exists to stop.
-	 */
-	imageBudget?: number | undefined;
 	/** The project's files: every import is resolved through them. */
 	files: DesignFiles;
 	/**
@@ -181,7 +174,7 @@ function loaderOf(path: string, loaders: Readonly<Record<string, Loader>>): Load
  * once; the player keeps them in a context and rebuilds incrementally.
  */
 export function designBuildOptions(options: DesignEntryOptions): BuildOptions & { metafile: true; write: false } {
-	const { designDir, resolveDir, sourcefile, contents, label, imageBudget, files, reads } = options;
+	const { designDir, resolveDir, sourcefile, contents, files, reads } = options;
 	const loader: Record<string, Loader> = TEXT_LOADERS;
 	return {
 		stdin: { contents, resolveDir, loader: "js", sourcefile },
@@ -206,7 +199,7 @@ export function designBuildOptions(options: DesignEntryOptions): BuildOptions & 
 		plugins: [
 			sharedImportPlugin(designDir, files),
 			spoolBoundaryPlugin(designDir, { ...DEFAULT_LOADERS, ...loader }, reads, options.hot === true),
-			spoolAssetPlugin(designDir, label, imageBudget, files, reads),
+			spoolAssetPlugin(designDir, files, reads),
 			// last, so the plugins above answer what is theirs first
 			designResolvePlugin(designDir, files),
 		],
@@ -468,7 +461,6 @@ function frameEntryOptions(
 		sourcefile: STDIN_NAME,
 		contents: bootEntry(frame),
 		label: `frame "${frame}"`,
-		imageBudget: IMAGE_BUDGET_BYTES,
 		files: host.files,
 		reads: () => reads,
 	};
@@ -689,34 +681,23 @@ function spoolBoundaryPlugin(
 }
 
 /**
- * Project assets, carried in the document rather than served (#101). There is
- * no asset route and no asset URL: an import becomes a `data:` URI right here,
- * which means an asset has no authority surface at all — the boundary plugin
- * has already held everything esbuild resolves to design/, symlinks and all —
- * and it lands in `metafile.inputs`, so it is a cache input, an ETag
- * ingredient, and a file the watcher already narrows on.
- *
- * Every kind is forced to base64. Esbuild's own `dataurl` loader percent-encodes
- * SVG, and both copies of the capture allowlist require `;base64,`; forcing the
- * encoding keeps those predicates as tight as they are instead of teaching them
- * a looser shape.
+ * Project assets, served by their content (#216): an import becomes the
+ * host-relative `assetUrl` of its bytes, which the host serving the document
+ * answers from the file it found under that hash in design/. The URL is made
+ * of the bytes alone, so the daemon and a Worker compile the same document,
+ * and the asset lands in `metafile.inputs`, so it is a cache input, an ETag
+ * ingredient, and a file the watcher already narrows on. The boundary plugin
+ * has already held everything esbuild resolves to design/, symlinks and all.
+ * The one ceiling is the sync's: a file a team project could not carry.
  */
-function spoolAssetPlugin(
-	designDir: string,
-	label: string,
-	budget: number | undefined,
-	files: DesignFiles,
-	readsOf: () => DesignReads | undefined,
-): Plugin {
-	let spent = 0;
+function spoolAssetPlugin(designDir: string, files: DesignFiles, readsOf: () => DesignReads | undefined): Plugin {
 	return {
 		name: "spool-assets",
 		setup(build) {
-			// A stylesheet's url() is the one reference esbuild cannot be handed a
-			// forced-base64 answer for, and a document-carried asset has no URL to
-			// give it. Say so in the project's own words rather than leaving
-			// esbuild to explain spool's loader choice. Remote and root-absolute
-			// URLs stay the author's business and pass straight through.
+			// A stylesheet's url() would be esbuild's to rewrite, to a URL it names
+			// itself. Say so in the project's own words rather than leaving esbuild
+			// to explain spool's loader choice. Remote and root-absolute URLs stay
+			// the author's business and pass straight through.
 			build.onResolve({ filter: ASSET_FILTER }, (args) => {
 				const local = !args.path.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(args.path);
 				if (args.kind !== "url-token" || !local) return null;
@@ -729,8 +710,7 @@ function spoolAssetPlugin(
 				};
 			});
 			build.onLoad({ filter: ASSET_FILTER }, (args) => {
-				const type = ASSET_MEDIA_TYPES[extname(args.path).toLowerCase()];
-				if (type === undefined) return null;
+				if (ASSET_MEDIA_TYPES[extname(args.path).toLowerCase()] === undefined) return null;
 				let bytes: Buffer | undefined;
 				try {
 					bytes =
@@ -745,18 +725,11 @@ function spoolAssetPlugin(
 				if (bytes === undefined) {
 					return { errors: [{ text: `Could not read from file: ${designRelativePath(designDir, args.path)}` }] };
 				}
-				const url = `data:${type};base64,${bytes.toString("base64")}`;
-				spent += url.length;
-				if (budget !== undefined && spent > budget) {
+				if (bytes.byteLength > FILE_LIMIT_BYTES) {
 					const file = designRelativePath(designDir, args.path);
-					return {
-						errors: [
-							{
-								text: `design/${file} (${kilobytes(url.length)} inlined) puts ${label} over its ${kilobytes(budget)} image budget`,
-							},
-						],
-					};
+					return { errors: [{ text: assetTooLarge(file, bytes.byteLength, FILE_LIMIT_BYTES) }] };
 				}
+				const url = assetUrl(contentDigest(bytes), args.path);
 				return { contents: `export default ${JSON.stringify(url)};\n`, loader: "js" };
 			});
 		},
