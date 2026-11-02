@@ -49,6 +49,16 @@ export function assetUrl(hash: string, file: string): string {
 /** An asset URL's path, its hash and extension captured. */
 export const ASSET_PATH = /^\/asset\/([0-9a-f]{64})(\.(?:gif|jpe?g|png|svg|webp))$/;
 
+/** Whether a URL, resolved against a document at `base`, is one of that document's own host's asset URLs. */
+export function isAssetUrl(value: string, base: string): boolean {
+	try {
+		const url = new URL(value, base);
+		return url.origin === new URL(base).origin && url.search === "" && ASSET_PATH.test(url.pathname);
+	} catch {
+		return false;
+	}
+}
+
 /** Why an imported file is refused: more than a team project's file may be. */
 export function assetTooLarge(file: string, bytes: number, limit: number): string {
 	return `design/${file} is ${megabytes(bytes)}, over the ${megabytes(limit)} a project file may be: save it smaller`;

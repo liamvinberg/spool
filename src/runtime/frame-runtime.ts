@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { isFramePath } from "../page-path";
 import { accelChord } from "./accel-chord";
+import { loadAssetImagesUnderCors } from "./asset-images";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
 import type { SpoolUi } from "./spool-public";
@@ -63,6 +64,9 @@ declare global {
 		__SPOOL_PLAY__?: PlayerConfig;
 	}
 }
+
+// before any frame renders an image, in a frame's document and the player's alike
+loadAssetImagesUnderCors();
 
 const play = window.__SPOOL_PLAY__;
 const config =
