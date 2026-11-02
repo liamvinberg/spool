@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.47.4
+
+### Patch Changes
+
+- 3d86a7e: Entering or selecting a frame on a page with hundreds of frames hitches less: frame names far off screen and pages-list rows scrolled out of view no longer get laid out again every time the camera stops or the selection changes.
+
 ## 0.47.3
 
 ### Patch Changes
