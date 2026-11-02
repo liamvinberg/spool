@@ -49,7 +49,7 @@ it("holds the last paint through an outside save and a shared save, until arriva
 	expect(held()).toBeNull();
 });
 
-it("drops a Fast Refresh swap the hand picked into while it ran, and reloads when the hand leaves", async () => {
+it("cancels a Fast Refresh swap the hand picks into while it runs, and reloads one that committed when the hand leaves", async () => {
 	vi.stubGlobal("__SPOOL_EXPERIMENTS__", ["fast-refresh"]);
 	const { host, canvas, change, post } = await readyCanvas();
 	const current = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
@@ -106,6 +106,9 @@ it("drops a Fast Refresh swap the hand picked into while it ran, and reloads whe
 			}),
 		);
 	});
+	// the document is told to drop the swap, should it not have committed yet
+	expect(asked("hot-cancel")?.id).toBe(offer?.id);
+	// it had: the swap may predate the hand's next write, which is when the reload is paid, or else the hand leaving
 	await act(async () => {
 		window.dispatchEvent(
 			new MessageEvent("message", {

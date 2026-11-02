@@ -1035,8 +1035,10 @@ function CanvasField({
 			// hold. The timer is the bound, because a document that never arrives
 			// must not leave a dead one standing in front of it.
 			const was = store.get().docNonces[frame] ?? 0;
-			// whatever reloads the frame retires the update in flight, and its bound
+			// whatever reloads the frame retires the update in flight, and its bound,
+			// and pays the reload a change under the hand owed it (#319)
 			hot.current.cancel(frame);
+			writtenUnderHand.current.delete(frame);
 			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
 			const standing = heldNow.current.get(frame);
 			const iframe = iframes.current.get(frame);
@@ -1088,6 +1090,18 @@ function CanvasField({
 		[reloadFrameDocument, store],
 	);
 	hotFallBack.current = holdOrReload;
+
+	// the hand coming into a frame drops the swap in flight there, unless its
+	// document has committed it: a swap read before the hand's write must not
+	// land over it (`hot-updates.ts`)
+	useEffect(() => {
+		const frames = new Set([...picked.map((pick) => pick.frame), ...(editing === null ? [] : [editing.frame])]);
+		for (const frame of frames) {
+			hot.current.handCame(frame, (id) =>
+				iframes.current.get(frame)?.contentWindow?.postMessage({ spool: "hot-cancel", id }, "*"),
+			);
+		}
+	}, [picked, editing]);
 
 	/** Where the hand is: editing words, picks, saved, or holding a write's readers (`hot-updates.ts`). */
 	const hand = useCallback(
@@ -2183,6 +2197,9 @@ function CanvasField({
 		[store],
 	);
 
+	/** A write of the hand's landed: whether a Fast Refresh swap it came into owes the reload now. */
+	const handLanded = useCallback((frame: string) => hot.current.landed(frame), []);
+
 	/** Whether the hand is still in a frame: selected, an element of it held, or entered. */
 	const frameHeld = useCallback(
 		(frame: string) =>
@@ -2605,6 +2622,7 @@ function CanvasField({
 		recordEntry,
 		reloadFrameDocument,
 		frameHeld,
+		handLanded,
 		sharedWrite,
 		holdChain,
 		holdFrame,
@@ -3298,9 +3316,17 @@ function CanvasField({
 					const route = onAnswer(hot.current.answer(message.frame, message.id, message.ok), hand(), message.frame);
 					// holdNext is the hand's, and counts as in the frame: an applied swap never has one to clear
 					if (route === "keep") requestSiteBoxes(message.frame);
-					// refused, or the hand came into the frame while it swapped: the
-					// swapped bundle may predate the hand's write, so the reload is owed
-					else if (route !== "stale") holdOrReload(message.frame);
+					else if (route === "defer") holdOrReload(message.frame);
+					// committed under a pick: shown until the hand's write lands, which reloads it
+					else if (route === "owe") {
+						hot.current.owe(message.frame);
+						writtenUnderHand.current.add(message.frame);
+					} else if (route === "reload") {
+						// the swapped bundle may predate the hand's write: the file is what shows, pick or not
+						saved.current.delete(message.frame);
+						holdNext.current.add(message.frame);
+						reloadFrameDocument(message.frame);
+					}
 					return;
 				}
 				case "loaded": {
