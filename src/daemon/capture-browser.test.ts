@@ -12,12 +12,23 @@ const AMBER_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4f
 const VIOLET_SVG =
 	"PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM3ZjAwZmYiLz48L3N2Zz4=";
 
-/** Both probes as a frame's imported images, at their asset URLs. */
+/**
+ * Both probes as a frame's imported images, at their asset URLs. The svg is an
+ * original bigger than a whole still may be (#216): only what is shown of it,
+ * at the size it is shown, can reach one.
+ */
 const VIOLET_SVG_URL = `/asset/${"a".repeat(64)}.svg`;
 const AMBER_PNG_URL = `/asset/${"b".repeat(64)}.png`;
-const ASSETS: Record<string, { type: string; base64: string }> = {
-	[VIOLET_SVG_URL]: { type: "image/svg+xml", base64: VIOLET_SVG },
-	[AMBER_PNG_URL]: { type: "image/png", base64: AMBER_PNG },
+const ASSETS: Record<string, { type: string; bytes: Buffer }> = {
+	[VIOLET_SVG_URL]: {
+		type: "image/svg+xml",
+		bytes: Buffer.from(
+			Buffer.from(VIOLET_SVG, "base64")
+				.toString("utf8")
+				.replace("</svg>", `<!-- ${"x".repeat(17 * 1024 * 1024)} --></svg>`),
+		),
+	},
+	[AMBER_PNG_URL]: { type: "image/png", bytes: Buffer.from(AMBER_PNG, "base64") },
 };
 
 interface ServedCapture {
@@ -57,7 +68,7 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 		if (asset !== undefined) {
 			response.setHeader("content-type", asset.type);
 			response.setHeader("access-control-allow-origin", "*");
-			response.end(Buffer.from(asset.base64, "base64"));
+			response.end(asset.bytes);
 			return;
 		}
 		if (url.hostname === RENDER_HOST && url.pathname === "/frame") {
@@ -126,7 +137,7 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 		importMap: { imports: {} },
 		bootJs: `
 			const heavyText = "x".repeat(65_535) + "😀" + "x".repeat(1_034_463);
-			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><img class="capture-asset-probe" alt="" src="${VIOLET_SVG_URL}"><span class="capture-asset-css-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
+			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><img class="capture-asset-probe" alt="" crossorigin="anonymous" src="${VIOLET_SVG_URL}"><span class="capture-asset-css-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
 			// drawn again when restored, as a frame must: a busy Mac's Chrome loses canvas contexts, blank until then
 			document.querySelectorAll("canvas").forEach((canvas, index) => {
 				const paint = () => {
@@ -186,7 +197,7 @@ async function serveWebglCapture(
 		if (asset !== undefined) {
 			response.setHeader("content-type", asset.type);
 			response.setHeader("access-control-allow-origin", "*");
-			response.end(Buffer.from(asset.base64, "base64"));
+			response.end(asset.bytes);
 			return;
 		}
 		if (url.hostname === RENDER_HOST && url.pathname === "/frame") {
@@ -699,7 +710,8 @@ it("captures through the isolated worker while preserving output and cleanup", {
 				}
 			).__captureCanvasStats.read(),
 		),
-	).toEqual({ toBlobCalls: 2, callsAtFirstCallback: 2 });
+		// both canvases and the shown svg, all drawn before any one is encoded
+	).toEqual({ toBlobCalls: 3, callsAtFirstCallback: 3 });
 	expect(
 		await authored.evaluate(
 			() => (window as unknown as { __captureIframeMutations: number }).__captureIframeMutations,
