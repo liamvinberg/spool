@@ -16,9 +16,10 @@ import { makeApp, makeTempDir, until, writeDesignFile, writeFrame } from "../tes
 const BUTTON = 'export const OrderButton = () => <button type="button">Order then</button>;\n';
 const BADGE = "export const Badge = () => <b>badge then</b>;\n";
 const CART_THEN =
-	'import { OrderButton } from "shared/ui/order-button";\nimport { Badge } from "shared/ui/badge";\n\nexport default function Cart() {\n\treturn <main><h1>cart then</h1><Badge /><OrderButton /></main>;\n}\n';
+	'import { OrderButton } from "shared/ui/order-button";\nimport { Badge } from "shared/ui/badge";\nimport mark from "./mark.svg";\n\nexport default function Cart() {\n\treturn <main><h1>cart then</h1><img src={mark} alt="" /><Badge /><OrderButton /></main>;\n}\n';
 const CART_NOW =
-	'import { OrderButton } from "shared/ui/order-button";\n\nexport default function Cart() {\n\treturn <main><h1>cart now</h1><OrderButton /></main>;\n}\n';
+	'import { OrderButton } from "shared/ui/order-button";\nimport mark from "./mark.svg";\n\nexport default function Cart() {\n\treturn <main><h1>cart now</h1><img src={mark} alt="" /><OrderButton /></main>;\n}\n';
+const MARK_THEN = '<svg xmlns="http://www.w3.org/2000/svg"><title>mark then</title></svg>\n';
 
 /** Every design file under a folder, by its path, with its bytes: what must not change. Sync's own state aside. */
 function tree(dir: string): Record<string, string> {
@@ -55,6 +56,7 @@ async function team(options: { historyCacheBytes?: number } = {}) {
 	// then: cart imports the order button and a badge; menu stands beside it
 	writeDesignFile(root, "shared/ui/order-button.tsx", BUTTON);
 	writeDesignFile(root, "shared/ui/badge.tsx", BADGE);
+	writeDesignFile(root, "frames/cart/mark.svg", MARK_THEN);
 	writeFrame(root, "cart", CART_THEN);
 	writeDesignFile(root, "frames/cart/frame.json", '{ "x": 0, "y": 0, "w": 480, "h": 320 }\n');
 	writeFrame(root, "menu", "export default function Menu() {\n\treturn <h1>menu then</h1>;\n}\n");
@@ -64,6 +66,7 @@ async function team(options: { historyCacheBytes?: number } = {}) {
 	for (const path of [
 		"shared/ui/order-button.tsx",
 		"shared/ui/badge.tsx",
+		"frames/cart/mark.svg",
 		"frames/cart/frame.tsx",
 		"frames/cart/frame.json",
 		"frames/menu/frame.tsx",
@@ -73,11 +76,13 @@ async function team(options: { historyCacheBytes?: number } = {}) {
 	const moment = cloud.history("checkout").at(-1)?.version ?? 0;
 	// since: cart and the button change, the badge goes, menu is deleted and promo is made
 	writeFrame(root, "cart", CART_NOW);
+	writeDesignFile(root, "frames/cart/mark.svg", MARK_THEN.replace("then", "now"));
 	writeDesignFile(root, "shared/ui/order-button.tsx", BUTTON.replace("then", "now"));
 	rmSync(join(root, "design/shared/ui/badge.tsx"));
 	rmSync(join(root, "design/frames/menu"), { recursive: true });
 	writeFrame(root, "promo", "export default function Promo() {\n\treturn <h1>promo</h1>;\n}\n");
 	await until(() => cloud.file("checkout", "frames/cart/frame.tsx") === CART_NOW, 15_000);
+	await until(() => cloud.file("checkout", "frames/cart/mark.svg") === MARK_THEN.replace("then", "now"), 15_000);
 	await until(() => cloud.file("checkout", "shared/ui/badge.tsx") === null, 15_000);
 	await until(() => cloud.file("checkout", "frames/menu/frame.tsx") === null, 15_000);
 	await until(() => cloud.file("checkout", "frames/promo/frame.tsx") !== undefined, 15_000);
@@ -126,6 +131,10 @@ it("serves a frame as it stood, its own file and the shared files it imported th
 	// the badge is gone today, and the old cart's own bytes still reach it
 	expect(old.html).toContain("badge then");
 	expect(old.html).not.toContain("cart now");
+	// and its image, changed since, still loads as it was then (#216)
+	const mark = /\/asset\/[0-9a-f]{64}\.svg/.exec(old.html)?.[0];
+	expect(mark).toBeDefined();
+	expect(await (await app.request(mark ?? "")).text()).toBe(MARK_THEN);
 
 	const today = await (await app.request("/p/checkout/frames/cart")).text();
 	expect(today).toContain("cart now");

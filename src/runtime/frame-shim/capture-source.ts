@@ -1,4 +1,5 @@
-import { FORBIDDEN_ELEMENTS, SAFE_IMAGE_SRC_PREFIX, URL_ATTRIBUTES, unsafeCaptureCss } from "./capture-safety";
+import { isAssetUrl } from "../../daemon/assets";
+import { FORBIDDEN_ELEMENTS, safeImageReference, URL_ATTRIBUTES, unsafeCaptureCss } from "./capture-safety";
 import { nativeFetch, nativeRaf } from "./natives";
 import { atFullDensity, realDevicePixelRatio } from "./resolution";
 import { settle } from "./settle";
@@ -187,6 +188,145 @@ async function inlineFontFaces(root: Node): Promise<string> {
 	return css;
 }
 
+/** How much of a still's source its images may take, leaving the rest of it to the document itself. */
+const ASSET_BUDGET_CHARS = 12 * 1024 * 1024;
+
+/** The most pixels a redrawn image is kept lossless at. */
+const LOSSLESS_PIXELS = 1024 * 1024;
+
+const assetDataUrls = new Map<string, Promise<string>>();
+/** An asset's own bytes, as a data URL: what a CSS url() names, which no element shows at one size. */
+function assetDataUrl(url: string): Promise<string> {
+	let held = assetDataUrls.get(url);
+	if (held === undefined) {
+		held = nativeFetch(url, { mode: "cors", credentials: "omit" })
+			.then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
+			.then((blob) =>
+				blob.size > ASSET_BUDGET_CHARS
+					? Promise.reject(new Error("asset too large"))
+					: readAsDataUrl(blob, "asset read failed"),
+			);
+		assetDataUrls.set(url, held);
+		held.catch(() => assetDataUrls.delete(url));
+	}
+	return held;
+}
+
+/**
+ * A shown image redrawn at the size it is shown, at the still's density, as a
+ * data URL: a still needs no more of an original than it shows, and an
+ * original can be bigger than a whole still may be. Drawn now, encoded later;
+ * nothing when it hasn't loaded or can't be read back (one loaded without CORS).
+ */
+function shownImage(image: HTMLImageElement): Promise<string> | undefined {
+	const { naturalWidth, naturalHeight } = image;
+	if (!image.complete || naturalWidth === 0 || naturalHeight === 0) return undefined;
+	const dpr = Math.min(realDevicePixelRatio(), 2);
+	// enough for the box however the image fits it, never more than it has
+	const scale = Math.min(
+		1,
+		Math.max((image.clientWidth * dpr) / naturalWidth, (image.clientHeight * dpr) / naturalHeight),
+	);
+	if (!(scale > 0)) return undefined;
+	const canvas = document.createElement("canvas");
+	canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+	canvas.height = Math.max(1, Math.round(naturalHeight * scale));
+	const context = canvas.getContext("2d");
+	if (context === null) return undefined;
+	try {
+		context.drawImage(image, 0, 0, canvas.width, canvas.height);
+		context.getImageData(0, 0, 1, 1);
+	} catch {
+		return undefined;
+	}
+	return new Promise((resolve, reject) => {
+		canvas.toBlob(
+			(blob) => {
+				if (blob) readAsDataUrl(blob, "image read failed").then(resolve, reject);
+				else reject(new Error("image encoding failed"));
+			},
+			// lossless while small, as an icon or a graphic is; a photo-sized one lossy, or one would fill a still
+			canvas.width * canvas.height <= LOSSLESS_PIXELS ? "image/png" : "image/webp",
+			0.92,
+		);
+	});
+}
+
+const CSS_URL = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+
+/**
+ * The frame's own images in the still (#216). Imported images load from the
+ * render host by URL, and the isolated rasterization loads nothing, so each
+ * one the clone names becomes a data URL: an image (the candidate the live one
+ * chose from its srcset) redrawn at the size it is shown, and the bytes the
+ * shim fetched itself, as it does fonts, of an SVG image's href and a url() in
+ * a style attribute or a style element. Read from the clone as it was cloned,
+ * before any await. The images together stay inside a still's size: one that
+ * would not fit, or fails to arrive, is left for the sanitizer to drop.
+ */
+function inlineAssetImages(clone: Element): Promise<void> {
+	const base = document.baseURI;
+	const asset = (value: string | null): value is string => value !== null && isAssetUrl(value.trim(), base);
+	const fetched = (url: string) => assetDataUrl(new URL(url.trim(), base).href);
+	const edits: Array<{ data: Promise<string>; apply: (data: string) => void }> = [];
+	const live = document.querySelectorAll("img");
+	const drawn = new Map<string, Promise<string> | undefined>();
+	clone.querySelectorAll("img").forEach((copy, index) => {
+		const image = live[index];
+		const shown = image?.currentSrc || copy.getAttribute("src");
+		if (!asset(shown)) return;
+		// the same image at the same size is drawn once, however often it is shown
+		const key = image === undefined ? "" : `${shown}\0${image.clientWidth}\0${image.clientHeight}`;
+		if (image !== undefined && !drawn.has(key)) drawn.set(key, shownImage(image));
+		const data = drawn.get(key) ?? fetched(shown);
+		edits.push({
+			data,
+			apply: (data) => {
+				copy.removeAttribute("srcset");
+				copy.setAttribute("src", data);
+			},
+		});
+	});
+	for (const image of clone.querySelectorAll("image")) {
+		for (const name of ["href", "xlink:href"]) {
+			const value = image.getAttribute(name);
+			if (asset(value)) edits.push({ data: fetched(value), apply: (data) => image.setAttribute(name, data) });
+		}
+	}
+	const inCss = (css: string, write: (css: string) => void): void => {
+		const urls = [...css.matchAll(CSS_URL)].map((match) => match[2] as string).filter(asset);
+		if (urls.length === 0) return;
+		let rewritten = css;
+		for (const url of new Set(urls)) {
+			edits.push({
+				data: fetched(url),
+				apply: (data) => {
+					rewritten = rewritten.replace(CSS_URL, (whole, _quote, target: string) =>
+						target === url ? `url("${data}")` : whole,
+					);
+					write(rewritten);
+				},
+			});
+		}
+	};
+	for (const element of clone.querySelectorAll("[style]")) {
+		inCss(element.getAttribute("style") || "", (css) => element.setAttribute("style", css));
+	}
+	for (const style of clone.querySelectorAll("style")) {
+		inCss(style.textContent || "", (css) => {
+			style.textContent = css;
+		});
+	}
+	return Promise.all(edits.map(({ data }) => data.catch(() => undefined))).then((arrived) => {
+		let spent = 0;
+		arrived.forEach((data, index) => {
+			if (data === undefined || spent + data.length > ASSET_BUDGET_CHARS) return;
+			spent += data.length;
+			edits[index]?.apply(data);
+		});
+	});
+}
+
 function sanitizeCaptureClone(clone: Element): void {
 	for (const element of clone.querySelectorAll(FORBIDDEN_ELEMENTS.join(", "))) {
 		element.remove();
@@ -207,7 +347,11 @@ function sanitizeCaptureClone(clone: Element): void {
 			}
 			if (!URL_ATTRIBUTES.has(name)) continue;
 			const value = attribute.value.trim();
-			if (value === "" || value.startsWith("#") || (name === "src" && SAFE_IMAGE_SRC_PREFIX.test(value))) {
+			if (
+				value === "" ||
+				value.startsWith("#") ||
+				safeImageReference(element.localName.toLowerCase(), name, value)
+			) {
 				continue;
 			}
 			element.removeAttribute(attribute.name);
@@ -339,7 +483,8 @@ async function captureAtDensity(settleMs: number): Promise<{ svg: Blob; width: n
 		if (d) d.setAttribute("value", el.value);
 	});
 	const fontCssPromise = inlineFontFaces(clone);
-	const [canvasUrls, fontCss] = await Promise.all([canvasUrlsPromise, fontCssPromise]);
+	const assetsPromise = inlineAssetImages(clone);
+	const [canvasUrls, fontCss] = await Promise.all([canvasUrlsPromise, fontCssPromise, assetsPromise]);
 	// Cached font promises and canvas encodes may resolve in this same task.
 	// Give the renderer a paint before sanitizing and serializing the clone.
 	await yieldCaptureTask();

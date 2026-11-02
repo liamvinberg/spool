@@ -148,7 +148,7 @@ it("assembles the document with the experiment off byte for byte as main does", 
 	// main's document for this frame: a
 	// change to the plain document on main updates it with `vitest -u`
 	expect(createHash("sha256").update(doc.document.replaceAll(name, "PROJECT")).digest("hex")).toMatchInlineSnapshot(
-		`"ade402700540bfd40ff5eeb4053ce551f3ae4201ccecb4e23b99e3cc1a59c45b"`,
+		`"98f70d92333fc0c50c43d32b2c7935b9547a460ea06f484337ce615aececac2d"`,
 	);
 });
 

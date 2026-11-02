@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -151,6 +152,18 @@ describe("daemon authority matrix", () => {
 			expect((await capture("/capture", { method })).status).toBe(404);
 		}
 		expect((await request("capture-spool.localhost.attacker.example", "/capture")).status).toBe(421);
+	});
+
+	// a frame's imported image (#216) is the frame's to load, from the host frames run on
+	it("serves an image's URL from the render host alone", async () => {
+		const { project, render, control, capture } = makeSecurityHarness();
+		writeDesignFile(project.root, "shared/assets/dot.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>");
+		const hash = createHash("sha256").update("<svg xmlns='http://www.w3.org/2000/svg'/>").digest("hex");
+		const path = `/asset/${hash}.svg`;
+
+		expect((await render(path)).status).toBe(200);
+		expect((await control(path)).status).toBe(404);
+		expect((await capture(path)).status).toBe(404);
 	});
 
 	/*

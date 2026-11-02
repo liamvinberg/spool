@@ -37,6 +37,8 @@ import { createAgentModelPreferences } from "./agent-model-preferences";
 import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
+import { createAssetStore } from "./asset-store";
+import { ASSET_MEDIA_TYPES, ASSET_PATH } from "./assets";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
@@ -67,6 +69,7 @@ import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
 import { historyCache } from "./history-cache";
 import { homeRoutes } from "./home-routes";
+import { oversizedImages } from "./image-size";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
@@ -380,6 +383,10 @@ export function createDaemonApp({
 	const startedAt = new Date().toISOString();
 	const webfonts = providedWebfonts ?? createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
+	const assetStore = createAssetStore({
+		roots: () => readRegistry(spoolDir).projects.map((project) => project.root),
+		subscribe: (root, changed) => hub.subscribe(root, changed),
+	});
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
@@ -1035,6 +1042,7 @@ export function createDaemonApp({
 			isFrameDocumentPath(path) ||
 			path.startsWith("/vendor/") ||
 			isProjectDataPath(path) ||
+			ASSET_PATH.test(path) ||
 			// a Fast Refresh document's own modules (the fast-refresh experiment)
 			/^\/p\/[^/]+\/hot\/[^/]+$/.test(path)
 		);
@@ -1427,6 +1435,9 @@ export function createDaemonApp({
 							// classes its stylesheet never built render unstyled with a clean console
 							const unstyled = unstyledWarning(doc.unstyled);
 							if (unstyled !== undefined) entries.unshift({ type: "spool", text: unstyled });
+							// and images served as they are, too big to be
+							const oversized = oversizedImages(doc.assets);
+							if (oversized !== undefined) entries.unshift({ type: "spool", text: oversized });
 							const files = recordBoot(project.root, frame, {
 								etag: doc.etag,
 								scenario: scenario ?? "default",
@@ -1491,6 +1502,7 @@ export function createDaemonApp({
 				const doc = await compiler.getDocument(root, frame, frameAuthority(root), hot);
 				if (doc.kind === "missing") return c.text(doc.message, 404);
 				if (doc.kind === "error") return c.html(doc.document, 500);
+				assetStore.note(root, doc.assets);
 				// a Fast Refresh document carries a session of its own, every load a new one
 				if (hot) {
 					c.header("cache-control", "no-store");
@@ -1712,6 +1724,36 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "font/woff2");
 			return c.body(new Uint8Array(readFileSync(file)));
+		})
+		.get("/asset/:file", async (c) => {
+			// A frame's imported image (#216), by the hash of its bytes: the address is
+			// the content, so it never goes stale, and only a file a registered design/
+			// holds now answers it. Null-origin sandboxed frames read it under CORS,
+			// to draw it into a canvas and to inline it into their own stills.
+			const match = ASSET_PATH.exec(c.req.path);
+			const hash = match?.[1] ?? "";
+			const type = ASSET_MEDIA_TYPES[(match?.[2] ?? "").toLowerCase()] ?? "";
+			// today's design/, or the bytes an old team version a compare compiled had then (spool#189)
+			const asset: { bytes: Uint8Array; type: string } | undefined =
+				match === null ? undefined : await assetStore.read(hash, match[2] ?? "");
+			const then = match === null || asset !== undefined ? undefined : comparing.asset(hash, type);
+			const served = asset ?? (then === undefined ? undefined : { bytes: then, type });
+			if (match === null || served === undefined) {
+				c.header("cache-control", "no-store");
+				return c.text("no such asset", 404);
+			}
+			const etag = `"${match[1]}"`;
+			c.header("access-control-allow-origin", "*");
+			c.header("cache-control", "public, max-age=31536000, immutable");
+			c.header("etag", etag);
+			c.header("content-type", served.type);
+			c.header("x-content-type-options", "nosniff");
+			// an svg opened on its own runs nothing and fetches nothing
+			if (served.type === "image/svg+xml") {
+				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+			}
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			return c.body(new Uint8Array(served.bytes));
 		})
 		.get("/vendor/webfont/:key", async (c) => {
 			// A project's own fonts.css named this file's URL and nothing else can
@@ -2273,6 +2315,7 @@ export function createDaemonApp({
 			boothWatches.clear();
 			iconWatch.close();
 			thumbnailWatch.close();
+			assetStore.close();
 			hub.close();
 			updateChecker.stop();
 			const closed = await Promise.allSettled([compiled, booth.close(), goReader.close()]);

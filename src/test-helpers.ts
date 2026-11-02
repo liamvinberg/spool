@@ -190,6 +190,7 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 				/^\/p\/[^/]+\/history\/\d+\/frames\/[^/]+$/.test(path) ||
 				path.startsWith("/play/") ||
 				path.startsWith("/vendor/") ||
+				path.startsWith("/asset/") ||
 				projectData !== null;
 			url.hostname = render ? RENDER_HOST : "localhost";
 			const request = new Request(url.href, init);

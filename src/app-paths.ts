@@ -11,6 +11,7 @@ export const APP_PATH_SEGMENTS: readonly string[] = [
 	// a project's canvas, and the daemon's own routes
 	"p",
 	"api",
+	"asset",
 	"capture",
 	"covers",
 	"favicon.svg",

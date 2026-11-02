@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { BrowserContext, CDPSession, ConsoleMessage, Disposable, Page } from "playwright-core";
+import type { BrowserContext, CDPSession, ConsoleMessage, Disposable, Page, Request } from "playwright-core";
 import { COVER_QUALITY, type ColorScheme, type CoverShape, coverShape, SETTLE_BUDGET_MS } from "../cover";
 import {
 	fetchHeadlessShell,
@@ -9,6 +9,7 @@ import {
 	MissingHeadlessShellError,
 } from "../headless-shell";
 import type { NamedElement } from "../runtime/frame-shim/named-element";
+import { ASSET_PATH } from "./assets";
 import { type BoothQueue, type BoothReason, keyOf, type Sitting } from "./booth-queue";
 import { frameShims } from "./frame-shims";
 import { type FramePace, SLOW_PER_SECOND } from "./thumbs";
@@ -118,6 +119,9 @@ const PACE_DEADLINE_MS = 3000;
 
 /** How long a cover's document has to draw something into its root. */
 const COVER_BOOT_MS = 5000;
+
+/** How long a booted document's images have to load and decode before its settle (#216). */
+const IMAGES_BUDGET_MS = 5000;
 
 /**
  * How long a shot waits for the root to have children (#16). A frame that
@@ -425,6 +429,10 @@ interface Tab {
 	parking: Promise<unknown> | undefined;
 	/** The context of its own a tab outside every slot is in, closed with it. */
 	alone: BrowserContext | undefined;
+	/** The asset images it is loading now (#216), however the frame asked: an img, a CSS url(), a new Image(). */
+	assets: Set<Request>;
+	/** Each told once nothing is loading. */
+	arrived: Set<() => void>;
 }
 
 /** What one sitting saw. */
@@ -799,7 +807,26 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			entries: [],
 			parking: undefined,
 			alone: alone ? context : undefined,
+			assets: new Set(),
+			arrived: new Set(),
 		};
+		const isAsset = (request: Request) => {
+			try {
+				return ASSET_PATH.test(new URL(request.url()).pathname);
+			} catch {
+				return false;
+			}
+		};
+		page.on("request", (request) => {
+			if (isAsset(request)) tab.assets.add(request);
+		});
+		const done = (request: Request) => {
+			if (!tab.assets.delete(request) || tab.assets.size > 0) return;
+			for (const tell of tab.arrived) tell();
+			tab.arrived.clear();
+		};
+		page.on("requestfinished", done);
+		page.on("requestfailed", done);
 		page.on("pageerror", (error) => {
 			// the stack, which a shot reads back to the frame's files (`stack-map.ts`)
 			const text = error.stack ?? String(error);
@@ -1334,6 +1361,8 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 			ran += step;
 			await evaluate(tab, world, `spoolTag(${ran})`);
 		}
+		// what the frame shows by now, its images in it, before its animations are set to their ages
+		await imagesLoaded(tab, world);
 		await evaluate(
 			tab,
 			world,
@@ -1344,10 +1373,44 @@ export function createBooth(queue: BoothQueue, deps: BoothDeps) {
 	}
 
 	/**
-	 * The shim's own settle, run where frame code cannot reach it, and waited on
-	 * for no longer than its budget and a grace before the picture is taken.
+	 * The frame's images and the shim's own settle, run where frame code cannot
+	 * reach them, each waited on for no longer than its budget and a grace before
+	 * the picture is taken.
 	 */
+	/**
+	 * Every asset image the frame has asked for arrived and every image it shows
+	 * decoded, or the budget spent (#216): an imported image arrives by URL after
+	 * the frame has booted, and a picture without it is wrong.
+	 */
+	async function imagesLoaded(tab: Tab, world: number): Promise<void> {
+		const started = Date.now();
+		if (tab.assets.size > 0) {
+			let tell: () => void = () => {};
+			await within(
+				new Promise<void>((resolve) => {
+					tell = resolve;
+					tab.arrived.add(resolve);
+				}),
+				IMAGES_BUDGET_MS,
+				"loading images",
+			)
+				.catch((error: unknown) => {
+					if (!(error instanceof TimedOut)) throw error;
+				})
+				.finally(() => tab.arrived.delete(tell));
+		}
+		const left = Math.max(0, IMAGES_BUDGET_MS - (Date.now() - started));
+		await within(
+			evaluate(tab, world, `${frameShims.boothProbes}.imagesReady(${left})`),
+			left + SETTLE_GRACE_MS,
+			"decoding images",
+		).catch((error: unknown) => {
+			if (!(error instanceof TimedOut)) throw error;
+		});
+	}
+
 	async function settled(tab: Tab, world: number): Promise<void> {
+		await imagesLoaded(tab, world);
 		await within(
 			evaluate(
 				tab,

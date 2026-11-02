@@ -481,11 +481,6 @@ async function composePlayer(
 	context: PlayerContext,
 	reads: DesignReads,
 ): Promise<{ composition: Composition; broken: Map<string, string> }> {
-	// No image budget here, and none in blameFrames either (#101). The budget
-	// guards a frame document, because the canvas loads a page full of them; the
-	// player is one document, loaded once. Applying it to the composition would
-	// kill the whole player over the sum of frames that each fit their own
-	// document — the exact whole-player failure this function exists to prevent.
 	const none = new Map<string, string>();
 	try {
 		// The healthy build rides the held context: esbuild keeps what it parsed

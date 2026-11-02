@@ -2,7 +2,7 @@ import { MAX_CAPTURE_OUTPUT_PIXELS } from "../../cover";
 import {
 	FORBIDDEN_ELEMENTS,
 	MAX_SOURCE_BYTES,
-	SAFE_IMAGE_SRC_PREFIX,
+	safeImageReference,
 	URL_ATTRIBUTES,
 	unsafeCaptureCss,
 } from "./capture-safety";
@@ -70,9 +70,9 @@ function validateSvg(svg: string, width: number, height: number): string {
 			const value = attribute.value.trim();
 			if (name.startsWith("on") || unsafeCaptureCss(value)) throw new Error("unsafe capture SVG");
 			if (!URL_ATTRIBUTES.has(name) || value === "" || value.startsWith("#")) continue;
-			// An svg reached through src is a passive image context: scripting and
-			// external references are off by specification, so it joins the rasters.
-			if (name === "src" && SAFE_IMAGE_SRC_PREFIX.test(value)) continue;
+			// An svg reached through src or an svg image is a passive image context:
+			// scripting and external references are off by specification, so it joins the rasters.
+			if (safeImageReference(tag, name, value)) continue;
 			throw new Error("unsafe capture SVG");
 		}
 	}

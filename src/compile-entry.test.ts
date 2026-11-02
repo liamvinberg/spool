@@ -127,6 +127,23 @@ describe("the compile entry, with the files in memory and esbuild-wasm", () => {
 		expect(cloud.hash).not.toBe(mac.hash);
 		expect(cloud.source).toBe(mac.source);
 	});
+
+	// what the cloud serves a document's images from: each one the document names, by its URL
+	it("names the images its document loads", { timeout: 60_000 }, async () => {
+		const { host, designDir } = inMemory();
+		const home = await compileFrameDocument(host, {
+			designDir,
+			frame: "home",
+			project: "fixture-project",
+			authority,
+			version: VERSION,
+		});
+
+		const hash = "3abfa0e1993c2eb53f969cded6d2548fe2fe3866d87c2f4266755c405a1b05b3";
+		expect(home.assets).toEqual([
+			{ url: `/asset/${hash}.svg`, hash, type: "image/svg+xml", path: "shared/assets/dot.svg", size: 109 },
+		]);
+	});
 });
 
 /**
