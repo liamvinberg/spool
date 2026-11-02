@@ -286,6 +286,8 @@ export interface CompiledFrameDocument {
 	etag: string;
 	/** Every file the document was made of, present or not, absolute. */
 	inputs: string[];
+	/** Every image the document loads by URL (#216): what the host serving it answers that URL with. */
+	assets: CompiledAsset[];
 	/** A Fast Refresh document's design modules, each served on its own (`hot-modules.ts`). */
 	hotModules?: string[];
 	/** The webfont revision its fonts were resolved at (#80). */
@@ -294,6 +296,34 @@ export interface CompiledFrameDocument {
 	settled: boolean;
 	/** Themed Tailwind classes its sources name that its stylesheet has no rule for (`unstyled-classes.ts`). */
 	unstyled: string[];
+}
+
+/** An image a document loads (#216), as the compile read it. */
+export interface CompiledAsset {
+	/** Where the document names it: `/asset/<hash>.<ext>`, host-relative. */
+	url: string;
+	/** The SHA-256 of its bytes, hex. */
+	hash: string;
+	/** Its media type, as it is served. */
+	type: string;
+	/** Its path in design/: `shared/assets/logo.svg`. */
+	path: string;
+	/** Its size in bytes. */
+	size: number;
+}
+
+/** The images among a bundle's files, by the bytes the compile read of each, in path order. */
+function compiledAssets(designDir: string, files: string[], reads: DesignReads): CompiledAsset[] {
+	return files
+		.flatMap((file) => {
+			const type = ASSET_MEDIA_TYPES[extname(file).toLowerCase()];
+			const bytes = type === undefined ? undefined : reads.bytes(file);
+			if (type === undefined || bytes === undefined) return [];
+			const hash = contentDigest(bytes);
+			const path = designRelativePath(designDir, file);
+			return [{ url: assetUrl(hash, file), hash, type, path, size: bytes.byteLength }];
+		})
+		.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 /**
@@ -382,6 +412,7 @@ export async function compileFrameDocument(
 		source: frameSource(frame, designDir, digests),
 		etag: `"${etag.slice(0, 32)}"`,
 		inputs: [...digests.keys()],
+		assets: compiledAssets(designDir, sourceFiles, reads),
 		fonts: fontsRevision,
 		settled,
 		unstyled,

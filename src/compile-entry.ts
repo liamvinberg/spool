@@ -37,6 +37,7 @@
 export type { CanvasOrder, CanvasPlaces, Place } from "./daemon/canvas-fields";
 export { type ClassScanner, type ScannedFile, scanCandidates } from "./daemon/class-scanner";
 export {
+	type CompiledAsset,
 	type CompiledFrameDocument,
 	type CompileEsbuild,
 	type CompileHost,
