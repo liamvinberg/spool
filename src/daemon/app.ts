@@ -37,6 +37,8 @@ import { createAgentModelPreferences } from "./agent-model-preferences";
 import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
+import { createAssetStore } from "./asset-store";
+import { ASSET_PATH } from "./assets";
 import { type BoothSeams, createBooth, createBoothQueue } from "./booth";
 import { canvasRoutes } from "./canvas-routes";
 import { type CloudAccountServices, createCloudAccount } from "./cloud-account";
@@ -67,6 +69,7 @@ import { handRoutes } from "./hand-routes";
 import { createHistory, type HistoryClock } from "./history";
 import { historyCache } from "./history-cache";
 import { homeRoutes } from "./home-routes";
+import { oversizedImages } from "./image-size";
 import { isLoopbackHost } from "./loopback";
 import { machineRoutes } from "./machine-routes";
 import { describeMigration, migrateFrameNames } from "./migrate-frame-names";
@@ -143,8 +146,6 @@ import {
 } from "./vendor";
 import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./verify-record";
 import { createWebfonts, type Webfonts } from "./webfonts";
-import { createAssetStore } from "./asset-store";
-import { ASSET_PATH } from "./assets";
 
 export interface DaemonOptions {
 	agentAppLauncher?: AgentAppLauncher;
@@ -1431,6 +1432,9 @@ export function createDaemonApp({
 							// classes its stylesheet never built render unstyled with a clean console
 							const unstyled = unstyledWarning(doc.unstyled);
 							if (unstyled !== undefined) entries.unshift({ type: "spool", text: unstyled });
+							// and images served as they are, too big to be
+							const oversized = oversizedImages(doc.assets);
+							if (oversized !== undefined) entries.unshift({ type: "spool", text: oversized });
 							const files = recordBoot(project.root, frame, {
 								etag: doc.etag,
 								scenario: scenario ?? "default",

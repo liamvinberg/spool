@@ -30,6 +30,7 @@ import {
 } from "./document";
 import { hotBootEntry, hotHeadKey, hotPreloads, isHotModuleFile, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
+import { imageSize } from "./image-size";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
 import { isThemeStylesheet } from "./themes";
@@ -310,6 +311,9 @@ export interface CompiledAsset {
 	path: string;
 	/** Its size in bytes. */
 	size: number;
+	/** Its pixel size, as a raster's header names it: never for an svg. */
+	width?: number;
+	height?: number;
 }
 
 /** The images among a bundle's files, by the bytes the compile read of each, in path order. */
@@ -321,7 +325,8 @@ function compiledAssets(designDir: string, files: string[], reads: DesignReads):
 			if (type === undefined || bytes === undefined) return [];
 			const hash = contentDigest(bytes);
 			const path = designRelativePath(designDir, file);
-			return [{ url: assetUrl(hash, file), hash, type, path, size: bytes.byteLength }];
+			const pixels = imageSize(file, bytes);
+			return [{ url: assetUrl(hash, file), hash, type, path, size: bytes.byteLength, ...pixels }];
 		})
 		.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
