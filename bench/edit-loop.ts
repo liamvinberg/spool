@@ -37,8 +37,10 @@ import {
  * the frame's own file and then the shared caption:
  *
  *   save_to_pixels_ms         write (epoch, node) to the first rAF in the frame's
- *                             document whose DOM holds the new text (epoch,
- *                             performance.timeOrigin + rAF timestamp)
+ *                             document whose DOM holds the new text (epoch, the
+ *                             clock when that rAF runs: its timestamp is when
+ *                             the frame began, which a document kept across
+ *                             edits can have begun before the write)
  *   save_to_loaded_ms         write to the frame's loaded report reaching the canvas
  *                             (absent when the edit did not reload the document)
  *   state_kept_count          of the four states, how many the painted frame still
@@ -202,7 +204,7 @@ if (!w.__editProbe) {
 					__editBench: {
 						kind: el.getAttribute("data-edit-mark"),
 						mark: el.textContent,
-						at: performance.timeOrigin + t,
+						at: performance.timeOrigin + performance.now(),
 						count: q("[data-edit-count]")?.textContent ?? null,
 						input: (q("[data-edit-input]") as HTMLInputElement | null)?.value ?? null,
 						scroll: (q("[data-edit-scroll]") as HTMLElement | null)?.scrollTop ?? null,
@@ -366,13 +368,24 @@ async function clickIn(page: Page, frame: Frame, selector: string): Promise<void
 	await sleep(60);
 }
 
-const STATE = { count: "3", input: "kept", scroll: 300 };
+const STATE = { clicks: 3, input: "kept", scroll: 300 };
 
-/** A person's state in the frame: three clicks, some typing, a scroll, and the animation left running. */
-async function putState(page: Page): Promise<{ ticks: number }> {
+/**
+ * A person's state in the frame: three clicks, some typing, a scroll, and the
+ * animation left running. A document that kept the last round's state (an
+ * edit that did not reload it) counts on from where it is, its input emptied
+ * first, so every round puts the same state in.
+ */
+async function putState(page: Page): Promise<{ ticks: number; count: string }> {
 	if (!(await isEntered(page))) await enter(page);
 	const frame = await fixtureFrame(page);
-	for (let i = 0; i < 3; i++) await clickIn(page, frame, "[data-edit-counter]");
+	const was = await frame.evaluate(() => ({
+		count: Number(document.querySelector("[data-edit-count]")?.textContent ?? "0"),
+		input: (document.querySelector("[data-edit-input]") as HTMLInputElement | null)?.value ?? "",
+	}));
+	const count = String(was.count + STATE.clicks);
+	for (let i = 0; i < STATE.clicks; i++) await clickIn(page, frame, "[data-edit-counter]");
+	if (was.input !== "") await frame.locator("[data-edit-input]").fill("");
 	await clickIn(page, frame, "[data-edit-input]");
 	await page.keyboard.type(STATE.input);
 	await frame.locator("[data-edit-scroll]").evaluate((el, top) => {
@@ -386,10 +399,10 @@ async function putState(page: Page): Promise<{ ticks: number }> {
 		ticks: Number(document.querySelector("[data-edit-ticks]")?.textContent ?? "NaN"),
 	}));
 	// the readers have to see the state they are about to judge, or a kept 0 means nothing
-	if (now.count !== STATE.count || now.input !== STATE.input || now.scroll !== STATE.scroll || !(now.ticks > 30)) {
+	if (now.count !== count || now.input !== STATE.input || now.scroll !== STATE.scroll || !(now.ticks > 30)) {
 		throw new Error(`the fixture did not take its state: ${JSON.stringify(now)}`);
 	}
-	return { ticks: now.ticks };
+	return { ticks: now.ticks, count };
 }
 
 /** What `--out` gets: the loop's metrics, and the samples behind them. */
@@ -428,7 +441,7 @@ async function editOnce(page: Page, fixture: Fixture, kind: "frame" | "shared"):
 		{ frame: FIXTURE, after: write.at },
 	);
 	const kept =
-		Number(painted.count === STATE.count) +
+		Number(painted.count === before.count) +
 		Number(painted.input === STATE.input) +
 		Number(painted.scroll === STATE.scroll) +
 		Number(painted.ticks >= before.ticks);

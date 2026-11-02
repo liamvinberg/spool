@@ -23,9 +23,12 @@ declare global {
  * element tree back while its direction is still open: off, Edit leaves the
  * rail exactly as Select does. `frame-resolution` has a live frame draw its
  * canvases at the density it is shown at rather than the screen's (spool#218):
- * cheaper at overview zooms, a short blur while a zoom in settles.
+ * cheaper at overview zooms, a short blur while a zoom in settles. `fast-refresh`
+ * swaps a saved frame's components into its open document with React Refresh,
+ * state kept, rather than reloading it (spool#218, `daemon/fast-refresh.ts`):
+ * off, every save reloads.
  */
-export type Experiment = "agent-panel" | "element-tree" | "frame-resolution";
+export type Experiment = "agent-panel" | "element-tree" | "fast-refresh" | "frame-resolution";
 
 export function experimentOn(name: Experiment): boolean {
 	const enabled = typeof window === "undefined" ? undefined : window.__SPOOL_EXPERIMENTS__;

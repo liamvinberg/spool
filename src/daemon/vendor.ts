@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { FAST_REFRESH_RUNTIME } from "./fast-refresh";
 import { REACT_SPECIFIERS } from "./vendor-pins";
 
 /**
@@ -18,6 +19,7 @@ import { REACT_SPECIFIERS } from "./vendor-pins";
 export {
 	importMapPins,
 	REACT_SPECIFIERS,
+	VENDOR_REACT_DEV_URL,
 	VENDOR_REACT_URL,
 	VENDOR_SPOOL_JSX_URL,
 	VENDOR_SPOOL_URL,
@@ -53,6 +55,25 @@ export const vendorReactJs: () => Promise<string> = lazyBuild(() => buildVendorR
  * Nothing else is ever served it.
  */
 export const vendorReactDevJs: () => Promise<string> = lazyBuild(() => buildVendorReact("development"));
+
+/** React Refresh's runtime, for a document compiled for the `fast-refresh` experiment (`fast-refresh.ts`). */
+export const fastRefreshRuntimeJs: () => Promise<string> = lazyBuild(async () => {
+	const result = await build({
+		stdin: { contents: FAST_REFRESH_RUNTIME, resolveDir: dirname(fileURLToPath(import.meta.url)), loader: "js" },
+		bundle: true,
+		format: "iife",
+		platform: "browser",
+		target: "es2022",
+		minifyWhitespace: true,
+		minifySyntax: true,
+		define: { "process.env.NODE_ENV": '"development"' },
+		write: false,
+		logLevel: "silent",
+	});
+	const js = result.outputFiles[0]?.text;
+	if (js === undefined) throw new Error("the fast refresh runtime produced no output");
+	return js;
+});
 
 async function buildVendorReact(mode: "production" | "development"): Promise<string> {
 	const seen = new Set<string>(["default"]);

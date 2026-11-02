@@ -34,6 +34,7 @@ import { IconButton } from "../primitives/actions";
 import { Count } from "../primitives/display";
 import { TextField } from "../primitives/inputs";
 import { TreeRow } from "../primitives/structure";
+import { useStableCallback } from "../stable-callback";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
 	flatPages,
@@ -1583,6 +1584,26 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
 	/* ── drawing ─────────────────────────────────────────────────────── */
 
+	// the rows' handlers keep one identity, so a row redraws only when what it shows changes: a
+	// selection on a page of a thousand frames redraws the two rows it moved, not the thousand
+	const rowPress = useStableCallback(pressRow);
+	const rowMenu = useStableCallback(openMenu);
+	const rowActivate = useStableCallback((row: PageRow | FrameRow) => {
+		if (justDragged.current || row.kind !== "page") return;
+		enterPage(row.page);
+	});
+	const rowSelect = useStableCallback((event: React.MouseEvent, row: PageRow | FrameRow) => {
+		if (justDragged.current || row.kind !== "frame") return;
+		onSelectFrame(row.name, modifiersOf(event), (anchor) => framesBetween(now.current.rows, anchor, rowKey(row)));
+	});
+	const rowOpen = useStableCallback((row: PageRow | FrameRow, deep: boolean) => {
+		if (row.kind !== "page") return;
+		setOpen(row.page, !row.open, deep);
+	});
+	const rowFly = useStableCallback((row: PageRow | FrameRow) => {
+		if (row.kind === "frame") onDoubleClickFrame(row.name);
+	});
+
 	const menuRow = menu === null ? null : (rows.find((row) => rowKey(row) === targetKey(menu.target)) ?? null);
 	/** what the open menu's row would move, and where it could go */
 	const menuMove =
@@ -1670,26 +1691,13 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 								into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
 								springing={row.kind === "page" && springing === row.page}
 								rename={rename}
-								onPress={pressRow}
-								onActivate={() => {
-									if (justDragged.current || row.kind !== "page") return;
-									enterPage(row.page);
-								}}
-								onSelect={(event) => {
-									if (justDragged.current || row.kind !== "frame") return;
-									onSelectFrame(row.name, modifiersOf(event), (anchor) =>
-										framesBetween(now.current.rows, anchor, rowKey(row)),
-									);
-								}}
-								onOpen={(deep) => {
-									if (row.kind !== "page") return;
-									setOpen(row.page, !row.open, deep);
-								}}
-								onRename={() => beginRename(row)}
-								onFly={() => {
-									if (row.kind === "frame") onDoubleClickFrame(row.name);
-								}}
-								onMenu={openMenu}
+								onPress={rowPress}
+								onActivate={rowActivate}
+								onSelect={rowSelect}
+								onOpen={rowOpen}
+								onRename={beginRename}
+								onFly={rowFly}
+								onMenu={rowMenu}
 							/>
 						);
 					})}
@@ -1819,6 +1827,9 @@ function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: bo
 				transform: `translateY(${row.top}px)`,
 				transition: `transform 280ms ${CURVE}, opacity 140ms ease-out`,
 				opacity: lifted ? 0.3 : 1,
+				// a page of a thousand frames is a thousand rows: the ones scrolled away
+				// are left unstyled and unlaid until they come near the list's view
+				contentVisibility: "auto",
 			}}
 		>
 			{children}
@@ -1859,7 +1870,7 @@ function NewPageRow({ row, rename }: { row: BornRow; rename: RenameHandle }) {
 /** The row's own button, laid across the row for the keyboard and for a reader: the row takes its clicks. */
 const ROW_ACTION = "absolute inset-0 z-1 focus-ring-inset";
 
-function RailTreeRow({
+const RailTreeRow = memo(function RailTreeRow({
 	row,
 	activePage,
 	litPage,
@@ -1894,11 +1905,11 @@ function RailTreeRow({
 	springing: boolean;
 	rename: RenameHandle | null;
 	onPress: (event: React.PointerEvent<HTMLElement>, row: RailRow) => void;
-	onActivate: () => void;
-	onSelect: (event: React.MouseEvent) => void;
-	onOpen: (deep: boolean) => void;
-	onRename: () => void;
-	onFly: () => void;
+	onActivate: (row: PageRow | FrameRow) => void;
+	onSelect: (event: React.MouseEvent, row: PageRow | FrameRow) => void;
+	onOpen: (row: PageRow | FrameRow, deep: boolean) => void;
+	onRename: (row: PageRow | FrameRow) => void;
+	onFly: (row: PageRow | FrameRow) => void;
 	onMenu: (event: React.MouseEvent, target: MenuTarget) => void;
 }) {
 	const label = row.kind === "page" ? pageLabel(row.page) : pageName(row.name);
@@ -1920,7 +1931,7 @@ function RailTreeRow({
 				depth={row.depth}
 				// the root page has no row, so its frames stand at the margin with no spine to hang on
 				{...(page
-					? { branch: { open: row.open, label, onToggle: onOpen } }
+					? { branch: { open: row.open, label, onToggle: (deep: boolean) => onOpen(row, deep) } }
 					: row.page === ROOT_PAGE
 						? {}
 						: { guide: row.last ? "last" : "mid" })}
@@ -1981,14 +1992,17 @@ function RailTreeRow({
 				// a click anywhere on the row is its button's, which says what it does; a
 				// field being typed in is not
 				{...(rename === null
-					? { onClick: page ? onActivate : onSelect, onDoubleClick: page ? onRename : onFly }
+					? {
+							onClick: page ? () => onActivate(row) : (event: React.MouseEvent) => onSelect(event, row),
+							onDoubleClick: page ? () => onRename(row) : () => onFly(row),
+						}
 					: {})}
 				onPointerDown={(event) => onPress(event, row)}
 				onContextMenu={(event) => onMenu(event, target)}
 			/>
 		</RowShell>
 	);
-}
+});
 
 /**
  * The row's menu, reachable without a right click (#229).

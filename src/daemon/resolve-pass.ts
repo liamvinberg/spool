@@ -78,7 +78,7 @@ export function createResolvePass(deps: ResolvePassDeps) {
 			// a fresh read is fresh whatever it found: a frame that rendered and
 			// wrote no [data-go] answered, and re-asking it every pass paid a page
 			// load per scenario for the answer already on disk (#150)
-			if (rendered(frame.name, sourceHash, scenarios.hash) !== null) {
+			if (rendered(frame.name, () => sourceHash, scenarios.hash) !== null) {
 				result.skipped++;
 				continue;
 			}

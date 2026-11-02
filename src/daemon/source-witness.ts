@@ -117,6 +117,8 @@ function memo<T>(ask: (path: string) => T): (path: string) => T {
  */
 export function createLooks() {
 	const landings = new Map<string, readonly string[] | undefined>();
+	// edges a pass hands out are shared by every frame walking the same file
+	const byEdge = new WeakMap<ImportEdge, readonly string[] | undefined>();
 	const looks = {
 		/** The path's identity now. */
 		at: memo((path) => look(path)),
@@ -154,10 +156,11 @@ export function createLooks() {
 		 * this tens of thousands of times.
 		 */
 		landing(designDir: string, edge: ImportEdge): readonly string[] | undefined {
+			if (byEdge.has(edge)) return byEdge.get(edge);
 			const key = landingKey(edge);
-			if (landings.has(key)) return landings.get(key);
-			const found = landingFolders(designDir, edge, looks);
+			const found = landings.has(key) ? landings.get(key) : landingFolders(designDir, edge, looks);
 			landings.set(key, found);
+			byEdge.set(edge, found);
 			return found;
 		},
 

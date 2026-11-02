@@ -17,8 +17,11 @@ import { designPathResolver, realDesignDir } from "./design-path";
 import { contentDigest, readDesignBytes } from "./design-reads";
 import { diskDesignFiles } from "./disk-files";
 import { errorDocument } from "./document";
+import { HOT_SESSION_PLACEHOLDER } from "./fast-refresh";
+import { hotModules } from "./hot-modules";
 import { describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
 import type { BundleMap } from "./stack-map";
+import { fastRefreshRuntimeJs } from "./vendor";
 import { inertWebfonts, type Webfonts } from "./webfonts";
 
 export type { FrameAuthority } from "./design-compile";
@@ -49,7 +52,27 @@ export function createFrameCompiler(
 ) {
 	const cache = new Map<string, CompiledFrameDocument>();
 
-	async function getDocument(root: string, frame: string, authority: FrameAuthority): Promise<FrameDocument> {
+	/**
+	 * `hot` asks for the document compiled for Fast Refresh, which only a canvas
+	 * with the `fast-refresh` experiment on asks for (`fast-refresh.ts`).
+	 */
+	const served = hotModules(host);
+
+	/**
+	 * The document as one load gets it: a Fast Refresh one with a session of its
+	 * own, its modules compiled alongside (`hot-modules.ts`); any other as it is.
+	 */
+	function withSession(root: string, designDir: string, entry: CompiledFrameDocument): string {
+		if (entry.hotModules === undefined) return entry.document;
+		return entry.document.replaceAll(HOT_SESSION_PLACEHOLDER, served.open(root, designDir, entry.hotModules));
+	}
+
+	async function getDocument(
+		root: string,
+		frame: string,
+		authority: FrameAuthority,
+		hot = false,
+	): Promise<FrameDocument> {
 		if (!isFramePath(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
 		const lookup = lookupFrame(root, frame);
 		if (lookup.kind === "missing") {
@@ -67,7 +90,7 @@ export function createFrameCompiler(
 			};
 		}
 
-		const stamp = frameStamp(frame, authority);
+		const stamp = frameStamp(frame, authority, hot);
 		const key = `${root}\0${stamp}`;
 		// What this request found. A miss answers only for that: another miss
 		// overlapping it may have cached a newer document meanwhile, which this one
@@ -87,8 +110,8 @@ export function createFrameCompiler(
 				// meanwhile retires this document as surely as one before it
 				cached.fonts === webfonts.revision()
 			) {
-				const { document, etag, source, unstyled } = cached;
-				return { kind: "ok", document, etag, source, unstyled, cache: "hit" };
+				const { etag, source, unstyled } = cached;
+				return { kind: "ok", document: withSession(root, designDir, cached), etag, source, unstyled, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
 				designDir,
@@ -97,13 +120,14 @@ export function createFrameCompiler(
 				authority,
 				version,
 				webfonts,
+				...(hot ? { hot: { runtime: await fastRefreshRuntimeJs() } } : {}),
 			});
 			if (cache.get(key) === cached) {
 				if (entry.settled) cache.set(key, entry);
 				else cache.delete(key);
 			}
-			const { document, etag, source, unstyled } = entry;
-			return { kind: "ok", document, etag, source, unstyled, cache: "miss" };
+			const { etag, source, unstyled } = entry;
+			return { kind: "ok", document: withSession(root, designDir, entry), etag, source, unstyled, cache: "miss" };
 		} catch (error) {
 			if (cache.get(key) === cached) cache.delete(key);
 			const message = await describeCompileError(host.esbuild, error);
@@ -134,7 +158,21 @@ export function createFrameCompiler(
 		}
 	}
 
-	return { getDocument, forget, sourceMap };
+	/**
+	 * One design module of a Fast Refresh document, in its session
+	 * (`hot-modules.ts`): undefined when no module is there; a compile failure throws.
+	 */
+	function getHotModule(root: string, path: string, session: string): Promise<string | undefined> {
+		return served.module(root, basename(root), realDesignDir(root), path, session);
+	}
+
+	/** A Fast Refresh document's plan for an update of its frame (`hot-modules.ts`); undefined when the frame is gone. */
+	async function getHotPlan(root: string, frame: string, session: string) {
+		if (!isFramePath(frame) || lookupFrame(root, frame).kind === "missing") return undefined;
+		return served.plan(root, basename(root), realDesignDir(root), frame, session);
+	}
+
+	return { getDocument, getHotModule, getHotPlan, forget, sourceMap };
 }
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;

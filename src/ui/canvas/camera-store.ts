@@ -172,12 +172,15 @@ export function useChanged(): (...values: readonly unknown[]) => boolean {
  * values `apply` writes, so a render can never put back a value the camera has
  * already moved past. The deps are what `apply` reads besides the camera; a
  * change runs it again before the paint, so a frame that moved under a still
- * camera is drawn moved.
+ * camera is drawn moved. `view`, when given, runs it again whenever the view
+ * the camera looks through changes size, for a follower that skips what it
+ * can't see.
  */
 export function useCameraFollow(
 	store: CameraStore,
 	apply: (camera: Camera, moving: boolean) => void,
 	deps: DependencyList,
+	view?: ViewChanges,
 ): void {
 	const latest = useRef(apply);
 	// the committed apply, never one from a render React threw away
@@ -195,4 +198,33 @@ export function useCameraFollow(
 			}),
 		[store],
 	);
+	useLayoutEffect(
+		() =>
+			view?.subscribe(() => {
+				const camera = store.get();
+				if (camera !== null) latest.current(camera, camera !== store.rest());
+			}),
+		[store, view],
+	);
+}
+
+/** Word that the view the camera looks through changed size, under a camera that did not move. */
+export interface ViewChanges {
+	subscribe(listener: () => void): () => void;
+}
+
+/** A `ViewChanges` and the one call that tells it. */
+export function createViewChanges(): ViewChanges & { tell(): void } {
+	const listeners = new Set<() => void>();
+	return {
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		tell() {
+			for (const listener of listeners) listener();
+		},
+	};
 }

@@ -849,9 +849,12 @@ export async function locateWrite(project: string, path: string, find: string[])
 	}
 }
 
-export function frameDocumentUrl(project: string, frame: string, nonce: number): string {
+export function frameDocumentUrl(project: string, frame: string, nonce: number, hot = false): string {
 	const base = `/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(frame)}`;
-	return new URL(nonce === 0 ? base : `${base}?v=${nonce}`, renderOrigin).href;
+	const url = new URL(nonce === 0 ? base : `${base}?v=${nonce}`, renderOrigin);
+	// the document compiled for Fast Refresh (the fast-refresh experiment), which a save swaps into
+	if (hot) url.searchParams.set("refresh", "1");
+	return url.href;
 }
 
 /**

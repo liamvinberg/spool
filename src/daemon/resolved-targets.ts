@@ -137,7 +137,11 @@ export function projectScenarios(root: string): { names: string[]; hash: string 
  * array is not: a render that produced no `[data-go]` answered the question,
  * and the answer is that the frame declares no walk at those sites (#150).
  */
-export type RenderedReader = (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[] | null;
+export type RenderedReader = (
+	frame: string,
+	sourceHash: () => string,
+	scenariosHash: string,
+) => RenderedTarget[] | null;
 
 /**
  * That read over one load of the cache file. A project-wide derivation asks per
@@ -156,7 +160,7 @@ export function createRenderedReader(root: string, known?: { text: string | unde
 		}, new Map<string, FrameRecord>());
 		const record = records.get(frame);
 		if (record === undefined) return null;
-		if (record.hash !== sourceHash || record.scenarios !== scenariosHash) return null;
+		if (record.scenarios !== scenariosHash || record.hash !== sourceHash()) return null;
 		return record.targets;
 	};
 }

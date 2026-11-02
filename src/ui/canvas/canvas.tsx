@@ -101,7 +101,7 @@ import {
 	zoomAt,
 	zoomFloor,
 } from "./camera";
-import { type CameraStore, createCameraStore, useCameraFollow } from "./camera-store";
+import { type CameraStore, createCameraStore, createViewChanges, useCameraFollow } from "./camera-store";
 import {
 	type CanvasContextMenu,
 	createCanvasStore,
@@ -172,6 +172,7 @@ import {
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
+import { hotBoots, hotUpdates } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import {
 	FrameLife,
@@ -318,6 +319,13 @@ interface ResizePaint {
 }
 
 const SETTLE_PERSIST_MS = 600;
+/**
+ * How long a Fast Refresh update (the fast-refresh experiment) may take before
+ * the frame is reloaded as if it had refused: about what a reload takes, so
+ * silence costs no more than the reload it stands for. An update lands in
+ * 20 to 190 ms on a loaded devobee.
+ */
+const HOT_UPDATE_BOUND_MS = 1000;
 
 /** Relayed keys that count only from the frame that is entered. */
 const ENTERED_ONLY_RELAYS: ReadonlySet<HotkeyId> = new Set([
@@ -843,6 +851,16 @@ function CanvasField({
 	 * asks the document it is in, and a document still booting answers nobody.
 	 */
 	const reloading = useRef(new Set<string>());
+	/**
+	 * Fast Refresh (the fast-refresh experiment): the iframes whose document has
+	 * said loaded, the only ones an update is offered to, and each frame's update
+	 * in flight, by id, which a refusal or silence turns into a reload.
+	 */
+	const loadedIframes = useRef(new WeakSet<HTMLIFrameElement>());
+	const hotFallBack = useRef<(frame: string) => void>(() => {});
+	const hot = useRef(hotUpdates(HOT_UPDATE_BOUND_MS, (frame) => hotFallBack.current(frame)));
+	/** Which of each frame's documents boot hot: none, until it is saved or reloads entered. */
+	const boots = useRef(hotBoots());
 	const loadWaiters = useRef(new Map<string, (() => void)[]>());
 	/** the frame's answer to a whole generation: children or siblings (#339) */
 	const generationWaiters = useRef(new Map<number, (answer: { chain: PickedHit[]; hits: PickedHit[] }) => void>());
@@ -1007,6 +1025,9 @@ function CanvasField({
 			// bound, because a document that never arrives must not leave a dead
 			// one standing in front of it
 			const was = store.get().docNonces[frame] ?? 0;
+			// whatever reloads the frame retires the update in flight, and its bound
+			hot.current.cancel(frame);
+			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
 			reloading.current.add(frame);
 			if (holdNext.current.delete(frame)) {
 				setHeldPaint((current) => ({ ...current, [frame]: was }));
@@ -1031,6 +1052,72 @@ function CanvasField({
 	);
 
 	/**
+	 * The reload a Fast Refresh update owes when it is refused, goes unanswered,
+	 * or lands under the hand: deferred like any change while an element is
+	 * picked in the frame (#319), and otherwise paid behind the frame's last
+	 * paint (#253).
+	 */
+	const holdOrReload = useCallback(
+		(frame: string) => {
+			if (store.get().picked.some((pick) => pick.frame === frame)) {
+				writtenUnderHand.current.add(frame);
+				return;
+			}
+			holdNext.current.add(frame);
+			reloadFrameDocument(frame);
+		},
+		[reloadFrameDocument, store],
+	);
+	hotFallBack.current = holdOrReload;
+
+	/** The hand is in the frame or about to write to it: editing words, saved, or holding a write's readers. */
+	const handInFrame = useCallback(
+		(frame: string) =>
+			store.get().editing?.frame === frame ||
+			store.get().picked.some((pick) => pick.frame === frame) ||
+			saved.current.has(frame) ||
+			holdNext.current.has(frame),
+		[store],
+	);
+
+	/**
+	 * A frame's document changed on disk, and nothing holds it: with the
+	 * fast-refresh experiment on, the open document is asked to swap the changed
+	 * components in with React Refresh, keeping its state (`daemon/fast-refresh.ts`),
+	 * and reloads as before when it refuses or does not answer in time. A frame
+	 * whose document has not loaded, or that the hand is in (`handInFrame`),
+	 * reloads as it always did: the hand lane is untouched.
+	 */
+	const refreshOrReload = useCallback(
+		(frame: string) => {
+			if (!experimentOn("fast-refresh")) {
+				reloadFrameDocument(frame);
+				return;
+			}
+			// a frame booted plain reloads into the hot document, which its later saves swap
+			if (boots.current.saved(frame, store.get().docNonces[frame] ?? 0) === "reload") {
+				if (handInFrame(frame)) reloadFrameDocument(frame);
+				else holdOrReload(frame);
+				return;
+			}
+			const iframe = iframes.current.get(frame);
+			const target = iframe?.contentWindow;
+			if (
+				iframe === undefined ||
+				target == null ||
+				!loadedIframes.current.has(iframe) ||
+				reloading.current.has(frame) ||
+				handInFrame(frame)
+			) {
+				reloadFrameDocument(frame);
+				return;
+			}
+			hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
+		},
+		[handInFrame, holdOrReload, reloadFrameDocument, store],
+	);
+
+	/**
 	 * A frame's document changed on disk, when the hand may be holding it (#319).
 	 *
 	 * The frame you have an element picked in does not reload under you. A reload
@@ -1050,9 +1137,9 @@ function CanvasField({
 				writtenUnderHand.current.add(frame);
 				return;
 			}
-			reloadFrameDocument(frame);
+			refreshOrReload(frame);
 		},
-		[reloadFrameDocument, store],
+		[refreshOrReload, store],
 	);
 
 	/**
@@ -1490,18 +1577,24 @@ function CanvasField({
 	 * middle of a frame's writes, where reading layout would force it.
 	 */
 	const viewSize = useRef({ width: 0, height: 0 });
+	const viewChanges = useMemo(createViewChanges, []);
+	const seen = useRef<{ camera: Camera; rect: Box } | null>(null);
 	useLayoutEffect(() => {
 		const el = viewportRef.current;
 		if (el === null) return;
 		const measure = () => {
+			const was = viewSize.current;
 			viewSize.current = { width: el.clientWidth, height: el.clientHeight };
+			if (was.width === viewSize.current.width && was.height === viewSize.current.height) return;
+			// what the camera sees is no longer what was asked of it
+			seen.current = null;
+			viewChanges.tell();
 		};
 		measure();
 		const observer = new ResizeObserver(measure);
 		observer.observe(el);
 		return () => observer.disconnect();
-	}, []);
-	const seen = useRef<{ camera: Camera; rect: Box } | null>(null);
+	}, [viewChanges]);
 	const near = useCallback<NearScreen>((at, box) => {
 		// one rectangle per drawn camera, however many followers ask about it
 		if (seen.current?.camera !== at) {
@@ -3150,7 +3243,7 @@ function CanvasField({
 			if (message === undefined) return;
 			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
 			// a document that may have changed under the element tree reads it again (#342)
-			if (["loaded", "arrived", "edited", "altered", "restored"].includes(message.spool)) {
+			if (["loaded", "hot", "arrived", "edited", "altered", "restored"].includes(message.spool)) {
 				elementTreeRef.current.stale(message.frame);
 			}
 			switch (message.spool) {
@@ -3184,7 +3277,19 @@ function CanvasField({
 					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
 					return;
 				}
+				case "hot": {
+					const outcome = hot.current.answer(message.frame, message.id, message.ok);
+					if (outcome === "stale") return;
+					// refused, or the hand came into the frame while it swapped: the
+					// swapped bundle may predate the hand's write, so the reload is owed
+					if (outcome === "refused" || handInFrame(message.frame)) holdOrReload(message.frame);
+					// holdNext is the hand's, and counts as in the frame: an applied swap never has one to clear
+					else requestSiteBoxes(message.frame);
+					return;
+				}
 				case "loaded": {
+					const loadedIframe = iframes.current.get(message.frame);
+					if (loadedIframe !== undefined) loadedIframes.current.add(loadedIframe);
 					lifecycleRef.current.noteLoaded(message.frame);
 					liveRef.current.loaded(message.frame);
 					// what waited on this document being there can ask it now (#340)
@@ -3515,6 +3620,8 @@ function CanvasField({
 		altered,
 		camera,
 		store,
+		handInFrame,
+		holdOrReload,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -5546,6 +5653,7 @@ function CanvasField({
 														}
 														pointerOnly={editing?.frame === frame.name ? editedBox : null}
 														docNonce={docNonces[frame.name] ?? 0}
+														hotFrom={boots.current.from[frame.name]}
 														holdNonce={heldPaint[frame.name] ?? null}
 														cover={frame.cover}
 														walkArrival={walkArrivals.has(frame.name)}
@@ -5584,6 +5692,7 @@ function CanvasField({
 										name={frame.name}
 										frame={frame}
 										near={near}
+										view={viewChanges}
 										camera={camera}
 										entered={isEntered}
 										selected={isSelected}

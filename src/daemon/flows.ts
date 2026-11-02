@@ -91,14 +91,70 @@ export interface Flows {
  * verified marks and the resolved-target cache.
  */
 export function sourceHash(pass: SourcePass, files: readonly string[]): string {
+	return hashOfBytes(
+		files,
+		files.map((file) => pass.bytes(file)),
+	);
+}
+
+function hashOfBytes(files: readonly string[], bytes: readonly (Buffer | undefined)[]): string {
 	const hash = createHash("sha256");
-	for (const file of files) {
+	files.forEach((file, at) => {
 		hash.update(file);
 		hash.update("\0");
-		hash.update(pass.bytes(file) ?? "absent");
+		hash.update(bytes[at] ?? "absent");
 		hash.update("\0");
-	}
+	});
 	return hash.digest("hex");
+}
+
+/**
+ * One project's file contents as its reads last found them, one Buffer per
+ * path: a read whose bytes equal the held ones hands back the held object, so
+ * every frame holding a file's bytes holds the same Buffer, whichever read
+ * built it. Memory is the project's distinct contents, not frames times graph.
+ */
+export function createHeldBytes() {
+	const held = new Map<string, Buffer>();
+	return {
+		hold(path: string, bytes: Buffer | undefined): Buffer | undefined {
+			if (bytes === undefined) {
+				held.delete(path);
+				return undefined;
+			}
+			const known = held.get(path);
+			if (known !== undefined && (known === bytes || known.equals(bytes))) return known;
+			held.set(path, bytes);
+			return bytes;
+		},
+		/** Let go of every path no frame's graph holds any more. */
+		keepOnly(paths: ReadonlySet<string>): void {
+			for (const path of held.keys()) if (!paths.has(path)) held.delete(path);
+		},
+	};
+}
+
+/**
+ * The same hash, taken only when somebody asks for it. Most reads never do: it
+ * is a mark's or a rendered read's key, and few frames have either, while a
+ * shared edit derives hundreds of frames again, each hashing every byte of its
+ * graph. The bytes are the pass's, held until asked, so a late answer is still
+ * the pass's own; held through `createHeldBytes`, so frames share them.
+ */
+function deferredSourceHash(
+	pass: SourcePass,
+	files: readonly string[],
+	held: ReturnType<typeof createHeldBytes>,
+): () => string {
+	let bytes: (Buffer | undefined)[] | undefined = files.map((file) => held.hold(file, pass.bytes(file)));
+	let hash: string | undefined;
+	return () => {
+		if (hash === undefined) {
+			hash = hashOfBytes(files, bytes ?? []);
+			bytes = undefined;
+		}
+		return hash;
+	};
 }
 
 /** What a frame with no readable source hashes to — a name that resolves nowhere. */
@@ -174,7 +230,10 @@ function verifiedWitness(walked: string | undefined, alive: ReadonlySet<string>)
 	for (const mark of parseVerifiedMarks(walked)) {
 		if (alive.has(mark.from) && alive.has(mark.to)) marks.set(`${mark.from}\0${mark.to}`, mark.hash);
 	}
-	return (from, to, hash) => marks.get(`${from}\0${to}`) === hash;
+	return (from, to, hash) => {
+		const marked = marks.get(`${from}\0${to}`);
+		return marked !== undefined && marked === hash();
+	};
 }
 
 /** The lawful targets a frame's folder claims, with the sites claiming them. */
@@ -249,7 +308,7 @@ export interface FrameGraph extends FrameSource {
 /** What the whole project supplies to one frame's decoration. */
 export interface FlowContext {
 	exists: ReadonlySet<string>;
-	verified: (from: string, to: string, hash: string) => boolean;
+	verified: (from: string, to: string, hash: () => string) => boolean;
 	rendered: RenderedReader;
 	scenarios: string;
 }
@@ -264,7 +323,8 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 	const from = graph.frame;
 	const edges: FlowEdge[] = [];
 	const unreadable: FlowUnreadable[] = [];
-	const read = context.rendered(from, graph.hash, context.scenarios);
+	const hash = () => graph.hash;
+	const read = context.rendered(from, hash, context.scenarios);
 	const filled = resolvedBySite(read ?? [], graph.unreadable);
 	// a resolved value is the site's, so it joins that site's own target list
 	const byTarget = derivedTargets(graph.sites);
@@ -295,7 +355,7 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 			to,
 			certainty: sites.some((site) => site.conditional === undefined) ? "will" : "might",
 			sites: sites.map(({ target: _target, ...site }) => site),
-			...(context.verified(from, to, graph.hash) ? { verified: true as const } : {}),
+			...(context.verified(from, to, hash) ? { verified: true as const } : {}),
 			...(context.exists.has(to) ? {} : { missing: true as const }),
 			// weaker than a literal: true for the scenarios rendered, not for every state
 			...(fromRender.has(to) ? { resolved: true as const } : {}),
@@ -337,8 +397,6 @@ interface FrameEntry {
 	imports: ImportEdge[];
 	/** Names and content digests: the cheap "did any of this move". */
 	fingerprint: string;
-	/** Names and bytes: what walked.json and resolved.json are keyed to. */
-	hash: string;
 	/** What vouches for all of the above without a read, when a stat can. */
 	witness: SourceWitness | undefined;
 	/** The half as callers receive it, handed out again while it stands. */
@@ -351,14 +409,10 @@ interface FrameEntry {
  * to recompute per read. Equal fingerprints mean equal bytes, so the hash the
  * persisted caches are keyed to survives untouched. */
 function fingerprintOf(pass: SourcePass, files: readonly string[]): string {
-	const hash = createHash("sha256");
-	for (const file of files) {
-		hash.update(file);
-		hash.update("\0");
-		hash.update(pass.digest(file));
-		hash.update("\0");
-	}
-	return hash.digest("hex");
+	// one update over the joined text hashes the same bytes as one per piece, at a fraction of the calls
+	let text = "";
+	for (const file of files) text += `${file}\0${pass.digest(file)}\0`;
+	return createHash("sha256").update(text).digest("hex");
 }
 
 function sameFiles(a: readonly string[], b: readonly string[]): boolean {
@@ -489,6 +543,15 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 	const running = new Map<string, Promise<Built>>();
 	const queued = new Map<string, Promise<Built>>();
 	const landings = new Map<string, ReturnType<typeof createLandingMemory>>();
+	const heldBytes = new Map<string, ReturnType<typeof createHeldBytes>>();
+	const heldBytesOf = (root: string) => {
+		let held = heldBytes.get(root);
+		if (held === undefined) {
+			held = createHeldBytes();
+			heldBytes.set(root, held);
+		}
+		return held;
+	};
 
 	/**
 	 * One frame's source half, and whether it had to be derived again. A witness
@@ -521,27 +584,32 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			return { entry: undefined, derived: false };
 		}
 		const listing = pass.listing(frameDir);
-		if (
-			known !== undefined &&
-			known.dir === frameDir &&
-			sameFiles(known.folder, listing.files) &&
-			fingerprintOf(pass, known.files) === known.fingerprint &&
-			sameImports(pass, known.imports)
-		) {
+		const knownFiles = known !== undefined && known.dir === frameDir && sameFiles(known.folder, listing.files);
+		const fingerprint = knownFiles ? fingerprintOf(pass, known.files) : undefined;
+		if (knownFiles && fingerprint === known.fingerprint && sameImports(pass, known.imports)) {
 			known.witness = witnessSource(pass.designDir, frameDir, listing, known, since, looks, pass.digest);
 			return { entry: known, derived: false };
 		}
 		const source = frameSourceIn(pass, frameDir);
-		const hash = sourceHash(pass, source.files);
+		const hash = deferredSourceHash(pass, source.files, heldBytesOf(root));
 		const entry: FrameEntry = {
 			dir: frameDir,
 			folder: source.folder,
 			files: source.files,
 			imports: source.imports,
-			fingerprint: fingerprintOf(pass, source.files),
-			hash,
+			// the same graph's fingerprint, if it was just taken
+			fingerprint:
+				fingerprint !== undefined && sameFiles(known?.files ?? [], source.files)
+					? fingerprint
+					: fingerprintOf(pass, source.files),
 			witness: witnessSource(pass.designDir, frameDir, listing, source, since, looks, pass.digest),
-			graph: { frame, ...source, hash },
+			graph: {
+				frame,
+				...source,
+				get hash() {
+					return hash();
+				},
+			},
 		};
 		entries.set(frame, entry);
 		moved.add(root);
@@ -554,8 +622,10 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 		const sharedDir = join(designDir, "shared") + sep;
 		// a shared file is in hundreds of graphs, and spelled once
 		const spelled = new Map<string, string>();
+		const inGraphs = new Set<string>();
 		for (const [frame, entry] of entries) {
 			for (const file of entry.files) {
+				inGraphs.add(file);
 				// graph files are real paths inside design/, so the folder alone says
 				// which are shared, and only those need spelling out
 				if (!file.startsWith(sharedDir)) continue;
@@ -570,6 +640,7 @@ export function createFlowGraph(options: { clock?: (designDir: string) => number
 			}
 		}
 		users.set(root, index);
+		heldBytes.get(root)?.keepOnly(inGraphs);
 	}
 
 	async function build(root: string): Promise<Built> {
