@@ -366,7 +366,7 @@ export async function compileFrameDocument(
 		hotRuntime:
 			hot === undefined
 				? undefined
-				: `${hot.runtime}\nwindow.__spoolHot.head = ${JSON.stringify(hotHead(designDir, reads, themed))};`,
+				: `${hot.runtime}\nwindow.__spoolHot.head = ${JSON.stringify(hotHead(designDir, reads, themed, resolvePath))};`,
 		hotPreloads: hotModules === undefined ? undefined : hotPreloads(project, hotModules),
 	});
 	// Every input, present or not, by the digest of the very bytes the document
@@ -426,16 +426,30 @@ export async function compileFrameHotState(
 		read: (file) => reads.text(file),
 		css: themed?.css ?? compiled.css,
 		bundledCss: bundledCss === undefined ? "" : layeredProjectCss(bundledCss),
-		head: hotHead(designDir, reads, themed),
+		head: hotHead(designDir, reads, themed, resolvePath),
 	};
 }
 
-/** The fonts and import map a Fast Refresh document stands on, as `hotHeadKey` names them. */
-function hotHead(designDir: string, reads: DesignReads, themed: { fonts: string | undefined } | undefined): string {
+/**
+ * The fonts and import map a Fast Refresh document stands on, as `hotHeadKey`
+ * names them: fonts.css's local faces, or the theme's, by their bytes.
+ */
+function hotHead(
+	designDir: string,
+	reads: DesignReads,
+	themed: { fonts: string | undefined; faces: string[] } | undefined,
+	resolvePath: (file: string, authored?: string) => string,
+): string {
 	const shared = join(designDir, "shared");
+	const fonts = themed === undefined ? reads.text(join(shared, "fonts.css")) : themed.fonts;
+	const faces = themed?.faces ?? inlineLocalFonts(designDir, fonts, reads.bytes, resolvePath).files;
 	return hotHeadKey(
-		themed === undefined ? reads.text(join(shared, "fonts.css")) : themed.fonts,
+		fonts,
 		reads.text(join(shared, "importmap.json")),
+		faces.map((file) => {
+			const bytes = reads.bytes(file);
+			return bytes === undefined ? null : createHash("sha256").update(bytes).digest("hex");
+		}),
 	);
 }
 
@@ -449,11 +463,11 @@ function themeStylesheet(
 	compiled: { css: string; theme?: string },
 	reads: DesignReads,
 	resolvePath: (file: string, authored?: string) => string,
-): { css: string; fonts: string | undefined } {
+): { css: string; fonts: string | undefined; faces: string[] } {
 	const { imports, rest } = hoistCssImports(compiled.css);
 	const label = `design/${designRelativePath(designDir, compiled.theme ?? "")}`;
-	const { css } = inlineLocalFonts(designDir, rest, reads.bytes, resolvePath, label);
-	return { css: css ?? rest, fonts: imports === "" ? undefined : imports };
+	const { css, files } = inlineLocalFonts(designDir, rest, reads.bytes, resolvePath, label);
+	return { css: css ?? rest, fonts: imports === "" ? undefined : imports, faces: files };
 }
 
 function frameEntryOptions(

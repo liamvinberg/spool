@@ -289,10 +289,17 @@ export function refreshFooter(id: string, source: string): string {
 /**
  * The fonts and import map a document was made with, as one key: neither can
  * change under a running document, so an update that brings others is refused.
+ * The fonts are the stylesheet that names them and the bytes of every local
+ * face it, or the theme, names (`faces`, their digests in order): a face file
+ * changed behind the same stylesheet is new fonts too.
  */
-export function hotHeadKey(fonts: string | undefined, importMap: string | undefined): string {
+export function hotHeadKey(
+	fonts: string | undefined,
+	importMap: string | undefined,
+	faces: readonly (string | null)[] = [],
+): string {
 	return createHash("sha256")
-		.update(JSON.stringify([fonts ?? null, importMap ?? null]))
+		.update(JSON.stringify([fonts ?? null, importMap ?? null, faces]))
 		.digest("hex")
 		.slice(0, 16);
 }
