@@ -166,6 +166,7 @@ interface FileRead {
 export function createSourcePass(designDir: string, memory?: LandingMemory) {
 	const files = new Map<string, FileRead>();
 	const specifiers = new Map<string, string | undefined>();
+	const edges = new Map<string, readonly ImportEdge[]>();
 	const folders = new Map<string, FolderListing>();
 
 	function listing(frameDir: string): FolderListing {
@@ -193,6 +194,34 @@ export function createSourcePass(designDir: string, memory?: LandingMemory) {
 		return fresh;
 	}
 
+	function resolve(fromFile: string, specifier: string): string | undefined {
+		const key = importKey(fromFile, specifier);
+		const known = specifiers.get(key);
+		if (known !== undefined || specifiers.has(key)) return known;
+		const recalled = memory?.recall(fromFile, specifier);
+		const found = recalled === undefined ? resolveLocalImport(designDir, fromFile, specifier) : recalled.to;
+		if (recalled === undefined) memory?.learn(fromFile, specifier, found);
+		specifiers.set(key, found);
+		return found;
+	}
+
+	function parsed(file: string): ParsedSource | undefined {
+		const found = read(file);
+		if (found.bytes === undefined) {
+			parseCache.delete(file);
+			return undefined;
+		}
+		if (found.parsed !== undefined) return found.parsed;
+		const cached = parseCache.get(file);
+		const result =
+			cached !== undefined && cached.hash === found.digest
+				? cached.result
+				: parseSource(found.bytes.toString("utf8"), relative(designDir, file).split(sep).join("/"));
+		parseCache.set(file, { hash: found.digest, result });
+		found.parsed = result;
+		return result;
+	}
+
 	return {
 		designDir,
 
@@ -203,32 +232,25 @@ export function createSourcePass(designDir: string, memory?: LandingMemory) {
 		digest: (file: string): string => read(file).digest,
 
 		/** One parse per file per content, shared by the graph walk and the sites. */
-		parsed(file: string): ParsedSource | undefined {
-			const found = read(file);
-			if (found.bytes === undefined) {
-				parseCache.delete(file);
-				return undefined;
-			}
-			if (found.parsed !== undefined) return found.parsed;
-			const cached = parseCache.get(file);
-			const result =
-				cached !== undefined && cached.hash === found.digest
-					? cached.result
-					: parseSource(found.bytes.toString("utf8"), relative(designDir, file).split(sep).join("/"));
-			parseCache.set(file, { hash: found.digest, result });
-			found.parsed = result;
-			return result;
-		},
+		parsed,
 
 		/** Where one import lands, resolved once per importing folder. */
-		resolve(fromFile: string, specifier: string): string | undefined {
-			const key = importKey(fromFile, specifier);
-			const known = specifiers.get(key);
-			if (known !== undefined || specifiers.has(key)) return known;
-			const recalled = memory?.recall(fromFile, specifier);
-			const found = recalled === undefined ? resolveLocalImport(designDir, fromFile, specifier) : recalled.to;
-			if (recalled === undefined) memory?.learn(fromFile, specifier, found);
-			specifiers.set(key, found);
+		resolve,
+
+		/**
+		 * Every import one file makes and where each lands, once per file: a shared
+		 * file sits in hundreds of graphs, and every frame walking it would spell
+		 * and look up each of its specifiers again.
+		 */
+		edges(file: string): readonly ImportEdge[] {
+			const known = edges.get(file);
+			if (known !== undefined) return known;
+			const found = (parsed(file)?.imports ?? []).map((specifier) => ({
+				from: file,
+				specifier,
+				to: resolve(file, specifier),
+			}));
+			edges.set(file, found);
 			return found;
 		},
 
@@ -295,9 +317,9 @@ export function frameSourceIn(pass: SourcePass, frameDir: string): FrameSource {
 	for (let at = 0; at < queue.length; at++) {
 		const file = queue[at];
 		if (file === undefined) continue;
-		for (const specifier of pass.parsed(file)?.imports ?? []) {
-			const to = pass.resolve(file, specifier);
-			imports.push({ from: file, specifier, to });
+		for (const edge of pass.edges(file)) {
+			imports.push(edge);
+			const { to } = edge;
 			if (to === undefined || seen.has(to)) continue;
 			seen.add(to);
 			queue.push(to);
