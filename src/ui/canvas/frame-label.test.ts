@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Camera } from "../api";
 import type { NearScreen } from "./camera";
-import { type CameraStore, createCameraStore, REST_MS } from "./camera-store";
+import { type CameraStore, createCameraStore, createViewChanges, REST_MS, type ViewChanges } from "./camera-store";
 import { FrameLabel, LabelField } from "./frame-label";
 
 beforeEach(() => {
@@ -37,6 +37,7 @@ function label(props: {
 	frameWidth: number;
 	camera: CameraStore;
 	near?: NearScreen;
+	view?: ViewChanges;
 	selected?: boolean;
 	hovered?: boolean;
 	entered?: boolean;
@@ -65,6 +66,7 @@ function element({
 	frameWidth,
 	camera,
 	near = ON_SCREEN,
+	view,
 	selected = false,
 	hovered = false,
 	entered = false,
@@ -74,6 +76,7 @@ function element({
 		frame: { ...AT, w: frameWidth, h: 800 },
 		camera,
 		near,
+		view,
 		entered,
 		selected,
 		hovered,
@@ -175,20 +178,27 @@ describe("FrameLabel", () => {
 		expect(place.style.transform).toBe("translate(-1px, -1px)");
 	});
 
-	it("leaves a label off screen alone while the camera moves, and catches it up once it rests", () => {
+	it("leaves a label off screen alone, at rest too, and places it once the view brings it near", () => {
 		const camera = cameraAt({ x: 0, y: 0, k: 0.2 });
 		act(() => vi.advanceTimersByTime(REST_MS));
-		const { el } = label({ name: "landing", frameWidth: 1200, camera, near: () => false });
-		// at rest everything is drawn, on screen or not
+		let onScreen = true;
+		const view = createViewChanges();
+		const { el } = label({ name: "landing", frameWidth: 1200, camera, near: () => onScreen, view });
 		expect(el.style.width).toBe("240px");
 
-		// the very first frame of a gesture already skips it
+		// the very first frame of a gesture already skips it, and its rest leaves it be
+		onScreen = false;
 		act(() => camera.set({ x: 40, y: 0, k: 0.5 }));
-		expect(el.style.width).toBe("240px");
-
 		act(() => vi.advanceTimersByTime(REST_MS));
+		expect(el.style.width).toBe("240px");
+		expect(el.parentElement?.style.visibility).toBe("hidden");
+
+		// a wider view takes it in under a still camera: placed exactly and shown at once
+		onScreen = true;
+		act(() => view.tell());
 		expect(el.style.width).toBe("600px");
 		expect(el.parentElement?.style.transform).toBe("translate(50px, 25px)");
+		expect(el.parentElement?.style.visibility).toBe("");
 	});
 
 	it("hides a label it leaves behind in a zoom, so it never stands over another frame", () => {
@@ -205,10 +215,11 @@ describe("FrameLabel", () => {
 		expect(place.style.transform).toBe("translate(20px, 10px)");
 		expect(place.style.visibility).toBe("hidden");
 
-		// back on screen it is placed for this zoom and shown in the same frame
+		// back on screen it is placed for this zoom, its width exact whatever its turn, and shown in the same frame
 		onScreen = true;
 		act(() => camera.set({ x: 0, y: 0, k: 0.7 }));
 		expect(place.style.transform).toBe("translate(70px, 35px)");
+		expect(el.style.width).toBe("840px");
 		expect(place.style.visibility).toBe("");
 	});
 

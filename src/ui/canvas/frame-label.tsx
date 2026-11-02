@@ -4,7 +4,7 @@ import { pageName } from "../../page-path";
 import { cn } from "../cn";
 import { bucketOf } from "./bucket";
 import { type Box, type NearScreen, tooSmall } from "./camera";
-import { type CameraStore, useCameraFollow, useChanged } from "./camera-store";
+import { type CameraStore, useCameraFollow, useChanged, type ViewChanges } from "./camera-store";
 import { type FrameAgent, FrameAgentsMark } from "./frame-agents";
 import type { SpatialDirection } from "./spatial-navigation";
 import { UnseenMark } from "./unseen-mark";
@@ -59,6 +59,7 @@ export const FrameLabel = memo(function FrameLabel({
 	frame,
 	camera,
 	near,
+	view,
 	entered,
 	selected,
 	hovered,
@@ -84,8 +85,10 @@ export const FrameLabel = memo(function FrameLabel({
 	frame: Box;
 	/** The label holds one size on screen through the zoom, so it follows the camera (#81). */
 	camera: CameraStore;
-	/** whether the label is worth laying out while the camera moves */
+	/** whether the label is near enough the screen to be laid out */
 	near: NearScreen;
+	/** the view resizing, which can bring a label near without the camera moving */
+	view?: ViewChanges | undefined;
 	entered: boolean;
 	selected: boolean;
 	hovered: boolean;
@@ -113,16 +116,22 @@ export const FrameLabel = memo(function FrameLabel({
 	// (`LabelField`): where its frame's top left falls at this zoom, as wide as
 	// the frame draws. Written here rather than rendered, and only when the
 	// zoom or the frame moved: a pan writes nothing, since the field carries
-	// every label at once, and a zoom step places again the labels on screen
-	// and nothing else, the rest once the camera rests. In motion a width waits
-	// for its label's turn (`WIDTH_TURNS`).
+	// every label at once, and a zoom step places again the labels near the
+	// screen and nothing else. In motion a width waits for its label's turn
+	// (`WIDTH_TURNS`).
+	//
+	// A label far off screen is hidden and left where it stood, at rest too: a
+	// rest used to place every label on the page, a thousand widths laid out
+	// and their visibility restyled in the frame the camera landed, only for
+	// the next move to hide them all again. It is placed, exactly, the frame
+	// a move or a resized view brings it near.
 	useCameraFollow(
 		camera,
 		(at, moving) => {
 			const placed = place.current;
 			const el = label.current;
 			if (placed === null || el === null) return;
-			if (moving && !near(at, frame)) {
+			if (!near(at, frame)) {
 				// left where an earlier zoom put it, it would stand over some other
 				// frame once this zoom moved its own off screen, so it is hidden until
 				// it is placed again
@@ -130,13 +139,14 @@ export const FrameLabel = memo(function FrameLabel({
 				offScreen.current = true;
 				return;
 			}
-			if (offScreen.current) placed.style.visibility = "";
+			const back = offScreen.current;
+			if (back) placed.style.visibility = "";
 			offScreen.current = false;
 			if (changed(at.k, frame.x, frame.y))
 				placed.style.transform = `translate(${frame.x * at.k}px, ${frame.y * at.k}px)`;
 			const width = `${frame.w * at.k}px`;
 			if (moving) moves.current += 1;
-			if (el.style.width !== width && (!moving || exact || (moves.current + turn) % WIDTH_TURNS === 0)) {
+			if (el.style.width !== width && (!moving || back || exact || (moves.current + turn) % WIDTH_TURNS === 0)) {
 				el.style.width = width;
 				// the verbs on a label go with the furniture round a frame too small
 				// to carry it, while the name truncates away on its own
@@ -145,6 +155,7 @@ export const FrameLabel = memo(function FrameLabel({
 			}
 		},
 		[frame.x, frame.y, frame.w, frame.h, near, exact],
+		view,
 	);
 	// the label sits on its own page, which already says where it is (#336)
 	const leaf = pageName(name);
