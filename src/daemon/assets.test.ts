@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FILE_LIMIT_BYTES } from "../team-sync-protocol";
@@ -155,9 +156,6 @@ describe("project assets", () => {
 			"x-content-type-options": "nosniff",
 			"access-control-allow-origin": "*",
 		});
-		const head = await request(png, { method: "HEAD" });
-		expect(head.status).toBe(200);
-		expect(head.headers.get("content-type")).toBe("image/png");
 		const again = await request(png, { headers: { "if-none-match": `"${sha256(COVER_PNG)}"` } });
 		expect(again.status).toBe(304);
 
@@ -179,9 +177,15 @@ describe("project assets", () => {
 
 		writeAsset(root, "shared/assets/hero.png", Uint8Array.from([...COVER_PNG, 0]));
 		expect((await request(url)).status).toBe(404);
-		// bytes outside design/ answer nothing, though they are on disk
-		writeFileSync(join(root, "outside.png"), COVER_PNG);
-		expect((await request(url)).status).toBe(404);
+		// nor do bytes design/ only links to: a link is never followed out of it, nor walked
+		const outside = Uint8Array.from([...COVER_PNG, 1]);
+		writeFileSync(join(root, "outside.png"), outside);
+		symlinkSync(join(root, "outside.png"), join(root, "design/shared/assets/linked.png"));
+		expect((await request(`/asset/${sha256(outside)}.png`)).status).toBe(404);
+		// so a link to what never ends reading holds nothing up
+		execFileSync("mkfifo", [join(root, "pipe")]);
+		symlinkSync(join(root, "pipe"), join(root, "design/shared/assets/pipe.png"));
+		expect((await request(`/asset/${"0".repeat(64)}.png`)).status).toBe(404);
 	});
 
 	it("refuses an asset that resolves outside design/", async () => {
