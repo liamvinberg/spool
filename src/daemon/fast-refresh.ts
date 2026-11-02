@@ -65,7 +65,8 @@ window.__spoolHot = {
 		const inner = type.render ?? type.type;
 		if (typeof inner === "function") Refresh.setSignature(inner, key, forceReset);
 	},
-	async update(url) {
+	// dropped: whether the canvas has asked, since, for this update not to land (the hand came in)
+	async update(url, dropped = () => false) {
 		if (++updates > ${HOT_UPDATE_LIMIT}) return "${HOT_UPDATE_LIMIT} updates: a reload lets their modules go";
 		let plan;
 		try {
@@ -93,6 +94,8 @@ window.__spoolHot = {
 				}
 			}
 		}
+		// the commit: nothing above it has touched what the frame shows
+		if (dropped()) return "the hand came in";
 		const mod = plan;
 		swapStyle("spool-css", mod.css, "");
 		swapStyle("spool-bundled-css", mod.bundledCss, "spool-css");
@@ -289,10 +292,17 @@ export function refreshFooter(id: string, source: string): string {
 /**
  * The fonts and import map a document was made with, as one key: neither can
  * change under a running document, so an update that brings others is refused.
+ * The fonts are the stylesheet that names them and the bytes of every local
+ * face it, or the theme, names (`faces`, their digests in order): a face file
+ * changed behind the same stylesheet is new fonts too.
  */
-export function hotHeadKey(fonts: string | undefined, importMap: string | undefined): string {
+export function hotHeadKey(
+	fonts: string | undefined,
+	importMap: string | undefined,
+	faces: readonly (string | null)[] = [],
+): string {
 	return createHash("sha256")
-		.update(JSON.stringify([fonts ?? null, importMap ?? null]))
+		.update(JSON.stringify([fonts ?? null, importMap ?? null, faces]))
 		.digest("hex")
 		.slice(0, 16);
 }
@@ -306,6 +316,8 @@ export function hotHeadKey(fonts: string | undefined, importMap: string | undefi
  */
 export const HOT_BOOT_CLIENT = `let hotRunning = false;
 let hotNext = null;
+// the update the canvas asked not to land, because the hand came into the frame
+let hotDropped = null;
 async function drainHot() {
 	hotRunning = true;
 	while (hotNext !== null) {
@@ -316,7 +328,7 @@ async function drainHot() {
 		url.searchParams.set("n", String(id));
 		let refused;
 		try {
-			refused = await window.__spoolHot.update(url.href);
+			refused = await window.__spoolHot.update(url.href, () => hotDropped === id);
 		} catch (error) {
 			refused = String(error);
 		}
@@ -326,7 +338,9 @@ async function drainHot() {
 }
 addEventListener("message", (event) => {
 	const data = event.data;
-	if (event.source !== parent || data === null || typeof data !== "object" || data.spool !== "hot" || typeof data.id !== "number") return;
+	if (event.source !== parent || data === null || typeof data !== "object" || typeof data.id !== "number") return;
+	if (data.spool === "hot-cancel") hotDropped = data.id;
+	if (data.spool !== "hot") return;
 	hotNext = data.id;
 	if (!hotRunning) void drainHot();
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RungRead } from "../api";
+import { type RungRead, writeText } from "../api";
 import { createCanvasStore } from "./canvas-store";
 import type { ShownRefusal } from "./hand-edit";
 import { emptyHistory } from "./history";
@@ -33,7 +33,7 @@ const readOf = (over: Partial<RungRead> = {}): RungRead => ({
 });
 
 /** The lane over a canvas of one frame, `cart`, whose document hears every message. */
-function lane() {
+function lane(over: Partial<HandEditDeps> = {}) {
 	const posted: unknown[] = [];
 	const frame = { contentWindow: { postMessage: (message: unknown) => posted.push(message) }, focus() {} };
 	const shown: (ShownRefusal | null)[] = [];
@@ -59,6 +59,7 @@ function lane() {
 		recordEntry: vi.fn(),
 		reloadFrameDocument: vi.fn(),
 		frameHeld: () => true,
+		handLanded: () => false,
 		sharedWrite: () => false,
 		holdChain: vi.fn(),
 		holdFrame: vi.fn(),
@@ -69,6 +70,7 @@ function lane() {
 		beginPick: vi.fn(),
 		applyPick: vi.fn(),
 		askFrame: vi.fn(),
+		...over,
 	};
 	const hand = createHandEdit(
 		() => deps,
@@ -78,7 +80,7 @@ function lane() {
 	);
 	const refusals = () => shown.filter((one) => one !== null).map((one) => one.refusal);
 	const alters = () => posted.filter((message) => (message as { spool?: string }).spool === "alter");
-	return { hand, posted, refusals, alters };
+	return { hand, deps, posted, refusals, alters };
 }
 
 describe("the read every write is measured against", () => {
@@ -138,5 +140,39 @@ describe("the read every write is measured against", () => {
 		);
 		expect(refusals()).toEqual([UNREAD]);
 		expect(posted.some((message) => (message as { spool?: string }).spool === "restore")).toBe(true);
+	});
+});
+
+describe("a write that lands", () => {
+	it("reloads the frame it landed on, pick and all, when a Fast Refresh swap the hand came into owes it", async () => {
+		for (const owed of [false, true]) {
+			const { hand, deps } = lane({ handLanded: () => owed });
+			vi.mocked(writeText).mockResolvedValueOnce({
+				ok: true,
+				path: "design/frames/cart/frame.tsx",
+				fingerprint: "f2",
+				shifts: [],
+				undo: { path: "design/frames/cart/frame.tsx", start: 0, end: 9, text: "Pay now", fingerprint: "f2" },
+			});
+			hand.noteRead(readOf(), [readOf()], false);
+			hand.finishEdit(
+				{
+					frame: "cart",
+					selector: "screen > h1",
+					source: "frames/cart/frame.tsx:7:4",
+					id: 1,
+					fingerprint: "f1",
+					phase: "open",
+					start: "Pay now",
+				},
+				true,
+				[{ text: "Pay later" }],
+				null,
+			);
+			await vi.waitFor(() => expect(deps.setSaves).toHaveBeenCalled());
+			// the frame already shows the hand's words, unless a swap read before them may be standing
+			expect(deps.reloadFrameDocument, String(owed)).toHaveBeenCalledTimes(owed ? 1 : 0);
+			expect(deps.saved.current.has("cart")).toBe(!owed);
+		}
 	});
 });

@@ -202,4 +202,40 @@ describe("a Fast Refresh document's modules", () => {
 		expect(after).toContain(encodeURIComponent("frames/home/card.tsx"));
 		expect(after).not.toContain(encodeURIComponent("card/index.tsx"));
 	});
+
+	it("refuses an update over a font file changed behind the same fonts.css or theme, so the frame reloads", async () => {
+		const { root, name, render } = harness();
+		writeDesignFile(root, "shared/fonts.css", '@font-face { font-family: "Brand"; src: url("./brand.woff2"); }\n');
+		writeDesignFile(root, "shared/brand.woff2", "one");
+		writeDesignFile(
+			root,
+			"frames/themed/theme.css",
+			'@import "tailwindcss";\n@font-face { font-family: "Own"; src: url("./own.woff2"); }\n',
+		);
+		writeDesignFile(root, "frames/themed/own.woff2", "one");
+		writeFrame(root, "home", "export default function Home() { return <main>home</main>; }\n");
+		writeFrame(
+			root,
+			"themed",
+			'import "./theme.css";\nexport default function Themed() { return <main>themed</main>; }\n',
+		);
+		const opened = async (frame: string) => {
+			const document = await (await render(`/p/${name}/frames/${frame}?refresh=1`)).text();
+			const session = /\?s=([\w-]{20,})&/.exec(document)?.[1] ?? "";
+			const head = /window\.__spoolHot\.head = "(\w+)"/.exec(document)?.[1];
+			const plan = async () =>
+				(await (await render(`/p/${name}/frames/${frame}?hot=${session}&n=1`, "null")).json()) as { head?: string };
+			return { head, plan };
+		};
+		for (const [frame, face] of [
+			["home", "shared/brand.woff2"],
+			["themed", "frames/themed/own.woff2"],
+		] as const) {
+			const { head, plan } = await opened(frame);
+			expect(head).toBeDefined();
+			expect((await plan()).head).toBe(head);
+			writeDesignFile(root, face, "two");
+			expect((await plan()).head, frame).not.toBe(head);
+		}
+	});
 });

@@ -246,11 +246,11 @@ export const FrameShell = memo(function FrameShell({
 	hotFrom?: number | undefined;
 	/**
 	 * The document to keep on screen while the current one boots (#253's no
-	 * blink), or null for every ordinary reload.
+	 * blink), or null when there is no painted one to keep.
 	 *
-	 * A hand edit reloads the very frame it wrote, and a reload is a remount:
-	 * the iframe goes white, the still comes back, and the frame the words were
-	 * just typed into blinks its old self at you. So a self-caused reload keeps
+	 * A reload is a remount: the iframe goes white, the still comes back, and
+	 * the frame blinks its old self at you, whether the hand's edit, an agent's
+	 * write or a teammate's save caused it. So a reload of a painted frame keeps
 	 * the outgoing document mounted, on top and inert, until the incoming one
 	 * reports arrived — its last paint held, exactly as it was, then swapped
 	 * onto a settled document rather than onto the still that covers a loaded
@@ -282,7 +282,7 @@ export const FrameShell = memo(function FrameShell({
 	// already gone by the time the cover fades. If a broken boot or mid-walk edit
 	// retires the marker while the frame stays covered, the honest cover returns.
 	// the document still on screen while this one boots, when there is one
-	const held = holdNonce !== null && holdNonce !== docNonce ? holdNonce : null;
+	const held = state !== "picture" && holdNonce !== null && holdNonce !== docNonce ? holdNonce : null;
 	const plan = coverPlan({
 		state,
 		ready,

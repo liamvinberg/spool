@@ -100,6 +100,8 @@ export interface HandEditDeps {
 	recordEntry: (entry: HistoryEntry) => void;
 	reloadFrameDocument: (frame: string) => void;
 	frameHeld: (frame: string) => boolean;
+	/** A write landed on the frame: whether a Fast Refresh swap the hand came into owes its reload now (`hot-updates.ts`). */
+	handLanded: (frame: string) => boolean;
 	sharedWrite: (frame: string, path: string) => boolean;
 	holdChain: (next: { frame: string; chain: PickedHit[] } | null) => void;
 	holdFrame: (frame: string) => void;
@@ -276,7 +278,7 @@ export function createHandEdit(deps: () => HandEditDeps, setRefused: Setter<Show
 		const d = deps();
 		d.setSaves((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 		handPrints.set(written.path, written.fingerprint);
-		if (written.shifts === null || !d.frameHeld(frame)) {
+		if (d.handLanded(frame) || written.shifts === null || !d.frameHeld(frame)) {
 			d.saved.current.delete(frame);
 			d.holdNext.current.add(frame);
 			d.reloadFrameDocument(frame);

@@ -172,7 +172,7 @@ import {
 import { onProjectHistory } from "./history-door";
 import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
-import { hotBoots, hotUpdates } from "./hot-updates";
+import { type Hand, hotBoots, hotUpdates, onAnswer, onChange } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import {
 	FrameLife,
@@ -536,8 +536,11 @@ function CanvasField({
 	 */
 	const [docNonces, setDocNonces] = useCanvasField(store, "docNonces");
 	// the document each frame keeps on screen while its replacement boots
-	// (#253's no blink): only a reload the canvas caused ever gets one
+	// (#253's no blink), whoever caused the reload
 	const [heldPaint, setHeldPaint] = useState<Record<string, number>>({});
+	// the same, read where a render has not caught up: a second reload before
+	// the first arrived keeps the paint that is still standing
+	const heldNow = useRef(new Map<string, number>());
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
 	const [walkArrivals, setWalkArrivals] = useCanvasField(store, "walkArrivals");
 	// where an element being dragged would land (#340), as the line drawn there
@@ -908,8 +911,9 @@ function CanvasField({
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
-	// frames whose next reload the canvas caused, so the outgoing document is
-	// held rather than blinking through its own still (#253's no blink)
+	// frames whose next reload the canvas caused: the hand is about to write
+	// them (`handIn`), and their outgoing document is held whatever its
+	// state (#253's no blink)
 	const holdNext = useRef(new Set<string>());
 	// frames whose file changed from outside while the hand held an element in
 	// them (#319): the reload they owe is paid when the hand leaves the frame,
@@ -1010,6 +1014,7 @@ function CanvasField({
 	const releaseHold = useCallback((frame: string) => {
 		clearTimeout(holdTimers.current.get(frame));
 		holdTimers.current.delete(frame);
+		heldNow.current.delete(frame);
 		setHeldPaint((current) => {
 			if (current[frame] === undefined) return current;
 			const next = { ...current };
@@ -1020,18 +1025,33 @@ function CanvasField({
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
-			// a reload the canvas caused holds its outgoing document on screen
-			// until the new one reports arrived (#253's no blink); the timer is the
-			// bound, because a document that never arrives must not leave a dead
-			// one standing in front of it
+			// a reload holds the outgoing document on screen until the new one
+			// reports arrived (#253's no blink), whoever caused it: the hand, an
+			// agent's write, a shared file, a teammate's save. What it holds is a
+			// painted document: a loaded one that is live (on screen or at its
+			// edge, which is what bounds a shared save's holds to the frames in
+			// view), or the paint a hold before it is still keeping up while the
+			// document after it boots. A frame that never loaded, or is not live,
+			// has nothing on screen to hold. The timer is the bound, counted from
+			// when the hold began, because a document that never arrives must not
+			// leave a dead one standing in front of it.
 			const was = store.get().docNonces[frame] ?? 0;
-			// whatever reloads the frame retires the update in flight, and its bound
+			// whatever reloads the frame retires the update in flight, and its bound,
+			// and pays the reload a change under the hand owed it (#319)
 			hot.current.cancel(frame);
+			writtenUnderHand.current.delete(frame);
 			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
+			const standing = heldNow.current.get(frame);
+			const iframe = iframes.current.get(frame);
+			const live = frameLife.states[frame] === "live";
+			const painted = iframe !== undefined && loadedIframes.current.has(iframe) && !reloading.current.has(frame);
 			reloading.current.add(frame);
-			if (holdNext.current.delete(frame)) {
+			const asked = holdNext.current.delete(frame);
+			if (!live) {
+				if (standing !== undefined) releaseHold(frame);
+			} else if (standing === undefined && (asked || painted)) {
+				heldNow.current.set(frame, was);
 				setHeldPaint((current) => ({ ...current, [frame]: was }));
-				clearTimeout(holdTimers.current.get(frame));
 				holdTimers.current.set(
 					frame,
 					setTimeout(() => releaseHold(frame), HOLD_PAINT_MS),
@@ -1048,7 +1068,7 @@ function CanvasField({
 			if (pickedChain.current?.frame === frame) holdChain(null);
 			setPreview((current) => (current?.frame === frame ? null : current));
 		},
-		[holdChain, releaseHold, store],
+		[frameLife, holdChain, releaseHold, store],
 	);
 
 	/**
@@ -1070,13 +1090,38 @@ function CanvasField({
 	);
 	hotFallBack.current = holdOrReload;
 
-	/** The hand is in the frame or about to write to it: editing words, saved, or holding a write's readers. */
-	const handInFrame = useCallback(
-		(frame: string) =>
-			store.get().editing?.frame === frame ||
-			store.get().picked.some((pick) => pick.frame === frame) ||
-			saved.current.has(frame) ||
-			holdNext.current.has(frame),
+	// a frame that leaves live lets go of its held paint: what is drawn there
+	// now is its still, and a held document it came back to would boot afresh
+	useEffect(
+		() =>
+			frameLife.subscribe(() => {
+				for (const frame of [...heldNow.current.keys()]) {
+					if (frameLife.states[frame] !== "live") releaseHold(frame);
+				}
+			}),
+		[frameLife, releaseHold],
+	);
+
+	// the hand coming into a frame drops the swap in flight there, unless its
+	// document has committed it: a swap read before the hand's write must not
+	// land over it (`hot-updates.ts`)
+	useEffect(() => {
+		const frames = new Set([...picked.map((pick) => pick.frame), ...(editing === null ? [] : [editing.frame])]);
+		for (const frame of frames) {
+			hot.current.handCame(frame, (id) =>
+				iframes.current.get(frame)?.contentWindow?.postMessage({ spool: "hot-cancel", id }, "*"),
+			);
+		}
+	}, [picked, editing]);
+
+	/** Where the hand is: editing words, picks, saved, or holding a write's readers (`hot-updates.ts`). */
+	const hand = useCallback(
+		(): Hand => ({
+			editing: store.get().editing?.frame ?? null,
+			picked: store.get().picked,
+			saved: saved.current,
+			writing: holdNext.current,
+		}),
 		[store],
 	);
 
@@ -1085,7 +1130,7 @@ function CanvasField({
 	 * fast-refresh experiment on, the open document is asked to swap the changed
 	 * components in with React Refresh, keeping its state (`daemon/fast-refresh.ts`),
 	 * and reloads as before when it refuses or does not answer in time. A frame
-	 * whose document has not loaded, or that the hand is in (`handInFrame`),
+	 * whose document has not loaded, or that the hand is in (`handIn`),
 	 * reloads as it always did: the hand lane is untouched.
 	 */
 	const refreshOrReload = useCallback(
@@ -1094,27 +1139,24 @@ function CanvasField({
 				reloadFrameDocument(frame);
 				return;
 			}
-			// a frame booted plain reloads into the hot document, which its later saves swap
-			if (boots.current.saved(frame, store.get().docNonces[frame] ?? 0) === "reload") {
-				if (handInFrame(frame)) reloadFrameDocument(frame);
-				else holdOrReload(frame);
-				return;
-			}
 			const iframe = iframes.current.get(frame);
 			const target = iframe?.contentWindow;
-			if (
-				iframe === undefined ||
-				target == null ||
-				!loadedIframes.current.has(iframe) ||
-				reloading.current.has(frame) ||
-				handInFrame(frame)
-			) {
-				reloadFrameDocument(frame);
-				return;
-			}
-			hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
+			const route = onChange({
+				hand: hand(),
+				frame,
+				// a frame booted plain reloads into the hot document, which its later saves swap
+				boot: boots.current.saved(frame, store.get().docNonces[frame] ?? 0),
+				open:
+					iframe !== undefined &&
+					target != null &&
+					loadedIframes.current.has(iframe) &&
+					!reloading.current.has(frame),
+			});
+			if (route === "defer") writtenUnderHand.current.add(frame);
+			else if (route === "reload" || target == null) reloadFrameDocument(frame);
+			else hot.current.offer(frame, (id) => target.postMessage({ spool: "hot", id }, "*"));
 		},
-		[handInFrame, holdOrReload, reloadFrameDocument, store],
+		[hand, reloadFrameDocument, store],
 	);
 
 	/**
@@ -2166,6 +2208,9 @@ function CanvasField({
 		[store],
 	);
 
+	/** A write of the hand's landed: whether a Fast Refresh swap it came into owes the reload now. */
+	const handLanded = useCallback((frame: string) => hot.current.landed(frame), []);
+
 	/** Whether the hand is still in a frame: selected, an element of it held, or entered. */
 	const frameHeld = useCallback(
 		(frame: string) =>
@@ -2588,6 +2633,7 @@ function CanvasField({
 		recordEntry,
 		reloadFrameDocument,
 		frameHeld,
+		handLanded,
 		sharedWrite,
 		holdChain,
 		holdFrame,
@@ -3278,13 +3324,20 @@ function CanvasField({
 					return;
 				}
 				case "hot": {
-					const outcome = hot.current.answer(message.frame, message.id, message.ok);
-					if (outcome === "stale") return;
-					// refused, or the hand came into the frame while it swapped: the
-					// swapped bundle may predate the hand's write, so the reload is owed
-					if (outcome === "refused" || handInFrame(message.frame)) holdOrReload(message.frame);
+					const route = onAnswer(hot.current.answer(message.frame, message.id, message.ok), hand(), message.frame);
 					// holdNext is the hand's, and counts as in the frame: an applied swap never has one to clear
-					else requestSiteBoxes(message.frame);
+					if (route === "keep") requestSiteBoxes(message.frame);
+					else if (route === "defer") holdOrReload(message.frame);
+					// committed under a pick: shown until the hand's write lands, which reloads it
+					else if (route === "owe") {
+						hot.current.owe(message.frame);
+						writtenUnderHand.current.add(message.frame);
+					} else if (route === "reload") {
+						// the swapped bundle may predate the hand's write: the file is what shows, pick or not
+						saved.current.delete(message.frame);
+						holdNext.current.add(message.frame);
+						reloadFrameDocument(message.frame);
+					}
 					return;
 				}
 				case "loaded": {
@@ -3309,8 +3362,8 @@ function CanvasField({
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
 					lifecycleRef.current.noteArrived(message.frame);
-					// and so has the document held in front of a reload the hand
-					// caused (#253's no blink): let go at loaded, the still would
+					// and so has the document held in front of a reload (#253's no
+					// blink): let go at loaded, the still would
 					// stand in until here, which is the flash the hold exists to
 					// prevent — so it lets go onto a settled document (#318)
 					releaseHold(message.frame);
@@ -3340,6 +3393,8 @@ function CanvasField({
 					// a walk boot that broke falls back to the honest cover: the quiet
 					// still must not dress a dead document as a settled one (#28)
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
+					// nor arrive: the paint held in front of it lets go, so the failure shows now
+					releaseHold(message.frame);
 					// a document that broke will never say loaded: what waited on it asks what there is
 					if (reloading.current.delete(message.frame)) {
 						const waiting = loadWaiters.current.get(message.frame) ?? [];
@@ -3620,7 +3675,7 @@ function CanvasField({
 		altered,
 		camera,
 		store,
-		handInFrame,
+		hand,
 		holdOrReload,
 	]);
 
