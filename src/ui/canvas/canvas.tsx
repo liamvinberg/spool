@@ -536,8 +536,11 @@ function CanvasField({
 	 */
 	const [docNonces, setDocNonces] = useCanvasField(store, "docNonces");
 	// the document each frame keeps on screen while its replacement boots
-	// (#253's no blink): only a reload the canvas caused ever gets one
+	// (#253's no blink), whoever caused the reload
 	const [heldPaint, setHeldPaint] = useState<Record<string, number>>({});
+	// the same, read where a render has not caught up: a second reload before
+	// the first arrived keeps the paint that is still standing
+	const heldNow = useRef(new Map<string, number>());
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
 	const [walkArrivals, setWalkArrivals] = useCanvasField(store, "walkArrivals");
 	// where an element being dragged would land (#340), as the line drawn there
@@ -908,8 +911,9 @@ function CanvasField({
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
-	// frames whose next reload the canvas caused, so the outgoing document is
-	// held rather than blinking through its own still (#253's no blink)
+	// frames whose next reload the canvas caused: the hand is about to write
+	// them (handInFrame), and their outgoing document is held whatever its
+	// state (#253's no blink)
 	const holdNext = useRef(new Set<string>());
 	// frames whose file changed from outside while the hand held an element in
 	// them (#319): the reload they owe is paid when the hand leaves the frame,
@@ -1010,6 +1014,7 @@ function CanvasField({
 	const releaseHold = useCallback((frame: string) => {
 		clearTimeout(holdTimers.current.get(frame));
 		holdTimers.current.delete(frame);
+		heldNow.current.delete(frame);
 		setHeldPaint((current) => {
 			if (current[frame] === undefined) return current;
 			const next = { ...current };
@@ -1020,17 +1025,31 @@ function CanvasField({
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
-			// a reload the canvas caused holds its outgoing document on screen
-			// until the new one reports arrived (#253's no blink); the timer is the
-			// bound, because a document that never arrives must not leave a dead
-			// one standing in front of it
+			// a reload holds the outgoing document on screen until the new one
+			// reports arrived (#253's no blink), whoever caused it: the hand, an
+			// agent's write, a shared file, a teammate's save. What it holds is a
+			// painted document: a loaded one that is live (on screen or at its
+			// edge, which is what bounds a shared save's holds to the frames in
+			// view), or the paint a hold before it is still keeping up while the
+			// document after it boots. A frame that never loaded has nothing to
+			// hold. The timer is the bound, because a document that never arrives
+			// must not leave a dead one standing in front of it.
 			const was = store.get().docNonces[frame] ?? 0;
 			// whatever reloads the frame retires the update in flight, and its bound
 			hot.current.cancel(frame);
 			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
+			const standing = heldNow.current.get(frame);
+			const iframe = iframes.current.get(frame);
+			const painted =
+				iframe !== undefined &&
+				loadedIframes.current.has(iframe) &&
+				!reloading.current.has(frame) &&
+				frameLife.states[frame] === "live";
 			reloading.current.add(frame);
-			if (holdNext.current.delete(frame)) {
-				setHeldPaint((current) => ({ ...current, [frame]: was }));
+			if (holdNext.current.delete(frame) || standing !== undefined || painted) {
+				const keep = standing ?? was;
+				heldNow.current.set(frame, keep);
+				setHeldPaint((current) => (current[frame] === keep ? current : { ...current, [frame]: keep }));
 				clearTimeout(holdTimers.current.get(frame));
 				holdTimers.current.set(
 					frame,
@@ -1048,7 +1067,7 @@ function CanvasField({
 			if (pickedChain.current?.frame === frame) holdChain(null);
 			setPreview((current) => (current?.frame === frame ? null : current));
 		},
-		[holdChain, releaseHold, store],
+		[frameLife, holdChain, releaseHold, store],
 	);
 
 	/**
@@ -3309,8 +3328,8 @@ function CanvasField({
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
 					lifecycleRef.current.noteArrived(message.frame);
-					// and so has the document held in front of a reload the hand
-					// caused (#253's no blink): let go at loaded, the still would
+					// and so has the document held in front of a reload (#253's no
+					// blink): let go at loaded, the still would
 					// stand in until here, which is the flash the hold exists to
 					// prevent — so it lets go onto a settled document (#318)
 					releaseHold(message.frame);
