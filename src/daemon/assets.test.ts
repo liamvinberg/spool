@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { COVER_PNG, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { FILE_LIMIT_BYTES } from "../team-sync-protocol";
+import { COVER_PNG, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { LOCAL_FONT_BUDGET_BYTES } from "./assets";
 
 /**
@@ -22,8 +22,10 @@ function project() {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
 	const { request } = makeApp(spoolDir);
-	return { root, name, document: () => request(`/p/${name}/frames/entry`) };
+	return { root, name, request, document: () => request(`/p/${name}/frames/entry`) };
 }
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 describe("project assets", () => {
 	it("serves an imported image by a URL named for its bytes, never inlined", async () => {
@@ -38,7 +40,7 @@ describe("project assets", () => {
 		const response = await document();
 		expect(response.status).toBe(200);
 		const body = await response.text();
-		expect(body).toContain(`"/asset/${createHash("sha256").update(COVER_PNG).digest("hex")}.png"`);
+		expect(body).toContain(`"/asset/${sha256(COVER_PNG)}.png"`);
 		expect(body).not.toContain("data:image/png");
 	});
 
@@ -128,6 +130,58 @@ describe("project assets", () => {
 		const body = await (await document()).text();
 		expect(body).toContain("https://example.test/hero.png");
 		expect(body).not.toContain("an asset is imported, not referenced");
+	});
+
+	it("serves an imported image at its URL, for good, to any frame", async () => {
+		const { root, request, document } = project();
+		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
+		writeAsset(root, "frames/entry/hero.png", COVER_PNG);
+		writeAsset(root, "shared/assets/logo.svg", Buffer.from(svg));
+		writeFrame(
+			root,
+			"entry",
+			'import hero from "./hero.png";\nimport logo from "../../shared/assets/logo.svg";\nexport default function Frame() { return <><img src={hero} alt="" /><img src={logo} alt="" /></>; }\n',
+		);
+		expect((await document()).status).toBe(200);
+
+		const png = `/asset/${sha256(COVER_PNG)}.png`;
+		const response = await request(png);
+		expect(response.status).toBe(200);
+		expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(COVER_PNG));
+		expect(Object.fromEntries(response.headers)).toMatchObject({
+			"content-type": "image/png",
+			"cache-control": "public, max-age=31536000, immutable",
+			etag: `"${sha256(COVER_PNG)}"`,
+			"x-content-type-options": "nosniff",
+			"access-control-allow-origin": "*",
+		});
+		const head = await request(png, { method: "HEAD" });
+		expect(head.status).toBe(200);
+		expect(head.headers.get("content-type")).toBe("image/png");
+		const again = await request(png, { headers: { "if-none-match": `"${sha256(COVER_PNG)}"` } });
+		expect(again.status).toBe(304);
+
+		// an svg opened on its own runs nothing
+		const logo = await request(`/asset/${sha256(Buffer.from(svg))}.svg`);
+		expect(logo.headers.get("content-type")).toBe("image/svg+xml");
+		expect(logo.headers.get("content-security-policy")).toBe(
+			"default-src 'none'; style-src 'unsafe-inline'; sandbox",
+		);
+	});
+
+	it("answers an image's URL only while a project's design/ holds those bytes", async () => {
+		const { root, request } = project();
+		writeAsset(root, "shared/assets/hero.png", COVER_PNG);
+		// no frame has compiled it: the daemon finds it in design/ all the same
+		const url = `/asset/${sha256(COVER_PNG)}.png`;
+		expect((await request(url)).status).toBe(200);
+		expect((await request(`/asset/${sha256(COVER_PNG)}.gif`)).status).toBe(404);
+
+		writeAsset(root, "shared/assets/hero.png", Uint8Array.from([...COVER_PNG, 0]));
+		expect((await request(url)).status).toBe(404);
+		// bytes outside design/ answer nothing, though they are on disk
+		writeFileSync(join(root, "outside.png"), COVER_PNG);
+		expect((await request(url)).status).toBe(404);
 	});
 
 	it("refuses an asset that resolves outside design/", async () => {

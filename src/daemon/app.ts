@@ -143,6 +143,8 @@ import {
 } from "./vendor";
 import { type BootLine, planShot, recordBoot, SHOT_AT_MAX_COUNT, SHOT_AT_MAX_MS } from "./verify-record";
 import { createWebfonts, type Webfonts } from "./webfonts";
+import { createAssetStore } from "./asset-store";
+import { ASSET_PATH } from "./assets";
 
 export interface DaemonOptions {
 	agentAppLauncher?: AgentAppLauncher;
@@ -380,6 +382,7 @@ export function createDaemonApp({
 	const startedAt = new Date().toISOString();
 	const webfonts = providedWebfonts ?? createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
+	const assetStore = createAssetStore(() => readRegistry(spoolDir).projects.map((project) => project.root));
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 
 	/**
@@ -1035,6 +1038,7 @@ export function createDaemonApp({
 			isFrameDocumentPath(path) ||
 			path.startsWith("/vendor/") ||
 			isProjectDataPath(path) ||
+			ASSET_PATH.test(path) ||
 			// a Fast Refresh document's own modules (the fast-refresh experiment)
 			/^\/p\/[^/]+\/hot\/[^/]+$/.test(path)
 		);
@@ -1491,6 +1495,7 @@ export function createDaemonApp({
 				const doc = await compiler.getDocument(root, frame, frameAuthority(root), hot);
 				if (doc.kind === "missing") return c.text(doc.message, 404);
 				if (doc.kind === "error") return c.html(doc.document, 500);
+				assetStore.note(root, doc.assets);
 				// a Fast Refresh document carries a session of its own, every load a new one
 				if (hot) {
 					c.header("cache-control", "no-store");
@@ -1712,6 +1717,27 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "font/woff2");
 			return c.body(new Uint8Array(readFileSync(file)));
+		})
+		.get("/asset/:file", (c) => {
+			// A frame's imported image (#216), by the hash of its bytes: the address is
+			// the content, so it never goes stale, and only a file a registered design/
+			// holds now answers it. Null-origin sandboxed frames read it under CORS,
+			// to draw it into a canvas and to inline it into their own stills.
+			const match = ASSET_PATH.exec(c.req.path);
+			const asset = match === null ? undefined : assetStore.read(match[1] ?? "", match[2] ?? "");
+			if (match === null || asset === undefined) return c.text("no such asset", 404);
+			const etag = `"${match[1]}"`;
+			c.header("access-control-allow-origin", "*");
+			c.header("cache-control", "public, max-age=31536000, immutable");
+			c.header("etag", etag);
+			c.header("content-type", asset.type);
+			c.header("x-content-type-options", "nosniff");
+			// an svg opened on its own runs nothing and fetches nothing
+			if (asset.type === "image/svg+xml") {
+				c.header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+			}
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			return c.body(new Uint8Array(asset.bytes));
 		})
 		.get("/vendor/webfont/:key", async (c) => {
 			// A project's own fonts.css named this file's URL and nothing else can

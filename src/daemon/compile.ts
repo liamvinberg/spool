@@ -3,6 +3,7 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import { isFramePath } from "../page-path";
 import { daemonCompileHost } from "./compile-host";
 import {
+	type CompiledAsset,
 	type CompiledFrameDocument,
 	type CompileHost,
 	compileFrameDocument,
@@ -32,6 +33,8 @@ export type FrameDocument =
 			document: string;
 			etag: string;
 			source: string;
+			/** The images it loads by URL (#216). */
+			assets: CompiledAsset[];
 			/** Themed classes its sources name that its stylesheet never built. */
 			unstyled: string[];
 			cache: "hit" | "miss";
@@ -110,8 +113,9 @@ export function createFrameCompiler(
 				// meanwhile retires this document as surely as one before it
 				cached.fonts === webfonts.revision()
 			) {
-				const { etag, source, unstyled } = cached;
-				return { kind: "ok", document: withSession(root, designDir, cached), etag, source, unstyled, cache: "hit" };
+				const { etag, source, unstyled, assets } = cached;
+				const document = withSession(root, designDir, cached);
+				return { kind: "ok", document, etag, source, unstyled, assets, cache: "hit" };
 			}
 			const entry = await compileFrameDocument(host, {
 				designDir,
@@ -126,8 +130,9 @@ export function createFrameCompiler(
 				if (entry.settled) cache.set(key, entry);
 				else cache.delete(key);
 			}
-			const { etag, source, unstyled } = entry;
-			return { kind: "ok", document: withSession(root, designDir, entry), etag, source, unstyled, cache: "miss" };
+			const { etag, source, unstyled, assets } = entry;
+			const document = withSession(root, designDir, entry);
+			return { kind: "ok", document, etag, source, unstyled, assets, cache: "miss" };
 		} catch (error) {
 			if (cache.get(key) === cached) cache.delete(key);
 			const message = await describeCompileError(host.esbuild, error);
