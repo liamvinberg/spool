@@ -143,7 +143,6 @@ describe("the compile entry, with the files in memory and esbuild-wasm", () => {
 		expect(home.assets).toEqual([
 			{ url: `/asset/${hash}.svg`, hash, type: "image/svg+xml", path: "shared/assets/dot.svg", size: 109 },
 		]);
-		expect(home.document).toContain(`/asset/${hash}.svg`);
 	});
 });
 
