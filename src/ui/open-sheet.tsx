@@ -35,8 +35,8 @@ const FACES: Record<Ask["face"], ComponentType<{ className?: string }>> = {
 };
 
 /**
- * Open…'s one small sheet, hung from the window bar the way a Mac sheet hangs from its title bar. It comes up only
- * when spool would make something, or to say plainly that nothing answers, keeping what was given to fix and try again.
+ * Open…'s one small dialog, centred like every other dialog in the app. It comes up only when spool would make
+ * something, or to say plainly that nothing answers, keeping what was given to fix and try again.
  * ⏎ is its one button and Esc is Cancel; Cancel during the work stops it.
  */
 export function OpenSheet({
@@ -78,7 +78,7 @@ export function OpenSheet({
 			ref={dialog}
 			width="free"
 			aria-label={label}
-			className="relative mt-bar! mb-auto! w-[480px] animate-sheet-down overflow-hidden rounded-t-none border-t-0 backdrop:animate-find-in"
+			className="relative w-[480px] overflow-hidden backdrop:animate-find-in"
 			onCancel={(event) => {
 				event.preventDefault();
 				onCancel();
