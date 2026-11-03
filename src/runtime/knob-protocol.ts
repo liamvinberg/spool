@@ -51,10 +51,12 @@ export interface KnobSite {
 	at: string;
 	/** paths whose `value` is not a literal in the file: shown read-only, never written */
 	computed: KnobPath[];
+	/** every call's stamp in the file as compiled, this one's included: a re-run file's other stamps are gone */
+	inFile: string[];
 }
 
 /** One `ui.knobs` call as a frame ran it: its site and its schema with the values it holds. */
-export interface KnobCall extends KnobSite {
+export interface KnobCall extends Omit<KnobSite, "inFile"> {
 	schema: KnobSchema;
 }
 

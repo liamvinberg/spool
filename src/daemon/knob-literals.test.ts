@@ -26,9 +26,11 @@ describe("stamping ui.knobs calls", () => {
 		const was = FRAME.split("\n");
 		const now = stamped.split("\n");
 		expect(now).toHaveLength(was.length);
-		expect(now[7]).toBe(`}, {"at":"frames/menu/frame.tsx:3:11","computed":["card.padding","more"]});`);
+		expect(now[7]).toBe(
+			`}, {"at":"frames/menu/frame.tsx:3:11","computed":["card.padding","more"],"inFile":["frames/menu/frame.tsx:3:11","frames/menu/frame.tsx:10:27"]});`,
+		);
 		expect(now[9]).toBe(
-			`\treturn <p className="x">{u.knobs({ on: { type: "toggle", value: k.on } }, {"at":"frames/menu/frame.tsx:10:27","computed":["on"]})}</p>;`,
+			`\treturn <p className="x">{u.knobs({ on: { type: "toggle", value: k.on } }, {"at":"frames/menu/frame.tsx:10:27","computed":["on"],"inFile":["frames/menu/frame.tsx:3:11","frames/menu/frame.tsx:10:27"]})}</p>;`,
 		);
 		for (const [index, line] of was.entries()) {
 			if (index !== 7 && index !== 9) expect(now[index]).toBe(line);

@@ -191,7 +191,9 @@ describe("ui.knobs calls", () => {
 				label: 'frame "menu"',
 				hot,
 			});
-			expect(bootJs).toContain('{ "at": "shared/knobs/kaffe.ts:2:22", "computed": [] }');
+			expect(bootJs).toContain(
+				'{ "at": "shared/knobs/kaffe.ts:2:22", "computed": [], "inFile": ["shared/knobs/kaffe.ts:2:22"] }',
+			);
 		}
 	});
 });

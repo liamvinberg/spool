@@ -1805,7 +1805,7 @@ function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
 	let entry = site === undefined ? undefined : knobEntries.get(site.at);
 	if (entry === undefined) {
 		entry = {
-			site: site ?? { at: "", computed: [] },
+			site: site ?? { at: "", computed: [], inFile: [] },
 			json,
 			specs: new Map(),
 			values: {},
@@ -1815,9 +1815,14 @@ function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
 		};
 		// an unstamped call reads its literals and is never declared
 		if (site !== undefined) knobEntries.set(site.at, entry);
-	} else if (entry.json === json && entry.site.computed.join() === site?.computed.join()) {
+	} else if (
+		entry.json === json &&
+		entry.site.computed.join() === site?.computed.join() &&
+		entry.site.inFile.join() === site.inFile.join()
+	) {
 		return entry.read as KnobRead<S>;
 	}
+	if (site !== undefined) dropGoneKnobs(site);
 	entry.site = site ?? entry.site;
 	entry.json = json;
 	entry.specs.clear();
@@ -1860,6 +1865,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	if (typeof value !== "object" || value === null) return false;
 	const proto = Object.getPrototypeOf(value);
 	return proto === Object.prototype || proto === null;
+}
+
+/**
+ * A file run again (Fast Refresh) may stamp its calls elsewhere, a line added
+ * above one: a call it no longer stamps is gone, not still declared.
+ */
+function dropGoneKnobs(site: KnobSite): void {
+	const file = site.at.replace(/:\d+:\d+$/, "");
+	for (const at of knobEntries.keys()) {
+		if (at.replace(/:\d+:\d+$/, "") === file && !site.inFile.includes(at)) knobEntries.delete(at);
+	}
 }
 
 /** Getters over the store, so the object a call returns stays the one to read from. */

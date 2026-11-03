@@ -188,13 +188,17 @@ export function stampKnobCalls(text: string, rel: string, loader: string): strin
 	} catch {
 		return text;
 	}
-	let stamped = text;
-	for (const call of knobCalls(program).sort((a, b) => (b.end ?? 0) - (a.end ?? 0))) {
+	const calls = knobCalls(program).flatMap((call) => {
 		const start = call.loc?.start;
-		if (start === undefined || call.end == null) continue;
-		const site: KnobSite = { at: `${rel}:${start.line}:${start.column + 1}`, computed: computedPaths(call) };
+		const end = call.end;
+		return start === undefined || end == null ? [] : [{ call, end, at: `${rel}:${start.line}:${start.column + 1}` }];
+	});
+	const inFile = calls.map(({ at }) => at);
+	let stamped = text;
+	for (const { call, end, at } of calls.sort((a, b) => b.end - a.end)) {
+		const site: KnobSite = { at, computed: computedPaths(call), inFile };
 		const comma = (call.extra?.trailingComma as number | undefined) === undefined ? ", " : " ";
-		const paren = call.end - 1;
+		const paren = end - 1;
 		stamped = `${stamped.slice(0, paren)}${comma}${JSON.stringify(site)}${stamped.slice(paren)}`;
 	}
 	return stamped;
