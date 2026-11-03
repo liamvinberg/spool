@@ -6,62 +6,9 @@
  * the write lane on release. The file stays the one record.
  */
 
-/** A choice in a segmented, select, pictures, icon or image knob. */
-export interface KnobOption {
-	value: string;
-	label?: string;
-	/** an imported image's URL (pictures, icon, image) */
-	image?: string;
-}
+import type { KnobSchema, KnobSpec } from "./spool-public";
 
-export type KnobChoice = string | KnobOption;
-
-/** A spring in perceived terms (seconds, -1…1), or in physics terms. */
-export type SpringValue = { duration: number; bounce: number } | { stiffness: number; damping: number; mass?: number };
-
-interface NumberLimits {
-	min?: number;
-	max?: number;
-	step?: number;
-	unit?: string;
-}
-
-/** One knob as written in the call: its type, its literal `value`, and what its control needs. */
-export type KnobSpec =
-	| ({ type: "slider"; value: number } & NumberLimits)
-	| ({ type: "range"; value: [number, number] } & NumberLimits)
-	| ({ type: "stepper"; value: number } & NumberLimits)
-	| { type: "angle"; value: number }
-	| ({ type: "xy"; value: { x: number; y: number } } & NumberLimits)
-	/** seconds */
-	| { type: "duration"; value: number; min?: number; max?: number }
-	/** cubic-bezier x1, y1, x2, y2 */
-	| { type: "easing"; value: [number, number, number, number] }
-	| { type: "spring"; value: SpringValue }
-	/** any CSS colour; `swatches` are the colours offered to try on */
-	| { type: "color"; value: string; alpha?: boolean; swatches?: string[] }
-	/** a CSS linear-gradient() */
-	| { type: "gradient"; value: string }
-	| { type: "toggle"; value: boolean }
-	| { type: "segmented" | "select" | "pictures" | "icon"; value: string; options: KnobChoice[] }
-	/** `value` names an option; the knob reads as that option's image */
-	| { type: "image"; value: string; options: KnobOption[] }
-	| { type: "text" | "longtext"; value: string }
-	| { type: "font"; value: string; options?: string[] }
-	| { type: "weight"; value: number; options?: number[] }
-	/** px: all sides, [vertical, horizontal], or [top, right, bottom, left] */
-	| {
-			type: "spacing";
-			value: number | [number, number] | [number, number, number, number];
-			min?: number;
-			max?: number;
-	  }
-	/** px: all corners, or [top-left, top-right, bottom-right, bottom-left] */
-	| { type: "corners"; value: number | [number, number, number, number]; min?: number; max?: number }
-	/** a CSS box-shadow */
-	| { type: "shadow"; value: string }
-	/** no value and nothing written; reads as how many times it was pressed */
-	| { type: "action"; label?: string };
+export type { KnobChoice, KnobOption, KnobSchema, KnobSpec, SpringValue } from "./spool-public";
 
 export type KnobType = KnobSpec["type"];
 
@@ -91,11 +38,6 @@ export const KNOB_TYPES: readonly KnobType[] = [
 	"shadow",
 	"action",
 ];
-
-/** A nested object is a group, folding in the rail, in code order. */
-export interface KnobSchema {
-	[key: string]: KnobSpec | KnobSchema;
-}
 
 /** A knob's value as JSON: what is posted live and what the write lane writes as a literal. */
 export type KnobValue = number | string | boolean | readonly number[] | { readonly [key: string]: number | string };
