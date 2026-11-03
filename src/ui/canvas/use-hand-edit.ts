@@ -1123,6 +1123,7 @@ export function createHandEdit(deps: () => HandEditDeps, setRefused: Setter<Show
 		moveBeside,
 		moveStep,
 		walkHand,
+		landed,
 		restored,
 		altered,
 		dispose,
