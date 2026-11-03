@@ -45,11 +45,14 @@ export interface DesktopWindow {
 	onProjectDownload?(
 		listener: (result: { status: "completed"; filename: string } | { status: "failed"; message: string }) => void,
 	): () => void;
+	/** the system's open panel: a folder, or for Open… a folder or a .spool file */
 	chooseDirectory?(request: DirectoryRequest): Promise<string | null>;
+	/** where a dropped file or folder lies on this Mac; an older app has no such call */
+	pathForFile?(file: File): string;
 }
 
 export interface DirectoryRequest {
-	purpose: "location" | "add" | "open" | "export";
+	purpose: "location" | "open" | "export";
 	defaultPath: string;
 }
 

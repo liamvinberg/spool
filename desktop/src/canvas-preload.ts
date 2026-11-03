@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { DirectoryRequest } from "./directory-dialog";
 import type { CanvasCommand } from "./main";
 import type { ProjectDownloadResult } from "./project-download";
@@ -72,4 +72,6 @@ contextBridge.exposeInMainWorld("spoolCanvasWindow", {
 	closeWindow: () => ipcRenderer.send("spool:canvas-close-window"),
 	chooseDirectory: (request: DirectoryRequest): Promise<string | null> =>
 		ipcRenderer.invoke("spool:choose-directory", request),
+	// where a file or folder dropped on the window lies, which a page is never told
+	pathForFile: (file: File): string => webUtils.getPathForFile(file),
 });
