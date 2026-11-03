@@ -180,8 +180,6 @@ export function App() {
 		setProjects((cards) => cards.map((card) => (card.root === from ? { ...card, ...renamed } : card)));
 		setOpen((roots) => roots.map((root) => (root === from ? renamed.root : root)));
 		setFocused((root) => (root === from ? renamed.root : root));
-		// a new project named by its first ask keeps its Agent pane out
-		setStarted((root) => (root === from ? renamed.root : root));
 		if (window.location.pathname === `/p/${encodeURIComponent(basename(from))}`) {
 			window.history.replaceState(null, "", `/p/${encodeURIComponent(renamed.name)}`);
 		}
@@ -525,7 +523,7 @@ export function App() {
 	// a .spool or a folder Finder handed the Mac app goes through the same Open…
 	useEffect(() => appWindow?.onOpenPath?.(openGiven), [appWindow, openGiven]);
 
-	/** The project New just made, whose canvas opens with the Agent pane out. */
+	/** The project New just made, whose canvas opens with the Agent pane out, once. */
 	const [started, setStarted] = useState<string | null>(null);
 	const newProject = useStartProject((project) => {
 		setStarted(project.root);
@@ -999,6 +997,7 @@ export function App() {
 								root={focusedTab.root}
 								onChrome={setChrome}
 								agentOpen={focusedTab.root === started}
+								onAgentOpened={() => setStarted(null)}
 								naming={naming.get(focusedTab.root)}
 								team={
 									focusedTab.teamAddress === undefined

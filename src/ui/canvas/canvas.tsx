@@ -408,6 +408,8 @@ interface ProjectCanvasProps {
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	/** A project New just made: its canvas opens with the Agent pane out, its composer not focused. */
 	agentOpen?: boolean | undefined;
+	/** The Agent pane `agentOpen` asked for is out: the ask is spent, so a later visit keeps the layout as it is. */
+	onAgentOpened?: (() => void) | undefined;
 	/** A team project's local copy: its team, which the empty project's name row says. */
 	team?: MarkTeam | undefined;
 	/** The thread whose first ask the daemon is naming this project from, while it does. */
@@ -442,6 +444,7 @@ function CanvasField({
 	onChrome,
 	onRename,
 	agentOpen = false,
+	onAgentOpened,
 	team: markTeam,
 	naming,
 	deck,
@@ -5576,6 +5579,7 @@ function CanvasField({
 								: undefined
 				}
 				onShown={(panes) => {
+					if (agentOpen && panes.includes("agent")) onAgentOpened?.();
 					setRailShown(panes.includes("agent"));
 					setCommentsShown(panes.includes("comments"));
 				}}
