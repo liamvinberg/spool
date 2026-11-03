@@ -7,8 +7,22 @@ import { isFramePath } from "../page-path";
 import { accelChord } from "./accel-chord";
 import { loadAssetImagesUnderCors } from "./asset-images";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
+import {
+	eachKnob,
+	isKnobSpec,
+	type KnobAction,
+	type KnobCall,
+	type KnobPath,
+	type KnobSchema,
+	type KnobSite,
+	type KnobSpec,
+	type KnobValue,
+	type KnobValues,
+	parseKnobAction,
+	parseKnobValues,
+} from "./knob-protocol";
 import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
-import type { SpoolUi } from "./spool-public";
+import type { KnobRead, SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
 /**
@@ -323,6 +337,16 @@ if (play === undefined) {
 		const shared = parseSharedState(event.data);
 		if (shared !== undefined) {
 			applySharedState(shared);
+			return;
+		}
+		const knobValues = parseKnobValues(event.data);
+		if (knobValues !== undefined) {
+			setKnobValues(knobValues);
+			return;
+		}
+		const knobAction = parseKnobAction(event.data);
+		if (knobAction !== undefined) {
+			pressKnob(knobAction);
 			return;
 		}
 		const decision = parseWalkDecision(event.data);
@@ -1750,6 +1774,175 @@ function PlayerDocument() {
 	return Screen === undefined ? null : createElement(Screen, { key: arrival });
 }
 
+// --- knobs (#220) ------------------------------------------------------------
+
+/**
+ * A knob is a design-time value, not prototype data: its own store, never
+ * persisted, and no scenario, walk or play session touches it. Each call is
+ * keyed by the stamp the compile gives it, so a module-level call (in a frame
+ * or a shared file) and a call repeated every render land on the same entry.
+ */
+interface KnobEntry {
+	site: KnobSite;
+	/** the schema as declared, dotted keys left out */
+	json: string;
+	specs: Map<KnobPath, KnobSpec>;
+	/** the canvas's live values while a hand tunes; a path absent reads its literal */
+	values: Record<KnobPath, KnobValue>;
+	presses: Map<KnobPath, number>;
+	groups: Map<KnobPath, Record<string, unknown>>;
+	read: Record<string, unknown>;
+}
+
+const knobEntries = new Map<string, KnobEntry>();
+const knobListeners = new Set<() => void>();
+const warnedKnobKeys = new Set<string>();
+let knobVersion = 0;
+let knobsDeclareScheduled = false;
+
+function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
+	const clean = withoutDottedKeys(schema, site?.at ?? "ui.knobs");
+	const json = JSON.stringify(clean);
+	let entry = site === undefined ? undefined : knobEntries.get(site.at);
+	if (entry === undefined) {
+		entry = {
+			site: site ?? { at: "", computed: [] },
+			json,
+			specs: new Map(),
+			values: {},
+			presses: new Map(),
+			groups: new Map(),
+			read: {},
+		};
+		// an unstamped call reads its literals and is never declared
+		if (site !== undefined) knobEntries.set(site.at, entry);
+	} else if (entry.json === json && entry.site.computed.join() === site?.computed.join()) {
+		return entry.read as KnobRead<S>;
+	}
+	entry.site = site ?? entry.site;
+	entry.json = json;
+	entry.specs.clear();
+	eachKnob(clean, (path, spec) => entry.specs.set(path, spec));
+	bindKnobGroup(entry, entry.read, clean, "");
+	if (site !== undefined) scheduleKnobsDeclared();
+	return entry.read as KnobRead<S>;
+}
+
+/** A key with a dot would make its path ambiguous: named once, and left out. */
+function withoutDottedKeys(schema: KnobSchema, at: string, prefix = ""): KnobSchema {
+	const clean: KnobSchema = {};
+	for (const [key, node] of Object.entries(schema)) {
+		const path = prefix === "" ? key : `${prefix}.${key}`;
+		if (key.includes(".")) {
+			if (!warnedKnobKeys.has(`${at} ${path}`)) {
+				warnedKnobKeys.add(`${at} ${path}`);
+				console.warn(`spool: knob key "${path}" at ${at} has a dot, which separates a path's keys — rename it`);
+			}
+			continue;
+		}
+		clean[key] = isKnobSpec(node) ? node : withoutDottedKeys(node, at, path);
+	}
+	return clean;
+}
+
+/** Getters over the store, so the object a call returns stays the one to read from. */
+function bindKnobGroup(entry: KnobEntry, target: Record<string, unknown>, schema: KnobSchema, prefix: string): void {
+	for (const key of Object.keys(target)) if (!Object.hasOwn(schema, key)) delete target[key];
+	for (const [key, node] of Object.entries(schema)) {
+		const path = prefix === "" ? key : `${prefix}.${key}`;
+		if (isKnobSpec(node)) {
+			Object.defineProperty(target, key, {
+				get: () => knobReading(entry, path),
+				enumerable: true,
+				configurable: true,
+			});
+			continue;
+		}
+		let group = entry.groups.get(path);
+		if (group === undefined) {
+			group = {};
+			entry.groups.set(path, group);
+		}
+		bindKnobGroup(entry, group, node, path);
+		Object.defineProperty(target, key, { value: group, enumerable: true, configurable: true });
+	}
+}
+
+function knobReading(entry: KnobEntry, path: KnobPath): unknown {
+	const spec = entry.specs.get(path);
+	if (spec === undefined) return undefined;
+	if (spec.type === "action") return entry.presses.get(path) ?? 0;
+	const value = Object.hasOwn(entry.values, path) ? entry.values[path] : spec.value;
+	if (spec.type === "image") return spec.options.find((option) => option.value === value)?.image ?? "";
+	return value;
+}
+
+function notifyKnobs(): void {
+	knobVersion++;
+	for (const listener of knobListeners) listener();
+}
+
+function setKnobValues(message: KnobValues): void {
+	const entry = knobEntries.get(message.at);
+	if (entry === undefined) return;
+	entry.values = message.values;
+	notifyKnobs();
+}
+
+function pressKnob(message: KnobAction): void {
+	const entry = knobEntries.get(message.at);
+	if (entry?.specs.get(message.path)?.type !== "action") return;
+	entry.presses.set(message.path, (entry.presses.get(message.path) ?? 0) + 1);
+	notifyKnobs();
+}
+
+/** Every call the document has run, whole, once per microtask: only the canvas tunes. */
+function scheduleKnobsDeclared(): void {
+	if (!embedded || play !== undefined || knobsDeclareScheduled) return;
+	knobsDeclareScheduled = true;
+	queueMicrotask(async () => {
+		const unlisted = [...knobEntries.values()].some((entry) =>
+			[...entry.specs.values()].some((spec) => spec.type === "font" && spec.options === undefined),
+		);
+		if (unlisted) await document.fonts?.ready;
+		knobsDeclareScheduled = false;
+		const families = unlisted ? loadedFontFamilies() : [];
+		const calls = [...knobEntries.values()].map((entry): KnobCall => {
+			const schema = JSON.parse(entry.json) as KnobSchema;
+			eachKnob(schema, (_, spec) => {
+				if (spec.type === "font") spec.options ??= families;
+			});
+			return { at: entry.site.at, computed: entry.site.computed, schema };
+		});
+		post({ spool: "knobs", calls });
+	});
+}
+
+/** A font knob with no options offers what this document loaded. */
+function loadedFontFamilies(): string[] {
+	const families = new Set<string>();
+	for (const face of document.fonts ?? []) {
+		if (face.status === "loaded") families.add(face.family.replace(/^["']|["']$/g, ""));
+	}
+	return [...families];
+}
+
+function subscribeKnobs(listener: () => void): () => void {
+	knobListeners.add(listener);
+	return () => knobListeners.delete(listener);
+}
+
+/**
+ * The frame document's root (the boot module renders it): a knob is read
+ * anywhere, from a module-level object, so a moved knob re-renders the whole
+ * frame, with no recompile. A memoised component with no knob-dependent props
+ * keeps its last render.
+ */
+export function FrameRoot({ frame }: { frame: ComponentType }) {
+	useSyncExternalStore(subscribeKnobs, () => knobVersion);
+	return createElement(frame);
+}
+
 // --- boot -------------------------------------------------------------------
 
 const state = reactive(stateTarget);
@@ -1759,7 +1952,7 @@ function useSpoolState(): SpoolState {
 	return state;
 }
 
-export const ui: SpoolUi = Object.freeze({ state, use: useSpoolState, go, back, copy });
+export const ui: SpoolUi = Object.freeze({ state, use: useSpoolState, go, back, copy, knobs });
 
 bindDataGo();
 bindExternalLinks();

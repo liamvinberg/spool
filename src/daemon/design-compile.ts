@@ -562,12 +562,12 @@ export function cssSources(reads: DesignReads, files: string[]): CssSource[] {
  * entirely in offscreen iframes, and offscreen frames must still report —
  * an effect fires after the first committed render regardless of visibility.
  *
- * "spool" is imported for its side effects in every document — data-go works
- * in frames that never import it — and its top-level await holds the first
- * render until the session is seeded.
+ * "spool" is imported in every document — data-go works in frames that never
+ * import it, and its FrameRoot re-renders the frame when a knob moves — and
+ * its top-level await holds the first render until the session is seeded.
  */
 function bootEntry(frame: string): string {
-	return `import "spool";
+	return `import { FrameRoot } from "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import Frame from "./frame.tsx";
@@ -582,7 +582,7 @@ function Ready() {
 	return null;
 }
 createRoot(document.getElementById("root")).render(
-	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
+	createElement(Fragment, null, createElement(FrameRoot, { frame: Frame }), createElement(Ready)),
 );
 `;
 }
