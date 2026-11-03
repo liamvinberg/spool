@@ -282,7 +282,8 @@ export function ListRow({
 			<StatusMark
 				key="unseen"
 				status={broken ? "broken" : unseen === "moved" ? "moved" : "unseen"}
-				aria-hidden="true"
+				// unseen is the label's own colour said again; broken is news a reader is owed
+				aria-hidden={broken ? undefined : "true"}
 				className={cn(giveWay && GIVE_WAY)}
 			/>
 		) : null,
