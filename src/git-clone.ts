@@ -53,9 +53,11 @@ export interface CloneProgress {
 
 /** What git prints while it clones, as a share of the whole: receiving is most of the wait, resolving the rest. */
 export function cloneProgressOf(line: string): CloneProgress {
-	const said = line.trim().toLowerCase();
+	// git's own words in lowercase, as machine text is shown; a path in them keeps its case
+	const trimmed = line.trim().replace(/^remote:\s*/iu, "");
+	const said = trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 	const percent = /^(receiving|resolving) (?:objects|deltas):\s+(\d+)%/u.exec(said);
-	if (percent === null) return { line: said.replace(/^remote:\s*/u, ""), done: null };
+	if (percent === null) return { line: said, done: null };
 	const share = Number(percent[2]) / 100;
 	return {
 		line: said.replace(/,.*$/u, "").replace(/\s+\(.*\)$/u, ""),

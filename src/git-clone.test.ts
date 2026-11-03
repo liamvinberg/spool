@@ -50,4 +50,7 @@ it("reads how far a clone has got from what git prints", () => {
 		line: "counting objects: 12, done.",
 		done: null,
 	});
+	expect(cloneProgressOf("Cloning into '/Users/Ada/spool/Tides'...").line).toBe(
+		"cloning into '/Users/Ada/spool/Tides'...",
+	);
 });
