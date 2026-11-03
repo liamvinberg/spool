@@ -411,6 +411,8 @@ export function agentRoutes(deps: {
 										turn: named,
 										signal: c.req.raw.signal,
 										registered: (at) => deps.registeredRoots().includes(at),
+										beat: (naming) =>
+											emitAppEvent({ kind: "naming", root: asked, thread: naming ? thread : null }),
 									});
 						// stopped while it was named, or the project went: the turn never starts
 						if (root === null) return c.text("stopped", 410);

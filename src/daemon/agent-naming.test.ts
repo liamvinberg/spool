@@ -34,6 +34,7 @@ describe("naming a new project from its first ask", () => {
 		turn: undefined,
 		signal: new AbortController().signal,
 		registered: () => true,
+		beat: () => {},
 	};
 	const named = (root: string, hasFrames = false, reply: string | null = "tide-planner") => {
 		const ask = vi.fn(async () => reply);

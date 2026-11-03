@@ -130,6 +130,8 @@ export function App() {
 		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
 	const [forgetting, setForgetting] = useState<ReadonlySet<string>>(new Set());
+	/** The projects a first ask is naming, and the thread each is named from. */
+	const [naming, setNaming] = useState<ReadonlyMap<string, string>>(new Map());
 	const [keysOpen, setKeysOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [toast, setToast] = useState<UpdateToast | null>(null);
@@ -309,8 +311,9 @@ export function App() {
 				hello: (data) => {
 					const { latest } = data as { latest?: unknown };
 					if (typeof latest === "string") offerUpdate(latest);
-					// who is in each team project is said again after every hello
+					// who is in each team project is said again after every hello, and a naming the gap hid is over
 					resetTabPresence();
+					setNaming(new Map());
 				},
 				app: (data) => {
 					const event = data as {
@@ -337,6 +340,17 @@ export function App() {
 					if (event.kind === "thumbnail" && typeof event.root === "string") {
 						const thumbnail = (data as { thumbnail?: ProjectThumbnail | null }).thumbnail ?? undefined;
 						return setThumbnail(event.root, thumbnail);
+					}
+					// a new project's first ask is naming it: its rail says so until the naming is over
+					if (event.kind === "naming" && typeof event.root === "string") {
+						const { root } = event;
+						const { thread } = data as { thread?: unknown };
+						return setNaming((was) => {
+							const next = new Map(was);
+							if (typeof thread === "string") next.set(root, thread);
+							else next.delete(root);
+							return next;
+						});
 					}
 					// who else is in a team project, for its tab while another is focused
 					if (event.kind === "presence" && typeof event.root === "string") {
@@ -982,6 +996,7 @@ export function App() {
 								root={focusedTab.root}
 								onChrome={setChrome}
 								agentOpen={focusedTab.root === started}
+								naming={naming.get(focusedTab.root)}
 								team={
 									focusedTab.teamAddress === undefined
 										? undefined

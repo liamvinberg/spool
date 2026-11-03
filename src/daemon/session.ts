@@ -39,6 +39,8 @@ export type AppEvent =
 	| { kind: "sync"; root: string; paused: string | null; goneLocal: string | null }
 	/** who else is in a team project changed as its tab shows them: someone arrived, left or came back from idle */
 	| { kind: "presence"; root: string; people: TabPresence[] }
+	/** a new project's first turn waits while the agent names it, in this thread; null once the naming is over */
+	| { kind: "naming"; root: string; thread: string | null }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.

@@ -108,17 +108,21 @@ export async function nameFirst(
 		signal: AbortSignal;
 		/** whether the project is still one spool knows, once the answer is in */
 		registered: (root: string) => boolean;
+		/** the naming starts, and is over: what the rail says meanwhile */
+		beat: (naming: boolean) => void;
 	},
 ): Promise<string | null> {
 	if (!isUntitled(basename(root)) || deps.hasFrames(root) || deps.spoken(root)) return root;
 	const stop = new AbortController();
 	const asked = AbortSignal.any([stop.signal, deps.signal]);
 	deps.namings.set(root, { turn: deps.turn, stop });
+	deps.beat(true);
 	let reply: string | null;
 	try {
 		reply = await deps.ask(asked);
 	} finally {
 		deps.namings.delete(root);
+		deps.beat(false);
 	}
 	if (asked.aborted || !deps.registered(root)) return null;
 	const name = kebabName(reply ?? "");
