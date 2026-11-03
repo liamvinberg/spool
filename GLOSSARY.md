@@ -132,6 +132,8 @@ _Avoid_: held, blocked, read-only
 
 **Dock**: Retired. The right column's strip of glyphs, one surface at a time, became pane toggles in the window bar and then the **tab rows** and **rails** of the two **sides**. _Avoid_: dock, column, index strip
 
+**Knob**: A value a frame declares with `ui.knobs({...})` for a person to tune by hand: a type, a literal `value`, and what its control needs (`min`, `max`, `unit`, options). It shows in the **properties rail** under the selected frame's geometry, one control per type, grouped as the object nests. Dragging moves the running frame and letting go writes the literal through the **write lane**, so the file stays the one record; one declared in `shared/` is one value for every frame that renders it. It is how a frame looks or moves, never prototype data, so no **scenario** or play session resets it. Opt-in and the agent's to declare (ADR-0012). _Avoid_: control, tweak, dial, prop
+
 **Properties rail**: The **pane** that shows a frame's own geometry, the x, y, width and height in its `frame.json`, and nothing about source, standing first on the right **side** by default. A held element shows the fields of the frame it is in, under that frame's name, and several held in one frame show the same fields. Nothing about an element itself is set here; its words are typed where they are drawn, and the rest is the agent's. A page shows what it is and how much is in it. The name is older than panes and stays: it is the pane titled Properties, and the agent can stand beside it in the same stack. _Avoid_: inspector, panel, sidebar
 
 **Crumbs**: Retired. The rail no longer shows where an element sits: the element's own **name label** says what it is, and Esc steps up to its parent. _Avoid_: breadcrumb trail, path
