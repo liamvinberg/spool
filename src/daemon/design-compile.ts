@@ -31,6 +31,7 @@ import {
 import { hotBootEntry, hotHeadKey, hotPreloads, isHotModuleFile, refreshFooter } from "./fast-refresh";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./font-faces";
 import { imageSize } from "./image-size";
+import { stampKnobCalls } from "./knob-literals";
 import type { BundleMap } from "./stack-map";
 import type { CssSource, StylesheetRunner } from "./tailwind";
 import { isThemeStylesheet } from "./themes";
@@ -652,8 +653,8 @@ function resolvingEachPass(
 	};
 }
 
-/** The loaders whose modules carry a Fast Refresh footer. */
-const HOT_LOADERS: ReadonlySet<Loader> = new Set(["js", "jsx", "ts", "tsx"]);
+/** The loaders of modules: what carries a Fast Refresh footer and has its knobs stamped. */
+const SCRIPT_LOADERS: ReadonlySet<Loader> = new Set(["js", "jsx", "ts", "tsx"]);
 
 /**
  * The load-bearing boundary (#16), enforced where it is visible: shared/ui/
@@ -697,11 +698,11 @@ function spoolBoundaryPlugin(
 					// A theme is Tailwind's to compile (`themes.ts`), never the bundle's:
 					// it stays in the closure, so it is an input, and adds no CSS of its own.
 					if (loader === "css" && isThemeStylesheet(contents.toString("utf8"))) return { contents: "", loader };
-					if (hot && HOT_LOADERS.has(loader)) {
-						const text = contents.toString("utf8");
-						return { contents: text + refreshFooter(designRelativePath(designDir, args.path), text), loader };
-					}
-					return { contents, loader };
+					if (!SCRIPT_LOADERS.has(loader) || (!hot && !contents.includes("knobs("))) return { contents, loader };
+					const text = contents.toString("utf8");
+					const rel = designRelativePath(designDir, args.path);
+					const stamped = stampKnobCalls(text, rel, loader);
+					return { contents: hot ? stamped + refreshFooter(rel, text) : stamped, loader };
 				} catch (error) {
 					// The cause rides along in detail, which esbuild hands back to the JS
 					// API and never prints. Reading outside design/ is not an authoring
@@ -787,6 +788,14 @@ function spoolAssetPlugin(designDir: string, files: DesignFiles, readsOf: () => 
 }
 
 /**
+ * What the compile does to the sources beyond esbuild, counted: within one
+ * release the same files compile to new bytes only when this moves, and a
+ * browser holding a document's etag must not keep the old one. 1 stamps
+ * knobs (#220).
+ */
+const COMPILE_REVISION = 1;
+
+/**
  * The cache key over a document's inputs, each by the digest of its bytes and
  * named by its path in design/, so the same inputs hash the same wherever the
  * folder sits.
@@ -798,7 +807,7 @@ export function inputsHash(
 	digests: ReadonlyMap<string, string>,
 ): string {
 	return createHash("sha256")
-		.update(JSON.stringify([version, shimHash(), stamp, namedDigests(designDir, digests)]))
+		.update(JSON.stringify([version, COMPILE_REVISION, shimHash(), stamp, namedDigests(designDir, digests)]))
 		.digest("hex");
 }
 
