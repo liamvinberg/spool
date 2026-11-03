@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import { z } from "zod";
@@ -9,7 +10,7 @@ import { type CloneProgress, cloneInto } from "../git-clone";
 import { expandHome } from "../paths";
 import type { DaemonCloud } from "./app";
 import { findOpenable, type TeamStanding } from "./open-finding";
-import { importProject, TRANSFER_LIMITS } from "./project-transfer";
+import { importArchive } from "./project-transfer";
 
 /**
  * Open… over HTTP, mounted under `/api/projects` beside Home's own routes: read what was handed over into a
@@ -96,11 +97,8 @@ export function openRoutes(deps: {
 				const found = await find(c.req.valid("json").path);
 				if (found.kind !== "file") return c.json({ error: "Choose a .spool project file." }, 400);
 				try {
-					if (statSync(found.path).size > TRANSFER_LIMITS.compressedBytes)
-						return c.json({ error: "The archive exceeds the compressed size limit." }, 400);
-					return c.json(
-						await importProject(readFileSync(found.path), deps.location(), deps.spoolDir, c.req.raw.signal),
-					);
+					const file = Readable.toWeb(createReadStream(found.path)) as ReadableStream<Uint8Array>;
+					return c.json(await importArchive(file, deps.location(), deps.spoolDir, c.req.raw.signal));
 				} catch (error) {
 					return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
 				}

@@ -35,10 +35,9 @@ import {
 	setThumbnailFromFrame,
 	ThumbnailRefused,
 } from "./project-thumbnail";
-import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
+import { exportProject, importArchive, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import { describeMissingFrame, discoverFrames, frameExists, type ProjectCard, summarizeProject } from "./projection";
 import { type AppEvent, readSession, type watchMachineState } from "./session";
-import type { createSettingsStore } from "./settings";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
 
 /** Body of the picker's POSTs: { path } — anything else is a 400. */
@@ -58,7 +57,8 @@ function requestedPath(value: unknown, c: Context): { path: string } | Response 
 export function homeRoutes(deps: {
 	resolve: ResolveProject;
 	spoolDir: string;
-	settings: Pick<ReturnType<typeof createSettingsStore>, "read">;
+	/** Where new projects go, as the setting says it (`~/spool`). */
+	location: () => string;
 	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
 	fsIndex: { home: string; spoolDir: string };
 	/** Projects mid-rename or mid-trash, which every other project change waits out. */
@@ -82,7 +82,7 @@ export function homeRoutes(deps: {
 }) {
 	const {
 		spoolDir,
-		settings,
+		location,
 		fsIndex,
 		projectRenames,
 		trashingProjects,
@@ -171,37 +171,9 @@ export function homeRoutes(deps: {
 					const declared = Number(c.req.header("content-length"));
 					if (declared > TRANSFER_LIMITS.compressedBytes)
 						throw new TransferError("The archive exceeds the compressed size limit.");
-					const reader = c.req.raw.body?.getReader();
-					if (!reader) throw new TransferError("Choose a Spool project file.");
-					const cancelUpload = () => {
-						void reader.cancel().catch(() => {});
-					};
-					controller.signal.addEventListener("abort", cancelUpload, { once: true });
-					const chunks: Uint8Array[] = [];
-					let length = 0;
-					try {
-						for (;;) {
-							controller.signal.throwIfAborted();
-							const chunk = await reader.read();
-							if (chunk.done) break;
-							length += chunk.value.length;
-							if (length > TRANSFER_LIMITS.compressedBytes)
-								throw new TransferError("The archive exceeds the compressed size limit.");
-							chunks.push(chunk.value);
-						}
-					} finally {
-						controller.signal.removeEventListener("abort", cancelUpload);
-						await reader.cancel();
-					}
-					const location = settings.read().entries.find((entry) => entry.key === "projects.location");
-					return c.json(
-						await importProject(
-							Buffer.concat(chunks),
-							String(location?.value ?? "~/spool"),
-							spoolDir,
-							controller.signal,
-						),
-					);
+					const body = c.req.raw.body;
+					if (!body) throw new TransferError("Choose a Spool project file.");
+					return c.json(await importArchive(body, location(), spoolDir, controller.signal));
 				} catch (error) {
 					if (controller.signal.aborted) return c.json({ error: "Import cancelled.", cancelled: true }, 409);
 					return c.json({ error: error instanceof Error ? error.message : "Import failed." }, 400);
@@ -231,8 +203,7 @@ export function homeRoutes(deps: {
 			// New project: the next free untitled in the projects location, opened at once
 			.post("/projects/start", (c) => {
 				try {
-					const location = settings.read().entries.find((entry) => entry.key === "projects.location");
-					const { root } = startProject(String(location?.value ?? "~/spool"), spoolDir);
+					const { root } = startProject(location(), spoolDir);
 					return c.json({ root, name: basename(root) });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;

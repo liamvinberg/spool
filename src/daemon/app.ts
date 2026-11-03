@@ -1239,7 +1239,7 @@ export function createDaemonApp({
 			homeRoutes({
 				resolve: resolveProject,
 				spoolDir,
-				settings,
+				location: projectsLocation,
 				fsIndex,
 				projectRenames,
 				trashingProjects,
@@ -1869,8 +1869,7 @@ export function createDaemonApp({
 			spoolDir,
 			home: fsIndex.home,
 			cloud,
-			location: () =>
-				String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool"),
+			location: projectsLocation,
 		}),
 	);
 	app.route("/api/p", projectShares.routes);
