@@ -36,6 +36,8 @@ export interface ServeDaemonOptions {
 	teamNotice?: ((message: string, root?: string) => void) | undefined;
 	/** Who Home's sidebar says is signed in, as a browser test sets it. */
 	cloudAccountServices?: CloudAccountServices | undefined;
+	/** Where a trashed project goes, so a browser test leaves the machine's Trash alone. */
+	moveToTrash?: ((paths: string[]) => Promise<void>) | undefined;
 }
 
 export interface RunningDaemon {
@@ -66,6 +68,7 @@ export function serveDaemon({
 	agentExecutor,
 	agentEngines,
 	agentLook,
+	moveToTrash,
 	booth,
 	cloud,
 	teamNotice,
@@ -84,6 +87,7 @@ export function serveDaemon({
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentEngines === undefined ? {} : { agentEngines }),
 		...(agentLook === undefined ? {} : { agentLook }),
+		...(moveToTrash === undefined ? {} : { moveToTrash }),
 		...(booth === undefined ? {} : { booth }),
 		...(cloud === undefined ? {} : { cloud }),
 		...(teamNotice === undefined ? {} : { teamNotice }),

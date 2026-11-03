@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { placeOf } from "../home-places";
 import { accelPressed } from "../runtime/platform-keys";
 import type { TabPresence } from "../team-sync-protocol";
+import { useAbandonUntitled } from "./abandon-untitled";
 import { AccountFoot } from "./account-foot";
 import type { CloudAccountState, DaemonIdentity, ProjectCard, ProjectIcon, ProjectThumbnail } from "./api";
 import {
@@ -495,6 +496,17 @@ export function App() {
 		openTab(project);
 	});
 	const startNew = newProject.start;
+	/** An untitled project closed empty, on its way to the Trash behind an Undo. */
+	const abandon = useAbandonUntitled({
+		hide: (root) => setForgetting((roots) => new Set([...roots, root])),
+		show: (root) => setForgetting((roots) => new Set([...roots].filter((held) => held !== root))),
+		onUndo: (project) => openTab(project),
+		onGone: (root) => {
+			projectRevision.current += 1;
+			setProjects((cards) => cards.filter((card) => card.root !== root));
+		},
+	});
+	const abandonClosed = abandon.closed;
 
 	// back and forward: to a tab's address, that tab; to one of Home's places, Home, which goes there itself
 	useEffect(() => {
@@ -532,8 +544,10 @@ export function App() {
 			setOpen(next);
 			putSession(root, false);
 			if (focusedRef.current === root) focusProject(focusAfterClose(openRef.current, root));
+			const card = projectsRef.current.byRoot.get(root);
+			if (card !== undefined) abandonClosed({ root, name: card.name, teamAddress: card.team?.team });
 		},
-		[focusProject],
+		[focusProject, abandonClosed],
 	);
 
 	/**
@@ -984,6 +998,7 @@ export function App() {
 				</main>
 
 				{newProject.toast}
+				{abandon.toast}
 				{transfer.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}

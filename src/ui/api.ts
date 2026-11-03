@@ -359,6 +359,15 @@ export async function trashProject(root: string): Promise<void> {
 	if (!res.ok) throw new Error(await errorText(res));
 }
 
+/** A closed project New made and nobody named or drew in, to the Trash; false when it turned out to be used. */
+export async function trashAbandoned(root: string): Promise<boolean> {
+	try {
+		return (await client.api.projects.trash.$post({ json: { root, abandoned: true } })).ok;
+	} catch {
+		return false;
+	}
+}
+
 export type UpgradeStart = { ok: true } | { ok: false; error: string };
 
 /** The toast door (#30): ask the daemon to spawn the upgrader and stand back. */

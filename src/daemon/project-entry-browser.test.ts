@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { initProject } from "../init";
@@ -41,7 +41,16 @@ it("starts a project at once with the Agent pane out, names it from the first as
 		},
 	);
 	const uiDir = await builtUi();
-	const project = await serveProject({ uiDir, agentExecutor: agent.executor, agentLook: () => true });
+	const trashed: string[] = [];
+	const project = await serveProject({
+		uiDir,
+		agentExecutor: agent.executor,
+		agentLook: () => true,
+		moveToTrash: async (paths) => {
+			for (const path of paths) rmSync(path, { recursive: true });
+			trashed.push(...paths);
+		},
+	});
 	const parent = realpathSync(makeTempDir());
 	const shared = join(parent, "shared-project");
 	mkdirSync(shared);
@@ -81,6 +90,17 @@ it("starts a project at once with the Agent pane out, names it from the first as
 	await rail.locator('[data-agent-turn-line="running"]').waitFor();
 	expect(await rail.getByText("Naming the project", { exact: true }).count()).toBe(0);
 	expect(new URL(page.url()).pathname).toBe("/p/tide-planner");
+
+	// one closed untitled and empty goes to the Trash behind an Undo, which brings it back
+	await page.getByRole("button", { name: "Home", exact: true }).click();
+	await page.locator(".pj-heading").getByRole("button", { name: "New project", exact: true }).click();
+	await page.getByRole("button", { name: "Close untitled", exact: true }).click();
+	await page.getByText("Moved untitled to Trash", { exact: true }).waitFor();
+	await page.getByRole("button", { name: "Undo", exact: true }).click();
+	await page.getByRole("button", { name: "Close untitled", exact: true }).click();
+	await page.getByText("Moved untitled to Trash", { exact: true }).waitFor();
+	await expect.poll(() => trashed, { timeout: 10_000 }).toEqual([join(parent, "untitled")]);
+	expect(readRegistry(project.spoolDir).projects.some((item) => item.root === join(parent, "untitled"))).toBe(false);
 
 	await page.getByRole("button", { name: "Home", exact: true }).click();
 	await page.locator(".pj-heading").getByRole("button", { name: "Open…", exact: true }).click();
