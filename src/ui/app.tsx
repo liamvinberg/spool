@@ -551,9 +551,11 @@ export function App() {
 
 	/** The project New just made, whose canvas opens with the Agent pane out, once. */
 	const [started, setStarted] = useState<string | null>(null);
-	const newProject = useStartProject((project) => {
+	// a local one opens with its name a field, which typing names and anything else leaves untitled
+	const newProject = useStartProject(({ team, ...project }) => {
 		setStarted(project.root);
 		openTab(project);
+		if (team === undefined) setRenaming(project.root);
 	});
 	const startNew = newProject.start;
 
