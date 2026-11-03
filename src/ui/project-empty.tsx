@@ -10,7 +10,6 @@ export function ProjectEmpty({
 	project,
 	root,
 	onRename,
-	onFolder,
 	onUseAgent,
 	team,
 }: {
@@ -19,7 +18,6 @@ export function ProjectEmpty({
 	team?: MarkTeam | undefined;
 	root?: string | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
-	onFolder?: (() => void) | undefined;
 	onUseAgent?: (() => void) | undefined;
 }) {
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -163,16 +161,6 @@ export function ProjectEmpty({
 					</p>
 				)}
 			</div>
-			{onFolder && (
-				<button
-					type="button"
-					className="project-empty-folder -translate-x-1/2 pointer-events-auto absolute bottom-[91px] left-1/2 rounded-xs text-secondary focus-ring type-label hover:text-primary"
-					onPointerDown={(event) => event.stopPropagation()}
-					onClick={onFolder}
-				>
-					Open an existing project folder
-				</button>
-			)}
 		</div>
 	);
 }

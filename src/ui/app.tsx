@@ -1009,7 +1009,6 @@ export function App() {
 												logo: null,
 											})
 								}
-								onFolder={choose}
 								onRename={(name) => requestRename(focusedTab, name)}
 							/>
 						)}

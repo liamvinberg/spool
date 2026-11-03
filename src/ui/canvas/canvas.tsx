@@ -406,7 +406,6 @@ interface ProjectCanvasProps {
 	project: string;
 	root?: string;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
-	onFolder?: (() => void) | undefined;
 	/** A project New just made: its canvas opens with the Agent pane out, its composer not focused. */
 	agentOpen?: boolean | undefined;
 	/** A team project's local copy: its team, which the empty project's name row says. */
@@ -442,7 +441,6 @@ function CanvasField({
 	root,
 	onChrome,
 	onRename,
-	onFolder,
 	agentOpen = false,
 	team: markTeam,
 	naming,
@@ -6029,7 +6027,6 @@ function CanvasField({
 								root={root}
 								team={markTeam}
 								onRename={onRename}
-								onFolder={onFolder}
 							/>
 						</div>
 					)}
