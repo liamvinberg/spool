@@ -15,7 +15,7 @@ import { updateLine } from "../update-how";
 import type { createAgentTurns } from "./agent-live";
 import { DesignBoundaryError } from "./design-path";
 import type { createChangeHub } from "./events";
-import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
+import { listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import type { MovedAway } from "./moved-away";
 import {
 	type createIconWatch,
@@ -47,15 +47,6 @@ function requestedPath(value: unknown, c: Context): { path: string } | Response 
 		return c.json({ error: 'expected { "path": "/abs/dir" }' }, 400);
 	}
 	return { path };
-}
-
-/** Body of a new folder: { path, name }, the folder to make it in and what to call it. */
-function requestedNewFolder(value: unknown, c: Context): { path: string; name: string } | Response {
-	const parsed = z.object({ path: z.string().min(1), name: z.string() }).safeParse(value);
-	if (!parsed.success) {
-		return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
-	}
-	return parsed.data;
 }
 
 /**
@@ -114,15 +105,6 @@ export function homeRoutes(deps: {
 				// no path is the picker opening: the moment to walk home again behind the index that stands (#277)
 				if (path === undefined) void refreshIndex(fsIndex);
 				return c.json(listing);
-			})
-			.post("/fs/create", validator("json", requestedNewFolder), (c) => {
-				try {
-					const { path, name } = c.req.valid("json");
-					return c.json(createDirectory(path, name));
-				} catch (error) {
-					if (!(error instanceof SpoolError)) throw error;
-					return c.json({ error: error.message }, 409);
-				}
 			})
 			.get("/fs/search", async (c) => {
 				// one indexed walk of home, answered under the folder asked for: the browse is what an empty query still shows
