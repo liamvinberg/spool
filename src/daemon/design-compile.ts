@@ -564,11 +564,11 @@ export function cssSources(reads: DesignReads, files: string[]): CssSource[] {
  * an effect fires after the first committed render regardless of visibility.
  *
  * "spool" is imported in every document — data-go works in frames that never
- * import it, and its FrameRoot re-renders the frame when a knob moves — and
+ * import it, and its renderFrame renders the frame again when a knob moves — and
  * its top-level await holds the first render until the session is seeded.
  */
 function bootEntry(frame: string): string {
-	return `import { FrameRoot } from "spool";
+	return `import { renderFrame } from "spool";
 import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import Frame from "./frame.tsx";
@@ -582,9 +582,8 @@ function Ready() {
 	useEffect(() => report("loaded", {}), []);
 	return null;
 }
-createRoot(document.getElementById("root")).render(
-	createElement(Fragment, null, createElement(FrameRoot, { frame: Frame }), createElement(Ready)),
-);
+const root = createRoot(document.getElementById("root"));
+renderFrame(() => root.render(createElement(Fragment, null, createElement(Frame), createElement(Ready))));
 `;
 }
 

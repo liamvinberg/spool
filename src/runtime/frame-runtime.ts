@@ -1797,7 +1797,6 @@ interface KnobEntry {
 const knobEntries = new Map<string, KnobEntry>();
 const knobListeners = new Set<() => void>();
 const warnedKnobKeys = new Set<string>();
-let knobVersion = 0;
 let knobsDeclareScheduled = false;
 
 function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
@@ -1878,7 +1877,6 @@ function knobReading(entry: KnobEntry, path: KnobPath): unknown {
 }
 
 function notifyKnobs(): void {
-	knobVersion++;
 	for (const listener of knobListeners) listener();
 }
 
@@ -1927,20 +1925,16 @@ function loadedFontFamilies(): string[] {
 	return [...families];
 }
 
-function subscribeKnobs(listener: () => void): () => void {
-	knobListeners.add(listener);
-	return () => knobListeners.delete(listener);
-}
-
 /**
- * The frame document's root (the boot module renders it): a knob is read
- * anywhere, from a module-level object, so a moved knob re-renders the whole
- * frame, with no recompile. A memoised component with no knob-dependent props
- * keeps its last render.
+ * The frame document's root render (the boot module hands it over): a knob is
+ * read anywhere, from a module-level object, so a moved knob renders the root
+ * again, with no recompile. A memoised component with no knob-dependent props
+ * keeps its last render. No wrapper component holds the frame, so nothing that
+ * reads React's fibers (the element tree, the name label, picks) meets one.
  */
-export function FrameRoot({ frame }: { frame: ComponentType }) {
-	useSyncExternalStore(subscribeKnobs, () => knobVersion);
-	return createElement(frame);
+export function renderFrame(render: () => void): void {
+	render();
+	knobListeners.add(render);
 }
 
 // --- boot -------------------------------------------------------------------
