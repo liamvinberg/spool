@@ -8,15 +8,15 @@ import { readRegistry } from "../registry";
 import { summarizeProject } from "./projection";
 
 /**
- * The "+" picker's two reads of the disk (#4/#22/#251/#277): the browser cannot
- * hand spool an absolute path, so the daemon walks its own. Directories only,
- * dotfolders hidden, spool projects marked by their canvas.json — detection by
- * the marker, never by scanning for content.
+ * The in-app folder chooser's two reads of the disk (#4/#22/#251/#277): the browser
+ * cannot hand spool an absolute path, so the daemon walks its own. Directories and
+ * `.spool` files only, dotfolders hidden, spool projects marked by their canvas.json —
+ * detection by the marker, never by scanning for content.
  *
  * `listDirectory` is one level, the folder you are standing in. `searchDirectories`
  * is the tree under a folder ranked against what you typed, answered from one
  * index of home that stands for the daemon's life: built in the background when
- * the daemon starts, rebuilt behind the picker each time it opens, and never
+ * the daemon starts, rebuilt behind the chooser each time it opens, and never
  * waited on twice.
  */
 
@@ -40,7 +40,7 @@ export interface FsListing {
  * one asks the person, once per folder, on behalf of whichever app started the
  * daemon, so a walk that enters them reads as Spool asking for their Music the
  * moment it opens. They are listed by name and never entered or probed unless
- * the picker is browsed into one, where the prompt answers a click. Other
+ * the chooser is browsed into one, where the prompt answers a click. Other
  * platforms ask nothing, so nothing is held back there.
  */
 const PRIVACY_GUARDED: ReadonlySet<string> =
@@ -126,7 +126,7 @@ const NOT_DESCENDED = new Set(["node_modules", "Library", ".git", "target", "dis
  */
 const MAX_DEPTH = 5;
 
-/** A ceiling on the index, so a pathological home cannot turn the picker into a disk scan. */
+/** A ceiling on the index, so a pathological home cannot turn the chooser into a disk scan. */
 const MAX_DIRS = 20_000;
 
 /** The ranked list is the product; past two hundred rows it is noise the readout still counts. */
@@ -169,7 +169,7 @@ export interface SearchOptions extends IndexOptions {
 
 /**
  * Walk home again, behind whatever index already stands. The daemon calls it
- * once on start so the first search ever finds an index waiting, and the picker
+ * once on start so the first search ever finds an index waiting, and the chooser
  * calls it on open so a folder cloned since is in the next one. A search never
  * waits on this unless there is no index at all.
  */
@@ -193,7 +193,7 @@ export function refreshIndex({ home, spoolDir, guarded = PRIVACY_GUARDED }: Inde
  * Every folder under `under` the query answers to, best guess first. `under`
  * outside home is nothing the daemon indexes, and answers undefined.
  *
- * Ties break on what the picker knows and the frame finder never had to: a spool
+ * Ties break on what the chooser knows and the frame finder never had to: a spool
  * project before a plain folder, then the shallower path, then alphabetically.
  * Depth stays out of the score — `~/personal/projects/gym-brute` and
  * `~/session-archive/2025/gymlog` are not different quality matches, they are
@@ -257,7 +257,7 @@ interface Level {
  * A plain directory is what its dirent says it is; only a symlink is resolved,
  * because only a symlink can point somewhere else. The walk never leaves home:
  * a link whose real path is not inside home is neither indexed nor entered, so
- * a symlink pointing out of `~` is a folder the picker cannot see. Real paths
+ * a symlink pointing out of `~` is a folder the chooser cannot see. Real paths
  * are also what dedupes it — a link to a folder already indexed is the same
  * folder, and it is listed once, under its own name.
  */

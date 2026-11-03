@@ -196,7 +196,7 @@ export interface DaemonOptions {
 	/** History's idle window (#157) — driven by tests instead of by the clock. */
 	historyClock?: HistoryClock;
 	/**
-	 * The home the picker's search walks (#251), and Get it's scan of the code folders (spool#193) — swapped by seam
+	 * The home the folder chooser's search walks (#251), and Get it's scan of the code folders (spool#193) — swapped by seam
 	 * tests, so a walk reads a fixture home rather than whatever is on the machine running them.
 	 */
 	home?: string | undefined;
@@ -528,7 +528,7 @@ export function createDaemonApp({
 	/** Where new projects go: the default project location. */
 	const projectsLocation = () =>
 		String(settings.read().entries.find((entry) => entry.key === "projects.location")?.value ?? "~/spool");
-	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
+	/** The home the folder chooser's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 
@@ -2313,7 +2313,7 @@ export function createDaemonApp({
 		startUpdateCheck: () => {
 			if (updateCheck === true) updateChecker.start();
 		},
-		/** Walk home for the picker's search now, so the first keystroke ever finds an index standing (#277). */
+		/** Walk home for the folder chooser's search now, so the first keystroke ever finds an index standing (#277). */
 		warmFsIndex: () => {
 			void refreshIndex(fsIndex);
 		},

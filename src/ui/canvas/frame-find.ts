@@ -7,7 +7,7 @@ import type { ProjectedFrame } from "../api";
  *
  * Plain substring finds but cannot rank, and with dozens of names sharing one
  * `--` family prefix, ranking is the entire product. The matcher itself is
- * `name-match.ts` — the picker asks the same question of folder names (#251),
+ * `name-match.ts` — the folder chooser asks the same question of folder names (#251),
  * so the scoring lives where both can reach it. What is left here is what only
  * frames know: ties break by recency, which is the same order the empty query
  * uses, so one rule covers both.

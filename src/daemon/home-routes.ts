@@ -40,7 +40,7 @@ import { describeMissingFrame, discoverFrames, frameExists, type ProjectCard, su
 import { type AppEvent, readSession, type watchMachineState } from "./session";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
 
-/** Body of the picker's POSTs: { path } — anything else is a 400. */
+/** Body of opening and designing in a folder: { path } — anything else is a 400. */
 function requestedPath(value: unknown, c: Context): { path: string } | Response {
 	const path = (value as { path?: unknown }).path;
 	if (typeof path !== "string" || path === "") {
@@ -50,7 +50,7 @@ function requestedPath(value: unknown, c: Context): { path: string } | Response 
 }
 
 /**
- * Home over HTTP, mounted under `/api`: the folder picker, the project list and each card's icon and
+ * Home over HTTP, mounted under `/api`: the folder chooser's reads, the project list and each card's icon and
  * thumbnail, and what a hand does to a whole project there (open, create, rename, export, import, forget,
  * trash).
  */
@@ -59,7 +59,7 @@ export function homeRoutes(deps: {
 	spoolDir: string;
 	/** Where new projects go, as the setting says it (`~/spool`). */
 	location: () => string;
-	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
+	/** The home the folder chooser's search indexes, and the registry that marks its projects (#251/#277). */
 	fsIndex: { home: string; spoolDir: string };
 	/** Projects mid-rename or mid-trash, which every other project change waits out. */
 	projectRenames: Set<string>;
@@ -106,7 +106,7 @@ export function homeRoutes(deps: {
 				const path = c.req.query("path");
 				const listing = listDirectory(path);
 				if (listing === undefined) return c.json({ error: "no such directory" }, 404);
-				// no path is the picker opening: the moment to walk home again behind the index that stands (#277)
+				// no path is the chooser opening: the moment to walk home again behind the index that stands (#277)
 				if (path === undefined) void refreshIndex(fsIndex);
 				return c.json(listing);
 			})
@@ -187,7 +187,7 @@ export function homeRoutes(deps: {
 					return c.json({ root, name: basename(root) });
 				} catch (error) {
 					if (!(error instanceof SpoolError)) throw error;
-					// nothing found by walk-up: the picker's next move is offering init
+					// nothing found by walk-up: the chooser's next move is offering init
 					return c.json({ error: error.message, offerInit: true }, 404);
 				}
 			})

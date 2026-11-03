@@ -80,7 +80,7 @@ import { type UpdateToast, UpdateToastPill } from "./update-toast";
 /**
  * The shell (#4/#12/#13): one top bar with a pinned Home button, one
  * tab per open project (focus-not-duplicate, machine session restored), "+"
- * as the picker — and the focused view below. Routerless: / and /p/<name>
+ * as New project — and the focused view below. Routerless: / and /p/<name>
  * only; the path is read once at boot and replaceState'd on focus.
  */
 
