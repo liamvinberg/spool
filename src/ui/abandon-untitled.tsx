@@ -15,7 +15,8 @@ interface Abandoned {
  * New makes a project without asking, so one closed untitled and empty goes to the Trash by itself (spool#51).
  * Closing its tab hides it from Home and stands a toast with Undo, which opens it again; once the toast drains
  * the daemon trashes it, if it still is closed, untitled and without frames. Opened again any other way meanwhile
- * (⌘⇧T, say), it is kept just as Undo keeps it. One with a turn running stays. A team copy stays, being the team's.
+ * (⌘⇧T, say), it is kept just as Undo keeps it. One with a turn running stays, as one being named does (the shell
+ * never hands it here). A team copy stays, being the team's.
  */
 export function useAbandonUntitled({
 	hide,

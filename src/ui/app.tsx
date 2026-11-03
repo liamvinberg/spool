@@ -132,6 +132,8 @@ export function App() {
 	const [forgetting, setForgetting] = useState<ReadonlySet<string>>(new Set());
 	/** The projects a first ask is naming, and the thread each is named from. */
 	const [naming, setNaming] = useState<ReadonlyMap<string, string>>(new Map());
+	const namingRef = useRef(naming);
+	namingRef.current = naming;
 	const [keysOpen, setKeysOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [toast, setToast] = useState<UpdateToast | null>(null);
@@ -568,7 +570,9 @@ export function App() {
 			putSession(root, false);
 			if (focusedRef.current === root) focusProject(focusAfterClose(openRef.current, root));
 			const card = projectsRef.current.byRoot.get(root);
-			if (card !== undefined) abandonClosed({ root, name: card.name, teamAddress: card.team?.team });
+			// one being named has a first ask on its way in, so it stays the way one with a turn running does
+			if (card !== undefined && !namingRef.current.has(root))
+				abandonClosed({ root, name: card.name, teamAddress: card.team?.team });
 		},
 		[focusProject, abandonClosed],
 	);
