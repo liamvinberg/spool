@@ -113,5 +113,11 @@ export interface AgentEngine {
 	/** Keep only the choice the engine confirmed, including any engine-specific pins. */
 	choice(offer: AgentOffer, wanted: AgentAsk, held: AgentAsk): AgentAsk;
 	start(options: EngineTurnOptions): AgentTurn;
+	/**
+	 * What the agent would call a project from its brief, asked as one quick question in plain text with no
+	 * tools and no session (`namingPrompt`), on the model the thread asks for where the engine needs one. Its
+	 * whole reply, or null when it could not be asked.
+	 */
+	name(root: string, brief: string, ask: AgentAsk, signal?: AbortSignal): Promise<string | null>;
 	continuable(root: string, session: AgentSessionRef): boolean | Promise<boolean>;
 }

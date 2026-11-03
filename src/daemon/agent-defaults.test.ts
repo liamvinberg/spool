@@ -32,6 +32,7 @@ function standIn(id: AgentEngineId, installed = true): AgentEngine {
 			throw new Error("no turns");
 		},
 		continuable: () => false,
+		name: async () => null,
 	};
 }
 

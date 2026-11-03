@@ -158,6 +158,7 @@ function endingEngine(work: () => void): AgentEngine {
 		}),
 		choice: () => ({ value: "spool" }),
 		continuable: async () => true,
+		name: async () => null,
 		start: () => ({
 			events: (async function* (): AsyncGenerator<AgentEvent> {
 				work();

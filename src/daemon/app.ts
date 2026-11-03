@@ -1369,6 +1369,7 @@ export function createDaemonApp({
 				agentPresence,
 				agentAppLauncher,
 				emitAppEvent,
+				rename: renameProject,
 				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
 				commentsForPrompt: (root, ids) =>
 					commentsForPrompt(ids, {

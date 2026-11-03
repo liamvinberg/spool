@@ -19,6 +19,7 @@ import {
 } from "./agent-frames";
 import type { AgentHeld, createAgentTurns } from "./agent-live";
 import { acceptedModelChoice, type createAgentModelPreferences } from "./agent-model-preferences";
+import { nameFirst } from "./agent-naming";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPictureEnding } from "./agent-picture";
 import type { createAgentPresence } from "./agent-presence";
@@ -26,6 +27,7 @@ import { closeThread, isThreadId, parseThreadPut, putThread, readThread, serveTh
 import type { CommentPrompt } from "./comment-prompt";
 import type { createChangeHub } from "./events";
 import { type ResolveProject, withProject } from "./project-route";
+import { discoverFrames } from "./projection";
 import { type createSelectionStore, parseSelectionEntries, type SelectionEntry } from "./selection";
 import { selectionBlock } from "./selection-block";
 import type { AppEvent } from "./session";
@@ -125,6 +127,8 @@ export function agentRoutes(deps: {
 	account: () => Promise<{ accountId: string; name: string }>;
 	/** Comments the person sent to the agent, as the prompt carries them: their blocks, and stills that ride along. */
 	commentsForPrompt: (root: string, ids: readonly string[]) => Promise<CommentPrompt>;
+	/** A project renamed, as `createRenamer` does it: how a new project takes the name its first ask gave it. */
+	rename: (root: string, name: string) => { root: string; name: string };
 }) {
 	const {
 		spoolDir,
@@ -362,7 +366,7 @@ export function agentRoutes(deps: {
 					};
 				}),
 				(c) =>
-					withProject(c, deps.resolve, async (root) => {
+					withProject(c, deps.resolve, async (asked) => {
 						// one turn, streamed as it arrives (#191): the prompt goes down the
 						// binary's stdin and its events come back over this response in the
 						// order the wire sent them
@@ -371,9 +375,25 @@ export function agentRoutes(deps: {
 						// run without a pause between its check that no turn is running and holding this one
 						const commented = await Promise.all(
 							said.map((one) =>
-								one.comments === undefined ? undefined : deps.commentsForPrompt(root, one.comments),
+								one.comments === undefined ? undefined : deps.commentsForPrompt(asked, one.comments),
 							),
 						);
+						// a new project is named from its first ask before anything in it is written (spool#51). A
+						// team copy keeps its name, which is the team's: renaming the folder would not rename that
+						const root =
+							followedLink(asked) !== undefined
+								? asked
+								: await nameFirst(asked, {
+										hasFrames: (at) => (discoverFrames(at)?.length ?? 0) > 0,
+										ask: () => {
+											const selected = engineFor(c, asked, thread, requested);
+											if ("response" in selected) return Promise.resolve(null);
+											const { engine } = selected;
+											const ask = modelPreferences.read(asked, thread, engine.id);
+											return engine.name(asked, said[0]?.prompt ?? "", ask, c.req.raw.signal);
+										},
+										rename: deps.rename,
+									});
 						/*
 						 * One turn per conversation, refused rather than replaced (#211).
 						 *

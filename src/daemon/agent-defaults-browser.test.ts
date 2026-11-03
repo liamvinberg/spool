@@ -19,6 +19,7 @@ const piStandIn: AgentEngine = {
 		throw new Error("not started in this test");
 	},
 	continuable: () => false,
+	name: async () => null,
 };
 
 /*
