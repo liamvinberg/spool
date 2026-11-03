@@ -183,10 +183,10 @@ describe("the tab keys", () => {
 		expect(app.host.querySelector('section[aria-label="Settings"]')).toBeNull();
 		expect(app.path()).toBe("/p/alpha");
 		// a native dialog takes its own Esc, and is sent one
-		await app.menu("app.new-project");
-		expect(app.host.querySelector('dialog[aria-label="New project"]')).not.toBeNull();
+		await app.menu("app.open-project");
+		expect(app.host.querySelector('dialog[aria-label="Choose a project folder"]')).not.toBeNull();
 		await app.menu("app.close-tab");
-		expect(app.host.querySelector('dialog[aria-label="New project"]')).toBeNull();
+		expect(app.host.querySelector('dialog[aria-label="Choose a project folder"]')).toBeNull();
 		expect(app.path()).toBe("/p/alpha");
 		expect(app.writes.filter((write) => write.startsWith("close"))).toEqual([]);
 	});

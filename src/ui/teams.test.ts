@@ -208,7 +208,7 @@ it("lists the team's projects on this Mac and starts a new one in the team", () 
 	expect(empty.textContent).toContain("Devosurf has no projects on this Mac yet");
 	act(() =>
 		Array.from(empty.querySelectorAll("button"))
-			.find((button) => button.textContent === "New project…")
+			.find((button) => button.textContent === "New project")
 			?.click(),
 	);
 	expect(onNewProject).toHaveBeenCalledOnce();

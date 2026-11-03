@@ -282,22 +282,17 @@ export async function initProjectAt(path: string): Promise<OpenOutcome> {
 	return { kind: "error", message: await errorText(res) };
 }
 
-/** The "+" (#242): make `name` inside `path` and scaffold it, one round trip. */
-export async function createProjectAt(path: string, name: string): Promise<OpenOutcome> {
-	const res = await client.api.projects.create.$post({ json: { path, name } });
-	if (res.ok) return { kind: "opened", ...((await res.json()) as { root: string; name: string }) };
-	return { kind: "error", message: await errorText(res) };
-}
-
-/** New project while a team is chosen in Home: a team project in a new folder, uploaded to the team. */
-export async function createTeamProjectAt(team: string, path: string, name: string): Promise<OpenOutcome> {
+/**
+ * New project, asking nothing: the next free `untitled` in the default project location, or, with a team chosen
+ * in Home, a team project in `<location>/<team>` uploaded to the team.
+ */
+export async function startProject(team?: string): Promise<Exclude<OpenOutcome, { kind: "offer-init" }>> {
 	let response: Response;
 	try {
-		response = await controlFetch(`/api/cloud/teams/${encodeURIComponent(team)}/projects`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ path, name }),
-		});
+		response = await controlFetch(
+			team === undefined ? "/api/projects/start" : `/api/cloud/teams/${encodeURIComponent(team)}/projects`,
+			{ method: "POST" },
+		);
 	} catch {
 		return { kind: "error", message: "spool could not be reached. Try again." };
 	}

@@ -43,10 +43,11 @@ import { ProjectTeams } from "./project-icon";
 import { useIconChange } from "./project-icon-change";
 import { useProjectTransfer } from "./project-transfer";
 import { RenameProjectDialog } from "./rename-project-dialog";
-import { settingsMoved, useSetting, useSettings } from "./settings";
+import { settingsMoved, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { ShareControl } from "./share-control";
 import { useShares } from "./shares";
+import { useStartProject } from "./start-project";
 import {
 	type ClosedTab,
 	lastTab,
@@ -108,13 +109,11 @@ export function App() {
 	const [handed, setHanded] = useState(() => handedOver(window.location.search));
 	/** A team, or one project of it, that spool.page's Export handed this page, to export once the teams are read. */
 	const [exportAsked] = useState(() => (handed?.export ? { team: handed.team, project: handed.project } : null));
-	const [picking, setPicking] = useState<"new" | "folder" | false>(false);
-	const location = useSetting("projects.location");
+	/** The folder picker, open for Open…. */
+	const [picking, setPicking] = useState(false);
 	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [account, setAccount] = useState<CloudAccountState>({ state: "unreachable" });
 	const readAccount = useCallback(async () => setAccount(await fetchCloudAccount()), []);
-	/** The team New project starts in, while the picker is open for one. */
-	const [pickingTeam, setPickingTeam] = useState<string | undefined>();
 	const [teamMenu, setTeamMenu] = useState<string | null>(null);
 	/** The project "Move to team…" is asking about, and the team it goes to when a setup list asked. */
 	const [moving, setMoving] = useState<{ root: string; name: string; team?: string } | null>(null);
@@ -487,6 +486,14 @@ export function App() {
 		[focusProject],
 	);
 
+	/** The project New just made, whose canvas opens with the Agent pane out. */
+	const [started, setStarted] = useState<string | null>(null);
+	const newProject = useStartProject((project) => {
+		setStarted(project.root);
+		openTab(project);
+	});
+	const startNew = newProject.start;
+
 	// back and forward: to a tab's address, that tab; to one of Home's places, Home, which goes there itself
 	useEffect(() => {
 		const moved = () => {
@@ -603,11 +610,11 @@ export function App() {
 		const handlers = {
 			"app.new-project": (event) => {
 				event?.preventDefault();
-				setPicking("new");
+				startNew();
 			},
 			"app.open-project": (event) => {
 				event?.preventDefault();
-				setPicking("folder");
+				setPicking(true);
 			},
 			"app.help": () => {
 				setSettingsOpen(false);
@@ -654,7 +661,7 @@ export function App() {
 			scope: "app",
 			handlers: appWindow === undefined ? withoutTabKeys(handlers) : handlers,
 		});
-	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot]);
+	}, [openSettings, closeOnTop, appWindow, reopenTab, focusSlot, startNew]);
 
 	useEffect(() => {
 		return appWindow?.onCommand((command) => {
@@ -662,12 +669,12 @@ export function App() {
 				case "app.new-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
-					setPicking("new");
+					startNew();
 					break;
 				case "app.open-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
-					setPicking("folder");
+					setPicking(true);
 					break;
 				case "app.settings":
 					setPicking(false);
@@ -686,7 +693,7 @@ export function App() {
 					runMenuHotkey(command);
 			}
 		});
-	}, [appWindow, openSettings, closeOnTop]);
+	}, [appWindow, openSettings, closeOnTop, startNew]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
 	const transfer = useProjectTransfer(async (project) => {
@@ -722,10 +729,7 @@ export function App() {
 					/>
 				);
 			},
-			onNewProject: (team) => {
-				setPickingTeam(team.address);
-				setPicking("new");
-			},
+			onNewProject: (team) => startNew(team.address),
 			// keyed on this Mac's copies of the team's projects, so one just got leaves the list
 			away: (team, here, teams) => (
 				<TeamProjectsAway
@@ -847,7 +851,7 @@ export function App() {
 								focusProject(project.root);
 								askProjectHistory(project.name);
 							}}
-							onPick={() => setPicking("new")}
+							onPick={() => startNew()}
 						/>
 					</div>
 
@@ -887,11 +891,8 @@ export function App() {
 										(project.team === undefined || !teamHome.teams.has(project.team.team)),
 								)}
 								loading={!projectsLoaded}
-								onStart={() => {
-									setPickingTeam(undefined);
-									setPicking("new");
-								}}
-								onFolder={() => setPicking("folder")}
+								onStart={() => startNew()}
+								onFolder={() => setPicking(true)}
 								onImport={transfer.importProject}
 								onExportProject={transfer.exportProject}
 								onChangeIcon={icons.change}
@@ -958,7 +959,8 @@ export function App() {
 								project={focusedTab.name}
 								root={focusedTab.root}
 								onChrome={setChrome}
-								onFolder={() => setPicking("folder")}
+								agentOpen={focusedTab.root === started}
+								onFolder={() => setPicking(true)}
 								onRename={(name) => requestRename(focusedTab, name)}
 							/>
 						)}
@@ -979,6 +981,7 @@ export function App() {
 					)}
 				</main>
 
+				{newProject.toast}
 				{transfer.surface}
 				{icons.surface}
 				{focusedTab === undefined && teamHome.toast}
@@ -993,25 +996,7 @@ export function App() {
 					/>
 				)}
 
-				{picking === "new" && (
-					<ProjectPicker
-						initial="start"
-						location={
-							pickingTeam === undefined || location === undefined ? location : `${location}/${pickingTeam}`
-						}
-						team={pickingTeam}
-						onOpened={(project) => {
-							setPicking(false);
-							setPickingTeam(undefined);
-							openTab(project);
-						}}
-						onClose={() => {
-							setPicking(false);
-							setPickingTeam(undefined);
-						}}
-					/>
-				)}
-				{picking === "folder" && (
+				{picking && (
 					<ProjectPicker
 						onOpened={(project) => {
 							setPicking(false);

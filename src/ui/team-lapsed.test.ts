@@ -306,7 +306,7 @@ it("says up front that a lapsed team takes no new project, and sends an admin to
 	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
 	const admin = withNewProject(fake, team("admin"), true);
 	await settle();
-	act(() => button(admin.host, "New project…").click());
+	act(() => button(admin.host, "New project").click());
 	expect(admin.started).toEqual([]);
 	expect(admin.refusal()?.textContent).toContain(
 		"Tidemark has gone local. Pay for it in Settings › Billing to add projects.",
@@ -321,7 +321,7 @@ it("gives an admin the sentence alone where the host can't go to Billing, and te
 	const fake = fakeTeamsSource({ teams: [team("admin")], people: PEOPLE, billing: LAPSED });
 	const admin = withNewProject(fake, team("admin"), false);
 	await settle();
-	act(() => button(admin.host, "New project…").click());
+	act(() => button(admin.host, "New project").click());
 	expect(admin.refusal()?.textContent).toContain(
 		"Tidemark has gone local. Pay for it in Settings › Billing to add projects.",
 	);
@@ -329,7 +329,7 @@ it("gives an admin the sentence alone where the host can't go to Billing, and te
 
 	const editor = withNewProject(fake, team("editor"), true);
 	await settle();
-	act(() => button(editor.host, "New project…").click());
+	act(() => button(editor.host, "New project").click());
 	expect(editor.started).toEqual([]);
 	expect(editor.refusal()?.textContent).toContain("Tidemark has gone local. An admin can pay for it to add projects.");
 	expect(() => button(editor.refusal() as HTMLElement, "Go to Billing")).toThrow();
@@ -342,7 +342,7 @@ it("starts a new project in a team with time as ever", async () => {
 	const fake = fakeTeamsSource({ teams: [team("editor", "paying")], people: PEOPLE, billing: LAPSED });
 	const editor = withNewProject(fake, team("editor", "paying"), true);
 	await settle();
-	act(() => button(editor.host, "New project…").click());
+	act(() => button(editor.host, "New project").click());
 	expect(editor.started).toEqual(["tidemark"]);
 	expect(editor.refusal()).toBeUndefined();
 });

@@ -1,15 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isSafeName } from "../page-path";
-import {
-	browseDirectory,
-	createDirectoryAt,
-	createProjectAt,
-	createTeamProjectAt,
-	type FsHit,
-	initProjectAt,
-	type OpenOutcome,
-	openProjectAt,
-} from "./api";
+import { browseDirectory, createDirectoryAt, type FsHit, type OpenOutcome, openProjectAt } from "./api";
 import { cn } from "./cn";
 import { type DirectoryRequest, desktopWindow } from "./desktop-window";
 import { attachHotkeyLayer } from "./hotkey-dispatch";
@@ -17,39 +8,29 @@ import { ArrowRightIcon, BackIcon, ChevronIcon, FolderIcon, PlusIcon, SearchIcon
 import { crumbsOf, shortPath } from "./picker-model";
 import { Button, IconButton } from "./primitives/actions";
 import { Dialog } from "./primitives/overlays";
-import { Checkbox } from "./primitives/selection";
 import { ListRow } from "./primitives/structure";
-import { useWriteSetting } from "./settings";
 import { useFolderBrowser } from "./use-folder-browser";
 
-type Step = "start" | "folder" | "location" | "name" | "directory";
+type Step = "folder" | "location" | "directory";
 
-/** One modal for creating a project, adding design to a folder, and opening existing work. */
+/** One modal for opening existing work and for choosing a location. */
 export function ProjectPicker({
 	initial = "folder",
 	location,
 	onOpened,
 	onClose,
 	onLocation,
-	team,
 }: {
-	initial?: "start" | "folder" | "location";
+	initial?: "folder" | "location";
 	location?: string | undefined;
-	/** The team a new project starts in, as Home's sidebar has it; none is this Mac only. */
-	team?: string | undefined;
 	onOpened: (project: { root: string; name: string }) => void;
 	onClose: () => void;
 	onLocation?: (path: string) => Promise<{ ok: boolean; reason?: string }>;
 }) {
 	const [step, setStep] = useState<Step>(initial);
-	const [folderAction, setFolderAction] = useState<"add" | "open">("open");
 	const nativeChoose = desktopWindow()?.chooseDirectory;
 	const nativeStarted = useRef(false);
-	const [returnTo, setReturnTo] = useState<"start" | "name">("start");
-	const [name, setName] = useState("");
-	const [chosenLocation, setLocation] = useState<string | null>(null);
 	const [directoryName, setDirectoryName] = useState("");
-	const [useAsDefault, setUseAsDefault] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
 	const working = useRef(false);
@@ -57,15 +38,12 @@ export function ProjectPicker({
 	const dialog = useRef<HTMLDialogElement>(null);
 	const nameInput = useRef<HTMLInputElement>(null);
 	const crumbsRef = useRef<HTMLElement>(null);
-	const [initialPath] = useState(initial === "start" ? "~" : (location ?? "~"));
+	const [initialPath] = useState(location ?? "~");
 	const folder = useFolderBrowser(initialPath);
-	const writeSetting = useWriteSetting();
-	const parent = chosenLocation ?? location;
 	const browsing = step === "folder" || step === "location";
 	const display = (path: string) => (folder.home ? shortPath(path, folder.home) : path);
 	const target = folder.target;
 	const crumbs = folder.listing && folder.home ? crumbsOf(folder.listing.path, folder.home) : [];
-	const canCreate = parent !== undefined && (name.trim() === "" || isSafeName(name.trim()));
 	useLayoutEffect(() => {
 		if (folder.listing && crumbsRef.current) crumbsRef.current.scrollLeft = crumbsRef.current.scrollWidth;
 	}, [folder.listing]);
@@ -87,7 +65,7 @@ export function ProjectPicker({
 	}, []);
 	useEffect(() => attachHotkeyLayer({ scope: "picker", handlers: {} }), []);
 	useEffect(() => {
-		if (!nativeChoose || initial === "start" || nativeStarted.current) return;
+		if (!nativeChoose || nativeStarted.current) return;
 		nativeStarted.current = true;
 		chooseNative(initial === "location" ? "location" : "open", true);
 	});
@@ -118,12 +96,7 @@ export function ProjectPicker({
 	function opened(outcome: OpenOutcome) {
 		if (!mounted.current) return;
 		if (outcome.kind === "opened") onOpened(outcome);
-		else
-			throw new Error(
-				outcome.kind === "error"
-					? outcome.message
-					: "This folder has no Spool project. Use Add spool to a folder to start one here.",
-			);
+		else throw new Error(outcome.kind === "error" ? outcome.message : "This folder has no spool project.");
 	}
 	function move(next: Step) {
 		setNotice(null);
@@ -131,68 +104,29 @@ export function ProjectPicker({
 	}
 	function back() {
 		if (working.current) return;
-		if (step === "location" && onLocation === undefined) move(returnTo);
-		else if (step === "directory") move("location");
-		else if (step === "name") move("folder");
-		else if (step === "folder" && initial === "start") move("start");
+		if (step === "directory") move("location");
 		else onClose();
 	}
 	function up() {
 		if (!busy && folder.listing?.parent) void folder.browse(folder.listing.parent);
 	}
-	function create() {
-		if (canCreate && parent !== undefined)
-			void run(async () => {
-				if (nativeChoose && useAsDefault) {
-					const written = await writeSetting("projects.location", parent);
-					if (!written.ok) throw new Error(written.reason);
-				}
-				opened(
-					await (team === undefined
-						? createProjectAt(parent, name.trim())
-						: createTeamProjectAt(team, parent, name.trim())),
-				);
-			});
-	}
-	function chooseNative(purpose: DirectoryRequest["purpose"], closeOnCancel = false) {
+	function chooseNative(purpose: Extract<DirectoryRequest["purpose"], "location" | "open">, closeOnCancel = false) {
 		if (!nativeChoose) return;
 		void run(async () => {
-			const path = await nativeChoose({ purpose, defaultPath: purpose === "location" ? (parent ?? "~") : "~" });
+			const path = await nativeChoose({ purpose, defaultPath: purpose === "location" ? (location ?? "~") : "~" });
 			if (!mounted.current) return;
 			if (path === null) {
 				if (closeOnCancel) onClose();
 				return;
 			}
-			if (purpose === "location") {
-				if (onLocation) {
-					const result = await onLocation(path);
-					if (!result.ok) throw new Error(result.reason ?? "Could not save this location.");
-					if (mounted.current) onClose();
-				} else setLocation(path);
-			} else if (purpose === "open") opened(await openProjectAt(path));
-			else {
-				const current = await browseDirectory(path);
-				if (!current) throw new Error("This folder is no longer available. Choose another folder.");
-				if (mounted.current)
-					opened(await (current.isProject ? openProjectAt(current.path) : initProjectAt(current.path)));
-			}
+			if (purpose === "location") await saveLocation(path);
+			else opened(await openProjectAt(path));
 		});
 	}
-	function chooseFolder(action: "add" | "open") {
-		setFolderAction(action);
-		if (nativeChoose) chooseNative(action);
-		else move("folder");
-	}
-	function chooseLocation() {
-		if (parent === undefined) return;
-		if (nativeChoose) {
-			chooseNative("location");
-			return;
-		}
-		setReturnTo(step === "name" ? "name" : "start");
-		setUseAsDefault(false);
-		move("location");
-		void folder.browse(parent);
+	async function saveLocation(path: string) {
+		const result = await onLocation?.(path);
+		if (result !== undefined && !result.ok) throw new Error(result.reason ?? "Could not save this location.");
+		if (mounted.current) onClose();
 	}
 	function createDirectory() {
 		if (!folder.listing || !isSafeName(directoryName.trim())) return;
@@ -212,94 +146,11 @@ export function ProjectPicker({
 			const current = await browseDirectory(target.path);
 			if (!current) throw new Error("This folder is no longer available. Choose another folder.");
 			if (!mounted.current) return;
-			if (step === "location") {
-				if (onLocation) {
-					const result = await onLocation(current.path);
-					if (!result.ok) throw new Error(result.reason ?? "Could not save this location.");
-					if (mounted.current) onClose();
-				} else {
-					if (useAsDefault) {
-						const written = await writeSetting("projects.location", current.path);
-						if (!written.ok) throw new Error(written.reason);
-					}
-					if (mounted.current) {
-						setLocation(current.path);
-						move(returnTo);
-					}
-				}
-			} else if (folderAction === "open") opened(await openProjectAt(current.path));
-			else if (current.isProject !== target.isProject) {
-				await folder.browse(current.path);
-				throw new Error("This folder changed. Check its action and try again.");
-			} else opened(await (current.isProject ? openProjectAt(current.path) : initProjectAt(current.path)));
+			if (step === "location") await saveLocation(current.path);
+			else opened(await openProjectAt(current.path));
 		});
 	}
-	const label =
-		step === "location"
-			? onLocation
-				? "Save projects here"
-				: "Choose location"
-			: folderAction === "open" || target?.isProject
-				? "Open project"
-				: "Add spool here";
-	const fields = (
-		<form
-			onSubmit={(event) => {
-				event.preventDefault();
-				create();
-			}}
-		>
-			<fieldset disabled={busy}>
-				<div className="picker-name-field flex items-center gap-[14px] py-[16px] px-[20px] h-[64px] [&>svg]:size-[20px] [&>svg]:text-accent [&_input]:w-full [&_input]:[outline:none] [&_input]:bg-transparent [&_input]:text-primary [&_input]:[font:var(--type-title)] [&_input]:caret-accent [&_input::placeholder]:text-secondary [.picker-expanded_&]:h-[58px] [.picker-expanded_&_input]:[font:var(--type-control)] [.picker-expanded_&>svg]:size-[18px]">
-					<PlusIcon />
-					<input
-						ref={nameInput}
-						aria-label="Project name (optional)"
-						placeholder="Project name (optional)"
-						value={name}
-						autoComplete="off"
-						spellCheck={false}
-						onChange={(event) => {
-							setName(event.target.value);
-							setNotice(null);
-						}}
-					/>
-				</div>
-				<div className="picker-name-bottom flex justify-between gap-[16px] pt-0 px-[20px] pb-[18px] items-center [@media(max-width:480px)]:flex-wrap">
-					<button
-						type="button"
-						className="picker-location-link flex items-center gap-[8px] min-w-0 text-secondary [font:var(--type-detail)] [&>span]:truncate [&_svg:last-child]:size-[10px] [@media(max-width:480px)]:max-w-full"
-						onClick={chooseLocation}
-						disabled={parent === undefined}
-						aria-label="Choose project location"
-						title={parent}
-					>
-						<FolderIcon />
-						{parent === undefined ? <span>Loading…</span> : <PickerPath path={display(parent)} />}
-						<ChevronIcon />
-					</button>
-					<Button type="submit" variant="primary" disabled={!canCreate}>
-						{busy ? "Creating…" : "Create project"}
-						<ArrowRightIcon />
-					</Button>
-				</div>
-				{nativeChoose && chosenLocation !== null && (
-					<Checkbox
-						className="mx-5 mb-4.5"
-						checked={useAsDefault}
-						onCheckedChange={setUseAsDefault}
-						label="Use for future projects"
-					/>
-				)}
-				{name.trim() !== "" && !isSafeName(name.trim()) && (
-					<p className="picker-error m-0 pt-[10px] px-[20px] pb-[16px] text-accent [font:var(--type-label)]">
-						Use a name without slashes or a leading dot.
-					</p>
-				)}
-			</fieldset>
-		</form>
-	);
-
+	const label = step === "location" ? "Save projects here" : "Open project";
 	return (
 		<Dialog
 			native
@@ -309,13 +160,7 @@ export function ProjectPicker({
 			className="fixed inset-0 w-[520px] [outline:none] [&_button]:cursor-pointer [&_button]:focus-ring-inset [&_:where(svg)]:size-[14px] [&_svg]:shrink-0 [&_fieldset]:border-0 [&_fieldset]:p-0 [&_fieldset]:min-w-0 [&_button:disabled]:cursor-default [&_button:disabled]:opacity-40"
 			tabIndex={-1}
 			aria-label={
-				browsing
-					? step === "location"
-						? "Choose a save location"
-						: "Choose a project folder"
-					: step === "directory"
-						? "New folder"
-						: "New project"
+				browsing ? (step === "location" ? "Choose a save location" : "Choose a project folder") : "New folder"
 			}
 			onCancel={(event) => {
 				event.preventDefault();
@@ -418,28 +263,20 @@ export function ProjectPicker({
 								}
 							}}
 						/>
-						<IconButton
-							size="sm"
-							icon={<PlusIcon />}
-							label={step === "location" ? "New folder here" : "New project inside this folder"}
-							title={
-								folder.listing
-									? `New ${step === "location" ? "folder" : "project"} inside ${display(folder.listing.path)}`
-									: undefined
-							}
-							disabled={busy || folder.pending || !folder.listing}
-							onClick={() => {
-								if (!folder.listing) return;
-								if (step === "location") {
+						{step === "location" && (
+							<IconButton
+								size="sm"
+								icon={<PlusIcon />}
+								label="New folder here"
+								title={folder.listing ? `New folder inside ${display(folder.listing.path)}` : undefined}
+								disabled={busy || folder.pending || !folder.listing}
+								onClick={() => {
+									if (!folder.listing) return;
 									setDirectoryName("");
 									move("directory");
-								} else {
-									setName("");
-									setLocation(folder.listing.path);
-									move("name");
-								}
-							}}
-						/>
+								}}
+							/>
+						)}
 					</div>
 					<div
 						ref={folder.list}
@@ -477,25 +314,8 @@ export function ProjectPicker({
 								{target ? <PickerPath path={display(target.path)} /> : "Choose a folder"}
 							</code>
 							<span>
-								{step === "location"
-									? onLocation
-										? "New projects will start here."
-										: `Creates ${name.trim() || "untitled"} inside this folder.`
-									: folderAction === "open"
-										? "Opens an existing spool project."
-										: target?.isProject
-											? "Existing spool project."
-											: "Adds a design folder here."}
+								{step === "location" ? "New projects will start here." : "Opens an existing spool project."}
 							</span>
-							{step === "location" && !onLocation && (
-								<Checkbox
-									className="mt-1"
-									checked={useAsDefault}
-									disabled={busy}
-									onCheckedChange={setUseAsDefault}
-									label="Use for future projects"
-								/>
-							)}
 						</div>
 						<Button variant="primary" disabled={busy || folder.pending || target === undefined} onClick={confirm}>
 							{busy ? "Working…" : label}
@@ -503,7 +323,7 @@ export function ProjectPicker({
 						</Button>
 					</div>
 				</>
-			) : step === "directory" ? (
+			) : (
 				<form
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -534,47 +354,6 @@ export function ProjectPicker({
 						</div>
 					</fieldset>
 				</form>
-			) : step === "name" ? (
-				<>
-					<div className="picker-small-heading flex items-center gap-[10px] pt-[14px] px-[16px] pb-0 [font:var(--type-control)] [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:gap-[6px]">
-						<IconButton
-							size="sm"
-							icon={<BackIcon />}
-							label="Back"
-							className="-ml-1"
-							disabled={busy}
-							onClick={back}
-						/>
-						<span>New project here</span>
-						<span className="picker-untitled-hint ml-auto text-secondary [font:var(--type-label)] [@media(max-width:480px)]:ml-0">
-							Blank name becomes untitled.
-						</span>
-					</div>
-					{fields}
-				</>
-			) : (
-				<>
-					<div className="picker-expanded border-b border-line-strong">
-						<div className="picker-expanded-title flex items-center justify-between pt-[20px] px-[20px] pb-0 [font:var(--type-title)] [&>span]:[font:var(--type-label)] [&>span]:text-secondary [@media(max-width:480px)]:flex-wrap [@media(max-width:480px)]:gap-[6px]">
-							Start designing<span>Blank name becomes untitled.</span>
-						</div>
-						{fields}
-					</div>
-					<div className="picker-choices p-[6px]">
-						<Choice
-							title="Add spool to a folder"
-							description="Start designing inside an existing codebase or folder."
-							disabled={busy}
-							onClick={() => chooseFolder("add")}
-						/>
-						<Choice
-							title="Open a spool project"
-							description="Pick a folder that already has a spool design."
-							disabled={busy}
-							onClick={() => chooseFolder("open")}
-						/>
-					</div>
-				</>
 			)}
 			{(notice || (browsing && !nativeChoose && folder.notice)) && (
 				<p
@@ -588,33 +367,6 @@ export function ProjectPicker({
 	);
 }
 
-function Choice({
-	title,
-	description,
-	disabled,
-	onClick,
-}: {
-	title: string;
-	description: string;
-	disabled: boolean;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			className="picker-choice flex items-center gap-[16px] w-full py-[16px] px-[14px] rounded-sm text-left [&:hover]:bg-surface-raised [&>svg]:size-[18px] [&>svg]:text-secondary [&>svg:last-child]:w-[14px] [&>span]:flex [&>span]:flex-1 [&>span]:flex-col [&>span]:gap-[6px] [&_strong]:[font:var(--type-title)] [&_small]:text-secondary [&_small]:[font:var(--type-label)]"
-			disabled={disabled}
-			onClick={onClick}
-		>
-			<FolderIcon />
-			<span>
-				<strong>{title}</strong>
-				<small>{description}</small>
-			</span>
-			<ArrowRightIcon />
-		</button>
-	);
-}
 function FolderRow({
 	row,
 	index,

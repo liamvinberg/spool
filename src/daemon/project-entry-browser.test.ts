@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { initProject } from "../init";
@@ -7,22 +7,17 @@ import { testBrowser } from "../test-browser";
 import { builtUi, makeTempDir, serveProject } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
-it("walks all three project jobs through the compact picker with one explicit confirmation", {
+it("starts a project at once with the Agent pane out, and opens existing work from Open…", {
 	timeout: 120_000,
 }, async () => {
 	const uiDir = await builtUi();
 	const project = await serveProject({ uiDir });
 	const parent = realpathSync(makeTempDir());
-	const codebase = join(parent, "existing-codebase");
-	mkdirSync(join(codebase, "src"), { recursive: true });
-	for (let i = 0; i < 20; i++) mkdirSync(join(codebase, `folder-${i}`));
-	writeFileSync(join(codebase, "src", "index.ts"), "export const keep = true;\n");
 	const shared = join(parent, "shared-project");
 	mkdirSync(shared);
 	initProject(shared, makeTempDir());
 	const sharedCanvas = readFileSync(join(shared, "design", "canvas.json"), "utf8");
-	const store = createSettingsStore(project.spoolDir);
-	store.write("projects.location", parent);
+	createSettingsStore(project.spoolDir).write("projects.location", parent);
 	const browser = await testBrowser();
 	const page = await browser.newPage({
 		viewport: { width: 1360, height: 900 },
@@ -33,126 +28,25 @@ it("walks all three project jobs through the compact picker with one explicit co
 	page.on("pageerror", (error) => errors.push(error.message));
 	await page.goto(project.url);
 	await page.getByRole("heading", { name: "Projects", exact: true }).waitFor();
-	await page.locator(".pj-heading").getByRole("button", { name: "New project…", exact: true }).click();
-	const creation = page.getByRole("dialog", { name: "New project", exact: true });
-	const projectName = creation.getByLabel("Project name (optional)");
-	await expect.poll(() => page.locator("input:focus").getAttribute("aria-label")).toBe("Project name (optional)");
-	expect(readdirSync(parent)).toEqual(["existing-codebase", "shared-project"]);
-	await projectName.fill("coffee");
-	await page.evaluate(() => document.fonts.ready);
-	const centered = async () => {
-		const rect = await page.locator("dialog[open]").boundingBox();
-		const viewport = page.viewportSize();
-		expect(rect).not.toBeNull();
-		expect(viewport).not.toBeNull();
-		if (rect && viewport) {
-			expect(Math.abs(rect.y + rect.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(1);
-			expect(Math.abs(rect.x + rect.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
-		}
-	};
-	await centered();
-	const evidence = process.env.SPOOL_ENTRY_EVIDENCE;
-	if (evidence) await page.screenshot({ path: join(evidence, "new-project.png") });
-	await creation.getByRole("button", { name: "Choose project location" }).click();
-	const location = page.getByRole("dialog", { name: "Choose a save location", exact: true });
-	await expect.poll(() => location.locator(".picker-footer code").getAttribute("title")).toBe(parent);
-	await expect
-		.poll(() => page.locator("input:focus").getAttribute("aria-label"))
-		.toBe("Search folders or paste a path");
-	await location.press("Escape");
-	expect(await projectName.inputValue()).toBe("coffee");
-	await creation.press("Escape");
-	expect(existsSync(join(parent, "coffee"))).toBe(false);
 
-	await page.getByRole("button", { name: "New project", exact: true }).click();
-	await projectName.fill("coffee");
-	await projectName.press("Enter");
+	await page.locator(".pj-heading").getByRole("button", { name: "New project", exact: true }).click();
 	await page.getByRole("heading", { name: "Your canvas is ready.", exact: true }).waitFor();
-	expect(existsSync(join(parent, "coffee", "design", "canvas.json"))).toBe(true);
 	expect(await page.locator("dialog").count()).toBe(0);
-
-	await page.getByRole("button", { name: "New project", exact: true }).click();
-	await creation.getByRole("button", { name: "Open a spool project", exact: false }).click();
-	const picker = page.getByRole("dialog", { name: "Choose a project folder", exact: true });
-	const search = picker.getByRole("textbox");
-	await search.fill(codebase);
-	await expect.poll(() => picker.getByRole("button", { name: "Open project", exact: true }).isEnabled()).toBe(true);
-	await search.press("Enter");
-	await picker.getByRole("alert").waitFor();
-	expect(await picker.getByRole("alert").innerText()).toContain("This folder has no Spool project");
-	expect(existsSync(join(codebase, "design"))).toBe(false);
-	await search.fill("");
-	await picker.press("Escape");
-	await creation.getByRole("button", { name: "Add spool to a folder", exact: false }).click();
-	await search.fill(codebase);
-	await expect.poll(() => picker.getByRole("button", { name: "Add spool here", exact: true }).isEnabled()).toBe(true);
-	expect(existsSync(join(codebase, "design"))).toBe(false);
-	if (evidence) await page.screenshot({ path: join(evidence, "setup-codebase.png") });
-	await search.press("Enter");
-	await page.getByRole("button", { name: "Close existing-codebase", exact: true }).waitFor();
-	expect(existsSync(join(codebase, "design", "canvas.json"))).toBe(true);
-	expect(existsSync(join(codebase, "existing-codebase"))).toBe(false);
-	expect(readFileSync(join(codebase, "src", "index.ts"), "utf8")).toBe("export const keep = true;\n");
+	expect(existsSync(join(parent, "untitled", "design", "canvas.json"))).toBe(true);
+	// the composer stands ready in the Agent pane, and the person's focus is still theirs
+	const composer = page.locator("textarea").first();
+	await composer.waitFor();
+	expect(await composer.evaluate((element) => element === document.activeElement)).toBe(false);
 
 	await page.getByRole("button", { name: "Home", exact: true }).click();
-	await page.getByRole("button", { name: "More ways to start", exact: true }).click();
-	await page.getByRole("menuitem", { name: "Open folder…" }).click();
+	await page.locator(".pj-heading").getByRole("button", { name: "Open…", exact: true }).click();
+	const picker = page.getByRole("dialog", { name: "Choose a project folder", exact: true });
+	const search = picker.getByRole("textbox");
 	await search.fill(shared);
 	await picker.getByRole("button", { name: "Open project", exact: true }).waitFor();
 	await search.press("Enter");
 	await page.getByRole("button", { name: "Close shared-project", exact: true }).waitFor();
 	expect(readRegistry(project.spoolDir).projects.some((item) => item.root === shared)).toBe(true);
 	expect(readFileSync(join(shared, "design", "canvas.json"), "utf8")).toBe(sharedCanvas);
-
-	await page.getByRole("button", { name: "Home", exact: true }).click();
-	await page.getByRole("button", { name: "More ways to start", exact: true }).click();
-	await page.getByRole("menuitem", { name: "Open folder…" }).click();
-	await search.fill(parent);
-	await picker.getByRole("button", { name: `Browse ${parent.split("/").at(-1)}` }).click();
-	await picker.getByRole("button", { name: "Browse existing-codebase", exact: true }).click();
-	await expect.poll(() => picker.locator(".picker-footer code").getAttribute("title")).toBe(codebase);
-	await centered();
-	expect(await picker.locator(".picker-folders").evaluate((element) => element.clientHeight)).toBe(450);
-	await picker.getByRole("button", { name: "Parent folder", exact: true }).click();
-	await expect.poll(() => picker.locator(".picker-footer code").getAttribute("title")).toBe(parent);
-	await picker.getByRole("button", { name: "Browse existing-codebase", exact: true }).click();
-	if (evidence) await page.screenshot({ path: join(evidence, "browse-codebase.png") });
-	await picker.getByRole("button", { name: "New project inside this folder", exact: true }).click();
-	await projectName.fill("workshop");
-	await projectName.press("Enter");
-	await page.getByRole("button", { name: "Close workshop", exact: true }).waitFor();
-	expect(existsSync(join(codebase, "workshop", "design", "canvas.json"))).toBe(true);
-	expect(store.read().entries.find((entry) => entry.key === "projects.location")?.value).toBe(parent);
-
-	await page.getByRole("button", { name: "New project", exact: true }).click();
-	await creation.getByRole("button", { name: "Create project", exact: true }).click();
-	await page.getByRole("button", { name: "Close untitled", exact: true }).waitFor();
-	expect(existsSync(join(parent, "untitled", "design", "canvas.json"))).toBe(true);
-	await page.getByRole("button", { name: "New project", exact: true }).click();
-	await projectName.fill("coffee");
-	await creation.getByRole("button", { name: "Create project", exact: true }).click();
-	await creation.getByRole("alert").waitFor();
-	expect(await projectName.inputValue()).toBe("coffee");
-	expect(await creation.getByRole("alert").innerText()).toContain("already exists");
-
-	await creation.getByRole("button", { name: "Choose project location" }).click();
-	await location.getByRole("button", { name: "New folder here" }).click();
-	const directory = page.getByRole("dialog", { name: "New folder", exact: true });
-	await directory.getByLabel("Folder name").fill("ideas");
-	await directory.getByLabel("Folder name").press("Enter");
-	await expect.poll(() => location.locator(".picker-footer code").getAttribute("title")).toBe(join(parent, "ideas"));
-	expect(readdirSync(join(parent, "ideas"))).toEqual([]);
-	await location.getByText("Use for future projects", { exact: true }).click();
-	expect(await location.getByLabel("Use for future projects").isChecked()).toBe(true);
-	if (evidence) await page.screenshot({ path: join(evidence, "save-location.png") });
-	await location.getByRole("button", { name: "Choose location", exact: true }).click();
-	await expect
-		.poll(() => store.read().entries.find((entry) => entry.key === "projects.location")?.value)
-		.toBe(join(parent, "ideas"));
-	expect(await projectName.inputValue()).toBe("coffee");
-	await page.setViewportSize({ width: 390, height: 844 });
-	await projectName.fill("a-long-project-name-that-still-fits-in-the-creation-form");
-	expect(await creation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-	if (evidence) await page.screenshot({ path: join(evidence, "new-project-narrow.png") });
 	expect(errors).toEqual([]);
 });

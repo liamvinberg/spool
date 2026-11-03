@@ -395,7 +395,7 @@ export function TeamProjects({
 							icon={<PlusIcon />}
 							onClick={lapsed ? () => setRefusing(true) : onNewProject}
 						>
-							New project…
+							New project
 						</Button>
 					)
 				}

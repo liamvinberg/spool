@@ -979,7 +979,7 @@ export function buildAppMenu(): Menu {
 			submenu: [
 				{ label: "Open Canvas", click: () => void openCanvas() },
 				{
-					label: "New Project…",
+					label: "New Project",
 					accelerator: menuKey("app.new-project", menuKeys),
 					click: () => sendCanvasCommand("app.new-project"),
 				},

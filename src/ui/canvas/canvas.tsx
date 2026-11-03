@@ -408,6 +408,8 @@ interface ProjectCanvasProps {
 	onNameFocused?: (() => void) | undefined;
 	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
+	/** A project New just made: its canvas opens with the Agent pane out, its composer not focused. */
+	agentOpen?: boolean | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 }
 
@@ -440,6 +442,7 @@ function CanvasField({
 	onFolder,
 	focusName,
 	onNameFocused,
+	agentOpen = false,
 	deck,
 	agentDefaults,
 }: ProjectCanvasProps & { deck: DeckStore; agentDefaults: AgentDefaultsDeck }) {
@@ -5564,9 +5567,11 @@ function CanvasField({
 					// History asked for since the last agent request shows it, once the canvas knows it is a team's
 					team && historyAsk !== null && historyAsk.agent === agentRequest?.id
 						? { pane: "history", key: `history-${historyAsk.key}` }
-						: agentRequest === undefined
-							? undefined
-							: { pane: "agent", key: agentRequest.id }
+						: agentRequest !== undefined
+							? { pane: "agent", key: agentRequest.id }
+							: agentOpen
+								? { pane: "agent", key: "new-project" }
+								: undefined
 				}
 				onShown={(panes) => {
 					setRailShown(panes.includes("agent"));
