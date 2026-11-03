@@ -218,7 +218,9 @@ export async function checkProject(root: string, scope?: string[]): Promise<Chec
 		if (selection.unmatched.length > 0) return { ...report(designDir, selection, [], 0), ran: false };
 		const checked = await checkInBatches(designDir, selection.entries);
 		// a page-level source some frame imports is a part, not a frame meant
-		selection.strays = selection.strays.filter((file) => basename(file) === "frame.tsx" || !checked.closure.has(file));
+		selection.strays = selection.strays.filter(
+			(file) => basename(file) === "frame.tsx" || !checked.closure.has(file),
+		);
 		const alone = new Set(checked.alone.map(({ entry }) => entry));
 		return {
 			...report(

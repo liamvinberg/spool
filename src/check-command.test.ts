@@ -131,7 +131,12 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		writeFrame(root, "cart", FRAME);
 		writeFrame(root, "big", FRAME);
 		writeCaptureError(root, "home", "threw on boot: TypeError: items is undefined\n    at Home", "boot");
-		writeCaptureError(root, "cart", '\u2718 [ERROR] No matching export for import "Pay"\n\n    cart.tsx:1:9:', "compile");
+		writeCaptureError(
+			root,
+			"cart",
+			'\u2718 [ERROR] No matching export for import "Pay"\n\n    cart.tsx:1:9:',
+			"compile",
+		);
 		writeCaptureError(root, "big", "too large for a cover", "capture");
 
 		expect(await runCheck(root, root, [])).toEqual({

@@ -414,7 +414,8 @@ export function scanBrokenFramesSync(root: string): Map<string, BrokenFrame> {
 			text = readFileSync(join(store, folder, CAPTURE_ERROR_NAME), "utf8");
 		} catch {}
 		const recorded = parseCaptureError(text);
-		if (recorded !== undefined && recorded.kind !== "capture") broken.set(frame, { ...recorded, kind: recorded.kind });
+		if (recorded !== undefined && recorded.kind !== "capture")
+			broken.set(frame, { ...recorded, kind: recorded.kind });
 	}
 	return broken;
 }
