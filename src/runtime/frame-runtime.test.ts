@@ -947,7 +947,7 @@ const tunedTsx = `import { ui } from "spool";
 import { kaffe } from "shared/knobs/kaffe";
 
 const k = ui.knobs({
-	card: { radius: { type: "slider", value: 20, min: 0, max: 40 }, "bad.key": { type: "toggle", value: true } },
+	card: { radius: { type: "slider", value: 20, min: 0, max: 40 }, "bad.key": { type: "toggle", value: true }, gap: { type: "number", value: 4, unit: "px" } },
 	hero: { type: "image", value: "a", options: [{ value: "a", image: "/a.png" }, { value: "b", image: "/b.png" }] },
 	family: { type: "font", value: "Inter" },
 	replay: { type: "action", label: "Replay" },
@@ -1005,6 +1005,7 @@ describe("knobs", () => {
 			await waitForText("#roast", "dark");
 			await waitForText("#count", "3");
 			expect(warnings.lines.filter((line) => line.includes('"card.bad.key"'))).toHaveLength(1);
+			expect(warnings.lines.filter((line) => line.includes('"card.gap"'))).toHaveLength(1);
 			await vi.waitFor(() => {
 				expect(declared.at(-1)).toEqual({
 					spool: "knobs",

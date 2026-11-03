@@ -10,7 +10,7 @@ import { stampKnobCalls } from "./knob-literals";
 const FRAME = `import { ui as u } from "spool";
 const pad = 4;
 const k = u.knobs({
-	card: { radius: { type: "corners", value: -20 }, padding: { type: "spacing", value: [pad, 2] } },
+	card: { radius: { type: "corners", value: -20 }, padding: { type: "spacing", value: [pad, 2] }, gap: { type: "number", value: pad } },
 	motion: { spring: { type: "spring", value: { duration: 0.35, bounce: 0.3 } }, replay: { type: "action" } },
 	label: { type: "text", value: \`Oat\` },
 	more: someSpec,

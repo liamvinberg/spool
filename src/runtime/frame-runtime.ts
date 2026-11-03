@@ -1800,7 +1800,7 @@ const warnedKnobKeys = new Set<string>();
 let knobsDeclareScheduled = false;
 
 function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
-	const clean = withoutDottedKeys(schema, site?.at ?? "ui.knobs");
+	const clean = cleanSchema(schema, site?.at ?? "ui.knobs");
 	const json = JSON.stringify(clean);
 	let entry = site === undefined ? undefined : knobEntries.get(site.at);
 	if (entry === undefined) {
@@ -1827,21 +1827,39 @@ function knobs<S extends KnobSchema>(schema: S, site?: KnobSite): KnobRead<S> {
 	return entry.read as KnobRead<S>;
 }
 
-/** A key with a dot would make its path ambiguous: named once, and left out. */
-function withoutDottedKeys(schema: KnobSchema, at: string, prefix = ""): KnobSchema {
+/**
+ * The schema as the rail can show it: a key with a dot would make its path
+ * ambiguous, and a spec whose type spool doesn't know has no editor, so each
+ * is named once and left out. Only a plain object is a group.
+ */
+function cleanSchema(schema: KnobSchema, at: string, prefix = ""): KnobSchema {
 	const clean: KnobSchema = {};
 	for (const [key, node] of Object.entries(schema)) {
 		const path = prefix === "" ? key : `${prefix}.${key}`;
+		const unknown = node as unknown;
+		const group = isPlainObject(unknown) && typeof unknown.type !== "string";
 		if (key.includes(".")) {
-			if (!warnedKnobKeys.has(`${at} ${path}`)) {
-				warnedKnobKeys.add(`${at} ${path}`);
-				console.warn(`spool: knob key "${path}" at ${at} has a dot, which separates a path's keys — rename it`);
-			}
-			continue;
+			warnKnobOnce(at, path, `knob key "${path}" at ${at} has a dot, which separates a path's keys — rename it`);
+		} else if (isKnobSpec(node)) clean[key] = node;
+		else if (group) clean[key] = cleanSchema(unknown as KnobSchema, at, path);
+		else {
+			const type = isPlainObject(unknown) ? `type "${String(unknown.type)}"` : "no type";
+			warnKnobOnce(at, path, `knob "${path}" at ${at} has ${type}, which is no knob spool knows — left out`);
 		}
-		clean[key] = isKnobSpec(node) ? node : withoutDottedKeys(node, at, path);
 	}
 	return clean;
+}
+
+function warnKnobOnce(at: string, path: KnobPath, says: string): void {
+	if (warnedKnobKeys.has(`${at} ${path}`)) return;
+	warnedKnobKeys.add(`${at} ${path}`);
+	console.warn(`spool: ${says}`);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	if (typeof value !== "object" || value === null) return false;
+	const proto = Object.getPrototypeOf(value);
+	return proto === Object.prototype || proto === null;
 }
 
 /** Getters over the store, so the object a call returns stays the one to read from. */
