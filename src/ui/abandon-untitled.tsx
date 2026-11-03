@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { isUntitled } from "../untitled";
-import { fetchProjection, trashAbandoned } from "./api";
+import { fetchAgentThreads, fetchProjection, trashAbandoned } from "./api";
 import { TextAction, Toast } from "./primitives/feedback";
 import type { TabProject } from "./tab-strip";
 
@@ -14,7 +14,7 @@ interface Abandoned {
 /**
  * New makes a project without asking, so one closed untitled and empty goes to the Trash by itself (spool#51).
  * Closing its tab hides it from Home and stands a toast with Undo, which opens it again; once the toast drains
- * the daemon trashes it, if it still is untitled with no frames. A team copy stays, being the team's.
+ * the daemon trashes it, if it still is untitled with no frames. One with a turn running stays. A team copy stays, being the team's.
  */
 export function useAbandonUntitled({
 	hide,
@@ -53,19 +53,24 @@ export function useAbandonUntitled({
 		(project: TabProject) => {
 			if (!isUntitled(project.name) || project.teamAddress !== undefined) return;
 			latest.current.hide(project.root);
-			void fetchProjection(project.name).then((projection) => {
-				if (projection === undefined || projection.frames.length > 0) {
-					latest.current.show(project.root);
-					return;
-				}
-				// one toast at a time: the one standing goes now
-				const was = standingRef.current;
-				if (was !== null) {
-					clearTimeout(was.timer);
-					trash(was.project);
-				}
-				stand({ project, timer: setTimeout(() => trash(project), UNDO_MS) });
-			});
+			void Promise.all([fetchProjection(project.name), fetchAgentThreads(project.name)]).then(
+				([projection, threads]) => {
+					const working = threads.some(
+						(thread) => thread.live && (thread.life === "running" || thread.life === "waiting"),
+					);
+					if (projection === undefined || projection.frames.length > 0 || working) {
+						latest.current.show(project.root);
+						return;
+					}
+					// one toast at a time: the one standing goes now
+					const was = standingRef.current;
+					if (was !== null) {
+						clearTimeout(was.timer);
+						trash(was.project);
+					}
+					stand({ project, timer: setTimeout(() => trash(project), UNDO_MS) });
+				},
+			);
 		},
 		[stand, trash],
 	);
