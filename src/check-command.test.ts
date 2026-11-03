@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { checkSourceLimits } from "./check-budget";
 import { runCheck } from "./check-command";
 import { shareCheckerInFile } from "./check-test-harness";
-import { writePace } from "./daemon/thumbs";
+import { writeCaptureError, writePace } from "./daemon/thumbs";
 import { makeTempDir, markProject, writeDesignFile, writeFrame, writePageFrame } from "./test-helpers";
 
 const FRAME = "export default function Frame() { return <main />; }\n";
@@ -123,6 +123,26 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 			ok: false,
 		});
 		expect(await runCheck(root, root, ["huge"])).toEqual({ stderr: [over], stdout: [], ok: false });
+	});
+
+	it("names the frames the canvas shows broken, as a note", async () => {
+		const root = project();
+		writeFrame(root, "home", FRAME);
+		writeFrame(root, "cart", FRAME);
+		writeFrame(root, "big", FRAME);
+		writeCaptureError(root, "home", "threw on boot: TypeError: items is undefined\n    at Home", "boot");
+		writeCaptureError(root, "cart", '\u2718 [ERROR] No matching export for import "Pay"\n\n    cart.tsx:1:9:', "compile");
+		writeCaptureError(root, "big", "too large for a cover", "capture");
+
+		expect(await runCheck(root, root, [])).toEqual({
+			stderr: [
+				'design/frames/cart/frame.tsx: broken on the canvas: failed to compile: \u2718 [ERROR] No matching export for import "Pay"',
+				"design/frames/home/frame.tsx: broken on the canvas: threw on boot: TypeError: items is undefined",
+			],
+			stdout: ["checked 3 frames (3 source files), 0 errors; 2 broken on the canvas"],
+			ok: true,
+		});
+		expect((await runCheck(root, root, ["big"])).stdout).toEqual(["checked 1 frame (1 source file), 0 errors"]);
 	});
 
 	it("spells out a slow frame only when it is named, and sums up the rest after the diagnostics", async () => {

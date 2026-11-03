@@ -4,6 +4,7 @@ import { checkProject } from "./check";
 import { altReaders, describeAltReader } from "./check-alt";
 import { describeSlowFrame, slowFrames } from "./check-pace";
 import { realDesignDir } from "./daemon/design-path";
+import { scanBrokenFrames } from "./daemon/thumbs";
 
 /** What `spool check [paths…]` says: diagnostics and notes on stderr, the count line on stdout. */
 export interface CheckOutput {
@@ -94,11 +95,23 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 	if (report.ran) for (const reader of altReaders(root, report.frames)) stderr.push(describeAltReader(reader));
 	const errors = report.diagnostics.length;
 	if (!report.ran) return { stderr, stdout: [`not checked: ${count(errors, "error")} stopped it`], ok: false };
+	// what the canvas shows broken, which a typecheck can not see all of (a frame
+	// that throws as it starts) and an agent should hear of in the same answer.
+	// A note rather than a failure: it is as of the canvas's last picture, which
+	// an edit since may have made moot
+	const broken = [...(await scanBrokenFrames(root))].filter(([frame]) => checked.has(frame));
+	for (const [frame, { kind, error }] of broken.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+		const said = error.split("\n").find((line) => line.trim() !== "") ?? error;
+		stderr.push(
+			`design/frames/${frame}/frame.tsx: broken on the canvas: ${kind === "compile" ? `failed to compile: ${said.trim()}` : said.trim()}`,
+		);
+	}
 	const batches = report.batches > 1 ? ` in ${report.batches} batches` : "";
+	const shown = broken.length > 0 ? `; ${broken.length} broken on the canvas` : "";
 	return {
 		stderr,
 		stdout: [
-			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}`,
+			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}${shown}`,
 		],
 		ok: errors === 0 && report.notChecked.length === 0,
 	};
