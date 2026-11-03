@@ -15,6 +15,7 @@ import {
 } from "../cloud-teams";
 import { SpoolError } from "../errors";
 import { startTeamProject } from "../init";
+import { isAddress } from "../team-project";
 import type { DaemonCloud } from "./app";
 import { teamExportRoutes } from "./team-export";
 
@@ -177,6 +178,8 @@ export function cloudTeamRoutes(options: {
 			// project as `spool init --team` makes one
 			.post("/teams/:team/projects", async (c) => {
 				const team = c.req.param("team");
+				// the address becomes a folder under the projects location, so it is one before it is used as one
+				if (!isAddress(team)) return c.json({ error: "No team has this address." }, 400);
 				try {
 					const { root } = await startTeamProject(join(options.location(), team), options.spoolDir, {
 						team,
