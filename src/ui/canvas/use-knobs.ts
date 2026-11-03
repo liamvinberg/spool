@@ -84,6 +84,8 @@ export function createKnobLane(deps: () => KnobLaneDeps) {
 	const pending = new Set<string>();
 	/** each gesture under way, by knob: the value it started from */
 	const gestures = new Map<string, KnobValue | undefined>();
+	/** each knob's last write, which its next one waits for, so two quick releases land in order */
+	const writes = new Map<string, Promise<void>>();
 	let status: { frame: string; status: KnobStatus } | null = null;
 	let washed: { frame: string; id: string; at: string; path: KnobPath; n: number } | null = null;
 	let refused: { frame: string; id: string; refusal: Refusal } | null = null;
@@ -236,7 +238,14 @@ export function createKnobLane(deps: () => KnobLaneDeps) {
 		put(at, path, next);
 		say(frame, null);
 		changed();
-		if (from !== undefined) void write(frame, knob, from, next);
+		if (from === undefined) return;
+		const after = (writes.get(id) ?? Promise.resolve())
+			.catch(() => undefined)
+			.then(() => write(frame, knob, from, next));
+		writes.set(id, after);
+		void after.finally(() => {
+			if (writes.get(id) === after) writes.delete(id);
+		});
 	};
 
 	const write = async (frame: string, knob: Extract<KnobLine, { kind: "knob" }>, from: KnobValue, to: KnobValue) => {
