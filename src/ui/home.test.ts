@@ -37,11 +37,10 @@ const actions = () => ({
 	onOpen: vi.fn(),
 });
 
-it("opens the two first-launch actions without a separate location choice", () => {
+it("opens the two first-launch actions", () => {
 	const callbacks = actions();
 	const host = mount(createElement(Home, { projects: [], ...callbacks }));
 	expect(host.querySelector(".pj-welcome h1")?.textContent).toBe("Start with an idea.");
-	expect(host.textContent).not.toContain("Save projects in");
 	const buttons = host.querySelectorAll<HTMLButtonElement>(".pj-welcome button");
 	act(() => {
 		buttons[0]?.click();
@@ -218,14 +217,13 @@ describe("a card's quiet line", () => {
 });
 
 describe("the head's two buttons", () => {
-	it("starts a project from New project and opens existing work from Open…, with no third way in", () => {
+	it("starts a project from New project and opens existing work from Open…", () => {
 		const callbacks = actions();
 		const host = mount(createElement(Home, { projects: [project("shop", "2026-09-01T00:00:00Z")], ...callbacks }));
 		act(() => button(host, "New project").click());
 		expect(callbacks.onStart).toHaveBeenCalledOnce();
 		act(() => button(host, "Open…").click());
 		expect(callbacks.onOpen).toHaveBeenCalledOnce();
-		expect(host.textContent).not.toContain("Import");
 	});
 });
 

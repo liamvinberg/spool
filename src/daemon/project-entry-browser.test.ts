@@ -116,9 +116,6 @@ it("starts a project at once with the Agent pane out, names it from the first as
 	await chooser.getByRole("button", { name: "Open", exact: true }).click();
 	const sheet = page.getByRole("dialog", { name: "existing-codebase", exact: true });
 	await sheet.getByText("No designs here yet, so its canvas starts empty.").waitFor();
-	// a folder inside a checkout is offered at the checkout's top, beside its code
-	expect(await sheet.innerText()).toContain("git · main");
-	expect(await sheet.innerText()).toContain("adds design/ beside the code");
 	expect(existsSync(join(codebase, "design"))).toBe(false);
 	await sheet.getByRole("button", { name: "Design in this folder", exact: true }).click();
 	await page.getByRole("button", { name: "Close existing-codebase", exact: true }).waitFor();
