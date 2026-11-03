@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
-import type { JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
+import type { CallExpression, JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
+import type { KnobPath, KnobValue } from "../runtime/knob-protocol";
 import { parseStampRef } from "../stamp";
 import { isLayoutOnly, readJsxText, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
+import { isLiteral, knobAt, knobCallAt, plainKey } from "./knob-literals";
 
 /**
  * The write lane (#253): a typed op in, the exact characters out.
@@ -34,7 +36,9 @@ export type HandOp =
 	/** the element out of the file, its own line with it when it stands alone (#317) */
 	| { kind: "delete"; source: string }
 	/** the element before or after a sibling written in the same parent (#340) */
-	| { kind: "move"; source: string; target: string; place: Place };
+	| { kind: "move"; source: string; target: string; place: Place }
+	/** a knob's literal, written in the `ui.knobs` call the stamp names (#220) */
+	| { kind: "set-knob"; source: string; path: KnobPath; value: KnobValue };
 
 /** Which side of the sibling a move lands on (#340). */
 export type Place = "before" | "after";
@@ -62,6 +66,12 @@ type RefusalCode =
 	| "not-siblings"
 	// a move across something the file computes: a condition, a list, a spread (#340)
 	| "sibling-expression"
+	// a knob write whose path names no knob in the call (#220)
+	| "no-knob"
+	// the knob's value is not a literal in the call, so only the agent can change it (#220)
+	| "computed-knob"
+	// an action knob has no value to write (#220)
+	| "action-knob"
 	| "unparsable"
 	| "overlapping-ops"
 	// the one the caller answers, because only it can: the file moved under
@@ -238,6 +248,15 @@ export function planOps(source: string, ops: readonly HandOp[]): Planned {
 
 	for (const op of ops) {
 		const stamp = parseStampRef(op.source);
+		if (op.kind === "set-knob") {
+			// the stamp names a call, not an element
+			const call = stamp === undefined ? undefined : knobCallAt(program, stamp.line, stamp.column);
+			if (call === undefined) return { ok: false, refusal: STALE_STAMP };
+			const planned = planKnob(source, call, op.path, op.value);
+			if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
+			patches.push(...planned.patches);
+			continue;
+		}
 		const element = stamp === undefined ? undefined : elementAt(program, stamp.line, stamp.column, stamp.rel);
 		if (element === undefined) return { ok: false, refusal: STALE_STAMP };
 		if (element.mapped) mapped = true;
@@ -292,7 +311,8 @@ export function readElements(
 	}
 	return at.map(({ line, column }) => {
 		const element = elementAt(program, line, column, rel);
-		if (element === undefined) return undefined;
+		// a knob call reads too, so a write of its literal has a file to be measured against
+		if (element === undefined) return knobCallAt(program, line, column) === undefined ? undefined : {};
 		const words = wordsRefusal(source, element);
 		return words === undefined ? {} : { words };
 	});
@@ -323,7 +343,7 @@ function wordsRefusal(source: string, element: Element): PatchRefusal | undefine
  */
 export type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 
-function planOne(source: string, program: Node, element: Element, op: HandOp): OnePlan {
+function planOne(source: string, program: Node, element: Element, op: Exclude<HandOp, { kind: "set-knob" }>): OnePlan {
 	switch (op.kind) {
 		case "set-text":
 			return planText(source, element, op.nodes);
@@ -488,6 +508,88 @@ function planSupplied(source: string, call: Element, prop: string, text: string)
 	// every element under it, so typed ones are written as the entity
 	const escaped = escapeAttribute(text).replaceAll("\n", "&#10;").replaceAll("\r", "&#13;");
 	return { patches: [narrowed(slot.start, slot.raw, escaped)] };
+}
+
+/**
+ * A knob's literal (#220): exactly the characters of its `value`, or of each
+ * entry in an array or object that keeps its shape, so a tuned value keeps the
+ * file's own spacing and lines, and an entry that did not change keeps its
+ * spelling. A value the file computes, anywhere from the schema down, is the
+ * agent's.
+ */
+function planKnob(source: string, call: CallExpression, path: KnobPath, value: KnobValue): OnePlan {
+	const knob = knobAt(call, path);
+	if (knob.kind === "none") return { refusal: { code: "no-knob", says: `no knob named ${path}` } };
+	if (knob.kind === "knob" && knob.type === "action") {
+		return { refusal: { code: "action-knob", says: `${path} is an action; it has no value to write` } };
+	}
+	if (knob.kind === "computed" || knob.value === undefined || !isLiteral(knob.value)) {
+		return {
+			refusal: {
+				code: "computed-knob",
+				says: "the value is computed, so only the agent can change it",
+				line: (knob.kind === "knob" ? knob.value : call)?.loc?.start.line ?? 0,
+			},
+		};
+	}
+	return { patches: literalPatches(source, knob.value, value) };
+}
+
+function literalPatches(source: string, node: Node, value: KnobValue): SpanPatch[] {
+	if (Array.isArray(value) && node.type === "ArrayExpression" && node.elements.length === value.length) {
+		return node.elements.flatMap((element, index) =>
+			element === null ? [] : literalPatches(source, element, value[index] as number),
+		);
+	}
+	if (typeof value === "object" && !Array.isArray(value) && node.type === "ObjectExpression") {
+		const record = value as Readonly<Record<string, number | string>>;
+		const keys = Object.keys(record);
+		const entries = node.properties.flatMap((property) => {
+			const key = property.type === "ObjectProperty" ? plainKey(property) : undefined;
+			return property.type === "ObjectProperty" && key !== undefined ? [{ key, at: property.value }] : [];
+		});
+		if (entries.length === keys.length && entries.every(({ key }) => Object.hasOwn(record, key))) {
+			return entries.flatMap(({ key, at }) => literalPatches(source, at, record[key] as number | string));
+		}
+	}
+	if (sameValue(node, value)) return [];
+	const quote =
+		node.type === "StringLiteral" ? (source[nodeStart(node)] ?? '"') : node.type === "TemplateLiteral" ? "`" : '"';
+	return [{ start: nodeStart(node), end: nodeEnd(node), text: literalText(value, quote) }];
+}
+
+/** The literal already says this, however it spells it: `0.50` stays. */
+function sameValue(node: Node, value: KnobValue): boolean {
+	if (node.type === "NumericLiteral" || node.type === "StringLiteral" || node.type === "BooleanLiteral") {
+		return node.value === value;
+	}
+	if (node.type === "UnaryExpression" && node.argument.type === "NumericLiteral")
+		return -node.argument.value === value;
+	if (node.type === "TemplateLiteral") return node.quasis[0]?.value.cooked === value;
+	return false;
+}
+
+/** A value as JS spells it, on one line: `18`, `"Oat"`, `[20, 22]`, `{ duration: 0.35, bounce: 0.3 }`. */
+function literalText(value: KnobValue, quote: string): string {
+	if (typeof value === "string") return quoted(value, quote);
+	if (typeof value !== "object") return String(value);
+	if (Array.isArray(value)) return `[${value.map((item) => literalText(item, quote)).join(", ")}]`;
+	const entries = Object.entries(value as Readonly<Record<string, number | string>>);
+	if (entries.length === 0) return "{}";
+	const key = (name: string) => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : quoted(name, quote));
+	return `{ ${entries.map(([name, item]) => `${key(name)}: ${literalText(item, quote)}`).join(", ")} }`;
+}
+
+/** A string in the quotes it is written in, escaped to stay on its line. */
+function quoted(text: string, quote: string): string {
+	const json = jsonString(text);
+	if (quote === '"') return json;
+	const inner = json.slice(1, -1).replace(/\\.|'|`|\$\{/g, (held) => {
+		if (held === '\\"') return '"';
+		if (held === quote || (held === "${" && quote === "`")) return `\\${held}`;
+		return held;
+	});
+	return `${quote}${inner}${quote}`;
 }
 
 /**

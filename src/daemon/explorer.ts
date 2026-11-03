@@ -21,9 +21,11 @@ import {
 } from "./canvas-places";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { type Moved, retargetFor, retargetLinks } from "./frame-links";
+import { type Geometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { reaimEscapingImports } from "./import-aim";
+import { GUTTER, overlaps } from "./placement";
 import { pageMovedInState, pagesDroppedFromState, readCanvasState, writeCanvasState } from "./project-state";
-import { describeMissingFrame, hasFrameEntry, lookupFrame, pagePaths } from "./projection";
+import { describeMissingFrame, hasFrameEntry, listProjectFrames, lookupFrame, pagePaths } from "./projection";
 import { carrySeen } from "./seen";
 import { carryCover } from "./thumbs";
 
@@ -235,10 +237,16 @@ export function moveFrames(
 	return { kind: "moved", moved: renamed(root, designDir, { frames: moves.map(({ from, to }) => ({ from, to })) }) };
 }
 
+/**
+ * Frames copied, each under a name nothing claims. A variant (#220) is named
+ * `<name>--b`, or the next letter free, and stands beside its original on its
+ * page rather than where the sidecar it copied says.
+ */
 export function duplicateFrames(
 	root: string,
 	frames: readonly string[],
 	page: string | undefined,
+	variant = false,
 ): Refusal | { kind: "duplicated"; copies: FrameCopy[] } {
 	if (frames.length === 0) return refuse(400, "a duplicate must name at least one frame");
 	if (page !== undefined && !isPageSlot(page)) return refuse(400, `not a page name: "${page}"`);
@@ -254,10 +262,12 @@ export function duplicateFrames(
 		if (found.kind === "missing") return refuse(404, describeMissingFrame(name));
 		// with no page asked for, a copy stays where its original lives
 		const landing = page ?? pageParent(name);
-		const fresh = freshName(pageName(name), (candidate) => {
+		const taken = (candidate: string) => {
 			const at = pageUnder(landing, candidate);
 			return minted.has(at) || existsSync(folderOf(designDir, at));
-		});
+		};
+		const fresh = variant ? variantName(pageName(name), taken) : freshName(pageName(name), taken);
+		if (fresh === undefined) return refuse(409, `every variant of "${name}" from --b to --z is taken`);
 		const to = pageUnder(landing, fresh);
 		minted.add(to);
 		plan.push({
@@ -266,13 +276,32 @@ export function duplicateFrames(
 			copy: { from: name, to, ...(landing === ROOT_PAGE ? {} : { page: landing }) },
 		});
 	}
+	const field = variant ? listProjectFrames(root).frames : [];
 	// the whole folder, sidecar included: a copy lands where its original sits
 	for (const step of plan) {
 		cpSync(step.from, step.to, { recursive: true });
 		// a copy asked onto another page may land at another depth (#273)
 		reaimEscapingImports(designDir, step.from, step.to);
+		const original = field.find((frame) => frame.name === step.copy.from);
+		if (original === undefined) continue;
+		const beside = besideOf(
+			original,
+			field.filter((frame) => frame.page === original.page),
+		);
+		writeGeometry(sidecarFileIn(step.to), beside, designDir);
+		field.push({ ...original, ...beside, name: step.copy.to });
 	}
 	return { kind: "duplicated", copies: plan.map((step) => step.copy) };
+}
+
+/** To the right of a frame, past whatever already stands on that line. */
+function besideOf(from: Geometry, field: readonly Geometry[]): Geometry {
+	const spot = { x: from.x + from.w + GUTTER, y: from.y, w: from.w, h: from.h };
+	for (let blocker = field.find((one) => overlaps(spot, one)); blocker !== undefined; ) {
+		spot.x = blocker.x + blocker.w + GUTTER;
+		blocker = field.find((one) => overlaps(spot, one));
+	}
+	return spot;
 }
 
 /**
@@ -357,6 +386,16 @@ function freshName(name: string, taken: (candidate: string) => boolean): string 
 		const candidate = `${base}-${suffix}`;
 		if (!taken(candidate)) return candidate;
 	}
+}
+
+/** `<name>--b` to `<name>--z`, a variant's own letter set aside: a variant of `card--b` is `card--c`. */
+function variantName(name: string, taken: (candidate: string) => boolean): string | undefined {
+	const base = name.replace(/--[b-z]$/, "");
+	for (let letter = "b".charCodeAt(0); letter <= "z".charCodeAt(0); letter += 1) {
+		const candidate = `${base}--${String.fromCharCode(letter)}`;
+		if (!taken(candidate)) return candidate;
+	}
+	return undefined;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import type { KnobPath, KnobValue } from "../runtime/knob-protocol";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import {
 	applySpan,
@@ -465,6 +466,26 @@ function moveSpliced(root: string, frame: string, ask: MoveAsk): WriteSite {
 	return planned(at, source, [{ kind: "move", source: subject, target, place: ask.place }]);
 }
 
+/** A knob's literal as the canvas sends it on release (#220): the call's stamp, the knob's path, its value. */
+export interface KnobAsk {
+	at: string;
+	path: KnobPath;
+	value: KnobValue;
+}
+
+/**
+ * Where a knob's write lands (#220): the call its stamp names, in the frame's
+ * own file or a shared one. It carries no fingerprint, because the frame
+ * declared the call and nobody read the file: the gate finds the call only at
+ * its exact place and checks the value is a literal at the moment of writing,
+ * so a file that moved under it refuses as a stale stamp.
+ */
+export function knobSite(root: string, frame: string, ask: KnobAsk): WriteSite {
+	const place = siteAt(root, frame, ask.at);
+	if ("kind" in place) return place;
+	return planned(place.at, place.source, [{ kind: "set-knob", source: ask.at, path: ask.path, value: ask.value }]);
+}
+
 /** The file one relative specifier in a design/ source lands on, inside design/. */
 function importedFile(root: string, from: string, specifier: string): { file: string; rel: string } | undefined {
 	let designDir: string;
@@ -524,7 +545,7 @@ type Site =
 	| { kind: "refusal"; refusal: PatchRefusal }
 	| { kind: "error"; status: 400 | 404; message: string };
 
-function siteAt(root: string, frame: string, stamped: string, fingerprint: string): Site {
+function siteAt(root: string, frame: string, stamped: string, fingerprint?: string): Site {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
 	const stamp = stampIn(root, stamped);
@@ -536,7 +557,8 @@ function siteAt(root: string, frame: string, stamped: string, fingerprint: strin
 	} catch {
 		return { kind: "refusal", refusal: STALE_STAMP };
 	}
-	if (fingerprintOf(source) !== fingerprint) return { kind: "refusal", refusal: STALE_FILE };
+	if (fingerprint !== undefined && fingerprintOf(source) !== fingerprint)
+		return { kind: "refusal", refusal: STALE_FILE };
 	return { at: stamp.stamp, source };
 }
 

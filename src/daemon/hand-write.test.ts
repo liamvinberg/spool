@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { KnobValue } from "../runtime/knob-protocol";
 import {
 	applySpan,
 	fingerprintOf,
@@ -768,5 +769,63 @@ describe("move", () => {
 		expect("refusal" in missing && missing.refusal.code).toBe("stale-stamp");
 		const computed = planItemMove(`const rows = load();\n`, "rows", 0, 1, "after");
 		expect("refusal" in computed && computed.refusal.code).toBe("mapped-expression");
+	});
+});
+
+describe("set-knob", () => {
+	const KNOBS = `import { ui } from "spool";
+const base = 4;
+export const k = ui.knobs({
+	card: {
+		radius: { type: "corners", value: 20, min: 0, max: 40 },
+		padding: { type: "spacing", value: [20,
+			22] },
+		label: { type: "text", value: 'Oat latte' },
+		gap: { type: "slider", value: base * 2 },
+	},
+	motion: {
+		spring: { type: "spring", value: { duration: 0.35, bounce: 0.3 } },
+		replay: { type: "action", label: "Replay" },
+	},
+	more: someSpec,
+});
+`;
+	const call = stamp(KNOBS, "ui.knobs(");
+	const knob = (path: string, value: KnobValue): HandOp => ({ kind: "set-knob", source: call, path, value });
+
+	it("writes exactly the value's characters, in the quotes a string is written in", () => {
+		expect(written([knob("card.radius", -2.5)], KNOBS)).toBe(KNOBS.replace("value: 20,", "value: -2.5,"));
+		expect(written([knob("card.label", `It's "oat"\n`)], KNOBS)).toBe(
+			KNOBS.replace("'Oat latte'", `'It\\'s "oat"\\n'`),
+		);
+		// a knob call reads like an element, so its file has a fingerprint to be measured against
+		const [line, column] = call.split(":").slice(1).map(Number);
+		expect(readElements(KNOBS, [{ line: line ?? 0, column: column ?? 0 }])).toEqual([{}]);
+	});
+
+	it("writes an array or object entry by entry while it keeps its shape, and whole on one line once it doesn't", () => {
+		expect(written([knob("card.padding", [18, 22])], KNOBS)).toBe(KNOBS.replace("[20,", "[18,"));
+		expect(written([knob("card.padding", [8, 12, 8, 12])], KNOBS)).toBe(
+			KNOBS.replace("[20,\n\t\t\t22]", "[8, 12, 8, 12]"),
+		);
+		expect(written([knob("motion.spring", { duration: 0.5, bounce: 0.3 })], KNOBS)).toBe(
+			KNOBS.replace("0.35", "0.5"),
+		);
+		expect(written([knob("motion.spring", { stiffness: 180, damping: 12 })], KNOBS)).toBe(
+			KNOBS.replace("{ duration: 0.35, bounce: 0.3 }", "{ stiffness: 180, damping: 12 }"),
+		);
+	});
+
+	it("refuses a stamp that hits no call, a path that names no knob, a computed value and an action", () => {
+		expect(refusal([{ ...knob("card.radius", 1), source: stamp(KNOBS, "card:") }], KNOBS).code).toBe("stale-stamp");
+		expect(refusal([knob("card.nope", 1)], KNOBS)).toEqual({ code: "no-knob", says: "no knob named card.nope" });
+		expect(refusal([knob("card", 1)], KNOBS).code).toBe("no-knob");
+		expect(refusal([knob("card.gap", 1)], KNOBS)).toEqual({
+			code: "computed-knob",
+			says: "the value is computed, so only the agent can change it",
+			line: 9,
+		});
+		expect(refusal([knob("more.radius", 1)], KNOBS).code).toBe("computed-knob");
+		expect(refusal([knob("motion.replay", 1)], KNOBS).code).toBe("action-knob");
 	});
 });

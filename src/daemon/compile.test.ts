@@ -165,6 +165,38 @@ describe("design-relative shared/ imports", () => {
 });
 
 /**
+ * Knob stamps (#220): a `ui.knobs` call in a frame or in a shared file outside
+ * shared/ui/ compiles with its site, in a plain build and a Fast Refresh one.
+ */
+describe("ui.knobs calls", () => {
+	it("compile with the site of a shared file's call, hot or not", async () => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const designDir = realDesignDir(root);
+		writeDesignFile(
+			root,
+			"shared/knobs/kaffe.ts",
+			'import { ui } from "spool";\nexport const kaffe = ui.knobs({ roast: { type: "slider", value: 3 } });\n',
+		);
+		writeFrame(
+			root,
+			"menu",
+			'import { kaffe } from "shared/knobs/kaffe";\nexport default () => <p>{kaffe.roast}</p>;\n',
+		);
+		for (const hot of [undefined, true] as const) {
+			const { bootJs } = await bundle({
+				designDir,
+				resolveDir: join(designDir, "frames", "menu"),
+				sourcefile: "<spool-boot>",
+				contents: 'export { default } from "./frame.tsx";\n',
+				label: 'frame "menu"',
+				hot,
+			});
+			expect(bootJs).toContain('{ "at": "shared/knobs/kaffe.ts:2:22", "computed": [] }');
+		}
+	});
+});
+
+/**
  * Frames compile with core's own TypeScript settings. A project's own
  * tsconfig.json above design/, which esbuild would otherwise find and obey,
  * changes nothing a frame compiles to: the cloud is handed design/ alone and
