@@ -27,14 +27,14 @@ const git = (cwd: string, ...args: string[]) =>
 
 it("opens a project from its folder or from anything inside it, however the path was written", async () => {
 	const { home, find } = world();
-	const kaffe = join(home, "spool", "kaffe");
+	const kaffe = join(home, "spool", "kaffe bar");
 	markProject(kaffe);
 	mkdirSync(join(kaffe, "design", "frames", "cart"), { recursive: true });
 	writeFileSync(join(kaffe, "design", "frames", "cart", "frame.tsx"), "");
-	const opens = { kind: "project", root: kaffe, name: "kaffe" };
+	const opens = { kind: "project", root: kaffe, name: "kaffe bar" };
 	expect(await find(kaffe)).toEqual(opens);
-	expect(await find("~/spool/kaffe/")).toEqual(opens);
-	expect(await find(`file://${kaffe}/design/frames`)).toEqual(opens);
+	expect(await find("~/spool/kaffe bar/")).toEqual(opens);
+	expect(await find(`file://${kaffe.replaceAll(" ", "%20")}/design/frames/`)).toEqual(opens);
 	expect(await find(` "${join(kaffe, "design", "frames", "cart", "frame.tsx")}" `)).toEqual(opens);
 });
 

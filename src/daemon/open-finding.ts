@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { branchAt, remoteHead } from "../git-clone";
 import { checkoutOf, repoOf } from "../git-remote";
 import { realDir } from "../paths";
@@ -59,7 +60,7 @@ export async function findOpenable(given: string, deps: FindingDeps): Promise<Fi
 function asPath(text: string, home: string): string | undefined {
 	if (text.startsWith("file://")) {
 		try {
-			return new URL(text).pathname.replace(/\/+$/u, "") || "/";
+			return resolve(fileURLToPath(text));
 		} catch {
 			return undefined;
 		}
