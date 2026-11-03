@@ -38,6 +38,9 @@ it("clones a repo that answers with its branch, and leaves nothing behind when t
 
 	await expect(cloneInto(`file://${join(dir, "nothing")}`, join(dir, "spool", "gone"))).rejects.toThrow();
 	expect(existsSync(join(dir, "spool", "gone"))).toBe(false);
+	// a folder that came there meanwhile is someone else's: the clone refuses it and leaves it be
+	await expect(cloneInto(url, join(dir, "spool", "tide-tables"))).rejects.toThrow("is already there");
+	expect(readFileSync(join(dir, "spool", "tide-tables", "README.md"), "utf8")).toBe("tides\n");
 });
 
 it("reads how far a clone has got from what git prints", () => {

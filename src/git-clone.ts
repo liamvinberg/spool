@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { SpoolError } from "./errors";
 
@@ -65,12 +66,22 @@ export function cloneProgressOf(line: string): CloneProgress {
 	};
 }
 
-/** Clone `url` into `into`, which must not exist yet. A clone that fails or is stopped leaves nothing behind. */
+/**
+ * Clone `url` into `into`, a folder this makes and refuses to find already there. A clone that fails or is stopped
+ * takes that folder away again, and nothing it did not make.
+ */
 export async function cloneInto(
 	url: string,
 	into: string,
 	options: { progress?: (progress: CloneProgress) => void; signal?: AbortSignal } = {},
 ): Promise<void> {
+	mkdirSync(dirname(into), { recursive: true });
+	try {
+		mkdirSync(into);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new SpoolError(`${into} is already there.`);
+		throw error;
+	}
 	const child = spawn("git", ["clone", "--progress", "--", url, into], {
 		env: quiet(),
 		stdio: ["ignore", "ignore", "pipe"],
