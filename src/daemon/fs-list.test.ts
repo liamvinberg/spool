@@ -5,10 +5,15 @@ import { initProject } from "../init";
 import { makeTempDir } from "../test-helpers";
 import { createDirectory, listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 
-it("identifies the current folder as a project, including through a symlink", () => {
+it("identifies the current folder as a project, including through a symlink, and lists .spool files beside it", () => {
 	const parent = makeHome(["coffee#"]);
 	symlinkSync(join(parent, "coffee"), join(parent, "shortcut"));
+	writeFileSync(join(parent, "kaffe-menu.spool"), "zip");
+	writeFileSync(join(parent, "notes.txt"), "");
 	expect(listDirectory(parent)?.isProject).toBe(false);
+	expect(listDirectory(parent)?.spools).toEqual([
+		{ name: "kaffe-menu.spool", path: join(realpathSync(parent), "kaffe-menu.spool") },
+	]);
 	expect(listDirectory(join(parent, "shortcut"))).toMatchObject({
 		path: join(realpathSync(parent), "coffee"),
 		isProject: true,

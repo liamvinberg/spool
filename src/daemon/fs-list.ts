@@ -33,6 +33,8 @@ export interface FsListing {
 	parent: string | null;
 	isProject: boolean;
 	dirs: FsEntry[];
+	/** the `.spool` project files beside them, which Open… takes too */
+	spools: { name: string; path: string }[];
 }
 
 /**
@@ -64,9 +66,15 @@ export function listDirectory(requested: string | undefined, options: ListOption
 	}
 	const atHome = path === realOrSelf(home);
 	let dirs: FsEntry[];
+	let spools: FsListing["spools"];
 	try {
-		dirs = readdirSync(path, { withFileTypes: true })
-			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+		const entries = readdirSync(path, { withFileTypes: true }).filter((entry) => !entry.name.startsWith("."));
+		spools = entries
+			.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".spool"))
+			.map((entry) => ({ name: entry.name, path: join(path, entry.name) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		dirs = entries
+			.filter((entry) => entry.isDirectory())
 			.map((entry) => {
 				const full = join(path, entry.name);
 				const probed = !(atHome && guarded.has(entry.name));
@@ -86,6 +94,7 @@ export function listDirectory(requested: string | undefined, options: ListOption
 		parent: parent === path ? null : parent,
 		isProject: existsSync(join(path, "design", "canvas.json")),
 		dirs,
+		spools,
 	};
 }
 
