@@ -43,6 +43,15 @@ export function PlusIcon() {
 	);
 }
 
+/** the plus's partner, for a stepper */
+export function MinusIcon() {
+	return (
+		<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+			<path d="M1 5 L9 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 export function BackIcon() {
 	return (
 		<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
