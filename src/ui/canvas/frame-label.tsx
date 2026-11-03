@@ -64,6 +64,7 @@ export const FrameLabel = memo(function FrameLabel({
 	selected,
 	hovered,
 	unseen,
+	broken = false,
 	onPlay,
 	live,
 	clickEnters = false,
@@ -99,6 +100,8 @@ export const FrameLabel = memo(function FrameLabel({
 	 * is when you most need to know which of these is new.
 	 */
 	unseen?: Unseen | undefined;
+	/** it does not compile or throws as it starts: the name in danger, the one thing that says so zoomed out */
+	broken?: boolean | undefined;
 	/** Play this frame, by its name. Offered on the frame pointed at, the selection and the live one. */
 	onPlay?: ((name: string) => void) | undefined;
 }) {
@@ -199,9 +202,11 @@ export const FrameLabel = memo(function FrameLabel({
 							className={`min-w-0 truncate transition-colors duration-fast ease-out type-value ${
 								selected || overview === "target"
 									? "text-accent-strong"
-									: hovered || unseen !== undefined || overview === "near"
-										? "text-primary"
-										: "text-secondary"
+									: broken
+										? "text-danger-strong"
+										: hovered || unseen !== undefined || overview === "near"
+											? "text-primary"
+											: "text-secondary"
 							}`}
 						>
 							{leaf}

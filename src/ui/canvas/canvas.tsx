@@ -12,6 +12,7 @@ import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
+import type { BrokenFrame as BrokenFrameRecord } from "../../daemon/thumbs";
 import { pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
@@ -84,6 +85,7 @@ import type { AgentTile } from "./agent-transcript";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
 import { frameScheme, framesOnScreen } from "./booth-view";
+import { BrokenFrame, brokenAsk } from "./broken-frame";
 import {
 	type Box,
 	boundsOf,
@@ -712,29 +714,34 @@ function CanvasField({
 	// machine that is true before anybody types
 	const install = useAgentInstall(project, deckEngine, deckOpen);
 	/**
-	 * Clashes' Ask agent to fix: one press opens a new thread and sends it every clashed file, with
-	 * where both sides are. The rail opens on it. Where the rail has nowhere to put words yet, the
-	 * composer holds them for the person to send. With no agent on this machine, the prompt is copied.
+	 * Ask agent to fix, for clashes and broken frames alike: one press opens a new thread and sends it
+	 * what is wrong. The rail opens on it. Where the rail has nowhere to put words yet, the composer
+	 * holds them for the person to send. With no agent on this machine, the prompt is copied.
 	 */
 	const fixing = useRef<{ text: string; from: string } | null>(null);
 	const onNewThread = useCallback(() => deck.get().onNew(), [deck]);
 	const noAgent = install.none;
-	const fixClashes = useMemo(
-		() => ({
-			label: noAgent ? "Copy prompt" : "Ask agent to fix",
-			run: (marks: readonly ShownSetAside[]) => {
-				const text = setAsideAsk(marks);
-				if (noAgent) {
-					void navigator.clipboard
-						?.writeText(text)
-						.then(() => setNotice({ kind: "success", message: "Prompt copied: paste it into your agent" }));
-					return;
-				}
-				fixing.current = { text, from: deck.get().open };
-				onNewThread();
-			},
-		}),
+	const fixLabel = noAgent ? "Copy prompt" : "Ask agent to fix";
+	const askToFix = useCallback(
+		(text: string) => {
+			if (noAgent) {
+				void navigator.clipboard
+					?.writeText(text)
+					.then(() => setNotice({ kind: "success", message: "Prompt copied: paste it into your agent" }));
+				return;
+			}
+			fixing.current = { text, from: deck.get().open };
+			onNewThread();
+		},
 		[noAgent, onNewThread, deck],
+	);
+	const fixClashes = useMemo(
+		() => ({ label: fixLabel, run: (marks: readonly ShownSetAside[]) => askToFix(setAsideAsk(marks)) }),
+		[fixLabel, askToFix],
+	);
+	const fixBroken = useCallback(
+		(frame: string, broken: BrokenFrameRecord) => askToFix(brokenAsk(frame, broken)),
+		[askToFix],
 	);
 	useEffect(() => {
 		const asked = fixing.current;
@@ -746,7 +753,7 @@ function CanvasField({
 		setAgentRequest({
 			id: crypto.randomUUID(),
 			thread: deckOpen,
-			...(took ? {} : { prepared: { intent: "set-aside", text: asked.text, selection: [] } }),
+			...(took ? {} : { prepared: { intent: "fix", text: asked.text, selection: [] } }),
 		});
 	}, [deckOpen, deck]);
 	const setAside = useSetAside(project, fixClashes);
@@ -960,11 +967,16 @@ function CanvasField({
 			setFrames((current) => {
 				// The booth photographs a frame that did not change to the same bytes, so
 				// the same address. A picture the canvas already shows is not worth a
-				// render of the whole canvas.
-				if (!current.some((entry) => entry.name === frame && entry.cover?.hash !== cover.hash)) return current;
-				return current.map((entry) =>
-					entry.name === frame && entry.cover?.hash !== cover.hash ? { ...entry, cover } : entry,
-				);
+				// render of the whole canvas. A picture landing is also proof the frame
+				// works again, whatever it looks like: the booth only keeps one it made.
+				const stale = (entry: ProjectedFrame) =>
+					entry.name === frame && (entry.cover?.hash !== cover.hash || entry.broken !== undefined);
+				if (!current.some(stale)) return current;
+				return current.map((entry) => {
+					if (!stale(entry)) return entry;
+					const { broken: _fixed, ...rest } = entry;
+					return { ...rest, cover };
+				});
 			});
 		},
 		[frameReads],
@@ -3250,6 +3262,10 @@ function CanvasField({
 						// read back costs a projection read
 						if (event.cover !== undefined) noteCover(event.frame, event.cover);
 						else void refetchFrames();
+					} else if (event.kind === "cover-failed") {
+						// the booth recorded why it could not picture a frame: whether that
+						// makes the frame broken is the projection's to say
+						void refetchFrames();
 					} else if (event.kind === "sync") {
 						// team sync says what didn't travel, why it paused, or that the project ended here: said where
 						// it lasts, and read again from the daemon
@@ -5738,6 +5754,22 @@ function CanvasField({
 									}}
 								</FrameLife>
 							))}
+							{/* over its shell, whatever the shell shows: a broken frame's picture is of a
+						    version that no longer exists, and its document is the error (#390) */}
+							{visibleFrames.map((frame) =>
+								frame.broken === undefined ? null : (
+									<BrokenFrame
+										key={`${frame.name}:broken`}
+										name={frame.name}
+										frame={frame}
+										broken={frame.broken}
+										camera={camera}
+										near={near}
+										act={fixLabel}
+										onAct={fixBroken}
+									/>
+								),
+							)}
 						</CameraField>
 					)}
 					{/* Labels share one layer above every frame. A transformed frame is
@@ -5764,6 +5796,7 @@ function CanvasField({
 										selected={isSelected}
 										hovered={isHovered}
 										unseen={unseen.get(frame.name)}
+										broken={frame.broken !== undefined}
 										onPlay={playFrame}
 										live={
 											isEntered && live.chip?.frame === frame.name
