@@ -1,5 +1,7 @@
 // Input primitives: TextField, NumberField, SearchField, Textarea and the bare
 // multi-line input, SelectTrigger, Field (label, hint, error) and ColourField.
+// NumberField carries the one number engine every knob tunes with (#220):
+// typing with maths and units, the scrub, the keys, and the gesture they share.
 //
 // The box is one thing, `FieldBox`: a well behind a hairline that firms on
 // hover, takes the one focus ring inside its edge, and turns danger on
@@ -14,7 +16,9 @@ import {
 	type ChangeEvent,
 	type ComponentProps,
 	type HTMLAttributes,
+	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
+	type PointerEvent as ReactPointerEvent,
 	useId,
 	useRef,
 	useState,
@@ -241,19 +245,327 @@ export interface TuneProps<T> {
 	disabled?: boolean | undefined;
 }
 
-export interface NumberFieldProps
-	extends Omit<FieldBoxProps, "children" | "onChange" | "defaultValue" | "prefix" | "size"> {
-	size?: FieldSize | undefined;
-	value: number;
-	/** a typed number, committed on Enter or blur, and never the value it already has */
-	onValueChange: (next: number) => void;
-	/** whole steps from the arrows, signed: one a press, ten under shift. Without it the arrows step `value` by `step` */
-	onStep?: ((units: number) => void) | undefined;
-	/** what one arrow press moves `value` by, when no `onStep` takes the steps */
+/** What a number may be: what holds it, what a step is, and the units it may be typed in. */
+export interface NumberRules {
+	/** held to on commit */
+	min?: number | undefined;
+	max?: number | undefined;
+	/** what an arrow or a scrub moves it by: shift ten of them, alt a tenth */
 	step?: number | undefined;
 	/** what it measures: `px` */
 	unit?: string | undefined;
-	/** the axis in the box: `x`, `w`, when no row names it */
+	/** the other units it may be typed in, each as how many `unit` one is: `{ s: 1000 }` beside `ms` */
+	units?: Readonly<Record<string, number>> | undefined;
+	/** where a scrub sticks for a moment; the value it set out from always does */
+	detents?: readonly number[] | undefined;
+	/** past `max` it comes round to `min` again, as an angle does */
+	wrap?: boolean | undefined;
+}
+
+/** A number held to its rules, wrapped or clamped, and rid of float dust. */
+export function fitNumber(n: number, rules: NumberRules): number {
+	const { min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY } = rules;
+	const span = max - min;
+	const held =
+		rules.wrap === true && Number.isFinite(span)
+			? ((((n - min) % span) + span) % span) + min
+			: Math.min(max, Math.max(min, n));
+	return Math.round(held * 1e6) / 1e6;
+}
+
+/**
+ * What a typed value says in the number's own unit, or null when it says
+ * nothing a number could be. `+ - * / ( )` work and units convert (`0.3s`
+ * beside `ms`); a line that opens with `+`, `*` or `/` works on `current`, as
+ * Figma's fields do (`+4`, `*2`). A comma is a decimal point.
+ */
+export function readNumber(text: string, current: number, rules: NumberRules): number | null {
+	const source = text.trim().replace(/,/g, ".").replace(/−/g, "-").replace(/×/g, "*");
+	const tokens: string[] = source.match(/(?:\d+\.?\d*|\.\d+)\s*[a-zµ°%]*|\S/gi) ?? [];
+	if (tokens.length === 0) return null;
+	if (/^[+*/]$/.test(tokens[0] ?? "")) tokens.unshift("x");
+	let at = 0;
+	const atom = (): number => {
+		const token = tokens[at++];
+		if (token === "x") return current;
+		if (token === "-") return -atom();
+		if (token === "(") {
+			const n = sum();
+			if (tokens[at++] !== ")") throw new Error("unclosed");
+			return n;
+		}
+		const number = /^(\d+\.?\d*|\.\d+)\s*(.*)$/.exec(token ?? "");
+		const unit = number?.[2] ?? "";
+		const factor = unit === "" || unit === rules.unit ? 1 : rules.units?.[unit];
+		if (number === null || factor === undefined) throw new Error("not a number");
+		return Number.parseFloat(number[1] ?? "") * factor;
+	};
+	const product = (): number => {
+		let n = atom();
+		while (tokens[at] === "*" || tokens[at] === "/") n = tokens[at++] === "*" ? n * atom() : n / atom();
+		return n;
+	};
+	const sum = (): number => {
+		let n = product();
+		while (tokens[at] === "+" || tokens[at] === "-") n = tokens[at++] === "+" ? n + product() : n - product();
+		return n;
+	};
+	try {
+		const n = sum();
+		return at === tokens.length && Number.isFinite(n) ? n : null;
+	} catch {
+		return null;
+	}
+}
+
+/** The nearest detent `raw` is within `zone` of, or null. */
+export function stickTo(raw: number, detents: readonly number[], zone: number): number | null {
+	let best: number | null = null;
+	for (const d of detents)
+		if (Math.abs(raw - d) < zone && (best === null || Math.abs(raw - d) < Math.abs(raw - best))) best = d;
+	return best;
+}
+
+/** A pointer's travel in one drag, and the modifiers held as it went. */
+export interface DragMove {
+	x: number;
+	y: number;
+	/** since the press */
+	dx: number;
+	dy: number;
+	/** since the last move */
+	mx: number;
+	my: number;
+	shift: boolean;
+	alt: boolean;
+}
+
+/**
+ * How fast a drag runs: slower the further the pointer strays from where it
+ * pressed, a half and then a quarter, so a trackpad gets fine control with no
+ * key held; shift ten times, alt a tenth.
+ */
+export function scrubSpeed(move: Pick<DragMove, "dy" | "shift" | "alt">): number {
+	const away = Math.abs(move.dy);
+	return (away < 36 ? 1 : away < 110 ? 0.5 : 0.25) * (move.shift ? 10 : move.alt ? 0.1 : 1);
+}
+
+/** pixels of a label scrub one step takes at speed one */
+const PX_PER_STEP = 2;
+/** pixels of travel a detent holds a drag for */
+const DETENT_PX = 5;
+
+/**
+ * One move of a drag on a number, `perPx` a pixel's worth at speed one: the
+ * raw value it carries on with, and the value to show, a whole step (a tenth
+ * of one under alt) unless a detent or the value it set out from holds it.
+ */
+export function scrubNumber(
+	raw: number,
+	move: Pick<DragMove, "mx" | "dy" | "shift" | "alt">,
+	perPx: number,
+	from: number,
+	rules: NumberRules,
+): { raw: number; value: number } {
+	const speed = scrubSpeed(move);
+	const next = fitNumber(raw + move.mx * perPx * speed, rules);
+	const near = stickTo(next, [...(rules.detents ?? []), from], DETENT_PX * perPx * Math.min(1, speed));
+	const quantum = (rules.step ?? 1) * (move.alt ? 0.1 : 1);
+	return { raw: next, value: near ?? fitNumber(Math.round(next / quantum) * quantum, rules) };
+}
+
+/**
+ * Runs one press to its end, captured so it survives leaving its element.
+ * `move` hears the pointer once it has come `threshold` pixels; Escape is
+ * caught before anything else hears it and ends the drag in `cancel`, as
+ * losing the pointer or the window does.
+ */
+export function drag(
+	event: ReactPointerEvent<Element>,
+	on: { move: (move: DragMove) => void; end: () => void; cancel: () => void },
+	threshold = 0,
+): void {
+	if (event.button !== 0) return;
+	event.preventDefault();
+	event.stopPropagation();
+	const target = event.currentTarget as HTMLElement;
+	// the press's default is gone, and with it the focus a slider's keys need
+	if (target.tabIndex >= 0) target.focus({ preventScroll: true });
+	const doc = target.ownerDocument;
+	const pointer = event.pointerId;
+	const start = { x: event.clientX, y: event.clientY };
+	let last = start;
+	let started = threshold === 0;
+	const move = (next: PointerEvent) => {
+		if (next.pointerId !== pointer) return;
+		const at = { x: next.clientX, y: next.clientY };
+		if (!started && Math.abs(at.x - start.x) + Math.abs(at.y - start.y) < threshold) return;
+		started = true;
+		const { x, y } = at;
+		on.move({
+			x,
+			y,
+			dx: x - start.x,
+			dy: y - start.y,
+			mx: x - last.x,
+			my: y - last.y,
+			shift: next.shiftKey,
+			alt: next.altKey,
+		});
+		last = at;
+	};
+	const finish = (cancelled: boolean) => {
+		doc.removeEventListener("pointermove", move, true);
+		doc.removeEventListener("pointerup", up, true);
+		doc.removeEventListener("pointercancel", lost, true);
+		doc.defaultView?.removeEventListener("keydown", key, true);
+		doc.defaultView?.removeEventListener("blur", away);
+		try {
+			target.releasePointerCapture(pointer);
+		} catch {
+			/* never captured */
+		}
+		if (cancelled) on.cancel();
+		else on.end();
+	};
+	const up = (next: PointerEvent) => next.pointerId === pointer && finish(false);
+	const lost = (next: PointerEvent) => next.pointerId === pointer && finish(true);
+	const away = () => finish(true);
+	const key = (next: KeyboardEvent) => {
+		if (next.key !== "Escape") return;
+		next.preventDefault();
+		next.stopImmediatePropagation();
+		finish(true);
+	};
+	doc.addEventListener("pointermove", move, true);
+	doc.addEventListener("pointerup", up, true);
+	doc.addEventListener("pointercancel", lost, true);
+	doc.defaultView?.addEventListener("keydown", key, true);
+	doc.defaultView?.addEventListener("blur", away);
+	try {
+		target.setPointerCapture(pointer);
+	} catch {
+		/* the document's listeners carry it */
+	}
+}
+
+/** One gesture's reports, so a gesture is one write however long it runs. */
+export interface TuneGesture<T> {
+	/** where it is now */
+	readonly value: T;
+	/** moves it, when `next` is somewhere new */
+	live: (next: T) => void;
+	/** the one commit; a gesture that came back where it set out from cancels instead, so nothing writes */
+	end: () => void;
+	/** puts back the value it set out from */
+	cancel: () => void;
+}
+
+export function tuneGesture<T>(from: T, onTune: TuneProps<T>["onTune"]): TuneGesture<T> {
+	const same = (a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
+	let last = from;
+	let moved = false;
+	const stop = (phase: TunePhase) => {
+		if (moved) onTune(phase === "commit" ? last : from, phase);
+		moved = false;
+	};
+	return {
+		get value() {
+			return last;
+		},
+		live(next) {
+			if (same(next, last)) return;
+			last = next;
+			moved = true;
+			onTune(next, "live");
+		},
+		end: () => stop(same(last, from) ? "cancel" : "commit"),
+		cancel: () => stop("cancel"),
+	};
+}
+
+/**
+ * A label that scrubs a number: spread the handler on it. A drag sideways
+ * moves the number a step every two pixels at speed one (`scrubSpeed`), and
+ * the value it set out from holds it a moment on the way back.
+ */
+export function useScrub(
+	value: number,
+	rules: NumberRules,
+	onTune: TuneProps<number>["onTune"],
+): (event: ReactPointerEvent<Element>) => void {
+	const held = useRef({ value, rules, onTune });
+	held.current = { value, rules, onTune };
+	return (event) => {
+		const { value: from, rules: now } = held.current;
+		const tune = tuneGesture(from, (next, phase) => held.current.onTune(next, phase));
+		const perPx = (now.step ?? 1) / PX_PER_STEP;
+		let raw = from;
+		const move = (step: DragMove) => {
+			const next = scrubNumber(raw, step, perPx, from, now);
+			raw = next.raw;
+			tune.live(next.value);
+		};
+		drag(event, { move, end: tune.end, cancel: tune.cancel }, 3);
+	};
+}
+
+const STEP_KEYS: Readonly<Record<string, 1 | -1>> = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 };
+
+/**
+ * Arrow keys on a number: up and right step on, down and left back, shift ten
+ * steps, alt a tenth. Each press moves it at once; the commit waits for the
+ * key to come up, so a held arrow is one write however far it runs, and
+ * Escape before then puts back where it began.
+ */
+export function useKeyTune(value: number, rules: NumberRules, onTune: TuneProps<number>["onTune"]) {
+	const gesture = useRef<TuneGesture<number> | null>(null);
+	const held = useRef(onTune);
+	held.current = onTune;
+	const end = () => {
+		gesture.current?.end();
+		gesture.current = null;
+	};
+	return {
+		onKeyDown: (event: ReactKeyboardEvent<Element>) => {
+			if (event.key === "Escape" && gesture.current !== null) {
+				event.preventDefault();
+				event.stopPropagation();
+				gesture.current.cancel();
+				gesture.current = null;
+				return;
+			}
+			const sign = STEP_KEYS[event.key];
+			if (sign === undefined) return;
+			event.preventDefault();
+			event.stopPropagation();
+			gesture.current ??= tuneGesture(value, (next, phase) => held.current(next, phase));
+			const by = (rules.step ?? 1) * (event.shiftKey ? 10 : event.altKey ? 0.1 : 1);
+			gesture.current.live(fitNumber(gesture.current.value + sign * by, rules));
+		},
+		onKeyUp: (event: ReactKeyboardEvent<Element>) => {
+			if (STEP_KEYS[event.key] !== undefined) end();
+		},
+		onBlur: end,
+	};
+}
+
+export interface NumberFieldProps
+	extends Omit<FieldBoxProps, "children" | "onChange" | "defaultValue" | "prefix" | "size">,
+		NumberRules {
+	size?: FieldSize | undefined;
+	value: number;
+	/**
+	 * Every change as a knob reports it: the prefix scrubs and a held arrow
+	 * runs `live` until one `commit`, a typed number commits on Enter or blur.
+	 * Without it the field is the panel's older kind, and reports below.
+	 */
+	onTune?: TuneProps<number>["onTune"] | undefined;
+	/** a typed number, committed on Enter or blur, and never the value it already has */
+	onValueChange?: ((next: number) => void) | undefined;
+	/** whole steps from the arrows, signed: one a press, ten under shift. Without it the arrows step `value` by `step` */
+	onStep?: ((units: number) => void) | undefined;
+	/** the axis in the box: `x`, `w`, when no row names it; with `onTune` it scrubs */
 	prefix?: string | undefined;
 	label?: string | undefined;
 	inputProps?: ComponentProps<"input"> | undefined;
@@ -262,17 +574,24 @@ export interface NumberFieldProps
 /**
  * A number in mono with its unit faint beside it. Quiet in a panel, so the
  * panel reads as values and the box arrives under the pointer. Focus selects
- * the number to type over; the draft is the field's own until Enter or blur
- * commits it, Escape puts the number back, and the arrows step.
+ * the number to type over, with maths and units (`readNumber`); the draft is
+ * the field's own until Enter or blur commits it, held to `min` and `max`,
+ * Escape puts the number back, and the arrows step.
  */
 export function NumberField({
 	size = "xs",
 	tone = "quiet",
 	value,
+	onTune,
 	onValueChange,
 	onStep,
+	min,
+	max,
 	step = 1,
 	unit,
+	units,
+	detents,
+	wrap,
 	prefix,
 	label,
 	error = false,
@@ -281,17 +600,25 @@ export function NumberField({
 	className,
 	...rest
 }: NumberFieldProps) {
+	const rules: NumberRules = { min, max, step, unit, units, detents, wrap };
 	const [draft, setDraft] = useState<string | null>(null);
 	// the draft as the handlers read it, which is a render ahead of the state:
 	// Escape's blur would otherwise commit the draft it just dropped
 	const typed = useRef<string | null>(null);
+	const tune = onTune ?? (() => {});
+	const keys = useKeyTune(value, rules, tune);
+	const scrub = useScrub(value, rules, tune);
 	const finish = (commit: boolean) => {
 		const held = typed.current;
 		typed.current = null;
 		setDraft(null);
 		if (!commit || held === null) return;
-		const parsed = Number.parseFloat(held);
-		if (!Number.isNaN(parsed) && parsed !== value) onValueChange(parsed);
+		const read = readNumber(held, value, rules);
+		if (read === null) return;
+		const next = fitNumber(read, rules);
+		if (next === value) return;
+		if (onTune === undefined) onValueChange?.(next);
+		else onTune(next, "commit");
 	};
 	return (
 		<FieldBox
@@ -302,10 +629,22 @@ export function NumberField({
 			className={cn("type-value", className)}
 			{...rest}
 		>
-			{prefix === undefined ? null : <span className={cn(AFFIX, "type-detail")}>{prefix}</span>}
+			{prefix === undefined ? null : (
+				<span
+					onPointerDown={onTune === undefined ? undefined : scrub}
+					className={cn(
+						AFFIX,
+						"type-detail",
+						onTune !== undefined &&
+							"cursor-ew-resize touch-none select-none transition-colors duration-fast hover:text-primary",
+					)}
+				>
+					{prefix}
+				</span>
+			)}
 			<input
-				inputMode="numeric"
-				value={draft ?? String(value)}
+				inputMode="decimal"
+				value={draft ?? String(fitNumber(value, {}))}
 				disabled={disabled}
 				aria-label={label}
 				aria-invalid={error || undefined}
@@ -321,11 +660,22 @@ export function NumberField({
 				}}
 				onBlur={(event) => {
 					inputProps?.onBlur?.(event);
+					keys.onBlur();
 					finish(true);
+				}}
+				onKeyUp={(event) => {
+					inputProps?.onKeyUp?.(event);
+					keys.onKeyUp(event);
 				}}
 				onKeyDown={(event) => {
 					inputProps?.onKeyDown?.(event);
 					if (event.nativeEvent.isComposing) return;
+					const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
+					if (onTune !== undefined && (vertical || event.key === "Escape")) {
+						if (vertical) finish(false);
+						keys.onKeyDown(event);
+						if (event.defaultPrevented) return;
+					}
 					if (event.key === "Enter") {
 						event.preventDefault();
 						finish(true);
@@ -336,11 +686,11 @@ export function NumberField({
 						finish(false);
 						event.currentTarget.blur();
 					}
-					if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+					if (vertical) {
 						event.preventDefault();
 						finish(false);
 						const units = (event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1);
-						if (onStep === undefined) onValueChange(value + units * step);
+						if (onStep === undefined) onValueChange?.(value + units * step);
 						else onStep(units);
 					}
 				}}
