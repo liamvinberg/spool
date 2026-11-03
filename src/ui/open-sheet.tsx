@@ -78,7 +78,7 @@ export function OpenSheet({
 			ref={dialog}
 			width="free"
 			aria-label={label}
-			className="relative mt-0 mb-auto w-[480px] animate-sheet-down overflow-hidden rounded-t-none border-t-0 backdrop:animate-find-in"
+			className="relative mt-bar! mb-auto! w-[480px] animate-sheet-down overflow-hidden rounded-t-none border-t-0 backdrop:animate-find-in"
 			onCancel={(event) => {
 				event.preventDefault();
 				onCancel();
