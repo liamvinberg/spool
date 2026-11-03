@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.50.0
+
+### Minor Changes
+
+- 194f246: A frame that fails to compile or throws as it starts now says so on the canvas. Its last good picture stays, dimmed, with a red edge and a red name. Near enough to read, it shows the error and an Ask agent to fix button, which hands the error to a new thread in the Agent pane, or copies the prompt when no agent is set up. The Pages list marks the frame with a red dot, and a shut folder holding one gets the dot too. It all clears as soon as the frame works again.
+- cad0354: `spool check` with no arguments now checks the whole canvas, however large. A canvas whose frames import more than one check can hold is checked in batches, with one combined answer. Only a frame that imports too much on its own is left out, and it is named. The check also names every frame the canvas shows as broken, with the first line of why, including frames that throw as they start, which a typecheck can't see.
+- 4d9b579: Added knobs. A frame can declare values with `ui.knobs({...})`, such as a radius, an easing, a colour or a spring, and they show in the properties rail under the frame's size. Drag one and the frame moves live; let go and the new value is written into the frame's file, one undo step. A knob in a shared file is one value for every frame that reads it, and Save as variant copies the frame beside itself as `name--b`. Agents learn it from `spool skill knobs`.
+
+### Patch Changes
+
+- 34063cb: A new project's tab opens with its name ready to type, so you can name it straight away or leave it untitled for the agent to name. Any project on this Mac can be renamed from its tab: double-click the name, or choose Rename… from the tab's menu, and its folder is renamed with it. Open…'s dialog now sits in the middle of the window like the others instead of hanging from the top. A chat opens on the model it last reported instead of "Loading…", and opening the model menu while it loads no longer starts the wait over.
+
 ## 0.49.0
 
 ### Minor Changes
