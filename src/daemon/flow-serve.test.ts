@@ -115,7 +115,8 @@ describe("frame document flow wiring", () => {
 		expect(doc.indexOf("window.__SPOOL__")).toBeLessThan(doc.indexOf('<script type="module">'));
 
 		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";
-		expect(boot).toContain('import "spool"');
+		// an import, so the runtime runs (and seeds the session) before the frame's code, which is bundled in
+		expect(boot).toMatch(/^import .* from "spool";$/m);
 	});
 
 	it("pins spool in the import map where the project map cannot override it", async () => {
