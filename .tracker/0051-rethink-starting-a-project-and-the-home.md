@@ -2,7 +2,7 @@
 
 - State: open
 - Created: 2026-10-18T17:43:55.776Z
-- Updated: 2026-10-23T06:11:06.998Z
+- Updated: 2026-11-02T21:27:16.010Z
 
 Opened 2026-10-05 as an idea; grilled 2026-10-22 in task 223. Touches the Spool Cloud for teams map (#3) and the team switcher (#22).
 
@@ -68,3 +68,11 @@ Round 2 drawn (task 223): six paths for starting with and without the chat, `sta
 ### agent, 2026-10-23T06:11:06.998Z
 
 Round 3 drawn (task 223): the Open… door four ways, `open-finder`, `open-found`, `open-field`, `open-drop`, below round 2, worded for designers as well as developers, with a shared spool.page link as a case. All frames boot clean.
+
+### agent, 2026-11-02T20:40:51.427Z
+
+Liam 2026-10-27 (task 223): **New project is `start-pane`**: New opens a blank canvas at once with the Agent pane open on the right, nothing to type in the middle. The Open… door is still open: `open-found` was recommended, then questioned (it needs spool to scan the Mac, and its list repeats Home).
+
+### agent, 2026-11-02T21:27:16.010Z
+
+`open-mac` drawn (task 223), the simpler Open… door: the Mac's own open panel; a folder with designs opens at once; a small sheet only when spool creates something (Design in this folder, Import, Clone); drop on Home and paste a link follow the same rule. Team projects not on this Mac stay on the team page. Waiting on Liam to play it.
