@@ -16,6 +16,7 @@ import type { BrokenFrame as BrokenFrameRecord } from "../../daemon/thumbs";
 import { pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
+import { parseKnobsDeclared } from "../../runtime/knob-protocol";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { SETTINGS } from "../../settings/registry";
@@ -177,6 +178,7 @@ import { HISTORY_CHANGE, HistoryPane } from "./history-pane";
 import { useVersions } from "./history-version";
 import { type Hand, hotBoots, hotUpdates, onAnswer, onChange } from "./hot-updates";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
+import { variantName } from "./knobs";
 import {
 	FrameLife,
 	type LifecycleStore,
@@ -247,6 +249,7 @@ import { type Notice, NoticeToast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
 import { HOLD_PAINT_MS, PICK_REPLY_MS, useHandEdit } from "./use-hand-edit";
+import { type KnobLane, useKnobLane } from "./use-knobs";
 import { useLiveMoves } from "./use-live-moves";
 import { useFollow, usePointerHidden, usePresenceSender } from "./use-presence";
 import { WalkLayer, walksOf } from "./walk-layer";
@@ -929,6 +932,11 @@ function CanvasField({
 	// them (`handIn`), and their outgoing document is held whatever its
 	// state (#253's no blink)
 	const holdNext = useRef(new Set<string>());
+	// the knobs' lane, made once the hand's edit lane it lands writes through is (#220)
+	const knobsRef = useRef<KnobLane | null>(null);
+	// frames a knob just wrote: a call is no element, so its file's read cannot
+	// vouch for the echo the way an element's does, and the next one is taken as ours
+	const knobEchoes = useRef(new Set<string>());
 	// frames whose file changed from outside while the hand held an element in
 	// them (#319): the reload they owe is paid when the hand leaves the frame,
 	// not under the gesture — the same flush the hand's own saves wait on
@@ -1059,6 +1067,7 @@ function CanvasField({
 			// and pays the reload a change under the hand owed it (#319)
 			hot.current.cancel(frame);
 			writtenUnderHand.current.delete(frame);
+			knobsRef.current?.reloading(frame);
 			if (experimentOn("fast-refresh")) boots.current.reloading(frame, was + 1, store.get().entered === frame);
 			const standing = heldNow.current.get(frame);
 			const iframe = iframes.current.get(frame);
@@ -1081,6 +1090,7 @@ function CanvasField({
 			// with it, so the canvas must not keep holding this frame's pointer
 			if (store.get().editing?.frame === frame) setEditing(null);
 			saved.current.delete(frame);
+			knobEchoes.current.delete(frame);
 			setWalkArrivals((current) => withoutFrame(current, frame));
 			// a reload drops every pick in the frame: the new document is asked afresh
 			setPicked((current) => current.filter((pick) => pick.frame !== frame));
@@ -1211,6 +1221,7 @@ function CanvasField({
 	 */
 	const changedUnderHand = useCallback(
 		(frame: string, own: { source: string; fingerprint: string }) => {
+			if (knobEchoes.current.delete(frame)) return;
 			void readRungs(project, frame, [own.source]).then((reads) => {
 				if (saved.current.get(frame) !== own || reads?.[0]?.fingerprint === own.fingerprint) return;
 				reloadOrHold(frame);
@@ -1220,8 +1231,10 @@ function CanvasField({
 	);
 
 	const onIframe = useCallback((name: string, el: HTMLIFrameElement | null) => {
-		if (el === null) iframes.current.delete(name);
-		else {
+		if (el === null) {
+			iframes.current.delete(name);
+			knobsRef.current?.gone(name);
+		} else {
 			if (iframes.current.get(name) !== el) departedFrameDocuments.current.delete(name);
 			iframes.current.set(name, el);
 		}
@@ -2627,6 +2640,7 @@ function CanvasField({
 		moveBeside,
 		moveStep,
 		walkHand,
+		landed,
 		restored,
 		altered,
 		refused,
@@ -2664,6 +2678,23 @@ function CanvasField({
 		applyPick,
 		askFrame,
 	});
+
+	const knobs = useKnobLane({
+		project,
+		post: (frame, message) => iframes.current.get(frame)?.contentWindow?.postMessage(message, "*"),
+		// the write lane's set-knob op: api.ts's writeKnob once it lands
+		writeKnob: async () => undefined,
+		landed: (frame, readAt, written) => {
+			landed(frame, readAt, written);
+			if (saved.current.has(frame)) knobEchoes.current.add(frame);
+		},
+		holdNext,
+		history,
+		updateHistory,
+		recordEntry,
+		setNotice,
+	});
+	knobsRef.current = knobs;
 
 	/**
 	 * One step of the one stack (#230).
@@ -2704,6 +2735,10 @@ function CanvasField({
 				walkHand(entry, way, taken.history);
 				return;
 			}
+			if (entry.kind === "knob") {
+				knobs.walk(entry, way, taken.history);
+				return;
+			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -2722,7 +2757,18 @@ function CanvasField({
 				void refetchFrames();
 			});
 		},
-		[applyPlaces, applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash, updateHistory, walkHand],
+		[
+			applyPlaces,
+			applyRects,
+			flushNudge,
+			knobs,
+			liveness,
+			refetchFrames,
+			stageEntry,
+			undoTrash,
+			updateHistory,
+			walkHand,
+		],
 	);
 
 	/**
@@ -3308,6 +3354,12 @@ function CanvasField({
 	// answers with the carried walk session, go/back move the entered state
 	useEffect(() => {
 		const onMessage = (event: MessageEvent) => {
+			// what a document's ui.knobs calls declare (#220), which is the knobs' lane's to hold
+			const declared = parseKnobsDeclared(event.data);
+			if (declared !== undefined) {
+				if (ownsFrameMessage(iframes.current, declared.frame, event.source)) knobs.heard(declared);
+				return;
+			}
 			const message = parseFrameMessage(event.data);
 			if (message === undefined) return;
 			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
@@ -3382,6 +3434,8 @@ function CanvasField({
 					return;
 				}
 				case "arrived":
+					// a document that arrived having declared no knobs has none
+					knobs.arrived(message.frame);
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
 					lifecycleRef.current.noteArrived(message.frame);
@@ -3413,6 +3467,7 @@ function CanvasField({
 					return;
 				case "error":
 					console.warn(`spool: frame "${message.frame}" reported:`, message.error);
+					knobs.arrived(message.frame);
 					// a walk boot that broke falls back to the honest cover: the quiet
 					// still must not dress a dead document as a settled one (#28)
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
@@ -3700,6 +3755,7 @@ function CanvasField({
 		store,
 		hand,
 		holdOrReload,
+		knobs,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -5525,6 +5581,12 @@ function CanvasField({
 						onGeometry: setFrameGeometry,
 						onGeometryPreview: previewFrameGeometry,
 						onGeometryCommit: commitFrameGeometry,
+						knobs: {
+							lane: knobs,
+							variantOf: (frame) => variantName(frame, new Set(store.get().frames.map((one) => one.name))),
+							// Save as variant is ⌘D's copy, laid beside the frame
+							onSaveVariant: (frame) => void frameVerbs.current?.duplicate([frame]),
+						},
 					}}
 				/>
 			),

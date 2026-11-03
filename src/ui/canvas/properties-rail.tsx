@@ -5,6 +5,7 @@ import { readRungs } from "../api";
 import { cn } from "../cn";
 import { Menu, MenuItem } from "../primitives/overlays";
 import { Bar, PropertyValue, ScrollArea, Section } from "../primitives/structure";
+import { type KnobsActs, KnobsSection } from "./knobs-section";
 import type { PickedHit } from "./protocol";
 import { NumField, popoverAt, Row, useCloseOnPressAway, VALUE } from "./rail-fields";
 
@@ -73,6 +74,8 @@ export interface PropertiesActs {
 	onGeometryPreview: (name: string, patch: Partial<Geometry>) => void;
 	/** the scrub let go: one write and one undo slot for the whole gesture */
 	onGeometryCommit: (name: string, before: Geometry) => void;
+	/** the held frame's knobs (#220), under its geometry */
+	knobs?: KnobsActs | undefined;
 }
 
 export function PropertiesRail({
@@ -87,7 +90,7 @@ export function PropertiesRail({
 	return (
 		<div data-properties-rail="" className="flex h-full min-w-[200px] flex-col overflow-hidden bg-surface-window">
 			<Head held={held} acts={acts} />
-			<ScrollArea className="flex-1 [&>section:first-child]:border-t-0">
+			<ScrollArea data-properties-scroll="" className="flex-1 [&>section:first-child]:border-t-0">
 				<Body held={held} acts={acts} />
 			</ScrollArea>
 			{recovery}
@@ -201,7 +204,12 @@ function Body({ held, acts }: { held: Held | null; acts: PropertiesActs }) {
 	const geometry = held.geometry;
 	if (name === null || geometry === null)
 		return <Empty says={`${held.kind === "elements" ? held.count : 1} elements`} />;
-	return <FrameGeometry key={name} name={name} geometry={geometry} acts={acts} />;
+	return (
+		<>
+			<FrameGeometry key={name} name={name} geometry={geometry} acts={acts} />
+			{acts.knobs === undefined ? null : <KnobsSection frame={name} acts={acts.knobs} />}
+		</>
+	);
 }
 
 function Empty({ says }: { says: string }) {

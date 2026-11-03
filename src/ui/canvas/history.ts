@@ -1,4 +1,5 @@
 import { movedOnto, pageWithin, ROOT_PAGE } from "../../page-path";
+import type { KnobPath, KnobValue } from "../../runtime/knob-protocol";
 import type { Geometry, HeldPatch, Place } from "../api";
 
 /**
@@ -127,6 +128,20 @@ export type HistoryEntry =
 			/** a stamp in the file the patch is on, which is how the file is asked whether it is still the hand's */
 			readonly readAt: string;
 			/** the other frames rendering a shared file the patch is on (#318), whose paint a run holds */
+			readonly frames?: readonly string[];
+	  }
+	// one knob let go (#220): the literal it wrote, and the values either side,
+	// which a run posts into the frames rather than reloading them for it
+	| {
+			readonly kind: "knob";
+			readonly frame: string;
+			/** the call's stamp, which is also where the file is asked whether it is still the hand's */
+			readonly at: string;
+			readonly path: KnobPath;
+			readonly before: KnobValue;
+			readonly after: KnobValue;
+			readonly patch: HeldPatch;
+			/** the other frames rendering a shared knob, whose paint a run holds */
 			readonly frames?: readonly string[];
 	  }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
@@ -395,6 +410,7 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
 		case "hand":
+		case "knob":
 			// the daemon's fingerprint is the real check and it happens on the wire;
 			// what the projection can say is whether the frame is still there to edit
 			return alive.frames.has(entry.frame) ? entry : undefined;
