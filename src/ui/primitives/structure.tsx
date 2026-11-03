@@ -187,6 +187,8 @@ export interface ListRowProps extends Omit<HTMLAttributes<HTMLElement>, "childre
 	lit?: boolean | undefined;
 	/** nobody has looked: a disc; `moved`, seen once and changed since: a ring */
 	unseen?: boolean | "moved" | undefined;
+	/** it does not compile or throws as it starts: the danger disc, in unseen's place */
+	broken?: boolean | undefined;
 	disabled?: boolean | undefined;
 	/** drawn behind the content, positioned against the row: a tree's guides */
 	decor?: ReactNode | undefined;
@@ -216,6 +218,7 @@ export function ListRow({
 	marked,
 	lit,
 	unseen,
+	broken,
 	disabled,
 	decor,
 	className,
@@ -275,10 +278,10 @@ export function ListRow({
 		>
 			{label}
 		</span>,
-		unseen ? (
+		broken || unseen ? (
 			<StatusMark
 				key="unseen"
-				status={unseen === "moved" ? "moved" : "unseen"}
+				status={broken ? "broken" : unseen === "moved" ? "moved" : "unseen"}
 				aria-hidden="true"
 				className={cn(giveWay && GIVE_WAY)}
 			/>
