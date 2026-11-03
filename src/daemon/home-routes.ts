@@ -13,6 +13,7 @@ import { backInGitOffered } from "../team-moves";
 import { isUntitled } from "../untitled";
 import { updateLine } from "../update-how";
 import type { createAgentTurns } from "./agent-live";
+import type { Namings } from "./agent-naming";
 import { DesignBoundaryError } from "./design-path";
 import type { createChangeHub } from "./events";
 import { listDirectory, refreshIndex, searchDirectories } from "./fs-list";
@@ -63,6 +64,8 @@ export function homeRoutes(deps: {
 	/** Projects mid-rename or mid-trash, which every other project change waits out. */
 	projectRenames: Set<string>;
 	trashingProjects: Set<string>;
+	/** Projects the agent is naming, which stay until it has answered. */
+	namings: Pick<Namings, "has">;
 	liveTurns: Pick<ReturnType<typeof createAgentTurns>, "of">;
 	hub: Pick<ReturnType<typeof createChangeHub>, "forget">;
 	/** A project renamed, as `createRenamer` does it. */
@@ -83,6 +86,7 @@ export function homeRoutes(deps: {
 		fsIndex,
 		projectRenames,
 		trashingProjects,
+		namings,
 		liveTurns,
 		hub,
 		machineStateWatch,
@@ -297,7 +301,7 @@ export function homeRoutes(deps: {
 					}
 					if (projectRenames.has(root)) return c.json({ error: "Project change is in progress." }, 409);
 					if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-					if ([...liveTurns.of(root)].some((turn) => turn.running)) {
+					if (namings.has(root) || [...liveTurns.of(root)].some((turn) => turn.running)) {
 						return c.json({ error: "Let the agent finish or stop its turn before trashing this project." }, 409);
 					}
 					const stateRoot = realpathSync(spoolDir);

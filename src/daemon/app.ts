@@ -34,6 +34,7 @@ import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { createPlaceholderLedger } from "./agent-frames";
 import { createAgentTurns } from "./agent-live";
 import { createAgentModelPreferences } from "./agent-model-preferences";
+import type { Namings } from "./agent-naming";
 import type { Look } from "./agent-preflight";
 import { createAgentPresence } from "./agent-presence";
 import { agentRoutes } from "./agent-routes";
@@ -890,6 +891,8 @@ export function createDaemonApp({
 	// the agent, model, effort and mode a new thread starts on, one choice per machine (#361)
 	const agentDefaults = createAgentDefaults(spoolDir, () => engines.values());
 	const projectRenames = new Set<string>();
+	/** Projects whose first turn waits on the agent's name for them (spool#51). */
+	const namings: Namings = new Map();
 
 	/**
 	 * Every turn this daemon is holding, by the conversation it belongs to (#211).
@@ -907,6 +910,7 @@ export function createDaemonApp({
 		spoolDir,
 		projectRenames,
 		trashingProjects,
+		namings,
 		liveTurns,
 		hub,
 		selections,
@@ -1239,6 +1243,7 @@ export function createDaemonApp({
 				fsIndex,
 				projectRenames,
 				trashingProjects,
+				namings,
 				liveTurns,
 				hub,
 				rename: renameProject,
@@ -1371,6 +1376,8 @@ export function createDaemonApp({
 				agentAppLauncher,
 				emitAppEvent,
 				rename: renameProject,
+				namings,
+				registeredRoots,
 				account: () => account(spoolDir, { ...cloud, origin: originOf(cloud) }),
 				commentsForPrompt: (root, ids) =>
 					commentsForPrompt(ids, {

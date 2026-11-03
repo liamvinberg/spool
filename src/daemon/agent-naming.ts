@@ -71,8 +71,15 @@ export async function askOnce(
 }
 
 /**
+ * Projects being named, by root: the turn each is named for, which a stop quotes, and the stop itself. A hand's
+ * rename and the trash refuse a project while it is here, as they refuse one a turn runs in.
+ */
+export type Namings = Map<string, { turn: string | undefined; stop: AbortController }>;
+
+/**
  * The project the first turn runs in: an untitled one with no frames, named first by `ask`, or the one it was.
- * A refused rename (the name is taken here, say) is a name it doesn't get, never a failed turn.
+ * A refused rename (the name is taken here, say) is a name it doesn't get, never a failed turn. Null when the turn
+ * should not start at all: it was stopped while the agent was asked, its request went, or the project did.
  */
 export async function nameFirst(
 	root: string,
@@ -80,12 +87,29 @@ export async function nameFirst(
 		/** whether the project has frames yet: one that has is past naming */
 		hasFrames: (root: string) => boolean;
 		/** the agent's reply to `namingPrompt`, or null */
-		ask: () => Promise<string | null>;
+		ask: (signal: AbortSignal) => Promise<string | null>;
 		rename: (root: string, name: string) => { root: string };
+		namings: Namings;
+		/** the turn being named for, as a stop names it */
+		turn: string | undefined;
+		/** the request that asked for the turn */
+		signal: AbortSignal;
+		/** whether the project is still one spool knows, once the answer is in */
+		registered: (root: string) => boolean;
 	},
-): Promise<string> {
+): Promise<string | null> {
 	if (!isUntitled(basename(root)) || deps.hasFrames(root)) return root;
-	const name = kebabName((await deps.ask()) ?? "");
+	const stop = new AbortController();
+	const asked = AbortSignal.any([stop.signal, deps.signal]);
+	deps.namings.set(root, { turn: deps.turn, stop });
+	let reply: string | null;
+	try {
+		reply = await deps.ask(asked);
+	} finally {
+		deps.namings.delete(root);
+	}
+	if (asked.aborted || !deps.registered(root)) return null;
+	const name = kebabName(reply ?? "");
 	if (name === null) return root;
 	try {
 		return deps.rename(root, name).root;

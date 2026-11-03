@@ -29,10 +29,16 @@ describe("asking the agent", () => {
 });
 
 describe("naming a new project from its first ask", () => {
+	const waiting = {
+		namings: new Map(),
+		turn: undefined,
+		signal: new AbortController().signal,
+		registered: () => true,
+	};
 	const named = (root: string, hasFrames = false, reply: string | null = "tide-planner") => {
 		const ask = vi.fn(async () => reply);
 		const rename = vi.fn((from: string, name: string) => ({ root: from.replace(/[^/]+$/u, name) }));
-		return { ask, rename, root: nameFirst(root, { hasFrames: () => hasFrames, ask, rename }) };
+		return { ask, rename, root: nameFirst(root, { ...waiting, hasFrames: () => hasFrames, ask, rename }) };
 	};
 
 	it("renames an untitled project with no frames to the agent's name for it", async () => {
@@ -52,6 +58,7 @@ describe("naming a new project from its first ask", () => {
 		expect(await named("/w/untitled", false, null).root).toBe("/w/untitled");
 		expect(await named("/w/untitled", false, "I can't name this without more context.").root).toBe("/w/untitled");
 		const refused = nameFirst("/w/untitled", {
+			...waiting,
 			hasFrames: () => false,
 			ask: async () => "coffee",
 			rename: () => {

@@ -843,6 +843,33 @@ describe("a new project's first turn", () => {
 		turn?.exit(0);
 		await drainTurn(res);
 	});
+
+	it("holds the project while the agent names it: a hand's rename and the trash wait, and a stop ends it unstarted", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const parent = makeTempDir();
+		mkdirSync(join(parent, "untitled"));
+		const { root } = initProject(join(parent, "untitled"), spoolDir);
+		// the naming question never answers: what stops it is the stop
+		const agent = fixtureAgentExecutor();
+		const moveToTrash = vi.fn(async () => {});
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor, moveToTrash });
+		const post = (path: string, body: unknown) =>
+			app.request(path, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+
+		const res = startTurn("untitled", app, { said: [{ prompt: "A tide planner" }], turn: "first" });
+		await until(() => agent.spawned.length === 1);
+		expect((await post("/api/projects/rename", { root, name: "coffee" })).status).toBe(409);
+		expect((await post("/api/projects/trash", { root })).status).toBe(409);
+		expect(moveToTrash).not.toHaveBeenCalled();
+		expect((await post("/api/p/untitled/agent/interrupt", { turn: "first" })).status).toBe(204);
+		expect((await res).status).toBe(410);
+		expect(agent.spawned).toHaveLength(1);
+		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
+	});
 });
 
 describe("the door", () => {
