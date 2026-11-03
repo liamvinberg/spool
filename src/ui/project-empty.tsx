@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { isUntitled } from "../untitled";
 import { ArrowRightIcon, RibbonMark } from "./icons";
 import { Button } from "./primitives/actions";
 import { EmptyState } from "./primitives/feedback";
+import { type MarkTeam, TeamMark } from "./teams";
 
 /** The empty project's name belongs to its folder; only a successful rename changes it. */
 export function ProjectEmpty({
@@ -12,8 +14,11 @@ export function ProjectEmpty({
 	onUseAgent,
 	focusName = false,
 	onNameFocused,
+	team,
 }: {
 	project: string;
+	/** A team project's local copy: the name row says its team. */
+	team?: MarkTeam | undefined;
 	focusName?: boolean | undefined;
 	onNameFocused?: (() => void) | undefined;
 	root?: string | undefined;
@@ -148,7 +153,20 @@ export function ProjectEmpty({
 						}
 					}}
 				/>
-				<span>{renaming ? "renaming…" : "saved on this mac"}</span>
+				{team === undefined ? null : (
+					<div className="flex items-center gap-1.5 type-label">
+						<TeamMark team={team} size={14} /> <span className="text-primary">{team.name}</span>
+					</div>
+				)}
+				<span>
+					{renaming
+						? "renaming…"
+						: team !== undefined
+							? "synced with spool.page"
+							: isUntitled(project)
+								? "goes to the Trash if closed with no frames"
+								: "saved on this mac"}
+				</span>
 				{notice && (
 					<p id="project-rename-notice" role="alert">
 						{notice}

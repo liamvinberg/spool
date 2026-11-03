@@ -976,6 +976,15 @@ export function App() {
 								root={focusedTab.root}
 								onChrome={setChrome}
 								agentOpen={focusedTab.root === started}
+								team={
+									focusedTab.teamAddress === undefined
+										? undefined
+										: (markTeams.get(focusedTab.teamAddress) ?? {
+												address: focusedTab.teamAddress,
+												name: focusedTab.teamAddress,
+												logo: null,
+											})
+								}
 								onFolder={() => setPicking(true)}
 								onRename={(name) => requestRename(focusedTab, name)}
 							/>

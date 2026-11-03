@@ -47,6 +47,25 @@ describe("empty project title", () => {
 		expect(input.value).toBe("untitled");
 	});
 
+	it("says an untitled one goes to the Trash closed empty, and a team copy's team instead", () => {
+		const detail = (props: Partial<Parameters<typeof ProjectEmpty>[0]>) => {
+			const host = document.createElement("div");
+			document.body.append(host);
+			const root = createRoot(host);
+			onTestFinished(() => {
+				act(() => root.unmount());
+				host.remove();
+			});
+			act(() => root.render(createElement(ProjectEmpty, { project: "untitled", root: "/tmp/untitled", ...props })));
+			return host.querySelector(".project-empty-title")?.textContent;
+		};
+		expect(detail({})).toBe("goes to the Trash if closed with no frames");
+		expect(detail({ project: "coffee" })).toBe("saved on this mac");
+		expect(detail({ team: { address: "devosurf", name: "Devosurf", logo: null } })).toBe(
+			"D Devosurfsynced with spool.page",
+		);
+	});
+
 	it("selects the name only when asked for a newly created project", () => {
 		const focused = vi.fn();
 		const input = mount(vi.fn().mockResolvedValue(null), true, focused);

@@ -67,6 +67,7 @@ import { useSetting, useWriteSetting } from "../settings";
 import { openShare, type ShareContext } from "../share-control";
 import { useShares } from "../shares";
 import { useStableCallback } from "../stable-callback";
+import type { MarkTeam } from "../teams";
 import { beforeUpdate } from "../update-lifecycle";
 import { type AskEntry, waitingAsk } from "./agent-ask-view";
 import { CanvasAsk } from "./agent-canvas-ask";
@@ -411,6 +412,8 @@ interface ProjectCanvasProps {
 	onFolder?: (() => void) | undefined;
 	/** A project New just made: its canvas opens with the Agent pane out, its composer not focused. */
 	agentOpen?: boolean | undefined;
+	/** A team project's local copy: its team, which the empty project's name row says. */
+	team?: MarkTeam | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 }
 
@@ -444,6 +447,7 @@ function CanvasField({
 	focusName,
 	onNameFocused,
 	agentOpen = false,
+	team: markTeam,
 	deck,
 	agentDefaults,
 }: ProjectCanvasProps & { deck: DeckStore; agentDefaults: AgentDefaultsDeck }) {
@@ -6026,6 +6030,7 @@ function CanvasField({
 								onUseAgent={root === undefined ? undefined : () => setAgentHandoff(true)}
 								project={project}
 								root={root}
+								team={markTeam}
 								onRename={onRename}
 								onFolder={onFolder}
 								focusName={focusName}
