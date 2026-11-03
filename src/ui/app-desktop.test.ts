@@ -35,7 +35,7 @@ describe("native app commands", () => {
 				if (pathname === "/api/projects") return Response.json({ projects: [] });
 				if (pathname === "/api/settings") return Response.json({ project: null, entries: [] });
 				if (pathname === "/api/fs/list")
-					return Response.json({ path: "/Users/test", parent: "/Users", isProject: false, dirs: [] });
+					return Response.json({ path: "/Users/test", parent: "/Users", isProject: false, dirs: [], spools: [] });
 				return Response.json({});
 			}),
 		);
@@ -56,9 +56,9 @@ describe("native app commands", () => {
 		expect(posts).toEqual(["/api/projects/start"]);
 		expect(host.querySelector("dialog")).toBeNull();
 		await act(async () => command?.("app.open-project"));
-		expect(host.querySelector('dialog[aria-label="Choose a project folder"]')).not.toBeNull();
+		expect(host.querySelector('dialog[aria-label="Open"]')).not.toBeNull();
 		await act(async () => command?.("app.settings"));
-		expect(host.querySelector('dialog[aria-label="Choose a project folder"]')).toBeNull();
+		expect(host.querySelector('dialog[aria-label="Open"]')).toBeNull();
 		expect(host.querySelector('section[aria-label="Settings"]')).not.toBeNull();
 		await act(async () => command?.("app.help"));
 		expect(host.querySelector('section[aria-label="Settings"]')).toBeNull();

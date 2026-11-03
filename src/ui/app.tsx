@@ -494,7 +494,7 @@ export function App() {
 			openTab(project);
 		},
 	});
-	const choose = opener.choose;
+	const { choose, close: closeOpen } = opener;
 
 	/** The project New just made, whose canvas opens with the Agent pane out. */
 	const [started, setStarted] = useState<string | null>(null);
@@ -692,6 +692,7 @@ export function App() {
 				case "app.new-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
+					closeOpen();
 					startNew();
 					break;
 				case "app.open-project":
@@ -700,9 +701,11 @@ export function App() {
 					choose();
 					break;
 				case "app.settings":
+					closeOpen();
 					openSettings();
 					break;
 				case "app.help":
+					closeOpen();
 					setSettingsOpen(false);
 					setKeysOpen(true);
 					break;
@@ -714,7 +717,7 @@ export function App() {
 					runMenuHotkey(command);
 			}
 		});
-	}, [appWindow, openSettings, closeOnTop, startNew, choose]);
+	}, [appWindow, openSettings, closeOnTop, startNew, choose, closeOpen]);
 
 	const icons = useIconChange(setIcon, setThumbnail);
 	const transfer = useProjectExport();

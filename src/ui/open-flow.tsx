@@ -248,9 +248,16 @@ export function useOpen({ home, onOpened }: { home: boolean; onOpened: (project:
 		setSheet(null);
 		setChoosing(true);
 	}, [stop]);
+	const close = useCallback(() => {
+		stop();
+		setSheet(null);
+		setChoosing(false);
+	}, [stop]);
 	return {
 		/** Open…: the chooser, which hands what was picked to the rule */
 		choose,
+		/** put the chooser or the sheet away, stopping what the sheet was doing, for another surface to take the window */
+		close,
 		/** the chooser or the sheet is up, which keeps the keys from the canvas */
 		up: choosing || sheet !== null,
 		/** a path or a link from elsewhere, the Mac app's own Open With included */
