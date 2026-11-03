@@ -10,7 +10,8 @@ import type { Cover } from "../../cover";
  * answer, leaving the canvas asking for a still the store has already let go
  * of: the frame never gets its picture. So a read that lands after a later one
  * is dropped, and a cover heard after a read was asked stands over that read's
- * answer.
+ * answer, and so does what it proves: a frame whose cover landed works, so
+ * the read's word that it was broken is older than the picture.
  */
 export interface FrameReads {
 	/** A read is being asked: its ticket, handed back to `settle` with the answer. */
@@ -18,7 +19,10 @@ export interface FrameReads {
 	/** The event stream brought a frame's new cover. */
 	note(frame: string, cover: Cover): void;
 	/** A read answered: the frames to show, or undefined when a later read already landed. */
-	settle<F extends { name: string; cover?: Cover }>(ticket: number, frames: readonly F[]): F[] | undefined;
+	settle<F extends { name: string; cover?: Cover; broken?: unknown }>(
+		ticket: number,
+		frames: readonly F[],
+	): F[] | undefined;
 }
 
 export function createFrameReads(): FrameReads {
@@ -34,16 +38,19 @@ export function createFrameReads(): FrameReads {
 		note: (frame, cover) => {
 			heard.set(frame, { cover, after: asked });
 		},
-		settle: (ticket, frames) => {
+		settle: <F extends { name: string; cover?: Cover; broken?: unknown }>(
+			ticket: number,
+			frames: readonly F[],
+		): F[] | undefined => {
 			if (ticket < landed) return undefined;
 			landed = ticket;
 			// a cover heard before this read was asked is in its answer already
 			for (const [frame, entry] of heard) if (entry.after < ticket) heard.delete(frame);
 			return frames.map((frame) => {
 				const entry = heard.get(frame.name);
-				return entry === undefined || entry.cover.hash === frame.cover?.hash
-					? frame
-					: { ...frame, cover: entry.cover };
+				if (entry === undefined) return frame;
+				const { broken: _older, ...working } = frame;
+				return { ...working, cover: entry.cover } as F;
 			});
 		},
 	};
