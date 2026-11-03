@@ -117,7 +117,7 @@ describe("shot and logs, compile paths", () => {
 			".spool/verify/shop/checkout.logs.json",
 			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
-		writeCaptureError(root, "shop/checkout", "shop only");
+		writeCaptureError(root, "shop/checkout", "shop only", "capture");
 
 		const logs = await logsFrame(deps("shop/checkout"));
 
@@ -138,7 +138,7 @@ describe("shot and logs, compile paths", () => {
 			".spool/verify/quiet.logs.json",
 			`${JSON.stringify({ etag, scenario: "default", scheme, entries: [] })}\n`,
 		);
-		writeCaptureError(root, "quiet", "capture canvases too large");
+		writeCaptureError(root, "quiet", "capture canvases too large", "capture");
 
 		const logs = await logsFrame(deps("quiet"));
 
