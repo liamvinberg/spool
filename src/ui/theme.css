@@ -163,8 +163,6 @@
 	/* the finder: the scrim fades in, the panel settles from just above */
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
-	/* Open…'s sheet, hung from the window bar the way a Mac sheet hangs from its title bar */
-	--animate-sheet-down: sheet-down var(--transition-duration-slow) var(--ease-snap);
 	/* the boot curtain (#244): it is gated at both ends, so the numbers here are
 	 * only half the story — `canvas/boot-clock.ts` carries the gate and the exit,
 	 * and why they are what they are. The mark winds slowly: this stands over a
@@ -833,12 +831,6 @@
 			transform: translateY(-8px);
 		}
 	}
-
-	@keyframes sheet-down {
-		from {
-			transform: translateY(-100%);
-		}
-	}
 }
 
 /* the ask on a thread row fades out under the close on hover (#205). A mask image cannot
@@ -920,7 +912,6 @@
 	.animate-history-wash,
 	.animate-history-ring,
 	.animate-find-panel-in,
-	.animate-sheet-down,
 	.animate-agent-entry,
 	.animate-agent-open,
 	.animate-agent-paragraph,

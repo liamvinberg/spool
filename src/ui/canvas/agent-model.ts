@@ -135,6 +135,18 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 	};
 }
 
+/**
+ * The last report heard, per thread and per engine, so a chat opens on the line it is about to be told rather than
+ * on "Loading…". The probe is a whole spawn of the binary, which on a busy Mac takes seconds, and the menu's rows
+ * are the binary's and the same for every thread. What is drawn from here is a remembered report, never a guess,
+ * and the probe replaces it whole the moment it lands.
+ */
+const heard = new Map<string, AgentOffer>();
+const engineKey = (engine?: AgentEngineId) => `engine:${engine ?? ""}`;
+
+/** a door that failed is asked once more after this, rather than leaving the footer waiting on nothing */
+const RETRY_MS = 1500;
+
 export interface AgentModelDeck {
 	readonly engine?: AgentEngineId;
 	readonly project?: string;
@@ -174,10 +186,11 @@ export interface AgentModelDeck {
  * every thread and which of them is answering does not, so switching thread re-asks
  * rather than carrying the last one's model across.
  *
- * Nothing is drawn about the first wait, and that wait is real — a cold spawn is about a
- * second. There is no state to draw before anything has been pressed: the readout is the
- * binary's report and the report does not exist yet, so anything on screen in that second
- * would be spool asserting a machine it has not been told about. A *press* is different,
+ * The first wait is real: a cold spawn is a second here and several on a busy Mac. Until it
+ * ends the readout is the last report heard for this thread, or for this engine, which the
+ * probe replaces whole; with none heard yet it says it is loading. Opening the menu while an
+ * ask is out joins it rather than starting the spawn over, and a door that failed is asked
+ * once more rather than left loading for good. A *press* is different,
  * because the press is the one thing spool does know, so it is held here beside the report
  * and drawn over it until the report catches up.
  *
@@ -204,6 +217,10 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 		setPressed(null);
 	}, [owner]);
 
+	/** the owner an ask is out for: opening the menu joins it rather than starting the spawn over */
+	const asking = useRef<string | null>(null);
+	/** the owner whose failed ask was already tried again, so a door that keeps failing is not asked forever */
+	const retried = useRef<string | null>(null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `asked` is not read in here, it is the trigger — climbing it is what re-asks the binary
 	useEffect(() => {
 		// a thread with no id yet is the deck before it has minted one, and there is nothing
@@ -215,19 +232,34 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 		let live = true;
 		const at = presses.current;
 		// an ask the rail moved on from is given up, so its spawn ends and it stops holding a connection
-		const asking = new AbortController();
-		const reply = agentModelOffer(project, thread, engine, asking.signal)
+		const abort = new AbortController();
+		asking.current = owner;
+		const reply = agentModelOffer(project, thread, engine, abort.signal)
 			.then(offerOf)
 			.catch(() => null);
 		pending.current = { owner, reply };
+		let again: ReturnType<typeof setTimeout> | undefined;
 		void reply.then((read) => {
-			// dropped where the rail moved on, and where a press went out after this ask did:
-			// an answer to the older question knows nothing about the newer choice
-			if (live && at === presses.current && read !== null) setReported({ owner, offer: read });
+			if (!live) return;
+			if (asking.current === owner) asking.current = null;
+			// a failed door (the project renamed under the ask, a spawn that died) is asked once more
+			if (read === null && retried.current !== owner) {
+				retried.current = owner;
+				again = setTimeout(() => setAsked((count) => count + 1), RETRY_MS);
+				return;
+			}
+			// dropped where a press went out after this ask did: an answer to the older question
+			// knows nothing about the newer choice
+			if (at !== presses.current || read === null) return;
+			heard.set(owner, read);
+			heard.set(engineKey(engine), read);
+			setReported({ owner, offer: read });
 		});
 		return () => {
 			live = false;
-			asking.abort();
+			clearTimeout(again);
+			if (asking.current === owner) asking.current = null;
+			abort.abort();
 		};
 	}, [project, thread, asked, engine, owner]);
 
@@ -257,7 +289,8 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 
 	// the press only ever answers for the thread it was made about, so a rail that moved
 	// on draws the report it has rather than the last thread's finger
-	const current = reported?.owner === owner ? reported.offer : NO_OFFER;
+	const current =
+		reported?.owner === owner ? reported.offer : (heard.get(owner) ?? heard.get(engineKey(engine)) ?? NO_OFFER);
 	const offer = pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
 	const loaded = reported?.owner === owner;
 	const said = loaded ? current.modes !== false : undefined;
@@ -281,6 +314,8 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 		readout: modelReadout(offer),
 		levels: effortLevels(offer),
 		choose,
-		refresh: useCallback(() => setAsked((count) => count + 1), []),
+		refresh: useCallback(() => {
+			if (asking.current !== activeOwner.current) setAsked((count) => count + 1);
+		}, []),
 	};
 }

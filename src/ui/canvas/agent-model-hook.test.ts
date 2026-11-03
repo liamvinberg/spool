@@ -77,6 +77,33 @@ it("gives up the ask for a thread the rail moved on from", async () => {
 	expect(signals).toEqual([true, true, false]);
 });
 
+it("opens a new chat on the engine's last report and joins its ask when the menu opens", async () => {
+	vi.mocked(agentModelOffer).mockResolvedValue(offer("codex"));
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.resetAllMocks();
+	});
+	let deck: ReturnType<typeof useAgentModel> | undefined;
+	function Harness({ thread }: { thread: string }) {
+		deck = useAgentModel("project", thread, "codex");
+		return null;
+	}
+	await act(async () => root.render(createElement(Harness, { thread: "heard" })));
+	expect(deck?.readout).toBe("Astra");
+	vi.mocked(agentModelOffer).mockReturnValue(new Promise(() => {}));
+	await act(async () => root.render(createElement(Harness, { thread: "fresh" })));
+	expect(deck?.loading).toBe(true);
+	expect(deck?.readout).toBe("Astra");
+	await act(async () => deck?.refresh());
+	const calls = vi.mocked(agentModelOffer).mock.calls;
+	expect(calls).toHaveLength(2);
+	expect(calls[1]?.[3]?.aborted).toBe(false);
+});
+
 function deferred() {
 	let resolve = (_value: unknown) => {};
 	const promise = new Promise<unknown>((done) => {

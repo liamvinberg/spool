@@ -48,7 +48,7 @@ import { settingsMoved, useSettings } from "./settings";
 import { SettingsPage } from "./settings-page/page";
 import { ShareControl } from "./share-control";
 import { useShares } from "./shares";
-import { useStartProject } from "./start-project";
+import { RefusedToast, useStartProject } from "./start-project";
 import {
 	type ClosedTab,
 	lastTab,
@@ -126,6 +126,10 @@ export function App() {
 		initialName: string;
 		resolve: (name: string | null) => void;
 	} | null>(null);
+	/** The project whose tab's name is a field, being renamed in place; null while none is. */
+	const [renaming, setRenaming] = useState<string | null>(null);
+	/** What the daemon refused a rename in a tab, until dismissed. */
+	const [renameRefused, setRenameRefused] = useState<string | null>(null);
 	const requestRename = (project: TabProject, initialName = project.name) =>
 		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
@@ -182,6 +186,7 @@ export function App() {
 		setProjects((cards) => cards.map((card) => (card.root === from ? { ...card, ...renamed } : card)));
 		setOpen((roots) => roots.map((root) => (root === from ? renamed.root : root)));
 		setFocused((root) => (root === from ? renamed.root : root));
+		setRenaming((root) => (root === from ? renamed.root : root));
 		if (window.location.pathname === `/p/${encodeURIComponent(basename(from))}`) {
 			window.history.replaceState(null, "", `/p/${encodeURIComponent(renamed.name)}`);
 		}
@@ -224,6 +229,25 @@ export function App() {
 		setProjectsLoaded(true);
 		setOpen(session);
 	}, [withVisits]);
+
+	/** A project renamed: its folder moves, and everything open on it follows. Throws what the daemon refused. */
+	const renameTo = useCallback(
+		async (root: string, name: string) => {
+			const renamed = await renameProject(root, name);
+			remapProject(root, renamed);
+			void refetch();
+			return renamed;
+		},
+		[remapProject, refetch],
+	);
+	/** A name typed in a tab: a refusal is said, and the tab keeps its name. */
+	const renameInTab = useCallback(
+		(root: string, name: string) =>
+			renameTo(root, name).catch((error: unknown) =>
+				setRenameRefused(error instanceof Error ? error.message : String(error)),
+			),
+		[renameTo],
+	);
 
 	/*
 	 * Boot: the session first, alone, and the registry behind it.
@@ -527,9 +551,11 @@ export function App() {
 
 	/** The project New just made, whose canvas opens with the Agent pane out, once. */
 	const [started, setStarted] = useState<string | null>(null);
-	const newProject = useStartProject((project) => {
+	// a local one opens with its name a field, which typing names and anything else leaves untitled
+	const newProject = useStartProject(({ team, ...project }) => {
 		setStarted(project.root);
 		openTab(project);
+		if (team === undefined) setRenaming(project.root);
 	});
 	const startNew = newProject.start;
 
@@ -857,6 +883,7 @@ export function App() {
 		!keysOpen &&
 		!settingsOpen &&
 		renameRequest === null &&
+		renaming === null &&
 		trashRequest === null &&
 		moving === null &&
 		!transfer.confirming &&
@@ -894,6 +921,9 @@ export function App() {
 								askProjectHistory(project.name);
 							}}
 							onPick={() => startNew()}
+							renaming={renaming}
+							onRenaming={setRenaming}
+							onRename={renameInTab}
 						/>
 					</div>
 
@@ -1033,6 +1063,9 @@ export function App() {
 				</main>
 
 				{newProject.toast}
+				{renameRefused !== null && (
+					<RefusedToast key={renameRefused} message={renameRefused} onDismiss={() => setRenameRefused(null)} />
+				)}
 				{abandon.toast}
 				{transfer.surface}
 				{opener.surface}
@@ -1054,10 +1087,8 @@ export function App() {
 						project={renameRequest.project}
 						initialName={renameRequest.initialName}
 						onRename={async (name) => {
-							const renamed = await renameProject(renameRequest.project.root, name);
-							remapProject(renameRequest.project.root, renamed);
+							const renamed = await renameTo(renameRequest.project.root, name);
 							renameRequest.resolve(renamed.name);
-							void refetch();
 						}}
 						onClose={() => {
 							renameRequest.resolve(null);

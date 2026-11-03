@@ -218,6 +218,9 @@ export function TabStrip({
 	onRemoveIcon,
 	onMatchTeam,
 	onHistory,
+	renaming = null,
+	onRenaming,
+	onRename,
 }: {
 	tabs: readonly TabProject[];
 	/** the focused project's root; null is Home */
@@ -238,6 +241,12 @@ export function TabStrip({
 	onMatchTeam?: (project: TabProject) => void;
 	/** "History…" on a team project's tab: its team history (spool#187). */
 	onHistory?: (project: TabProject) => void;
+	/** the root whose name is a field in its tab, being renamed; null while none is */
+	renaming?: string | null;
+	/** a tab's name becomes a field (double-click, "Rename…"), or the field goes (null) */
+	onRenaming?: (root: string | null) => void;
+	/** a name typed in the field and committed: what the tab shows until it settles; a refusal is the caller's to say */
+	onRename?: (root: string, name: string) => Promise<unknown>;
 }) {
 	const [menu, setMenu] = useState<{ project: TabProject; x: number; y: number; anchor: HTMLElement } | null>(null);
 	const nav = useRef<HTMLElement | null>(null);
@@ -649,6 +658,16 @@ export function TabStrip({
 								}}
 								onClose={(byPointer) => (byPointer ? closeHolding(tab.root) : onClose(tab.root))}
 								onMenu={(x, y, anchor) => setMenu({ project: tab, x, y, anchor })}
+								editing={renaming === tab.root}
+								{...(onRenaming === undefined || onRename === undefined || tab.teamAddress !== undefined
+									? {}
+									: {
+											onEdit: () => onRenaming(tab.root),
+											onEdited: (name: string | null) => {
+												onRenaming(null);
+												return name === null ? undefined : onRename(tab.root, name);
+											},
+										})}
 							/>
 						))}
 					</AnimatePresence>
@@ -665,6 +684,7 @@ export function TabStrip({
 					onClose={() => setMenu(null)}
 					onExport={() => onExport?.(menu.project)}
 					onCloseTab={() => onClose(menu.project.root)}
+					{...(onRenaming === undefined ? {} : { onRename: () => onRenaming(menu.project.root) })}
 					{...(onChangeIcon === undefined ? {} : { onChangeIcon: () => onChangeIcon(menu.project) })}
 					{...(onRemoveIcon === undefined ? {} : { onRemoveIcon: () => onRemoveIcon(menu.project) })}
 					{...(onMatchTeam === undefined ? {} : { onMatchTeam: () => onMatchTeam(menu.project) })}
@@ -875,6 +895,52 @@ function Name({ children }: { children: React.ReactNode }) {
 	);
 }
 
+/**
+ * A tab's name as a field, in the name's place and type, the whole name chosen. Enter or leaving it takes what
+ * was typed, Esc keeps the name; empty or the same takes nothing. What happens in it stays in it: no drag, no
+ * click on the tab, no menu, no key for the canvas.
+ */
+function NameField({ name, onDone }: { name: string; onDone: (name: string | null, byKey: boolean) => void }) {
+	const field = useRef<HTMLInputElement | null>(null);
+	const done = useRef(false);
+	useLayoutEffect(() => {
+		field.current?.focus({ preventScroll: true });
+		field.current?.select();
+	}, []);
+	const finish = (take: boolean, byKey: boolean) => {
+		if (done.current) return;
+		done.current = true;
+		const typed = field.current?.value.trim() ?? "";
+		onDone(take && typed !== "" && typed !== name ? typed : null, byKey);
+	};
+	const stop = (event: React.SyntheticEvent) => event.stopPropagation();
+	return (
+		<input
+			ref={field}
+			defaultValue={name}
+			aria-label={`Rename ${name}`}
+			spellCheck={false}
+			autoComplete="off"
+			className="mr-3 min-w-0 flex-1 rounded-xs bg-transparent text-primary outline-1 outline-line-focus outline-offset-2 outline-solid"
+			onBlur={() => finish(true, false)}
+			onKeyDown={(event) => {
+				event.stopPropagation();
+				if (event.nativeEvent.isComposing) return;
+				if (event.key === "Enter" || event.key === "Escape") {
+					event.preventDefault();
+					finish(event.key === "Enter", true);
+				}
+			}}
+			onPointerDown={stop}
+			onMouseDown={stop}
+			onClick={stop}
+			onDoubleClick={stop}
+			onAuxClick={stop}
+			onContextMenu={stop}
+		/>
+	);
+}
+
 /** Carry an element's width as `--tw`, which its face lays itself out against, and say when it is narrow. */
 function useWidth(ref: RefObject<HTMLElement | null>) {
 	useLayoutEffect(() => {
@@ -917,6 +983,9 @@ function Tab({
 	onPick,
 	onClose,
 	onMenu,
+	editing,
+	onEdit,
+	onEdited,
 }: {
 	tab: TabProject;
 	active: boolean;
@@ -937,8 +1006,38 @@ function Tab({
 	onPick: () => void;
 	onClose: (byPointer: boolean) => void;
 	onMenu: (x: number, y: number, anchor: HTMLElement) => void;
+	/** its name is a field */
+	editing: boolean;
+	/** a double-click on the name makes it a field; absent, the tab's name isn't this Mac's to change */
+	onEdit?: () => void;
+	/** the field went: with the name to take, or null for none */
+	onEdited?: (name: string | null) => Promise<unknown> | undefined;
 }) {
 	const [present, safeToRemove] = usePresence();
+	const label = useRef<HTMLButtonElement | null>(null);
+	/** the name committed, shown while the rename is on its way */
+	const [taking, setTaking] = useState<string | null>(null);
+	/** the field went by a key, and the keyboard goes back to the tab */
+	const refocus = useRef(false);
+	useEffect(() => {
+		if (editing || !refocus.current) return;
+		refocus.current = false;
+		label.current?.focus();
+	}, [editing]);
+	const name = taking ?? tab.name;
+	const mark = (
+		<span className="flex size-4 shrink-0 items-center justify-center">
+			<ProjectMark
+				project={tab.name}
+				name={tab.name}
+				icon={tab.icon}
+				team={tab.teamAddress}
+				paused={tab.paused}
+				// the gap round the badge is the colour the tab is drawn on
+				cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
+			/>
+		</span>
+	);
 	const slot = useRef<HTMLDivElement | null>(null);
 	useWidth(slot);
 	/** the keyboard was in this tab when it closed, and goes on to a neighbour */
@@ -1027,7 +1126,7 @@ function Tab({
 					transform: `translateX(${shift}px)`,
 					transition: still || carried ? "none" : "transform var(--transition-duration-base) var(--ease-snap)",
 				}}
-				onPointerDown={onPress}
+				onPointerDown={editing ? undefined : onPress}
 				// the middle button closes a tab, as it does in a browser, and must not
 				// start the page's autoscroll on the way
 				onMouseDown={(event) => {
@@ -1041,39 +1140,49 @@ function Tab({
 			>
 				{lifted && <Backing sheet={active} />}
 				<Wash lit={active} />
-				<button
-					type="button"
-					className={cn(LABEL, "project-tab-label cursor-default pr-8")}
-					style={{ paddingLeft: FACE_PAD }}
-					onContextMenu={(event) => {
-						event.preventDefault();
-						onMenu(event.clientX, event.clientY, event.currentTarget);
-					}}
-					onKeyDown={(event) => {
-						if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-							event.preventDefault();
-							const box = event.currentTarget.getBoundingClientRect();
-							onMenu(box.left, box.bottom, event.currentTarget);
-						}
-					}}
-					aria-current={active ? "page" : undefined}
-					onClick={onPick}
-					title={tab.root}
-				>
-					<span className="flex size-4 shrink-0 items-center justify-center">
-						<ProjectMark
-							project={tab.name}
+				{editing && onEdited !== undefined ? (
+					<div
+						className={cn(LABEL, "project-tab-label pr-8")}
+						style={{ paddingLeft: FACE_PAD }}
+						aria-current={active ? "page" : undefined}
+					>
+						{mark}
+						<NameField
 							name={tab.name}
-							icon={tab.icon}
-							team={tab.teamAddress}
-							paused={tab.paused}
-							// the gap round the badge is the colour the tab is drawn on
-							cut={active && present ? "var(--color-surface-canvas)" : "var(--color-surface-window)"}
+							onDone={(next, byKey) => {
+								refocus.current = byKey;
+								if (next !== null) setTaking(next);
+								void onEdited(next)?.finally(() => setTaking(null));
+							}}
 						/>
-					</span>
-					<Name>{tab.name}</Name>
-					{!active && tab.here !== undefined && tab.here.length > 0 && <TabDots mates={tab.here} />}
-				</button>
+					</div>
+				) : (
+					<button
+						ref={label}
+						type="button"
+						className={cn(LABEL, "project-tab-label cursor-default pr-8")}
+						style={{ paddingLeft: FACE_PAD }}
+						onContextMenu={(event) => {
+							event.preventDefault();
+							onMenu(event.clientX, event.clientY, event.currentTarget);
+						}}
+						onKeyDown={(event) => {
+							if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+								event.preventDefault();
+								const box = event.currentTarget.getBoundingClientRect();
+								onMenu(box.left, box.bottom, event.currentTarget);
+							}
+						}}
+						aria-current={active ? "page" : undefined}
+						onClick={onPick}
+						onDoubleClick={onEdit}
+						title={tab.root}
+					>
+						{mark}
+						<Name>{name}</Name>
+						{!active && tab.here !== undefined && tab.here.length > 0 && <TabDots mates={tab.here} />}
+					</button>
+				)}
 				<span
 					className={cn(
 						"absolute top-1/2 right-1.5 mt-0.5 flex -translate-y-1/2 opacity-0 transition-opacity duration-fast ease-out has-focus-visible:opacity-100 group-hover/tab:opacity-100",
