@@ -57,12 +57,13 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 		}
 		return { stderr, stdout: [], ok: false };
 	}
-	if (report.notChecked !== undefined) return { stderr: [report.notChecked], stdout: [], ok: false };
+	if (!report.ran && report.notChecked.length > 0) return { stderr: report.notChecked, stdout: [], ok: false };
 	for (const diagnostic of report.diagnostics) {
 		stderr.push(
 			`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}`,
 		);
 	}
+	stderr.push(...report.notChecked);
 	for (const stray of report.strays) {
 		stderr.push(
 			stray.endsWith("/frame.tsx")
@@ -93,12 +94,13 @@ export async function runCheck(root: string, cwd: string, paths: string[]): Prom
 	if (report.ran) for (const reader of altReaders(root, report.frames)) stderr.push(describeAltReader(reader));
 	const errors = report.diagnostics.length;
 	if (!report.ran) return { stderr, stdout: [`not checked: ${count(errors, "error")} stopped it`], ok: false };
+	const batches = report.batches > 1 ? ` in ${report.batches} batches` : "";
 	return {
 		stderr,
 		stdout: [
-			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")}), ${count(errors, "error")}`,
+			`checked ${count(report.frames.length, "frame")} (${count(report.sources, "source file")})${batches}, ${count(errors, "error")}`,
 		],
-		ok: errors === 0,
+		ok: errors === 0 && report.notChecked.length === 0,
 	};
 }
 

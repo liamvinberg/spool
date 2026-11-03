@@ -39,6 +39,11 @@ export class CheckSourceBudget {
 		return { files: this.#files.size, bytes: this.#totalBytes };
 	}
 
+	/** The bytes one file was reserved at, or nothing when it was not. */
+	bytesOf(file: string): number | undefined {
+		return this.#files.get(file);
+	}
+
 	get maxFileBytes(): number {
 		return this.limits.maxFileBytes;
 	}

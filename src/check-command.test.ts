@@ -84,8 +84,9 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it("says how far over the file limit the closure is, and that naming frames checks fewer", async () => {
+	it("checks a closure over the limit in batches, saying a shared source's error once", async () => {
 		const root = project();
+		writeDesignFile(root, "shared/common.ts", "export const common: string = 1;\n");
 		const half = Math.ceil(checkSourceLimits.maxFiles / 2) + 1;
 		for (let index = 0; index < half; index += 1) {
 			writeDesignFile(root, `shared/part${index}.ts`, `export const part = ${index};\n`);
@@ -93,23 +94,35 @@ describe("spool check [paths…]", { timeout: 30_000 }, () => {
 				root,
 				"many",
 				`f${index}`,
-				`import { part } from "../../../shared/part${index}";\nexport default function F() { return <p>{part}</p>; }\n`,
+				`import { common } from "../../../shared/common";\nimport { part } from "../../../shared/part${index}";\nexport default function F() { return <p>{part}{common}</p>; }\n`,
 			);
 		}
 
 		expect(await runCheck(root, root, [])).toEqual({
-			stderr: [
-				`not checked: ${half * 2} source files, the limit is ${checkSourceLimits.maxFiles}; name frames or folders of frames to check fewer, as in spool check design/frames/<page>`,
-			],
-			stdout: [],
+			stderr: ["design/shared/common.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'."],
+			stdout: [`checked ${half} frames (${half * 2 + 1} source files) in 2 batches, 1 error`],
 			ok: false,
 		});
-		expect((await runCheck(root, root, ["design/frames/many"])).stderr[0]).toMatch(
-			/^not checked: \d+ source files, the limit is \d+; name fewer frames to check fewer$/,
+	});
+
+	it("leaves out only a frame whose own imports are over the limit, and says how far over", async () => {
+		const root = project();
+		writeFrame(root, "home", FRAME);
+		const parts = checkSourceLimits.maxFiles;
+		writeFrame(
+			root,
+			"huge",
+			`${Array.from({ length: parts }, (_, index) => `import "../../shared/part${index}";`).join("\n")}\n${FRAME}`,
 		);
-		expect((await runCheck(root, root, ["many/f0", "many/f1"])).stdout).toEqual([
-			"checked 2 frames (4 source files), 0 errors",
-		]);
+		for (let index = 0; index < parts; index += 1) writeDesignFile(root, `shared/part${index}.ts`, "export {};\n");
+		const over = `design/frames/huge/frame.tsx: not checked: it imports ${parts + 1} source files, the limit is ${parts}`;
+
+		expect(await runCheck(root, root, [])).toEqual({
+			stderr: [over],
+			stdout: ["checked 1 frame (1 source file), 0 errors"],
+			ok: false,
+		});
+		expect(await runCheck(root, root, ["huge"])).toEqual({ stderr: [over], stdout: [], ok: false });
 	});
 
 	it("spells out a slow frame only when it is named, and sums up the rest after the diagnostics", async () => {
