@@ -214,7 +214,7 @@ describe("skill", () => {
 	});
 
 	it("prints every listed topic", () => {
-		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "verbs", "comments"]) {
+		for (const topic of ["frames", "flows", "sharing", "scenarios", "styling", "knobs", "verbs", "comments"]) {
 			expect(skillText(topic).length).toBeGreaterThan(100);
 		}
 	});
@@ -239,7 +239,7 @@ describe("skill", () => {
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
 		expect(() => skillText("vibes")).toThrowError(
-			/frames, flows, sharing, team, comments, history, scenarios, styling, shaders, verbs/,
+			/frames, flows, sharing, team, comments, history, scenarios, styling, knobs, shaders, verbs/,
 		);
 		expect(() => skillText("frames", "vibes")).toThrowError(/no skill topic "vibes"/);
 	});
