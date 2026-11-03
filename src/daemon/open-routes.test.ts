@@ -42,3 +42,19 @@ it("reads what Open… was handed and imports a .spool file from where it lies",
 	});
 	expect(refused.status).toBe(400);
 });
+
+it("says spool.page could not be reached for a team link while it doesn't answer", async () => {
+	const app = makeApp(join(makeTempDir(), ".spool"), {
+		cloud: {
+			origin: "https://cloud.test",
+			vault: { read: async () => "t".repeat(43) },
+			fetch: async () => {
+				throw new TypeError("fetch failed");
+			},
+		},
+	});
+	const found = await app.request(
+		`/api/projects/find?${new URLSearchParams({ given: "https://cloud.test/tidemark/app" })}`,
+	);
+	expect(await found.json()).toEqual({ kind: "nothing", says: "spool.page could not be reached. Try again." });
+});

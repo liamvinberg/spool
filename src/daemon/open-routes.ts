@@ -32,7 +32,7 @@ export function openRoutes(deps: {
 		} catch (error) {
 			if (error instanceof CloudSignedOut) return "signed-out";
 			if (error instanceof CloudTeamRefused && (error.status === 404 || error.status === 403)) return "missing";
-			throw error;
+			return "unreachable";
 		}
 	};
 	const find = (given: string) =>

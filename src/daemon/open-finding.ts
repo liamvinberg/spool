@@ -27,7 +27,7 @@ export type Finding =
 	| { kind: "nothing"; says: string };
 
 /** How this account stands in a team project spool.page was asked about. */
-export type TeamStanding = "editor" | "viewer" | "missing" | "signed-out";
+export type TeamStanding = "editor" | "viewer" | "missing" | "signed-out" | "unreachable";
 
 export interface FindingDeps {
 	spoolDir: string;
@@ -163,9 +163,11 @@ async function findTeam(team: string, project: string, deps: FindingDeps): Promi
 		says:
 			standing === "signed-out"
 				? "Sign in to spool.page to get this project."
-				: standing === "viewer"
-					? "You can only view this project. Open the link in a browser to look."
-					: "Nothing answers at this link.",
+				: standing === "unreachable"
+					? "spool.page could not be reached. Try again."
+					: standing === "viewer"
+						? "You can only view this project. Open the link in a browser to look."
+						: "Nothing answers at this link.",
 	};
 }
 
