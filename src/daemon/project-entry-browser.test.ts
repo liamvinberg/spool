@@ -15,7 +15,7 @@ import {
 } from "../test-helpers";
 import { createSettingsStore } from "./settings";
 
-it("starts a project at once with the Agent pane out, names it from the first ask, and opens existing work from Open… and a paste", {
+it("starts a project at once with the Agent pane out, names it from its tab or the first ask, and opens existing work from Open… and a paste", {
 	timeout: 120_000,
 }, async () => {
 	// the naming question is answered when the test says; the turn after it answers the model probes and works on
@@ -78,11 +78,18 @@ it("starts a project at once with the Agent pane out, names it from the first as
 	await page.getByRole("heading", { name: "Your canvas is ready.", exact: true }).waitFor();
 	expect(await page.locator("dialog").count()).toBe(0);
 	expect(existsSync(join(parent, "untitled", "design", "canvas.json"))).toBe(true);
-	// the composer stands ready in the Agent pane, and the person's focus is still theirs
+	// the composer stands ready in the Agent pane, and the focus is in the tab's name, a field with "untitled" chosen
 	const rail = page.locator("[data-agent-rail]");
 	const composer = rail.locator("textarea");
 	await composer.waitFor();
 	expect(await composer.evaluate((element) => element === document.activeElement)).toBe(false);
+	const tabName = page.getByRole("navigation", { name: "Open projects" }).getByRole("textbox");
+	expect(
+		await tabName.evaluate(
+			(field: HTMLInputElement) =>
+				field === document.activeElement && field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0),
+		),
+	).toBe("untitled");
 
 	// the first ask names the project before its turn starts, and the pane stays out through the rename
 	await composer.fill("A tide planner for sea kayakers");
@@ -96,6 +103,25 @@ it("starts a project at once with the Agent pane out, names it from the first as
 	await rail.locator('[data-agent-turn-line="running"]').waitFor();
 	expect(await rail.getByText("Naming the project", { exact: true }).count()).toBe(0);
 	expect(new URL(page.url()).pathname).toBe("/p/tide-planner");
+
+	// a name typed in a new project's tab and taken by Enter moves its folder
+	await page.getByRole("button", { name: "Home", exact: true }).click();
+	await page.locator(".pj-heading").getByRole("button", { name: "New project", exact: true }).click();
+	await tabName.waitFor();
+	await page.keyboard.type("kelp-map");
+	await page.keyboard.press("Enter");
+	await page.getByRole("button", { name: "Close kelp-map", exact: true }).waitFor();
+	expect(existsSync(join(parent, "kelp-map", "design", "canvas.json"))).toBe(true);
+	expect(existsSync(join(parent, "untitled"))).toBe(false);
+	// Rename… in the tab's menu makes the name a field again, and Esc leaves it as it was
+	await page.getByRole("button", { name: "kelp-map", exact: true }).click({ button: "right" });
+	await page.getByRole("menuitem", { name: "Rename…", exact: true }).click();
+	await tabName.waitFor();
+	await page.keyboard.type("kelp-chart");
+	await page.keyboard.press("Escape");
+	await tabName.waitFor({ state: "detached" });
+	await page.getByRole("button", { name: "Close kelp-map", exact: true }).waitFor();
+	expect(existsSync(join(parent, "kelp-chart"))).toBe(false);
 
 	// one closed untitled and empty goes to the Trash behind an Undo, which brings it back
 	await page.getByRole("button", { name: "Home", exact: true }).click();
