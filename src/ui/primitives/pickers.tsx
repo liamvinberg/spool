@@ -767,7 +767,11 @@ export function GradientPreview({ value }: { value: string }) {
 	const gradient = parseGradient(value);
 	return (
 		<span className="flex min-w-0 items-center gap-1.5">
-			<Chip paint={value} className="h-3.5 w-7" />
+			<span
+				aria-hidden="true"
+				className="h-3.5 w-7 shrink-0 rounded-xs border border-line-strong"
+				style={{ background: value }}
+			/>
 			{gradient === undefined ? null : (
 				<>
 					<span className="text-primary tabular-nums type-value">{trim(gradient.angle, 1)}°</span>
