@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
@@ -7,7 +7,6 @@ import { z } from "zod";
 import { SpoolError } from "../errors";
 import { checkoutOf } from "../git-remote";
 import { initProject, startProject } from "../init";
-import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
 import { forgetResolvedProject, readRegistry } from "../registry";
 import { backInGitOffered } from "../team-moves";
@@ -36,7 +35,6 @@ import {
 } from "./project-thumbnail";
 import { exportProject, importProject, TRANSFER_LIMITS, TransferError } from "./project-transfer";
 import { describeMissingFrame, frameExists, type ProjectCard, summarizeProject } from "./projection";
-import type { createSelectionStore } from "./selection";
 import type { AppEvent, watchMachineState } from "./session";
 import type { createSettingsStore } from "./settings";
 import { type createTeamSync, endedWith, followedLink, goneLocalWith, movedOutOf } from "./team-sync";
@@ -73,9 +71,10 @@ export function homeRoutes(deps: {
 	/** Projects mid-rename or mid-trash, which every other project change waits out. */
 	projectRenames: Set<string>;
 	trashingProjects: Set<string>;
-	liveTurns: Pick<ReturnType<typeof createAgentTurns>, "of" | "relocate">;
+	liveTurns: Pick<ReturnType<typeof createAgentTurns>, "of">;
 	hub: Pick<ReturnType<typeof createChangeHub>, "forget">;
-	selections: Pick<ReturnType<typeof createSelectionStore>, "relocate">;
+	/** A project renamed, as `createRenamer` does it. */
+	rename: (root: string, name: string) => { root: string; name: string };
 	machineStateWatch: Pick<ReturnType<typeof watchMachineState>, "acknowledgeRegistry" | "acknowledgeSession">;
 	emitAppEvent: (event: AppEvent) => void;
 	registeredRoots: () => string[];
@@ -94,7 +93,6 @@ export function homeRoutes(deps: {
 		trashingProjects,
 		liveTurns,
 		hub,
-		selections,
 		machineStateWatch,
 		emitAppEvent,
 		registeredRoots,
@@ -260,34 +258,13 @@ export function homeRoutes(deps: {
 					const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
 					return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
 				}),
-				async (c) => {
+				(c) => {
 					const { root, name } = c.req.valid("json");
-					const target = join(dirname(root), name.trim());
-					if (projectRenames.has(root) || projectRenames.has(target))
-						return c.json({ error: "Project change is in progress." }, 409);
-					if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
-					if ([...liveTurns.of(root)].some((turn) => turn.running)) {
-						return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
-					}
-					projectRenames.add(root);
-					projectRenames.add(target);
 					try {
-						const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
-						if (result.root !== root) {
-							hub.forget(root);
-							liveTurns.relocate(root, result.root);
-							selections.relocate(root, result.root);
-						}
-						machineStateWatch.acknowledgeRegistry(result.registry);
-						machineStateWatch.acknowledgeSession(result.session);
-						emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
-						return c.json({ root: result.root, name: result.name });
+						return c.json(deps.rename(root, name));
 					} catch (error) {
 						if (!(error instanceof SpoolError)) throw error;
 						return c.json({ error: error.message }, 409);
-					} finally {
-						projectRenames.delete(root);
-						projectRenames.delete(target);
 					}
 				},
 			)

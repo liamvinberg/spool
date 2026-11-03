@@ -89,6 +89,7 @@ import {
 	listProjectFramesAwaited,
 	readFrameGeometry,
 } from "./projection";
+import { createRenamer } from "./renamer";
 import { createResolvePass } from "./resolve-pass";
 import {
 	CAPTURE_HOST,
@@ -901,6 +902,16 @@ export function createDaemonApp({
 	 */
 	const liveTurns = createAgentTurns();
 	const modelPreferences = createAgentModelPreferences(spoolDir, agentDefaults);
+	const renameProject = createRenamer({
+		spoolDir,
+		projectRenames,
+		trashingProjects,
+		liveTurns,
+		hub,
+		selections,
+		machineStateWatch,
+		emitAppEvent,
+	});
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -1229,7 +1240,7 @@ export function createDaemonApp({
 				trashingProjects,
 				liveTurns,
 				hub,
-				selections,
+				rename: renameProject,
 				machineStateWatch,
 				emitAppEvent,
 				registeredRoots,
