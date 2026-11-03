@@ -203,6 +203,6 @@ describe("importing the compile entry", () => {
 		expect(typeof entry.compileFrameDocument).toBe("function");
 		expect(bundle).not.toContain("import.meta");
 		// the file system, the module loader and threads are the daemon's, never the compile's
-		expect([...imported].sort()).toEqual(["node:buffer", "node:crypto", "node:path", "tailwindcss"]);
+		expect([...imported].sort()).toEqual(["@babel/parser", "node:buffer", "node:crypto", "node:path", "tailwindcss"]);
 	});
 });
