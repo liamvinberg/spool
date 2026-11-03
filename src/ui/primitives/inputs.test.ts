@@ -2,7 +2,17 @@
 import { act, createElement, type ReactElement, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { ColourField, Field, NumberField, SearchField, TextField } from "./inputs";
+import {
+	ColourField,
+	Field,
+	fitNumber,
+	NumberField,
+	readNumber,
+	SearchField,
+	scrubNumber,
+	TextField,
+	type TunePhase,
+} from "./inputs";
 
 /**
  * The input primitives hold a draft of their own where a half-typed value must
@@ -82,6 +92,79 @@ it("a number field's arrows step by its step, ten under shift, or hand the units
 	const stepped = render(createElement(NumberField, { value: 10, onValueChange, onStep, label: "y" }));
 	key(input(stepped, "y"), "ArrowDown", true);
 	expect(onStep).toHaveBeenCalledExactlyOnceWith(-10);
+});
+
+it("a typed number takes maths, units and a step relative to the value it had", () => {
+	const ms = { unit: "ms", units: { s: 1000 } };
+	expect(readNumber("300ms", 520, ms)).toBe(300);
+	expect(readNumber("0,3s", 520, ms)).toBe(300);
+	expect(readNumber("78*2", 0, {})).toBe(156);
+	expect(readNumber("(1+2)*-2", 0, {})).toBe(-6);
+	expect(readNumber("+4", 20, {})).toBe(24);
+	expect(readNumber("*2", 20, {})).toBe(40);
+	expect(readNumber("-4", 20, {})).toBe(-4);
+	expect(readNumber("3em", 0, ms)).toBeNull();
+	expect(readNumber("78*", 0, {})).toBeNull();
+});
+
+it("a number is clamped to its bounds, or comes round when it wraps", () => {
+	expect(fitNumber(52, { min: 0, max: 40 })).toBe(40);
+	expect(fitNumber(-30, { min: 0, max: 360, wrap: true })).toBe(330);
+	expect(fitNumber(360, { min: 0, max: 360, wrap: true })).toBe(0);
+	expect(fitNumber(0.1 + 0.2, {})).toBe(0.3);
+});
+
+it("a scrub slows as the pointer strays, steps by shift and alt, and sticks where it set out", () => {
+	const plain = { dy: 0, shift: false, alt: false };
+	expect(scrubNumber(10, { ...plain, mx: 8 }, 0.5, 10, {}).value).toBe(14);
+	expect(scrubNumber(10, { ...plain, mx: 8, dy: 60 }, 0.5, 10, {}).value).toBe(12);
+	expect(scrubNumber(10, { ...plain, mx: 8, dy: 200 }, 0.5, 0, {}).value).toBe(11);
+	expect(scrubNumber(10, { ...plain, mx: 8, shift: true }, 0.5, 10, { max: 40 }).value).toBe(40);
+	expect(scrubNumber(10, { ...plain, mx: 4, alt: true }, 0.5, 0, {}).value).toBe(10.2);
+	// back within a few pixels of where it began, it holds there, as on any detent
+	expect(scrubNumber(11, { ...plain, mx: -1 }, 0.5, 10, {}).value).toBe(10);
+	expect(scrubNumber(23, { ...plain, mx: 1 }, 0.5, 10, { detents: [24] })).toEqual({ raw: 23.5, value: 24 });
+});
+
+it("a knob's number reports a scrub and a held arrow live and commits each once; Escape puts back the start", () => {
+	const onTune = vi.fn<(next: number, phase: TunePhase) => void>();
+	const host = render(createElement(NumberField, { value: 20, onTune, prefix: "r", label: "radius" }));
+	const handle = host.querySelector("span") as HTMLElement;
+	const pointer = (type: string, clientX: number) =>
+		act(() => {
+			const event = new PointerEvent(type, { clientX, clientY: 0, button: 0, pointerId: 1, bubbles: true });
+			(type === "pointerdown" ? handle : document).dispatchEvent(event);
+		});
+	pointer("pointerdown", 0);
+	pointer("pointermove", 6);
+	pointer("pointermove", 12);
+	pointer("pointerup", 12);
+	expect(onTune.mock.calls).toEqual([
+		[23, "live"],
+		[26, "live"],
+		[26, "commit"],
+	]);
+
+	onTune.mockClear();
+	pointer("pointerdown", 0);
+	pointer("pointermove", 10);
+	key(document, "Escape");
+	pointer("pointerup", 10);
+	expect(onTune.mock.calls).toEqual([
+		[25, "live"],
+		[20, "cancel"],
+	]);
+
+	onTune.mockClear();
+	const field = input(host, "radius");
+	key(field, "ArrowUp");
+	key(field, "ArrowUp", true);
+	act(() => field.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", bubbles: true })));
+	expect(onTune.mock.calls).toEqual([
+		[21, "live"],
+		[31, "live"],
+		[31, "commit"],
+	]);
 });
 
 it("a search shows its key while empty and a clear once there is something to clear", () => {
