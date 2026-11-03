@@ -150,6 +150,12 @@ export function Home({
 	);
 	const start = (
 		<>
+			{/* until Open… takes a .spool file itself (spool#51's Open…) */}
+			{onImport && (
+				<Button size="lg" variant="ghost" onClick={onImport}>
+					Import…
+				</Button>
+			)}
 			<Button size="lg" icon={<FolderIcon />} onClick={onFolder}>
 				Open…
 			</Button>

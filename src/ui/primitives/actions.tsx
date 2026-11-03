@@ -110,7 +110,7 @@ export interface ButtonProps extends ComponentProps<"button"> {
 
 /**
  * A labelled act. Words in sentence case, an ellipsis when it opens something
- * that asks more (`New project…`).
+ * that asks more (`Open…`).
  */
 export function Button({
 	variant = "secondary",
