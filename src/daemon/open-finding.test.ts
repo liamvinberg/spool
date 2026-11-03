@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { registerProject } from "../registry";
@@ -64,6 +64,11 @@ it("offers to design in a folder: at the top of its checkout beside the code, or
 	});
 	mkdirSync(join(moodboard, "design"));
 	expect(await find(moodboard)).toMatchObject({ kind: "nothing", says: expect.stringContaining("isn't spool's") });
+	expect(await find(home)).toMatchObject({ kind: "nothing" });
+	// a home kept in git is no checkout to design beside: a plain folder in it is designed in where it is
+	git(home, "init", "-q", "-b", "main");
+	rmSync(join(moodboard, "design"), { recursive: true });
+	expect(await find(moodboard)).toMatchObject({ kind: "folder", path: moodboard, code: false, branch: null });
 	expect(await find(home)).toMatchObject({ kind: "nothing" });
 });
 

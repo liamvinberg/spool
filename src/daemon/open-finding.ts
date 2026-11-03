@@ -127,10 +127,14 @@ async function findAtPath(path: string, deps: FindingDeps): Promise<Finding> {
 		return { kind: "team", team: link.team, project: link.project, url: link.url, checkout: root };
 	}
 	if (!isDir) return { kind: "nothing", says: "spool opens a folder or a .spool file." };
-	const checkout = await checkoutOf(dir);
-	const top = checkout?.top === undefined ? dir : realDir(checkout.top);
-	if (top === realDir(deps.home) || dirname(top) === top)
-		return { kind: "nothing", says: "Choose a project's folder, not the whole of this Mac's home." };
+	// home, or the disk itself, is never a project's folder, nor is a checkout of either (dotfiles kept in git, say):
+	// a folder inside one is designed in where it is
+	const home = realDir(deps.home);
+	const whole = (folder: string) => folder === home || dirname(folder) === folder;
+	const found = await checkoutOf(dir);
+	const checkout = found === undefined || whole(realDir(found.top)) ? undefined : found;
+	const top = checkout === undefined ? dir : realDir(checkout.top);
+	if (whole(top)) return { kind: "nothing", says: "Choose a project's folder, not the whole of this Mac's home." };
 	if (existsSync(join(top, "design")))
 		return {
 			kind: "nothing",
