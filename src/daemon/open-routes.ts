@@ -12,9 +12,9 @@ import { findOpenable, type TeamStanding } from "./open-finding";
 import { importProject, TRANSFER_LIMITS } from "./project-transfer";
 
 /**
- * Open… over HTTP, mounted at `/api/open`: read what was handed over into a finding, and the two acts that only it
- * has, cloning a git link and importing a `.spool` file by its path. Opening a project, designing in a folder and
- * getting a team's project are the routes Home already had.
+ * Open… over HTTP, mounted under `/api/projects` beside Home's own routes: read what was handed over into a
+ * finding, and the two acts only it has, cloning a git link and importing a `.spool` file by its path. Opening a
+ * project, designing in a folder and getting a team's project are the routes Home already had.
  */
 export function openRoutes(deps: {
 	spoolDir: string;
@@ -87,7 +87,7 @@ export function openRoutes(deps: {
 		)
 		.get("/clone/progress", (c) => c.json(clones.get(c.req.query("transfer") ?? "") ?? null))
 		.post(
-			"/import",
+			"/import/path",
 			validator("json", (value, c) => {
 				const parsed = z.object({ path: z.string().min(1) }).safeParse(value);
 				return parsed.success ? parsed.data : c.json({ error: 'expected { "path" }' }, 400);

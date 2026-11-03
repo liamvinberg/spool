@@ -11,7 +11,8 @@ it("reads what Open… was handed and imports a .spool file from where it lies",
 	const location = realpathSync(makeTempDir());
 	createSettingsStore(spoolDir).write("projects.location", location);
 	const app = makeApp(spoolDir);
-	const find = async (given: string) => (await app.request(`/api/open/find?${new URLSearchParams({ given })}`)).json();
+	const find = async (given: string) =>
+		(await app.request(`/api/projects/find?${new URLSearchParams({ given })}`)).json();
 	expect(await find(project.root)).toEqual({ kind: "project", root: project.root, name: project.name });
 
 	const exported = await app.request("/api/projects/export", {
@@ -23,7 +24,7 @@ it("reads what Open… was handed and imports a .spool file from where it lies",
 	writeFileSync(file, Buffer.from(await exported.arrayBuffer()));
 	expect(await find(file)).toMatchObject({ kind: "file", into: location });
 
-	const imported = await app.request("/api/open/import", {
+	const imported = await app.request("/api/projects/import/path", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ path: file }),
@@ -34,7 +35,7 @@ it("reads what Open… was handed and imports a .spool file from where it lies",
 	expect(existsSync(join(root, "design", "canvas.json"))).toBe(true);
 	expect(readRegistry(spoolDir).projects.some((entry) => entry.root === root)).toBe(true);
 
-	const refused = await app.request("/api/open/import", {
+	const refused = await app.request("/api/projects/import/path", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ path: project.root }),

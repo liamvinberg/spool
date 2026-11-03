@@ -265,7 +265,7 @@ export type { CloneProgress, Finding };
 /** What a folder, a .spool file or a link handed to Open… is, read by the daemon: the one action that fits it. */
 export async function findOpenable(given: string): Promise<Finding> {
 	try {
-		const response = await controlFetch(`/api/open/find?${new URLSearchParams({ given })}`);
+		const response = await controlFetch(`/api/projects/find?${new URLSearchParams({ given })}`);
 		if (response.ok) return (await response.json()) as Finding;
 		return { kind: "nothing", says: await errorText(response) };
 	} catch {
@@ -275,7 +275,7 @@ export async function findOpenable(given: string): Promise<Finding> {
 
 /** Clone a git link into the projects location, then what the clone is, read again; throws what git said. */
 export async function cloneRepo(url: string, transfer: string, signal?: AbortSignal): Promise<Finding> {
-	const response = await controlFetch("/api/open/clone", {
+	const response = await controlFetch("/api/projects/clone", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ url, transfer }),
@@ -288,7 +288,7 @@ export async function cloneRepo(url: string, transfer: string, signal?: AbortSig
 /** How far the clone under `transfer` has got; null once it is over or before it starts. */
 export async function fetchCloneProgress(transfer: string): Promise<CloneProgress | null> {
 	try {
-		const response = await controlFetch(`/api/open/clone/progress?${new URLSearchParams({ transfer })}`);
+		const response = await controlFetch(`/api/projects/clone/progress?${new URLSearchParams({ transfer })}`);
 		return response.ok ? ((await response.json()) as CloneProgress | null) : null;
 	} catch {
 		return null;
@@ -297,7 +297,7 @@ export async function fetchCloneProgress(transfer: string): Promise<CloneProgres
 
 /** Import the .spool file at `path` into the projects location, read where it lies. */
 export async function importProjectFrom(path: string, signal?: AbortSignal): Promise<{ root: string; name: string }> {
-	const response = await controlFetch("/api/open/import", {
+	const response = await controlFetch("/api/projects/import/path", {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ path }),

@@ -1857,7 +1857,7 @@ export function createDaemonApp({
 		}),
 	);
 	app.route(
-		"/api/open",
+		"/api/projects",
 		openRoutes({
 			spoolDir,
 			home: fsIndex.home,

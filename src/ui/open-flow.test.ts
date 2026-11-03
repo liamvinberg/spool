@@ -13,9 +13,9 @@ function daemon(findings: Record<string, Finding>, answers: Record<string, () =>
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-			if (url.pathname === "/api/open/find")
+			if (url.pathname === "/api/projects/find")
 				return Response.json(findings[url.searchParams.get("given") ?? ""] ?? { kind: "nothing", says: "?" });
-			if (url.pathname === "/api/open/clone/progress") return Response.json(null);
+			if (url.pathname === "/api/projects/clone/progress") return Response.json(null);
 			writes.push({ path: url.pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
 			const answer = answers[url.pathname];
 			if (answer) return answer();
@@ -105,7 +105,7 @@ it("clones a repo, then reads the clone again and asks to design in it", async (
 			},
 		},
 		{
-			"/api/open/clone": () =>
+			"/api/projects/clone": () =>
 				Response.json({
 					kind: "folder",
 					path: "/u/spool/tides",
@@ -120,7 +120,7 @@ it("clones a repo, then reads the clone again and asks to design in it", async (
 	await take("https://github.com/t/tides");
 	expect(host.querySelector("dialog")?.textContent).toContain("git clone into /u/spool/tides");
 	await press("Clone");
-	expect(writes[0]).toMatchObject({ path: "/api/open/clone", body: { url: "https://github.com/t/tides" } });
+	expect(writes[0]).toMatchObject({ path: "/api/projects/clone", body: { url: "https://github.com/t/tides" } });
 	expect(host.querySelector("dialog")?.textContent).toContain("Design in this folder");
 	expect(onOpened).not.toHaveBeenCalled();
 });
