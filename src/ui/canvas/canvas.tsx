@@ -19,6 +19,7 @@ import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { SETTINGS } from "../../settings/registry";
 import type { Comment, Presence, PresenceState } from "../../team-sync-protocol";
+import { isUntitled } from "../../untitled";
 import { AgentHandoff } from "../agent-handoff";
 import type {
 	Camera,
@@ -5534,6 +5535,8 @@ function CanvasField({
 					install={install}
 					offeredModel={offeredModel}
 					agentDefaults={agentDefaults}
+					// the daemon names an untitled local project from its first ask (spool#51)
+					unnamed={projectEmpty && !team && isUntitled(project)}
 				/>
 			),
 		},

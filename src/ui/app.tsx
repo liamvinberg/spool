@@ -179,6 +179,8 @@ export function App() {
 		setProjects((cards) => cards.map((card) => (card.root === from ? { ...card, ...renamed } : card)));
 		setOpen((roots) => roots.map((root) => (root === from ? renamed.root : root)));
 		setFocused((root) => (root === from ? renamed.root : root));
+		// a new project named by its first ask keeps its Agent pane out
+		setStarted((root) => (root === from ? renamed.root : root));
 		if (window.location.pathname === `/p/${encodeURIComponent(basename(from))}`) {
 			window.history.replaceState(null, "", `/p/${encodeURIComponent(renamed.name)}`);
 		}
