@@ -227,6 +227,20 @@ function ClearButton({ onClear }: { onClear: () => void }) {
 
 /* --------------------------------------------------------- NumberField -- */
 
+/**
+ * Where a tuning gesture is (#220): `live` while a hand drags or types, `commit`
+ * once on release (the one write), `cancel` on Escape with the value from before
+ * the gesture, which nothing writes.
+ */
+export type TunePhase = "live" | "commit" | "cancel";
+
+/** What every knob editor takes: its value and the one way it reports a change. */
+export interface TuneProps<T> {
+	value: T;
+	onTune: (next: T, phase: TunePhase) => void;
+	disabled?: boolean | undefined;
+}
+
 export interface NumberFieldProps
 	extends Omit<FieldBoxProps, "children" | "onChange" | "defaultValue" | "prefix" | "size"> {
 	size?: FieldSize | undefined;
